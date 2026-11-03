@@ -10,6 +10,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -519,6 +520,38 @@ func TestRunAndShellHelpStateTheFilteredDefault(t *testing.T) {
 			if !strings.Contains(page, want) {
 				t.Errorf("coop help %s lost %q:\n%s", name, want, page)
 			}
+		}
+	}
+}
+
+// A rules file's shape is not guessable, and the file adds to the project's rules rather than
+// replacing them: the run page shows a minimal file that really decodes, the launch pages say the
+// flag adds rules, and the network paragraph says a one-off open or offline run leaves them out.
+func TestRunHelpShowsAMinimalRulesFile(t *testing.T) {
+	_, rest, found := strings.Cut(runHelp, "RULES FILE\n")
+	if !found {
+		t.Fatalf("coop help run has no RULES FILE section:\n%s", runHelp)
+	}
+	var example []string
+	for _, line := range strings.Split(rest, "\n") {
+		if strings.HasPrefix(line, "    ") {
+			example = append(example, strings.TrimPrefix(line, "    "))
+		} else if len(example) != 0 {
+			break
+		}
+	}
+	rules, err := egress.DecodeRules([]byte(strings.Join(example, "\n") + "\n"))
+	if err != nil || len(rules) != 1 || rules[0].To.Domain != "docs.example.com" {
+		t.Fatalf("the help's rules file does not decode: %v %v\n%s", rules, err, strings.Join(example, "\n"))
+	}
+	for name, page := range map[string]string{"run": runHelp, "shell": manualPage("shell")} {
+		if want := "With --egress open or\n  offline, the project's network rules do not apply to that run."; !strings.Contains(page, want) {
+			t.Errorf("coop help %s does not say a one-off open or offline run leaves the project's rules out", name)
+		}
+	}
+	for name, page := range map[string]string{"run": runHelp, "shell": manualPage("shell"), "acp": manualPage("acp")} {
+		if strings.Contains(page, "load network rules") || !strings.Contains(page, "--egress-rules <path>  add the network rules in a file") {
+			t.Errorf("coop help %s does not say --egress-rules adds rules", name)
 		}
 	}
 }

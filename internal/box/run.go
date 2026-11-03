@@ -1118,6 +1118,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
 	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
+	if policy == nil {
+		sections.projectRulesSetAside(len(p.Box.EgressRules))
+	}
 	sections.offlineMCP(offlineOmitted)
 	sections.openMCP(open.servers(), openKept)
 	sections.legacyMCP(append(brokerPlan.legacySSEServers(), open.legacySSEServers()...))

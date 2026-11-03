@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -100,6 +101,9 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
+	if err := checkRuleFlags(spec, options, preview.Mode); err != nil {
+		return nil, err
+	}
 	if preview.Pending != nil {
 		return nil, fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
 	}
@@ -146,6 +150,33 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	}
 	capture.Default = preview.Default
 	return capture, nil
+}
+
+// checkRuleFlags refuses the person's own rule flags on a run that is not filtered. They only add
+// to filtered access, so dropping them quietly would start a box that cannot reach what was asked
+// for. The project's own rules are not checked here: a one-off --egress open or offline sets them
+// aside, and any other mode leaves them pending (networkstate.Admission.pendingApproval).
+func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) error {
+	if mode == egress.Filtered {
+		return nil
+	}
+	var flags []string
+	if len(options.Domains) != 0 {
+		flags = append(flags, "--allow-domain")
+	}
+	if options.RulesFile != "" {
+		flags = append(flags, "--egress-rules")
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	adds := "adds"
+	if len(flags) > 1 {
+		adds = "add"
+	}
+	named := strings.Join(flags, " and ")
+	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and this run is %s\n\n  Use --egress filtered, or leave out %s.",
+		networkLaunchName(spec), named, adds, mode.Word(), named)
 }
 
 // networkLaunchName is who a refusal says cannot start: the agent by its

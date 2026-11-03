@@ -105,7 +105,9 @@ started outside a co:op project, and one in a project whose <code>.agent/project
 <code>coop run</code> or <code>coop shell</code> reaches only the destinations you approved. <code>coop init</code> writes
 <code>box.egress: filtered</code> into new projects.</p>
 <p>There are two other modes. <code>open</code> allows all network traffic, and <code>offline</code> turns networking off.
-Choose one for a single run with <code>--egress open</code> or <code>--egress offline</code>. Set <code>COOP_EGRESS</code> to
+Choose one for a single run with <code>--egress open</code> or <code>--egress offline</code>. The project&#39;s network
+rules do not apply to that run, approved or not, and its network section says
+<code>This project&#39;s network rules do not apply to this run.</code> Set <code>COOP_EGRESS</code> to
 change the mode for all your runs, or <code>box.egress</code> to change it for one project. The command
 line, <code>COOP_EGRESS</code> and the project file use the same three words. A project&#39;s request for
 <code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an existing project
@@ -563,6 +565,14 @@ execute instructions from your repository.</p>
 <td><code>&lt;Agent&gt; cannot start because this project asks for network access that has not been approved</code> · <code>Review it: coop approve</code></td>
 </tr>
 <tr>
+<td><code>--allow-domain</code> or <code>--egress-rules</code> on a run that is open or offline</td>
+<td><code>&lt;Agent&gt; cannot start because --allow-domain only adds to filtered access, and this run is offline</code> · <code>Use --egress filtered, or leave out --allow-domain.</code></td>
+</tr>
+<tr>
+<td>a rules file that is a bare list, or nests its rules under <code>box:</code></td>
+<td><code>--egress-rules takes a file that lists its rules under one top-level egress_rules key, like this:</code>, then a rules file to copy</td>
+</tr>
+<tr>
 <td><code>open</code>, in a project with no approval yet</td>
 <td><code>&lt;Agent&gt; cannot start because this project asks for unrestricted internet access, which has not been approved</code> · <code>Review it: coop approve</code></td>
 </tr>
@@ -714,9 +724,18 @@ an interactive fork, fork ACP, and a fork review or merge gate.</li>
 <p>These messages do not appear when the project has no pending request.</p>
 <h3 id="access-for-one-run">Access for one run</h3>
 <p>For one run, use <code>--allow-domain &lt;name&gt;</code> to allow an exact name over TLS on port 443, or pass
-<code>--egress-rules &lt;file&gt;</code> with a full rule document. A rules file inside a folder mounted into
-the agent&#39;s box only requests access. Its location prevents the agent from using it to
-approve its own rules.</p>
+<code>--egress-rules &lt;file&gt;</code> to add the rules in a file. Both add to the project&#39;s approved rules for
+that run only. A rules file lists its rules under one top-level <code>egress_rules</code> key, the way
+<code>.agent/project.yaml</code> lists them under <code>box.egress_rules</code>:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Access for one run code example" tabindex="0"><code>egress_rules:
+  - to: {domain: &#34;docs.example.com&#34;}
+    protocol: tls
+    ports: [443]
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Keep the file outside the project. A rules file inside a folder mounted into the agent&#39;s box
+only requests access. Its location prevents the agent from using it to approve its own rules.</p>
+<p>Both flags only add to filtered access. On a run that is open or offline, co:op refuses them by
+name instead of starting without them.</p>
 <h3 id="the-approval-follows-the-directory">The approval follows the directory</h3>
 <p>Approval belongs to the project directory itself. If you move an approved checkout aside and
 put another checkout at the same path, co:op refuses the next launch until a human reviews it

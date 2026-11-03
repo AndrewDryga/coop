@@ -218,6 +218,11 @@ type Requested struct {
 	Rules []Rule `yaml:"egress_rules" json:"egress_rules"`
 }
 
+// errRulesDocumentShape is how a rules file that is not shaped like one is refused: with the shape
+// to use and an example to copy, never the decoder's type names.
+var errRulesDocumentShape = errors.New("--egress-rules takes a file that lists its rules under one top-level egress_rules key, like this:\n\n" +
+	"  egress_rules:\n    - to: {domain: \"docs.example.com\"}\n      protocol: tls\n      ports: [443]")
+
 // DecodeRules accepts exactly one bounded YAML document and only the public rule
 // shape. In particular, a file cannot smuggle approval, source or fingerprint data.
 func DecodeRules(data []byte) ([]Rule, error) {
@@ -228,6 +233,11 @@ func DecodeRules(data []byte) ([]Rule, error) {
 	d.KnownFields(true)
 	var value Requested
 	if err := d.Decode(&value); err != nil {
+		// The common slips are the shape of the whole document — a bare list, or the box: nesting
+		// copied from .agent/project.yaml. A mistake inside a rule keeps its own exact cause.
+		if !rulesDocumentShape(data) {
+			return nil, errRulesDocumentShape
+		}
 		return nil, fmt.Errorf("egress rules: %w", err)
 	}
 	var extra any
@@ -235,6 +245,25 @@ func DecodeRules(data []byte) ([]Rule, error) {
 		return nil, errors.New("egress rules require exactly one YAML document")
 	}
 	return NormalizeRules(value.Rules)
+}
+
+// rulesDocumentShape reports whether a document's top level is a mapping whose only key is
+// egress_rules. It judges the shape alone; DecodeRules still decodes every rule strictly.
+func rulesDocumentShape(data []byte) bool {
+	var document yaml.Node
+	if yaml.Unmarshal(data, &document) != nil || len(document.Content) != 1 {
+		return false
+	}
+	top := document.Content[0]
+	if top.Kind != yaml.MappingNode || len(top.Content) == 0 {
+		return false
+	}
+	for i := 0; i < len(top.Content); i += 2 {
+		if top.Content[i].Value != "egress_rules" {
+			return false
+		}
+	}
+	return true
 }
 
 func NormalizeRules(rules []Rule) ([]Rule, error) {

@@ -89,10 +89,17 @@ func (p *PendingApproval) Sentence() string {
 // The mode the file names counts only where it would decide anything: an
 // explicit --egress or COOP_EGRESS outranks it, so under one the
 // file's "open" is moot and refusing the run over it would protect nothing.
+// The same holds for the whole request under a one-off --egress open or
+// offline: rules only add to filtered access, so that run does not use them.
+// COOP_EGRESS is not a one-off: a remembered approval outranks it, so
+// approving the request still changes what later runs get.
 func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error) {
 	rules, err := egress.NormalizeRules(a.Requests)
 	if err != nil {
 		return nil, err
+	}
+	if a.InvocationMode != nil && *a.InvocationMode != egress.Filtered {
+		return nil, nil
 	}
 	const asks = "this project asks for network access that has not been approved"
 	const requests = ".agent/project.yaml requests changes to network access."
@@ -326,15 +333,15 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	}
 	// Nothing chose: the built-in default is filtered, so a box reaches its providers and what a
 	// human approved, inside a project or not. Rules need filtered, which the default already is.
+	// Rules never change a mode somebody chose. Under another mode the project's rules are either
+	// set aside (a one-off --egress) or a request still waiting for a human (pendingApproval), and
+	// the launcher refuses its own rule flags by name; Compile refuses rules outside filtered too.
 	mode := egress.Filtered
 	for _, value := range []*egress.Mode{a.InvocationMode, remembered, a.HostPreference, a.ProjectMode} {
 		if value != nil {
 			mode = *value
 			break
 		}
-	}
-	if mode != egress.Filtered && a.hasRules() {
-		return "", errors.New("egress rules only apply in filtered mode — run with --egress filtered, or drop the rules (network_policy_conflict)")
 	}
 	return mode, nil
 }

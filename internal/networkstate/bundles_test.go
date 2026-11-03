@@ -146,7 +146,7 @@ func TestFeatureApprovalBindsVariantButAllowsUnchangedReleaseExpansion(t *testin
 			changed[0].Version = "3"
 			changed[0].Features = map[string][]egress.Rule{"cloud-mcp": {rule("different.example.com")}}
 		}
-		if got, err := s.Admit(project, Admission{Requests: requests, Bundles: changed}); err == nil || got.Fingerprint != "" || !strings.Contains(err.Error(), "network_approval_required") {
+		if got, err := s.Admit(project, Admission{Requests: requests, Bundles: changed}); err == nil || got.Fingerprint != "" || !strings.Contains(err.Error(), "run 'coop approve'") {
 			t.Fatal("variant or optional expansion reused unrelated approval", change, got, err)
 		}
 	}

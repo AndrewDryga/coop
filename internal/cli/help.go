@@ -310,7 +310,7 @@ OPTIONS
   --egress <mode>        choose filtered, open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
-  --egress-rules <path>  load network rules from a file
+  --egress-rules <path>  add the network rules in a file
 
   Put Coop options before --. Everything after it belongs to your command.
 
@@ -320,7 +320,21 @@ NETWORK ACCESS
   offline   block internet access
 
   Without --egress, the box is filtered unless the project's network
-  setting or COOP_EGRESS chooses another mode.
+  setting or COOP_EGRESS chooses another mode. With --egress open or
+  offline, the project's network rules do not apply to that run.
+
+RULES FILE
+  --egress-rules adds a file's rules to this run's filtered access. The
+  file lists them under egress_rules, the way .agent/project.yaml lists
+  them under box.egress_rules:
+
+    egress_rules:
+      - to: {domain: "docs.example.com"}
+        protocol: tls
+        ports: [443]
+
+  Keep the file outside the project, where the agent cannot edit it.
+  A file inside the project only requests access.
 
 For more details see:
   coop help net`
@@ -612,7 +626,7 @@ OPTIONS
   --egress <mode>        choose filtered, open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
-  --egress-rules <path>  load network rules from a file
+  --egress-rules <path>  add the network rules in a file
 
 USING THE SHELL
   The shell opens in your project inside the box.
@@ -624,7 +638,8 @@ NETWORK ACCESS
   offline   block internet access
 
   Without --egress, the box is filtered unless the project's network
-  setting or COOP_EGRESS chooses another mode.
+  setting or COOP_EGRESS chooses another mode. With --egress open or
+  offline, the project's network rules do not apply to that run.
 
 For more details see:
   coop help net`,
@@ -859,7 +874,7 @@ OPTIONS
   --egress <mode>        choose filtered (default), open, or offline
   --allow-domain <host>  allow TLS access to this host on port 443
                          repeat to allow more hosts
-  --egress-rules <path>  load network rules from a file
+  --egress-rules <path>  add the network rules in a file
 
 SWITCHING AGENTS
   Use the editor's Provider and Account controls to change who runs the session.

@@ -2,7 +2,7 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go]
+sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/box/launch_sections.go]
 updated: 2026-11-03
 ---
 
@@ -119,7 +119,16 @@ removes it.
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
 `COOP_EGRESS` → project `box.egress` → filtered (`networkstate/admission.go`, `resolveMode`). Rules
-need filtered, so a rule with any other resolved mode is a conflict. The built-in default was
+only add to filtered access and never change a chosen mode. Under a one-off `--egress open` or
+`offline` the project's request (rules, services) is set aside: `pendingApproval` returns nothing
+for it, nothing is captured, and the launch's network section says `This project's network rules
+do not apply to this run.` (`launchSections.projectRulesSetAside`). Under any other non-filtered
+mode — a remembered open/offline posture, `COOP_EGRESS` — the rules stay a pending request, because
+approving them still changes what later runs get (a remembered approval outranks `COOP_EGRESS`).
+The person's own `--allow-domain`/`--egress-rules` on a run that is not filtered are refused by
+name before the pending check (`checkRuleFlags` in box/network_admission.go); `egress.Compile`
+still refuses rules outside filtered as the backstop. A rules file is one top-level `egress_rules`
+list; any other shape gets that shape and an example (`egress.DecodeRules`). The built-in default was
 open until 2026-11-03 (owner's call, task
 2026-11-03-choose-the-default-network-for-boxes-outside-a-c); `config.Load`'s unset COOP_EGRESS
 says filtered too. When nothing chose the mode, `AdmissionPreview.Default` marks the capture
@@ -357,6 +366,12 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-03 — a one-off `--egress open` or `offline` sets the project's rules aside instead of
+  refusing with `network_policy_conflict` (task
+  2026-11-03-let-one-off-network-flags-work-on-projects-with); rule flags on a non-filtered run are
+  refused by name, and a non-filtered mode from anywhere else leaves the rules pending. Swept every
+  `AdmitNetwork` caller: only the person's flags reach `checkRuleFlags`; `coop approve` and bare
+  `coop net` never set an invocation mode, so they still report the request.
 - 2026-11-03 — the built-in default is filtered, not open (owner's call, task
   2026-11-03-choose-the-default-network-for-boxes-outside-a-c). Swept every caller that launched
   without admission or relied on the open default: `coop doctor` and `coop eval` candidates keep

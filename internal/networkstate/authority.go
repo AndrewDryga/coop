@@ -548,7 +548,7 @@ func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundle
 			}
 		}
 		if !found {
-			return nil, errors.New("the optional provider features changed since they were approved — run 'coop approve' (network_approval_required)")
+			return nil, errors.New("the optional provider features changed since they were approved — run 'coop approve'")
 		}
 	}
 	return approval, nil
@@ -565,7 +565,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 		return rules, nil
 	} // sticky posture survives YAML deletion.
 	if approval == nil || approval.Posture != egress.Filtered {
-		return nil, errors.New("this project's egress rules were never approved — run 'coop approve' (network_approval_required)")
+		return nil, errors.New("this project's egress rules were never approved — run 'coop approve'")
 	}
 	for _, request := range rules {
 		found := false
@@ -576,7 +576,7 @@ func checkRequestEnvelope(approval *Approval, requests []egress.Rule) ([]egress.
 			}
 		}
 		if !found {
-			return nil, errors.New("this project asks for more than what was approved — run 'coop approve' (network_approval_required)")
+			return nil, errors.New("this project asks for more than what was approved — run 'coop approve'")
 		}
 	}
 	return rules, nil

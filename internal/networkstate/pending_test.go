@@ -49,6 +49,13 @@ func TestPendingApprovalIsTheExactRequest(t *testing.T) {
 		"service, same definition":      {input: Admission{Requests: []egress.Rule{service}, Services: map[string]string{"db": strings.Repeat("1", 64)}}, approval: approvedService},
 		"service, rewritten":            {input: Admission{Requests: []egress.Rule{service}, Services: map[string]string{"db": strings.Repeat("2", 64)}}, approval: approvedService, want: `service "db" changed`},
 		"service, identity missing":     {input: Admission{Requests: []egress.Rule{service}}, approval: approvedService, want: "has not been approved"},
+		// An open or offline run does not use the project's rules, so they cannot widen it.
+		"fresh rules under --egress open":        {input: Admission{Requests: []egress.Rule{a}, InvocationMode: open}},
+		"fresh rules under --egress offline":     {input: Admission{Requests: []egress.Rule{a}, InvocationMode: none}},
+		"approved, rule added, --egress offline": {input: Admission{Requests: []egress.Rule{a, b}, InvocationMode: none}, approval: approvedFiltered},
+		"service rewritten under --egress open":  {input: Admission{Requests: []egress.Rule{service}, Services: map[string]string{"db": strings.Repeat("2", 64)}, InvocationMode: open}, approval: approvedService},
+		// COOP_EGRESS yields to a remembered approval, so approving the rules is still a real choice.
+		"fresh rules under COOP_EGRESS offline": {input: Admission{Requests: []egress.Rule{a}, HostPreference: none}, want: "has not been approved"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pending, err := tc.input.pendingApproval(tc.approval)

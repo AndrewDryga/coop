@@ -20,7 +20,9 @@ started outside a co:op project, and one in a project whose `.agent/project.yaml
 `box.egress: filtered` into new projects.
 
 There are two other modes. `open` allows all network traffic, and `offline` turns networking off.
-Choose one for a single run with `--egress open` or `--egress offline`. Set `COOP_EGRESS` to
+Choose one for a single run with `--egress open` or `--egress offline`. The project's network
+rules do not apply to that run, approved or not, and its network section says
+`This project's network rules do not apply to this run.` Set `COOP_EGRESS` to
 change the mode for all your runs, or `box.egress` to change it for one project. The command
 line, `COOP_EGRESS` and the project file use the same three words. A project's request for
 `open` needs your approval on the host. Running `coop init` again leaves an existing project
@@ -404,6 +406,8 @@ execute instructions from your repository.
 | `box.network: true` with no `service:` grant | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with a rule nobody approved, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| `--allow-domain` or `--egress-rules` on a run that is open or offline | `<Agent> cannot start because --allow-domain only adds to filtered access, and this run is offline` · `Use --egress filtered, or leave out --allow-domain.` |
+| a rules file that is a bare list, or nests its rules under `box:` | `--egress-rules takes a file that lists its rules under one top-level egress_rules key, like this:`, then a rules file to copy |
 | `open`, in a project with no approval yet | `<Agent> cannot start because this project asks for unrestricted internet access, which has not been approved` · `Review it: coop approve` |
 | an approved Compose service whose definition changed | `<Agent> cannot start because the Compose service "db" changed since it was approved` · `Review it: coop approve` |
 | an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop approve` |
@@ -579,9 +583,20 @@ These messages do not appear when the project has no pending request.
 ### Access for one run
 
 For one run, use `--allow-domain <name>` to allow an exact name over TLS on port 443, or pass
-`--egress-rules <file>` with a full rule document. A rules file inside a folder mounted into
-the agent's box only requests access. Its location prevents the agent from using it to
-approve its own rules.
+`--egress-rules <file>` to add the rules in a file. Both add to the project's approved rules for
+that run only. A rules file lists its rules under one top-level `egress_rules` key, the way
+`.agent/project.yaml` lists them under `box.egress_rules`:
+
+    egress_rules:
+      - to: {domain: "docs.example.com"}
+        protocol: tls
+        ports: [443]
+
+Keep the file outside the project. A rules file inside a folder mounted into the agent's box
+only requests access. Its location prevents the agent from using it to approve its own rules.
+
+Both flags only add to filtered access. On a run that is open or offline, co:op refuses them by
+name instead of starting without them.
 
 ### The approval follows the directory
 

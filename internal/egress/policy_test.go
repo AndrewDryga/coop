@@ -96,6 +96,34 @@ func TestStrictRulesDocument(t *testing.T) {
 	}
 }
 
+// A rules file mirrors box.egress_rules, so its list sits under one top-level key. A bare list,
+// the project file's nesting or an extra key is told the shape to use, with an example to copy,
+// instead of a YAML decoder's type names. A mistake inside a rule keeps its own exact cause.
+func TestRulesFileShapeIsExplained(t *testing.T) {
+	const valid = "egress_rules:\n  - to: {domain: example.com}\n    protocol: tls\n    ports: [443]\n"
+	for name, document := range map[string]string{
+		"bare list":    "- to: {domain: example.com}\n  protocol: tls\n  ports: [443]\n",
+		"project file": "box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n",
+		"extra key":    valid + "approved: true\n",
+		"scalar":       "example.com\n",
+		"comment only": "# nothing here\n",
+	} {
+		_, err := DecodeRules([]byte(document))
+		if err == nil || !strings.Contains(err.Error(), "one top-level egress_rules key") || !strings.Contains(err.Error(), "  egress_rules:\n    - to: {domain: \"docs.example.com\"}") {
+			t.Errorf("%s: %v; want the expected shape and an example", name, err)
+		}
+		if err != nil && (strings.Contains(err.Error(), "egress.Requested") || strings.Contains(err.Error(), "!!")) {
+			t.Errorf("%s: the error leaks decoder internals: %v", name, err)
+		}
+	}
+	if _, err := DecodeRules([]byte("egress_rules:\n  - to: {host: example.com}\n")); err == nil || strings.Contains(err.Error(), "top-level") {
+		t.Errorf("a bad rule inside the right shape lost its own cause: %v", err)
+	}
+	if rules, err := DecodeRules([]byte(valid)); err != nil || len(rules) != 1 {
+		t.Errorf("the documented shape did not decode: %v %v", rules, err)
+	}
+}
+
 func TestRulePresenceAndASCII(t *testing.T) {
 	for _, rule := range []string{
 		"{to: {domain: example.com, ip: ''}, protocol: tls, ports: [443]}",

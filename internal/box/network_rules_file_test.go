@@ -26,7 +26,7 @@ func TestNetworkRulesFileCannotLaunderRulesThroughOrdinaryMode(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir()}
 			capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: "must-not-execute"}, RunSpec{Repo: t.TempDir()},
 				NetworkAdmission{InvocationMode: &mode, RulesFile: path})
-			if capture != nil || err == nil || !strings.Contains(err.Error(), "network_policy_conflict") {
+			if capture != nil || err == nil || !strings.Contains(err.Error(), "--egress-rules only adds to filtered access") {
 				t.Fatal("ordinary mode accepted rules or reached the runtime", err)
 			}
 			state, err := NetworkStatePath()

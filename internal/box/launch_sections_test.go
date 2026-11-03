@@ -131,6 +131,34 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 	}
 }
 
+// A one-off --egress open or offline runs without the project's network rules; the network
+// section says so under the mode's warning, and says nothing when the project has none.
+func TestInternetSectionSaysTheProjectRulesDoNotApply(t *testing.T) {
+	spec := RunSpec{Agent: "codex"}
+	for _, c := range []struct {
+		egress string
+		rules  int
+		want   string
+	}{
+		{"open", 2, "  ⚠ Unrestricted: nothing is blocked\n  This project's network rules do not apply to this run.\n"},
+		{"none", 1, "  ⚠ Offline: Codex cannot reach OpenAI\n  This project's network rules do not apply to this run.\n"},
+		{"none", 0, "  ⚠ Offline: Codex cannot reach OpenAI\n"},
+	} {
+		got := captureStderr(t, func() {
+			s := newLaunchSections(spec)
+			s.internet(&config.Config{Egress: c.egress}, spec, nil)
+			s.projectRulesSetAside(c.rules)
+		})
+		if want := "Configuring network access\n" + c.want; got != want {
+			t.Errorf("%s with %d rules: rendered %q, want %q", c.egress, c.rules, got, want)
+		}
+	}
+	quiet := RunSpec{Agent: "codex", Batch: true}
+	if got := captureStderr(t, func() { newLaunchSections(quiet).projectRulesSetAside(3) }); got != "" {
+		t.Errorf("a batch run narrated %q", got)
+	}
+}
+
 // The account section names every account a launch connects, one stable row each, and — once, and
 // only when an API key is protected — what that protection means; several accounts pluralize both.
 // A launch with no account prints no section, and batch output stays quiet.

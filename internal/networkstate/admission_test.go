@@ -223,6 +223,8 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 		if mode, err := input.resolveMode(nil); err != nil || mode != egress.Filtered {
 			t.Fatal("rules did not imply filtered", mode, err)
 		}
+		// Rules never change a mode somebody chose. Whether a run may start with them is the
+		// pending check's question for the project's rules, and the launcher's for its own flags.
 		for _, mode := range []egress.Mode{egress.Open, egress.None} {
 			for _, source := range []string{"invocation", "posture", "preference", "project"} {
 				value := input
@@ -237,10 +239,62 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 				case "project":
 					value.ProjectMode = &mode
 				}
-				if got, err := value.resolveMode(approval); err == nil || got != "" {
-					t.Fatal("rules silently changed an explicit/stored mode", source, mode, got, err)
+				if got, err := value.resolveMode(approval); err != nil || got != mode {
+					t.Fatal("rules changed an explicit/stored mode", source, mode, got, err)
+				}
+				pending, err := value.pendingApproval(approval)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Only a one-off open or offline run sets the project's rules aside; every other
+				// source leaves them a request that still needs a human, as an unapproved open is.
+				want := source != "invocation" && (!operator || source == "project" && mode == egress.Open)
+				if (pending != nil) != want {
+					t.Fatalf("%s %s: pending = %q, want pending %v", source, mode, pending.Sentence(), want)
 				}
 			}
+		}
+	}
+}
+
+// A one-off --egress open or offline does not use the project's rules, so they are not a reason
+// to refuse it, and nothing is captured for them. A withdrawal still stops everything but offline.
+func TestOneOffOpenOrOfflineSetsTheProjectRulesAside(t *testing.T) {
+	root, project := filepath.Join(t.TempDir(), "network"), t.TempDir()
+	requests := []egress.Rule{rule("docs.example.com")}
+	for _, mode := range []egress.Mode{egress.Open, egress.None} {
+		preview, err := PreviewAdmission(root, project, nil, Admission{InvocationMode: &mode, Requests: requests})
+		if err != nil || preview.Mode != mode || preview.Pending != nil || preview.Default {
+			t.Fatalf("--egress %s previewed %s (pending %q, default %v), %v; want %s with nothing pending",
+				mode.Word(), preview.Mode, preview.Pending.Sentence(), preview.Default, err, mode)
+		}
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a one-off open or offline preview created authority", err)
+	}
+	s, err := Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	open := egress.Open
+	if snapshot, err := s.Admit(project, Admission{InvocationMode: &open, Requests: requests}); err == nil {
+		t.Fatalf("an open capture carried the project's rules: %+v", snapshot)
+	}
+	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+		t.Fatal(err)
+	}
+	record, err := s.ApprovalAt(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.Forget(t.Context(), record); err != nil || !removed {
+		t.Fatal("the approval was not withdrawn", removed, err)
+	}
+	for mode, pending := range map[egress.Mode]bool{egress.Open: true, egress.None: false} {
+		preview, err := PreviewAdmission(root, project, nil, Admission{InvocationMode: &mode, Requests: requests})
+		if err != nil || (preview.Pending != nil) != pending {
+			t.Fatalf("withdrawn project under --egress %s: pending %q, %v; want pending %v", mode.Word(), preview.Pending.Sentence(), err, pending)
 		}
 	}
 }

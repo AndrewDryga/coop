@@ -2,6 +2,7 @@ package box
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,6 +106,8 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 		// not a posture: the launch refuses and names the review.
 		"repo widening is pending":   {remembered: true, projectYAML: "box:\n  egress: open\n", want: "pending"},
 		"unapproved open is pending": {projectYAML: "box:\n  egress: open\n", want: "pending"},
+		// COOP_EGRESS yields to a remembered approval, so the rules are a real request to review.
+		"host preference keeps rules pending": {explicitEnv: "offline", projectYAML: projectRuleYAML, want: "pending"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, repo, root := admissionFixture(t)
@@ -172,6 +175,110 @@ func TestAdmitNetworkExplicitOverrideLeavesTheRememberedPosture(t *testing.T) {
 	approval, err := store.Approval(repo)
 	if err != nil || approval == nil || approval.Posture != egress.Filtered {
 		t.Fatal("one invocation changed the remembered posture", approval, err)
+	}
+}
+
+const projectRuleYAML = "box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [443]\n"
+
+// --egress open or offline is the documented way to run one box without the project's rules,
+// approved or not: they only add to filtered access, so neither mode can use them. The run writes
+// no host state and leaves the remembered approval as it was.
+func TestAdmitNetworkOneOffOpenOrOfflineSetsProjectRulesAside(t *testing.T) {
+	for _, remembered := range []bool{false, true} {
+		for _, mode := range []egress.Mode{egress.Open, egress.None} {
+			t.Run(fmt.Sprintf("%s remembered=%v", mode.Word(), remembered), func(t *testing.T) {
+				cfg, repo, root := admissionFixture(t)
+				writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+				approved := []egress.Rule{{To: egress.Destination{Domain: "other.example.com"}, Protocol: "tls", Ports: []int{443}}}
+				if remembered {
+					// The file has asked for another rule since: a pending change for filtered runs.
+					rememberFilteredPosture(t, root, repo, approved)
+				}
+				capture, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &mode})
+				if err != nil || capture != nil || cfg.Egress != string(mode) {
+					t.Fatalf("--egress %s with project rules = capture %v, %v, posture %q", mode.Word(), capture != nil, err, cfg.Egress)
+				}
+				if !remembered {
+					if _, err := os.Stat(root); !os.IsNotExist(err) {
+						t.Fatal("a one-off run created authority state", err)
+					}
+					return
+				}
+				store, err := networkstate.OpenExisting(root, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer store.Close()
+				approval, err := store.Approval(repo)
+				if err != nil || approval == nil || approval.Posture != egress.Filtered || len(approval.Envelope) != 1 || approval.Envelope[0].To.Domain != "other.example.com" {
+					t.Fatal("a one-off run changed the remembered approval", approval, err)
+				}
+			})
+		}
+	}
+}
+
+// The person's own rule flags only add to filtered access. On a run that is open or offline —
+// by flag, COOP_EGRESS or a remembered approval — they are refused by name with the way out,
+// before any state exists, rather than silently dropped.
+func TestAdmitNetworkRefusesRuleFlagsOnARunThatIsNotFiltered(t *testing.T) {
+	open, none, filtered := egress.Open, egress.None, egress.Filtered
+	for name, test := range map[string]struct {
+		env        string
+		invocation *egress.Mode
+		domains    []string
+		rulesFile  string // "inside" the project or "outside" it
+		want       []string
+	}{
+		"open flag and a domain":        {invocation: &open, domains: []string{"example.com"}, want: []string{"--allow-domain only adds", "this run is open"}},
+		"offline flag and a rules file": {invocation: &none, rulesFile: "outside", want: []string{"--egress-rules only adds", "this run is offline"}},
+		"offline flag and a repo file":  {invocation: &none, rulesFile: "inside", want: []string{"--egress-rules only adds", "this run is offline"}},
+		"COOP_EGRESS and both flags":    {env: "offline", domains: []string{"example.com"}, rulesFile: "outside", want: []string{"--allow-domain and --egress-rules only add", "this run is offline"}},
+		"filtered flag and a domain":    {invocation: &filtered, domains: []string{"example.com"}, want: []string{filteredReachedRuntimePreflight}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			if test.env != "" {
+				t.Setenv("COOP_EGRESS", test.env)
+				loaded, err := config.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				loaded.ConfigDir = cfg.ConfigDir
+				cfg = loaded
+			}
+			options := NetworkAdmission{InvocationMode: test.invocation, Domains: test.domains}
+			if test.rulesFile != "" {
+				dir := t.TempDir()
+				if test.rulesFile == "inside" {
+					dir = repo
+				}
+				options.RulesFile = filepath.Join(dir, "rules.yaml")
+				writeCopyFixture(t, options.RulesFile, networkRulesFixture)
+			}
+			before := cfg.Egress
+			capture, err := admitFixture(t, cfg, repo, options)
+			if capture != nil || err == nil {
+				t.Fatal("rule flags were admitted", capture != nil, err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not say %q", err, want)
+				}
+			}
+			if test.invocation != nil && *test.invocation == egress.Filtered {
+				return
+			}
+			if !strings.Contains(err.Error(), "Use --egress filtered") || strings.Contains(err.Error(), "network_policy_conflict") {
+				t.Errorf("refusal %q does not name the way out in plain words", err)
+			}
+			if cfg.Egress != before {
+				t.Errorf("a refused launch still resolved a posture: %q", cfg.Egress)
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Error("a refused launch created authority state", err)
+			}
+		})
 	}
 }
 
