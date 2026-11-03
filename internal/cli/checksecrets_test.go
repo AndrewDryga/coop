@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -463,5 +465,35 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	}
 	if !strings.Contains(out, "Review files that run commands") || !strings.Contains(out, ".githooks/pre-commit") {
 		t.Fatalf("check-secrets did not report the host surfaces:\n%s", out)
+	}
+}
+
+// The marker Coop writes when a project's network access is approved is no blind spot, but any
+// other content or file at that name still is: only the exact format is left out of the warning.
+func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(networkstate.ProjectApprovalMarker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	marker := filepath.Join(repo, networkstate.ProjectApprovalMarker)
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(marker, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("coop-network-approval-v3\n" + strings.Repeat("a", 64) + "\n" + strings.Repeat("b", 32) + "\n")
+	if got, err := unscannedIgnoredFiles(repo); err != nil || len(got) != 0 {
+		t.Fatalf("unchecked with a real marker = %v, %v", got, err)
+	}
+	for name, body := range map[string]string{
+		"extra line": "coop-network-approval-v3\n" + strings.Repeat("a", 64) + "\n" + strings.Repeat("b", 32) + "\nAWS_SECRET=x\n",
+		"other file": "AWS_SECRET=x\n",
+	} {
+		write(body)
+		if got, err := unscannedIgnoredFiles(repo); err != nil || !slices.Contains(got, networkstate.ProjectApprovalMarker) {
+			t.Errorf("%s: unchecked = %v, %v; want the marker listed", name, got, err)
+		}
 	}
 }

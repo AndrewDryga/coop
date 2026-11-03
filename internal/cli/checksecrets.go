@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -264,11 +265,28 @@ func unscannedIgnoredFiles(repo string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !hidden {
+		if !hidden && !isApprovalMarker(repo, r) {
 			out = append(out, r) // box-visible, user-gitignored, unprotected → a real blind spot
 		}
 	}
 	return out, nil
+}
+
+// isApprovalMarker reports whether rel is the network approval marker Coop keeps at the project
+// root, holding exactly what Coop writes there. That is a format line and two IDs, so nothing in it
+// needs checking, and naming it on every approved project would bury the files that do. Anything
+// else at that name, by its content or its file type, is an ordinary unchecked file.
+func isApprovalMarker(repo, rel string) bool {
+	if rel != networkstate.ProjectApprovalMarker {
+		return false
+	}
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	content, status := readScannable(root, rel)
+	return status.kind == scanRead && networkstate.IsProjectMarkerBody(content)
 }
 
 // maxListedFiles bounds a list of paths inside a warning: the first few say what kind of files

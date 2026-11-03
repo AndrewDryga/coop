@@ -27,6 +27,12 @@ func projectAnchorBody(projectID, anchor string) []byte {
 	return []byte("coop-network-approval-v3\n" + projectID + "\n" + anchor + "\n")
 }
 
+var projectMarkerBodyRE = regexp.MustCompile(`\Acoop-network-approval-v3\n[0-9a-f]{64}\n[0-9a-f]{32}\n\z`)
+
+// IsProjectMarkerBody reports whether content is exactly what Coop writes in a project's approval
+// marker: a format line and two IDs, with room for nothing else.
+func IsProjectMarkerBody(content string) bool { return projectMarkerBodyRE.MatchString(content) }
+
 func (s *Store) projectAnchorBinding(project, projectID, anchor string) fsidentity.Binding {
 	return fsidentity.Binding{RootPath: project, MarkerName: ProjectApprovalMarker, AnchorRoot: s.root,
 		AnchorName: projectAnchorName(projectID, anchor), Body: projectAnchorBody(projectID, anchor)}
