@@ -560,6 +560,43 @@ func TestApprovedServiceChooser(t *testing.T) {
 		assertApprovedOutput(t, "13q-services-already-configured", strings.TrimPrefix(out, "\n"))
 	})
 
+	// A Compose file set up before coop asked for service rules gets its missing rule from the same
+	// command, with the one step that makes the rule count.
+	t.Run("13q1-services-already-configured-rule-added", func(t *testing.T) {
+		repo := initializedProject(t)
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := initApp(t, repo)
+		var code int
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres"})) })
+		if code != 0 {
+			t.Fatalf("adding a missing rule = %d:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "13q1-services-already-configured-rule-added", strings.TrimPrefix(out, "\n"))
+	})
+
+	// An egress_rules layout coop cannot edit safely is left alone, and the rule comes back whole,
+	// ready to paste.
+	t.Run("13q2-services-rule-unplaced", func(t *testing.T) {
+		repo := initializedProject(t)
+		file := filepath.Join(repo, ".agent", "project.yaml")
+		const before = "box:\n  egress: filtered\n  egress_rules: []\n"
+		if err := os.WriteFile(file, []byte(before), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := initApp(t, repo)
+		var code int
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "postgres"})) })
+		if code != 0 {
+			t.Fatalf("an unplaced rule = %d:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "13q2-services-rule-unplaced", strings.TrimPrefix(out, "\n"))
+		if after, _ := os.ReadFile(file); string(after) != before {
+			t.Errorf("an unplaceable edit changed project.yaml:\n%s", after)
+		}
+	})
+
 	// Nobody can answer a chooser without a terminal, so it names the explicit form instead.
 	t.Run("13r-services-needs-a-terminal", func(t *testing.T) {
 		repo := initializedProject(t)

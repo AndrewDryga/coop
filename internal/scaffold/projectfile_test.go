@@ -432,6 +432,9 @@ func TestInPlaceEditsRefuseLeafLinks(t *testing.T) {
 					_, err = AddComposeServices(repo, ".agent/compose.yml", []string{"postgres"})
 				} else {
 					_, err = RegisterSubprojects(repo, []string{"infra", "portal"})
+					if _, rulesErr := AddServiceRules(repo, []string{"postgres"}); rulesErr == nil || !strings.Contains(rulesErr.Error(), "must be a regular file") {
+						t.Errorf("service rules through a leaf link = %v, want a regular-file refusal", rulesErr)
+					}
 				}
 				if err == nil || !strings.Contains(err.Error(), "must be a regular file") {
 					t.Fatalf("edit through a leaf link = %v, want a regular-file refusal", err)
@@ -502,6 +505,9 @@ func TestInPlaceEditsRefuseHiddenFiles(t *testing.T) {
 			switch tc.edit {
 			case project.File:
 				_, err = RegisterSubprojects(repo, []string{"infra", "portal"})
+				if _, rulesErr := AddServiceRules(repo, []string{"postgres"}); !errors.As(rulesErr, new(HiddenFile)) || rulesErr.Error() != tc.want {
+					t.Errorf("service rules edit = %v, want %q", rulesErr, tc.want)
+				}
 			case ".gitignore":
 				_, err = (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
 			default:

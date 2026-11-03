@@ -1,0 +1,14 @@
+✓ Service added to .agent/compose.yml
+  postgres → db
+
+⚠ One network rule still needs to be added
+
+      .agent/project.yaml uses an egress_rules layout Coop could not update safely.
+
+  Add this under box.egress_rules, then run coop approve:
+    - to: {service: "db"}
+      protocol: tcp
+      ports: [5432]
+
+Start services:
+  → coop up

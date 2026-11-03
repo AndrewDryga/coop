@@ -265,6 +265,159 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 	return missing, nil
 }
 
+// ServiceRule is the network rule a filtered box needs to reach one catalog service: TCP to the
+// Compose service by name, on the port it listens on.
+type ServiceRule struct {
+	Service string // the Compose service name, "db"
+	Port    int    // the port the service listens on, 5432
+}
+
+// ServiceRules is what AddServiceRules did to project.yaml's network requests.
+type ServiceRules struct {
+	Added    []ServiceRule // rules written into box.egress_rules
+	Unplaced []ServiceRule // rules the project still needs that coop could not place safely
+}
+
+// AddServiceRules asks for the network rule each named catalog service needs, in a project.yaml
+// that selects filtered networking and does not ask for that service yet. A filtered box never
+// joins the shared services network, so a service with no rule is one every launch refuses on
+// until somebody writes the rule by hand. The rules stay requests until `coop approve`.
+//
+// Like RegisterSubprojects, the edit is surgical text: project.yaml is a commented template, and a
+// YAML round trip would strip every comment. The rules join an existing box.egress_rules list, or
+// replace the template's untouched commented example. Any other layout is the person's, and the
+// result must read back with exactly the new rules added; otherwise nothing is written and the
+// rules come back as Unplaced for the caller to show.
+func AddServiceRules(repo string, services []string) (ServiceRules, error) {
+	return addServiceRules(repo, services, writeAndSync)
+}
+
+func addServiceRules(repo string, services []string, write scaffoldFileWrite) (ServiceRules, error) {
+	var out ServiceRules
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return out, fmt.Errorf("open scaffold root %s: %w", repo, err)
+	}
+	defer root.Close()
+	before, present, err := readProjectFile(root, project.File, project.File)
+	if err != nil || !present {
+		return out, err
+	}
+	defer before.dir.Close()
+	pj, err := project.Parse(before.data)
+	if err != nil {
+		return out, err
+	}
+	// An open box joins the services' network and an offline one reaches nothing, and project.yaml
+	// refuses rules outside filtered mode, so only a filtered project asks for them.
+	if pj.Box.Egress != "filtered" {
+		return out, nil
+	}
+	var missing []ServiceRule
+	for _, rule := range catalogRules(services) {
+		if !requestsService(pj, rule.Service) { // a rule the person already wrote is theirs, port and all
+			missing = append(missing, rule)
+		}
+	}
+	if len(missing) == 0 {
+		return out, nil
+	}
+	lines := strings.Split(strings.TrimSuffix(string(before.data), "\n"), "\n")
+	next, placed := spliceServiceRules(lines, missing)
+	if !placed {
+		out.Unplaced = missing
+		return out, nil
+	}
+	data := []byte(strings.Join(next, "\n") + "\n")
+	after, err := project.Parse(data)
+	if err != nil || len(after.Box.EgressRules) != len(pj.Box.EgressRules)+len(missing) {
+		out.Unplaced = missing
+		return out, nil
+	}
+	for _, rule := range missing {
+		if !requestsService(after, rule.Service) {
+			out.Unplaced = missing
+			return out, nil
+		}
+	}
+	if err := replaceProjectFile(before, project.File, data, write); err != nil {
+		return ServiceRules{}, err
+	}
+	out.Added = missing
+	return out, nil
+}
+
+// requestsService reports whether the project already asks for a Compose service by name.
+func requestsService(pj *project.Project, service string) bool {
+	for _, rule := range pj.Box.EgressRules {
+		if rule.To.Service == service {
+			return true
+		}
+	}
+	return false
+}
+
+// spliceServiceRules adds the rules to a real `  egress_rules:` list, after its last item and in
+// that list's own indentation, or turns the template's untouched commented example into a list.
+func spliceServiceRules(lines []string, rules []ServiceRule) ([]string, bool) {
+	if at := indexOfLine(lines, "  egress_rules:"); at >= 0 {
+		end, indent, seen := at+1, "    ", false
+		for i := at + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue // a trailing comment may introduce the next key; the last item decides the end
+			}
+			lead := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " "))]
+			if len(lead) < 2 || len(lead) == 2 && !strings.HasPrefix(trimmed, "- ") {
+				break // the next key under box:, or a top-level one
+			}
+			if !seen && strings.HasPrefix(trimmed, "- ") {
+				indent, seen = lead, true
+			}
+			end = i + 1
+		}
+		return slices.Concat(lines[:end], serviceRuleLines(indent, rules), lines[end:]), true
+	}
+	at := indexOfLine(lines, "  # egress_rules:")
+	if at < 0 || at+len(egressRulesExample) >= len(lines) || !slices.Equal(lines[at+1:at+1+len(egressRulesExample)], egressRulesExample) {
+		return nil, false
+	}
+	list := append([]string{"  egress_rules:"}, serviceRuleLines("    ", rules)...)
+	return slices.Concat(lines[:at], list, lines[at+1+len(egressRulesExample):]), true
+}
+
+// egressRulesExample is the commented example the template writes under `# egress_rules:` when no
+// service asks for a rule; AddServiceRules replaces it, untouched, with the real list.
+var egressRulesExample = []string{
+	`  #   - to: {domain: "docs.example.com"}`,
+	"  #     protocol: tls",
+	"  #     ports: [443]",
+}
+
+// catalogRules are the rules the named catalog services need, in catalog order.
+func catalogRules(services []string) []ServiceRule {
+	var rules []ServiceRule
+	for _, name := range ComposeServices {
+		if slices.Contains(services, name) {
+			unit := composeCatalog[name]
+			rules = append(rules, ServiceRule{Service: unit.service, Port: unit.port})
+		}
+	}
+	return rules
+}
+
+// serviceRuleLines renders rules as egress_rules list items at indent, the way the template does.
+func serviceRuleLines(indent string, rules []ServiceRule) []string {
+	var lines []string
+	for _, rule := range rules {
+		lines = append(lines,
+			fmt.Sprintf("%s- to: {service: %q}", indent, rule.Service),
+			indent+"  protocol: tcp",
+			fmt.Sprintf("%s  ports: [%d]", indent, rule.Port))
+	}
+	return lines
+}
+
 // projectFileSnapshot is a repository file read for an in-place edit, with the handle of the
 // directory it came from; the caller closes dir. Staging and renaming through that same handle
 // keeps the edit where the content was read, even if a box swaps a parent directory for a link in
@@ -661,24 +814,12 @@ box:
 
   # Network rules this project asks you to approve.
 `)
-	requested := false
-	for _, name := range ComposeServices {
-		if slices.Contains(services, name) {
-			requested = true
-		}
+	list := []string{"  # egress_rules:"}
+	list = append(list, egressRulesExample...)
+	if rules := catalogRules(services); len(rules) > 0 {
+		list = append([]string{"  egress_rules:"}, serviceRuleLines("    ", rules)...)
 	}
-	if requested {
-		b.WriteString("  egress_rules:\n")
-		for _, name := range ComposeServices {
-			if !slices.Contains(services, name) {
-				continue
-			}
-			unit := composeCatalog[name]
-			fmt.Fprintf(&b, "    - to: {service: %q}\n      protocol: tcp\n      ports: [%d]\n", unit.service, unit.port)
-		}
-	} else {
-		b.WriteString("  # egress_rules:\n  #   - to: {domain: \"docs.example.com\"}\n  #     protocol: tls\n  #     ports: [443]\n")
-	}
+	b.WriteString(strings.Join(list, "\n") + "\n")
 	b.WriteString(`
   # Use a project Dockerfile or Compose file instead of the default paths.
   # dockerfile: .agent/Dockerfile
@@ -693,7 +834,8 @@ box:
   # Start project services automatically (default: true).
   # auto_up: false
 
-  # Join the project services' network (default: true).
+  # Join the project services' network (default: true). Filtered boxes never
+  # join it: they reach a service only through its rule in egress_rules.
   # network: false
 
   # Resource limits for Docker; not applied by Apple container.

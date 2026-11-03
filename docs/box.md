@@ -359,7 +359,9 @@ Do not rely on the devcontainer alone to protect those files.
 
 Services such as databases run in separate containers alongside the box. None are added by
 default. `coop init` asks which ones you want, or you can pass `--services postgres,redis`.
-It writes their configuration to `.agent/compose.yml`.
+It writes their configuration to `.agent/compose.yml`. In a project with filtered network
+access, it also asks for a network rule for each service in `.agent/project.yaml`. Run
+`coop approve` once so the box can reach them.
 
 ```bash
 coop up                      # starts the configured Compose services, waits until ready
@@ -369,8 +371,9 @@ coop down --delete-volumes   # stop them and permanently delete their volumes (a
 coop init --services         # add another service to a project that already has some
 ```
 
-Services run as their own containers on a private network the box joins. Connect with a URL such
-as `DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev`, and put it in `agents/env`.
+Services run as their own containers. An open box joins their private network; a filtered box
+reaches each service only through its approved rule. Connect with a URL such as
+`DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev`, and put it in `agents/env`.
 
 ### Development and loop stacks
 

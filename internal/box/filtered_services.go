@@ -24,6 +24,112 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// servicesNeedRules refuses a filtered box in a project that has services but
+// no approved service grant. An open box joins the services' network; a
+// filtered one never does, so each service it uses is a rule the person asks
+// for and approves. The refusal drafts those rules from the Compose file, whole,
+// so they can be pasted as they are wherever the file declares a service's port.
+func servicesNeedRules(spec RunSpec, composeFile string) error {
+	name := networkLaunchName(spec)
+	if composeFile == "" {
+		return fmt.Errorf("%s cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n"+
+			"  Unset COOP_SERVICES_NET, or set box.network: false in %s.", name, project.File)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s cannot start because filtered boxes reach project services only through approved network rules\n\n", name)
+	fmt.Fprintf(&b, "  Ask for each service it uses under box.egress_rules in %s:\n", project.File)
+	drafts := serviceRuleDrafts(composeFile, spec.Repo, spec.RepoReadOnly)
+	if len(drafts) == 0 { // a Compose file coop cannot read still gets the rule's whole shape
+		drafts = []serviceDraft{{name: "<service>"}}
+	}
+	placeholder := false
+	for _, draft := range drafts {
+		ports := make([]string, 0, len(draft.ports))
+		for _, port := range draft.ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		if len(ports) == 0 {
+			ports, placeholder = []string{"<port>"}, true
+		}
+		fmt.Fprintf(&b, "    - to: {service: %q}\n      protocol: tcp\n      ports: [%s]\n", draft.name, strings.Join(ports, ", "))
+	}
+	if placeholder {
+		b.WriteString("  Replace <port> with the port the service listens on.\n")
+	}
+	b.WriteString("  Then review it: coop approve\n")
+	b.WriteString("  To start without project services, set box.network: false.")
+	return errors.New(b.String())
+}
+
+// serviceDraft is one Compose service a filtered box could ask for, with the
+// TCP ports its definition declares (none when it declares none).
+type serviceDraft struct {
+	name  string
+	ports []int
+}
+
+// serviceRuleDrafts lists the services of a Compose file in name order. A name
+// no rule can carry, which is anything but one lowercase DNS label, is left
+// out, and a file coop cannot read or validate drafts nothing.
+func serviceRuleDrafts(composeFile, repo string, repoReadOnly bool) []serviceDraft {
+	data, err := readValidatedCompose(composeFile, repo, repoReadOnly)
+	if err != nil {
+		return nil
+	}
+	var doc composeDoc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil
+	}
+	var drafts []serviceDraft
+	for name, service := range doc.Services {
+		if label, err := egress.NormalizeLabel(name); err == nil && label == name {
+			drafts = append(drafts, serviceDraft{name: name, ports: declaredPorts(service)})
+		}
+	}
+	slices.SortFunc(drafts, func(a, b serviceDraft) int { return strings.Compare(a.name, b.name) })
+	return drafts
+}
+
+// declaredPorts are the TCP container ports a Compose service declares: its
+// expose entries and the container side of its ports. A range, a variable or
+// a UDP port names no single TCP port the rule could carry.
+func declaredPorts(service serviceSpec) []int {
+	var ports []int
+	add := func(entry any) {
+		var spec string
+		switch value := entry.(type) {
+		case int:
+			spec = strconv.Itoa(value)
+		case string:
+			spec = value
+		case map[string]any: // the long form: {target: 5432, published: …, protocol: tcp}
+			if protocol, _ := value["protocol"].(string); protocol != "" && protocol != "tcp" {
+				return
+			}
+			spec = fmt.Sprint(value["target"])
+		}
+		spec, protocol, _ := strings.Cut(spec, "/")
+		if protocol != "" && protocol != "tcp" {
+			return
+		}
+		// The short form is [host_ip:][host_port:]container_port; the container side is last.
+		spec = spec[strings.LastIndex(spec, ":")+1:]
+		if port, err := strconv.Atoi(spec); err == nil && port > 0 && port <= 65535 && !slices.Contains(ports, port) {
+			ports = append(ports, port)
+		}
+	}
+	if expose, ok := service.Expose.([]any); ok {
+		for _, entry := range expose {
+			add(entry)
+		}
+	}
+	for _, entry := range service.Ports {
+		add(entry)
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // serviceGrants lists the sidecars this policy actually approved. A Compose
 // file is a request; only an approved `service:` grant is authority.
 func serviceGrants(policy egress.Snapshot) []egress.Grant {

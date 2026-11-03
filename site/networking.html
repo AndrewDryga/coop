@@ -408,6 +408,8 @@ proxy variables disconnects the services from the internet; it does not bypass t
 views, with the name of the Compose service they came from. Direct traffic between services stays on
 the internal network and isn&#39;t reported as external traffic.</p>
 <p>In filtered mode, you must name the service you need; <code>box.network: true</code> alone is rejected.
+<code>coop init --services</code> adds a rule for each service it sets up, so one <code>coop approve</code> lets the
+box reach them.
 A filtered run that needs project services waits for every other box in the project to stop
 before starting those services. Each loop run and editor session gets its own Compose project,
 network and volumes. A run started directly uses the project&#39;s development stack.</p>
@@ -540,7 +542,7 @@ execute instructions from your repository.</p>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> grant</td>
-<td><code>a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: &lt;name&gt;} rule …</code></td>
+<td><code>&lt;Agent&gt; cannot start because filtered boxes reach project services only through approved network rules</code>, then a complete rule to paste for each Compose service</td>
 </tr>
 <tr>
 <td><code>-v /var/run:/x</code> (or any mount of <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code>, or the Docker socket&#39;s directory)</td>

@@ -3,7 +3,7 @@ name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go]
-updated: 2026-10-17
+updated: 2026-11-03
 ---
 
 # Stack validation precedes scaffold writes
@@ -20,7 +20,8 @@ of at most 1 MiB that may be a link inside the project; one coop cannot read tha
 scaffolding only after Init succeeds. First-run prompts remain CLI-owned and precede Init; this
 preflight does not introduce a second CLI validation implementation.
 
-Additive `init --services` edits, subproject registration in project.yaml and Coop's stanzas in the
+Additive `init --services` edits (the Compose file, then the service rules a filtered project.yaml
+asks for, `AddServiceRules`), subproject registration in project.yaml and Coop's stanzas in the
 root `.gitignore` share one reader and one staged replacement (temporary file, then rename). The
 reader opens the file's directory once as an `os.Root` handle, and the read, the temporary file and
 the rename all go through it: a parent a box swaps for a link mid-edit cannot carry content read in
@@ -121,6 +122,12 @@ yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` �
 put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-11-03 — `coop init --services` on a filtered project also asks for each catalog service's
+  `to: {service: …}` rule in project.yaml (`AddServiceRules`, the same reader and staged rename):
+  it fills the template's untouched commented example or joins a real `egress_rules` list, and
+  returns the rules unplaced, file untouched, for any other layout or a result that does not read
+  back with exactly those rules added. Pinned by TestAddServiceRules* and the leaf-link and
+  hidden-file tables (task 2026-11-03-make-coop-init-services-work-with-the-default-fi).
 - 2026-10-17 — the fallback error line now escapes (`safeErrorText` in internal/cli/cli.go); was
   "not escaped (queued)".
 - 2026-10-17 — the second-review entry's `MaxCoopIgnoreBytes` is now the unexported `ignoreLimit`

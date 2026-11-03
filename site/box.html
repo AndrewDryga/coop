@@ -380,15 +380,18 @@ Do not rely on the devcontainer alone to protect those files.</p>
 </section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
 <p>Services such as databases run in separate containers alongside the box. None are added by
 default. <code>coop init</code> asks which ones you want, or you can pass <code>--services postgres,redis</code>.
-It writes their configuration to <code>.agent/compose.yml</code>.</p>
+It writes their configuration to <code>.agent/compose.yml</code>. In a project with filtered network
+access, it also asks for a network rule for each service in <code>.agent/project.yaml</code>. Run
+<code>coop approve</code> once so the box can reach them.</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Project services code example" tabindex="0"><code class="language-bash">coop up                      # starts the configured Compose services, waits until ready
 coop claude                  # the box reaches each service by its Compose name
 coop down                    # stop services; stored data is kept
 coop down --delete-volumes   # stop them and permanently delete their volumes (asks first)
 coop init --services         # add another service to a project that already has some
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>Services run as their own containers on a private network the box joins. Connect with a URL such
-as <code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in <code>agents/env</code>.</p>
+<p>Services run as their own containers. An open box joins their private network; a filtered box
+reaches each service only through its approved rule. Connect with a URL such as
+<code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in <code>agents/env</code>.</p>
 <h3 id="development-and-loop-stacks">Development and loop stacks</h3>
 <p>Your development services keep the same workspace identity and data between runs. A loop gets
 its own Compose project, network, volumes and published ports for the entire run. It reuses them

@@ -17,5 +17,9 @@ Services: redis
 ✓ Service added to .agent/compose.yml
   redis → redis
 
-Start services:
+✓ Network rule added to .agent/project.yaml
+  service redis:6379 · TCP
+
+Approve network access, then start services:
+  → coop approve
   → coop up

@@ -280,6 +280,8 @@ views, with the name of the Compose service they came from. Direct traffic betwe
 the internal network and isn't reported as external traffic.
 
 In filtered mode, you must name the service you need; `box.network: true` alone is rejected.
+`coop init --services` adds a rule for each service it sets up, so one `coop approve` lets the
+box reach them.
 A filtered run that needs project services waits for every other box in the project to stop
 before starting those services. Each loop run and editor session gets its own Compose project,
 network and volumes. A run started directly uses the project's development stack.
@@ -386,7 +388,7 @@ execute instructions from your repository.
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or none, or set COOP_RUNTIME=docker` |
-| `box.network: true` with no `service:` grant | `a filtered box does not join the shared services network — ask for the one sidecar you need with a to: {service: <name>} rule …` |
+| `box.network: true` with no `service:` grant | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with a rule nobody approved, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
 | `open`, in a project with no approval yet | `<Agent> cannot start because this project asks for unrestricted internet access, which has not been approved` · `Review it: coop approve` |

@@ -2,17 +2,21 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 )
@@ -445,6 +449,50 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	// The file a human edited is not rewritten by the re-init.
 	if after, _ := os.ReadFile(project); !strings.Contains(string(after), "docs.example.com") {
 		t.Errorf("re-init rewrote project.yaml:\n%s", after)
+	}
+}
+
+// Services added to a fresh filtered project need one approval and no hand edits: coop init, then
+// coop init --services, then coop approve grants each service by name and port. That grant is what
+// lets a filtered launch reach the service instead of refusing (box.prepareFilteredExecution);
+// reaching it over the gateway needs Docker, so the task's manual check covers that last step.
+func TestInitServicesNeedOneApproval(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	hermeticGit(t)
+	repo := t.TempDir()
+	gitInit(t, repo)
+	a := initAppOnDocker(repo, t.TempDir())
+	for _, args := range [][]string{nil, {"--services", "postgres,redis"}} {
+		captureStderr(t, func() {
+			if code, err := a.cmdInit(args); code != 0 || err != nil {
+				t.Fatalf("coop init %v = (%d, %v)", args, code, err)
+			}
+		})
+	}
+	// Fields only: formatting the access whole would call Error on its nil *PendingApproval.
+	access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+	if err != nil || access.Pending == nil {
+		t.Fatalf("adding services asked for no approval (mode %s, err %v)", access.Mode, err)
+	}
+	review, err := box.ReviewProjectNetworkContext(t.Context(), a.cfg, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(review.Commit(t.Context()), review.Close()); err != nil {
+		t.Fatal(err)
+	}
+	access, err = box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+	if err != nil || access.Pending != nil || access.Approval == nil {
+		t.Fatalf("one approval left the project unapproved (pending %v, approved %v, err %v)", access.Pending != nil, access.Approval != nil, err)
+	}
+	for _, want := range []egress.Rule{
+		{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}},
+		{To: egress.Destination{Service: "redis"}, Protocol: "tcp", Ports: []int{6379}},
+	} {
+		if !slices.ContainsFunc(access.Approval.Envelope, func(got egress.Rule) bool { return reflect.DeepEqual(got, want) }) {
+			t.Errorf("the approval does not grant %s: %+v", netRuleText(want), access.Approval.Envelope)
+		}
 	}
 }
 

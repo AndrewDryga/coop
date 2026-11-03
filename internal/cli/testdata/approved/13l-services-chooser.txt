@@ -12,5 +12,10 @@ Services (space-separated, or press Enter for none): postgres redis
   postgres → db
   redis → redis
 
-Start services:
+✓ Network rules added to .agent/project.yaml
+  service db:5432 · TCP
+  service redis:6379 · TCP
+
+Approve network access, then start services:
+  → coop approve
   → coop up

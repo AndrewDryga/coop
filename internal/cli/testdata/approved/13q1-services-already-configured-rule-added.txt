@@ -1,0 +1,8 @@
+Services are already configured in .agent/compose.yml.
+  postgres → db
+
+✓ Network rule added to .agent/project.yaml
+  service db:5432 · TCP
+
+Approve network access:
+  → coop approve

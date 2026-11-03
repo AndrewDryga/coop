@@ -16,6 +16,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/scaffold"
@@ -473,28 +474,85 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		return 1, initFailed("Could not add services to "+shown, sentence(ui.SafeInline(firstLine(err))), fix,
 			"No services were changed.")
 	}
+	// A filtered box reaches a service only through an approved rule, so the services in the file
+	// are asked for in project.yaml too, already configured ones included: a project set up before
+	// coop did this gets its missing rules from the same command.
+	rules, err := scaffold.AddServiceRules(repo, slices.Concat(added.Added, added.Existing))
+	ui.Note("")
 	if len(added.Added) == 0 {
-		ui.Note("")
 		ui.Note("Services are already configured in %s.", shown)
 		for _, name := range added.Existing {
 			ui.Note("  %s → %s", name, scaffold.ServiceName(name))
 		}
+	} else {
+		// The names follow on their own lines, so a count in the headline would only restate what
+		// the reader is about to read. Plural, not "2 Services added".
+		ui.OK("%s added to %s", plural(len(added.Added), "Service"), shown)
+		for _, name := range added.Added {
+			ui.Note("  %s → %s", name, scaffold.ServiceName(name))
+		}
+		for _, name := range added.Existing {
+			ui.Note("  %s is already configured as %s.", name, scaffold.ServiceName(name))
+		}
+	}
+	if err != nil {
+		kept := ""
+		if len(added.Added) > 0 {
+			kept = "The services were added to " + shown + "."
+		}
+		if refused := initUnreadableCoopignore(err, "coop init --services", kept); refused != nil {
+			return 1, refused
+		}
+		actions := []string{fmt.Sprintf("Fix %s, then run coop init --services again.", project.File)}
+		if kept != "" {
+			actions = append(actions, kept)
+		}
+		return 1, initFailed("Could not request network access in "+project.File, sentence(ui.SafeInline(firstLine(err))), actions...)
+	}
+	switch {
+	case len(rules.Added) > 0:
+		ui.Note("")
+		ui.OK("%s added to %s", plural(len(rules.Added), "Network rule"), project.File)
+		for _, rule := range rules.Added {
+			ui.Note("  %s", netRuleText(serviceEgressRule(rule)))
+		}
+	case len(rules.Unplaced) > 0:
+		verb, these := "need", "these"
+		if len(rules.Unplaced) == 1 {
+			verb, these = "needs", "this"
+		}
+		draft := []string{fmt.Sprintf("Add %s under box.egress_rules, then run coop approve:", these)}
+		for _, rule := range rules.Unplaced {
+			draft = append(draft, strings.Split(strings.TrimRight(netRuleYAML(serviceEgressRule(rule)), "\n"), "\n")...)
+		}
+		ui.Note("")
+		warnBlock(fmt.Sprintf("%s still %s to be added", countWord(len(rules.Unplaced), "network rule"), verb),
+			project.File+" uses an egress_rules layout Coop could not update safely.", draft...)
+	}
+	approve, start := len(rules.Added) > 0, len(added.Added) > 0
+	var heading string
+	var next []string
+	switch {
+	case approve && start:
+		heading, next = "Approve network access, then start services:", []string{"coop approve", "coop up"}
+	case approve:
+		heading, next = "Approve network access:", []string{"coop approve"}
+	case start:
+		heading, next = "Start services:", []string{"coop up"}
+	default:
 		return 0, nil
 	}
 	ui.Note("")
-	// The names follow on their own lines, so a count in the headline would only restate what the
-	// reader is about to read. Plural, not "2 Services added".
-	ui.OK("%s added to %s", plural(len(added.Added), "Service"), shown)
-	for _, name := range added.Added {
-		ui.Note("  %s → %s", name, scaffold.ServiceName(name))
+	ui.Note("%s", heading)
+	for _, command := range next {
+		ui.Note("  %s %s", ui.Cyan("→"), command)
 	}
-	for _, name := range added.Existing {
-		ui.Note("  %s is already configured as %s.", name, scaffold.ServiceName(name))
-	}
-	ui.Note("")
-	ui.Note("Start services:")
-	ui.Note("  %s coop up", ui.Cyan("→"))
 	return 0, nil
+}
+
+// serviceEgressRule is the rule coop init asked for, in the form coop net and coop approve show.
+func serviceEgressRule(rule scaffold.ServiceRule) egress.Rule {
+	return egress.Rule{To: egress.Destination{Service: rule.Service}, Protocol: "tcp", Ports: []int{rule.Port}}
 }
 
 // reportDockerSetup points at the project's own Docker configuration when coop's box is not set

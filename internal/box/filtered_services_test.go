@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -654,5 +655,82 @@ func TestComposeFailureNamesComposesOwnReason(t *testing.T) {
 	}
 	if err := composeFailure("prepare filtered services", errors.New("exited with status 1"), "  \n"); err.Error() != "prepare filtered services: exited with status 1" {
 		t.Fatalf("an empty stderr added noise: %q", err)
+	}
+}
+
+// A filtered box never joins the shared services network, so a project with services and no
+// approved service grant is refused before the runtime is touched, and the refusal carries the
+// rules to ask for: whole, drafted from the Compose file, with the port wherever the file says it.
+func TestFilteredServicesRefusalDraftsCompleteRules(t *testing.T) {
+	store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := egress.Filtered
+	policy, err := store.Admit(repo, networkstate.Admission{InvocationMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(repo, ".agent", "compose.yml")
+	if err := os.MkdirAll(filepath.Dir(compose), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// db declares nothing (coop's own Postgres), api publishes 3000 on loopback, cache exposes two
+	// ports and a UDP one, and Bad_Name is no DNS label, so no rule can name it.
+	if err := os.WriteFile(compose, []byte(`services:
+  db:
+    image: postgres:18
+  api:
+    image: example/api:1
+    ports: ["127.0.0.1:8080:3000", {target: 9229, host_ip: 127.0.0.1}]
+  cache:
+    image: example/cache:1
+    expose: ["6379", 6380, "6381/udp"]
+  Bad_Name:
+    image: example/other:1
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	capture := &CapturedEgress{Store: store, Project: repo, Fingerprint: policy.Fingerprint}
+	cfg := &config.Config{Egress: "filtered", ConfigDir: t.TempDir()}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, err = prepareFilteredExecution(t.Context(), cfg, recorderRuntime(t, recorder),
+		RunSpec{Repo: repo, Cmd: []string{"true"}, Network: true}, capture, compose, nil, nil)
+	const want = `This box cannot start because filtered boxes reach project services only through approved network rules
+
+  Ask for each service it uses under box.egress_rules in .agent/project.yaml:
+    - to: {service: "api"}
+      protocol: tcp
+      ports: [3000, 9229]
+    - to: {service: "cache"}
+      protocol: tcp
+      ports: [6379, 6380]
+    - to: {service: "db"}
+      protocol: tcp
+      ports: [<port>]
+  Replace <port> with the port the service listens on.
+  Then review it: coop approve
+  To start without project services, set box.network: false.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("refusal =\n%v\nwant:\n%s", err, want)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the refused launch reached the runtime")
+	}
+	// Every drafted rule is one the project file accepts once its ports are filled in.
+	draft := want[strings.Index(want, "    - to:"):strings.Index(want, "  Replace")]
+	if _, err := project.Parse([]byte("box:\n  egress: filtered\n  egress_rules:\n" + strings.ReplaceAll(draft, "<port>", "5432"))); err != nil {
+		t.Errorf("the drafted rules do not parse: %v\n%s", err, draft)
+	}
+	// box.network: false starts without the services, and so without this refusal.
+	_, err = prepareFilteredExecution(t.Context(), cfg, recorderRuntime(t, recorder),
+		RunSpec{Repo: repo, Cmd: []string{"true"}}, capture, compose, nil, nil)
+	if err != nil && strings.Contains(err.Error(), "project services") {
+		t.Errorf("box.network: false still refused on services: %v", err)
 	}
 }
