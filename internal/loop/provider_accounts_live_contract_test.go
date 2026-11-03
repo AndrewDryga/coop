@@ -277,6 +277,7 @@ func TestProviderAccountsLiveContractController(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{ConfigDir: layout.Config, RepoOverride: layout.Repo, Homes: true}
+	cfg.SetEgress("open")
 	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 	guard := accountLiveLaunchGuard{provider: "claude", accounts: []string{"first", "second"}}
 	c.boxRun = func(spec box.RunSpec) (int, error) {
