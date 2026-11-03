@@ -1,16 +1,21 @@
 ---
 name: case-exposure-has-persistent-approval
-description: remember reviewed case-exposed secret paths through coop approve without granting future paths or policy writes
+description: require explicit coop approve --case-exposure for mount-fallback file access without granting future paths or policy writes
 scope: security
 sources: [internal/box/caseapproval.go, internal/box/mounts.go, internal/cli/net_approve.go, internal/cli/services_cmd.go, internal/runtime/docker_objects.go, internal/runtime/docker_lifecycle.go]
-check: "go test ./internal/box -run 'TestCaseExposureApprovalPersistsOnlyReviewedPaths|TestCaseExposureApprovalIncludesServiceOnlyPaths'"
-updated: 2026-11-01
+check: "go test ./internal/cli -run 'TestApproveDoesNotRequestCaseExposure|TestApproveExplicitCaseExposure|TestApproveDoesNotInspectMountPolicy|TestMountFallbackRemedyRequiresExplicitCaseApproval'"
+updated: 2026-11-03
 ---
 
 # Remember reviewed case exposure through coop approve
 
 A user who accepts secret-file exposure on a case-insensitive disk can save that decision
-with `coop approve`. Bind it to the host-owned repository identity and exact reviewed paths;
+with `coop approve --case-exposure`. Ordinary `coop approve` must neither compute mount
+exposure nor create or rewrite file-access approval. Qualified eBPF runs need no such permission;
+the explicit review describes mount fallback only. Do not predict all future launch backends
+from host capability: images and runtime options can also force mount protection. Actual mount
+refusals must direct the explicit command, so accepting fallback remains possible.
+Bind approval to the host-owned repository identity and exact reviewed paths;
 new paths require another review. Keep canonical decoys. Do not grant alternate-spelling
 writes to `.coopignore` through this secret-file approval. Show paths during review and a
 short count during launch. Check both agent and service mount plans.
@@ -31,6 +36,11 @@ before presenting it as a supported solution.
 They explicitly requested removal of the feature or persistent approval via `coop approve`.
 
 ## Changelog
+- 2026-11-03 — user reported Emisar's approval prompt despite eBPF. Swept approval dispatch,
+  agent/service refusal remedies, help/completion, box/configuration/networking docs and KB.
+  Made mount exposure an explicit option; retained existing grants and runtime enforcement.
+  Regression tests first reproduced unsolicited file approval during both unchanged and changed
+  network reviews, and now cover default no-grant behavior and the explicit fallback remedy.
 - 2026-11-01 — user corrected the host-volume recommendation: "we need coop to work no matter
   how host is configured". Swept box/configuration docs, spelling detection, case approval and
   doctor source: no existing requirement to move projects to a case-sensitive volume. Recorded

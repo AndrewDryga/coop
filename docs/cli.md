@@ -1566,14 +1566,20 @@ Lists abandoned boxes but does not remove them.
 
 coop approve: review and approve this project's requested access
 
-Usage: coop approve
+Usage: coop approve [--case-exposure]
 
   Shows what .agent/project.yaml asks for, compared with your last approval.
   Confirm the changes to allow new runs to use them.
-  On a case-insensitive disk, also reviews hidden files that remain readable
-  under another letter case. Remembers those exact paths for future agent
-  and service runs; newly exposed paths need approval again.
   If nothing changed, there is nothing to approve.
+
+OPTIONS
+  --case-exposure  additionally review file exposure with mount protection
+
+  Use this option only when a launch using mount protection refuses hidden
+  files that remain readable under another letter case. Approval remembers
+  those exact paths, including future contents, for agent and service runs
+  using mount protection. Newly exposed paths need approval again.
+  Qualified eBPF runs protect those files without this approval.
 
   Running boxes keep the rules they started with. A running editor session
   (coop acp) that has network rules moves to a new box with these rules

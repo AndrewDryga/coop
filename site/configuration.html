@@ -148,7 +148,7 @@ any other value.</p>
 <tr>
 <td><code>COOP_ALLOW_CASE_EXPOSED_SECRETS</code></td>
 <td>off</td>
-<td>One-run override on a Mac when Coop cannot hide every letter-case spelling of a long filename. Use <code>coop approve</code> to remember access to reviewed file paths. The box or service could then read a secret through a name such as <code>.ENV.PRODUCTION</code>. See <a href="box.html#hiding-secrets">hiding secrets</a>.</td>
+<td>One-run override on a Mac when mount protection cannot hide every letter-case spelling of a long filename. Use <code>coop approve --case-exposure</code> to remember access to reviewed file paths with mount protection. The box or service could then read a secret through a name such as <code>.ENV.PRODUCTION</code>. Qualified eBPF runs protect these files without an override or approval. See <a href="box.html#hiding-secrets">hiding secrets</a>.</td>
 </tr>
 <tr>
 <td><code>COOP_HOMES</code></td>

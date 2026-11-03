@@ -107,6 +107,9 @@ func TestCompletionCandidates(t *testing.T) {
 	if hasCand(a.completionCandidates([]string{"net"}), "approve") {
 		t.Error("retired `coop net approve` must not be completed")
 	}
+	if !hasCand(a.completionCandidates([]string{"approve"}), "--case-exposure") {
+		t.Error("approve completion must offer explicit mount exposure review")
+	}
 
 	for _, w := range []string{"ls", "rm", "merge"} {
 		if !hasCand(a.completionCandidates([]string{"fork"}), w) {

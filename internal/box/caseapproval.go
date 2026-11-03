@@ -124,7 +124,7 @@ func (r *CaseExposureReview) Commit(ctx context.Context) error {
 		return err
 	}
 	if anchor != r.anchor {
-		return errors.New("project identity changed — run 'coop approve' again")
+		return errors.New("project identity changed — run 'coop approve --case-exposure' again")
 	}
 	file, err := caseExposurePath(anchor)
 	if err != nil {

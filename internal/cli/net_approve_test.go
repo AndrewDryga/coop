@@ -5,12 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/AndrewDryga/coop/internal/box"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -211,16 +212,163 @@ func TestApprovalSurfacesACommitFailure(t *testing.T) {
 }
 
 // There is no --mode: the mode comes from .agent/project.yaml and nowhere else.
-func TestApproveTakesNoFlags(t *testing.T) {
+func TestApproveRejectsUnrelatedFlags(t *testing.T) {
 	a := &app{}
 	for _, args := range [][]string{{"--mode", "open"}, {"--mode=none"}, {"--yes"}, {"extra"}} {
 		if code, err := a.cmdApprove(args); code != 2 || err == nil {
 			t.Errorf("cmdApprove(%q) = (%d, %v), want a usage error", args, code, err)
 		}
 	}
+	if code, err := a.cmdApprove([]string{"--case-exposure", "--case-exposure"}); code != 2 || err == nil {
+		t.Fatalf("repeated flag = %d, %v", code, err)
+	}
+	if !ui.IsTerminal(os.Stdin) {
+		if code, err := a.cmdApprove([]string{"--case-exposure"}); code != 1 || err == nil || !strings.Contains(err.Error(), "terminal") {
+			t.Fatalf("explicit file approval bypassed terminal requirement: %d, %v", code, err)
+		}
+	}
 	if code, err := a.dispatch([]string{"approve", "extra"}); code != 2 || err == nil {
 		t.Errorf("dispatch coop approve extra = (%d, %v), want a usage error", code, err)
 	}
+}
+
+func TestApproveDoesNotRequestCaseExposure(t *testing.T) {
+	for _, networkChange := range []bool{false, true} {
+		t.Run(fmt.Sprint(networkChange), func(t *testing.T) {
+			netHostFixture(t)
+			state := filepath.Join(t.TempDir(), "private-state")
+			t.Setenv(box.ServiceStateRootEnv, state)
+			repo := netFixtureProject(t)
+			if err := os.WriteFile(filepath.Join(repo, "credentials.json"), []byte("inert"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(repo, "CREDENTIALS.JSON")); err != nil {
+				t.Skip("requires a disk that folds case")
+			}
+			if networkChange {
+				if err := os.Mkdir(filepath.Join(repo, ".agent"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(repo, ".agent/project.yaml"), []byte("box:\n  egress: open\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := &app{cfg: &config.Config{RepoOverride: repo}}
+			confirmations := 0
+			var code int
+			var err error
+			out := captureStderr(t, func() {
+				code, err = a.approveProject(t.Context(), repo, false, func(string) bool {
+					confirmations++
+					return true
+				})
+			})
+			if code != 0 || err != nil || (confirmations == 1) != networkChange || confirmations > 1 || strings.Contains(out, "FILE ACCESS") {
+				t.Fatalf("network change %t: code=%d err=%v confirmations=%d output=%s", networkChange, code, err, confirmations, out)
+			}
+			if pending := box.UnapprovedCaseExposures(repo, []string{"credentials.json"}); len(pending) != 1 {
+				t.Fatal("ordinary approval granted file exposure")
+			}
+			for _, path := range []string{filepath.Join(state, "case-exposure-approvals"), filepath.Join(repo, ".coop-service-approval")} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("ordinary approval touched file authority %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMountFallbackRemedyRequiresExplicitCaseApproval(t *testing.T) {
+	for _, who := range []string{"the box", "your services"} {
+		_, _, fix := uncoveredSpellingsBlock([]string{"credentials.json"}, who, "a service")
+		if !strings.Contains(fix, "coop approve --case-exposure") {
+			t.Fatal(fix)
+		}
+	}
+}
+
+func TestApproveExplicitCaseExposure(t *testing.T) {
+	netHostFixture(t)
+	state := t.TempDir()
+	t.Setenv(box.ServiceStateRootEnv, state)
+	repo := netFixtureProject(t)
+	if err := os.WriteFile(filepath.Join(repo, "credentials.json"), []byte("inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "CREDENTIALS.JSON")); err != nil {
+		t.Skip("requires a disk that folds case")
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	for _, accept := range []bool{false, true} {
+		var code int
+		var err error
+		confirmations := 0
+		out := captureStderr(t, func() {
+			code, err = a.approveProject(t.Context(), repo, true, func(prompt string) bool {
+				confirmations++
+				if !strings.Contains(prompt, "using mount protection") {
+					t.Error(prompt)
+				}
+				return accept
+			})
+		})
+		if (code == 0 && err == nil) != accept || confirmations != 1 || !strings.Contains(out, "FILE ACCESS WITH MOUNT PROTECTION") {
+			t.Fatalf("accepted=%t: %d, %v, confirmations=%d, output=%s", accept, code, err, confirmations, out)
+		}
+		if pending := box.UnapprovedCaseExposures(repo, []string{"credentials.json"}); (len(pending) == 0) != accept {
+			t.Fatalf("accepted=%t: pending=%v", accept, pending)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(state, "case-exposure-approvals", "*.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("approval files: %v, %v", files, err)
+	}
+	before, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "production-secret.pem"), []byte("inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	captureStderr(t, func() {
+		if code, err := a.approveProject(t.Context(), repo, false, func(string) bool {
+			t.Error("ordinary approval asked for exposure")
+			return false
+		}); code != 0 || err != nil {
+			t.Fatalf("ordinary approval: %d, %v", code, err)
+		}
+	})
+	after, err := os.ReadFile(files[0])
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("saved approval changed: %v", err)
+	}
+	if pending := box.UnapprovedCaseExposures(repo, []string{"credentials.json", "production-secret.pem"}); len(pending) != 1 || pending[0] != "production-secret.pem" {
+		t.Fatal(pending)
+	}
+}
+
+func TestApproveDoesNotInspectMountPolicy(t *testing.T) {
+	netHostFixture(t)
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	repo := netFixtureProject(t)
+	if err := os.Symlink(t.TempDir(), filepath.Join(repo, ".coopignore")); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	captureStderr(t, func() {
+		if code, err := a.approveProject(t.Context(), repo, false, func(string) bool {
+			t.Error("ordinary approval asked for exposure")
+			return false
+		}); code != 0 || err != nil {
+			t.Fatalf("ordinary approval inspected mount policy: %d, %v", code, err)
+		}
+		if code, err := a.approveProject(t.Context(), repo, true, func(string) bool {
+			t.Error("invalid policy was offered for approval")
+			return true
+		}); code != 1 || err == nil {
+			t.Fatalf("explicit review accepted invalid mount policy: %d, %v", code, err)
+		}
+	})
 }
 
 func TestRetiredNetApprovePointsAtApprove(t *testing.T) {
@@ -288,7 +436,8 @@ func TestApprovalIncludesCaseOnlyAccessAndFreezesPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(out.String(), "FILE ACCESS ON THIS DISK") || !strings.Contains(out.String(), "credentials.json") {
+			if !strings.Contains(out.String(), "FILE ACCESS WITH MOUNT PROTECTION") || !strings.Contains(out.String(), "credentials.json") ||
+				!strings.Contains(out.String(), "Qualified eBPF runs still protect these files without this approval.") {
 				t.Fatal(out.String())
 			}
 			if (network.committed == 1) != networkChange {

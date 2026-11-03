@@ -25,7 +25,7 @@ any other value.
 | `COOP_PIDS` | `4096` | Limits the number of processes in the box, including runaway process creation. `0`, `unlimited` or empty turns it off. |
 | `COOP_MEMORY`, `COOP_CPUS` | unset | Box memory and CPU caps, like `4g` and `2`. |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | Runs the box with `--security-opt no-new-privileges`. |
-| `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | One-run override on a Mac when Coop cannot hide every letter-case spelling of a long filename. Use `coop approve` to remember access to reviewed file paths. The box or service could then read a secret through a name such as `.ENV.PRODUCTION`. See [hiding secrets](box.md#hiding-secrets). |
+| `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | One-run override on a Mac when mount protection cannot hide every letter-case spelling of a long filename. Use `coop approve --case-exposure` to remember access to reviewed file paths with mount protection. The box or service could then read a secret through a name such as `.ENV.PRODUCTION`. Qualified eBPF runs protect these files without an override or approval. See [hiding secrets](box.md#hiding-secrets). |
 | `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out and disables preset and consult runs, which need them to route work to their agents. |
 | `COOP_EGRESS` | `open` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |
 | `COOP_NO_ASDF` | off | Skips runtime `.tool-versions` provisioning. Stale Node shim repair still runs. The box reads it, so set it in `agents/env` (forwarded into the box), not your host shell. |

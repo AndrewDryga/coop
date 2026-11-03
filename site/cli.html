@@ -1357,14 +1357,20 @@ Run coop build --egress open, then coop doctor to test the Coop image.
 Filtered images are separate and are verified when a filtered run starts.
 
 Requires Git and a running container runtime. Honors COOP_RUNTIME.
-Lists abandoned boxes but does not remove them.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-approve-review-and-approve-this-projects-requested-access"><h2>coop approve: review and approve this project&#39;s requested access</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop approve: review and approve this project&#39;s requested access code example" tabindex="0"><code>Usage: coop approve
+Lists abandoned boxes but does not remove them.</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-approve-review-and-approve-this-projects-requested-access"><h2>coop approve: review and approve this project&#39;s requested access</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop approve: review and approve this project&#39;s requested access code example" tabindex="0"><code>Usage: coop approve [--case-exposure]
 
   Shows what .agent/project.yaml asks for, compared with your last approval.
   Confirm the changes to allow new runs to use them.
-  On a case-insensitive disk, also reviews hidden files that remain readable
-  under another letter case. Remembers those exact paths for future agent
-  and service runs; newly exposed paths need approval again.
   If nothing changed, there is nothing to approve.
+
+OPTIONS
+  --case-exposure  additionally review file exposure with mount protection
+
+  Use this option only when a launch using mount protection refuses hidden
+  files that remain readable under another letter case. Approval remembers
+  those exact paths, including future contents, for agent and service runs
+  using mount protection. Newly exposed paths need approval again.
+  Qualified eBPF runs protect those files without this approval.
 
   Running boxes keep the rules they started with. A running editor session
   (coop acp) that has network rules moves to a new box with these rules

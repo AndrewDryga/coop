@@ -2,8 +2,8 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
-updated: 2026-11-02
+sources: [internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+updated: 2026-11-03
 ---
 
 ## Selection and policy
@@ -12,6 +12,9 @@ Agent and final service launch share the filesystem admission. Automatic selecti
 requires host APFS, Docker cgroup v2 with cgroupfs, the expected BTF hook signatures and an
 actual-share probe. Unsupported runtimes keep spelling mounts and existing case-exposure
 approval. A failed cleanup is never permission to fall back: unresolved custody stops the launch.
+Only `coop approve --case-exposure` reviews and remembers mount-fallback exposure. Ordinary
+`coop approve` handles network access without calculating or granting file exposure; it cannot
+predict the images and options of future launches. Qualified BPF admissions ignore this waiver.
 If mount preparation also fails, `FilesystemFallbackError` retains the bounded backend-selection
 reason beside that refusal. The CLI preserves the mount remedy; joined cleanup failures use the
 complete generic error instead. Successful fallback stays quiet, and `FilesystemReport` still
@@ -184,6 +187,8 @@ The ACP live conformance test accepts the same qualification switch to inspect t
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
 ## Changelog
+- 2026-11-03 — checked approval dispatch and agent/service mount fallback. Made exposure review
+  explicit; existing saved permissions and runtime backend selection remain unchanged.
 - 2026-11-02 — recorded the failed FSEvents freshness experiment and Watchman limitation;
   rechecked inventory and final-validation ownership in the snapshot/walk sources. No scan
   was replaced with persistent observer state. Other enforcement sections were not reverified.

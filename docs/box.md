@@ -30,7 +30,9 @@ by a read-only empty directory. On a case-insensitive disk, Coop also covers upp
 spellings of a hidden filename with up to 11 letters, and every spelling of `.coopignore`.
 Longer filenames or a project with too many spellings can exceed the mount limit.
 Coop then refuses the agent or service launch. Move the file into a hidden folder, or run
-`coop approve` to review and remember access to the listed files. Approval applies to those exact
+`coop approve --case-exposure` to review and remember access to the listed files with mount
+protection. Ordinary `coop approve` reviews network access without granting file exposure.
+File approval applies to those exact
 paths, including future contents, for new agent and service runs. Newly exposed paths need another
 approval; already running boxes stay unchanged. `.coopignore` cannot receive this approval.
 The one-run override `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` remains available. A qualified eBPF run

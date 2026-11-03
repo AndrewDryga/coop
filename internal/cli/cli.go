@@ -344,7 +344,7 @@ func uncoveredSpellingsBlock(paths []string, who, one string) (headline, reason,
 	}
 	reason = "This disk ignores letter case, so " + one + " could open " + listed +
 		" under another spelling and read the real file. Coop covers every spelling of a hidden name only for names of up to 11 letters, and only so many in one launch."
-	fix = "Run 'coop approve' to review and remember access to these files, or move them into a hidden folder. COOP_ALLOW_CASE_EXPOSED_SECRETS=1 accepts exposure for one run."
+	fix = "Run 'coop approve --case-exposure' to review and remember access to these files with mount protection, or move them into a hidden folder. COOP_ALLOW_CASE_EXPOSED_SECRETS=1 accepts exposure for one run."
 	for _, path := range paths {
 		if box.IsCoopignoreName(filepath.Base(path)) {
 			fix = "Policy files cannot receive a file-access approval. Move nearby secret files into a hidden folder to reduce the number of case covers needed."

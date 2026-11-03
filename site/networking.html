@@ -670,10 +670,14 @@ previous rules and explains why. After <code>coop net forget</code>, a running s
 until you reconnect the editor.</p>
 <h3 id="reviewing-a-request">Reviewing a request</h3>
 <p>Approval covers the file&#39;s exact network mode, rules and the reviewed definition of every
-<code>service:</code> it names. <code>coop approve</code> has no flags. To change access, edit the file and review
+<code>service:</code> it names. To change network access, edit the file and review
 it again. Before saving approval, <code>coop approve</code> checks that the runtime can enforce the rules,
 just as it does at launch. It refuses unsupported rules, such as an IPv6 destination, during
 review so they cannot be approved and then fail at every launch.</p>
+<p>Ordinary <code>coop approve</code> does not grant file exposure. If a launch using mount protection
+refuses hidden files that remain readable under another letter case, use
+<code>coop approve --case-exposure</code> to additionally review that permission. Qualified eBPF runs
+protect those files without it; see <a href="box.html#hiding-secrets">hiding secrets</a>.</p>
 <p>The review compares the request with the access already approved. Unchanged rules have no
 marker; additions use <code>+</code> and removals use <code>-</code>. The <code>NETWORK RULES</code> heading explains these
 markers. Coop explains any network mode change in plain words. A request for <code>open</code> gets a

@@ -22,8 +22,18 @@ import (
 // requires a terminal on purpose: an approval is a human's decision, and a pipe
 // that answers "y" is not a human.
 func (a *app) cmdApprove(args []string) (int, error) {
-	if err := rejectArgs("approve", args); err != nil {
-		return 2, err
+	caseExposure := false
+	for _, arg := range args {
+		if arg != "--case-exposure" {
+			if strings.HasPrefix(arg, "-") {
+				return 2, unknownOptionErr(arg, "coop approve", []string{"--case-exposure"})
+			}
+			return 2, ui.UnexpectedArgument(arg, "coop approve", "coop approve [--case-exposure]")
+		}
+		if caseExposure {
+			return 2, ui.RepeatedOption(arg, "coop approve")
+		}
+		caseExposure = true
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
 		return 1, netTerminalOnly("coop approve")
@@ -34,15 +44,27 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	}
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	return a.approveProject(ctx, repo, caseExposure, func(prompt string) bool {
+		return confirmTerminalPrompt(ctx, prompt)
+	})
+}
+
+func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool, confirm func(string) bool) (int, error) {
 	review, err := box.ReviewProjectNetworkContext(ctx, a.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
-	caseReview, err := box.ReviewCaseExposure(ctx, a.cfg, repo)
-	if err != nil {
-		return 1, errors.Join(err, review.Close())
+	// Future images and options can select mount protection even on an eBPF
+	// runtime. Accepting that exposure is an explicit decision, never a side
+	// effect of reviewing network access.
+	var caseReview *box.CaseExposureReview
+	if caseExposure {
+		caseReview, err = box.ReviewCaseExposure(ctx, a.cfg, repo)
+		if err != nil {
+			return 1, errors.Join(err, review.Close())
+		}
 	}
-	if review.Unchanged() && len(caseReview.Pending) == 0 {
+	if review.Unchanged() && (caseReview == nil || len(caseReview.Pending) == 0) {
 		// No security question has an answer that could change anything, so
 		// none is asked and nothing is written — not even a fresher timestamp.
 		ui.Note("%s", netApproveUnchanged)
@@ -50,10 +72,10 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	}
 	prompt, done := netApprovePrompt, netApproveApproved
 	if review.Unchanged() {
-		prompt, done = "Remember this file access for future runs and service starts?", "File access approved for future runs and service starts"
+		prompt, done = "Remember this file access for future runs and service starts using mount protection?", "File access approved for future runs and service starts using mount protection"
 	}
 	err = confirmProjectApproval(ctx, review, caseReview, os.Stderr, func() bool {
-		return confirmTerminalPrompt(ctx, prompt)
+		return confirm(prompt)
 	})
 	return reportNetChange(errors.Join(err, review.Close()), done)
 }
@@ -136,12 +158,13 @@ func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases
 		writeNetAccessChange(&b, p, review.Before(), after.Posture, after.Envelope)
 	}
 	if cases != nil && len(cases.Pending) > 0 {
-		fmt.Fprintln(&b, "\nFILE ACCESS ON THIS DISK")
-		fmt.Fprintln(&b, "  These hidden files can be read under another letter case:")
+		fmt.Fprintln(&b, "\nFILE ACCESS WITH MOUNT PROTECTION")
+		fmt.Fprintln(&b, "  With mount protection, these hidden files can be read under another letter case:")
 		for _, path := range cases.Paths {
 			fmt.Fprintf(&b, "    %s\n", ui.SafeInline(path))
 		}
-		fmt.Fprintln(&b, "  Approval remembers these paths, including future contents, for agents and services.")
+		fmt.Fprintln(&b, "  Qualified eBPF runs still protect these files without this approval.")
+		fmt.Fprintln(&b, "  Approval remembers these paths, including future contents, for agents and services using mount protection.")
 		fmt.Fprintln(&b, "  New paths need approval. Already running boxes stay unchanged.")
 	}
 	if _, err := io.WriteString(out, b.String()); err != nil {

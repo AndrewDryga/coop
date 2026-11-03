@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Only approve file exposure deliberately.** Ordinary `coop approve` no longer asks to
+  expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
+  use `coop approve --case-exposure` to review and remember those exact paths.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

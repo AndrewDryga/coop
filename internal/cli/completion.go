@@ -205,6 +205,10 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
 		}
+	case "approve":
+		if len(prev) == 1 {
+			return []string{"--case-exposure"}
+		}
 	case "net":
 		if len(prev) == 1 {
 			return netCommands

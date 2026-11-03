@@ -523,10 +523,15 @@ until you reconnect the editor.
 ### Reviewing a request
 
 Approval covers the file's exact network mode, rules and the reviewed definition of every
-`service:` it names. `coop approve` has no flags. To change access, edit the file and review
+`service:` it names. To change network access, edit the file and review
 it again. Before saving approval, `coop approve` checks that the runtime can enforce the rules,
 just as it does at launch. It refuses unsupported rules, such as an IPv6 destination, during
 review so they cannot be approved and then fail at every launch.
+
+Ordinary `coop approve` does not grant file exposure. If a launch using mount protection
+refuses hidden files that remain readable under another letter case, use
+`coop approve --case-exposure` to additionally review that permission. Qualified eBPF runs
+protect those files without it; see [hiding secrets](box.md#hiding-secrets).
 
 The review compares the request with the access already approved. Unchanged rules have no
 marker; additions use `+` and removals use `-`. The `NETWORK RULES` heading explains these
