@@ -7,7 +7,20 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
+
+// Every process starts after its host boots, this test's included. A boot time that read as now or
+// as the epoch would let a sweep take a live run's files, or none.
+func TestBootTimeIsInThePast(t *testing.T) {
+	boot, ok := BootTime()
+	if !ok {
+		t.Fatal("this host's boot time could not be read")
+	}
+	if !boot.Before(time.Now()) || boot.Year() < 2000 {
+		t.Fatalf("boot time = %v", boot)
+	}
+}
 
 func TestCurrentProcessIdentity(t *testing.T) {
 	token := StartToken(os.Getpid())

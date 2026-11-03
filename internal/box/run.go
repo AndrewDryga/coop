@@ -439,6 +439,9 @@ func prepareCompositionArtifactParent(artifacts *compositionArtifactOps, cfg *co
 	if err != nil {
 		return nil, fmt.Errorf("create private run artifact directory: %w", err)
 	}
+	// Named before anything is written there, so a run killed during setup leaves a folder the
+	// daily sweep can attribute to a process it can prove gone.
+	recordRunOwner(dir, supervisorLabelValue(supervisorScope(spec), os.Getpid()))
 	artifacts.parent, artifacts.runDir = dir, dir
 	return func() { _ = os.RemoveAll(dir) }, nil
 }
@@ -1390,8 +1393,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return -1, err
 	}
-	// Recorded now so a run killed during setup is still swept, and again as the box starts.
-	recordRunDaemon(artifacts.runDir, daemon)
+	// Recorded before any service, broker or box of this run can start, and again as the box starts.
+	if err := recordRunDaemon(artifacts.runDir, daemon); err != nil {
+		return -1, err
+	}
 	// Every image Coop built that this launch rests on counts as used, not just the one the box
 	// runs: a filtered box runs its client image by ID, and a project image's own base is the
 	// managed one. A later build of each family keeps what was recorded here (reclaim.go).
@@ -1768,7 +1773,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, errors.New("docker daemon changed after filesystem admission"))
 		}
 		// The box starts on the owner's bound daemon, which need not be the one probed above.
-		recordRunDaemon(artifacts.runDir, owner.docker.Info().ID)
+		if err := recordRunDaemon(artifacts.runDir, owner.docker.Info().ID); err != nil {
+			return finish(-1, err)
+		}
 		runPlain = func(in io.Reader, out, errOut io.Writer, args ...string) (int, error) {
 			return owner.docker.RunWorkload(context.Background(), in, out, errOut, args...)
 		}
@@ -1831,11 +1838,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	defer unlockMounts()
 	if spec.filesystem != nil {
-		recordRunDaemon(artifacts.runDir, spec.filesystem.docker.Info().ID)
+		if err := recordRunDaemon(artifacts.runDir, spec.filesystem.docker.Info().ID); err != nil {
+			return finish(-1, err)
+		}
 	} else if spec.native == nil {
 		// A native box starts on its owner's bound daemon, recorded above; this one starts through
 		// the runtime CLI, on whichever daemon the current Docker context selects by now.
-		recordDaemonAtStart(spec.Ctx, rt, artifacts.runDir)
+		if err := recordDaemonAtStart(spec.Ctx, rt, artifacts.runDir); err != nil {
+			return finish(-1, err)
+		}
 	}
 	// The launch boundary: everything above is host work, everything below is the provider's.
 	// A caller that clocks the provider starts counting HERE, never from Run's entry — an early

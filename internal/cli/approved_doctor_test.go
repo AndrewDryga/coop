@@ -32,6 +32,7 @@ type doctorEvidence struct {
 	taskErr    string // the task-channel probe produced nothing; this is why
 	boxes      box.OrphanSurvey
 	surveyErr  string
+	leftovers  int // run folders killed runs left in the runfiles root
 }
 
 // allPassed is the evidence of a healthy run on the shared image: every check ran and held.
@@ -104,14 +105,15 @@ func (e doctorEvidence) render(t *testing.T) string {
 	})
 }
 
-// survey adds the read-only abandoned-box findings, which sit outside the check tally, through the
-// same renderer a real run uses.
+// survey adds the read-only abandoned-box and leftover run folder findings, which sit outside the
+// check tally, through the same renderers a real run uses.
 func (e doctorEvidence) survey(report *doctorReport) {
 	var err error
 	if e.surveyErr != "" {
 		err = errors.New(e.surveyErr)
 	}
 	reportOrphanSurvey(report, "docker", e.boxes, err)
+	reportLeftoverRunFolders(report, "/Users/me/.config/coop/runfiles", e.leftovers, nil)
 }
 
 func TestApprovedDoctorReports(t *testing.T) {
@@ -186,6 +188,11 @@ func TestApprovedDoctorReports(t *testing.T) {
 		{"18k-doctor-sandbox-probe-failed", func() doctorEvidence {
 			e := allPassed()
 			e.sandboxErr = "The container could not start: permission denied."
+			return e
+		}},
+		{"18p-doctor-leftover-run-folders", func() doctorEvidence {
+			e := allPassed()
+			e.leftovers = 1256
 			return e
 		}},
 	}

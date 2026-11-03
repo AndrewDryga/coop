@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -182,6 +183,8 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	doctorCheckClone(cloneSection, fixture, clone)
 
 	code := a.doctorReportOrphanBoxes(report, repo, withoutProject)
+	root, leftovers, err := box.LeftoverRunFolders(a.cfg, time.Now())
+	reportLeftoverRunFolders(report, root, leftovers, err)
 	if verdict := report.print(); verdict != 0 {
 		code = verdict
 	}
@@ -334,6 +337,27 @@ func reportOrphanSurvey(report *doctorReport, rtName string, survey box.OrphanSu
 			details: survey.OtherHost,
 			reason:  strings.Join(commands, "\n"),
 			footer:  "Coop never removes them. If the Coop that started them no longer runs, remove them with " + them + "."})
+	}
+}
+
+// reportLeftoverRunFolders adds the run folders killed runs left in root (box.LeftoverRunFolders).
+// Like abandoned boxes, they are host hygiene outside the tally, and doctor only looks: the daily
+// cleanup removes each one once it can prove nothing still uses it.
+func reportLeftoverRunFolders(report *doctorReport, root string, leftovers int, err error) {
+	section := "Leftover run folders"
+	switch {
+	case err != nil:
+		report.section(section).add(doctorRow{outcome: doctorNote,
+			label: "Could not check for leftover run folders", reason: sentence(firstLine(err))})
+	case leftovers == 1:
+		report.section(section).add(doctorRow{outcome: doctorNote,
+			label: "1 folder was left behind by a run that stopped before cleaning up", details: []string{root},
+			footer: "Coop's daily cleanup removes it once it can prove nothing still uses it."})
+	case leftovers > 1:
+		report.section(section).add(doctorRow{outcome: doctorNote,
+			label:   fmt.Sprintf("%d folders were left behind by runs that stopped before cleaning up", leftovers),
+			details: []string{root},
+			footer:  "Coop's daily cleanup removes each one once it can prove nothing still uses it."})
 	}
 }
 

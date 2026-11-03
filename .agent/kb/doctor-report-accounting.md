@@ -3,7 +3,7 @@ name: doctor-report-accounting
 description: how `coop doctor` counts — the 37 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
 sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go, internal/cli/doctor_test.go, Makefile]
-updated: 2026-11-02
+updated: 2026-11-03
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
@@ -24,7 +24,8 @@ Row outcomes (doctor_report.go), because the easy version lies:
 - `doctorProbeFail` — the probe died: ONE failure plus `covers` checks counted as uncompleted, so
   the totals still add to 37 instead of shrinking into something that reads clean.
 - `doctorUnrun` — checks a failure elsewhere prevented; neither performed nor skipped.
-- `doctorNote` — the abandoned-box survey, outside the tally entirely.
+- `doctorNote` — the abandoned-box survey and the leftover run folder count
+  (`box.LeftoverRunFolders`), outside the tally entirely.
 - `doctorInfo` — neutral backend selection/fallback context, also uncounted; selection is not
   a successful isolation check and does not earn a warning icon.
 
@@ -57,6 +58,7 @@ traverse a foreign-owned private bind. A real image keeps its configured USER so
 detects incompatible image ownership. Docker Desktop has a different host UID mapping.
 
 ## Changelog
+- 2026-11-03 — added the leftover run folder note (approved 18p), host hygiene outside the tally.
 - 2026-11-02 — added the doctor probe's required `ls` reader to the minimal test PATH;
   reproduced the existing visibility regression before fixing the host-tool inventory.
 - 2026-11-01 — removed empty-decoy metadata assumptions for BPF denial, retained public/negative

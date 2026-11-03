@@ -64,17 +64,30 @@ func newRunfiles(t *testing.T) (*config.Config, string) {
 	return cfg, root
 }
 
-// runFolder is a run's folder in root that recorded daemon as its box's (none when empty).
+// runFolder is a run's folder in root, made by a Coop that recorded no owner, whose box started on
+// daemon (a record naming none when empty).
 func runFolder(t *testing.T, root, name, daemon string, age time.Duration) string {
+	t.Helper()
+	return runFolderBy(t, root, name, "", true, daemon, age)
+}
+
+// runFolderBy is a run's folder in root with owner's record (none when empty). Its box started on
+// daemon, as runFolder's did, or, when started is false, its run never started a container.
+func runFolderBy(t *testing.T, root, name, owner string, started bool, daemon string, age time.Duration) string {
 	t.Helper()
 	path := filepath.Join(root, name)
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	recordRunOwner(path, owner)
 	if err := os.WriteFile(filepath.Join(path, "env"), []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	recordRunDaemon(path, daemon)
+	if started {
+		if err := recordRunDaemon(path, daemon); err != nil {
+			t.Fatal(err)
+		}
+	}
 	when := time.Now().Add(-age)
 	if err := os.Chtimes(path, when, when); err != nil {
 		t.Fatal(err)
@@ -162,6 +175,140 @@ func TestReapRunfilesJudgesARunFolderOnlyByItsOwnDaemon(t *testing.T) {
 	removed, err = ReapOrphanRunfiles(context.Background(), fakeMounts{sources: map[string]bool{}}, cfg, time.Now())
 	if err != nil || removed != 1 || exists(client) || !exists(elsewhere) || !exists(unknown) {
 		t.Fatalf("reap by an unfrozen runtime = %d, %v; want only the client folder removed", removed, err)
+	}
+}
+
+// A run folder names the process that made it and, once its run could start a container, the daemon
+// that container started on. The sweep removes it only when those records prove nothing can still
+// use it: an owner this host can prove gone, and a run that started no container, started its box
+// on the daemon whose listing shows it unused, or ended before this host last booted. A live run's
+// folder survives however old it is and whatever its daemon record says.
+func TestReapRunfilesJudgesARunFolderByItsOwnerAndDaemon(t *testing.T) {
+	workspace := t.TempDir()
+	live := liveSupervisorLabel(t, workspace)
+	gone := goneSupervisorLabel(t, workspace)
+	reused := deadSupervisorLabel(workspace)
+	elsewhere := supervisorLabelOn(otherHost, workspace, os.Getpid())
+	now := time.Now()
+	sinceBoot, beforeBoot := 3*time.Hour, 72*time.Hour
+	bootedRecently := now.Add(-2 * time.Hour)
+	for _, tc := range []struct {
+		name    string
+		owner   string
+		started bool
+		daemon  string
+		age     time.Duration
+		boot    time.Time
+		removed bool
+	}{
+		{name: "a live run whose box is on this daemon", owner: live, started: true, daemon: "daemon-a", age: sinceBoot},
+		{name: "a live run still setting up", owner: live, age: sinceBoot},
+		{name: "a live run on another daemon", owner: live, started: true, daemon: "daemon-b", age: sinceBoot},
+		{name: "a run killed during setup", owner: gone, age: sinceBoot, removed: true},
+		{name: "a run killed during setup whose pid was reused", owner: reused, age: sinceBoot, removed: true},
+		{name: "a killed run whose box was on this daemon", owner: gone, started: true, daemon: "daemon-a", age: sinceBoot, removed: true},
+		{name: "a killed run whose box was on another daemon", owner: gone, started: true, daemon: "daemon-b", age: sinceBoot},
+		{name: "a killed run whose box was on an unnamed daemon", owner: gone, started: true, age: sinceBoot},
+		{name: "a killed run whose box was on another daemon before the last boot", owner: gone, started: true, daemon: "daemon-b", age: beforeBoot, boot: bootedRecently, removed: true},
+		{name: "another host's run", owner: elsewhere, age: beforeBoot, boot: bootedRecently},
+		{name: "an earlier Coop's run whose box was on this daemon", started: true, daemon: "daemon-a", age: sinceBoot, removed: true},
+		{name: "an earlier Coop's run on another daemon", started: true, daemon: "daemon-b", age: sinceBoot},
+		{name: "an earlier Coop's run with no daemon record", age: sinceBoot},
+		{name: "an earlier Coop's run with no daemon record before the last boot", age: beforeBoot, boot: bootedRecently, removed: true},
+		{name: "an earlier Coop's run on another daemon before the last boot", started: true, daemon: "daemon-b", age: beforeBoot, boot: bootedRecently, removed: true},
+		{name: "an earlier Coop's run from within a day of the last boot", age: 25 * time.Hour, boot: bootedRecently},
+		{name: "an earlier Coop's run when the boot time is unknown", age: beforeBoot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, root := newRunfiles(t)
+			run := runFolderBy(t, root, "coop-run-1", tc.owner, tc.started, tc.daemon, tc.age)
+			removed, err := reapOrphanRunfiles(context.Background(),
+				fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, cfg, now, localHost(), tc.boot)
+			want := 0
+			if tc.removed {
+				want = 1
+			}
+			if err != nil || removed != want || exists(run) == tc.removed {
+				t.Fatalf("reap = %d, %v (folder left: %v); want %d removed", removed, err, exists(run), want)
+			}
+		})
+	}
+}
+
+// An owner record cut short could name a process that is gone, though its run is live. Only a
+// complete record, ended by its newline, is read; anything else keeps the folder, even from
+// before the last boot.
+func TestReapRunfilesKeepsAFolderWhoseOwnerRecordIsIncomplete(t *testing.T) {
+	cfg, root := newRunfiles(t)
+	run := runFolderBy(t, root, "coop-run-1", "", false, "", 72*time.Hour)
+	label := goneSupervisorLabel(t, t.TempDir())
+	if err := os.WriteFile(filepath.Join(run, runOwnerFile), []byte(label), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(run, when, when); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := reapOrphanRunfiles(context.Background(), fakeMounts{daemon: "daemon-a", sources: map[string]bool{}},
+		cfg, time.Now(), localHost(), time.Now().Add(-time.Hour))
+	if err != nil || removed != 0 || !exists(run) {
+		t.Fatalf("reap = %d, %v; want the folder kept", removed, err)
+	}
+}
+
+// A run folder names its owner before anything else is written there, so a run killed at any moment
+// of its setup leaves a folder the sweep can attribute, and the owner is this process.
+func TestARunFolderNamesItsOwnerFirst(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	spec := RunSpec{Repo: t.TempDir()}
+	artifacts := defaultCompositionArtifactOps()
+	cleanup, err := prepareCompositionArtifactParent(&artifacts, cfg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	entries, err := os.ReadDir(artifacts.runDir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != runOwnerFile {
+		t.Fatalf("a new run folder holds %v (%v); want only its owner record", entries, err)
+	}
+	record, err := os.ReadFile(filepath.Join(artifacts.runDir, runOwnerFile))
+	want := supervisorLabelValue(supervisorScope(spec), os.Getpid())
+	if err != nil || want == "" || string(record) != want+"\n" {
+		t.Fatalf("owner record = %q (%v), want %q", record, err, want+"\n")
+	}
+	info, err := os.Stat(artifacts.runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	judge := runJudge{daemon: "daemon-a", host: localHost(), boot: time.Now().Add(-time.Hour)}
+	if judge.runFolderUnused(artifacts.runDir, info.ModTime().Add(-72*time.Hour)) {
+		t.Fatal("this live process's run folder was judged unused")
+	}
+}
+
+// Doctor counts what killed runs left: run folders over a day old whose owner is gone or was never
+// recorded. A live run's folder, another host's, a young one and Coop's other entries are not
+// leftovers, and looking creates no runfiles root.
+func TestLeftoverRunFoldersCountsWhatKilledRunsLeft(t *testing.T) {
+	cfg, root := newRunfiles(t)
+	workspace := t.TempDir()
+	runFolderBy(t, root, "coop-run-gone", goneSupervisorLabel(t, workspace), true, "daemon-a", 48*time.Hour)
+	runFolder(t, root, "coop-run-earlier", "daemon-b", 48*time.Hour)
+	runFolderBy(t, root, "coop-run-live", liveSupervisorLabel(t, workspace), true, "daemon-a", 48*time.Hour)
+	runFolderBy(t, root, "coop-run-elsewhere", supervisorLabelOn(otherHost, workspace, os.Getpid()), true, "daemon-a", 48*time.Hour)
+	runFolderBy(t, root, "coop-run-young", goneSupervisorLabel(t, workspace), false, "", time.Hour)
+	writeDirEntry(t, root, "coop-docker-client-1", 48*time.Hour)
+	got, leftovers, err := LeftoverRunFolders(cfg, time.Now())
+	if err != nil || got != root || leftovers != 2 {
+		t.Fatalf("leftovers = %q, %d, %v; want %q, 2", got, leftovers, err, root)
+	}
+
+	none := &config.Config{BoxHome: filepath.Join(t.TempDir(), "box-home")}
+	if got, leftovers, err := LeftoverRunFolders(none, time.Now()); got != "" || leftovers != 0 || err != nil {
+		t.Fatalf("leftovers without a root = %q, %d, %v", got, leftovers, err)
+	}
+	if _, err := os.Stat(none.BoxHome); !os.IsNotExist(err) {
+		t.Fatalf("looking for leftovers created state: %v", err)
 	}
 }
 
@@ -382,7 +529,8 @@ func TestReapTouchesOnlyCoopEntries(t *testing.T) {
 // just before the box starts: the CLI starts the box on whichever daemon the current Docker context
 // selects by then, and the record is all a later sweep can go on. After a `docker context use`
 // while services or brokers start, the folder names the daemon the box started on; when no daemon
-// can be named then, it names none, so the sweep keeps it.
+// can be named then, the record stays and names none, so the sweep keeps the folder rather than
+// read it as a run that never started a container.
 func TestRunRecordsTheDaemonItsBoxStartsOn(t *testing.T) {
 	for name, setup := range map[string]func(t *testing.T) (*config.Config, RunSpec){
 		"ordinary": func(t *testing.T) (*config.Config, RunSpec) {
@@ -393,7 +541,7 @@ func TestRunRecordsTheDaemonItsBoxStartsOn(t *testing.T) {
 		for _, tc := range []struct{ name, atStart, want string }{
 			{name: "the same daemon", atStart: "echo daemon-a", want: "daemon-a\n"},
 			{name: "another daemon after a context switch", atStart: "echo daemon-b", want: "daemon-b\n"},
-			{name: "no daemon answers", atStart: "echo 'failed to connect to the docker API' >&2; exit 1", want: ""},
+			{name: "no daemon answers", atStart: "echo 'failed to connect to the docker API' >&2; exit 1", want: "named none\n"},
 		} {
 			t.Run(name+"/"+tc.name, func(t *testing.T) {
 				cfg, spec := setup(t)
@@ -405,7 +553,9 @@ func TestRunRecordsTheDaemonItsBoxStartsOn(t *testing.T) {
 				script := "#!/bin/sh\ncase \"$1\" in\n" +
 					"info) [ \"$2 $3\" = '--format {{.ID}}' ] || exit 0\n" +
 					"\tif [ -e " + strconv.Quote(probed) + " ]; then " + tc.atStart + "; else : > " + strconv.Quote(probed) + "; echo daemon-a; fi ;;\n" +
-					"run) cat " + strconv.Quote(filepath.Join(cfg.ConfigDir, "runfiles")) + "/coop-run-*/" + runDaemonFile + " 2>/dev/null >> " + strconv.Quote(recorded) + " ;;\n" +
+					"run) for f in " + strconv.Quote(filepath.Join(cfg.ConfigDir, "runfiles")) + "/coop-run-*/" + runDaemonFile + "; do\n" +
+					"\tif [ ! -e \"$f\" ]; then echo no record; elif [ -s \"$f\" ]; then cat \"$f\"; else echo named none; fi\n" +
+					"\tdone >> " + strconv.Quote(recorded) + " ;;\n" +
 					"esac\nexit 0\n"
 				if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 					t.Fatal(err)

@@ -4,6 +4,7 @@ package processidentity
 
 import (
 	"fmt"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -38,4 +39,12 @@ func platformCommand(pid int) string {
 		return ""
 	}
 	return unix.ByteSliceToString(kp.Proc.P_comm[:])
+}
+
+func platformBootTime() (time.Time, bool) {
+	boot, err := unix.SysctlTimeval("kern.boottime")
+	if err != nil || boot.Sec <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(boot.Sec, int64(boot.Usec)*1000), true
 }

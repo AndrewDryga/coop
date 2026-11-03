@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A token names the PID namespace its pid was read in (v2), since a pid means something only there.
@@ -88,4 +89,23 @@ func platformCommand(pid int) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// platformBootTime reads the btime line of /proc/stat. In a container that is the host's boot,
+// earlier than the container's own start, so a caller only keeps more of what the container left.
+func platformBootTime() (time.Time, bool) {
+	stat, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, line := range strings.Split(string(stat), "\n") {
+		if value, ok := strings.CutPrefix(line, "btime "); ok {
+			seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if err != nil || seconds <= 0 {
+				return time.Time{}, false
+			}
+			return time.Unix(seconds, 0), true
+		}
+	}
+	return time.Time{}, false
 }

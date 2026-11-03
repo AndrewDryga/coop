@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -43,15 +45,24 @@ var tempPrefixes = []string{
 }
 
 // runDirPrefix names the folder in the runfiles root where an ordinary run keeps every file its
-// box mounts. Only the daemon that runs the box can say the folder is unused: any other daemon's
-// listing never shows that box at all. So the launch records its daemon's ID in the folder
-// (recordRunDaemon, recordDaemonAtStart), and a sweep judges the folder only by that daemon's
-// listing. A folder that names another daemon, or none (made before the record existed, or where
-// Docker printed no ID), is kept: removing a live box's files is worse than keeping a killed one's.
+// box mounts. Two things can still use one: the coop process that made it, and a container that
+// run started. So the folder names both. Its owner record (recordRunOwner) is written first, and
+// its daemon record (recordRunDaemon) before the run starts any container, because only the
+// daemon that runs a box can say the box is gone: any other daemon's listing never shows it.
+// runFolderUnused is the judgment; removing a live box's files is worse than keeping a killed one's.
 const runDirPrefix = "coop-run-"
 
 // runDaemonFile, inside a run folder, holds the ID of the daemon the run's box was started on.
 const runDaemonFile = "daemon"
+
+// runOwnerFile, inside a run folder, names the coop process that made it, as a supervisor label
+// does (supervisorLabelValue), with a final newline that marks the record complete.
+const runOwnerFile = "owner"
+
+// rebootMargin is how long before this host booted a run folder must have last changed for the
+// reboot alone to prove it unused. It covers a clock set forward after boot, which moves the boot
+// time recorded by the kernel past folders a live process made before the change.
+const rebootMargin = 24 * time.Hour
 
 // runfilesPrefixes adds what only the private runfiles root holds: each run's folder, and the empty
 // folder a coop hands Docker as its client config for a whole run, never mounting it, so old and
@@ -95,7 +106,7 @@ func ReapOrphanTempEntries(
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
 	}
-	return reapOrphanEntries(dir, tempPrefixes, "", mounted, now)
+	return reapOrphanEntries(dir, tempPrefixes, runJudge{}, mounted, now)
 }
 
 // ReapOrphanRunfiles sweeps Coop's private runfiles root by the same rules, Docker client folders
@@ -107,6 +118,14 @@ func ReapOrphanTempEntries(
 // it names (runtime.FreezeCompose): the CLI otherwise follows whichever Docker context is current,
 // so a `docker context use` mid-listing could pass one daemon's word off as another's.
 func ReapOrphanRunfiles(ctx context.Context, lister mountLister, cfg *config.Config, now time.Time) (int, error) {
+	host, _ := thisHost()
+	boot, _ := processidentity.BootTime()
+	return reapOrphanRunfiles(ctx, lister, cfg, now, host, boot)
+}
+
+// reapOrphanRunfiles is ReapOrphanRunfiles for a coop on host, on a host that booted at boot (zero
+// when unknown), so tests can judge owners and reboots this process cannot be.
+func reapOrphanRunfiles(ctx context.Context, lister mountLister, cfg *config.Config, now time.Time, host string, boot time.Time) (int, error) {
 	root, exists, err := config.ExistingRunfiles(cfg)
 	if err != nil || !exists {
 		return 0, err
@@ -116,20 +135,40 @@ func ReapOrphanRunfiles(ctx context.Context, lister mountLister, cfg *config.Con
 		return 0, fmt.Errorf("%w: %w", ErrMountsUnknown, err)
 	}
 	_, daemon := lister.ComposeBinding()
-	return reapOrphanEntries(root, runfilesPrefixes, daemon, mounted, now)
+	return reapOrphanEntries(root, runfilesPrefixes, runJudge{daemon: daemon, host: host, boot: boot}, mounted, now)
 }
 
-// recordRunDaemon names, inside a run's folder, the daemon its box is about to start on, or removes
-// the record when daemon is "". It is best effort: a folder without the record is only ever kept,
-// so a record it could not write is removed rather than left naming an earlier daemon.
-func recordRunDaemon(runDir, daemon string) {
-	if runDir == "" {
+// recordRunOwner names, inside a run folder it has just made, the coop process that made it, before
+// anything else goes in: a run killed at any later moment leaves a folder a sweep can attribute.
+// owner is "" when this host cannot name the process (supervisorLabelValue); the folder then has no
+// record and is judged as an earlier Coop's were. A record cut short could read as another process
+// that is gone, so only a complete one stays.
+func recordRunOwner(runDir, owner string) {
+	if owner == "" {
 		return
 	}
-	path := filepath.Join(runDir, runDaemonFile)
-	if daemon == "" || os.WriteFile(path, []byte(daemon+"\n"), 0o600) != nil {
+	path := filepath.Join(runDir, runOwnerFile)
+	if os.WriteFile(path, []byte(owner+"\n"), 0o600) != nil {
 		_ = os.Remove(path)
 	}
+}
+
+// recordRunDaemon names, inside a run's folder, the daemon its box is about to start on; "" says
+// the box may start on a daemon nobody could name, which no sweep can judge. Once written the record
+// stays: a folder without one says its run never started a container, which lets a sweep remove it
+// as soon as its owner is gone. So a record coop cannot write stops the launch instead.
+func recordRunDaemon(runDir, daemon string) error {
+	if runDir == "" {
+		return nil
+	}
+	record := ""
+	if daemon != "" {
+		record = daemon + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(runDir, runDaemonFile), []byte(record), 0o600); err != nil {
+		return fmt.Errorf("record the Docker daemon in the run folder: %w", err)
+	}
+	return nil
 }
 
 // recordDaemonAtStart records the daemon again just before a box starts through the runtime CLI.
@@ -139,10 +178,10 @@ func recordRunDaemon(runDir, daemon string) {
 // there would remove a live box's files. So the record is rewritten to the daemon that answers now.
 // The one race left, a switch between this probe and the start, is the same whether the record
 // changed or not; dropping a changed record instead would keep a killed run's credentials forever.
-// A probe that names no daemon drops the record, so the folder is kept.
-func recordDaemonAtStart(ctx context.Context, rt runtime.Runtime, runDir string) {
+// A probe that names no daemon records none, so the folder is kept.
+func recordDaemonAtStart(ctx context.Context, rt runtime.Runtime, runDir string) error {
 	if runDir == "" {
-		return
+		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -151,18 +190,94 @@ func recordDaemonAtStart(ctx context.Context, rt runtime.Runtime, runDir string)
 	if err != nil {
 		daemon = ""
 	}
-	recordRunDaemon(runDir, daemon)
+	return recordRunDaemon(runDir, daemon)
 }
 
-// startedOn reports whether the run folder at path recorded daemon as the one its box started on.
-func startedOn(path, daemon string) bool {
-	recorded, err := os.ReadFile(filepath.Join(path, runDaemonFile))
-	return err == nil && daemon != "" && strings.TrimSpace(string(recorded)) == daemon
+// runJudge holds what a pass knows when it judges a run folder: the daemon it pinned and listed
+// ("" for none), the host field this coop writes, and when this host booted (zero when unknown).
+type runJudge struct {
+	daemon string
+	host   string
+	boot   time.Time
+}
+
+// runFolderUnused reports whether the run folder at path, last changed at changed, has records
+// that prove nothing outside the caller's mount listing can still use it. The caller removes it only
+// when it is also old and no listed box mounts it.
+//
+//   - It names its owner: that process is provably gone from this host (pid gone or reused), and
+//     the run either started no container (no daemon record), started its box on the pinned daemon
+//     (whose listing the caller checked), or ended before this host's last boot.
+//   - It names no owner, as every folder an earlier Coop made: it names the pinned daemon, or it
+//     last changed before this host's last boot. No process outlives a reboot, nor does a box on a
+//     daemon that can mount this host's files.
+//
+// Everything else stays: a live owner, one this host cannot check, a record it cannot read, a box
+// on another or an unnamed daemon, an owner-less folder from since the boot.
+func (j runJudge) runFolderUnused(path string, changed time.Time) bool {
+	beforeBoot := !j.boot.IsZero() && changed.Before(j.boot.Add(-rebootMargin))
+	daemon, err := os.ReadFile(filepath.Join(path, runDaemonFile))
+	started := !errors.Is(err, fs.ErrNotExist)
+	onPinned := err == nil && j.daemon != "" && strings.TrimSpace(string(daemon)) == j.daemon
+	owner, recorded, ok := runOwner(path)
+	if !recorded {
+		return onPinned || beforeBoot
+	}
+	if !ok || !supervisorProvablyDead(owner, j.host) {
+		return false
+	}
+	return !started || onPinned || beforeBoot
+}
+
+// runOwner reads the owner record of the run folder at path. recorded is false when it has none;
+// ok is true only for a complete record this version can read.
+func runOwner(path string) (owner supervisorRef, recorded, ok bool) {
+	record, err := os.ReadFile(filepath.Join(path, runOwnerFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return supervisorRef{}, false, false
+	}
+	label, complete := strings.CutSuffix(string(record), "\n")
+	owner, ok = parseSupervisorLabel(label)
+	return owner, true, err == nil && complete && ok
+}
+
+// leftoverRunAge is how old a run folder must be before doctor counts it as left behind: older than
+// any setup, and old enough for the daily cleanup to have had its chance.
+const leftoverRunAge = 24 * time.Hour
+
+// LeftoverRunFolders counts the run folders in Coop's runfiles root that are over a day old and whose
+// owner is gone or was never recorded: what killed runs left that the daily cleanup has not removed,
+// because it has not run since or cannot yet prove that no box uses them. It reads only the folders'
+// own records, asks no runtime and creates nothing, so doctor can report it anywhere. root is ""
+// when there is no runfiles root.
+func LeftoverRunFolders(cfg *config.Config, now time.Time) (root string, leftovers int, err error) {
+	root, exists, err := config.ExistingRunfiles(cfg)
+	if err != nil || !exists {
+		return "", 0, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return root, 0, err
+	}
+	host, _ := thisHost()
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), runDirPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) < leftoverRunAge {
+			continue
+		}
+		if owner, recorded, ok := runOwner(filepath.Join(root, entry.Name())); !recorded || ok && supervisorProvablyDead(owner, host) {
+			leftovers++
+		}
+	}
+	return root, leftovers, nil
 }
 
 // reapOrphanEntries removes dir's old, unmounted entries with one of prefixes. mounted is what the
-// boxes of daemon mount, so a run folder is removed only when its box started on that daemon.
-func reapOrphanEntries(dir string, prefixes []string, daemon string, mounted map[string]bool, now time.Time) (int, error) {
+// boxes of judge's daemon mount, and a run folder goes only when judge proves it unused.
+func reapOrphanEntries(dir string, prefixes []string, judge runJudge, mounted map[string]bool, now time.Time) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, err
@@ -175,14 +290,14 @@ func reapOrphanEntries(dir string, prefixes []string, daemon string, mounted map
 			continue
 		}
 		path := filepath.Join(dir, name)
-		if strings.HasPrefix(name, runDirPrefix) && !startedOn(path, daemon) {
-			continue
-		}
 		if tempEntryMounted(path, mounted) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil || now.Sub(info.ModTime()) < reapMinimumAge {
+			continue
+		}
+		if strings.HasPrefix(name, runDirPrefix) && !judge.runFolderUnused(path, info.ModTime()) {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {

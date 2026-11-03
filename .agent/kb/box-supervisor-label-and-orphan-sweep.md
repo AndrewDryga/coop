@@ -102,7 +102,7 @@ surface: the count and the container ids, outside its pass/fail tally, reaping n
 
 Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries` for TMPDIR,
 then `box.ReapOrphanRunfiles` for the private runfiles root): coop-prefixed entries that are over an
-hour old AND mounted by no box (a run's folder must also name the daemon that listed the boxes). It
+hour old AND mounted by no box (a run's folder must also pass `runFolderUnused`, below). It
 starts once per process from `runBox` (direct, editor and fork launches) and `collectOrphanBoxes`
 (loop and fork starts, and a build's recycle near its end);
 doctor probes, eval trials and fork merge gates launch boxes without it. It stamps
@@ -116,23 +116,41 @@ A listing is one daemon's word. The runtime CLI follows DOCKER_HOST or the curre
 and another daemon's boxes are simply missing from it, so after `docker context use other` their
 folders looked unused. Each run's folder (`coop-run-*`, the only kind current code makes that a box
 mounts) therefore names its daemon in a `daemon` file. The launch writes the ID its own probe
-returned (`runtime.DaemonID`, `info --format {{.ID}}`, in run.go), so a run
-killed after the launch probe is still swept, and writes it again just before the box starts
-(`recordDaemonAtStart`): the CLI starts the box on whichever daemon the context selects by then,
-and a switch while services or brokers start would otherwise leave the folder naming a daemon that
-never sees the box. A start-time probe that names no daemon drops the record. A native-credential
-run records its owner's bound daemon (`owner.docker.Info().ID`) instead and skips the start-time
-probe, since that box starts through the bound endpoint.
+returned (`runtime.DaemonID`, `info --format {{.ID}}`, in run.go) before it starts any service,
+broker or box, and writes it again just before the box starts (`recordDaemonAtStart`): the CLI
+starts the box on whichever daemon the context selects by then, and a switch while services or
+brokers start would otherwise leave the folder naming a daemon that never sees the box. A
+start-time probe that names no daemon writes an empty record. A native-credential run records its
+owner's bound daemon (`owner.docker.Info().ID`) instead and skips the start-time probe, since that
+box starts through the bound endpoint. The record is never removed once written, and a write that
+fails stops the launch: an absent record means the run started no container.
+
+The folder also names its owner, the coop process that made it, in an `owner` file written before
+anything else goes in (`recordRunOwner`, the supervisor label's `v2:` form plus a newline that marks
+a complete record; none when `supervisorLabelValue` is empty). The setup between the folder and the
+first daemon record writes credentials, MCP configs and hooks and can take minutes, so before
+2026-11-03 a run killed there left a folder no record named. One ~4-hour burst of killed runs on
+2026-10-17 left 1,256 such folders on the owner's Mac (born before the binary that recorded
+daemons, all with native credentials), and nothing removed them.
+
+`runFolderUnused` is the judgment, after the hour and mount checks. A folder that names its owner
+goes only when that owner is provably gone from this host (`supervisorProvablyDead`) AND its run
+started no container (no daemon record), started its box on the pinned daemon, or ended at least a
+day before this host's last boot (`processidentity.BootTime`; the day covers a clock set forward
+after boot). An owner-less folder, as every earlier Coop made, goes when it names the pinned daemon
+or ended a day before the last boot. No process outlives a reboot, nor does a box on a daemon that
+can mount this host's files. A live owner, another host's, an incomplete or unreadable record, or a
+box on another or an unnamed daemon keeps the folder.
 
 The pass (`cli.reapTemp`) pins the daemon the current context selects (`FreezeCompose`) when a
 runfiles root exists: pinning makes a client folder there, and a host without one has no run
 folders to judge. A frozen runtime's `MountSourcesByLabel` lists through that daemon's socket,
 whatever the context says meanwhile, and fails (`ErrMountsUnknown`) unless that daemon still
 answers there at the end; reading the ID before and after an unpinned listing missed a switch and
-back. `ReapOrphanRunfiles` removes a run folder only when it names the frozen daemon's ID. Another
-daemon's folder, or one with no record, is kept, and so is every run folder when the pass has no
-pinned daemon, though the rest is still swept: `bindDocker` binds only a local unix socket, so
-Docker over TCP or SSH never pins, and a `COOP_RUNTIME` Coop does not recognize names no daemon.
+back. Only the frozen daemon's listing can prove a box gone, so with no pinned daemon a run folder
+goes only on its owner and boot evidence, though the rest is still swept: `bindDocker` binds only a
+local unix socket, so Docker over TCP or SSH never pins, and a `COOP_RUNTIME` Coop does not
+recognize names no daemon.
 Apple's container sweeps nothing at all: `FreezeCompose` returns it unchanged, its
 `MountSourcesByLabel` fails, and the TMPDIR pass stops on `ErrMountsUnknown` before it removes or
 stamps anything. The ID, not the endpoint: `default` and `orbstack` reach one daemon on the
@@ -141,15 +159,13 @@ TMPDIR pass sweeps only kinds no box mounts (audit snapshots, test leases, earli
 and Compose client folders); the box files earlier versions left there name no daemon, so the
 sweep leaves them.
 
-Known leak: a run folder that no pass can prove unused stays forever, credentials included. That
-is one with no record: made before 2026-10-16, by a run killed before its launch probe (the folder
-comes first), or by a run whose start-time probe failed or printed no ID. It is every run folder
-on Docker over TCP or SSH, which earlier versions swept, or under a `COOP_RUNTIME` Coop does not
-recognize. And it is one whose daemon never lists again: resetting Docker Desktop or OrbStack
-gives the daemon a new ID, an engine the user stops using never sweeps again, and the stamp is per
-host, so a second daemon that is never the current one at the day's first launch may never sweep.
-The user can delete those `coop-run-*` folders in the runfiles root (`~/.config/coop/runfiles`)
-while no Coop runs; the CHANGELOG entry says so.
+Remaining leak, until the host's next reboot plus a day: a killed run whose box was on another or
+an unnamed daemon (Docker over TCP or SSH, a context switch, a daemon reset that changed its ID),
+and an owner-less folder from since the last boot. `coop doctor` counts run folders over a day old
+whose owner is gone or unrecorded (`box.LeftoverRunFolders`, read-only, no runtime call) under
+"Leftover run folders", outside the tally. Trap: a shared or network home would let one host's
+reboot rule judge another host's owner-less folders; owner records name their host and are never
+judged that way.
 
 Trap: a `coop-docker-client-*` directory (`runtime.bindDocker`) is in use for a whole run yet never
 mounted. It lives in the runfiles root beside the run files and `coop-compose-client-*`, made only
@@ -243,6 +259,10 @@ Traps:
 ## Changelog
 - 2026-11-03 — a build's recycle (and the sweep it starts) runs only for an image the build
   replaced, and restarts only the supervised boxes running it (`recycleBoxes` in build_cmd.go).
+- 2026-11-03 — run folders name their owner first, the daemon record is never removed, and the sweep
+  judges owner, daemon and the last boot (`runFolderUnused`); doctor counts leftovers. Verified with
+  `TestReapRunfilesJudgesARunFolderByItsOwnerAndDaemon` and three mutations of the rule (task
+  2026-11-03-reap-leftover-per-run-folders-in-the-coop-config).
 - 2026-10-18 — a session-service run's boxes and brokers are judged from any workspace (task
   2026-10-16-remove-a-dead-session-service-run-s-containers-b).
 - 2026-10-17 — the read-only and bare launches are gone: `runBox` and `collectOrphanBoxes` are the

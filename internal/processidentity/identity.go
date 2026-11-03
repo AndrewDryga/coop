@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // State is the result of comparing a pid with a previously recorded start token.
@@ -182,6 +183,10 @@ func (k Kernel) Inspect(pid int, token string) State {
 	}
 	return Match
 }
+
+// BootTime is when this host's kernel started; ok is false when it cannot be read. No process
+// outlives a reboot, so whatever a process left before then has no live owner.
+func BootTime() (boot time.Time, ok bool) { return platformBootTime() }
 
 // Parent returns pid's parent pid, or 0 when it cannot be read.
 func Parent(pid int) int { return platformParent(pid) }
