@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: the loop box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go]
-updated: 2026-10-18
+updated: 2026-11-03
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (eight tools:
@@ -66,7 +66,9 @@ says to work, not a permission. A mutation on a task
 another live process leases is refused at the call (`tasks.TryTaskLease` / `ErrTaskLeased`), with a
 legible "held by another live process" message — the assigned task runs under the launching
 iteration's own lease and never leases twice. `tasks_complete`/`tasks_block` on another task use the
-host's trusted completion/block (its own lease + receipt). `tasks_block` replaces decision.md through
+host's trusted completion/block (its own lease + receipt). `tasks_complete` refuses a blocked task,
+the box's own included, as `coop tasks claim` does: only the host's `coop tasks unblock` returns it to
+work. `tasks_block` replaces decision.md through
 `tasks.ReplaceDecision`: a decision the human already answered goes into log.md first, and the
 result tells the agent it had been answered. In a fork, `tasks_propose` writes the
 validated proposal into `Authority.ProposalOutbox` (the same file `tasks.ImportForkProposals` reads at
@@ -163,6 +165,8 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-03 — `tasks_complete` refuses a blocked task (it had moved one to done past its open
+  decision); `coop tasks claim` refuses blocked and done tasks the same way.
 - 2026-10-18 — a daily CI job runs `make task-channel-e2e` in a freshly built box image (task
   2026-10-17-exercise-the-task-channel-in-a-real-box-in-ci).
 - 2026-10-18 — each tool call pins its workspace and queues and every read and write goes through

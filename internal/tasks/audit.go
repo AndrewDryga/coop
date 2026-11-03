@@ -425,8 +425,8 @@ func CompleteTrustedTask(project, root string, task Item) (retErr error) {
 }
 
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before
-// a host command reopens or blocks an archived task. On a failed move it restores the old receipt,
-// so concurrent supervised windows never see a false unowned completion.
+// `coop tasks block` reopens an archived task. On a failed move it restores the old receipt, so
+// concurrent supervised windows never see a false unowned completion.
 func moveTrustedTaskFromDone(root string, task Item, newState string) error {
 	return moveTrustedTaskFromDoneWith(root, task, newState, nil)
 }

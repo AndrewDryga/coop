@@ -221,15 +221,25 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Error("done must record host-only completion evidence")
 	}
 
-	// Review reopens are ordinary non-done moves: scratch created for the next attempt survives
-	// the move, then the next successful completion removes it.
+	// A claim cannot reopen archived work. A review reopen is the host's trusted move out of done:
+	// scratch created for the next attempt survives it, then the next successful completion removes it.
 	reopenedTmp := filepath.Join(root, StateDone, id, "tmp", "review-notes.txt")
 	writeTaskFile(t, reopenedTmp, "resume review fix\n")
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
-		t.Fatalf("review reopen: code=%d err=%v", code, err)
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 1 || err == nil {
+		t.Fatalf("claim of a done task: code=%d err=%v, want a refusal", code, err)
+	}
+	archived, ok := mustCurrentTask(t, root, id)
+	if !ok || archived.State != StateDone {
+		t.Fatalf("the refused claim moved the done task: %+v", archived)
+	}
+	if err := moveTrustedTaskFromDone(root, archived, StateInProgress); err != nil {
+		t.Fatalf("review reopen: %v", err)
 	}
 	if !fileExists(filepath.Join(root, StateInProgress, id, "tmp", "review-notes.txt")) {
 		t.Error("review reopen must retain tmp")
+	}
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		t.Fatalf("claim the reopened task: code=%d err=%v", code, err)
 	}
 	if _, owned := taskOwned(t, root, id); !owned {
 		t.Error("claiming a review reopen must write a fresh owner record")

@@ -1078,7 +1078,10 @@ OPTIONS
   --force       take over a claim held by another live process
 
   Moves a todo task to in progress. An agent's claim normally follows its
-  process; a claim made at a terminal stays until you release or finish it.
+  process. A claim made at a terminal stays until you release or finish it.
+
+  A blocked task must return to todo first, through coop tasks unblock, even
+  when its decision is answered. Completed tasks stay in the archive.
 
 EXAMPLES
   coop tasks claim login-retries

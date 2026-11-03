@@ -74,7 +74,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused when another live process holds the task.",
+		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused for a blocked task, which waits for a human's answer, and when another live process holds the task.",
 		schema: object(map[string]any{
 			"id":       idProp(),
 			"outcome":  enumProp("Omit for normal implementation completion. No-change choices require reason and evidence.", "already_satisfied", "could_not_reproduce", "wont_fix"),
@@ -622,6 +622,11 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 			return refusal(err.Error())
 		}
 		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + s.bulkNote(loc.item.Dir))
+	}
+	// The same rule as `coop tasks claim`: a blocked task's decision belongs to a human, and only the
+	// host's unblock returns it to work, so the box can finish neither its own blocked task nor another.
+	if loc.item.State == tasks.StateBlocked {
+		return refusal(fmt.Sprintf("%s is blocked on a decision for a human, who returns it to todo with `coop tasks unblock %s` — leave it alone", loc.item.ID, loc.item.ID))
 	}
 	if loc.item.ID != s.authority.Assigned {
 		if claim.NoChange() {

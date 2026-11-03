@@ -721,6 +721,30 @@ func TestCompleteWithoutAnAssignedLeaseUsesTheTrustedPath(t *testing.T) {
 	}
 }
 
+// A blocked task waits for a human's answer, and only the host's unblock returns it to work, so
+// the box can complete neither another blocked task nor the one it blocked itself.
+func TestCompleteRefusesABlockedTask(t *testing.T) {
+	for _, assigned := range []string{"t1", ""} {
+		t.Run("assigned="+assigned, func(t *testing.T) {
+			root := queue(t, map[string]string{"t1": tasks.StateBlocked})
+			dir := filepath.Join(root, tasks.StateBlocked, "t1")
+			if err := tasks.RewriteSubtasks(dir, []tasks.Subtask{{Text: "required checks passed", Done: true}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "decision.md"), []byte("# Decision: Postgres or SQLite?\n\n**Resolution:** <!-- Human: write your answer here -->\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sess := newSession(t, newServer(t, root, assigned))
+			if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "coop tasks unblock") {
+				t.Fatalf("refusal = %s", text)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "task.md")); err != nil {
+				t.Fatalf("the refused completion moved the blocked task: %v", err)
+			}
+		})
+	}
+}
+
 func TestProposeCreatesAQueueFolderTheHostWouldHave(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 	sess := newSession(t, newServer(t, root, "t1"))

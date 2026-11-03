@@ -743,6 +743,11 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	if err != nil {
 		return 1, err
 	}
+	if newState == StateInProgress {
+		if err := claimRefusal(t); err != nil {
+			return 1, err
+		}
+	}
 	if t.State == newState {
 		switch newState {
 		case StateDone:
@@ -798,13 +803,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 				return -1, fmt.Errorf("record claim ownership for %s: %w", t.ID, err)
 			}
 		}
-		var err error
-		if t.State == StateDone {
-			err = moveTrustedTaskFromDone(root, t, newState)
-		} else {
-			err = MoveTaskDir(root, t, newState)
-		}
-		if err != nil {
+		if err := MoveTaskDir(root, t, newState); err != nil {
 			if newState == StateInProgress {
 				_ = removeTaskOwnerRecord(root, t.ID) // best-effort: the claim never took effect
 			}
@@ -823,6 +822,29 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		ui.OK("%s %s", pastVerb, t.ID)
 	}
 	return 0, nil
+}
+
+// claimRefusal is why a claim cannot take t, or nil for todo and in-progress work. A blocked task
+// returns to todo only through unblock, the one path that records the human's answer and spends any
+// audit authority, so a claim never moves it, answered or not. A done task stays in the archive.
+func claimRefusal(t Item) error {
+	switch t.State {
+	case StateBlocked:
+		then := [2]string{"Then claim it:", "coop tasks claim " + t.ID}
+		if t.HasDecision && !answeredDecision(t) {
+			return ui.CommandFailed(t.Title+" is blocked", "Its decision is waiting for your answer.",
+				[2]string{"Answer it:", "coop tasks unblock " + t.ID + ` "<answer>"`}, then)
+		}
+		cause := "Its decision is answered. Unblock returns it to todo."
+		if !t.HasDecision {
+			cause = "It has no decision to answer. Unblock returns it to todo."
+		}
+		return ui.CommandFailed(t.Title+" is blocked", cause, [2]string{"Return it to todo:", "coop tasks unblock " + t.ID}, then)
+	case StateDone:
+		return ui.CommandFailed(t.Title+" is done", "Completed work stays in the archive.",
+			[2]string{"For more work, add a task:", `coop tasks add "<title>"`})
+	}
+	return nil
 }
 
 // printClaimResult is the claim's result: who now holds the task, anything exceptional about how

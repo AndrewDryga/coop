@@ -305,6 +305,44 @@ func TestOwnerRecordRejectsMalformedActorIdentity(t *testing.T) {
 	}
 }
 
+// A claim takes ready work only. A blocked task returns to todo through unblock, the one path that
+// records the human's answer and spends any audit authority; a done task stays in the archive. Each
+// refusal leaves the folder where it is, writes no claim, and names the command that moves it on.
+func TestClaimRefusesBlockedAndDoneTasks(t *testing.T) {
+	const id = "2026-11-03-pick-storage"
+	for name, tc := range map[string]struct {
+		state, decision string
+		want, notWant   string
+	}{
+		"blocked with an open decision": {StateBlocked, renderDecisionScaffold(id, "Pick storage"), `coop tasks unblock ` + id + ` "<answer>"`, ""},
+		"blocked with an answer":        {StateBlocked, "# Decision: Which store?\n\n**Resolution:** Postgres.\n", "coop tasks unblock " + id, "<answer>"},
+		"blocked without a decision":    {StateBlocked, "", "coop tasks unblock " + id, "<answer>"},
+		"done":                          {StateDone, "", "Completed work stays in the archive", "unblock"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, tc.state, id)
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Pick storage\n")
+			if tc.decision != "" {
+				writeTaskFile(t, filepath.Join(dir, "decision.md"), tc.decision)
+			}
+			code, err := CmdTasksFolder(root, root, []string{"claim", "pick-storage"})
+			if code != 1 || err == nil {
+				t.Fatalf("claim = (%d, %v), want a refusal", code, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) || (tc.notWant != "" && strings.Contains(err.Error(), tc.notWant)) {
+				t.Fatalf("refusal = %q, want %q without %q", err, tc.want, tc.notWant)
+			}
+			if items := mustReadTaskTree(t, root); len(items) != 1 || items[0].State != tc.state {
+				t.Fatalf("the refused claim moved the task: %+v", items)
+			}
+			if _, owned := taskOwned(t, root, id); owned {
+				t.Fatal("a refused claim wrote an owner record")
+			}
+		})
+	}
+}
+
 // humanOwnerRecordForTest is a well-formed version-2 human claim on id, ready for one mutation.
 func humanOwnerRecordForTest(id string) TaskOwnerRecord {
 	return TaskOwnerRecord{

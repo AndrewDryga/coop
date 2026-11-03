@@ -577,6 +577,31 @@ func TestCompletionTaskIDs(t *testing.T) {
 	}
 }
 
+// claim refuses blocked and done tasks, so its completion offers only the work it can take; other
+// id verbs keep every task.
+func TestCompletionClaimOffersOnlyClaimableTasks(t *testing.T) {
+	repo := t.TempDir()
+	ids := map[string]string{stateTodo: "2026-01-01-ready", stateInProgress: "2026-01-02-resume", stateBlocked: "2026-01-03-waiting", stateDone: "2026-01-04-shipped"}
+	for state, id := range ids {
+		writeTaskFile(t, filepath.Join(repo, tasksRoot, state, id, "task.md"), "# x\n")
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
+	claim := a.completionCandidates([]string{"tasks", "claim"})
+	for _, id := range []string{"2026-01-01-ready", "2026-01-02-resume"} {
+		if !hasCand(claim, id) {
+			t.Errorf("tasks claim completion lost %s: %v", id, claim)
+		}
+	}
+	for _, id := range []string{"2026-01-03-waiting", "2026-01-04-shipped"} {
+		if hasCand(claim, id) {
+			t.Errorf("tasks claim completion offers %s, which claim refuses: %v", id, claim)
+		}
+	}
+	if path := a.completionCandidates([]string{"tasks", "path"}); len(path) != len(ids) {
+		t.Errorf("tasks path completion = %v, want every task", path)
+	}
+}
+
 // Completion offers each sessions subcommand's flags exactly as its parser accepts them, and nothing
 // for a subcommand that doesn't exist (serve and policies once lingered here after they were gone).
 func TestSessionsCompletionMatchesTheParsers(t *testing.T) {

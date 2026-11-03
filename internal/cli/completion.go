@@ -171,6 +171,9 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return tasks.TasksVerbs
 		}
+		if len(prev) == 2 && prev[1] == "claim" { // claim refuses blocked and done tasks
+			return a.taskIDs(tasks.StateTodo, tasks.StateInProgress)
+		}
 		if len(prev) == 2 && taskIDVerb(prev[1]) {
 			return a.taskIDs()
 		}
@@ -430,7 +433,6 @@ func taskIDVerb(v string) bool {
 	return false
 }
 
-// taskIDs lists the task ids across the configured queue(s) — local reads, for `__complete`.
 // netRunIDs completes a run id from this project's recorded runs, newest first.
 // Best-effort like every other candidate lookup: a host with no evidence root
 // simply completes nothing.
@@ -452,7 +454,9 @@ func (a *app) netRunIDs() []string {
 	return ids
 }
 
-func (a *app) taskIDs() []string {
+// taskIDs lists the task ids across the configured queue(s) — local reads, for `__complete` —
+// limited to the given states when any are named.
+func (a *app) taskIDs(states ...string) []string {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return nil
@@ -468,7 +472,9 @@ func (a *app) taskIDs() []string {
 			return nil
 		}
 		for _, it := range items {
-			ids = append(ids, it.ID)
+			if len(states) == 0 || slices.Contains(states, it.State) {
+				ids = append(ids, it.ID)
+			}
 		}
 	}
 	return ids
