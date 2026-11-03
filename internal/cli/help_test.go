@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -150,6 +151,20 @@ func TestHelpTextWidth(t *testing.T) {
 		if n := len([]rune(line)); n > menuWidth {
 			t.Errorf("menu line exceeds %d cols (%d): %q", menuWidth, n, line)
 		}
+	}
+}
+
+// An installed coop has no docs/ folder beside it, so a help page points at the published guide,
+// never at a path in this repository; a GitHub URL to the file is a real link and stays allowed.
+func TestHelpLinksPublishedGuidesNotRepoPaths(t *testing.T) {
+	repoPath := regexp.MustCompile(`(^|[\s(])docs/\S+\.md`)
+	for key, page := range commandHelp {
+		if m := repoPath.FindString(page); m != "" {
+			t.Errorf("help page %q points at the repository path %q; link the published page instead", key, strings.TrimSpace(m))
+		}
+	}
+	if !strings.Contains(commandHelp["eval run"], "https://coop.dryga.com/evals.html") {
+		t.Error(`coop help eval run does not link the published evaluation guide`)
 	}
 }
 

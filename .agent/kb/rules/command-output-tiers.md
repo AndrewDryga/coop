@@ -4,7 +4,7 @@ description: "Unprefixed human output, truthful progress, useful results, and re
 scope: cli-output
 sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go, internal/forkctl/rm.go]
 check: "none"
-updated: 2026-11-02
+updated: 2026-11-03
 ---
 
 # Command output: no prefixes, useful results, truthful progress
@@ -74,6 +74,13 @@ is not proof the live helpers conform; regression tests must exercise all output
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-11-03 — a manual test found `coop eval run core nosuchagent` saying "No preset named" and
+  exiting 1. A who-runs word that names neither an agent nor a preset is now `unknownWhoErr`
+  ("Unknown agent or preset … for <command>", exit 2), drawn by `loadRunPreset` for loop, acp,
+  fork, eval and loop.yaml's work.agent; `coop presets <name>` keeps "No preset named". eval's
+  configuration refusals now return `refusalExit`, so a missing account or malformed target exits
+  2 there as everywhere else, and an account a failed listing hides still exits 1.
+  TestEvalRunRefusesAnUnknownAgentOrPresetAsInput and TestAccountRefusalsNameAFailedListing pin it.
 - 2026-11-02 — announce filtered cleanup immediately, replacing the old two-second timer, and
   separate the independently rendered project summary from Protecting secrets. Swept launch,
   filtered cleanup and open-run exit: the open --rm path already returns after removal; quiet,

@@ -141,25 +141,26 @@ func TestAccountRefusalsNameAFailedListing(t *testing.T) {
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	// An account that does not exist is rejected input (exit 2) everywhere; one a failed listing
+	// may hide is a command that could not do its job (exit 1).
 	commands := []struct {
-		name    string
-		missing int // the exit code for an account that does not exist
-		refuse  func(account string) (int, error)
+		name   string
+		refuse func(account string) (int, error)
 	}{
-		{"credential", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account}) }},
-		{"default", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "default"}) }},
-		{"remove", 2, func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "rm"}) }},
-		{"launch", 2, func(account string) (int, error) { return a.launchAgent("claude@"+account, nil) }},
-		{"preset", 2, func(account string) (int, error) {
-			p, err := a.loadRunPreset("lead-" + account)
+		{"credential", func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account}) }},
+		{"default", func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "default"}) }},
+		{"remove", func(account string) (int, error) { return a.cmdCredentials([]string{"claude", account, "rm"}) }},
+		{"launch", func(account string) (int, error) { return a.launchAgent("claude@"+account, nil) }},
+		{"preset", func(account string) (int, error) {
+			p, err := a.loadRunPreset("coop", "lead-"+account)
 			if err != nil {
 				return 0, err
 			}
 			return a.launchPreset(p, nil)
 		}},
-		{"acp", 2, func(account string) (int, error) { return a.cmdACP([]string{"claude@" + account}) }},
-		{"fork", 2, func(account string) (int, error) { return a.forkCreate([]string{"scratchfork", "claude@" + account}) }},
-		{"eval", 1, func(account string) (int, error) {
+		{"acp", func(account string) (int, error) { return a.cmdACP([]string{"claude@" + account}) }},
+		{"fork", func(account string) (int, error) { return a.forkCreate([]string{"scratchfork", "claude@" + account}) }},
+		{"eval", func(account string) (int, error) {
 			return a.evalRun([]string{"core", "claude@" + account, "--timeout", "35m"})
 		}},
 	}
@@ -183,8 +184,8 @@ func TestAccountRefusalsNameAFailedListing(t *testing.T) {
 	}
 	for _, tc := range commands {
 		t.Run(tc.name+"-missing", func(t *testing.T) {
-			if code, err := tc.refuse("ghost"); code != tc.missing || asUsage(err) == nil || !strings.HasPrefix(asUsage(err).Error(), `No Claude account named "ghost"`) {
-				t.Fatalf("missing account = (%d, %v), want (%d, the missing-account refusal)", code, err, tc.missing)
+			if code, err := tc.refuse("ghost"); code != 2 || asUsage(err) == nil || !strings.HasPrefix(asUsage(err).Error(), `No Claude account named "ghost"`) {
+				t.Fatalf("missing account = (%d, %v), want (2, the missing-account refusal)", code, err)
 			}
 		})
 	}

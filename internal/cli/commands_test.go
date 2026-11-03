@@ -1791,7 +1791,7 @@ func TestAPresetThatDoesNotLoadExitsByWhatWentWrong(t *testing.T) {
 		want string
 		code int
 	}{
-		{[]string{"loop", "missing"}, `No preset named "missing"`, 2},
+		{[]string{"loop", "missing"}, `Unknown agent or preset "missing" for "coop loop"`, 2},
 		{[]string{"loop", "broken"}, `Could not load preset "broken"`, 1},
 		{[]string{"acp", "broken"}, `Could not load preset "broken"`, 1},
 		{[]string{"broken"}, `Could not load preset "broken"`, 1},

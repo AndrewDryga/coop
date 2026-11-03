@@ -30,6 +30,11 @@ func TestEveryShippedStarterLoads(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the shipped starter does not load: %v", err)
 			}
+			// coop eval ls names the starter by its ID, and runs and inspect by the suite's name: one
+			// suite, one name, or the reader cannot match a recorded run to what they ran.
+			if suite.Name != s.ID {
+				t.Errorf("suite name %q differs from the starter ID %q", suite.Name, s.ID)
+			}
 			if len(suite.Cases) == 0 {
 				t.Error("a starter with no cases measures nothing")
 			}

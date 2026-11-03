@@ -47,9 +47,9 @@ type Plan struct {
 	Suite      *Suite
 	Configs    []Configuration
 	Repeat     int
-	Jobs       int // effective workers, never more than the number of trials
-	Timeout    time.Duration
-	LoopConfig string // the loop.yaml this run uses (override or the suite's), for a loop suite
+	Jobs       int           // effective workers, never more than the number of trials
+	Timeout    time.Duration // zero only for a preview, which may go without a deadline
+	LoopConfig string        // the loop.yaml this run uses (override or the suite's), for a loop suite
 }
 
 // BuildPlan validates the request and returns the matrix. It launches nothing. It refuses an empty
@@ -88,10 +88,11 @@ func BuildPlan(s *Suite, configs []Configuration, opts Options) (*Plan, error) {
 	if jobs > trials {
 		jobs = trials // never reserve more workers than there is work
 	}
-	if opts.Timeout <= 0 {
+	// A preview launches nothing, so it may go without a deadline; its plan then records none.
+	if opts.Timeout <= 0 && !opts.DryRun {
 		return nil, errors.New("a run needs a positive --timeout covering preparation, trials and grading")
 	}
-	if longest := s.longestCaseTimeout(); opts.Timeout < longest {
+	if longest := s.longestCaseTimeout(); opts.Timeout > 0 && opts.Timeout < longest {
 		return nil, fmt.Errorf("--timeout %s is smaller than the longest case budget %s; no trial could finish",
 			opts.Timeout, longest)
 	}

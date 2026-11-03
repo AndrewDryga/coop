@@ -9,18 +9,21 @@ package cli
 // RunSpec's Preset.
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// loadRunPreset resolves the repo and loads the named preset ("" loads nothing). Pure
-// local reads — validation fails loud here, before any box or detached worker starts. A refusal is
-// drawn as presetLoadErr draws it, so refusalExit gives its exit code.
-func (a *app) loadRunPreset(name string) (*preset.Preset, error) {
+// loadRunPreset resolves the repo and loads the preset named in command's who-runs slot ("" loads
+// nothing). Pure local reads — validation fails loud here, before any box or detached worker starts.
+// A preset that will not load is drawn as presetLoadErr draws it; a name nothing defines is
+// unknownWhoErr. Either way refusalExit gives the exit code.
+func (a *app) loadRunPreset(command, name string) (*preset.Preset, error) {
 	if name == "" {
 		return nil, nil
 	}
@@ -29,10 +32,24 @@ func (a *app) loadRunPreset(name string) (*preset.Preset, error) {
 		return nil, ui.CommandFailed("Could not find the project", err.Error()) // a run that cannot start: exit 1
 	}
 	p, err := preset.Load(repo, a.cfg.GlobalPresetsDir(), name)
+	if errors.Is(err, preset.ErrNotFound) {
+		return nil, unknownWhoErr(command, name)
+	}
 	if err != nil {
 		return nil, presetLoadErr(repo, name, err)
 	}
 	return p, nil
+}
+
+// unknownWhoErr refuses a who-runs word that is neither an agent nor a preset. The slot takes
+// either (a word that is not a target is read as a preset name), so the refusal offers both instead
+// of calling a mistyped agent a missing preset.
+func unknownWhoErr(command, word string) error {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Unknown agent or preset %q for %q", word, command),
+		Cause:    "Name an agent (" + ui.List(agents.Names(), "or") + ") or a preset listed by coop presets.",
+		Rows:     [][2]string{{"Help:", ui.HelpCommand(command)}},
+	}
 }
 
 // presetNamed reports whether word names an EXISTING preset folder (.agent/presets/<word>/, or the

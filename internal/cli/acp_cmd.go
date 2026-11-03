@@ -191,7 +191,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 			a.acpAccountBindings = bindings
 		}
 	}
-	p, err := a.loadRunPreset(presetName)
+	p, err := a.loadRunPreset("coop acp", presetName)
 	if err != nil {
 		return refusalExit(err), err
 	}

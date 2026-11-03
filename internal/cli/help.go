@@ -1699,7 +1699,7 @@ TRY IT
      coop eval inspect
 
 RUN AND COMPARE
-  coop eval run <suite> <target|preset>...  run a suite; --timeout is required
+  coop eval run <suite> <target|preset>...  run a suite; a real run needs --timeout
   coop eval runs                            find runs, configurations and outcomes
   coop eval inspect [<run-id>]              read results and causes; latest by default
   coop eval compare <before-id> <after-id>  compare two recorded runs without spending
@@ -1727,7 +1727,7 @@ provider[:model][/effort][@account]. Presets need a loop suite such as queue;
 core and other single-agent suites accept targets only.
 
 OPTIONS
-  --timeout <duration>  required time limit, including preparation and grading
+  --timeout <duration>  time limit, including preparation and grading; required to run
   --dry-run             print the plan without launching containers or providers
   --repeat <n>          trials per case and configuration (default: 1)
   --jobs <n>            concurrent trials (default: 1)
@@ -1742,7 +1742,7 @@ BEFORE A REAL RUN
   cloc is optional. Install it for change-size figures; grading and verdicts still
   work when it is unavailable, and the result labels the missing measurement.
 
-  --timeout is required even for a preview. It limits time, not spending.
+  Only a real run requires --timeout. It limits time, not spending.
   The timer starts when the command starts and stops preparation, trials and
   grading. After it expires, Coop still tries to clean up and save the final record.
   More configurations or repetitions mean more paid work. Each case also has its
@@ -1758,7 +1758,7 @@ CUSTOM RUNTIME PROFILES
   limit is not enforced or measured. This Coop-adapted workload does not match
   every condition of the official benchmark.
   Image and platform details shown by a dry run are provisional.
-  See docs/evals.md for profile setup.
+  See https://coop.dryga.com/evals.html for profile setup.
 
 EXAMPLES
   coop eval run core codex --timeout 35m --dry-run

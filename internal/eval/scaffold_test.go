@@ -28,6 +28,33 @@ func TestScaffoldWritesAWorkingSuiteAndNeverOverwrites(t *testing.T) {
 	}
 }
 
+// A scaffolded suite is named after its folder, so coop eval runs tells two custom suites apart.
+// The name is written as a YAML string, so a folder name YAML would read as something else stays
+// the name; a folder with no name of its own (the filesystem root) keeps the generic one.
+func TestScaffoldNamesTheSuiteAfterItsFolder(t *testing.T) {
+	for folder, want := range map[string]string{
+		"nightly-checks": "nightly-checks",
+		"my suite":       "my suite",
+		"a: b #c":        "a: b #c",
+		"true":           "true",
+	} {
+		dir := filepath.Join(t.TempDir(), folder)
+		if err := Scaffold(dir); err != nil {
+			t.Fatal(err)
+		}
+		suite, err := Load(filepath.Join(dir, "suite.yaml"))
+		if err != nil {
+			t.Fatalf("scaffold in %q does not load: %v", folder, err)
+		}
+		if suite.Name != want {
+			t.Errorf("scaffold in %q named the suite %q, want %q", folder, suite.Name, want)
+		}
+	}
+	if got := suiteName(string(filepath.Separator)); got != "my-suite" {
+		t.Errorf("suiteName(root) = %q, want the generic my-suite", got)
+	}
+}
+
 func TestScaffoldRefusesKeptFileBeforeCreatingOtherFiles(t *testing.T) {
 	dir := t.TempDir()
 	kept := filepath.Join(dir, "files", "greeting", ".keep")

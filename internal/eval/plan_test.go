@@ -65,6 +65,21 @@ func TestBuildPlanRefusesEveryBadRequest(t *testing.T) {
 	}
 }
 
+// A preview launches nothing, so it needs no deadline; the plan records none, and a real run still
+// cannot be built without one.
+func TestBuildPlanPreviewsWithoutATimeout(t *testing.T) {
+	s := loadAgent(t)
+	one := []Configuration{{Kind: ConfigTarget, Label: "codex"}}
+	p, err := BuildPlan(s, one, Options{Jobs: 1, Repeat: 1, DryRun: true})
+	if err != nil || p.Timeout != 0 {
+		t.Fatalf("preview without --timeout = (%+v, %v), want a plan with no deadline", p, err)
+	}
+	if _, err := BuildPlan(s, one, Options{Jobs: 1, Repeat: 1, DryRun: true, Timeout: time.Minute}); err == nil ||
+		!strings.Contains(err.Error(), "smaller than the longest case budget") {
+		t.Errorf("a preview's given --timeout is still checked against the case budget: %v", err)
+	}
+}
+
 func TestBuildPlanTakesTheLoopConfigOverrideForALoopSuite(t *testing.T) {
 	s, err := Load(writeSuite(t, loopSuite, "loop.yaml", "fixtures/app", "queues/repo-evolution", "verifiers/repo-evolution"))
 	if err != nil {

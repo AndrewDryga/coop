@@ -9,10 +9,13 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestEvalRunImageIgnoresCurrentCheckout(t *testing.T) {
@@ -71,9 +74,10 @@ func TestParseEvalRunArgs(t *testing.T) {
 		{"suite and two configs", []string{"./s.yaml", "codex", "frontier", "--timeout", "60m"}, "./s.yaml", []string{"codex", "frontier"}, 1, 1, time.Hour, "", ""},
 		{"flags interleaved", []string{"./s.yaml", "--jobs", "4", "codex", "--repeat", "3", "--timeout", "30m"}, "./s.yaml", []string{"codex"}, 4, 3, 30 * time.Minute, "", ""},
 		{"loop config override", []string{"./s.yaml", "frontier", "--timeout", "60m", "--loop-config", ".agent/loop.yaml"}, "./s.yaml", []string{"frontier"}, 1, 1, time.Hour, ".agent/loop.yaml", ""},
-		// A run needs an explicit --timeout covering preparation, trials and grading.
+		// A real run needs an explicit --timeout covering preparation, trials and grading; a preview
+		// launches nothing, so it needs none.
 		{"no timeout", []string{"./s.yaml", "codex"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
-		{"dry run still needs timeout", []string{"./s.yaml", "codex", "--dry-run"}, "", nil, 0, 0, 0, "", "Missing --timeout"},
+		{"dry run needs no timeout", []string{"./s.yaml", "codex", "--dry-run"}, "./s.yaml", []string{"codex"}, 1, 1, 0, "", ""},
 		{"missing flag value", []string{"./s.yaml", "codex", "--jobs"}, "", nil, 0, 0, 0, "", `Missing value for "--jobs"`},
 		{"flag is not loop config path", []string{"./s.yaml", "codex", "--loop-config", "--dry-run", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Missing value for "--loop-config"`},
 		{"repeated flag", []string{"./s.yaml", "codex", "--jobs", "2", "--jobs", "3", "--timeout", "10m"}, "", nil, 0, 0, 0, "", `Option "--jobs" can only be used once`},
@@ -243,6 +247,75 @@ func TestEvalStarterAndScaffoldHintsPreviewSupportedTargets(t *testing.T) {
 	})
 	if !strings.Contains(out, "'"+filepath.Join(dir, "suite.yaml")+"' codex --timeout 12m --dry-run") || strings.Contains(out, "<target|preset>") {
 		t.Fatalf("scaffold hint is not a copyable supported preview:\n%s", out)
+	}
+}
+
+// A preview launches nothing, so --timeout is a requirement of a real run only: the preview shows
+// the whole plan in counted words and says the deadline is not set, and a real run without one is
+// still refused as input.
+func TestEvalDryRunNeedsNoTimeout(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := trialSuite(t)
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	out := captureStdout(t, func() {
+		code, err := a.evalRun([]string{suite.Path, "codex", "codex:gpt-5.6", "--repeat", "2", "--dry-run"})
+		if code != 0 || err != nil {
+			t.Fatalf("dry run without --timeout = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{
+		"Suite: trial-suite (agent runner, 1 case)",
+		"Matrix: 1 case x 2 configurations x 2 repeats = 4 trials\n",
+		"Deadline: not set. A real run needs --timeout, which limits preparation, trials and grading.\n",
+		"Dry run: nothing was launched.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(s)") {
+		t.Errorf("preview counts with (s) instead of words:\n%s", out)
+	}
+	code, err := a.evalRun([]string{suite.Path, "codex"})
+	if usage := asUsage(err); code != 2 || usage == nil || !strings.Contains(usage.Headline, "--timeout") {
+		t.Errorf("real run without --timeout = (%d, %v), want the missing-option refusal", code, err)
+	}
+}
+
+// The who-runs slot takes an agent or a preset, so a word that is neither is refused as rejected
+// input naming both (exit 2), the same in coop eval run as in coop loop, never as a missing preset
+// or a failed run. A malformed target is the same kind of mistake.
+func TestEvalRunRefusesAnUnknownAgentOrPresetAsInput(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := evalTestRepo(t)
+	if err := tasks.ScaffoldStateDirs(filepath.Join(repo, tasks.TasksRoot)); err != nil {
+		t.Fatal(err)
+	}
+	a := func() *app {
+		return &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), RuntimeName: "coop-no-such-runtime-xyz"}}
+	}
+	offer := "Name an agent (" + ui.List(agents.Names(), "or") + ") or a preset listed by coop presets."
+	for _, tc := range []struct {
+		args        []string
+		want, cause string
+	}{
+		{[]string{"eval", "run", "core", "nosuchagent", "--dry-run"}, `Unknown agent or preset "nosuchagent" for "coop eval run"`, offer},
+		{[]string{"eval", "run", "core", "Codex", "--timeout", "35m"}, `Unknown agent or preset "Codex" for "coop eval run"`, offer},
+		{[]string{"loop", "nosuchagent"}, `Unknown agent or preset "nosuchagent" for "coop loop"`, offer},
+		{[]string{"eval", "run", "core", "nope:model", "--dry-run"}, `Unknown agent "nope:model" for "coop eval run"`, ""},
+	} {
+		code, err := a().dispatch(tc.args)
+		usage := asUsage(err)
+		if code != 2 || usage == nil || usage.Headline != tc.want || tc.cause != "" && usage.Cause != tc.cause {
+			t.Errorf("coop %s = (%d, %v); want exit 2 with %q", strings.Join(tc.args, " "), code, err, tc.want)
+		}
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := eval.ListRuns(root); err != nil || len(ids) != 0 {
+		t.Fatalf("refused input left run records: %v, %v", ids, err)
 	}
 }
 

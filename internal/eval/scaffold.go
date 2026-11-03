@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Scaffold writes a working custom suite into dir: a runnable agent example plus a documented loop
@@ -14,8 +17,13 @@ import (
 // placeholder — so `coop eval init` followed by `coop eval run` produces an actual verdict, and a
 // user edits something they have already seen work.
 func Scaffold(dir string) error {
+	// A string always marshals; written as YAML, a folder name like "true" or "a: b" stays a name.
+	name, err := yaml.Marshal(suiteName(dir))
+	if err != nil {
+		return err
+	}
 	files := map[string]string{
-		"suite.yaml":                   scaffoldManifest,
+		"suite.yaml":                   fmt.Sprintf(scaffoldManifest, strings.TrimSuffix(string(name), "\n")),
 		"verifiers/greeting/README.md": scaffoldVerifierNote,
 		"verifiers/greeting/verify.sh": scaffoldVerifier,
 		"files/greeting/.keep":         "",
@@ -54,6 +62,18 @@ func Scaffold(dir string) error {
 	return nil
 }
 
+// suiteName is the name a scaffolded suite takes: its folder's, so coop eval runs tells custom
+// suites apart. A folder with no name of its own (the filesystem root) keeps the generic one.
+func suiteName(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if name := filepath.Base(dir); strings.TrimSpace(name) != "" && name != "." && name != string(filepath.Separator) {
+		return name
+	}
+	return "my-suite"
+}
+
 const scaffoldManifest = `# A custom Coop eval suite. Run it with:
 #   coop eval run ./suite.yaml codex --timeout 12m --dry-run
 #
@@ -64,7 +84,7 @@ const scaffoldManifest = `# A custom Coop eval suite. Run it with:
 # Read the latest result and any errors with ` + "`coop eval inspect`" + `.
 
 version: 1
-name: my-suite
+name: %s
 runner: agent            # "agent" (one headless attempt) or "loop" (the whole Coop loop)
 
 cases:

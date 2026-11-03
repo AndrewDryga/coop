@@ -6,7 +6,7 @@
 # configuration passes tells you nothing.
 
 version: 1
-name: coop-core
+name: core
 runner: agent
 
 cases:

@@ -215,15 +215,17 @@ func TestLoadRunPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-	p, err := a.loadRunPreset("frontier")
+	p, err := a.loadRunPreset("coop loop", "frontier")
 	if err != nil || p == nil || p.Lead().Provider != "claude" {
 		t.Fatalf("loadRunPreset = (%+v, %v)", p, err)
 	}
-	if p, err := a.loadRunPreset(""); p != nil || err != nil {
+	if p, err := a.loadRunPreset("coop loop", ""); p != nil || err != nil {
 		t.Errorf("empty name = (%v, %v), want (nil, nil)", p, err)
 	}
-	if _, err := a.loadRunPreset("ghost"); err == nil || !strings.Contains(err.Error(), `No preset named "ghost"`) {
-		t.Errorf("missing preset should fail loud: %v", err)
+	// The slot takes an agent or a preset, so a miss is refused as either, never as a missing preset.
+	if _, err := a.loadRunPreset("coop loop", "ghost"); refusalExit(err) != 2 ||
+		!strings.Contains(err.Error(), `Unknown agent or preset "ghost" for "coop loop"`) {
+		t.Errorf("missing preset should fail loud as rejected input: %v", err)
 	}
 }
 

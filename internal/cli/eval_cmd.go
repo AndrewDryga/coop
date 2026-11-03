@@ -15,7 +15,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/eval"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
-	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -135,7 +134,7 @@ func (a *app) evalRun(args []string) (int, error) {
 	if len(positionals) == 0 {
 		return 2, ui.MissingArgument("<target|preset>", "coop eval run", "coop eval run "+suitePath+" <target|preset>... --timeout 60m")
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), started.Add(opts.Timeout))
+	ctx, cancel := evalDeadline(started, opts.Timeout)
 	defer cancel()
 	suite, err := a.resolveEvalSuite(suitePath)
 	if err != nil {
@@ -146,7 +145,7 @@ func (a *app) evalRun(args []string) (int, error) {
 	}
 	configs, err := a.resolveEvalConfigurations(positionals)
 	if err != nil {
-		return 1, err
+		return refusalExit(err), err // a mistyped target is rejected input; an unlistable account is not
 	}
 	if err := ctx.Err(); err != nil {
 		return 1, err
@@ -238,6 +237,15 @@ func (a *app) evalRun(args []string) (int, error) {
 	return a.executeEvalRun(ctx, plan, frozen)
 }
 
+// evalDeadline bounds the invocation by its --timeout from when the command started. Only a preview
+// has none, and it launches nothing, so its context is merely cancelable.
+func evalDeadline(started time.Time, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithDeadline(context.Background(), started.Add(timeout))
+}
+
 // executeEvalRun creates the run record, works the whole matrix and prints the sealed summary. Every
 // trial's workspace lives under one scratch root that is removed when the run ends — the durable
 // record is the store's, not a pile of temp directories.
@@ -285,7 +293,7 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 		if c.Kind != eval.ConfigPreset {
 			continue
 		}
-		loaded, perr := a.loadRunPreset(c.Label)
+		loaded, perr := a.loadRunPreset("coop eval run", c.Label)
 		if perr != nil {
 			return 1, perr
 		}
@@ -380,8 +388,8 @@ func (a *app) resolveEvalSuite(ref string) (*eval.Suite, error) {
 
 // resolveEvalConfigurations turns each positional into an evaluated configuration, using the same
 // target parsing and preset resolution as every other launch. Each positional is its OWN
-// configuration — there is no fallback to the preceding one. A malformed target or a missing preset
-// is refused here, by name, before any plan is shown.
+// configuration — there is no fallback to the preceding one. A malformed target or a word that names
+// neither an agent nor a preset is refused here, by name, before any plan is shown.
 func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configuration, error) {
 	configs := make([]eval.Configuration, 0, len(positionals))
 	seen := make(map[eval.Configuration]bool, len(positionals))
@@ -390,7 +398,7 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 		if isTargetHead(who) {
 			t, err := agents.ParseTarget(who)
 			if err != nil {
-				return nil, err
+				return nil, targetUsage(err, "coop eval run", "coop eval run <suite> <target|preset>... --timeout 60m")
 			}
 			// A pinned @account must exist, refused by name before any work — the same promise every
 			// other launch makes. A bare target (no account) is left to the provider's own defaults.
@@ -401,10 +409,7 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 			}
 			c = eval.Configuration{Kind: eval.ConfigTarget, Label: t.String()}
 		} else {
-			if !preset.ValidName(who) {
-				return nil, fmt.Errorf("%q is neither a target (provider[:model][/effort][@account]) nor a preset name", who)
-			}
-			if _, err := a.loadRunPreset(who); err != nil {
+			if _, err := a.loadRunPreset("coop eval run", who); err != nil {
 				return nil, err
 			}
 			c = eval.Configuration{Kind: eval.ConfigPreset, Label: who}
@@ -543,7 +548,8 @@ func (a *app) evalInit(args []string) (int, error) {
 
 // parseEvalRunArgs splits `run` into the suite, the target/preset positionals and the flags. The
 // suite is the first positional; every positional after it is a configuration; flags may appear
-// anywhere. Defaults: one repetition, one worker, no cost limit; a run needs an explicit --timeout.
+// anywhere. Defaults: one repetition, one worker, no cost limit; a real run needs an explicit
+// --timeout.
 func parseEvalRunArgs(args []string) (suite string, positionals []string, opts eval.Options, err error) {
 	const cmd = "coop eval run"
 	opts = eval.Options{Jobs: 1, Repeat: 1}
@@ -606,11 +612,10 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 			positionals = append(positionals, arg)
 		}
 	}
-	// A whole-invocation deadline is required, not defaulted: an eval launches real models, and the
-	// one number that bounds what it can spend should be a decision the operator made, not one Coop
-	// guessed. It is required for --dry-run too, because the dry run's job is to show exactly what
-	// the real run would do — deadline included.
-	if opts.Timeout <= 0 {
+	// A real run's whole-invocation deadline is required, not defaulted: an eval launches real models,
+	// and the one number that bounds what it can spend should be a decision the operator made, not
+	// one Coop guessed. A preview launches nothing, so it runs without one and its plan says so.
+	if opts.Timeout <= 0 && !opts.DryRun {
 		return "", nil, opts, ui.MissingArgument("--timeout", cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
 	}
 	return suite, positionals, opts, nil
@@ -632,8 +637,8 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	if p.Suite.IsLoop() {
 		kind = "loop"
 	}
-	fmt.Printf("Suite: %s (%s runner, %d case(s)) [workload %s]\n", p.Suite.Name, kind, len(p.Suite.Cases),
-		eval.WorkloadFingerprint(p.Suite).Short())
+	fmt.Printf("Suite: %s (%s runner, %s) [workload %s]\n", evalDisplayText(p.Suite.Name), kind,
+		ui.Count(len(p.Suite.Cases), "case"), eval.WorkloadFingerprint(p.Suite).Short())
 	if p.Suite.IsLoop() {
 		fmt.Printf("Loop config: %s\n", p.LoopConfig)
 	}
@@ -644,10 +649,14 @@ func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 			frozen[i].Fingerprint().Short(), frozen[i].Build)
 	}
 	fmt.Println()
-	fmt.Printf("Matrix: %d case(s) x %d configuration(s) x %d repeat(s) = %d trial(s)\n",
-		len(p.Suite.Cases), len(p.Configs), p.Repeat, p.Trials())
+	fmt.Printf("Matrix: %s x %s x %s = %s\n", ui.Count(len(p.Suite.Cases), "case"),
+		ui.Count(len(p.Configs), "configuration"), ui.Count(p.Repeat, "repeat"), ui.Count(p.Trials(), "trial"))
 	fmt.Printf("Workers: %d\n", p.Jobs)
-	fmt.Printf("Deadline: %s from command start (stops preparation, trials and grading)\n", p.Timeout)
+	if p.Timeout > 0 {
+		fmt.Printf("Deadline: %s from command start (stops preparation, trials and grading)\n", p.Timeout)
+	} else {
+		fmt.Println("Deadline: not set. A real run needs --timeout, which limits preparation, trials and grading.")
+	}
 	fmt.Println()
 	fmt.Println("Isolation: operator MCP servers and COOP_RUN_ARGS are omitted from trials")
 	fmt.Println("Native web search/fetch: disabled (not an authenticated-request firewall)")

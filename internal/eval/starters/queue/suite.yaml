@@ -5,7 +5,7 @@
 # not the number of folders that reached 99_done, because moving a task is not the same as doing it.
 
 version: 1
-name: coop-queue
+name: queue
 runner: loop
 loop_config: ./loop.yaml
 

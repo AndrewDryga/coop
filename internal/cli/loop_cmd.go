@@ -125,7 +125,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	}
 	// A positional preset name: its lead agent leads, its roles seed the run, and its models
 	// ladder becomes the rotation. A positional target instead pins the one-off ladder.
-	p, err := a.loadRunPreset(presetName)
+	p, err := a.loadRunPreset(loopCommand, presetName)
 	if err != nil {
 		return refusalExit(err), err
 	}
@@ -293,7 +293,7 @@ func (a *app) resolveWorkAgent(rungs []string) (agent string, p *preset.Preset, 
 	}
 	for _, r := range rs {
 		if r.Preset != "" {
-			pr, perr := a.loadRunPreset(r.Preset)
+			pr, perr := a.loadRunPreset(loopCommand, r.Preset)
 			if perr != nil {
 				// The name comes from .agent/loop.yaml, not the command line, so the refusal says so.
 				cause := perr.Error()

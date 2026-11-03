@@ -390,7 +390,7 @@ func (a *app) forkCreate(args []string) (int, error) {
 	// then default the fork's agent, credentials, and model from the preset's lead — a positional
 	// target instead pins them, and the lead's model/credentials only apply when the fork runs the lead.
 	if fa.preset != "" {
-		p, err := a.loadRunPreset(fa.preset)
+		p, err := a.loadRunPreset("coop fork", fa.preset)
 		if err != nil {
 			return refusalExit(err), err
 		}
