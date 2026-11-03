@@ -80,7 +80,7 @@ var allowedEdges = map[string][]string{
 	"shadowpath":            {"safefile"},
 	"taskchannel":           nil,
 	"taskmcp":               {"mcp", "tasks"},
-	"tasks":                 {"box", "config", "forkspace", "hostsurface", "processidentity", "project", "randid", "safetext", "taskstate", "ui"},
+	"tasks":                 {"box", "config", "forkspace", "hostsurface", "processidentity", "project", "randid", "safetext", "scaffold", "taskstate", "ui"},
 	"taskstate":             nil,
 	"testutil/gitrepo":      nil,
 	"testutil/liveprovider": {"agent", "box", "config", "testutil/procharness", "testutil/teststate"},

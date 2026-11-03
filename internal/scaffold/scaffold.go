@@ -144,7 +144,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 	if _, err := WriteProject(repo, subs, services...); err != nil {
 		return s.notices, err
 	}
-	if err := s.updateGitignore(agentDirs, writeAndSync); err != nil {
+	if _, err := s.updateGitignore(agentDirs, writeAndSync); err != nil {
 		return s.notices, err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
@@ -622,19 +622,20 @@ func CheckGitignore(repo string) error {
 }
 
 // updateGitignore edits .gitignore through the rooted reader and staged replacement the other
-// in-place edits use. A box can write the repository, so .gitignore may be a link it planted to a
-// host file such as ~/.zshrc: the read refuses a link or any other non-regular entry, and the edit
-// is renamed into place rather than written through whatever the name points to by then.
-func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite) error {
+// in-place edits use, and reports whether it changed the file. A box can write the repository, so
+// .gitignore may be a link it planted to a host file such as ~/.zshrc: the read refuses a link or
+// any other non-regular entry, and the edit is renamed into place rather than written through
+// whatever the name points to by then.
+func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite) (bool, error) {
 	root, err := os.OpenRoot(s.repo)
 	if err != nil {
-		return fmt.Errorf("open scaffold root %s: %w", s.repo, err)
+		return false, fmt.Errorf("open scaffold root %s: %w", s.repo, err)
 	}
 	defer root.Close()
 	dest := filepath.Join(s.repo, ".gitignore")
 	before, present, err := readProjectFile(root, ".gitignore", ".gitignore")
 	if err != nil {
-		return err
+		return false, err
 	}
 	if present {
 		defer before.dir.Close()
@@ -675,16 +676,16 @@ func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite
 
 	out := strings.Join(lines, "\n") + "\n"
 	if out == orig {
-		return nil // already up to date
+		return false, nil // already up to date
 	}
 	if present {
-		return replaceProjectFile(before, dest, []byte(out), write)
+		return true, replaceProjectFile(before, dest, []byte(out), write)
 	}
 	created, err := writeNewRepoFile(s.repo, dest, []byte(out), 0o644, write)
 	if err == nil && !created { // a file appeared after the read; an exclusive create never overwrites it
-		return fmt.Errorf("%s already exists", dest)
+		return false, fmt.Errorf("%s already exists", dest)
 	}
-	return err
+	return err == nil, err
 }
 
 func hasIgnoreLine(lines []string, want string) bool {

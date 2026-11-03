@@ -30,15 +30,48 @@ import (
 // member reads as terraform/environments/va1/… and two members with the same basename stay
 // distinct (rendering from the member's PARENT collapsed both to "va1/…").
 func InitSubproject(repo, dir string) error {
-	dirs := make([]string, 0, len(taskstate.All))
-	for _, st := range taskstate.All {
-		dirs = append(dirs, filepath.Join(dir, ".agent", "tasks", st))
-	}
-	if err := mkdirs(repo, dirs...); err != nil {
-		return err
+	_, err := (&scaffolder{repo: repo}).initQueueFolder(filepath.Join(dir, ".agent", "tasks"))
+	return err
+}
+
+// QueueSetup is what InitQueue wrote, so the command that set the queue up can say so.
+type QueueSetup struct {
+	Readme    bool // the queue's README.md: how tasks work, and the template new tasks start from
+	Gitignore bool // .gitignore gained the lines that keep task folders out of Git
+}
+
+// InitQueue is the queue part of Init, for the first `coop tasks add` or `coop backlog add` in a
+// project nobody ran coop init in: queue's state folders and README.md, and the .gitignore lines
+// that keep task folders out of Git. queue is the queue folder inside repo. A .gitignore coop cannot
+// edit stops it before anything is written, and nothing that exists is replaced.
+func InitQueue(repo, queue string) (QueueSetup, error) {
+	if err := CheckGitignore(repo); err != nil {
+		return QueueSetup{}, err
 	}
 	s := &scaffolder{repo: repo}
-	return s.writeIfAbsent(filepath.Join(dir, ".agent", "tasks", "README.md"), "templates/agent/tasks/README.md", 0o644)
+	ignored, err := s.updateGitignore(nil, writeAndSync)
+	if err != nil {
+		return QueueSetup{}, err
+	}
+	readme, err := s.initQueueFolder(queue)
+	return QueueSetup{Readme: readme, Gitignore: ignored}, err
+}
+
+// initQueueFolder makes the state folders of queue and its README.md when it has none, reporting
+// whether it wrote the README.
+func (s *scaffolder) initQueueFolder(queue string) (bool, error) {
+	dirs := make([]string, 0, len(taskstate.All))
+	for _, st := range taskstate.All {
+		dirs = append(dirs, filepath.Join(queue, st))
+	}
+	if err := mkdirs(s.repo, dirs...); err != nil {
+		return false, err
+	}
+	readme, err := templates.ReadFile("templates/agent/tasks/README.md")
+	if err != nil {
+		return false, err
+	}
+	return writeNewRepoFile(s.repo, filepath.Join(queue, "README.md"), readme, 0o644, writeAndSync)
 }
 
 // DetectSubprojects returns the directories under repo that are themselves coop projects (they

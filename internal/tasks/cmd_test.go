@@ -1206,10 +1206,53 @@ func TestTasksFolderLint(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(clean, StateTodo, "ok", "task.md"), "---\ntitle: OK\n---\n# OK\n**Context:** why\n**Acceptance criteria:** the gate is green\n**Approach:** do it\n")
-	writeTaskFile(t, filepath.Join(clean, StateBlocked, "bk", "task.md"), "# BK\n**Context:** c\n**Acceptance criteria:** y\n**Approach:** a\n")
+	writeTaskFile(t, filepath.Join(clean, StateBlocked, "bk", "task.md"), "---\ntitle: BK\n---\n# BK\n**Context:** c\n**Acceptance criteria:** y\n**Approach:** a\n")
 	writeTaskFile(t, filepath.Join(clean, StateBlocked, "bk", "decision.md"), "# Decision: which?\n**Recommendation:** A\n")
 	if code, err := tasksFolderLint(clean); err != nil || code != 0 {
 		t.Fatalf("clean lint: code=%d err=%v (want 0)", code, err)
+	}
+}
+
+// lint names a task that still holds the template's placeholders and a task.md with no frontmatter.
+// A placeholder is a section or subtask that is wholly one <…>, so text that merely uses angle
+// brackets is never one.
+func TestTasksFolderLintReportsUnfilledTasksAndMissingFrontmatter(t *testing.T) {
+	root := t.TempDir()
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderAdd(root, []string{"Fix login retries"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-bare", "task.md"),
+		"# Bare\n\n**Context:** c\n\n**Acceptance criteria:** a\n\n**Approach:** p\n\n## Subtasks\n\n- [ ] do it\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-03-markup", "task.md"),
+		"---\nid: 2026-01-03-markup\ntitle: Markup\n---\n\n# Markup\n\n**Context:** The <div> wrapper eats <Enter>.\n\n"+
+			"**Acceptance criteria:** <Button> renders\n\n**Approach:**\n\n<a href=\"/x\">the link</a> keeps its target.\n\n"+
+			"## Subtasks\n\n- [ ] <Button> renders <Icon>\n")
+	var code int
+	out := captureStdout(t, func() {
+		_ = captureStderr(t, func() { code, _ = tasksFolderLint(root) })
+	})
+	if code != 1 {
+		t.Fatalf("lint = %d, want 1:\n%s", code, out)
+	}
+	stub := ""
+	for _, item := range mustReadTaskTree(t, root) {
+		if strings.HasSuffix(item.ID, "-fix-login-retries") {
+			stub = item.ID
+		}
+	}
+	for _, want := range []string{
+		stub + ": not filled in yet: Context, Acceptance criteria, Approach and a subtask",
+		"2026-01-02-bare: task.md has no frontmatter",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lint lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "markup") || strings.Count(out, "\n") != 2 {
+		t.Errorf("lint flagged text that only uses angle brackets, or more than the two findings:\n%s", out)
 	}
 }
 
@@ -1219,7 +1262,7 @@ func TestTasksFolderLint(t *testing.T) {
 func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "t1", "task.md"),
-		"# T\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n")
+		"---\ntitle: T\n---\n# T\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n")
 	// only 00_todo exists (a hand-made or pre-fix tree) — the other three are missing.
 	if code, err := tasksFolderLint(root); err != nil || code != 1 {
 		t.Fatalf("lint of a queue missing state dirs: code=%d err=%v (want 1)", code, err)
@@ -1237,7 +1280,7 @@ func TestTasksFolderLintRejectsDuplicateIDs(t *testing.T) {
 	if err := ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)
 	}
-	task := "# D\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n"
+	task := "---\ntitle: D\n---\n# D\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n"
 	writeTaskFile(t, filepath.Join(root, StateTodo, "dup", "task.md"), task)
 	writeTaskFile(t, filepath.Join(root, StateDone, "dup", "task.md"), task)
 	if _, err := ReadTaskTree(root); err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
@@ -1255,7 +1298,8 @@ func TestTasksFolderLintRejectsDuplicateIDs(t *testing.T) {
 }
 
 // `coop tasks add` seeds self-documenting task.md + log.md + state.md (but not decision.md,
-// which would make a todo task lint-dirty), and the result is lint-clean out of the box.
+// which would make a todo task lint-dirty). lint names the fresh scaffold as not filled in yet, and
+// nothing else.
 func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	root := t.TempDir()
 	if code, err := tasksFolderAdd(root, []string{"make egress fail closed"}, StateTodo, "tasks add"); code != 0 || err != nil {
@@ -1278,13 +1322,16 @@ func TestTasksFolderAddSeedsSelfDocumentingFiles(t *testing.T) {
 	if fileExists(filepath.Join(dir, "decision.md")) {
 		t.Error("add must NOT seed decision.md — a todo task carrying one is a lint error")
 	}
-	// A freshly-added task is lint-clean (all sections present, no decision in todo, no status field).
-	if code, err := tasksFolderLint(root); code != 0 || err != nil {
-		t.Errorf("a freshly-added task should be lint-clean, got code=%d err=%v", code, err)
+	// All sections are present, no decision sits in todo and there is no status field: the one
+	// finding is the placeholders left to fill in.
+	var code int
+	out := captureStdout(t, func() { _ = captureStderr(t, func() { code, _ = tasksFolderLint(root) }) })
+	if code != 1 || strings.Count(out, "\n") != 1 || !strings.Contains(out, "not filled in yet") {
+		t.Errorf("lint of a freshly-added task = %d:\n%s\nwant only its not-filled-in finding", code, out)
 	}
 }
 
-// The README-less fallback remains lint-clean for freshly selected queues.
+// The README-less fallback has every required section, each still its placeholder until filled in.
 func TestTaskTemplateFallbackShape(t *testing.T) {
 	template, err := parseTaskTemplate(fallbackTaskTemplate)
 	if err != nil {
@@ -1296,6 +1343,17 @@ func TestTaskTemplateFallbackShape(t *testing.T) {
 	}
 	if issues := taskShapeIssues(body); len(issues) != 0 {
 		t.Errorf("scaffold has all sections present, want no issues, got %v", issues)
+	}
+	if parts := joinWithAnd(unfilledParts(body)); parts != "Context, Acceptance criteria, Approach and a subtask" {
+		t.Errorf("unfilled parts of the fallback scaffold = %q", parts)
+	}
+	filled, err := template.render("2026-01-01-task", "Task", "2026-01-01T00:00:00Z",
+		map[string]string{"Context": "c", "Acceptance criteria": "a", "Approach": "p"}, []string{"step"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parts := unfilledParts(filled); len(parts) != 0 {
+		t.Errorf("a filled task still reads as unfilled: %v", parts)
 	}
 	if issues := taskShapeIssues("# t\n**Acceptance criteria:** x\n"); len(issues) != 2 { // missing Context + Approach
 		t.Errorf("body missing Context+Approach should yield 2 issues, got %v", issues)
@@ -1592,7 +1650,7 @@ func TestUnblockRequiresResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-pick", "task.md"),
-		"# Pick a backend\n\n**Context:** need a datastore\n**Acceptance criteria:** one is chosen and why is noted\n**Approach:** compare options\n")
+		"---\ntitle: Pick a backend\n---\n# Pick a backend\n\n**Context:** need a datastore\n**Acceptance criteria:** one is chosen and why is noted\n**Approach:** compare options\n")
 	if code, err := tasksFolderBlock(root, []string{"pick"}); code != 0 || err != nil {
 		t.Fatalf("block: %d %v", code, err)
 	}
@@ -1644,7 +1702,7 @@ func TestTasksFolderBlockSeedsHumanReplyDecision(t *testing.T) {
 // of the decision.md survives the edit and the updated file rides along to the new state.
 func TestTasksFolderUnblockRecordsInlineAnswer(t *testing.T) {
 	root := t.TempDir()
-	if code, err := tasksFolderAdd(root, []string{"pick the db"}, StateTodo, "tasks add"); code != 0 || err != nil {
+	if code, err := tasksFolderAdd(root, []string{"pick the db", "--context", "c", "--acceptance", "a", "--approach", "p", "--subtask", "pick"}, StateTodo, "tasks add"); code != 0 || err != nil {
 		t.Fatalf("add: code=%d err=%v", code, err)
 	}
 	id := mustReadTaskTree(t, root)[0].ID

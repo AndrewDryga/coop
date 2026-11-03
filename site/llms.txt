@@ -654,6 +654,9 @@ OPTIONS
   If you use any text option, include --context, --acceptance and --approach.
   Repeat a text option to add another paragraph.
 
+  The first task in a Git project without a task queue sets one up: its
+  README.md, and .gitignore lines that keep task folders out of Git.
+
 EXAMPLES
   coop tasks add "Fix login retries"
   coop tasks add --project web "Fix login retries"
@@ -832,7 +835,9 @@ coop tasks lint: check task files for missing or inconsistent information
 
 Usage: coop tasks lint [--tasks <path>]...
 
-  Checks the task folders, required sections and decision state.
+  Checks the task folders, frontmatter, required sections and decision state.
+  It also names tasks that still hold the template's <…> text. The loop still
+  works such a task: its agent fills the text in first.
   Returns a nonzero exit status when it finds a problem.
 
 EXAMPLE

@@ -497,14 +497,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 	}
 }
 
-// tasksHost builds the real tasks.Host: the command-help catalog and the live-board driver the
-// `coop tasks`/`coop backlog` verb family need but cannot own itself (see internal/tasks's Host
-// doc) — both cli-wide, not task-specific.
+// tasksHost builds the real tasks.Host: the live-board driver the `coop tasks` verb family needs
+// but cannot own itself (see internal/tasks's Host doc) — cli-wide, not task-specific.
 func tasksHost() tasks.Host {
-	return tasks.Host{
-		GroupHelp:    groupHelp,
-		RunWatchLoop: runWatchLoop,
-	}
+	return tasks.Host{RunWatchLoop: runWatchLoop}
 }
 
 // cmdTasks and cmdBacklog are thin `*app` shims: internal/tasks owns the folder-mode verb family

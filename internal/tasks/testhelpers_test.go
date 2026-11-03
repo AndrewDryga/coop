@@ -205,6 +205,12 @@ func assignLoopTask(hosts []string, owner TaskLeaseOwner) (TaskAssignment, error
 	return AssignLoopTaskOnly(hosts, owner, "")
 }
 
+// tasksFolderAdd is `coop tasks add` (StateTodo) or `coop backlog add` (StateBacklog) into the queue
+// at root with no project to set a new queue up in: a missing queue is only made.
+func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, error) {
+	return tasksFolderAddWithProject(root, args, state, cmdLabel, "")
+}
+
 // tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
 // in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
 // to the state it's already in is a no-op note, not an error.

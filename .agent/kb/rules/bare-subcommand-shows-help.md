@@ -4,7 +4,7 @@ description: "a bare group prints help or its default view, never an empty-token
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/fork_cmd.go, internal/tasks/queue.go]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-03
 ---
 
 # A bare subcommand group shows help, never an "unknown command \"\"" error
@@ -30,6 +30,9 @@ Bare `coop` prints help; a bare group should match that.
   reviewed rule; check it whenever you add or touch a subcommand group.
 
 ## Changelog
+- 2026-11-03 — bare `coop tasks` in a project with no queue yet printed help while `coop tasks ls`
+  failed; both now print the empty listing, so a bare group with a listing default always lists.
+  `tasks.Host` dropped `GroupHelp`, its only use. Other dispatchers unchanged.
 - 2026-10-17 — the 2026-08-09 sweep entry keeps its dispatcher names and drops their file:line
   numbers.
 - 2026-09-27 — removed references to the obsolete test-only `unknownErr` helper; rechecked

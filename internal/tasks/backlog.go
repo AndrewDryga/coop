@@ -48,6 +48,10 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	project, err := projectFolder(cfg, repo)
+	if err != nil {
+		return -1, err
+	}
 	rels, err := TaskQueues(cfg, repo, flags)
 	if err != nil {
 		return 2, err
@@ -86,14 +90,18 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	if len(rels) == 0 {
 		return 2, errors.New("coop backlog: no task queue configured — set COOP_TASKS or pass --tasks <path>")
 	}
-	return cmdBacklogFolder(filepath.Join(repo, rels[0]), rest)
+	root := filepath.Join(repo, rels[0])
+	if err := refuseQueueOutsideProject(repo, project, root); err != nil {
+		return 1, err
+	}
+	return cmdBacklogFolder(project, root, rest)
 }
 
 // cmdBacklogFolder dispatches `coop backlog <sub>` against a single queue root (…/.agent/tasks). A bare
 // `coop backlog` lists the drawer (the useful default, like bare `coop tasks`); add/rm/promote are the
-// verbs. The queue need not exist yet — `add` creates xx_backlog on demand (tasksFolderAdd), the way a
-// secondary --tasks queue is bootstrapped.
-func cmdBacklogFolder(root string, rest []string) (int, error) {
+// verbs. The queue need not exist yet — `add` creates xx_backlog on demand, setting a new queue up in
+// project the way `coop tasks add` does.
+func cmdBacklogFolder(project, root string, rest []string) (int, error) {
 	// A leading flag is the default listing with that flag, same as cmdBacklog's own check —
 	// kept here too so this dispatcher is correct on its own, not just via that caller. See rule
 	// bare-flag-routes-to-default-view.
@@ -115,7 +123,7 @@ func cmdBacklogFolder(root string, rest []string) (int, error) {
 	case "", "ls":
 		return backlogFolderList(root)
 	case "add":
-		return tasksFolderAdd(root, args, StateBacklog, "backlog add")
+		return tasksFolderAddWithProject(root, args, StateBacklog, "backlog add", project)
 	case "rm":
 		return backlogFolderRemove(root, args)
 	case "promote":
@@ -262,13 +270,13 @@ func backlogAcrossQueues(repo string, rels []string, rest []string) (int, error)
 	}
 	if id == "" {
 		// No id: delegate to the first queue so the handler's own usage error is what the user sees.
-		return cmdBacklogFolder(filepath.Join(repo, rels[0]), rest)
+		return cmdBacklogFolder("", filepath.Join(repo, rels[0]), rest)
 	}
 	rel, err := queueOfBacklogTask(repo, rels, id)
 	if err != nil {
 		return 1, err
 	}
-	return cmdBacklogFolder(filepath.Join(repo, rel), rest)
+	return cmdBacklogFolder("", filepath.Join(repo, rel), rest) // rm and promote never make a queue
 }
 
 // queueOfBacklogTask finds which configured queue's xx_backlog holds the id — the backlog analog of

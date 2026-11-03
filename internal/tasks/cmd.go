@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -130,7 +131,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "lint":
 		return tasksFolderLint(root)
 	case "add":
-		return tasksFolderAdd(root, args, StateTodo, "tasks add")
+		return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", repo)
 	case "claim":
 		return tasksFolderClaim(root, args)
 	case "release":
@@ -325,16 +326,12 @@ func newTaskFiles(template taskTemplate, id, title, now string, values map[strin
 	}, nil
 }
 
-// tasksFolderAdd creates a task folder under root/state (stateTodo for `coop tasks add`, stateBacklog
-// for `coop backlog add` — the two share every bit of parsing/validation). cmdLabel is the command as
-// typed ("tasks add" / "backlog add"), so error and usage lines name the right command.
-func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, error) {
-	return tasksFolderAddWithProject(root, args, state, cmdLabel, "")
-}
-
-// projectName selected the queue this task is created in; the created path below already shows
-// which one it landed in, so the name is not repeated in the result.
-func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, _ string) (int, error) {
+// tasksFolderAddWithProject creates a task folder under root/state (StateTodo for `coop tasks add`,
+// StateBacklog for `coop backlog add` — the two share every bit of parsing/validation). cmdLabel is
+// the command as typed ("tasks add" / "backlog add"), so error and usage lines name the right
+// command. project is the folder that owns the queue: a queue that does not exist yet is set up in
+// it the way coop init would (see createTaskFolder).
+func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, project string) (int, error) {
 	// Optional structured flags carve the title from the body: with any of
 	// --context/--acceptance/--approach/--subtask the task is created FILLED and validated up front;
 	// with none, it's the placeholder scaffold you edit. The flag names ARE the shape (taskSections).
@@ -399,13 +396,14 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, _ st
 			return 2, fmt.Errorf("coop %s: structured flags need every section — missing %s (or omit all flags to scaffold)", cmdLabel, strings.Join(missing, ", "))
 		}
 	}
-	id, err := createTaskFolder(root, state, slug, title, values, subtasks)
+	id, setup, err := createTaskFolder(project, root, state, slug, title, values, subtasks)
 	if err != nil {
 		if errors.As(err, &taskExistsError{}) {
 			return 1, err
 		}
 		return -1, err
 	}
+	printQueueSetup(root, setup)
 	if state == StateBacklog {
 		// A saved idea reports what was saved and where; only the unfilled scaffold asks for notes,
 		// because only it has placeholders left to replace.
@@ -441,21 +439,47 @@ func (e taskExistsError) Error() string { return e.msg }
 
 // createTaskFolder writes a new task folder <date>-<slug> under root/state from the given body values
 // and returns its id, for `coop tasks add` and `coop backlog add`. A queue that does not exist yet is
-// made first: `add` is how a secondary --tasks queue starts. The text is checked before that, so a
-// refused add leaves no empty queue behind for `coop loop` to take for a set-up project.
-func createTaskFolder(root, state, slug, title string, values map[string]string, subtasks []string) (string, error) {
+// made first: `add` is how a project starts tasks before coop init, and how a secondary --tasks queue
+// starts. In project it gets coop init's queue part, the README.md task.md points to and the
+// .gitignore lines that keep task folders out of Git; setup says what that wrote. The text is checked
+// before any of it, so a refused add leaves no empty queue behind for `coop loop` to take.
+func createTaskFolder(project, root, state, slug, title string, values map[string]string, subtasks []string) (string, scaffold.QueueSetup, error) {
+	var setup scaffold.QueueSetup
 	if err := checkTaskText(title, subtasks); err != nil {
-		return "", err
+		return "", setup, err
+	}
+	if exists, err := taskQueueExists(root); err != nil {
+		return "", setup, err
+	} else if !exists && project != "" {
+		if setup, err = scaffold.InitQueue(project, root); err != nil {
+			return "", setup, fmt.Errorf("set up the task queue %s: %w", displayPath(root), err)
+		}
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		return "", err
+		return "", setup, err
 	}
 	queue, err := os.OpenRoot(root)
 	if err != nil {
-		return "", err
+		return "", setup, err
 	}
 	defer queue.Close()
-	return createTaskFolderIn(queue, state, slug, title, values, subtasks)
+	id, err := createTaskFolderIn(queue, state, slug, title, values, subtasks)
+	return id, setup, err
+}
+
+// printQueueSetup says what setting up a new queue wrote, before the task it made room for.
+func printQueueSetup(root string, setup scaffold.QueueSetup) {
+	if !setup.Readme && !setup.Gitignore {
+		return
+	}
+	ui.Note("Set up a task queue in %s", displayPath(root))
+	if setup.Readme {
+		ui.Note("  Added README.md, which explains how tasks work")
+	}
+	if setup.Gitignore {
+		ui.Note("  Updated .gitignore to keep task folders out of Git")
+	}
+	ui.Note("")
 }
 
 // createTaskFolderIn is createTaskFolder in the queue folder queue, the one the in-box task channel
@@ -1949,7 +1973,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	written := req.filled
 	if !written {
 		body, exists, err := readOptionalTaskMetadataPath(dec)
-		written = err == nil && exists && !strings.Contains(string(body), decisionScaffoldMarker)
+		written = err == nil && exists && !decisionUnwritten(string(body))
 	}
 	ui.OK("Blocked task: %s", t.Title)
 	ui.Note("\n  %s", displayPath(dec))
@@ -1971,6 +1995,10 @@ var taskRemoveSpec = taskArgSpec{[]string{"--all-done", "--yes", "-y"}, 1, "coop
 // presence is how `block --question …` tells "nobody has written this decision yet" from "a human
 // or an earlier agent wrote one", which it must never overwrite.
 const decisionScaffoldMarker = "<what needs to be chosen and why you cannot safely proceed>"
+
+// decisionUnwritten reports whether a decision.md body is still the editable stub: nobody wrote its
+// question, so `coop tasks decisions` has no question to show, only the file to fill in.
+func decisionUnwritten(body string) bool { return strings.Contains(body, decisionScaffoldMarker) }
 
 // decisionResolutionLine is the last line of every decision.md, stub or filled: the one place a
 // human writes the answer, and the command that saves it for them.
@@ -2649,9 +2677,17 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 	for _, t := range decisions {
 		question := t.Title
 		rec := ""
-		body, _, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "decision.md"))
+		decPath := filepath.Join(t.Dir, "decision.md")
+		body, exists, err := readOptionalTaskMetadataPath(decPath)
 		if err != nil {
 			return -1, err
+		}
+		if !exists || decisionUnwritten(string(body)) {
+			// The scaffold's "<title>?" and its placeholders are no question: name the file to write.
+			fmt.Printf("\n  %s\n", sanitizeCell(t.Title))
+			fmt.Printf("    %s %s\n", p.Dim("Decision not written yet:"), displayPath(decPath))
+			fmt.Printf("    %s\n", p.Faint(t.ID))
+			continue
 		}
 		for _, line := range strings.Split(string(body), "\n") {
 			if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
@@ -2664,7 +2700,7 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 		// Question first (what you weigh), the recommendation under it, then the id (the handle you
 		// `unblock` with) — the same title/markers/id shape as the task list.
 		fmt.Printf("\n  %s\n", sanitizeCell(question))
-		if rec != "" {
+		if rec != "" && !isPlaceholder(rec) {
 			fmt.Printf("    %s %s\n", p.Dim("Recommendation:"), sanitizeCell(rec))
 		}
 		fmt.Printf("    %s\n", p.Faint(t.ID))
@@ -2737,11 +2773,15 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 			where = ref.label + " · " + t.ID // say which queue this decision lives in
 		}
 		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), where))
-		body, _, err := readOptionalTaskMetadataPath(decPath)
+		body, exists, err := readOptionalTaskMetadataPath(decPath)
 		if err != nil {
 			return -1, err
 		}
-		fprintDecisionBody(out, p, string(body))
+		if !exists || decisionUnwritten(string(body)) {
+			fmt.Fprintf(out, "\n%s\n  %s %s\n", p.Bold(t.Title), p.Dim("Decision not written yet:"), displayPath(decPath))
+		} else {
+			fprintDecisionBody(out, p, string(body))
+		}
 		resolved, err := decisionResolved(decPath)
 		if err != nil {
 			return -1, err
@@ -2923,9 +2963,8 @@ func stripHTMLComments(s string) string {
 }
 
 // taskShapeIssues reports a required section (taskSections) whose **Heading:** is absent from a
-// task.md body — the structural half of "self-contained." It does NOT flag an unfilled `<…>`
-// placeholder: a fresh scaffold is lint-clean by design (you add, then fill), and the loop doesn't
-// gate on lint. Derived from taskSections so lint and the scaffold share one shape source.
+// task.md body — the structural half of "self-contained"; unfilledParts is the other half. Derived
+// from taskSections so lint and the scaffold share one shape source.
 func taskShapeIssues(body string) []string {
 	var issues []string
 	for _, s := range taskSections {
@@ -2934,6 +2973,73 @@ func taskShapeIssues(body string) []string {
 		}
 	}
 	return issues
+}
+
+// unfilledParts names what a task.md still leaves to write: each required section that is empty or
+// wholly a template placeholder, then "a subtask" when a checklist item is one. A fresh scaffold is
+// all placeholders. The loop still takes such a task, because the scaffold's header tells its agent
+// to fill them in before any other work, but lint names it so a person sees what is unwritten.
+func unfilledParts(content string) []string {
+	var parts []string
+	for _, s := range taskSections {
+		if text, ok := sectionText(content, s.heading); ok && (text == "" || isPlaceholder(text)) {
+			parts = append(parts, s.heading)
+		}
+	}
+	for _, item := range ScanChecklist(content) {
+		if isPlaceholder(item.Label) {
+			return append(parts, "a subtask")
+		}
+	}
+	return parts
+}
+
+// sectionText is the text of the **heading:** section in content: the rest of its line and the
+// lines under it, up to the next required section or markdown heading outside a code fence. ok is
+// false when there is no such section.
+func sectionText(content, heading string) (text string, ok bool) {
+	var lines []string
+	inFence := false
+	for _, line := range strings.Split(content, "\n") {
+		boundary := !inFence && (strings.HasPrefix(line, "#") || startsTaskSection(line))
+		if fenceMarker(line) {
+			inFence = !inFence
+		}
+		switch {
+		case ok && boundary:
+			return strings.TrimSpace(strings.Join(lines, "\n")), true
+		case ok:
+			lines = append(lines, line)
+		case boundary && strings.HasPrefix(line, "**"+heading+":**"):
+			ok = true
+			lines = append(lines, strings.TrimPrefix(line, "**"+heading+":**"))
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), ok
+}
+
+func startsTaskSection(line string) bool {
+	for _, s := range taskSections {
+		if strings.HasPrefix(line, "**"+s.heading+":**") {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlaceholder reports whether s is wholly one <…> placeholder, as the templates write them. Text
+// that only uses angle brackets, such as "The <div> wrapper" or "<Button> renders <Icon>", is not.
+func isPlaceholder(s string) bool {
+	s = strings.TrimSpace(s)
+	return len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>' && !strings.ContainsAny(s[1:len(s)-1], "<>")
+}
+
+// joinWithAnd reads a list the way a sentence does: "a, b and c".
+func joinWithAnd(parts []string) string {
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
 func tasksFolderLint(root string) (int, error) {
@@ -2995,11 +3101,17 @@ func tasksFolderLint(root string) (int, error) {
 		if fields, _ := SplitFrontmatter(body); fields["status"] != "" {
 			add(t.ID, "has a `status:` field — remove it; the parent directory is the status")
 		}
-		// self-contained: every shape section present and filled — not still a `<…>` placeholder (not
-		// for done, which is the shipped record). Supersedes the old acceptance-substring-only check.
+		// self-contained: frontmatter, every shape section present, and none still the template's
+		// placeholder (not for done, which is the shipped record).
 		if t.State != StateDone {
+			if _, _, ok := frontmatterLines(body); !ok {
+				add(t.ID, "task.md has no frontmatter — start it with the --- block of id, title, labels and updated")
+			}
 			for _, issue := range taskShapeIssues(body) {
 				add(t.ID, "not self-contained: "+issue)
+			}
+			if parts := unfilledParts(body); len(parts) > 0 {
+				add(t.ID, "not filled in yet: "+joinWithAnd(parts)+" (an agent that takes the task fills them in first)")
 			}
 		}
 	}

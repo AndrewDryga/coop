@@ -270,6 +270,10 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	project, err := projectFolder(cfg, repo)
+	if err != nil {
+		return -1, err
+	}
 	projectName := ""
 	if len(rest) > 0 && rest[0] == "add" {
 		addArgs := rest[1:]
@@ -296,7 +300,7 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 			if !ok {
 				return 2, taskProjectAddError(projectName, choices)
 			}
-			return tasksAddInQueue(repo, ch.Rel, rest[1:], ch.Name)
+			return tasksAddInQueue(repo, project, ch.Rel, rest[1:])
 		}
 	}
 	if projectName != "" {
@@ -387,49 +391,86 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rels) == 0 {
 		return 2, noQueueConfigured("coop tasks")
 	}
-	return tasksInQueue(host, repo, rels[0], rest, flags)
+	return tasksInQueue(repo, project, rels[0], rest, flags, explicitQueues)
 }
 
-func tasksInQueue(host Host, repo, rel string, rest, flags []string) (int, error) {
+// tasksInQueue runs a command on the one queue at rel. explicit says the queue was named (--tasks or
+// COOP_TASKS) rather than found in the project.
+func tasksInQueue(repo, project, rel string, rest, flags []string, explicit bool) (int, error) {
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
 	}
 	root := filepath.Join(repo, rel)
-	// When the queue doesn't exist yet, a bare `coop tasks` shows help, while `add`
-	// bootstraps it on demand (tasksFolderAdd creates the folder) — that's how you start a
-	// secondary --tasks queue in a monorepo, since `coop init` only scaffolds the repo root.
-	// Every other subcommand needs an existing queue to act on.
 	exists, err := taskQueueExists(root)
 	if err != nil {
 		return -1, err
 	}
 	if !exists {
-		switch sub {
-		case "":
-			// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no
-			// subcommand — then help + exit 0 reads as a silent no-op. If the swallowed value
-			// names a subcommand, the user almost certainly meant `coop tasks <sub>`.
-			if len(flags) == 1 && isTasksSubcommand(flags[0]) {
-				return 2, ui.UnknownValue("queue folder", flags[0], "coop tasks --tasks",
-					"", "coop tasks "+flags[0])
-			}
-			return host.groupHelp("tasks")
-		case "add":
-			// fall through — tasksFolderAdd creates the queue dir
+		// `coop tasks --tasks done` greedily eats `done` as the queue path, leaving no subcommand.
+		// If the swallowed value names a subcommand, the user almost certainly meant `coop tasks <sub>`.
+		if sub == "" && len(flags) == 1 && isTasksSubcommand(flags[0]) {
+			return 2, ui.UnknownValue("queue folder", flags[0], "coop tasks --tasks", "", "coop tasks "+flags[0])
+		}
+		if project == "" {
+			return 1, noProject(repo)
+		}
+		switch {
+		case sub == "add":
+			// add makes the queue and sets it up as coop init would (see createTaskFolder): that is
+			// how a project starts tasks before coop init, and how a secondary --tasks queue starts.
+		case (sub == "" || sub == "ls") && !explicit:
+			// The project's own queue before its first task: the empty listing, bare or not.
 		default:
-			return -1, ui.CommandFailed("No task queue at "+rel,
-				"This project has not been set up for tasks yet.",
-				[2]string{"Set it up:", "coop init"},
-				[2]string{"Or start a queue here:", "coop tasks --tasks " + rel + ` add "<title>"`})
+			start := `coop tasks add "<title>"`
+			if len(flags) > 0 {
+				start = "coop tasks --tasks " + rel + ` add "<title>"`
+			}
+			return 1, ui.CommandFailed("No task queue at "+rel, "", [2]string{"Add the first task:", start})
 		}
 	}
 	return CmdTasksFolder(repo, root, rest)
 }
 
-func tasksAddInQueue(repo, rel string, args []string, projectName string) (int, error) {
+func tasksAddInQueue(repo, project, rel string, args []string) (int, error) {
 	root := filepath.Join(repo, rel)
-	return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", projectName)
+	if err := refuseQueueOutsideProject(repo, project, root); err != nil {
+		return 1, err
+	}
+	return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", project)
+}
+
+// projectFolder is the project a task command may start a queue in: COOP_REPO when it is set, else
+// the Git repository holding the working folder, or "" when there is neither. ResolveRepo falls back
+// to the working folder, which still reads a queue someone made there, but a new one there would
+// hold tasks no project owns: `coop tasks add` in ~/Downloads must not start a queue.
+func projectFolder(cfg *config.Config, repo string) (string, error) {
+	if cfg.RepoOverride != "" {
+		return repo, nil
+	}
+	if _, found, err := box.FindRepo(); err != nil || !found {
+		return "", err
+	}
+	return repo, nil
+}
+
+// refuseQueueOutsideProject refuses the queue at root when it does not exist yet and no project owns
+// the folder (see projectFolder), so no command starts a queue there.
+func refuseQueueOutsideProject(repo, project, root string) error {
+	if project != "" {
+		return nil
+	}
+	if exists, err := taskQueueExists(root); err != nil || exists {
+		return err
+	}
+	return noProject(repo)
+}
+
+// noProject refuses a task command in a folder that is no project and has no queue yet.
+func noProject(dir string) error {
+	return ui.CommandFailed("No project here",
+		dir+" is not inside a Git repository.\nRun Coop in your project folder, or set one up here.",
+		[2]string{"Set up a project here:", "coop init"})
 }
 
 // tasksListAll rolls up `coop tasks ls` across several configured queues (a monorepo with a

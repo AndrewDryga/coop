@@ -503,7 +503,7 @@ func TestInPlaceEditsRefuseHiddenFiles(t *testing.T) {
 			case project.File:
 				_, err = RegisterSubprojects(repo, []string{"infra", "portal"})
 			case ".gitignore":
-				err = (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
+				_, err = (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
 			default:
 				var out ComposeAddition
 				out, err = AddComposeServices(repo, tc.edit, []string{"postgres"})
@@ -822,7 +822,7 @@ func TestUpdateGitignoreRefusesLinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			// ErrNotRegular is what makes coop init say "fix the path" rather than "or permissions".
-			err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
+			_, err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync)
 			if !errors.Is(err, ErrNotRegular) || err.Error() != ".gitignore must be a regular file" {
 				t.Fatalf("edit through a .gitignore link = %v, want a regular-file refusal matching ErrNotRegular", err)
 			}
@@ -862,7 +862,7 @@ func TestUpdateGitignoreReplacesALinkSwappedInBeforeTheWrite(t *testing.T) {
 	if err := os.WriteFile(gi, []byte(payload), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := (&scaffolder{repo: repo}).updateGitignore(nil, func(file *os.File, data []byte) error {
+	_, err := (&scaffolder{repo: repo}).updateGitignore(nil, func(file *os.File, data []byte) error {
 		if err := os.Remove(gi); err != nil {
 			return err
 		}

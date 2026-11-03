@@ -31,14 +31,14 @@ func TestBacklogOutput(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(wd) })
 
 	// Empty drawer: the answer, then the one command that changes it.
-	got := captureBacklog(t, func() { _, _ = cmdBacklogFolder(root, nil) })
+	got := captureBacklog(t, func() { _, _ = cmdBacklogFolder("", root, nil) })
 	want := "No saved ideas yet.\n\n  Save one: coop backlog add \"Describe the idea\"\n"
 	if got != want {
 		t.Errorf("empty backlog =\n%q\nwant\n%q", got, want)
 	}
 
 	// An unfilled idea reports what was saved, where, and that it still needs notes.
-	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder(root, []string{"add", "Redesign account permissions"}) })
+	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder("", root, []string{"add", "Redesign account permissions"}) })
 	id := onlyBacklogID(t, root)
 	want = "✓ Saved idea: Redesign account permissions\n\n  " +
 		filepath.Join(".agent", "tasks", StateBacklog, id, "task.md") + "\n\nAdd your notes to this file.\n"
@@ -47,14 +47,14 @@ func TestBacklogOutput(t *testing.T) {
 	}
 
 	// The listing leads with the count and ends with the one next step.
-	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder(root, nil) })
+	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder("", root, nil) })
 	want = "Backlog · 1 idea\n\n  Redesign account permissions\n    " + id + "\n\nReady to start: coop backlog promote <id>\n"
 	if got != want {
 		t.Errorf("backlog listing =\n%q\nwant\n%q", got, want)
 	}
 
 	// Promotion names the task and its new home.
-	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder(root, []string{"promote", id}) })
+	got = captureBacklog(t, func() { _, _ = cmdBacklogFolder("", root, []string{"promote", id}) })
 	want = "✓ Moved to todo: Redesign account permissions\n\n  " +
 		filepath.Join(".agent", "tasks", StateTodo, id, "task.md") + "\n"
 	if got != want {
@@ -67,7 +67,7 @@ func TestBacklogStructuredAddOmitsTheNotesPrompt(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, ".agent", "tasks")
 	got := captureBacklog(t, func() {
-		_, _ = cmdBacklogFolder(root, []string{"add", "Support offline exports",
+		_, _ = cmdBacklogFolder("", root, []string{"add", "Support offline exports",
 			"--context", "why", "--acceptance", "what", "--approach", "how"})
 	})
 	if !strings.Contains(got, "✓ Saved idea: Support offline exports") {
@@ -83,11 +83,11 @@ func TestBacklogStructuredAddOmitsTheNotesPrompt(t *testing.T) {
 func TestBacklogRemovePreviewAndCancellation(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, ".agent", "tasks")
-	if _, err := cmdBacklogFolder(root, []string{"add", "Redesign account permissions"}); err != nil {
+	if _, err := cmdBacklogFolder("", root, []string{"add", "Redesign account permissions"}); err != nil {
 		t.Fatal(err)
 	}
 	id := onlyBacklogID(t, root)
-	got := captureBacklog(t, func() { _, _ = cmdBacklogFolder(root, []string{"rm", id}) })
+	got := captureBacklog(t, func() { _, _ = cmdBacklogFolder("", root, []string{"rm", id}) })
 	for _, want := range []string{
 		"Delete idea: Redesign account permissions",
 		"Its notes and saved files will be permanently deleted.",

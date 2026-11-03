@@ -345,6 +345,28 @@ func TestDecisionsShowTheQuestionOfANewAndAnOldDecision(t *testing.T) {
 	}
 }
 
+// A decision nobody wrote yet has no question to show: decisions marks it not written, with the file
+// to fill in, instead of the scaffold's "<title>?" and its recommendation placeholder. So does the
+// -i browser.
+func TestDecisionsMarkAnUnwrittenDecision(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, StateBlocked, "2026-11-03-pick-storage")
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Pick storage\n")
+	writeTaskFile(t, filepath.Join(dir, "decision.md"), renderDecisionScaffold("2026-11-03-pick-storage", "Pick storage"))
+	list := captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) })
+	want := "\n  Pick storage\n    Decision not written yet: " + displayPath(filepath.Join(dir, "decision.md")) + "\n    2026-11-03-pick-storage\n"
+	if !strings.Contains(list, want) || strings.Contains(list, "Pick storage?") || strings.Contains(list, "<your choice and why>") {
+		t.Fatalf("coop tasks decisions shows the unwritten scaffold:\n%s\nwant it to contain:\n%s", list, want)
+	}
+	var browser strings.Builder
+	if code, err := runDecisionBrowser("", []decisionRef{{root: root, id: "2026-11-03-pick-storage"}}, strings.NewReader(":q\n"), &browser); code != 0 || err != nil {
+		t.Fatalf("browser = (%d, %v)", code, err)
+	}
+	if !strings.Contains(browser.String(), "Decision not written yet: ") || strings.Contains(browser.String(), "<your choice and why>") {
+		t.Fatalf("the decision browser shows the unwritten scaffold:\n%s", browser.String())
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

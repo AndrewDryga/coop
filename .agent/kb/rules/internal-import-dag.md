@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-03 — tasks imports scaffold: the first `coop tasks add` or `coop backlog add` in a project
+  nobody ran coop init in sets the new queue up with `scaffold.InitQueue` (README.md, state folders,
+  .gitignore lines) instead of a second copy of init's queue template and ignore rules. scaffold
+  imports neither tasks nor box, so no cycle forms; it adds no presentation edge.
 - 2026-11-03 — workerconnector imports the existing safefile leaf for bounded, no-follow reads
   of private source receipts before optional immutable-payload reuse. This shares descriptor-relative
   regular-file and size checks with other host-state readers instead of duplicating security-sensitive

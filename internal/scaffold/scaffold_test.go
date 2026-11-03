@@ -210,7 +210,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -222,7 +222,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		}
 	}
 	// Idempotent: a second run doesn't duplicate the block.
-	_ = (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync)
+	_, _ = (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync)
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
@@ -238,10 +238,10 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 	}
 
 	s := &scaffolder{repo: repo}
-	if err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -271,7 +271,7 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 // doesn't keep a .gemini/ shouldn't be given rules for one.
 func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 	repo := t.TempDir()
-	if err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -279,7 +279,7 @@ func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 		t.Errorf("gemini rules written for a repo with no .gemini/:\n%s", gi)
 	}
 	// …and adding gemini later still gets them, exactly once.
-	if err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ = os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -340,6 +340,43 @@ func TestInitSubproject(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
 			t.Errorf("member should NOT have %s (top-level only / retired)", rel)
 		}
+	}
+}
+
+// The first `coop tasks add` in a project coop init never ran in gets init's queue part only: the
+// state folders, README.md and coop's .gitignore lines, each reported once and never rewritten.
+func TestInitQueue(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join(repo, ".agent", "tasks")
+	setup, err := InitQueue(repo, queue)
+	if err != nil || setup != (QueueSetup{Readme: true, Gitignore: true}) {
+		t.Fatalf("first InitQueue = %+v, %v", setup, err)
+	}
+	for _, rel := range []string{"00_todo", "10_in_progress", "50_blocked", "99_done", "README.md"} {
+		if _, err := os.Stat(filepath.Join(queue, rel)); err != nil {
+			t.Errorf("queue missing %s: %v", rel, err)
+		}
+	}
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if !strings.HasPrefix(string(gi), "node_modules/\n") || !strings.Contains(string(gi), "\n**/.agent/tasks/*\n!**/.agent/tasks/README.md\n") {
+		t.Errorf(".gitignore lost its own lines or lacks coop's queue rules:\n%s", gi)
+	}
+	for _, rel := range []string{"AGENTS.md", ".agent/project.yaml", ".agent/loop.yaml"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			t.Errorf("InitQueue wrote %s, which belongs to a full coop init", rel)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(queue, "README.md"), []byte("# Ours\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if setup, err := InitQueue(repo, queue); err != nil || setup != (QueueSetup{}) {
+		t.Fatalf("second InitQueue = %+v, %v; want nothing written", setup, err)
+	}
+	if readme, _ := os.ReadFile(filepath.Join(queue, "README.md")); string(readme) != "# Ours\n" {
+		t.Errorf("InitQueue replaced an existing README.md: %q", readme)
 	}
 }
 
