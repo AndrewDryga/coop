@@ -348,10 +348,14 @@ func (a *filesystemAdmission) remove(ctx context.Context, ref runtime.DockerRef)
 		return err
 	}
 	if !present {
-		if a.record.Pending == ref.Name {
+		if a.record.Pending != ref.Name {
+			return nil
+		}
+		if !pendingCreateSettled(a.dir) {
 			return errors.New("filesystem resource creation outcome remains unknown")
 		}
-		return nil
+		a.record.Pending = ""
+		return a.persist()
 	}
 	ref.ID = value.ID
 	if a.record.Pending == ref.Name {

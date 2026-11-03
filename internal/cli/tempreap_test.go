@@ -233,6 +233,42 @@ func TestTempReapRetriesAPassThatCouldNotListMounts(t *testing.T) {
 	}
 }
 
+// No workspace's own recovery can reach a filesystem helper whose workspace is gone, such as the one
+// a timed-out host setup check leaves on its scratch folder, so the daily pass asks for those: it
+// names no workspace. A pass that could not ask the runtime what is mounted stops before that, and
+// the next launch tries again.
+func TestTempReapRecoversFilesystemHelpersOfGoneWorkspaces(t *testing.T) {
+	var asked []string
+	saved := recoverFilesystemAdmissions
+	recoverFilesystemAdmissions = func(_ context.Context, _ containerruntime.Runtime, workspace string) (int, error) {
+		asked = append(asked, workspace)
+		return 0, errors.New("this pass waits a day like any other that failed part of its work")
+	}
+	t.Cleanup(func() { recoverFilesystemAdmissions = saved })
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	cfg := &config.Config{BoxHome: dir}
+	fake := func(name, script string) containerruntime.Runtime {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return containerruntime.Runtime{Name: path}
+	}
+	stamp := tempReapPath(cfg)
+	reapTemp(fake("broken", "#!/bin/sh\nexit 1\n"), cfg, stamp)
+	if len(asked) != 0 {
+		t.Fatalf("a pass that could not list mounts asked recovery for %q", asked)
+	}
+	reapTemp(fake("working", "#!/bin/sh\nexit 0\n"), cfg, stamp)
+	if len(asked) != 1 || asked[0] != "" {
+		t.Fatalf("the pass asked recovery for %q, want one request naming no workspace", asked)
+	}
+	if !pathExists(stamp) {
+		t.Fatal("a filesystem recovery that failed kept the pass from counting for the day")
+	}
+}
+
 // A pass pins the daemon the current Docker context selects, lists it alone, and removes a killed
 // run's folder only when the run recorded that daemon. After `docker context use other` the boxes
 // still running on the first daemon are missing from the listing, so their folders stay, as does

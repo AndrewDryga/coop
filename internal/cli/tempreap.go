@@ -28,6 +28,10 @@ const serviceLockSweepLimit = 10000
 // or wedged, giving up costs nothing and blocking costs the user's command.
 const tempReapTimeout = 30 * time.Second
 
+// recoverFilesystemAdmissions is box.RecoverFilesystemAdmissions; a variable so a test can see what
+// the sweep asks of it.
+var recoverFilesystemAdmissions = box.RecoverFilesystemAdmissions
+
 func tempReapPath(cfg *config.Config) string {
 	return filepath.Join(cfg.BoxHome, "temp-reap")
 }
@@ -105,6 +109,9 @@ func reapTemp(rt runtime.Runtime, cfg *config.Config, stamp string) {
 	_, _ = forkspace.SweepGitViews()
 	// Service-launch locks of repositories that are gone; one held is never touched.
 	_, _ = forkspace.SweepServiceLaunchLocks(serviceLockSweepLimit)
+	// Filesystem helpers whose workspace is gone, which no later launch there would ever look for:
+	// a timed-out host setup check leaves one on its deleted scratch folder.
+	_, _ = recoverFilesystemAdmissions(ctx, rt, "")
 	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err == nil {
 		_ = os.WriteFile(stamp, nil, 0o644)
 	}

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/fsfilter"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -79,7 +81,9 @@ func (r filesystemRecord) validate() error {
 		return errors.New("invalid filesystem custody record")
 	}
 	supervisor, ok := parseSupervisorLabel(r.Supervisor)
-	if !ok || supervisor.scope != workspaceScope(r.Workspace) {
+	// A scope is the workspace's real path, which a path spelled through a link no longer resolves
+	// to once the workspace is gone. Such a record must still be readable, or it could never retire.
+	if !ok || supervisor.scope != workspaceScope(r.Workspace) && !filesystemWorkspaceGone(r.Workspace) {
 		return errors.New("invalid filesystem supervisor")
 	}
 	validID := func(id string) bool { return len(id) == 64 && strings.Trim(id, "0123456789abcdef") == "" }
@@ -124,9 +128,28 @@ func (r filesystemRecord) validate() error {
 	return nil
 }
 
+// filesystemWorkspaceGone reports whether workspace no longer exists. Only that answer counts: a
+// path that cannot be checked may still be a workspace in use.
+func filesystemWorkspaceGone(workspace string) bool {
+	_, err := os.Stat(workspace)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// pendingCreateSettled reports whether a create that a custody record in dir names as pending has
+// had time to land. Docker finishes a create whose client gave up, so its absence proves nothing at
+// first. The record was last written about when its owner stopped waiting, which dates the create.
+func pendingCreateSettled(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "record.json"))
+	return err == nil && time.Since(info.ModTime()) >= unfinishedCreateSettle
+}
+
 // RecoverFilesystemAdmissions retires only this host's provably orphaned
 // admissions. Service protection remains until every restartable consumer is
 // absent; a successful process exit alone never authorizes removing it.
+//
+// A workspace selects its own admissions. An empty one selects what no workspace's recovery can
+// reach, the admissions whose workspace no longer exists: a host setup check's scratch folder, or a
+// deleted worktree. The helper of a workspace that still exists is never that pass's to touch.
 func RecoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	admissions, err := recoverFilesystemAdmissions(ctx, rt, workspace)
 	controllers, controllerErr := recoverFilesystemControllers(ctx, rt)
@@ -194,7 +217,8 @@ func recoverFilesystemAdmission(ctx context.Context, rt runtime.Runtime, dir str
 		return false, err
 	}
 	supervisor, _ := parseSupervisorLabel(record.Supervisor)
-	if workspace != "" && workspaceScope(workspace) != supervisor.scope || supervisor.origin(host) != originHere || !record.Services && !supervisorProvablyDead(supervisor, host) {
+	selected := workspace != "" && workspaceScope(workspace) == supervisor.scope || workspace == "" && filesystemWorkspaceGone(record.Workspace)
+	if !selected || supervisor.origin(host) != originHere || !record.Services && !supervisorProvablyDead(supervisor, host) {
 		return false, nil
 	}
 	// Recovery must start a release-owned cleanup helper to reconcile VM pins.

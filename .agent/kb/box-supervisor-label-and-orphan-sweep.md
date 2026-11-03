@@ -110,7 +110,8 @@ doctor probes, eval trials and fork merge gates launch boxes without it. It stam
 one that did not): a goroutine dies with its process, stamping first let a short command use up the
 day, and a pass that could not list removed nothing, so the next launch retries it.
 `MountSourcesByLabel` skips a box removed between `ps` and its inspect only when the same listing,
-run again, no longer shows its id.
+run again, no longer shows its id. The pass then asks filesystem recovery about workspaces that are
+gone ([[filesystem-enforcement]]). It reports nothing, and the pass counts for the day either way.
 
 A listing is one daemon's word. The runtime CLI follows DOCKER_HOST or the current docker context,
 and another daemon's boxes are simply missing from it, so after `docker context use other` their
@@ -264,6 +265,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-03 — the daily pass also retires filesystem custody whose workspace is gone
+  (`box.RecoverFilesystemAdmissions` with no workspace; see [[filesystem-enforcement]]).
 - 2026-11-03 — editor tool handoff folders (`coop-acp-mcp-*`) name their owner and join the runfiles
   sweep under the run folder rule; `TestReapRunfilesJudgesAnEditorHandoffFolderByItsOwner` keeps a live
   session's folder.

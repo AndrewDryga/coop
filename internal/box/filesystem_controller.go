@@ -424,10 +424,14 @@ func (c *filesystemController) remove(ctx context.Context, docker *runtime.Docke
 		return err
 	}
 	if !present {
-		if c.record.Pending == ref.Name {
+		if c.record.Pending != ref.Name {
+			return nil
+		}
+		if !pendingCreateSettled(c.dir) {
 			return errors.New("controller creation outcome remains unknown")
 		}
-		return nil
+		c.record.Pending = ""
+		return c.persist()
 	}
 	ref.ID = value.ID
 	if c.record.Pending == ref.Name {
