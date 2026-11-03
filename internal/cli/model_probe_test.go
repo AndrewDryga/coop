@@ -85,6 +85,7 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 		{"legacy writer inventory is unavailable " + secret, "Docker could not verify existing credential mounts; retry when Docker is ready."},
 		{"canonical credential file must be owner-private with one link " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
 		{"legacy native credential writer is busy " + secret, "An existing session is using this account; finish it before retrying."},
+		{"a container mounts /mnt/" + secret + ", which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in", "A container mount could not be checked; stop the container that holds it, then retry."},
 		{"native account needs host sign-in or renewal " + secret, "Sign in to Claude to refresh its models: coop login claude"},
 		{secret + "\x1b[31m", "The model probe closed before answering."},
 	} {

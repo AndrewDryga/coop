@@ -114,3 +114,67 @@ func TestAuthorityPathMissingTailDoesNotHideDanglingAlias(t *testing.T) {
 		}
 	}
 }
+
+// Docker Desktop and OrbStack run the daemon in a Linux VM. Coop's own filesystem helpers bind the
+// VM's /sys/fs/cgroup and /sys/fs/bpf, which a Mac does not have; those binds must not block every
+// provider launch, while anything else the host cannot resolve keeps failing closed. Every row
+// behaves the same on macOS and on Linux, where /sys exists and the roots resolve normally.
+func TestLegacyMountPathsSkipOnlyHostlessKernelMounts(t *testing.T) {
+	home := t.TempDir()
+	previous := hostLstat
+	t.Cleanup(func() { hostLstat = previous })
+	hostLstat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	for _, test := range []struct {
+		name, source string
+		allowed      bool
+	}{
+		{"VM bpffs root", "/sys/fs/bpf", true},
+		{"VM cgroup root", "/sys/fs/cgroup", true},
+		{"VM sysfs root", "/sys", true},
+		{"path below a kernel root", "/sys/fs/bpf/coop-test-missing", false},
+		{"other missing sysfs path", "/sys/coop-test-missing", false},
+		{"unclean path that leaves /sys", "/sys/.." + filepath.Join(home, "missing"), false},
+		{"VM view of a host folder", "/mnt/coop-test-host" + home, false},
+		{"name that only starts like sys", "/sysfs-coop-test/missing", false},
+		{"relative sys path", "sys/fs/bpf", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt := legacyMountRuntime(t, test.source, "running")
+			err := checkLegacyMountPaths(t.Context(), rt, false, home)
+			if (err == nil) != test.allowed {
+				t.Fatalf("allowed=%v, want %v: %v", err == nil, test.allowed, err)
+			}
+			if err != nil && !strings.Contains(err.Error(), strconv.Quote(test.source)) {
+				t.Fatalf("refusal does not name the mount %q: %v", test.source, err)
+			}
+		})
+	}
+}
+
+func TestHostlessKernelMountNeedsAHostWithoutSys(t *testing.T) {
+	previous := hostLstat
+	t.Cleanup(func() { hostLstat = previous })
+	hostSys, err := os.Lstat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name       string
+		lstat      func(string) (os.FileInfo, error)
+		source     string
+		hostlessOK bool
+	}{
+		{"host without /sys", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/sys/fs/bpf", true},
+		{"host with /sys", func(string) (os.FileInfo, error) { return hostSys, nil }, "/sys/fs/bpf", false},
+		{"unreadable /sys", func(string) (os.FileInfo, error) { return nil, os.ErrPermission }, "/sys/fs/cgroup", false},
+		{"below a root", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/sys/fs/bpf/link", false},
+		{"trailing slash", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/sys/fs/bpf/", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			hostLstat = test.lstat
+			if got := hostlessKernelMount(test.source); got != test.hostlessOK {
+				t.Fatalf("hostlessKernelMount(%q) = %v, want %v", test.source, got, test.hostlessOK)
+			}
+		})
+	}
+}

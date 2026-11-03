@@ -271,15 +271,20 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 		}
 		for _, source := range sources {
 			resolved, err := filepath.EvalSymlinks(source.Source)
-			if errors.Is(err, os.ErrNotExist) && source.Stopped {
-				resolved, err = resolveAuthorityPath(source.Source)
+			if errors.Is(err, os.ErrNotExist) {
+				if hostlessKernelMount(source.Source) {
+					continue
+				}
+				if source.Stopped {
+					resolved, err = resolveAuthorityPath(source.Source)
+				}
 			}
 			if err != nil {
-				return errors.New("legacy writer mount cannot be resolved")
+				return unresolvedMountError(source.Source)
 			}
 			overlap, err := authorityPathsOverlap(canonical, resolved)
 			if err != nil {
-				return errors.New("legacy writer mount cannot be resolved")
+				return unresolvedMountError(source.Source)
 			}
 			if overlap {
 				return errors.New("legacy credential home is mounted by a running or restartable container; finish that session before retrying")
@@ -287,6 +292,33 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 		}
 	}
 	return nil
+}
+
+// hostlessKernelMount reports whether a bind source is one of the container daemon's own kernel
+// filesystem roots on a host that has no /sys at all. Docker Desktop and OrbStack run the daemon in
+// a Linux VM, so Coop's filesystem helpers' binds of /sys/fs/cgroup and /sys/fs/bpf (and tools that
+// bind /sys itself) name VM paths that do not exist on the Mac. Docker reports a bind source as the
+// cleaned path it was given, and only exact mount roots are accepted: below a root, bpffs and
+// cgroupfs can hold links or new mount points. Pointing one of these roots at a host folder takes
+// root inside the VM, which this inventory never guarded against. Every other source missing on the
+// host, including the VM's own view of host folders, stays unresolved and keeps failing closed.
+func hostlessKernelMount(source string) bool {
+	switch source {
+	case "/sys", "/sys/fs/cgroup", "/sys/fs/bpf":
+	default:
+		return false
+	}
+	_, err := hostLstat("/sys")
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// hostLstat is a variable so tests can model a host that has its own /sys.
+var hostLstat = os.Lstat
+
+// unresolvedMountError names the mount, so the person can find the container that holds it. The
+// path is quoted: a container's bind source can contain line breaks.
+func unresolvedMountError(source string) error {
+	return fmt.Errorf("a container mounts %q, which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in; stop or remove the container that mounts it, then try again", source)
 }
 
 // Cutover is not fresh sign-in. Tombstones and uncertain canonical authority
