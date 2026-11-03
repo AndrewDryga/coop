@@ -29,6 +29,32 @@ func TestScanSecretsPatterns(t *testing.T) {
 	}
 }
 
+// Every sk-ant-… key is also an sk-… key. One credential is one finding, named by the more
+// specific shape: counting it twice inflated the report and asked for two exceptions. Detector ids
+// are what saved exceptions name, so the test checks those, not the labels.
+func TestScanSecretsReportsEachTokenOnce(t *testing.T) {
+	const anthropic = "sk-ant-api03-Zk9xQ2mP7vR4tY8wZ1cF6nH5jD0sG2eU4iO7pLm3"
+	const openAI = "sk-proj-N7qFvZm2Ld8RwXcTb3JhKp6Ys9Ug4Aa1"
+	detectors := func(line string) []string {
+		var out []string
+		for _, f := range ScanSecrets(line) {
+			out = append(out, f.Detector)
+		}
+		return out
+	}
+	for line, want := range map[string][]string{
+		`ANTHROPIC_API_KEY=` + anthropic:                    {"anthropic_api_key"},
+		`client = "` + anthropic + `"`:                      {"anthropic_api_key"},
+		`OPENAI_API_KEY=` + openAI:                          {"openai_api_key"},
+		`keys = ["` + anthropic + `", "` + openAI + `"]`:    {"anthropic_api_key", "openai_api_key"},
+		`keys = ["` + anthropic + `", "` + anthropic + `"]`: {"anthropic_api_key"},
+	} {
+		if got := detectors(line); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: detectors = %v, want %v", line, got, want)
+		}
+	}
+}
+
 func TestScanSecretsURLCredentials(t *testing.T) {
 	// A password embedded in a connection string is flagged regardless of the key name (the key
 	// isn't a credential word, so the entropy path never sees it).

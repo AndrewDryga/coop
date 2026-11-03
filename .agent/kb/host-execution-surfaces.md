@@ -2,8 +2,8 @@
 name: host-execution-surfaces
 description: local execution classifications, fork protections and controller-authorized CI publication
 subsystem: hostsurface
-sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go]
-updated: 2026-10-30
+sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go, internal/scaffold/stock.go]
+updated: 2026-11-03
 ---
 
 Shared-write boxes can plant metadata that native host tools execute even before a merge,
@@ -49,7 +49,11 @@ The consumers:
 - `coop fork review` prints all findings; `coop fork merge` blocks on the automatic ones.
 - `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked)
   under `Review files that run commands`, AFTER its verdict; it never changes the exit code, which
-  stays the secret scan's.
+  stays the secret scan's. A file whose bytes (or link target) are exactly what this Coop's init
+  writes at that path (`scaffold.Stock`: templates, the hook and gate for every language choice,
+  project/Compose files for every service choice, the Dockerfile for the current .tool-versions,
+  init's links) is counted in one line instead of listed: a fresh project's sixteen setup files
+  buried its secret result. One changed byte lists it again; fork review/merge keep listing all.
 - Session review refuses local execution and content findings before retaining the exact
   candidate for controller-authorized publication.
 
@@ -59,6 +63,8 @@ the board carries no acknowledgement marker. Old `flags.json` files are inert: n
 writes or deletes them. Review agent work at the fork boundary instead.
 
 ## Changelog
+- 2026-11-03: check-secrets counts Coop's unchanged setup files instead of listing them
+  (`scaffold.Stock`, proven against every file init writes by TestStockMatchesEveryFileInitWrites).
 - 2026-10-30: separated authorized remote CI publication from local fork execution policy;
   swept the classifier, session scanner, fork merge and isolated candidate consumers. Local
   protections are unchanged; publication and scanner regressions cover the distinction.

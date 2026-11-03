@@ -3,7 +3,7 @@ name: secret-finding-identity
 description: how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may and may not excuse, and why exceptions stop at check-secrets
 subsystem: secretscan
 sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go]
-updated: 2026-09-13
+updated: 2026-11-03
 ---
 
 A reviewed false positive is excused by NAMING the exact finding, so the detectors never learn to
@@ -18,6 +18,12 @@ present:
 - **The material, not the marker.** A private key is fingerprinted BEGIN-through-END, because every
   key in a file shares the BEGIN line; an unterminated block falls back to the whole file, so the
   id changes on any edit (re-reports rather than hides).
+
+One credential is one finding. `secretPatterns` order is precedence: on each line a provider match
+that overlaps a span an earlier pattern already reported is dropped, so an `sk-ant-…` key (also
+`sk-…`-shaped) is one `anthropic_api_key` finding, never a second `openai_api_key` one. A broader
+shape goes after the specific one it overlaps. Before 2026-11-03 such a key reported both; a saved
+`openai_api_key` entry for it now simply matches nothing.
 
 Detector ids (`DetectorOpenAIAPIKey` and friends) are a compatibility surface: rename one and every
 saved exception for it silently stops applying. Labels above them are presentation and may be
@@ -52,6 +58,8 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-11-03: overlapping provider matches report once, by the earlier pattern
+  (TestScanSecretsReportsEachTokenOnce).
 - 2026-09-13: corrected fork warning advice; synthetic visible/hidden fixtures retain
   non-forced merge refusal and prove removing the credential clears only its content finding.
 - 2026-09-13: verified ancestor-directory hiding across scanner modes and ignored

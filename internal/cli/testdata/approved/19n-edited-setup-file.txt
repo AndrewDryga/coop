@@ -1,0 +1,9 @@
+✓ No possible secrets found
+  Checked commit-candidate files and Coop's task files and notes.
+
+Review files that run commands
+  .githooks/pre-commit
+    Runs during Git operations.
+
+  Read these changes before running your tools.
+  15 unchanged Coop setup files that run commands are not listed.

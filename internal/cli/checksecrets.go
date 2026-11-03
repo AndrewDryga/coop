@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -54,11 +55,11 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	}
 
 	scan, err := scanVisibleTree(repo, includeIgnored)
-	// The default scan's blind spot is counted before anything is printed: a .coopignore coop cannot
+	// The default scan's blind spot is found before anything is printed: a .coopignore coop cannot
 	// read leaves it unknown, and stops the command as it stops the scan.
-	unscanned := 0
+	var unscanned []string
 	if err == nil && !includeIgnored {
-		unscanned, err = unscannedIgnoredCount(repo)
+		unscanned, err = unscannedIgnoredFiles(repo)
 	}
 	if err != nil {
 		if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
@@ -117,23 +118,26 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	}
 
 	// A clean default scan can be false assurance: a box bind-mounts the WHOLE tree, so a
-	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Say how
-	// many such files --include-ignored would add, so the default's blind spot is visible.
-	if n := unscanned; n > 0 {
+	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Name the
+	// files --include-ignored would add, so the default's blind spot is visible.
+	if n := len(unscanned); n > 0 {
 		verb, object := "were", "them"
 		if n == 1 {
 			verb, object = "was", "it"
 		}
 		blankBefore(&said)
 		warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
-			fmt.Sprintf("The box can read %s.", object),
+			fmt.Sprintf("The box can read %s:\n%s", object, fileList(unscanned)),
 			fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
 	}
 	// Independent of secrets: which files changed since the last commit alter what runs on YOUR
 	// machine — a hook, a settings file, a compose file, the Makefile. The sandbox contains the
 	// box; it cannot contain what your own tools do with files an agent left behind, so this is
 	// the "read these before running anything here" list. Informational: it never fails the scan.
-	if surfaces := hostSurfacesChanged(repo); len(surfaces) > 0 {
+	// Coop's own setup files, byte for byte what it ships, are counted rather than listed: right
+	// after coop init they were the whole list and buried the secret result.
+	surfaces, stock := hostSurfacesToReview(repo)
+	if len(surfaces) > 0 {
 		blankBefore(&said)
 		ui.Note("%s", ui.Bold("Review files that run commands"))
 		for _, finding := range surfaces {
@@ -142,6 +146,12 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 			ui.Note("")
 		}
 		ui.Note("  Read these changes before running your tools.")
+		if stock > 0 {
+			ui.Note("  %s", unchangedSetupFiles(stock))
+		}
+	} else if stock > 0 {
+		blankBefore(&said)
+		ui.Note("%s", unchangedSetupFiles(stock))
 	}
 
 	if len(scan.unreadable) > 0 {
@@ -229,36 +239,62 @@ type treeScan struct {
 	git        bool     // the candidate list came from git, not a directory walk
 }
 
-// unscannedIgnoredCount counts files the box can read but the default scan skipped — gitignored
+// unscannedIgnoredFiles lists files the box can read but the default scan skipped — gitignored
 // files (in the full visible tree but not the commit-candidate set) that aren't shadowed. It tells
-// the user how much surface --include-ignored would add, so a clean default scan isn't false
-// assurance. Returns 0 when git is unavailable (both sets fall back to the same full walk), and the
-// refusal of a .coopignore that coop cannot read, which leaves the count unknown.
-func unscannedIgnoredCount(repo string) (int, error) {
+// the user what --include-ignored would add, so a clean default scan isn't false assurance.
+// Returns none when git is unavailable (both sets fall back to the same full walk), and the
+// refusal of a .coopignore that coop cannot read, which leaves the list unknown.
+func unscannedIgnoredFiles(repo string) ([]string, error) {
 	all, _, err1 := candidateFiles(repo, true)
 	scanned, _, err2 := candidateFiles(repo, false)
 	if err1 != nil || err2 != nil {
-		return 0, nil
+		return nil, nil
 	}
 	inScan := make(map[string]bool, len(scanned))
 	for _, r := range scanned {
 		inScan[r] = true
 	}
 	shadowed := box.NewShadowDecider(repo)
-	n := 0
+	var out []string
 	for _, r := range all {
 		if inScan[r] {
 			continue // already scanned by default (incl. coop's .agent/ state)
 		}
 		hidden, err := shadowed(r)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if !hidden {
-			n++ // box-visible, user-gitignored, unprotected → a real blind spot
+			out = append(out, r) // box-visible, user-gitignored, unprotected → a real blind spot
 		}
 	}
-	return n, nil
+	return out, nil
+}
+
+// maxListedFiles bounds a list of paths inside a warning: the first few say what kind of files
+// these are, and a count says the rest exist.
+const maxListedFiles = 5
+
+// fileList renders paths one per line, indented under the sentence that introduces them, with
+// anything a path could do to the terminal shown escaped.
+func fileList(paths []string) string {
+	var lines []string
+	for i, path := range paths {
+		if i == maxListedFiles {
+			lines = append(lines, fmt.Sprintf("  and %d more", len(paths)-i))
+			break
+		}
+		lines = append(lines, "  "+ui.SafeInline(path))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// unchangedSetupFiles says how many of Coop's own setup files the review list left out.
+func unchangedSetupFiles(n int) string {
+	if n == 1 {
+		return "1 unchanged Coop setup file that runs commands is not listed."
+	}
+	return fmt.Sprintf("%d unchanged Coop setup files that run commands are not listed.", n)
 }
 
 // scanVisibleTree scans candidateFiles, skipping only hidden noncandidates. It shares
@@ -505,4 +541,17 @@ func hostSurfacesChanged(repo string) []hostsurface.Finding {
 		changes = append(changes, gitdiff.Change{Status: code, Path: path})
 	}
 	return hostsurface.Findings(changes)
+}
+
+// hostSurfacesToReview is hostSurfacesChanged without the files that hold exactly what Coop's own
+// scaffold ships there (scaffold.Stock), and how many of those it left out.
+func hostSurfacesToReview(repo string) (review []hostsurface.Finding, stock int) {
+	for _, finding := range hostSurfacesChanged(repo) {
+		if scaffold.Stock(repo, finding.Path) {
+			stock++
+			continue
+		}
+		review = append(review, finding)
+	}
+	return review, stock
 }

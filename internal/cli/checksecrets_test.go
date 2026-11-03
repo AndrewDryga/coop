@@ -58,8 +58,10 @@ func TestHostSurfacesChangedPreservesExactPaths(t *testing.T) {
 	}
 }
 
+// The blind-spot warning names what the box can read: every file when there are a few, the first
+// few and a count when there are more.
 func TestCheckSecretsIgnoredWarningAgreement(t *testing.T) {
-	for _, n := range []int{1, 3} {
+	for _, n := range []int{1, 3, 7} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			pinGitConfig(t)
 			repo, _ := gitrepo.New(t)
@@ -78,14 +80,24 @@ func TestCheckSecretsIgnoredWarningAgreement(t *testing.T) {
 			if code != 0 || runErr != nil {
 				t.Fatalf("scan = (%d, %v): %s", code, runErr, out)
 			}
-			want := []string{"3 Git-ignored files were not checked", "The box can read them.", "Check them with coop check-secrets --include-ignored."}
+			want := []string{fmt.Sprintf("%d Git-ignored files were not checked", n), "The box can read them:\n",
+				"Check them with coop check-secrets --include-ignored."}
 			if n == 1 {
-				want = []string{"1 Git-ignored file was not checked", "The box can read it.", "Check it with coop check-secrets --include-ignored."}
+				want = []string{"1 Git-ignored file was not checked", "The box can read it:\n", "Check it with coop check-secrets --include-ignored."}
+			}
+			for i := range min(n, maxListedFiles) {
+				want = append(want, fmt.Sprintf("\n        ignored-%d\n", i))
+			}
+			if n > maxListedFiles {
+				want = append(want, fmt.Sprintf("\n        and %d more\n", n-maxListedFiles))
 			}
 			for _, text := range want {
 				if !strings.Contains(out, text) {
 					t.Errorf("warning missing %q: %s", text, out)
 				}
+			}
+			if n > maxListedFiles && strings.Contains(out, fmt.Sprintf("ignored-%d", maxListedFiles)) {
+				t.Errorf("warning listed more than %d files: %s", maxListedFiles, out)
 			}
 		})
 	}
@@ -220,7 +232,7 @@ func TestScanVisibleTree(t *testing.T) {
 	}
 }
 
-func TestUnscannedIgnoredCount(t *testing.T) {
+func TestUnscannedIgnoredFiles(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -246,8 +258,8 @@ func TestUnscannedIgnoredCount(t *testing.T) {
 	run("add", ".gitignore", "tracked.go")
 	run("commit", "-qm", "add")
 
-	if n, err := unscannedIgnoredCount(repo); n != 1 || err != nil {
-		t.Errorf("unscannedIgnoredCount = %d, %v; want 1 (only secret.txt; .env shadowed, .agent/* now scanned by default, tracked.go committed)", n, err)
+	if files, err := unscannedIgnoredFiles(repo); len(files) != 1 || files[0] != "secret.txt" || err != nil {
+		t.Errorf("unscannedIgnoredFiles = %q, %v; want only secret.txt (.env shadowed, .agent/* now scanned by default, tracked.go committed)", files, err)
 	}
 }
 

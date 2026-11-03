@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -40,6 +41,9 @@ const (
 // secretPatterns are high-signal provider token shapes — precise enough to flag with
 // low false positives. Filename-based shadowing (SecretGlobs / .coopignore) catches
 // secret-*looking paths*; this catches a real token sitting in an ordinary file.
+//
+// Order is precedence: a token two shapes both match (every sk-ant-… key is also an sk-… key) is
+// reported once, by the earlier one, so a more specific shape goes before a broader one.
 var secretPatterns = []struct {
 	detector string
 	kind     string
@@ -233,10 +237,17 @@ func ScanFile(path, content string) []SecretFinding {
 	for i, line := range lines {
 		n := i + 1
 		precise := map[string]bool{}
+		// The spans of this line already reported: one credential is one finding, named by the
+		// first (most specific) pattern that matched it.
+		var reported [][2]int
 		for _, p := range secretPatterns {
 			// EVERY match on the line, not just the first: two tokens side by side are two
 			// independent findings, and ignoring one must never hide the other.
-			for _, tok := range p.re.FindAllString(line, -1) {
+			for _, at := range p.re.FindAllStringIndex(line, -1) {
+				if slices.ContainsFunc(reported, func(span [2]int) bool { return at[0] < span[1] && span[0] < at[1] }) {
+					continue
+				}
+				tok := line[at[0]:at[1]]
 				// Skip a token that is an obvious example/placeholder (AKIA…EXAMPLE) — a real
 				// provider token never contains "example"/"secret"/etc.
 				if placeholderRe.MatchString(tok) {
@@ -248,6 +259,7 @@ func ScanFile(path, content string) []SecretFinding {
 				}
 				add(SecretFinding{Line: n, Kind: p.kind, Detector: p.detector}, material)
 				precise[tok] = true
+				reported = append(reported, [2]int{at[0], at[1]})
 			}
 		}
 		// A password embedded in a connection-string URL (postgres://user:pw@host) — flagged when

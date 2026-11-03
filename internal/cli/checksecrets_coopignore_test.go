@@ -167,8 +167,8 @@ func TestCheckSecretsCoopignoreCommitCandidates(t *testing.T) {
 				if !hidden {
 					t.Fatal("candidate is not protected by the box mount plan")
 				}
-				if count, err := unscannedIgnoredCount(repo); count != 0 || err != nil {
-					t.Errorf("hidden ignored descendants counted as visible: %d, %v", count, err)
+				if files, err := unscannedIgnoredFiles(repo); len(files) != 0 || err != nil {
+					t.Errorf("hidden ignored descendants listed as visible: %q, %v", files, err)
 				}
 				for _, includeIgnored := range []bool{false, true} {
 					scan, err := scanVisibleTree(repo, includeIgnored)

@@ -3,6 +3,9 @@
 
 ⚠ 3 Git-ignored files were not checked
 
-      The box can read them.
+      The box can read them:
+        local-data/one.txt
+        local-data/three.txt
+        local-data/two.txt
 
   Check them with coop check-secrets --include-ignored.

