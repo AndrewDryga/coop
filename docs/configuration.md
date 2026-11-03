@@ -171,6 +171,13 @@ are reserved. A controller review with open networking starts the services in `r
 before the check, then removes them and their volumes. `coop fork review --gate` does not start
 them.
 
+Two variables tell a check what it is checking. `COOP_REVIEW_BASE` names the commit the changes
+are compared against, so a check can look only at what changed, for example
+`git diff --name-only "$COOP_REVIEW_BASE"...HEAD`. It is set for the project checks that
+`coop fork merge` and `coop fork review --gate` run, and for controller reviews. `COOP_REVIEW=1`
+is set only for a review (`coop fork review --gate` or a controller review), so a script can tell
+it from a merge check.
+
 ## Path-routed context
 
 Use `coop context` to give an agent the committed docs relevant to the files it is working on.

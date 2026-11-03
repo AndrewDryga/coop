@@ -451,6 +451,12 @@ restrictions but cannot relax them on its own:</p>
 are reserved. A controller review with open networking starts the services in <code>review.compose</code>
 before the check, then removes them and their volumes. <code>coop fork review --gate</code> does not start
 them.</p>
+<p>Two variables tell a check what it is checking. <code>COOP_REVIEW_BASE</code> names the commit the changes
+are compared against, so a check can look only at what changed, for example
+<code>git diff --name-only &#34;$COOP_REVIEW_BASE&#34;...HEAD</code>. It is set for the project checks that
+<code>coop fork merge</code> and <code>coop fork review --gate</code> run, and for controller reviews. <code>COOP_REVIEW=1</code>
+is set only for a review (<code>coop fork review --gate</code> or a controller review), so a script can tell
+it from a merge check.</p>
 </section><section class="doc-section reference-section" id="path-routed-context"><h2>Path-routed context</h2>
 <p>Use <code>coop context</code> to give an agent the committed docs relevant to the files it is working on.
 This avoids loading every rule and knowledge-base note for a small change. co:op always includes
