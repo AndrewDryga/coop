@@ -42,8 +42,9 @@ func TestForkMergeRequiresName(t *testing.T) {
 	if code, err := c.ForkMerge([]string{"--nope"}); code != 2 || err == nil {
 		t.Errorf("ForkMerge(--nope) = (%d, %v), want (2, unknown-flag error)", code, err)
 	}
-	if code, err := c.ForkMerge([]string{"perf", "--all", "--yes"}); code != 2 || err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("ForkMerge(perf --all --yes) = (%d, %v), want (2, mutually-exclusive error)", code, err)
+	if code, err := c.ForkMerge([]string{"perf", "--all", "--yes"}); code != 2 || !errors.As(err, &usage) ||
+		usage.Headline != `Cannot combine "<name>" and "--all" in "coop fork merge"` {
+		t.Errorf("ForkMerge(perf --all --yes) = (%d, %v), want (2, the conflicting-options block)", code, err)
 	}
 }
 
@@ -1130,9 +1131,11 @@ func TestForkMergeNonTTYRequiresYes(t *testing.T) {
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "work")
 
-	// Without --yes: refuse, before landing, fork intact.
-	if code, err := c.ForkMerge([]string{"a"}); err == nil || code == 0 {
-		t.Fatalf("ForkMerge(no --yes) = (%d, %v), want a refusal", code, err)
+	// Without --yes: refuse in the shared block, as every unconfirmed deletion is, before landing.
+	var usage *ui.UsageError
+	if code, err := c.ForkMerge([]string{"a"}); code != 2 || !errors.As(err, &usage) || usage.Headline != "Confirmation required" ||
+		!strings.Contains(usage.Cause, "pass --yes to confirm") {
+		t.Fatalf("ForkMerge(no --yes) = (%d, %v), want (2, Confirmation required)", code, err)
 	}
 	if pathExists(filepath.Join(repo, "a.txt")) {
 		t.Error("a.txt landed despite the non-interactive refusal")

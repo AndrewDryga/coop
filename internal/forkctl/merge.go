@@ -912,6 +912,17 @@ func (c *Control) FastForwardParent(repo, ws, name string) error {
 	return nil
 }
 
+// mergeNeedsConfirmation refuses a merge nothing could confirm, as ui.ConfirmationRequired refuses
+// an unanswered deletion: a merge also removes the fork, and without a terminal only --yes answers.
+func mergeNeedsConfirmation() *ui.UsageError {
+	return &ui.UsageError{
+		Headline: "Confirmation required",
+		Cause: "Merging brings the fork's commits into your branch and removes the fork.\n" +
+			"Run this command in a terminal, or pass --yes to confirm.",
+		Rows: [][2]string{{"Help:", ui.HelpCommand("coop fork merge")}},
+	}
+}
+
 func (c *Control) ForkMerge(args []string) (int, error) {
 	all, force, yes := false, false, false
 	var pos []string
@@ -925,7 +936,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 			yes = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, fmt.Errorf("coop fork merge: unknown flag %q", x)
+				return 2, ui.UnknownOption(x, "coop fork merge", "")
 			}
 			pos = append(pos, x)
 		}
@@ -949,7 +960,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		}
 	}
 	if all && name != "" {
-		return 2, errors.New("coop fork merge: <name> and --all are mutually exclusive")
+		return 2, ui.ConflictingOptions("<name>", "--all", "coop fork merge")
 	}
 	if !all && !forkspace.ValidName(name) {
 		return 2, fmt.Errorf("invalid fork name %q", name)
@@ -986,13 +997,14 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		return c.forkMergeIsolatedCommand(repo, name, identity, force, yes, false)
 	}
 	if gitDirty(repo) {
-		return 1, errors.New("your working tree has uncommitted changes — commit or stash before merging")
+		return 1, ui.CommandFailed("Your working tree has uncommitted changes",
+			"Merging needs a clean working tree.", [2]string{"", "Commit or stash them, then merge again."})
 	}
 	// Merging lands work and (by default) deletes the fork. A non-interactive run has
 	// no one to answer the prompts, so refuse rather than proceed on the default —
 	// pass --yes to opt in explicitly.
 	if !yes && !ui.IsTerminal(os.Stdin) {
-		return 1, errors.New("coop fork merge: refusing to land in a non-interactive shell — pass --yes to confirm")
+		return 2, mergeNeedsConfirmation()
 	}
 	img, err := c.MergeGate(repo)
 	if err != nil {
@@ -1136,7 +1148,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
 	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
-		return 2, ForkCancelled(err)
+		return 2, ForkCancelled(err, "coop fork merge")
 	}
 	// --yes asked nothing, so there is no answered question to separate from the first fork.
 	if !yes {

@@ -31,7 +31,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 		img := ""
 		if !pending {
 			if !yes && !ui.IsTerminal(os.Stdin) {
-				return mergeOutcome{}, errors.New("coop fork merge: refusing new isolated publication in a non-interactive shell — pass --yes to confirm")
+				return mergeOutcome{}, mergeNeedsConfirmation()
 			}
 			img, err = c.MergeGate(repo)
 			if err != nil {
@@ -54,6 +54,11 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 	if err != nil {
 		if result.landed {
 			ui.Note("The isolated fork's commits are in the parent repository. Remaining steps are recorded for recovery.")
+		}
+		// A publication nothing could confirm is refused before anything lands, as rejected input.
+		var refused *ui.UsageError
+		if errors.As(err, &refused) && refused.ExitCode == 0 {
+			return 2, err
 		}
 		return 1, err
 	}
@@ -88,7 +93,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 
 func (c *Control) forkMergeIsolatedBatch(repo string, names []string, force, yes bool) (int, error) {
 	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
-		return 2, ForkCancelled(err)
+		return 2, ForkCancelled(err, "coop fork merge")
 	}
 	for _, name := range names {
 		if forkspace.NeedsStop(repo, name) {

@@ -561,7 +561,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 				})
 			}
 			if err := ui.DestroyGate("Recreate this fork", fa.yes, asks...); err != nil {
-				return 2, forkctl.ForkCancelled(err)
+				return 2, forkctl.ForkCancelled(err, "coop fork")
 			}
 			// An answered question is a section of its own; --yes asked nothing.
 			if !fa.yes {

@@ -555,8 +555,9 @@ func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
 	code, err := a.forkCreate([]string{"perf", "claude", "--fresh"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), "cannot recreate this fork without confirmation") || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("fork --fresh without confirmation = (%d, %v), want refusal naming --yes", code, err)
+	if usage := asUsage(err); code != 2 || usage == nil || usage.Headline != "Confirmation required" ||
+		!strings.Contains(usage.Cause, "--yes") || usage.Rows[0][1] != "coop help fork" {
+		t.Fatalf("fork --fresh without confirmation = (%d, %v), want the shared refusal naming --yes", code, err)
 	}
 	if !pathExists(ws) {
 		t.Fatal("unconfirmed --fresh deleted the fork")

@@ -139,7 +139,8 @@ func oneForkName(verb string, pos []string) (string, error) {
 	return pos[0], nil
 }
 
-// ForkRmSafe is the guard for `rm`: never silently drop an agent's work.
+// ForkRmSafe is the guard for `rm`: never silently drop an agent's work. Its sentence is also part of
+// --fresh's refusals; `coop fork rm` itself draws the guard as rmGuardRefusal.
 func ForkRmSafe(unmerged, dirty, force bool) error {
 	if force {
 		return nil
@@ -153,14 +154,34 @@ func ForkRmSafe(unmerged, dirty, force bool) error {
 	return nil
 }
 
-// ForkCancelled turns a declined confirmation into the plain sentence a person expects, and keeps
-// any other gate refusal (a pipe with no --yes) as the error it is. It is emitted only BEFORE any
-// mutation, so it can truthfully say the fork was kept.
-func ForkCancelled(err error) error {
+// rmGuardRefusal is ForkRmSafe's refusal for `coop fork rm`: what deleting the fork would discard,
+// and the ways forward. name passed forkspace.ValidExistingName, so it is plain text.
+func rmGuardRefusal(name string, unmerged, dirty bool) error {
+	anyway := [2]string{"Delete it anyway:", "coop fork rm " + name + " --force"}
+	switch {
+	case dirty && unmerged:
+		return ui.CommandFailed(fmt.Sprintf("Fork %q has uncommitted changes and unmerged commits", name),
+			"Deleting it would discard both.", [2]string{"Review it:", "coop fork review " + name}, anyway)
+	case dirty:
+		return ui.CommandFailed(fmt.Sprintf("Fork %q has uncommitted changes", name),
+			"Deleting it would discard them.", [2]string{"Review it:", "coop fork review " + name}, anyway)
+	default:
+		return ui.CommandFailed(fmt.Sprintf("Fork %q has unmerged commits", name),
+			"Deleting it would discard them.", [2]string{"Merge it:", "coop fork merge " + name}, anyway)
+	}
+}
+
+// ForkCancelled turns a declined confirmation into the plain sentence a person expects, and refuses
+// a gate nothing could answer (a pipe with no --yes) in the shared block, pointing at command's
+// page. It is emitted only BEFORE any mutation, so it can truthfully say the fork was kept.
+func ForkCancelled(err error, command string) error {
 	if err != nil && err.Error() == "cancelled" {
 		ui.Note("")
 		ui.Note("Cancelled. The fork was kept.")
 		return ui.Reported(err)
+	}
+	if errors.Is(err, ui.ErrNeedsConfirmation) {
+		return ui.ConfirmationRequired(command)
 	}
 	return err
 }
@@ -271,7 +292,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		case "--yes", "-y": // accepted so `--yes` skips the confirm below (read via hasYes)
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, fmt.Errorf("coop fork rm: unknown flag %q", x)
+				return 2, ui.UnknownOption(x, "coop fork rm", "")
 			}
 			pos = append(pos, x)
 		}
@@ -306,6 +327,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return -1, fmt.Errorf("no such fork: %s", name)
 		}
 		if err := c.destroyGate("Remove orphaned fork state "+name, hasYes(args)); err != nil {
+			if errors.Is(err, ui.ErrNeedsConfirmation) {
+				return 2, ui.ConfirmationRequired("coop fork rm")
+			}
 			return 2, err
 		}
 		if !hasYes(args) {
@@ -350,7 +374,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	}
 	initialUnmerged, initialDirty := ForkUnmerged(repo, ws), ForkWorktreeClean(ws) != nil
 	if err := ForkRmSafe(initialUnmerged, initialDirty, force); err != nil {
-		return 1, err
+		return 1, rmGuardRefusal(name, initialUnmerged, initialDirty)
 	}
 	initialIdentity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
@@ -371,7 +395,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	PrintForkDestroyPreview(fmt.Sprintf("Delete fork %q", name), ws,
 		ForkDestroyDescription(needsStop, initialDirty, initialUnmerged, initialTaskState))
 	if err := c.destroyGate("Delete this fork", hasYes(args)); err != nil {
-		return 2, ForkCancelled(err)
+		return 2, ForkCancelled(err, "coop fork rm")
 	}
 	// One blank line closes every section, so the result below needs none of its own: the preview
 	// closed with one, an answered question gets one here (--yes asked nothing), and a forced stop's
