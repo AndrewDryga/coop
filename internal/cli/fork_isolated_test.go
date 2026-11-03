@@ -94,3 +94,28 @@ func TestIsolatedModeSurvivesMissingWorkspaceBeforeRecreation(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeForkDoesNotAdoptUnreservedImmutablePrimary(t *testing.T) {
+	repo := initRepo(t)
+	workspace := forkspace.Workspace(repo, "interrupted-primary")
+	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".git", forkspace.ImmutablePrimaryMarker), []byte(`{"version":99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "interrupted-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if _, err := forkBoundaryMode(repo, "interrupted-primary", false, false); err == nil {
+		t.Fatal("native fork recovered unfinished controller projection")
+	}
+	if _, err := bindForkBoundary(repo, "interrupted-primary", false); err == nil {
+		t.Fatal("native fork adopted unfinished controller projection")
+	}
+	if _, present, err := forkspace.ReadGeneration(repo, "interrupted-primary"); err != nil || present {
+		t.Fatalf("native refusal still created generation: %t %v", present, err)
+	}
+}

@@ -175,7 +175,7 @@ func ensureSessionCompanionContext(
 	return binding, nil
 }
 
-func createSessionCompanionContext(ctx context.Context, binding session.CompanionRepository) (returnErr error) {
+func createSessionCompanionContext(ctx context.Context, binding session.CompanionRepository, history ...string) (returnErr error) {
 	stage, err := os.MkdirTemp(
 		filepath.Dir(binding.Workspace), "."+binding.Name+"-",
 	)
@@ -205,7 +205,7 @@ func createSessionCompanionContext(ctx context.Context, binding session.Companio
 	// The worker has already fetched a self-contained object closure. Copy the
 	// pinned commit's whole history out of it, with no refs or remote to remove,
 	// and no history budget that rejects large working trees.
-	if err := forkspace.GitCopyPinnedHistoryContext(ctx, binding.Repository, stage, binding.BaseCommit); err != nil {
+	if err := forkspace.GitCopyPinnedHistoryContext(ctx, binding.Repository, stage, binding.BaseCommit, history...); err != nil {
 		return fmt.Errorf("copy companion history: %w", err)
 	}
 	if err := forkspace.GitRefCommand(ctx, stage, "update-ref", "--no-deref", "HEAD", binding.BaseCommit).Run(); err != nil {

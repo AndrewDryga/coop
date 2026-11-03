@@ -349,7 +349,8 @@ func refOnlyShape(args []string) bool {
 		}
 		return (len(rest) == 2 || len(rest) == 3) && plain(rest...)
 	case "symbolic-ref":
-		return len(args) == 3 && args[1] == "HEAD" && strings.HasPrefix(args[2], "refs/heads/") && plain(args[2])
+		return len(args) == 3 && plain(args[2]) && (args[1] == "HEAD" && strings.HasPrefix(args[2], "refs/heads/") ||
+			args[1] == "refs/remotes/origin/HEAD" && strings.HasPrefix(args[2], "refs/remotes/origin/"))
 	case "for-each-ref":
 		return len(args) == 2 && strings.HasPrefix(args[1], "--format=")
 	case "branch":

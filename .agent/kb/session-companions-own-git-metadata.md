@@ -2,7 +2,7 @@
 name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
-sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
+sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
 updated: 2026-11-03
 ---
 
@@ -95,7 +95,22 @@ which nonrecursive removal can reclaim without authority over unknown contents. 
 entry whose ownership/cleanliness proof exceeds the 30-second pass remains retained and reported;
 the rotating cursor prevents it from starving other entries. Session history and old independent companion copies keep their existing custody and cleanup rules.
 
+Frozen read-only controller primary forks now use the same immutable cache/projection machinery
+under a distinct materialization key. Their root set includes selected, admitted default and base
+commits; private metadata restores their fork branch, origin and admitted tracking refs without
+checkout or reset. Writable primaries still use independent clones. Task binding, checkpoint,
+restore and publication already refuse readonly sessions; review rebases an independent scratch.
+A versioned, inode-bound primary marker is durable before publication. Retries of a marked fork
+verify only; historical independent copies keep their hydration path. Missing provenance cannot
+adopt shared payloads as an independent copy (the separately proven generation anchor is excluded).
+The marker denies native mutation and actual writable mounts even before generation/reservation
+publication, including ancestor aliases and child paths. Unknown marker versions remain protected
+through discard planning, revalidation, staging and purge. Stopped-worker checks inventory them.
+No filesystem reflink support is required: private state on both Btrfs and ext4 shares actual inodes,
+and the existing allocated-block accountant counts each payload once.
+
 ## Changelog
+- 2026-11-03 — extend immutable payload sharing to frozen read-only primaries; close unreserved native-launch and unknown-receipt cleanup gaps.
 - 2026-11-03 — share verified immutable companion payloads while keeping per-session metadata, mounts and custody; bounded cache reclamation uses durable filesystem references.
 - 2026-10-17 — dropped the run.go line numbers after `companionRepositoryMounts`, which the sentence
   already names (re-verified its `/coop/repositories/<alias>` read-only bind in

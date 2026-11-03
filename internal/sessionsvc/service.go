@@ -1831,7 +1831,11 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		s.reclaimBeforeAllocation(ctx)
 	}
 	started := time.Now()
-	workspace, err = ensureSessionWorkspaceContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID)
+	var primary *primarySnapshotSource
+	if execution.RepositoryReadOnly && job.Source != nil {
+		primary = &primarySnapshotSource{stateRoot: s.stateRoot, source: *job.Source}
+	}
+	workspace, err = ensureSessionWorkspaceForJobContext(ctx, s, execution.Repository, intent.ForkName, selected, intent.OwnerStoreID, intent.SessionID, primary)
 	if err != nil {
 		if errors.Is(err, errSessionWorkspacePublicationPending) {
 			// The generation or reservation may already be visible. Keep the

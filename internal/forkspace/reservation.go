@@ -199,6 +199,9 @@ func ReadWorkspaceReservation(repo string, identity Identity) (WorkspaceReservat
 }
 
 func RequireNoWorkspaceReservationLocked(repo string, identity Identity) error {
+	if err := RefuseImmutablePrimaryMutation(Workspace(repo, identity.Name)); err != nil {
+		return err
+	}
 	reservation, ok, err := ReadWorkspaceReservation(repo, identity)
 	if err != nil {
 		return err

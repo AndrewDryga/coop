@@ -173,6 +173,12 @@ func allowControllerJobSources(cfg *config.Config, spec RunSpec, stateRoot strin
 		return err
 	}
 	allow.sources[spec.Repo] = true
+	if spec.RepoReadOnly {
+		if allow.readonlySources == nil {
+			allow.readonlySources = map[string]bool{}
+		}
+		allow.readonlySources[spec.Repo] = true
+	}
 	for _, companion := range spec.CompanionRepositories {
 		if companion.Name == "" || filepath.Base(companion.Name) != companion.Name ||
 			companion.Name == "." || companion.Name == ".." ||
@@ -287,6 +293,11 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		}
 	}
 	checkSource := func(source string, writable bool, allowed map[string]bool, trees []string, trustedOpaque bool) error {
+		if writable {
+			if err := forkspace.RefuseImmutablePrimaryMutation(source); err != nil {
+				return err
+			}
+		}
 		for _, isolatedParent := range isolatedParents {
 			canonical, err := resolveAuthorityPath(source)
 			if err != nil {

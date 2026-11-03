@@ -2471,3 +2471,24 @@ func TestForkMergeQueueReportsCleanupFailureAndContinues(t *testing.T) {
 		t.Error("second fork not cleaned up")
 	}
 }
+
+func TestNativeRemovalRefusesUnreservedPrimaryBeforeConfirmation(t *testing.T) {
+	repo := initRepo(t)
+	workspace, err := forkspace.Setup(repo, "unreserved-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".git", forkspace.ImmutablePrimaryMarker), []byte(`{"version":99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	control := &Control{cfg: &config.Config{RepoOverride: repo}, askDelete: func(string) bool { t.Error("unknown primary reached destructive confirmation"); return false }}
+	for _, args := range [][]string{{"unreserved-primary", "--force"}, {"unreserved-primary", "--force", "--yes"}} {
+		code, err := control.ForkRm(args)
+		if code != 1 || err == nil || !strings.Contains(err.Error(), "immutable read-only primary") {
+			t.Fatalf("native removal = %d %v", code, err)
+		}
+	}
+	if !pathExists(workspace) {
+		t.Fatal("unknown primary disappeared")
+	}
+}

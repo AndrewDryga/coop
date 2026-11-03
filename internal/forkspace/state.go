@@ -452,7 +452,7 @@ func OpenStateFile(path string) (*os.File, error) {
 // with O_CREATE, whether it was just made or was already there, is set to 0600 through its
 // descriptor, never by path.
 func openStateFile(dirfd int, name, path string, flag int) (*os.File, error) {
-	fd, err := unix.Openat(dirfd, name, flag|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+	fd, err := openFileAt(dirfd, name, flag|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		// O_NOFOLLOW refuses a link with ELOOP, a folder opened to write fails with EISDIR, and
 		// open(2) refuses a socket with ENXIO on Linux and EOPNOTSUPP on macOS, as it does a named

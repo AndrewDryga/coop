@@ -41,6 +41,10 @@ type companionSnapshotReceipt struct {
 }
 
 func companionSnapshotKey(stateRoot string, binding session.CompanionRepository) (string, error) {
+	stateRoot, err := filepath.EvalSymlinks(stateRoot)
+	if err != nil {
+		return "", err
+	}
 	repository, err := filepath.EvalSymlinks(binding.Repository)
 	if err != nil {
 		return "", err
@@ -97,11 +101,17 @@ func companionSnapshotKey(stateRoot string, binding session.CompanionRepository)
 }
 
 func createCachedSessionCompanion(ctx context.Context, stateRoot string, binding session.CompanionRepository) error {
-	stateRoot, err := filepath.EvalSymlinks(stateRoot)
+	key, err := companionSnapshotKey(stateRoot, binding)
 	if err != nil {
 		return err
 	}
-	key, err := companionSnapshotKey(stateRoot, binding)
+	return createCachedSessionSnapshot(ctx, stateRoot, binding, key, nil, nil)
+}
+
+// The cache owns detached immutable payloads. A primary may add private fork
+// metadata to its projection before publication; neither path mutates the cache.
+func createCachedSessionSnapshot(ctx context.Context, stateRoot string, binding session.CompanionRepository, key string, history []string, prepare func(string) error) error {
+	stateRoot, err := filepath.EvalSymlinks(stateRoot)
 	if err != nil {
 		return err
 	}
@@ -124,7 +134,7 @@ func createCachedSessionCompanion(ctx context.Context, stateRoot string, binding
 		}
 	}
 	if _, err = os.Lstat(entry); errors.Is(err, os.ErrNotExist) {
-		if err = buildCompanionSnapshot(ctx, entry, key, binding); err != nil {
+		if err = buildCompanionSnapshot(ctx, entry, key, binding, history...); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -133,6 +143,9 @@ func createCachedSessionCompanion(ctx context.Context, stateRoot string, binding
 	cached := binding
 	cached.Workspace = filepath.Join(entry, "tree")
 	if err = verifyCompanionSnapshot(ctx, entry, key, cached); err != nil {
+		return err
+	}
+	if err = verifySnapshotHistory(ctx, cached.Workspace, history); err != nil {
 		return err
 	}
 	// Recent use keeps an unreferenced hot snapshot available to a following job.
@@ -159,13 +172,18 @@ func createCachedSessionCompanion(ctx context.Context, stateRoot string, binding
 	if err = verifySessionSubmodules(ctx, stage, binding.BaseCommit); err != nil {
 		return err
 	}
+	if prepare != nil {
+		if err = prepare(stage); err != nil {
+			return err
+		}
+	}
 	if _, err = os.Lstat(binding.Workspace); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("companion destination appeared while projecting snapshot")
 	}
 	return os.Rename(stage, binding.Workspace)
 }
 
-func buildCompanionSnapshot(ctx context.Context, entry, key string, binding session.CompanionRepository) error {
+func buildCompanionSnapshot(ctx context.Context, entry, key string, binding session.CompanionRepository, history ...string) error {
 	stage, err := os.MkdirTemp(filepath.Dir(entry), ".snapshot-")
 	if err != nil {
 		return err
@@ -185,7 +203,7 @@ func buildCompanionSnapshot(ctx context.Context, entry, key string, binding sess
 	}
 	cached := binding
 	cached.Workspace = filepath.Join(stage, "tree")
-	if err = createSessionCompanionContext(ctx, cached); err != nil {
+	if err = createSessionCompanionContext(ctx, cached, history...); err != nil {
 		return err
 	}
 	if err = verifySessionSubmodules(ctx, cached.Workspace, binding.BaseCommit); err != nil {

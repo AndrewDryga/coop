@@ -27,6 +27,38 @@ func SetupPinnedContext(ctx context.Context, repo, name, commit string) (ws stri
 	return setupContext(ctx, repo, name, commit, false)
 }
 
+// PrepareProjectedForkContext initializes only the private metadata of a newly
+// projected read-only tree. It never checks out, resets or rewrites payloads.
+// The caller owns an unpublished, independently configured projection and holds
+// the fork lifecycle lock; ordinary writable forks continue through Setup.
+func PrepareProjectedForkContext(ctx context.Context, repo, workspace, name, commit string) error {
+	if !ValidName(name) || !ValidObjectID(commit) {
+		return errors.New("invalid projected fork identity")
+	}
+	if err := RequireForkNameAvailable(repo, name); err != nil {
+		return err
+	}
+	if err := ensureForkHome(repo); err != nil {
+		return err
+	}
+	for _, args := range [][]string{
+		{"update-ref", "refs/heads/" + name, commit},
+		{"symbolic-ref", "HEAD", "refs/heads/" + name},
+		{"config", "remote.origin.url", repo},
+	} {
+		if err := GitRefCommand(ctx, workspace, args...).Run(); err != nil {
+			return err
+		}
+	}
+	if err := propagateGitEnvContext(ctx, repo, workspace); err != nil {
+		return err
+	}
+	if err := Exclude(workspace, ".coop/"); err != nil {
+		return err
+	}
+	return Exclude(workspace, "/"+GenerationMarkerName)
+}
+
 // SetupIsolatedContext additionally materializes independently owned unchanged
 // submodules and LFS payloads, without running checkout drivers from host config.
 func SetupIsolatedContext(ctx context.Context, repo, name, commit string) (string, error) {
@@ -211,6 +243,9 @@ func appendFile(path string, data []byte) error {
 // teardown is driven by the fork's own compose file, so once the workspace is deleted there is
 // nothing left to drive it.
 func Destroy(repo, name string) error {
+	if err := RefuseImmutablePrimaryMutation(Workspace(repo, name)); err != nil {
+		return err
+	}
 	identity, exists, err := ReadGeneration(repo, name)
 	if err != nil {
 		return err

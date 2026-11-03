@@ -376,6 +376,16 @@ func runSessionCheck(state string) (int, error) {
 	if err != nil {
 		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
 	}
+	if err == nil {
+		var primary sessionsvc.CompanionSnapshotCheck
+		primary, err = sessionsvc.CheckPrimarySnapshots(state)
+		records = append(records, workerconnector.RecordCheck{Noun: "primary snapshot receipt",
+			Version: primary.Version, Current: primary.Current, Newer: primary.Newer,
+			Older: primary.Older, Damaged: primary.Damaged})
+	}
+	if err != nil {
+		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+	}
 	return reportSessionCheck(state, store, records)
 }
 

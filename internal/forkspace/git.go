@@ -116,7 +116,7 @@ func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
 	return errors.Join(command.Run(), ctx.Err())
 }
 
-// GitCopyPinnedHistoryContext makes dst a new repository holding one commit's whole history
+// GitCopyPinnedHistoryContext makes dst a new repository holding the requested roots' whole history
 // from a local trusted source, in a pack of its own: no refs, remote, checkout, template,
 // hardlink, alternate or source-side configuration. Git runs in dst and reads the source's
 // objects through this one command's environment, keeping their stored form. A non-local clone
@@ -125,9 +125,12 @@ func GitFetchPinnedContext(ctx context.Context, src, dst, commit string) error {
 // before its agent could start, and this copy takes half a minute (2026-10-17). A shallow
 // source, or one an alternate list cannot name, is cloned instead, and the clone's refs and
 // remote go.
-func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string) error {
-	if !ValidObjectID(commit) {
-		return errors.New("invalid pinned history commit")
+func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string, additional ...string) error {
+	roots := append([]string{commit}, additional...)
+	for _, root := range roots {
+		if !ValidObjectID(root) || len(root) != len(commit) {
+			return errors.New("invalid pinned history commit")
+		}
 	}
 	view, err := pinnedSourceView(ctx, src)
 	if err != nil {
@@ -138,7 +141,7 @@ func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string) e
 	// Git splits an alternate list at the path separator, so a source whose path holds one
 	// cannot be named there; it is cloned like a shallow one.
 	if fileExists(filepath.Join(view.dir, "shallow")) || strings.ContainsRune(objects, filepath.ListSeparator) {
-		return gitClonePinnedHistoryContext(ctx, src, dst, commit)
+		return gitClonePinnedHistoryContext(ctx, src, dst, commit, additional...)
 	}
 	format := "sha1"
 	if len(commit) == 64 {
@@ -158,20 +161,25 @@ func GitCopyPinnedHistoryContext(ctx context.Context, src, dst, commit string) e
 	pack := git(append(slices.Clip(env), "GIT_ALTERNATE_OBJECT_DIRECTORIES="+objects),
 		"pack-objects", "--quiet", "--revs", "--window=0", "--delta-base-offset",
 		filepath.Join(dst, ".git", "objects", "pack", "pack"))
-	pack.Stdin = strings.NewReader(commit + "\n")
+	pack.Stdin = strings.NewReader(strings.Join(roots, "\n") + "\n")
 	if err := pack.Run(); err != nil {
 		return errors.Join(ctx.Err(), fmt.Errorf("copy pinned history: %w", err))
 	}
 	// The source is out of reach now: the history must be whole without it.
-	if err := git(env, "rev-list", "--quiet", "--objects", commit).Run(); err != nil {
+	if err := git(env, append([]string{"rev-list", "--quiet", "--objects"}, roots...)...).Run(); err != nil {
 		return errors.Join(ctx.Err(), fmt.Errorf("verify pinned history: %w", err))
 	}
 	return nil
 }
 
-func gitClonePinnedHistoryContext(ctx context.Context, src, dst, commit string) error {
+func gitClonePinnedHistoryContext(ctx context.Context, src, dst, commit string, additional ...string) error {
 	if err := GitClonePinnedContext(ctx, src, dst, commit); err != nil {
 		return err
+	}
+	for _, root := range additional {
+		if err := GitFetchPinnedContext(ctx, src, dst, root); err != nil {
+			return err
+		}
 	}
 	if err := GitRefCommand(ctx, dst, "remote", "remove", "origin").Run(); err != nil {
 		return fmt.Errorf("remove pinned history transport: %w", err)

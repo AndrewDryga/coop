@@ -2,12 +2,11 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
+sources: [internal/forkspace/usage.go, internal/forkspace/state_root.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
 updated: 2026-11-03
 ---
 
-A worker accounts for its own disk so a control plane can bound workspace growth. Four things about
-it are not obvious from the code.
+A worker accounts for its own disk so a control plane can bound workspace growth. Several details are not obvious from the code.
 
 **Only exclusive bytes are reclaimable.** `git clone` of a local path hardlinks the parent's object
 files, so measuring each fork on its own charges the same baseline to every one of them and reports
@@ -25,7 +24,9 @@ inode into `<repo>-forks/.discarding/<name>.<16 hex>` — one atomic same-filesy
 anything is removed. Deleting in place was not resumable: a crash partway through left a directory
 that still occupied the fork's name but had no `.git`, so every later plan refused it and its bytes
 were stranded for good. After the rename the fork name is free and the remains are unambiguously
-coop's garbage that `PurgeStagedDiscards` finishes without re-proving anything. The staging
+coop's garbage that `PurgeStagedDiscards` finishes without rebuilding the original Git cleanliness
+proof. A surviving primary receipt must still have a supported format and the same directory;
+unknown newer data is retained and reported. The staging
 directory is a SIBLING of the fork workspaces rather than a child of `.coop` so the accounting can
 measure control state and mid-removal garbage as two separate trees. No discard reports success
 until `confirmSessionWorkspaceRemoved` sees the bytes gone.
@@ -46,21 +47,9 @@ while retaining its exact body and execution fence; cleanup remains possible ins
 **Unknown is never zero.** An unreadable subtree, an unattributable directory, or a scan past its
 bounds sets `Usage.Unknown`, which becomes `totals.unknown` and publishes
 `storage.unattributed_bytes` as `null`. An unbound generation is protected even when old and clean:
-the session row may be in another store, or `ensureSessionWorkspaceContext` may have written the
+the session row may be in another store, or `ensureSessionWorkspaceForJobContext` may have written the
 workspace before its create transaction. Maintenance only purges workspaces already staged by an
 authorized discard; it does not infer ownership from absence in this store.
-
-## Changelog
-- 2026-09-27 — removed age-based orphan deletion after checking the create-before-row window;
-  unbound generations remain protected for manual recovery.
-- 2026-09-27 — distinguished checkpoint allocation/recovery pressure protection from ordinary
-  admission monitoring; verified against checkpoint_storage.go and the interrupted-restore tests.
-- 2026-09-23 — corrected link-count accounting: directories commonly have `Nlink > 1` because of
-  child directories but are still exclusively reclaimable; only multiply-linked non-directories
-  enter the shared-inode set.
-- 2026-09-11 — `docs/worker.md` folded into `docs/session-api.md` with the `coop sessions connect`
-  consolidation; the workspace-storage section lives there now.
-- 2026-09-11 — created with the worker-side byte accounting, pressure check and owned-orphan scan.
 
 **Closed sessions release clean companion copies independently of the primary.** A retained dirty
 or unmerged primary no longer pins every reproducible companion history. Maintenance examines a
@@ -91,3 +80,28 @@ entries; it does not recursively measure every cache before deleting the first o
 allocated bytes as a warm-cache budget hint. A sweep carries that hint across bounded passes;
 it is not a recovered-byte claim. Actual telemetry still deduplicates current inode allocations.
 The cursor advances before a slow/held entry, so one entry cannot starve all following cleanup.
+
+Frozen readonly primary payloads use the same cache budget and durable hardlink references as
+companions. Their distinct private generation anchors also have link count two; numeric totals
+count each anchor once alongside the shared payload, rather than subtracting them as duplicate
+repository bytes. Unknown primary markers prevent destructive cleanup even when Git is clean.
+
+Concurrent first creation of private lock files exposed a Darwin openat(O_CREAT) race: a stable
+directory returned ENOENT without deletion. `openFileAt` exclusively creates, then opens an existing
+file only after EEXIST, preserving no-follow flags and real disappearance errors. State locks,
+legacy-record migration locks and local Git excludes share this operation; no retry masks I/O loss.
+
+## Changelog
+- 2026-11-03 — documented immutable readonly primary payload sharing, private generation-anchor
+  accounting and unknown-receipt custody; named the current workspace creation owner and the
+  exclusive-create lock operation that avoids Darwin first-creation races.
+- 2026-09-27 — removed age-based orphan deletion after checking the create-before-row window;
+  unbound generations remain protected for manual recovery.
+- 2026-09-27 — distinguished checkpoint allocation/recovery pressure protection from ordinary
+  admission monitoring; verified against checkpoint_storage.go and the interrupted-restore tests.
+- 2026-09-23 — corrected link-count accounting: directories commonly have `Nlink > 1` because of
+  child directories but are still exclusively reclaimable; only multiply-linked non-directories
+  enter the shared-inode set.
+- 2026-09-11 — `docs/worker.md` folded into `docs/session-api.md` with the `coop sessions connect`
+  consolidation; the workspace-storage section lives there now.
+- 2026-09-11 — created with the worker-side byte accounting, pressure check and owned-orphan scan.

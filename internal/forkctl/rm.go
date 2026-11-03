@@ -84,6 +84,9 @@ func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error
 // fork, and so does work found in it once they stopped. The caller holds the fork's lifecycle lock.
 // With force the removal goes ahead after the warnings, as the operator asked.
 func DestroyFork(rt runtime.Runtime, repo, name string, force bool, exposedRoots ...string) error {
+	if err := forkspace.RefuseImmutablePrimaryMutation(forkspace.Workspace(repo, name)); err != nil {
+		return err
+	}
 	stopErr := stopForkServices(rt, repo, name, exposedRoots...)
 	if !force {
 		if stopErr != nil {
@@ -291,6 +294,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		return 1, err
 	}
 	ws := forkspace.Workspace(repo, name)
+	if err := forkspace.RefuseImmutablePrimaryMutation(ws); err != nil {
+		return 1, err
+	}
 	if !pathExists(ws) {
 		orphanedIdentity, orphaned, generationErr := forkspace.ReadGeneration(repo, name)
 		if generationErr != nil {
@@ -388,6 +394,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	// detached startup so a newly-starting worker cannot lose its workspace underneath it.
 	if !pathExists(ws) {
 		return 1, fmt.Errorf("fork %q changed while awaiting confirmation — it no longer exists", name)
+	}
+	if err := forkspace.RefuseImmutablePrimaryMutation(ws); err != nil {
+		return 1, err
 	}
 	if !forkspace.SamePinned(ws, originalWS) {
 		return 1, fmt.Errorf("fork %q was replaced while awaiting confirmation", name)

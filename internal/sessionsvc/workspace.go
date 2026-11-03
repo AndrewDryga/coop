@@ -370,10 +370,10 @@ type forkAllocationGuard interface {
 	admitNewFork(repo, name string) (func(), error)
 }
 
-// ensureSessionWorkspaceContext creates or adopts only the deterministic workspace bound to an
+// ensureSessionWorkspaceForJobContext creates or adopts only the deterministic workspace bound to an
 // already-persisted base. An existing path is read-only inspected: a crash-recovery retry must
 // never reset, clean, or replace an ambiguous workspace it did not create.
-func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base, storeID, sessionID string) (sessionWorkspace, error) {
+func ensureSessionWorkspaceForJobContext(ctx context.Context, guard forkAllocationGuard, repo, generatedName, base, storeID, sessionID string, primary *primarySnapshotSource) (sessionWorkspace, error) {
 	if repo == "" || !filepath.IsAbs(repo) || !forkspace.ValidName(generatedName) || !forkspace.ValidObjectID(base) {
 		return sessionWorkspace{}, errors.New("invalid session workspace binding")
 	}
@@ -418,7 +418,13 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		defer release()
 	}
 	if created {
-		createdPath, createErr := forkspace.SetupPinnedContext(ctx, repo, generatedName, base)
+		createdPath := ws
+		var createErr error
+		if primary != nil {
+			createErr = createReadOnlyPrimarySnapshot(ctx, primary, repo, generatedName, ws)
+		} else {
+			createdPath, createErr = forkspace.SetupPinnedContext(ctx, repo, generatedName, base)
+		}
 		if createErr != nil {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("create session workspace: %w", createErr))
 		}
@@ -429,6 +435,9 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		if head, headErr := sessionWorkspaceCommitContext(ctx, ws, "HEAD"); headErr != nil {
 			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, fmt.Errorf("verify new session workspace HEAD: %w", headErr))
 		} else if head != base {
+			if primary != nil {
+				return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, errors.New("immutable primary pin changed"))
+			}
 			if _, _, resetErr := runSessionWorkspaceGitWithEnvContext(
 				ctx, ws, sessionWorkspaceGitOutputLimit, nil, "reset", "--hard", base,
 			); resetErr != nil {
@@ -437,11 +446,15 @@ func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuar
 		}
 	}
 
-	if err := materializeSessionSubmodules(ctx, repo, ws, base); err != nil {
+	shared, materializeErr := verifyPrimarySnapshotProjection(ctx, primary, repo, ws)
+	if materializeErr == nil && !shared {
+		materializeErr = materializeSessionSubmodules(ctx, repo, ws, base)
+	}
+	if materializeErr != nil {
 		if created {
-			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, err)
+			return sessionWorkspace{}, removeCreatedSessionWorkspace(ws, materializeErr)
 		}
-		return sessionWorkspace{}, err
+		return sessionWorkspace{}, materializeErr
 	}
 	workspace, err := verifySessionWorkspaceContext(ctx, repo, generatedName, ws, base)
 	if err != nil {
@@ -945,6 +958,9 @@ func planSessionWorkspaceDiscardAtParent(
 		return WorkspaceDiscardPlan{}, fmt.Errorf("pin session workspace for discard: %w", err)
 	}
 	defer handle.Close()
+	if _, _, err := forkspace.ReadImmutablePrimarySnapshot(workspace); err != nil {
+		return WorkspaceDiscardPlan{}, err
+	}
 	if hasGeneration {
 		if err := forkspace.ValidateGenerationWorkspace(repo, generation); err != nil {
 			return WorkspaceDiscardPlan{}, fmt.Errorf("validate session workspace generation: %w", err)
@@ -1046,6 +1062,9 @@ func (validated *validatedSessionWorkspaceDiscard) close() error {
 // services, workspace state, or lifecycle authority. The service runs it once, under LockState,
 // before DownServices, and destroys with its result.
 func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validatedSessionWorkspaceDiscard, error) {
+	if _, _, err := forkspace.ReadImmutablePrimarySnapshot(plan.Workspace); err != nil {
+		return nil, err
+	}
 	name, err := sessionWorkspaceName(plan.Repo, plan.Workspace)
 	if err != nil || name != plan.Name {
 		if err != nil {

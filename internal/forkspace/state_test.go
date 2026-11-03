@@ -905,3 +905,54 @@ func TestForkRecordsShareAFolderAcrossSpellings(t *testing.T) {
 		t.Fatalf("records of %s and %s shared = %v; want %v where the disk folds case", repo, other, shared, folds)
 	}
 }
+
+// Concurrent readonly snapshot creation exposed a Darwin openat(O_CREAT) race:
+// the kernel returned ENOENT for a stable directory even though no thread removed
+// a file. Lock creation must converge on one inode without retrying real I/O loss.
+func TestConcurrentStateFileCreationKeepsOneLockInode(t *testing.T) {
+	root, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	const workers = 8
+	for iteration := 0; iteration < 100; iteration++ {
+		name := fmt.Sprintf("lock-%d", iteration)
+		start := make(chan struct{})
+		type outcome struct {
+			info os.FileInfo
+			err  error
+		}
+		results := make(chan outcome, workers)
+		for range workers {
+			go func() {
+				<-start
+				f, err := openStateFile(int(root.Fd()), name, filepath.Join(root.Name(), name), os.O_RDWR|os.O_CREATE)
+				var info os.FileInfo
+				if err == nil {
+					info, err = f.Stat()
+					err = errors.Join(err, f.Close())
+				}
+				results <- outcome{info, err}
+			}()
+		}
+		close(start)
+		var first os.FileInfo
+		var problem error
+		for range workers {
+			result := <-results
+			if result.err != nil {
+				problem = errors.Join(problem, result.err)
+				continue
+			}
+			if first == nil {
+				first = result.info
+			} else if !os.SameFile(first, result.info) {
+				problem = errors.Join(problem, errors.New("concurrent opens selected different inodes"))
+			}
+		}
+		if problem != nil {
+			t.Fatalf("first creation lost stable lock at iteration%d: %v", iteration, problem)
+		}
+	}
+}

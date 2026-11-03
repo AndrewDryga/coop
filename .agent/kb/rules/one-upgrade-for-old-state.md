@@ -2,9 +2,9 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-10-19
+updated: 2026-11-03
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -63,6 +63,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 
 | State | Where | Current | Oldest read | Older versions today | Converting build |
 |---|---|---|---|---|---|
+| Primary snapshot receipt | `<state>/job-sources/<key>/repository-forks/<fork>/.git/coop-primary-snapshot.json` | 1 | 1 | none exist; independent forks have no receipt | none |
 | Companion snapshot receipt | `<state>/companion-snapshots/<key>/receipt.json` | 1 | 1 | none exist | none |
 | Session database schema | `<state>/session.sqlite` | 26 | 1 | converted when the service opens the store | builds using schema 26 |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
@@ -102,6 +103,9 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-11-03 — added the version 1 immutable primary receipt and stopped-worker inventory of
+  current workspaces and staged discards. Current-format checks use the runtime reader; unknown
+  versions remain protected. Swept version constants through TestOneUpgradeWaypoints.
 - 2026-10-28 — advanced the current session schema to 26 for accumulated turn costs; retained schema 25 historical waypoint examples and the existing conversion floor. Swept all version constants through TestOneUpgradeWaypoints.
 - 2026-10-19 — network records are named by plain hashes (task
   2026-10-15-simplify-network-record-keys-and-setup-records): rows for the network withdrawal (2,

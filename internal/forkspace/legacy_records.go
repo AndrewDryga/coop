@@ -130,7 +130,7 @@ func MoveLegacyForkRecords(repo string) error {
 
 // lockLegacyMove takes the lock that lets one process at a time move fork records.
 func lockLegacyMove(forks *os.File) (func(), error) {
-	fd, err := unix.Openat(int(forks.Fd()), ".moving.lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, err := openFileAt(int(forks.Fd()), ".moving.lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: filepath.Join(forks.Name(), ".moving.lock"), Err: err}
 	}

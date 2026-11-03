@@ -69,3 +69,8 @@ func prepareSessionOutputDir(workspace, turnID string) (*sessionOutputDirectory,
 	}
 	return prepareSessionOutputDirAtRoot(filepath.Join(workspace, sessionOutputRoot), turnID)
 }
+
+// Ordinary workspace fixtures deliberately exercise independent writable forks.
+func ensureSessionWorkspaceContext(ctx context.Context, guard forkAllocationGuard, repo, name, base, storeID, sessionID string) (sessionWorkspace, error) {
+	return ensureSessionWorkspaceForJobContext(ctx, guard, repo, name, base, storeID, sessionID, nil)
+}

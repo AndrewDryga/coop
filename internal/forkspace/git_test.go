@@ -326,3 +326,28 @@ func objectFiles(t *testing.T, repo string) map[string]bool {
 	}
 	return files
 }
+
+func TestPinnedHistoryCopyOwnsOnlyAuthorizedComparisonRoots(t *testing.T) {
+	repo := committedSetupRepo(t)
+	base := strings.TrimSpace(string(readOut(t, repo, "rev-parse", "HEAD")))
+	selected := commitFile(t, repo, "selected.txt", []byte("selected\n"))
+	gitIn(t, repo, "checkout", "-q", "-b", "default", base)
+	current := commitFile(t, repo, "default.txt", []byte("default\n"))
+	gitIn(t, repo, "checkout", "-q", "-b", "unrelated", base)
+	unrelated := commitFile(t, repo, "private.txt", []byte("not requested\n"))
+	dst := filepath.Join(t.TempDir(), "copy")
+	if err := GitCopyPinnedHistoryContext(t.Context(), repo, dst, selected, base, current); err != nil {
+		t.Fatal(err)
+	}
+	for _, commit := range []string{base, selected, current} {
+		if err := exec.Command("git", "-C", dst, "cat-file", "-e", commit+"^{commit}").Run(); err != nil {
+			t.Fatalf("authorized root %s missing: %v", commit, err)
+		}
+	}
+	if err := exec.Command("git", "-C", dst, "cat-file", "-e", unrelated+"^{commit}").Run(); err == nil {
+		t.Fatal("unrequested branch crossed pinned history boundary")
+	}
+	if refs := strings.TrimSpace(string(readOut(t, dst, "for-each-ref", "--format=%(refname)"))); refs != "" {
+		t.Fatalf("cache acquired mutable source refs: %s", refs)
+	}
+}

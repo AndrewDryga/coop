@@ -141,3 +141,18 @@ func PublishNoReplace(root *os.Root, tmp, name string) error {
 // tempName is prefix plus 8 random hex digits, no longer than os.CreateTemp's suffix, so a name
 // that fit with CreateTemp still fits.
 func tempName(prefix string) string { return prefix + randid.Hex(4) }
+
+// Darwin can return ENOENT when simultaneous openat(O_CREAT) calls first make
+// one file in a stable directory. Claim creation exclusively; an existing file
+// takes a plain open with the same NOFOLLOW/access flags. This is not a retry:
+// disappearance after EEXIST and every other I/O failure remain visible.
+func openFileAt(dirfd int, name string, flags int, mode uint32) (int, error) {
+	if flags&unix.O_CREAT == 0 || flags&unix.O_EXCL != 0 {
+		return unix.Openat(dirfd, name, flags, mode)
+	}
+	fd, err := unix.Openat(dirfd, name, flags|unix.O_EXCL, mode)
+	if errors.Is(err, unix.EEXIST) {
+		return unix.Openat(dirfd, name, flags&^unix.O_CREAT, mode)
+	}
+	return fd, err
+}

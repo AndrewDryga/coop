@@ -24,7 +24,9 @@ var stagedDiscardSuffix = regexp.MustCompile(`^[0-9a-f]{16}$`)
 // every later plan refuses it and its bytes are stranded for good. Renaming the proven inode into
 // this owner-private directory first is a single atomic operation on the same filesystem. After it
 // the fork name is free, and what remains is unambiguously coop's own garbage that any later pass
-// can finish removing without re-proving anything.
+// can finish removing without rebuilding the original Git cleanliness proof.
+// A surviving immutable-primary receipt must still prove a supported format and
+// the same directory; unknown newer data remains protected.
 //
 // It is a sibling of the fork workspaces rather than a child of .coop so that storage accounting
 // can measure control state and mid-removal garbage as two separate trees instead of subtracting
@@ -78,6 +80,9 @@ func StageWorkspaceDiscardLocked(repo, name string, pinned os.FileInfo) (string,
 	workspace := Workspace(repo, name)
 	if !SamePinned(workspace, pinned) {
 		return "", fmt.Errorf("refusing to stage %q: the workspace is missing or was replaced", workspace)
+	}
+	if _, _, err := ReadImmutablePrimarySnapshot(workspace); err != nil {
+		return "", err
 	}
 	home, staging, err := openStagedDiscardDir(repo)
 	if err != nil {
@@ -159,6 +164,9 @@ func removeStagedDiscard(path string) error {
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return fmt.Errorf("staged discard %q is not a real directory", path)
+	}
+	if _, _, err := ReadImmutablePrimarySnapshot(path); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove staged discard %q: %w", path, err)

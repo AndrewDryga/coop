@@ -267,7 +267,7 @@ func excludeAt(commonDir string, expected os.FileInfo, pattern string) error {
 	}
 	info := os.NewFile(uintptr(infoFD), "info")
 	defer info.Close()
-	excludeFD, err := unix.Openat(infoFD, "exclude",
+	excludeFD, err := openFileAt(infoFD, "exclude",
 		unix.O_RDWR|unix.O_APPEND|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0o644)
 	if err != nil {
 		return fmt.Errorf("open local Git exclude file: %w", err)

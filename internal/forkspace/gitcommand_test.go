@@ -37,7 +37,7 @@ func TestHostGitRejectsSubmoduleEscapeArguments(t *testing.T) {
 		// host's own configuration.
 		{"remote", "update"}, {"remote", "add", "evil", "url"}, {"config", "--global", "user.name", "x"},
 		{"config", "core.fsmonitor", "evil"}, {"config", "--add", "user.name", "x"}, {"init"},
-		{"branch", "-D", "x"}, {"update-ref", "-d", "refs/heads/x"}, {"symbolic-ref", "HEAD", "refs/remotes/x"},
+		{"branch", "-D", "x"}, {"update-ref", "-d", "refs/heads/x"}, {"symbolic-ref", "HEAD", "refs/remotes/x"}, {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/private"},
 		{"for-each-ref", "--format=%(refname)", "refs/"}, {"rev-parse", "HEAD"}, {"worktree", "add", "--no-checkout", "path"},
 	} {
 		if command := GitRefCommand(t.Context(), t.TempDir(), args...); command.Err == nil {
@@ -58,7 +58,7 @@ func TestGitRefCommandAcceptsTheShapesItsCallersUse(t *testing.T) {
 		{"update-ref", "refs/heads/main", commit}, {"update-ref", "refs/heads/main", commit, commit},
 		{"update-ref", "-m", "coop: re-sign commits", "refs/heads/main", commit, commit},
 		{"update-ref", "--no-deref", "HEAD", commit}, {"update-ref", "--stdin"},
-		{"symbolic-ref", "HEAD", "refs/heads/main"}, {"for-each-ref", "--format=delete %(refname)"},
+		{"symbolic-ref", "HEAD", "refs/heads/main"}, {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"}, {"for-each-ref", "--format=delete %(refname)"},
 		{"branch", "-q", "-D", "review/fork"}, {"branch", "topic", "HEAD"}, {"remote", "remove", "origin"},
 		{"init", "--bare", "--quiet"}, {"init", "--bare", "--quiet", "--object-format=sha256"},
 		{"init", "--quiet", "--template=", "--object-format=sha1", "--initial-branch=main"},

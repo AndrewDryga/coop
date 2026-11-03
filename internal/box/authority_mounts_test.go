@@ -652,6 +652,17 @@ func TestAuthorityMountGuardAllowsOnlyBoundControllerJobSources(t *testing.T) {
 		[]string{"-v", companion + ":/host"}, "", nil, allow); err == nil {
 		t.Fatal("controller job companion accepted a writable mount")
 	}
+	// A second writable alias defeats a read-only primary's normal mount.
+	readOnly := spec
+	readOnly.RepoReadOnly = true
+	readOnlyAllow, err := protectRunPrivateState(cfg, readOnly, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), readOnly,
+		[]string{"-v", workspace + ":/workspace:ro", "-v", workspace + ":/writable-alias"}, "", nil, readOnlyAllow); err == nil {
+		t.Fatal("read-only controller primary accepted a writable alias")
+	}
 	restricted := spec
 	restricted.ActivityRepo = ""
 	restricted.ActivityKind = ""
@@ -782,5 +793,36 @@ func TestAuthorityMountGuardAcceptsASymlinkedProjectParent(t *testing.T) {
 	if err := validateAuthorityMounts(context.Background(), spec,
 		[]string{"-v", aliasWorkspace + ":/workspace"}, "", nil, authorityMountAllowlist{}); err != nil {
 		t.Fatalf("symlinked spelling of the anchored fork was refused: %v", err)
+	}
+}
+
+func TestNativeMountCannotWriteUnreservedImmutablePrimary(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "custom-worker-state")
+	repo := filepath.Join(state, "job-sources", strings.Repeat("a", 64), "repository")
+	workspace := forkspace.Workspace(repo, "review-crash-gap")
+	for _, path := range []string{repo, filepath.Join(workspace, ".git")} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".git", "coop-primary-snapshot.json"), []byte(`{"version":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Generic `coop acp` on a still-unbound directory has no remote RunID or fork.
+	spec := RunSpec{Repo: workspace, ActivityRepo: workspace}
+	cfg := &config.Config{ConfigDir: filepath.Join(t.TempDir(), "native-config")}
+	allow, err := protectRunPrivateState(cfg, spec, authorityMountAllowlist{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{workspace, filepath.Join(workspace, ".git"), alias} {
+		err = validateAuthorityMounts(context.Background(), spec, []string{"-v", source + ":/workspace"}, "", nil, allow)
+		if err == nil {
+			t.Fatalf("native direct ACP can mount unreserved immutable primary writable: %s", source)
+		}
 	}
 }

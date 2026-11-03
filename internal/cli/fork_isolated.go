@@ -29,6 +29,9 @@ func setupForkBoundary(repo, name string, isolated bool) error {
 }
 
 func bindForkBoundary(repo, name string, isolated bool) (forkspace.Identity, error) {
+	if err := forkspace.RefuseImmutablePrimaryMutation(forkspace.Workspace(repo, name)); err != nil {
+		return forkspace.Identity{}, err
+	}
 	if isolated {
 		return forkspace.EnsureIsolatedGenerationLocked(repo, name)
 	}
@@ -36,6 +39,9 @@ func bindForkBoundary(repo, name string, isolated bool) (forkspace.Identity, err
 }
 
 func forkBoundaryMode(repo, name string, requested, fresh bool) (bool, error) {
+	if err := forkspace.RefuseImmutablePrimaryMutation(forkspace.Workspace(repo, name)); err != nil {
+		return false, err
+	}
 	identity, present, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
 		return false, err

@@ -512,13 +512,19 @@ Forks can share Git objects with their source checkout through hard links. Stora
 the space that deleting the content would actually free. Shared repository data is counted once
 in `totals.baseline_shared_bytes`, rather than once for every fork.
 
-Read-only companion repositories reuse a verified immutable snapshot for the same authorized
-repository and pinned revision. Sessions keep separate Git configuration, indexes and outputs,
+Read-only primary and companion repositories reuse verified immutable snapshots for the same
+authorized repository and pinned revisions. Sessions keep separate Git configuration, indexes and outputs,
 while sharing unchanged source files, Git objects and LFS payloads. Controller/workspace and
 repository bindings keep private caches separate. Writable primary workspaces remain independent.
 The same shared-byte accounting counts a payload once across all sessions using it.
+Primary forks preserve their own branch, configuration, index and admitted default/base history.
+Only frozen read-only jobs use this storage; checkpoint, restore and writable jobs keep independent
+payloads. Existing independent sessions are retained in place. A missing, damaged or newer ownership
+receipt protects shared data from reuse; unsupported receipts also prevent destructive cleanup.
+Native launches and alternate writable mounts cannot adopt an interrupted read-only primary.
+Primary references are released by the normal authorized discard; closing retains the workspace.
 
-An unused companion snapshot becomes eligible for cleanup after an hour. Under storage pressure
+An unused repository snapshot becomes eligible for cleanup after an hour. Under storage pressure
 or above the disposable-byte budget, cleanup can evict it sooner. A snapshot referenced by a
 session remains; closing one session cannot invalidate another session's files. Cleanup retains
 and reports an entry when its ownership and cleanliness cannot be proved within the 30-second

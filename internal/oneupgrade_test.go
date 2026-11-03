@@ -23,6 +23,7 @@ const waypointCard = ".agent/kb/rules/one-upgrade-for-old-state.md"
 // (forkspace.MoveLegacyForkRecords), and the execution fallback registry's are "not written" and
 // "read", so their rows are listed but pin nothing.
 var waypointConstants = map[string]struct{ current, oldest string }{
+	"Primary snapshot receipt":    {"forkspace/immutable_primary.go:ImmutablePrimaryVersion", "forkspace/immutable_primary.go:ImmutablePrimaryVersion"},
 	"Companion snapshot receipt":  {"sessionsvc/companion_snapshot.go:companionSnapshotVersion", "sessionsvc/companion_snapshot.go:companionSnapshotVersion"},
 	"Session database schema":     {"session/records.go:SchemaVersion", "session/records.go:OldestSchemaVersion"},
 	"Turn retry receipts":         {"session/operation_result.go:turnOperationResultVersion", ""},
