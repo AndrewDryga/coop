@@ -490,6 +490,63 @@ func TestInteractiveForkUsesSharedNetworkAdmission(t *testing.T) {
 	}
 }
 
+// A bare name continues an existing fork. With no fork by that name there is nothing to continue,
+// so coop fork says the fork does not exist and how to create it, instead of asking for a target
+// and pointing at sign-in, and it creates nothing.
+func TestForkWithoutATargetNamesAMissingFork(t *testing.T) {
+	repo := initRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	for _, args := range [][]string{{"nosuch"}, {"nosuch", "--loop"}, {"nosuch", "--fresh"}, {"nosuch", "--new"}} {
+		code, err := a.cmdFork(args)
+		usage := asUsage(err)
+		if code != 2 || usage == nil || usage.Headline != `No fork named "nosuch"` {
+			t.Errorf("coop fork %s = (%d, %v), want the missing-fork refusal", strings.Join(args, " "), code, err)
+			continue
+		}
+		if got := usageBlock(t, err); !strings.Contains(got, "Create it: coop fork nosuch <target|preset>") ||
+			!strings.Contains(got, "Forks:     coop fork ls") || strings.Contains(got, "login") {
+			t.Errorf("coop fork %s refusal does not say how to create the fork:\n%s", strings.Join(args, " "), got)
+		}
+	}
+	if pathExists(forkspace.Workspace(repo, "nosuch")) || pathExists(forkspace.Home(repo)) {
+		t.Error("refusing a missing fork created a fork folder")
+	}
+}
+
+// A brand-new fork whose first start stops before the agent runs (here at network admission) is
+// kept, as before, but coop fork ls says it never started and why, instead of calling it idle.
+func TestForkFirstStartThatStopsShortIsShownAsNeverStarted(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: project.example}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "request filtered network")
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
+	code, err := a.forkCreate([]string{"networked", "claude"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+		t.Fatalf("first start = (%d, %v), want the admission refusal", code, err)
+	}
+	reason, _, _ := strings.Cut(err.Error(), "\n")
+	ws := forkspace.Workspace(repo, "networked")
+	if note := forkctl.ReadForkStartError(ws); note != reason {
+		t.Fatalf("start note = %q, want the refusal's first line %q", note, reason)
+	}
+	listing := captureStdout(t, func() {
+		if code, err := a.forkctl().ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(listing, "  networked · never started · updated just now\n    Start failed: "+reason+"\n") {
+		t.Errorf("fork ls does not show the fork that never started:\n%s", listing)
+	}
+}
+
 func TestForkFreshConfirmsBeforeRuntimeWork(t *testing.T) {
 	repo := initRepo(t)
 	ws, err := forkspace.Setup(repo, "perf")
@@ -1731,7 +1788,7 @@ func TestParseForkCreateCredential(t *testing.T) {
 func TestForkLoopDefaultNoQueueFailsFast(t *testing.T) {
 	repo := t.TempDir()
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
-	code, err := a.forkCreate([]string{"x", "--loop"})
+	code, err := a.forkCreate([]string{"x", "claude", "--loop"})
 	if err == nil || !strings.Contains(err.Error(), "no task queue found") {
 		t.Fatalf("forkCreate(x --loop, no queue) = (%d, %v), want a 'no task queue found' error", code, err)
 	}

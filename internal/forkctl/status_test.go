@@ -180,6 +180,52 @@ func TestForkLsNamesTheSystemThatStartedALoop(t *testing.T) {
 	}
 }
 
+// A fork whose first agent start stopped short (an image to build, an account that could not be
+// used) has done nothing yet, so coop fork ls says it never started and why, instead of "idle". The
+// JSON state keeps its contract, and the reason is text in a folder the agent can write, so it is
+// escaped. Any other state still speaks for itself.
+func TestForkLsShowsAForkThatNeverStarted(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	workspace := forkspace.Workspace(repo, "perf")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = forkspace.EnsureGenerationLocked(repo, "perf")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	NoteForkStart(workspace, true, false, fmt.Errorf("the box image is not built\x1b[2J\nsecond line"))
+	lastWeek := time.Now().Add(-7*24*time.Hour - time.Hour)
+	if err := os.Chtimes(workspace, lastWeek, lastWeek); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	text, stderr, status := listForkStatus(t, c, "perf")
+	want := "Forks\n\n  perf · never started · updated 7 days ago\n    Start failed: the box image is not built\\u001B[2J\n\nReview a fork: coop fork review <name>\n"
+	if text != want || stderr != "" {
+		t.Errorf("fork ls printed:\n%s\n%s\nwant:\n%s", text, stderr, want)
+	}
+	if !strings.Contains(status, `"state":"idle"`) {
+		t.Errorf("fork ls --json changed the machine state: %s", status)
+	}
+	if !(forkStatus{StartError: "x"}).neverStarted() || (forkStatus{StartError: "x", Running: true}).neverStarted() ||
+		(forkStatus{}).neverStarted() {
+		t.Error("only an otherwise idle fork with a start note reads as never started")
+	}
+	// A start that reaches the agent removes the note; a later failure of a fork that has run before
+	// does not bring it back.
+	NoteForkStart(workspace, false, true, nil)
+	NoteForkStart(workspace, false, false, fmt.Errorf("account refused"))
+	if note := ReadForkStartError(workspace); note != "" {
+		t.Errorf("a fork whose agent ran still has the start note %q", note)
+	}
+}
+
 // listForkStatus runs coop fork ls and coop fork ls --json, and returns the listing, what the listing
 // printed to stderr, and the named fork's JSON status, compacted.
 func listForkStatus(t *testing.T, c *Control, name string) (text, stderr, status string) {

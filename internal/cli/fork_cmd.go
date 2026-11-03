@@ -202,6 +202,18 @@ func (a *app) cmdFork(args []string) (int, error) {
 	}
 }
 
+// unknownForkErr refuses a bare fork name with no fork behind it: creating one needs the agent or
+// preset that will work in it. The name already passed forkspace.ValidName, so it is plain text.
+func unknownForkErr(name string) error {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("No fork named %q", name),
+		Rows: [][2]string{
+			{"Create it:", "coop fork " + name + " <target|preset>"},
+			{"Forks:", "coop fork ls"},
+		},
+	}
+}
+
 // forkVerbNearMiss reports the fork verb that a would-be fork name is a likely typo of, so cmdFork
 // can refuse it (with a suggestion) instead of silently cloning a stray fork. It stays quiet when the
 // name is already an existing fork, or when an explicit target/preset follows it — that positional
@@ -355,7 +367,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 
 // forkCreate opens a new fork (clone + branch) or resumes an existing one, then
 // runs the chosen agent in it. The agent's exit status doesn't fail the handoff.
-func (a *app) forkCreate(args []string) (int, error) {
+func (a *app) forkCreate(args []string) (code int, err error) {
 	fc := a.forkctl()
 	fa, err := parseForkCreate(args)
 	if err != nil {
@@ -421,6 +433,11 @@ func (a *app) forkCreate(args []string) (int, error) {
 		}
 	}
 	ws := forkspace.Workspace(repo, fa.name)
+	// A bare name continues a fork. With no fork by that name there is nothing to continue, so say
+	// that and how to create one, rather than asking for a target as if the fork were there.
+	if !fa.agentSet && fa.preset == "" && !pathExists(ws) {
+		return 2, unknownForkErr(fa.name)
+	}
 	fa.isolated, err = forkBoundaryMode(repo, fa.name, fa.isolated, fa.fresh)
 	if err != nil {
 		return 1, err
@@ -718,6 +735,9 @@ func (a *app) forkCreate(args []string) (int, error) {
 		return -1, fmt.Errorf("save fork provider before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 	}
 	if fa.loop {
+		// A loop reports its own state and keeps its own log, so a note that an earlier interactive
+		// start failed would only go stale. Like the note itself, its removal is best effort.
+		_ = forkctl.ClearForkStartError(ws)
 		switch {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)
@@ -734,6 +754,13 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, false)
 		}
 	}
+	// Until an agent runs in a fork, a start that stops short (an account that cannot be used, an image
+	// to build, network rules to approve) leaves a fork that never ran: coop fork ls says so, with the
+	// reason, instead of listing it as idle. This launch is such a first start when it made the fork,
+	// or when an earlier one failed the same way.
+	firstStart := !existed || fa.fresh || forkctl.ReadForkStartError(ws) != ""
+	agentRan := false
+	defer func() { forkctl.NoteForkStart(ws, firstStart, agentRan, err) }()
 	// Pin this interactive session's account/model/effort from the positional target, below any
 	// preset the fork carries.
 	if err := a.applyOneOff(fa.agent, fa.model, fa.credential, fa.effort); err != nil {
@@ -800,7 +827,8 @@ func (a *app) forkCreate(args []string) (int, error) {
 			return 1, err
 		}
 	}
-	code, err := a.runBox(spec)
+	code, err = a.runBox(spec)
+	agentRan = code >= 0 // runBox says -1 when it stops before the box runs; otherwise it is the box's exit
 	if err == nil {
 		var rememberErr error
 		if captureNewSession {
@@ -1106,7 +1134,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !innerProcess && sessionsvc.RunIDFromEnv() == "" && !repositoryReadOnly {
 		return a.superviseForkACP(repo, ws, name, t, peers, capture)
 	}
-	return a.runBox(spec)
+	code, err := a.runBox(spec)
+	if code >= 0 { // the box ran, so an agent has now worked in this fork (see forkctl.NoteForkStart)
+		_ = forkctl.ClearForkStartError(ws)
+	}
+	return code, err
 }
 
 // forkACPAgent is the agent a target-less `coop fork <name> acp` starts: the one the fork was

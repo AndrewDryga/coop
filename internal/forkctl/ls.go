@@ -68,11 +68,18 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	listing("Forks")
 	for _, s := range statuses {
 		listing("")
-		heading := "  " + s.Name + " · " + stateWords(s.stateCell(), s.Elsewhere)
+		state := stateWords(s.stateCell(), s.Elsewhere)
+		if s.neverStarted() {
+			state = "never started"
+		}
+		heading := "  " + s.Name + " · " + state
 		if s.Updated != "" {
 			heading += " · updated " + s.Updated
 		}
 		listing("%s", heading)
+		if s.neverStarted() {
+			listing("    Start failed: %s", ui.SafeInline(s.StartError)) // the agent can write the note
+		}
 		if s.Agent != "" && s.Agent != "?" {
 			listing("    Agent: %s", s.Agent)
 		}
@@ -261,31 +268,17 @@ func forkUpdated(repo, ws string) string {
 	// Show the fork's OWN latest commit. A fresh fork has none, so `git log -1` would report the base
 	// commit it inherited from the clone — misreading a seconds-old fork as hours/days stale (and a
 	// truly idle fork as fresh). When there are no commits beyond the base, fall back to the clone's
-	// own age instead of the inherited time.
+	// own age instead of the inherited time. Both read as ui.Ago: git's own "%cr" would say
+	// "0 seconds ago" where the clone's age says "just now".
 	if base := forkspace.GitOut(repo, "rev-parse", "HEAD"); base != "" {
 		if n := forkspace.GitOut(ws, "rev-list", "--count", base+"..HEAD"); n != "" && n != "0" {
-			if rel := forkspace.GitOut(ws, "log", "-1", "--format=%cr"); rel != "" {
-				return rel
+			if at, err := strconv.ParseInt(forkspace.GitOut(ws, "log", "-1", "--format=%ct"), 10, 64); err == nil {
+				return ui.Ago(time.Unix(at, 0))
 			}
 		}
 	}
 	if fi, err := os.Stat(ws); err == nil {
-		return relativeAge(fi.ModTime())
+		return ui.Ago(fi.ModTime())
 	}
 	return "—"
-}
-
-// relativeAge renders how long ago t was in git's `%cr` idiom, for timestamps that aren't git commits
-// (a fork's clone time). Coarse buckets — it labels staleness, not exact durations.
-func relativeAge(t time.Time) string {
-	switch d := time.Since(t); {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return ui.Count(int(d.Minutes()), "minute") + " ago"
-	case d < 24*time.Hour:
-		return ui.Count(int(d.Hours()), "hour") + " ago"
-	default:
-		return ui.Count(int(d.Hours()/24), "day") + " ago"
-	}
 }

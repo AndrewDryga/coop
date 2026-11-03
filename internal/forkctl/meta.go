@@ -33,6 +33,46 @@ func ReadForkAgent(ws string) string {
 
 func SaveForkAgent(ws, agent string) error { return saveForkMeta(ws, forkAgentFile(ws), agent) }
 
+// forkStartErrorFile notes why a fork's first start stopped before its agent ran, so coop fork ls
+// can say the fork never started instead of listing it as idle. It lives beside the agent file.
+func forkStartErrorFile(ws string) string { return filepath.Join(ws, ".coop", "start-error") }
+
+// ReadForkStartError is that note, or "" when the fork's agent has run (or the note is unreadable:
+// it is a hint in a folder the agent can write, so a reader escapes it).
+func ReadForkStartError(ws string) string { return readForkMeta(ws, forkStartErrorFile(ws)) }
+
+// ClearForkStartError removes the note once a launch hands the fork to an agent.
+func ClearForkStartError(ws string) error { return removeForkMeta(ws, forkStartErrorFile(ws)) }
+
+// NoteForkStart keeps the note true after an interactive launch: a launch whose agent ran removes
+// it, and one that stopped before the agent ran records why, if no agent has ever run in this fork
+// (firstStart). The note is only a hint for coop fork ls and the launch already reported its own
+// result, so a note that cannot be written is left out rather than replacing that result.
+func NoteForkStart(ws string, firstStart, agentRan bool, err error) {
+	switch {
+	case agentRan:
+		_ = ClearForkStartError(ws)
+	case firstStart && err != nil:
+		_ = saveForkMeta(ws, forkStartErrorFile(ws), startFailure(err))
+	}
+}
+
+// startFailure is what the note keeps of a failed start: a refusal block's headline, else the
+// error's first line, bounded so the listing stays one line.
+func startFailure(err error) string {
+	msg := err.Error()
+	var usage *ui.UsageError
+	if errors.As(err, &usage) {
+		msg = usage.Headline
+	}
+	msg, _, _ = strings.Cut(msg, "\n")
+	msg = strings.TrimSpace(msg)
+	if r := []rune(msg); len(r) > 300 {
+		msg = string(r[:299]) + "…"
+	}
+	return msg
+}
+
 const forkMetadataFileLimit = 4 << 10
 
 // Fork metadata is provider-writable between launches. Reads and writes reuse the task metadata
@@ -100,6 +140,12 @@ func SaveForkSession(ws, agent, account, id string) error {
 }
 
 func ClearForkSession(ws, agent, account string) error {
+	return removeForkMeta(ws, ForkSessionFile(ws, agent, account))
+}
+
+// removeForkMeta deletes one metadata file through the same no-follow root as reads and writes; a
+// file that is already gone is not an error.
+func removeForkMeta(ws, path string) error {
 	meta := filepath.Join(ws, ".coop")
 	root, err := tasks.OpenTaskMetadataRoot(meta)
 	if errors.Is(err, os.ErrNotExist) {
@@ -109,9 +155,8 @@ func ClearForkSession(ws, agent, account string) error {
 		return fmt.Errorf("open fork metadata directory %s: %w", meta, err)
 	}
 	defer root.Close()
-	path := ForkSessionFile(ws, agent, account)
 	if err := root.Remove(filepath.Base(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("clear fork session metadata %s: %w", path, err)
+		return fmt.Errorf("clear fork metadata %s: %w", path, err)
 	}
 	return nil
 }

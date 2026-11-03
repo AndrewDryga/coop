@@ -578,25 +578,3 @@ func firstDefaultLine(out string) string {
 func signInLabel(cfg *config.Config, agent, account string) string {
 	return box.ProfileSignIn(cfg, agent, account, time.Now()).Label()
 }
-
-// The human durations are the ones a person says out loud; the compressed form stays where a
-// column is scanned for drift.
-func TestHumanAgeReadsAloud(t *testing.T) {
-	now := time.Now()
-	for _, tc := range []struct {
-		at   time.Time
-		want string
-	}{
-		{now.Add(-30 * time.Second), "just now"},
-		{now.Add(-90 * time.Second), "a minute ago"},
-		{now.Add(-7 * time.Minute), "7 minutes ago"},
-		{now.Add(-100 * time.Minute), "an hour ago"},
-		{now.Add(-7 * time.Hour), "7 hours ago"},
-		{now.Add(-30 * time.Hour), "yesterday"},
-		{now.Add(-19 * 24 * time.Hour), "19 days ago"},
-	} {
-		if got := humanAge(tc.at); got != tc.want {
-			t.Errorf("humanAge(%s) = %q, want %q", tc.at.Format(time.RFC3339), got, tc.want)
-		}
-	}
-}

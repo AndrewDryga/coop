@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/safetext"
 )
@@ -206,6 +207,29 @@ func Count(n int, singular string, plural ...string) string {
 		noun = plural[0]
 	}
 	return fmt.Sprintf("%d %s", n, noun)
+}
+
+// Ago is how long ago t was, the way a person says it — "just now", "7 hours ago", "yesterday",
+// "19 days ago" — for facts judged by feel rather than by arithmetic: a credential's age, a saved
+// model list, a fork's last activity. Every such age uses it, so they all read one way.
+func Ago(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < 2*time.Minute:
+		return "a minute ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
+	case d < 2*time.Hour:
+		return "an hour ago"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	case d < 48*time.Hour:
+		return "yesterday"
+	default:
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+	}
 }
 
 // List joins items the way a sentence does — "claude", "claude or codex", "claude, codex, or all"

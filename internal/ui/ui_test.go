@@ -4,8 +4,33 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
+
+// Every "how long ago" Coop prints is one a person says out loud, in one wording: a credential's
+// age, a saved model list, a fork's last activity. A seconds-old commit is "just now", never
+// git's "0 seconds ago".
+func TestAgoReadsAloud(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		at   time.Time
+		want string
+	}{
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(time.Minute), "just now"}, // a clock running ahead is not "in the future"
+		{now.Add(-90 * time.Second), "a minute ago"},
+		{now.Add(-7 * time.Minute), "7 minutes ago"},
+		{now.Add(-100 * time.Minute), "an hour ago"},
+		{now.Add(-7 * time.Hour), "7 hours ago"},
+		{now.Add(-30 * time.Hour), "yesterday"},
+		{now.Add(-19 * 24 * time.Hour), "19 days ago"},
+	} {
+		if got := Ago(tc.at); got != tc.want {
+			t.Errorf("Ago(%s) = %q, want %q", tc.at.Format(time.RFC3339), got, tc.want)
+		}
+	}
+}
 
 // A box chooses the names SafeInline prints, so a character that can act on the terminal, break the
 // line or hide inside a name comes out as its code, and ordinary text stays as it is.

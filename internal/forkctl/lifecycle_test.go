@@ -733,17 +733,18 @@ func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forkspace.Setup: %v", err)
 	}
-	if got := forkUpdated(repo, ws); strings.Contains(got, "year") {
-		t.Errorf("fresh fork UPDATED = %q, want ~creation time, not the inherited 2020 base commit", got)
+	if got := forkUpdated(repo, ws); got != "just now" {
+		t.Errorf("fresh fork UPDATED = %q, want its creation (just now), not the inherited 2020 base commit", got)
 	}
-	// Its own commit is what should show once it works.
+	// Its own commit is what should show once it works, in the same words as the clone's age: a
+	// listing taken a second later must not switch to git's "0 seconds ago".
 	if err := os.WriteFile(filepath.Join(ws, "x.txt"), []byte("w\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, ws, "add", "-A")
 	git(t, ws, "commit", "-qm", "fork work")
-	if got := forkUpdated(repo, ws); got == "—" || strings.Contains(got, "year") {
-		t.Errorf("fork with its own commit should show that commit's recent time, got %q", got)
+	if got := forkUpdated(repo, ws); got != "just now" {
+		t.Errorf("fork with its own commit should show that commit's recent time as just now, got %q", got)
 	}
 }
 

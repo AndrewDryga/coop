@@ -195,32 +195,9 @@ func (a *app) envBackedAccount(agent, profile string) bool {
 // this clock should read. See box.ProfileTokenMtime.
 func (a *app) credentialAge(agent, profile string) string {
 	if t, ok := box.ProfileTokenMtime(a.cfg, agent, profile); ok {
-		return humanAge(t)
+		return ui.Ago(t)
 	}
 	return "—"
-}
-
-// humanAge is a duration a person reads without decoding it — "7 hours ago", "yesterday",
-// "19 days ago" — for facts an operator judges by feel rather than by arithmetic. Shared with the
-// model menu, which says the same way how old a list it could not refresh is.
-func humanAge(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < 2*time.Minute:
-		return "a minute ago"
-	case d < time.Hour:
-		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
-	case d < 2*time.Hour:
-		return "an hour ago"
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d hours ago", int(d.Hours()))
-	case d < 48*time.Hour:
-		return "yesterday"
-	default:
-		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
-	}
 }
 
 // profilePath routes the path grammar's per-profile tail: bare shows the account, an

@@ -31,6 +31,7 @@ type forkStatus struct {
 	Doing, Reviewing, ReadyTasks, Blocked int
 	Problems                              []string
 	Cost                                  float64 // total loop spend across the fork's runs, 0 if it never ran
+	StartError                            string  // why the fork's first start stopped before its agent ran (see NoteForkStart)
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
@@ -123,8 +124,13 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		Blocked:             blockedTasks,
 		Problems:            problems,
 		Cost:                cost,
+		StartError:          ReadForkStartError(ws),
 	}
 }
+
+// neverStarted is a fork whose first start stopped before its agent ran and that has done nothing
+// since: the listing says so instead of "idle". Any other state outranks the note.
+func (s forkStatus) neverStarted() bool { return s.StartError != "" && s.stateCell() == "idle" }
 
 func summarizeForkExecutions(observations []forkspace.ExecutionObservation) (active, parked, cleanup, unverified int, problems []string) {
 	for _, observation := range observations {
