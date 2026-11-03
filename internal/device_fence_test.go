@@ -29,6 +29,8 @@ var deviceComparisons = map[string]string{
 		"the other mounts of home's filesystem: never stored, so no reboot comes between them",
 	"x.Dev == y.Dev": "forkspace's sameDisk asks whether two live folders share a filesystem before a hard link joins " +
 		"them: both are stat'ed at once, nothing is stored, and it decides nothing about identity",
+	"rootID.dev != privateID.dev": "filesystemVolumeProfile asks whether Coop's private folder is on a live root's " +
+		"volume before measuring its lookup equivalences there: both are stat'ed at once and nothing is stored",
 }
 
 // TestIdentityFencesNeverCompareTheDevice is the check for deviceFenceCard. A volume's device number

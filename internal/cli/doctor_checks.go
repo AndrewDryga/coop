@@ -39,6 +39,14 @@ var doctorSecretChecks = []doctorCheckDef{
 	{"sandbox.secret_value", "The test secret cannot be read", "The test secret can be read", ""},
 }
 
+// doctorKernelChecks are what only kernel protection covers: another name or spelling of a hidden
+// secret must not open it. They run only after the sandbox run reported kernel protection.
+var doctorKernelChecks = []doctorCheckDef{
+	{"kernel.hardlink", "Hardlinks cannot reveal hidden secrets", "A hardlink can reveal a hidden secret", "notes-hardlink → .env"},
+	{"kernel.case", "Other letter cases cannot reveal hidden secrets", "Another letter case can reveal a hidden secret", ".ENV"},
+	{"kernel.unicode", "Other Unicode spellings cannot reveal hidden secrets", "Another Unicode spelling can reveal a hidden secret", "clé.pem with a combining accent"},
+}
+
 // doctorHostChecks are the two host-reach assertions the same in-box probe reports. The privilege
 // measurements that complete this section are interpreted on the host (they depend on the image
 // and the runtime), so they are not table-driven.

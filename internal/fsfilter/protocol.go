@@ -8,13 +8,6 @@ import (
 
 const ControlPath = "/.coop-fs"
 
-const ProbeContent = "coop filesystem admission fixture\n"
-
-type ShareProbe struct {
-	Denied   []string `json:"denied"`
-	Readable []string `json:"readable"`
-}
-
 type Admission struct {
 	Roots []Policy `json:"roots"`
 }

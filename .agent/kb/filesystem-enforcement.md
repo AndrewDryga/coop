@@ -2,15 +2,17 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, cmd/coop-fs/probe_linux.go, cmd/coop-fs/probe_linux_test.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-03
 ---
 
 ## Selection and policy
 
 Agent and final service launch share the filesystem admission. Automatic selection initially
-requires host APFS, Docker cgroup v2 with cgroupfs, the expected BTF hook signatures and an
-actual-share probe. Unsupported runtimes keep spelling mounts and existing case-exposure
+requires host APFS, Docker cgroup v2 with cgroupfs and the expected BTF hook signatures. Since
+2026-11-03 (owner decision) launches no longer prove the actual share: a per-launch probe folder
+in the project showed up in editors and cost a container start. `coop doctor` runs the
+kernel-only checks instead (below). Unsupported runtimes keep spelling mounts and existing case-exposure
 approval. A failed cleanup is never permission to fall back: unresolved custody stops the launch.
 Only `coop approve --case-exposure` reviews and remembers mount-fallback exposure. Ordinary
 `coop approve` handles network access without calculating or granting file exposure; it cannot
@@ -39,8 +41,7 @@ access applied after protected entries; policy files and directories cannot be g
 
 The helper image generates its immutable Unicode wire table at build time. Admissions compile
 unique exact path/ancestor rows (never normalized hashes as allow authority), followed by all
-grants. Fresh-owner creation and controller acquisition overlap the host inventory. The trusted share
-probe is created stopped in that same branch; it starts only after complete policy and READY.
+grants. Fresh-owner creation and controller acquisition overlap the host inventory.
 Only this branch writes custody, and both branches settle before publication or failure/panic
 cleanup. Sparse path/object maps
 retain the accepted upper bounds without preallocating every element. Host capture and remembering
@@ -64,14 +65,12 @@ protected object, grant and ancestor. It reclassifies current names and refuses 
 or changed protected identities. Public leaf identities need not be fetched again: the loader
 still holds every initially protected object, so a new public alias inherits its denial. A change
 to remembered identity authority falls back to full inventory. Other filesystems keep full
-revalidation, including Linux leaf mount device checks. Every admission proves the actual share
-by replacing a warmed public pathname with a protected hardlink and checking that pathname
-first, before another alias could refresh guest metadata. A completed host rename can briefly
-appear missing in the guest, including without BPF. The probe retries only that same open on
-ENOENT, with one two-second deadline across all denied paths. Absence never proves enforcement:
-actual EPERM/EACCES is mandatory, a successful open or any other error fails immediately, and
-public-content checks remain required. The probe records how many missing observations occurred;
-it never refreshes another alias or restarts the qualification to make a failure disappear.
+revalidation, including Linux leaf mount device checks.
+
+Nothing is written into a root. The case/Unicode profile (`fsfilter.Profile`) is measured in the
+admission's private state folder when it shares the root's device: APFS case sensitivity and
+normalization belong to the whole volume. A root on another device gets both equivalences, so the
+policy may deny spellings that volume would not resolve but never misses one it would.
 
 FSEvents is not authoritative evidence that a retained inventory is current. Its flush can
 return before completed filesystem changes are reported, even after draining the callback
@@ -167,20 +166,15 @@ sibling. Resolve private state-root aliases before comparing control mounts (`/v
 `/private/var` on macOS). Recovery racing reuse can legitimately remove a candidate between the
 scan and lease acquisition; absence means continue, other errors remain errors.
 
-Probe cleanup does not compare persisted device numbers or recursively delete a path. It holds
-the directory, validates at most six known inert leaves, unlinks only those leaves, rechecks the
-current name, and removes only an empty directory. Inode is a replacement warning; semantic
-contents supply deletion authority. Partial cleanup is retryable; foreign contents stay intact.
-
-Parallel launches in one project (an editor's warm boxes start together) each put a probe at the
-root, so a walk can meet another admission's probe and then lose it at that admission's
-qualification. Before 2026-11-03 the walk classified its `.env` and the final check failed with
-`lstat <repo>/.coop-fs-probe-…: no such file or directory`. The inventory (`inventoryFilesystem`)
-now defers what it cannot read under a probe-named root entry and, after the walk,
-`leaveOutProbes` drops a probe that a not-provably-dead admission recorded with the same
-identity, or that vanished under a recorded name. Any other probe-named entry, a dead admission's
-included, stays project content and its read errors still fail the walk. Identity is reliable here
-because admission runs only on APFS, which does not reuse inode numbers.
+Records written before 2026-11-03 list `.coop-fs-probe-*` folders the old per-launch probe made
+at each root, so the record keeps an `omitempty` `Probes` field and retirement still removes one a
+crash left. That cleanup does not compare persisted device numbers or recursively delete a path.
+It holds the directory, validates at most six known inert leaves, unlinks only those leaves,
+rechecks the current name, and removes only an empty directory. Inode is a replacement warning;
+semantic contents supply deletion authority. Partial cleanup is retryable; foreign contents stay
+intact. Walks treat any probe-named folder as ordinary project content. A launch from an older
+binary that is still running (an editor's agent server keeps its binary until restart) can still
+make one, and a new walk that loses it mid-read fails that launch once; a retry succeeds.
 
 ## Verification
 
@@ -196,7 +190,21 @@ alive. Kernel ID lookups prove retirement after cleanup; each observation FD clo
 The ACP live conformance test accepts the same qualification switch to inspect the actual guard
 and prove .env/.ENV denial before prompts and after replay. Live provider calls remain opt-in.
 
+`coop doctor` is the user-run proof on a real machine. When its sandbox run reports kernel
+protection, it starts a second box on its own throwaway project (a public name hardlinked to
+`.env`, and `clé.pem` made with a precomposed é) and requires that `notes-hardlink`, `.ENV` and
+`cle\u0301.pem` cannot be read. A spelling the disk does not resolve finds nothing, which also
+passes, so the box must first read the project's public file and list `notes-hardlink`: an empty
+or wrong mount fails the probe instead of passing it. The separate project keeps those files away
+from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
+
 ## Changelog
+- 2026-11-03 — review: the doctor probe got a positive control, retiring an old probe whose
+  project folder is gone no longer retains custody, and folding is measured on ASCII letters too.
+- 2026-11-03 — removed the per-launch share probe (folder, stopped probe container, `coop-fs
+  probe`, walk exclusion and other-admission probe handling) on the owner's decision; the volume
+  profile is now measured privately; `coop doctor` gained the hardlink, letter-case and Unicode
+  checks under kernel protection. Swept code, tests, docs and both filesystem cards for the probe.
 - 2026-11-03 — checked approval dispatch and agent/service mount fallback. Made exposure review
   explicit; existing saved permissions and runtime backend selection remain unchanged.
 - 2026-11-03 — walks leave out other live admissions' recorded probes and defer read errors under

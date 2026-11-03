@@ -62,6 +62,23 @@ echo "RESULT CAPS $(awk '/^CapEff/{print $2}' /proc/self/status 2>/dev/null)"
 echo "RESULT PIDS $(cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgroup/pids/pids.max 2>/dev/null)"
 `
 
+// doctorKernelProbe reads a hidden secret through another name and other spellings, which only
+// kernel protection covers. A spelling the disk does not resolve finds nothing, which also passes,
+// so the box must first read the project's public file: an empty or wrong mount fails the probe.
+const doctorKernelProbe = `#!/bin/sh
+cd /workspace 2>/dev/null || { echo "RESULT FAIL sandbox.workspace"; exit 1; }
+[ "$(cat public.txt 2>/dev/null)" = public ] || { echo "RESULT FAIL sandbox.workspace"; exit 1; }
+hidden_file() { [ "$(cat "$1" 2>/dev/null; printf '.')" = '.' ]; }
+listed() { for name in *; do [ "$name" = "$1" ] && return 0; done; return 1; }
+# The hardlink is listed under its public name, so only denial can hide it.
+hidden_link() { listed notes-hardlink && hidden_file notes-hardlink; }
+check() { if "$@"; then echo "RESULT PASS $ID"; else echo "RESULT FAIL $ID"; fi; }
+ID=kernel.hardlink  check hidden_link
+ID=kernel.case      check hidden_file .ENV
+# clé.pem with a combining accent (U+0301) instead of the precomposed é the file was made with.
+ID=kernel.unicode   check hidden_file "$(printf 'cle\314\201.pem')"
+`
+
 // doctorImage picks an ordinary image for the probe: the repo's built image, then the shared base,
 // then a stock alpine stand-in. Filtered launches prove their separate image during admission.
 // real reports whether one of coop's images was found — the stand-in lacks coop's non-root USER
@@ -146,6 +163,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	secrets, host, offline, taskSection, credentials, cloneSection := report.doctorSections()
 
 	var out, errOut bytes.Buffer
+	kernel := false
 	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
 		Image: img, Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
 		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
@@ -155,6 +173,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 			if value.Backend == "mounts" {
 				label = "Filesystem protection: mounts"
 			}
+			kernel = value.Backend == "bpf"
 			secrets.add(doctorRow{outcome: doctorInfo, label: label, reason: value.Reason})
 		},
 	})
@@ -176,6 +195,11 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		doctorCheckUID(host, results["UID"], usingReal)
 		doctorCheckCaps(host, results["CAPS"], hardened)
 		doctorCheckPids(host, results["PIDS"], hardened, a.cfg.Pids)
+		// Launches no longer test their share, so this is where kernel protection proves the
+		// spellings and aliases mounts never covered.
+		if kernel {
+			runKernelSpellings(a, img).record(secrets)
+		}
 	}
 
 	// Egress fails closed: a run is asked for a network (Network:true) but with COOP_EGRESS=offline;
@@ -626,6 +650,56 @@ func answered(refusedExec, refusedShell bool) []string {
 	return out
 }
 
+// kernelSpellingRun is what the kernel-only probe box reported.
+type kernelSpellingRun struct {
+	results map[string]string
+	failure string // why the box produced nothing usable; empty when it ran
+	kernel  bool   // the probe box itself ran under kernel protection
+}
+
+// record never turns a probe that could not see its project, or a box that used mounts, into a pass.
+func (r kernelSpellingRun) record(s *doctorSection) {
+	switch {
+	case r.failure != "":
+		s.probeFailed("Could not run the hardlink and spelling checks", r.failure, len(doctorKernelChecks))
+	case r.results["sandbox.workspace"] == "FAIL":
+		s.probeFailed("The hardlink and spelling checks could not see their test project", "/workspace", len(doctorKernelChecks))
+	case !r.kernel:
+		s.skip("Hardlinks and other spellings not checked", "This run used mount protection, which does not cover them.", len(doctorKernelChecks))
+	default:
+		for _, def := range doctorKernelChecks {
+			s.record(def, r.results[def.id] == "PASS")
+		}
+	}
+}
+
+// runKernelSpellings runs the kernel-only probe in a project of its own: its hardlinked and
+// accented secrets would change the ordinary checks' results on a host that uses mounts.
+func runKernelSpellings(a *app, img string) kernelSpellingRun {
+	fixture, err := buildKernelFixture()
+	if err != nil {
+		return kernelSpellingRun{failure: sentence(err.Error())}
+	}
+	defer os.RemoveAll(fixture)
+	probe, cleanup, err := writeProbeFile(doctorKernelProbe)
+	if err != nil {
+		return kernelSpellingRun{failure: sentence(err.Error())}
+	}
+	defer cleanup()
+	var out, errOut bytes.Buffer
+	kernel := false
+	_, runErr := box.Run(a.cfg, a.rt, box.RunSpec{
+		Image: img, Repo: fixture, Workdir: "/workspace", Cmd: []string{"sh", "/probe.sh"},
+		Batch: true, Quiet: true, Stdout: &out, Stderr: &errOut,
+		ExtraArgs:          []string{"-v", probe + ":/probe.sh:ro"},
+		OnFilesystemReport: func(value box.FilesystemReport) { kernel = value.Backend == "bpf" },
+	})
+	if runErr != nil || out.Len() == 0 {
+		return kernelSpellingRun{failure: probeReason(errOut.String(), runErr, "The probe produced no output.")}
+	}
+	return kernelSpellingRun{results: parseProbeResults(out.String()), kernel: kernel}
+}
+
 // doctorCheckClone proves the fork handoff: a clone of the fixture carries the tracked source and
 // none of the shadowed secrets, and has nowhere to push to.
 func doctorCheckClone(s *doctorSection, fixture, clone string) {
@@ -850,22 +924,6 @@ const doctorCoopignorePath = "config/stripe.live.json"
 
 // buildFixture creates a throwaway git repo seeded with secrets and decoys.
 func buildFixture() (string, error) {
-	dir, err := os.MkdirTemp("", "coop-doctor-")
-	if err != nil {
-		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
-	}
-	ready := false
-	defer func() {
-		if !ready {
-			_ = os.RemoveAll(dir)
-		}
-	}()
-	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
-	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
-	// the root world-traversable; seed permissions explicitly below because umask may be private.
-	if err := os.Chmod(dir, 0o755); err != nil {
-		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
-	}
 	files := map[string]string{
 		".env":         "SECRET=hunter2\n",
 		".env.example": "KEY=put-your-key-here\n",
@@ -883,6 +941,44 @@ func buildFixture() (string, error) {
 		"src/app.js":         "console.log(1)\n",
 		".gitignore":         ".env\n.envrc\n*.tfvars\nsecrets/\ndeploy/\n" + doctorCoopignorePath + "\n",
 	}
+	// A symlink to a secret: shadowing must cover what it points at, so following it reads empty.
+	return seedFixture(files, func(dir string) error { return os.Symlink(".env", filepath.Join(dir, "notes-link")) })
+}
+
+// buildKernelFixture is the project for the checks only kernel protection covers: a public name
+// hardlinked to a secret, a secret whose name has a precomposed accent (é), and a public file the
+// probe must read first.
+func buildKernelFixture() (string, error) {
+	files := map[string]string{
+		".env":         "SECRET=hunter2\n",
+		"cl\u00e9.pem": "-----BEGIN PRIVATE KEY-----\nhunter2\n",
+		"public.txt":   "public\n",
+		".gitignore":   ".env\n*.pem\nnotes-hardlink\n",
+	}
+	return seedFixture(files, func(dir string) error {
+		return os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "notes-hardlink"))
+	})
+}
+
+// seedFixture writes files into a new world-readable temporary git repo, lets link add what a map
+// cannot express, and commits.
+func seedFixture(files map[string]string, link func(dir string) error) (string, error) {
+	dir, err := os.MkdirTemp("", "coop-doctor-")
+	if err != nil {
+		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
+	}
+	ready := false
+	defer func() {
+		if !ready {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	// MkdirTemp makes the root 0700; the box mounts it at /workspace and the probe must cd into and
+	// stat it as a uid that may not own it (and, under --cap-drop ALL, can't bypass the check). Make
+	// the root world-traversable; seed permissions explicitly below because umask may be private.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
+	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)
 		parent := filepath.Dir(p)
@@ -899,8 +995,7 @@ func buildFixture() (string, error) {
 			return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 		}
 	}
-	// A symlink to a secret: shadowing must cover what it points at, so following it reads empty.
-	if err := os.Symlink(".env", filepath.Join(dir, "notes-link")); err != nil {
+	if err := link(dir); err != nil {
 		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}
 	cmds := [][]string{

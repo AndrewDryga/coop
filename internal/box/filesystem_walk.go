@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"sync"
 )
 
@@ -20,13 +19,13 @@ type filesystemInventory struct {
 	paths   []string
 }
 
-func filesystemObjects(root, exclude string) (*filesystemInventory, error) {
-	return inventoryFilesystem(root, exclude, true)
+func filesystemObjects(root string) (*filesystemInventory, error) {
+	return inventoryFilesystem(root, true)
 }
 
 // The APFS final check needs every name and every directory identity, but pinned
 // objects already protect new public aliases. Other backends use full metadata.
-func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemInventory, error) {
+func inventoryFilesystem(root string, fullMetadata bool) (*filesystemInventory, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return nil, err
@@ -48,9 +47,6 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 		entries []entry
 		err     error
 		last    bool
-		// unsettled is what could not be read under a probe-named root entry (probeLeaf), which
-		// may be another admission's probe going away; leaveOutProbes judges it after the walk.
-		unsettled []unsettledProbe
 	}
 	jobs := make(chan entry)
 	results := make(chan result)
@@ -98,9 +94,6 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 				if dir != "." {
 					rel = dir + "/" + rel
 				}
-				if rel == exclude {
-					continue
-				}
 				if !fullMetadata && !d.IsDir() {
 					r.entries = append(r.entries, entry{rel, filesystemObject{mode: d.Type()}})
 					continue
@@ -114,10 +107,6 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 					}
 				}
 				if err != nil {
-					if leaf := probeLeaf(rel); leaf != "" {
-						r.unsettled = append(r.unsettled, unsettledProbe{leaf, err})
-						continue
-					}
 					r.err, r.last = err, true
 					break
 				}
@@ -136,7 +125,6 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 		})
 	}
 	children := map[string][]string{}
-	unsettled := map[string]error{}
 	pending := []entry{{".", objects["."]}}
 	active := 0
 	for len(pending) > 0 || active > 0 {
@@ -153,12 +141,7 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 			if r.last {
 				active--
 			}
-			for _, u := range r.unsettled {
-				unsettled[u.leaf] = errors.Join(unsettled[u.leaf], u.err)
-			}
-			if leaf := probeLeaf(r.dir); r.err != nil && leaf != "" {
-				unsettled[leaf] = errors.Join(unsettled[leaf], r.err)
-			} else if r.err != nil {
+			if r.err != nil {
 				return nil, r.err
 			}
 			for _, e := range r.entries {
@@ -176,9 +159,6 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 			}
 		}
 	}
-	if err := leaveOutProbes(root, objects, children, unsettled); err != nil {
-		return nil, err
-	}
 	// Sort siblings, then visit subtrees, matching WalkDir without comparing
 	// long shared prefixes across the entire repository.
 	for _, entries := range children {
@@ -194,97 +174,4 @@ func inventoryFilesystem(root, exclude string, fullMetadata bool) (*filesystemIn
 	}
 	visit(".")
 	return &filesystemInventory{objects: objects, paths: paths}, nil
-}
-
-// unsettledProbe is what a walk could not read under one probe-named root entry.
-type unsettledProbe struct {
-	leaf string
-	err  error
-}
-
-// probeLeaf is the probe-named root entry (newFilesystemProbe) that rel is or lies under, or "".
-func probeLeaf(rel string) string {
-	leaf, _, _ := strings.Cut(rel, "/")
-	if strings.HasPrefix(leaf, filesystemProbePrefix) {
-		return leaf
-	}
-	return ""
-}
-
-// leaveOutProbes removes from an inventory the probe directories other live admissions made at
-// root, and everything under them. Parallel launches in one project (an editor's warm boxes) each
-// make one, and each removes its own once its shares qualify. Another launch's walk took that
-// directory and the .env inside it for project content, then failed its final check with
-// "lstat <repo>/.coop-fs-probe-...: no such file or directory" once the directory went away.
-//
-// A probe counts only when an admission that is not provably gone recorded it with this identity,
-// in custody state no box can write; a recorded probe the walk found gone counts too, since nothing
-// else can take that name before it goes. Any other probe-named entry is project content like the
-// rest, and what the walk could not read under it fails the walk as it always did. A dead
-// admission's probe is walked too, so an entry planted in one its owner could not retire stays
-// protected.
-func leaveOutProbes(root string, objects map[string]filesystemObject, children map[string][]string, unsettled map[string]error) error {
-	probes := liveProbes(root)
-	genuine := func(leaf string) bool {
-		recorded, ok := probes[leaf]
-		object, seen := objects[leaf]
-		return ok && (!seen || object.mode.IsDir() && object.id == recorded)
-	}
-	for leaf, err := range unsettled {
-		if !genuine(leaf) {
-			return err
-		}
-	}
-	var drop func(string)
-	drop = func(rel string) {
-		delete(objects, rel)
-		for _, child := range children[rel] {
-			drop(child)
-		}
-		delete(children, rel)
-	}
-	kept := children["."][:0]
-	for _, rel := range children["."] {
-		if probeLeaf(rel) != "" && genuine(rel) {
-			drop(rel)
-			continue
-		}
-		kept = append(kept, rel)
-	}
-	children["."] = kept
-	return nil
-}
-
-// liveProbes maps the probe directories at root that admissions not provably gone recorded to the
-// identity each was made with. An unreadable record contributes nothing: its probe, if any, is
-// walked as project content.
-func liveProbes(root string) map[string]fileIdentity {
-	probes := map[string]fileIdentity{}
-	state, err := serviceStateRoot("filesystem")
-	if err != nil {
-		return probes
-	}
-	entries, err := os.ReadDir(state)
-	if err != nil {
-		return probes
-	}
-	host, _ := thisHost()
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "coop-fs-") {
-			continue
-		}
-		record, err := readFilesystemRecord(filepath.Join(state, entry.Name()))
-		if err != nil {
-			continue
-		}
-		if supervisor, _ := parseSupervisorLabel(record.Supervisor); supervisorProvablyDead(supervisor, host) {
-			continue
-		}
-		for _, probe := range record.Probes {
-			if filepath.Clean(probe.Root) == filepath.Clean(root) {
-				probes[probe.Leaf] = fileIdentity{dev: probe.Dev, ino: probe.Ino}
-			}
-		}
-	}
-	return probes
 }

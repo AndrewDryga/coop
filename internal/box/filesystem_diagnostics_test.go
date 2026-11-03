@@ -119,7 +119,7 @@ func TestFilesystemPreparationNarrationStartsBeforeBuild(t *testing.T) {
 }
 
 func TestFilesystemFallbackRefusalHasOneRenderer(t *testing.T) {
-	fallback := &FilesystemFallbackError{Reason: "share qualification failed", Err: &UncoveredSpellings{Paths: []string{"credentials.json"}}}
+	fallback := &FilesystemFallbackError{Reason: "Kernel filesystem protection requires Docker cgroupfs with cgroup v2", Err: &UncoveredSpellings{Paths: []string{"credentials.json"}}}
 	for _, err := range []error{fallback, errors.Join(fallback, errors.New("cleanup remains pending"))} {
 		sections := newLaunchSections(RunSpec{Agent: "claude"})
 		captureStderr(t, func() { sections.prepareSecrets() })

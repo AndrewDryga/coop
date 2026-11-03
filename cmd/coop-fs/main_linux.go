@@ -72,9 +72,6 @@ func run(args []string) error {
 	if handled, err := sharedCommand(args); handled {
 		return err
 	}
-	if len(args) == 2 && (args[0] == "probe" || args[0] == "probe-warm") {
-		return probeShare(args[1], args[0] == "probe-warm")
-	}
 	if len(args) == 2 && (args[0] == "guard" || args[0] == "healthcheck") {
 		if args[1] != fsfilter.ControlPath+"/manifest.json" {
 			return errors.New("invalid filesystem guard control path")

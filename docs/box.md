@@ -27,7 +27,9 @@ writable, and ordinary public hardlinks work. `.coopignore` stays readable and r
 This avoids adding a mount for every spelling of each secret filename.
 
 Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
-hooks and cgroup configuration. It checks the actual shared folder before starting the workload.
+hooks and cgroup configuration. Launches do not test the protection itself. After updating Docker
+or OrbStack, run `coop doctor`: it tries to read test secrets in a real box, including through
+another letter case, an equivalent Unicode spelling and a hardlink.
 The helper and its compiler are built inside Docker from sources shipped with Coop; no host
 packages, filesystem changes or kernel settings are needed. The initial supported configuration
 uses cgroup v2 with the `cgroupfs` driver. Other filesystems, unsupported VM kernels and incompatible

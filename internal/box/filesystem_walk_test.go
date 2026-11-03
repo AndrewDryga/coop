@@ -14,7 +14,7 @@ import (
 
 func TestFilesystemObjectsMatchFullWalk(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"a/z", "a.txt", "!first", ".git", "secrets/nested", "probe"} {
+	for _, name := range []string{"a/z", "a.txt", "!first", ".git", "secrets/nested"} {
 		if err := os.MkdirAll(filepath.Join(root, name), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -41,9 +41,6 @@ func TestFilesystemObjectsMatchFullWalk(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if rel == "probe" {
-			return fs.SkipDir
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
@@ -60,7 +57,7 @@ func TestFilesystemObjectsMatchFullWalk(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 5 {
-		got, err := filesystemObjects(root, "probe")
+		got, err := filesystemObjects(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +81,7 @@ func TestFilesystemObjectsRefuseInvalidRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{file, link, filepath.Join(root, "missing")} {
-		if got, err := filesystemObjects(p, ""); err == nil || got != nil {
+		if got, err := filesystemObjects(p); err == nil || got != nil {
 			t.Fatalf("accepted invalid root %q: %v", p, err)
 		}
 	}
@@ -110,7 +107,7 @@ func TestFilesystemObjectsRefuseUnreadableSubtree(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0700) })
 	for range 10 {
-		if inventory, err := filesystemObjects(root, ""); err == nil || inventory != nil {
+		if inventory, err := filesystemObjects(root); err == nil || inventory != nil {
 			t.Fatal("partial inventory accepted after directory read failure")
 		}
 	}

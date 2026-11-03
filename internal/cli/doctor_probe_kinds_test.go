@@ -13,6 +13,7 @@ import (
 func TestProbeKindsAreAllParsed(t *testing.T) {
 	scripts := []string{
 		doctorProbe,
+		doctorKernelProbe,
 		doctorCredAndHomeProbe("/home/node", true),
 		doctorTaskProbe,
 	}

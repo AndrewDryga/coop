@@ -116,7 +116,7 @@ func reuseLockedServiceFilesystem(ctx context.Context, rt runtime.Runtime, dir s
 	if !r.Services || r.Pending != "" || r.Ready == nil || r.ServiceConfigDigest != digest || r.WorkloadImage != image || r.ProtectionDigest == "" || r.HelperStartedAt.IsZero() || supervisor.origin(host) != originHere {
 		return nil, nil
 	}
-	snapshot, err := captureFilesystemSnapshot(r.Workspace, r.Profile, grants, nil, "")
+	snapshot, err := captureFilesystemSnapshot(r.Workspace, r.Profile, grants, nil)
 	if err != nil {
 		return nil, err
 	}

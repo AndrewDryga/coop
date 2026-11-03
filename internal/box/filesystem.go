@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -34,13 +33,16 @@ type filesystemRecord struct {
 	Pending                               string
 	Supervisor, Workspace                 string
 	Services                              bool
-	Probes                                []filesystemProbeRecord
 	Project, Service, WorkingDir          string
 	HealthTest                            []string
 	ServiceConfigDigest, ProtectionDigest string
 	Profile                               fsfilter.Profile
 	WorkloadImage                         string
 	HelperStartedAt                       time.Time
+
+	// Probes lists share-check folders that earlier Coop versions made in project roots.
+	// Admissions no longer make them; retiring an old record removes any a crash left.
+	Probes []filesystemProbeRecord `json:",omitempty"`
 }
 
 type filesystemAdmission struct {
@@ -49,7 +51,6 @@ type filesystemAdmission struct {
 	dir               string
 	record            filesystemRecord
 	snapshots         []*filesystemSnapshot
-	probes            []*filesystemProbe
 	workloadImage     string
 	workloadExecution *runtime.DockerImageExecution
 	lease             *os.File
@@ -87,7 +88,7 @@ func (a *filesystemAdmission) persist() error {
 }
 
 // prepareFilesystemAdmission is shared by agents and services. No workload is
-// created until every hook and every actual share has passed qualification.
+// created until every hook is attached and the complete policy is published.
 func prepareFilesystemAdmission(ctx context.Context, rt runtime.Runtime, roots []string, grants [][]string, binding *runtime.Docker) (_ *filesystemAdmission, result error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -157,20 +158,15 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 	if err := a.record.validate(); err != nil {
 		return nil, err
 	}
-	for _, root := range roots {
-		probe, err := newFilesystemProbe(root, func(record filesystemProbeRecord) error {
-			a.record.Probes = append(a.record.Probes, record)
-			return a.persist()
-		})
-		if err != nil {
+	profiles := make([]fsfilter.Profile, len(roots))
+	for i, root := range roots {
+		if profiles[i], err = filesystemVolumeProfile(root, dir); err != nil {
 			return nil, errors.Join(errFilesystemUnsupported, err)
 		}
-		a.probes = append(a.probes, probe)
 	}
 	// Only the owner branch writes custody. Policy publication and cleanup wait
-	// for both branches; the trusted probe stays stopped until qualification.
+	// for both branches.
 	var policies fsfilter.Admission
-	var probeRef runtime.DockerRef
 	prepareOwner := func() error {
 		image, labels, err := docker.Image(ctx, fsimage.Tag())
 		if errors.Is(err, runtime.ErrDockerImageMissing) {
@@ -214,26 +210,18 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		if saveErr := a.persist(); err != nil || saveErr != nil {
 			return errors.Join(err, saveErr)
 		}
-		if err := docker.StartContainer(ctx, a.record.Helper); err != nil {
-			return err
-		}
-		probeRef, err = a.createShareProbe(ctx, roots)
-		return err
+		return docker.StartContainer(ctx, a.record.Helper)
 	}
 	capture := func() error {
 		for i, root := range roots {
-			probe := a.probes[i]
 			// Remember captured identities before publication so a rejected admission
 			// retains old aliases across an ordinary host atomic save and fresh retry.
-			snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, probe.profile, grants[i], probe.relative)
+			snapshot, err := captureRememberedFilesystemSnapshot(ctx, root, profiles[i], grants[i])
 			if err != nil {
 				return err
 			}
 			a.snapshots = append(a.snapshots, snapshot)
-			policy := snapshot.policy
-			policy.Entries = slices.Clone(policy.Entries)
-			probe.add(&policy)
-			policies.Roots = append(policies.Roots, policy)
+			policies.Roots = append(policies.Roots, snapshot.policy)
 		}
 		return nil
 	}
@@ -248,17 +236,8 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		// a launch failure, not permission to replace guarded services with mounts.
 		return nil, err
 	}
-	if err := a.qualifyShares(ctx, probeRef); err != nil {
-		return nil, errors.Join(errFilesystemUnsupported, err)
-	}
 	// Only release-owned helpers have run. The stopped workload's final
 	// verification rechecks the complete inventory before its first start.
-	for _, probe := range a.probes {
-		if err := probe.close(); err != nil {
-			return nil, err
-		}
-	}
-	a.probes = nil
 	transferred = true
 	return a, nil
 }
@@ -329,58 +308,9 @@ func (a *filesystemAdmission) consumer(ref runtime.DockerRef) error {
 	return a.persist()
 }
 
-func (a *filesystemAdmission) createShareProbe(ctx context.Context, roots []string) (runtime.DockerRef, error) {
-	ref := filesystemRef(a.record.Parent, "probe")
-	if err := a.consumer(ref); err != nil {
-		return ref, err
-	}
-	options := []string{"--network", "none", "--user", "0", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--cgroup-parent", a.record.cgroupParent(), "--mount", networkMount("bind", a.dir, "/state", true)}
-	for i, root := range roots {
-		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
-	}
-	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: options, Command: []string{"probe", "/state/probe.json"}})
-	ref.ID = id
-	if saveErr := a.consumer(ref); err != nil || saveErr != nil {
-		return ref, errors.Join(err, saveErr)
-	}
-	return ref, nil
-}
-
-func (a *filesystemAdmission) qualifyShares(ctx context.Context, ref runtime.DockerRef) error {
-	var warm fsfilter.ShareProbe
-	for i, p := range a.probes {
-		warm.Readable = append(warm.Readable, fmt.Sprintf("/sources/%d/%s/warm-alias", i+1, p.relative))
-	}
-	if err := filesystemJSON(filepath.Join(a.dir, "probe-warm.json"), warm); err != nil {
-		return err
-	}
-	if _, err := a.docker.ExecRead(ctx, a.record.Helper, 4096, "/usr/local/bin/coop-fs", "probe-warm", "/state/probe-warm.json"); err != nil {
-		return err
-	}
-	var probe fsfilter.ShareProbe
-	for i, p := range a.probes {
-		if err := p.replace(i, &probe); err != nil {
-			return err
-		}
-	}
-	if err := filesystemJSON(filepath.Join(a.dir, "probe.json"), probe); err != nil {
-		return err
-	}
-	var output bytes.Buffer
-	code, err := a.docker.StartAttached(ctx, ref, nil, &output, &output, nil)
-	if code != 0 || err != nil {
-		return errors.Join(fmt.Errorf("filesystem share qualification failed: %s", output.String()), err)
-	}
-	return a.docker.RemoveContainer(ctx, ref)
-}
-
 func (a *filesystemAdmission) revalidate() error {
-	for i, s := range a.snapshots {
-		exclude := ""
-		if i < len(a.probes) {
-			exclude = a.probes[i].relative
-		}
-		if err := s.revalidate(exclude); err != nil {
+	for _, s := range a.snapshots {
+		if err := s.revalidate(); err != nil {
 			return err
 		}
 	}

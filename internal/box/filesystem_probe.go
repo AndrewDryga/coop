@@ -2,7 +2,6 @@ package box
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,14 +13,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// filesystemProbePrefix starts the name of every probe directory an admission makes at a root.
-const filesystemProbePrefix = ".coop-fs-probe-"
-
-type filesystemProbe struct {
-	root, relative string
-	profile        fsfilter.Profile
-	record         filesystemProbeRecord
-}
+// Coop versions before 2026-11-03 checked each launch's share with a probe folder at every
+// project root. Their custody records still list those folders, so retiring such a record
+// removes one that a crash left behind; nothing writes new probes.
+const (
+	filesystemProbePrefix  = ".coop-fs-probe-"
+	filesystemProbeContent = "coop filesystem admission fixture\n"
+)
 
 type filesystemProbeRecord struct {
 	Root, Leaf string
@@ -37,6 +35,9 @@ func (p filesystemProbeRecord) close() error {
 		return errors.New("invalid filesystem probe identity")
 	}
 	parent, err := safefile.OpenRoot(p.Root)
+	if os.IsNotExist(err) {
+		return nil // the project folder is gone, and the probe folder inside it with it
+	}
 	if err != nil {
 		return err
 	}
@@ -72,8 +73,8 @@ func (p filesystemProbeRecord) close() error {
 		if !slices.Contains(allowed, fsfilter.NormalizeName(name, fsfilter.Profile{Normalize: true})) {
 			return errors.New("filesystem probe has unexpected entries; retained for review")
 		}
-		data, err := safefile.ReadRegular(dir, name, int64(len(fsfilter.ProbeContent)))
-		if err != nil || len(data) != 0 && string(data) != fsfilter.ProbeContent {
+		data, err := safefile.ReadRegular(dir, name, int64(len(filesystemProbeContent)))
+		if err != nil || len(data) != 0 && string(data) != filesystemProbeContent {
 			return errors.Join(errors.New("filesystem probe contents changed; retained for review"), err)
 		}
 	}
@@ -97,103 +98,54 @@ func (p filesystemProbeRecord) close() error {
 	return unix.Unlinkat(int(parent.Fd()), p.Leaf, unix.AT_REMOVEDIR)
 }
 
-func newFilesystemProbe(root string, record func(filesystemProbeRecord) error) (*filesystemProbe, error) {
-	dir, err := os.MkdirTemp(root, filesystemProbePrefix)
+// filesystemVolumeProfile reports which other spellings of a name open the same file on root's
+// volume: another letter case (Fold) or another Unicode form (Normalize). Both belong to the whole
+// volume, so the test file goes in Coop's private folder when it shares root's device and nothing
+// is written in the project. A root on another device gets both: a policy may then deny spellings
+// the volume would not resolve, but never misses one it would.
+func filesystemVolumeProfile(root, private string) (fsfilter.Profile, error) {
+	rootInfo, err := os.Stat(root)
 	if err != nil {
-		return nil, err
+		return fsfilter.Profile{}, err
 	}
-	p := &filesystemProbe{root: root, relative: filepath.Base(dir)}
-	info, err := os.Lstat(dir)
+	privateInfo, err := os.Stat(private)
 	if err != nil {
-		return nil, err
+		return fsfilter.Profile{}, err
 	}
-	id, ok := identityOf(info)
-	if !ok {
-		return nil, errors.New("filesystem probe identity unavailable")
+	rootID, rootOK := identityOf(rootInfo)
+	privateID, privateOK := identityOf(privateInfo)
+	if !rootOK || !privateOK {
+		return fsfilter.Profile{}, errors.New("filesystem identity unavailable")
 	}
-	p.record = filesystemProbeRecord{Root: root, Leaf: p.relative, Dev: id.dev, Ino: id.ino}
-	fail := func(err error) (*filesystemProbe, error) { return nil, errors.Join(err, p.close()) }
-	if err := record(p.record); err != nil {
-		return fail(err)
+	if rootID.dev != privateID.dev {
+		return fsfilter.Profile{Fold: true, Normalize: true}, nil
 	}
-	if err := os.Chmod(dir, 0755); err != nil {
-		return fail(err)
-	}
-	for _, name := range []string{".env", "Café", "public", "warm-alias"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(fsfilter.ProbeContent), 0644); err != nil {
-			return fail(err)
-		}
-		if err := os.Chmod(filepath.Join(dir, name), 0644); err != nil {
-			return fail(err)
-		}
-	}
-	base, err := os.Stat(filepath.Join(dir, "Café"))
+	name := filepath.Join(private, "Caf\u00e9")
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return fail(err)
+		return fsfilter.Profile{}, err
 	}
-	for name, destination := range map[string]*bool{"CAFÉ": &p.profile.Fold, "Cafe\u0301": &p.profile.Normalize} {
-		alias, err := os.Stat(filepath.Join(dir, name))
+	defer os.Remove(name)
+	base, err := file.Stat()
+	if err := errors.Join(err, file.Close()); err != nil {
+		return fsfilter.Profile{}, err
+	}
+	// Folding is tried on the ASCII letters alone and on the accented one, so a volume that folds
+	// only one kind still counts as folding.
+	var profile fsfilter.Profile
+	for _, alias := range []struct {
+		name       string
+		equivalent *bool
+	}{{"CAF\u00c9", &profile.Fold}, {"cAF\u00e9", &profile.Fold}, {"Cafe\u0301", &profile.Normalize}} {
+		info, err := os.Stat(filepath.Join(private, alias.name))
 		if err == nil {
-			*destination = os.SameFile(base, alias)
+			*alias.equivalent = *alias.equivalent || os.SameFile(base, info)
 		} else if !os.IsNotExist(err) {
-			return fail(err)
+			return fsfilter.Profile{}, err
 		}
 	}
-	return p, nil
+	return profile, nil
 }
-
-func (p *filesystemProbe) add(policy *fsfilter.Policy) {
-	for _, name := range []string{".env", "Café"} {
-		policy.Entries = append(policy.Entries, fsfilter.Entry{Path: p.relative + "/" + name, Flags: fsfilter.Secret})
-	}
-}
-
-// After the loader retains the original inode, add an unlisted hardlink and
-// replace the protected name. The probe now proves both retained-object denial
-// across independent binds and path denial for a newly created inode.
-func (p *filesystemProbe) replace(index int, probe *fsfilter.ShareProbe) error {
-	dir := filepath.Join(p.root, p.relative)
-	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "object-alias")); err != nil {
-		return err
-	}
-	// Replace a pathname already opened in the guest, not just a fresh alias.
-	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "replacement")); err != nil {
-		return err
-	}
-	if err := os.Rename(filepath.Join(dir, "replacement"), filepath.Join(dir, "warm-alias")); err != nil {
-		return err
-	}
-	temporary, err := os.OpenFile(filepath.Join(dir, "replacement"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temporary.Name())
-	_, writeErr := temporary.WriteString(fsfilter.ProbeContent)
-	// Ordinary permissions must allow the probe's read, so only enforcement
-	// can explain its denial after the protected pathname is replaced.
-	if err := errors.Join(writeErr, temporary.Chmod(0644), temporary.Close()); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary.Name(), filepath.Join(dir, ".env")); err != nil {
-		return err
-	}
-	prefix := fmt.Sprintf("/sources/%d/%s/", index+1, p.relative)
-	// Check the warmed pathname before another alias can refresh guest metadata.
-	probe.Denied = append(probe.Denied, prefix+"warm-alias", prefix+".env", prefix+"object-alias", prefix+"Café")
-	if p.profile.Fold {
-		probe.Denied = append(probe.Denied, prefix+".ENV", prefix+"CAFÉ")
-	}
-	if p.profile.Normalize {
-		probe.Denied = append(probe.Denied, prefix+"Cafe\u0301")
-	}
-	if p.profile.Fold && p.profile.Normalize {
-		probe.Denied = append(probe.Denied, prefix+"CAFE\u0301")
-	}
-	probe.Readable = append(probe.Readable, prefix+"public")
-	return nil
-}
-
-func (p *filesystemProbe) close() error { return p.record.close() }
 
 func nonoverlappingFilesystemRoots(roots []string) error {
 	for i, root := range roots {

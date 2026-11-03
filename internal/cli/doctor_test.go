@@ -551,3 +551,91 @@ func TestDoctorImagePrefersTheRepoImageThenBaseThenAlpine(t *testing.T) {
 		t.Fatalf("plain repo: (%q, %v), want (coop-box, true)", img, real)
 	}
 }
+
+// The kernel-only probe must fail on a secret it can read through the hardlink or through a
+// spelling the disk resolves, pass only when every secret read is refused, and never pass when the
+// box cannot see its project or the hardlink is missing rather than denied.
+func TestDoctorKernelProbeReadsAliasesAndSpellings(t *testing.T) {
+	for _, mode := range []string{"readable", "denied", "hardlink missing", "empty workspace"} {
+		t.Run(mode, func(t *testing.T) {
+			dir, err := buildKernelFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(dir)
+			// Whether this disk opens original under another spelling; a probe on it then reads the secret.
+			resolves := func(spelling, original string) bool {
+				info, err := os.Stat(filepath.Join(dir, spelling))
+				want, wantErr := os.Stat(filepath.Join(dir, original))
+				return err == nil && wantErr == nil && os.SameFile(info, want)
+			}
+			exposed := map[string]bool{"kernel.hardlink": true, "kernel.case": resolves(".ENV", ".env"), "kernel.unicode": resolves("cle\u0301.pem", "cl\u00e9.pem")}
+			prefix := ""
+			switch mode {
+			case "denied", "hardlink missing":
+				prefix = "cat() { case \"$1\" in public.txt) command cat \"$@\";; *) return 1;; esac; }\n"
+			case "empty workspace":
+				dir = t.TempDir()
+			}
+			if mode == "hardlink missing" {
+				if err := os.Remove(filepath.Join(dir, "notes-hardlink")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := strings.Replace(doctorKernelProbe, "cd /workspace 2>/dev/null || { echo \"RESULT FAIL sandbox.workspace\"; exit 1; }", prefix, 1)
+			cmd := exec.Command("sh", "-c", script)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			results := parseProbeResults(string(out))
+			if mode == "empty workspace" {
+				if err == nil || results["sandbox.workspace"] != "FAIL" || len(results) != 1 {
+					t.Fatalf("a probe that cannot see its project reported checks: %v %s", err, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			for _, def := range doctorKernelChecks {
+				want := "PASS"
+				if mode == "readable" && exposed[def.id] || mode == "hardlink missing" && def.id == "kernel.hardlink" {
+					want = "FAIL"
+				}
+				if results[def.id] != want {
+					t.Errorf("%s: want %s, got %s", def.id, want, out)
+				}
+			}
+		})
+	}
+}
+
+// Only a box that ran under kernel protection and saw its project can pass these checks.
+func TestKernelSpellingRunRecordsOnlyWhatRan(t *testing.T) {
+	passed := map[string]string{"kernel.hardlink": "PASS", "kernel.case": "PASS", "kernel.unicode": "PASS"}
+	blind := map[string]string{"sandbox.workspace": "FAIL"}
+	for _, tc := range []struct {
+		name string
+		run  kernelSpellingRun
+		want doctorOutcome
+	}{
+		{"failed box", kernelSpellingRun{failure: "The container could not start.", kernel: true}, doctorProbeFail},
+		{"blind box", kernelSpellingRun{results: blind, kernel: true}, doctorProbeFail},
+		{"mount box", kernelSpellingRun{results: passed}, doctorSkip},
+		{"kernel box", kernelSpellingRun{results: passed, kernel: true}, doctorPass},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &doctorSection{}
+			tc.run.record(s)
+			covered := 0
+			for _, row := range s.rows {
+				if row.outcome != tc.want {
+					t.Fatalf("row %q is %d, want %d", row.label, row.outcome, tc.want)
+				}
+				covered += row.covers
+			}
+			if covered != len(doctorKernelChecks) {
+				t.Fatalf("rows cover %d checks, want %d", covered, len(doctorKernelChecks))
+			}
+		})
+	}
+}

@@ -25,10 +25,12 @@ type doctorEvidence struct {
 	baseImage  string
 	usingReal  bool
 	hardened   bool
+	kernel     bool   // the sandbox run used kernel protection, so the hardlink and spelling checks ran
 	pids       string // the cgroup value the box reported
 	pidsConfig string // what configuration asked for
 	verdicts   map[string]string
 	sandboxErr string // the sandbox probe produced nothing; this is why
+	kernelErr  string // the kernel-only probe produced nothing; this is why
 	taskErr    string // the task-channel probe produced nothing; this is why
 	boxes      box.OrphanSurvey
 	surveyErr  string
@@ -39,6 +41,9 @@ type doctorEvidence struct {
 func allPassed() doctorEvidence {
 	verdicts := map[string]string{}
 	for _, def := range doctorSecretChecks {
+		verdicts[def.id] = "PASS"
+	}
+	for _, def := range doctorKernelChecks {
 		verdicts[def.id] = "PASS"
 	}
 	for _, def := range doctorHostChecks {
@@ -80,6 +85,9 @@ func (e doctorEvidence) render(t *testing.T) string {
 			doctorCheckUID(host, e.verdicts["UID"], e.usingReal)
 			doctorCheckCaps(host, e.verdicts["CAPS"], e.hardened)
 			doctorCheckPids(host, e.pids, e.hardened, e.pidsConfig)
+			if e.kernel {
+				kernelSpellingRun{results: e.verdicts, failure: e.kernelErr, kernel: true}.record(secrets)
+			}
 		}
 		offline.pass("Offline mode leaves only the loopback interface")
 		switch {
@@ -193,6 +201,23 @@ func TestApprovedDoctorReports(t *testing.T) {
 		{"18p-doctor-leftover-run-folders", func() doctorEvidence {
 			e := allPassed()
 			e.leftovers = 1256
+			return e
+		}},
+		{"18q-doctor-kernel-protection", func() doctorEvidence {
+			e := allPassed()
+			e.kernel = true
+			return e
+		}},
+		{"18r-doctor-kernel-spelling-exposed", func() doctorEvidence {
+			e := allPassed()
+			e.kernel = true
+			e.verdicts["kernel.unicode"] = "FAIL"
+			return e
+		}},
+		{"18s-doctor-kernel-probe-failed", func() doctorEvidence {
+			e := allPassed()
+			e.kernel = true
+			e.kernelErr = "The container could not start: permission denied."
 			return e
 		}},
 	}

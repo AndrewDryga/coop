@@ -19,10 +19,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 )
 
-func captureRememberedFilesystemSnapshot(ctx context.Context, root string, profile fsfilter.Profile, grants []string, exclude string) (snapshot *filesystemSnapshot, err error) {
+func captureRememberedFilesystemSnapshot(ctx context.Context, root string, profile fsfilter.Profile, grants []string) (snapshot *filesystemSnapshot, err error) {
 	err = withHiddenFilesLock(ctx, root, func() error {
 		var captureErr error
-		snapshot, captureErr = captureFilesystemSnapshot(root, profile, grants, nil, exclude)
+		snapshot, captureErr = captureFilesystemSnapshot(root, profile, grants, nil)
 		if captureErr != nil {
 			return captureErr
 		}
@@ -102,13 +102,13 @@ func (s *filesystemSnapshot) secretCount() int {
 // captureFilesystemSnapshot uses the existing decider and walks even hidden
 // directories: an already-existing hardlink outside a hidden directory must
 // inherit its protection. A later trusted-host reclassification needs admission.
-func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []string, retained map[fileIdentity]uint32, exclude string) (*filesystemSnapshot, error) {
+func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []string, retained map[fileIdentity]uint32) (*filesystemSnapshot, error) {
 	s := &filesystemSnapshot{root: root, policy: fsfilter.Policy{Profile: profile, Grants: slices.Clone(grants)}, objects: map[string]filesystemObject{}, protected: maps.Clone(retained), origins: rememberedHidden{}}
 	before := loadHiddenFiles(root)
 	if s.protected == nil {
 		s.protected = map[fileIdentity]uint32{}
 	}
-	inventory, err := filesystemObjects(root, exclude)
+	inventory, err := filesystemObjects(root)
 	if err != nil {
 		return nil, err
 	}
@@ -210,13 +210,13 @@ func filesystemNamedFlags(root string, inventory *filesystemInventory, before re
 // Revalidate before the first workload instruction. Public content edits are
 // irrelevant, but root/ancestor replacement, policy changes, new secrets and
 // changing alias or grant identities require a new admission.
-func (s *filesystemSnapshot) revalidate(exclude string) error {
+func (s *filesystemSnapshot) revalidate() error {
 	// Only the qualified APFS backend permits this optimization. In particular,
 	// Linux leaf bind mounts need a device check on every leaf.
 	if !filesystemProfileCandidate(s.root) || !maps.Equal(loadHiddenFiles(s.root), s.origins) {
-		return s.revalidateFull(exclude)
+		return s.revalidateFull()
 	}
-	inventory, err := inventoryFilesystem(s.root, exclude, false)
+	inventory, err := inventoryFilesystem(s.root, false)
 	if err != nil {
 		return err
 	}
@@ -249,13 +249,13 @@ func (s *filesystemSnapshot) revalidate(exclude string) error {
 	// Another admission can remember a newly classified inode while this walk
 	// runs. Only a full identity census can find its ordinary-looking aliases.
 	if !maps.Equal(loadHiddenFiles(s.root), s.origins) {
-		return s.revalidateFull(exclude)
+		return s.revalidateFull()
 	}
 	return nil
 }
 
-func (s *filesystemSnapshot) revalidateFull(exclude string) error {
-	next, err := captureFilesystemSnapshot(s.root, s.policy.Profile, s.policy.Grants, s.protected, exclude)
+func (s *filesystemSnapshot) revalidateFull() error {
+	next, err := captureFilesystemSnapshot(s.root, s.policy.Profile, s.policy.Grants, s.protected)
 	if err != nil {
 		return err
 	}

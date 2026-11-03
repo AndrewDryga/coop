@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Launches leave your project alone.** With eBPF file protection, every launch used to create a
+  `.coop-fs-probe-…` folder in the project root and run a test container before the agent
+  started. Editors showed the folder as changes, and the test added time to every start. Launches
+  no longer test the protection. Run `coop doctor` after updating Docker or OrbStack: with eBPF it
+  now also checks that a hardlink, another letter case or an equivalent Unicode spelling cannot
+  reveal a hidden secret.
+
 - **Editor and terminal agents manage their own tasks.** Agents in `coop acp` and `coop <agent>`
   boxes now get Coop's task tools, as loop agents do. They claim a task, keep its notes current,
   complete it, block it on your decision or hand it back, all without the coop command. A claim

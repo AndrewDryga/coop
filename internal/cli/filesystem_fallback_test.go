@@ -14,7 +14,7 @@ import (
 
 func TestFilesystemFallbackRefusalRetainsQualification(t *testing.T) {
 	err := &box.FilesystemFallbackError{
-		Reason: "filesystem share qualification failed: secret share probe did not deny .env: no such file or directory",
+		Reason: "Could not qualify Docker for kernel filesystem protection: permission denied",
 		Err:    &box.UncoveredSpellings{Paths: []string{"credentials.json"}},
 	}
 	out := usageBlock(t, err)
@@ -51,7 +51,7 @@ func TestFilesystemFallbackDiagnosticIsBoundedAndKeepsInnerUsage(t *testing.T) {
 }
 
 func TestFilesystemFallbackGenericFailureKeepsBothCauses(t *testing.T) {
-	err := &box.FilesystemFallbackError{Reason: "share qualification failed", Err: errors.New("remember hidden files: disk full")}
+	err := &box.FilesystemFallbackError{Reason: "Kernel filesystem protection requires Docker cgroupfs with cgroup v2", Err: errors.New("remember hidden files: disk full")}
 	if asUsage(err) != nil || !strings.Contains(err.Error(), err.Reason) || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("generic error lost a cause: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestFilesystemFallbackGenericFailureKeepsBothCauses(t *testing.T) {
 
 func TestFilesystemFallbackRetainsCleanupFailures(t *testing.T) {
 	refusal := &box.UncoveredSpellings{Paths: []string{"credentials.json"}}
-	fallback := &box.FilesystemFallbackError{Reason: "share qualification failed", Err: refusal}
+	fallback := &box.FilesystemFallbackError{Reason: "Kernel filesystem protection requires Docker cgroupfs with cgroup v2", Err: refusal}
 	cleanup := errors.New("credential cleanup remains pending")
 	for _, err := range []error{
 		errors.Join(fallback, cleanup),

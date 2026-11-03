@@ -72,7 +72,7 @@ func TestFilesystemContextContainsOnlyReleaseSources(t *testing.T) {
 		}
 		seen[h.Name] = true
 	}
-	for _, name := range []string{"Dockerfile", "cmd/coop-fs/main_linux.go", "cmd/coop-fs/probe_linux.go", "internal/fsfilter/assets/filter.c", "internal/fsfilter/assets/loader.c", "go.mod", "go.sum"} {
+	for _, name := range []string{"Dockerfile", "cmd/coop-fs/main_linux.go", "cmd/coop-fs/admit_linux.go", "internal/fsfilter/assets/filter.c", "internal/fsfilter/assets/loader.c", "go.mod", "go.sum"} {
 		if !seen[name] {
 			t.Fatal("missing source", name)
 		}
