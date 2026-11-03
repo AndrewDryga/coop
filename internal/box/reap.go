@@ -64,13 +64,18 @@ const runOwnerFile = "owner"
 // time recorded by the kernel past folders a live process made before the change.
 const rebootMargin = 24 * time.Hour
 
-// runfilesPrefixes adds what only the private runfiles root holds: each run's folder, and the empty
-// folder a coop hands Docker as its client config for a whole run, never mounting it, so old and
-// unmounted does not mean unused there. Removing a live one costs the run nothing, since Docker
-// reads a missing one as empty, and in that owner-only folder no one else can recreate it. In a
-// shared /tmp anyone could, with a Docker config of their own, so a temp directory sweep never
-// looks for these, not even the ones earlier versions left there.
-var runfilesPrefixes = slices.Concat(tempPrefixes, []string{"coop-docker-client-", runDirPrefix})
+// runfilesPrefixes adds what only the private runfiles root holds: each run's folder, each editor
+// session's tool handoff folder, and the empty folder a coop hands Docker as its client config for a
+// whole run, never mounting it, so old and unmounted does not mean unused there. Removing a live one
+// costs the run nothing, since Docker reads a missing one as empty, and in that owner-only folder no
+// one else can recreate it. In a shared /tmp anyone could, with a Docker config of their own, so a
+// temp directory sweep never looks for these, not even the ones earlier versions left there.
+var runfilesPrefixes = slices.Concat(tempPrefixes, []string{"coop-docker-client-", runDirPrefix, mcpHandoffDirPrefix})
+
+// ownedFolderPrefixes are the runfiles folders that name the process that made them
+// (recordRunOwner): a live editor session keeps its handoff folder for days, so old and unmounted
+// do not make one unused; runFolderUnused judges them.
+var ownedFolderPrefixes = []string{runDirPrefix, mcpHandoffDirPrefix}
 
 // mountLister is the part of the runtime reaping needs, named here so this can
 // be tested without a container runtime.
@@ -297,7 +302,8 @@ func reapOrphanEntries(dir string, prefixes []string, judge runJudge, mounted ma
 		if err != nil || now.Sub(info.ModTime()) < reapMinimumAge {
 			continue
 		}
-		if strings.HasPrefix(name, runDirPrefix) && !judge.runFolderUnused(path, info.ModTime()) {
+		if slices.ContainsFunc(ownedFolderPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) &&
+			!judge.runFolderUnused(path, info.ModTime()) {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {

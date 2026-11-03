@@ -235,6 +235,63 @@ func TestReapRunfilesJudgesARunFolderByItsOwnerAndDaemon(t *testing.T) {
 	}
 }
 
+// A coop acp editor session keeps its tool handoff folder for as long as the editor stays open, and
+// a killed session leaves it behind. The sweep removes one by the run folder's rule: only once its
+// owner is provably gone, or, for an earlier Coop's folder that names no owner, once it predates the
+// last boot. Old and unmounted alone never make a live session's folder unused.
+func TestReapRunfilesJudgesAnEditorHandoffFolderByItsOwner(t *testing.T) {
+	workspace := t.TempDir()
+	now := time.Now()
+	bootedRecently := now.Add(-2 * time.Hour)
+	for _, tc := range []struct {
+		name    string
+		owner   string
+		age     time.Duration
+		removed bool
+	}{
+		{name: "a live editor session's", owner: liveSupervisorLabel(t, workspace), age: 72 * time.Hour},
+		{name: "a killed editor session's", owner: goneSupervisorLabel(t, workspace), age: 3 * time.Hour, removed: true},
+		{name: "a killed editor session's from within the hour", owner: goneSupervisorLabel(t, workspace), age: 30 * time.Minute},
+		{name: "another host's", owner: supervisorLabelOn(otherHost, workspace, os.Getpid()), age: 72 * time.Hour},
+		{name: "an earlier Coop's since the last boot", age: 3 * time.Hour},
+		{name: "an earlier Coop's before the last boot", age: 72 * time.Hour, removed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, root := newRunfiles(t)
+			folder := runFolderBy(t, root, mcpHandoffDirPrefix+"1", tc.owner, false, "", tc.age)
+			removed, err := reapOrphanRunfiles(context.Background(),
+				fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, cfg, now, localHost(), bootedRecently)
+			if err != nil || exists(folder) == tc.removed {
+				t.Fatalf("reap = %d, %v (folder left: %v); want removed %v", removed, err, exists(folder), tc.removed)
+			}
+		})
+	}
+}
+
+// An editor session's handoff folder names this process as its owner before the child writes into
+// it, so a session killed at any moment leaves a folder the sweep can attribute.
+func TestAnEditorHandoffFolderNamesItsOwner(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	repo := t.TempDir()
+	dir, err := NewSessionMCPHandoffDir(cfg, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := os.ReadFile(filepath.Join(dir, runOwnerFile))
+	want := supervisorLabelValue(supervisorScope(RunSpec{Repo: repo}), os.Getpid())
+	if err != nil || want == "" || string(record) != want+"\n" {
+		t.Fatalf("owner record = %q (%v), want %q", record, err, want+"\n")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	judge := runJudge{daemon: "daemon-a", host: localHost(), boot: time.Now().Add(-time.Hour)}
+	if judge.runFolderUnused(dir, info.ModTime().Add(-72*time.Hour)) {
+		t.Fatal("this live session's handoff folder was judged unused")
+	}
+}
+
 // An owner record cut short could name a process that is gone, though its run is live. Only a
 // complete record, ended by its newline, is read; anything else keeps the folder, even from
 // before the last boot.

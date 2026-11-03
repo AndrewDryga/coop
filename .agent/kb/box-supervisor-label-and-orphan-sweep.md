@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
 updated: 2026-11-03
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -142,6 +142,13 @@ or ended a day before the last boot. No process outlives a reboot, nor does a bo
 can mount this host's files. A live owner, another host's, an incomplete or unreadable record, or a
 box on another or an unnamed daemon keeps the folder.
 
+A `coop acp` editor session's tool handoff folder (`coop-acp-mcp-*`, `NewSessionMCPHandoffDir` in
+mcp_broker.go) lives in the same root and is judged by the same rule (`ownedFolderPrefixes`): it
+names the session as its owner the same way and never records a daemon, so it goes once that session
+is provably gone. The session removes it when its child stops; a killed session left 35 of them on
+the owner's Mac by 2026-11-03. Those name no owner, so each goes only once it predates the last
+boot by a day.
+
 The pass (`cli.reapTemp`) pins the daemon the current context selects (`FreezeCompose`) when a
 runfiles root exists: pinning makes a client folder there, and a host without one has no run
 folders to judge. A frozen runtime's `MountSourcesByLabel` lists through that daemon's socket,
@@ -257,6 +264,9 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-03 — editor tool handoff folders (`coop-acp-mcp-*`) name their owner and join the runfiles
+  sweep under the run folder rule; `TestReapRunfilesJudgesAnEditorHandoffFolderByItsOwner` keeps a live
+  session's folder.
 - 2026-11-03 — a build's recycle (and the sweep it starts) runs only for an image the build
   replaced, and restarts only the supervised boxes running it (`recycleBoxes` in build_cmd.go).
 - 2026-11-03 — run folders name their owner first, the daemon record is never removed, and the sweep

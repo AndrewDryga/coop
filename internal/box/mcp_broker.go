@@ -29,15 +29,26 @@ const maxProviderRoutes = 8
 // stand-ins its adapter must be handed.
 const SessionMCPHandoffEnv = "COOP_SESSION_MCP_HANDOFF"
 
+// mcpHandoffDirPrefix names the folder in the runfiles root where a coop acp editor session's child
+// hands its rendered tools back. The session removes it when the child stops; one a killed session
+// left goes in the daily sweep once its owner record proves that session gone (runFolderUnused).
+const mcpHandoffDirPrefix = "coop-acp-mcp-"
+
 // NewSessionMCPHandoffDir keeps the child's rendered tools under the same protected control
 // home as other run artifacts, never where an older box's broad system-temp bind can reach them.
+// The folder names this process as its owner first, as a run folder does.
 func NewSessionMCPHandoffDir(cfg *config.Config, repo string) (string, error) {
 	base, err := config.PrivateRunfiles(cfg)
 	if err != nil {
 		return "", err
 	}
 	spec := RunSpec{Repo: repo}
-	return privateTempDirUnder(base, repo, "coop-acp-mcp-", compositionArtifactExposureRoots(cfg, spec)...)
+	dir, err := privateTempDirUnder(base, repo, mcpHandoffDirPrefix, compositionArtifactExposureRoots(cfg, spec)...)
+	if err != nil {
+		return "", err
+	}
+	recordRunOwner(dir, supervisorLabelValue(supervisorScope(spec), os.Getpid()))
+	return dir, nil
 }
 
 // mcpRoute is one secret-bearing MCP server a run brokers: the upstream its literal URL names, the
