@@ -299,6 +299,9 @@ func TestEvalRunRefusesAnUnknownAgentOrPresetAsInput(t *testing.T) {
 		args        []string
 		want, cause string
 	}{
+		// A mistyped suite is the same kind of mistake: neither a starter nor a path to a suite.
+		{[]string{"eval", "run", "cor", "codex", "--dry-run"}, `Unknown suite "cor" for "coop eval run"`,
+			"Name a starter suite (core or queue), or give the path to your own suite.yaml."},
 		{[]string{"eval", "run", "core", "nosuchagent", "--dry-run"}, `Unknown agent or preset "nosuchagent" for "coop eval run"`, offer},
 		{[]string{"eval", "run", "core", "Codex", "--timeout", "35m"}, `Unknown agent or preset "Codex" for "coop eval run"`, offer},
 		{[]string{"loop", "nosuchagent"}, `Unknown agent or preset "nosuchagent" for "coop loop"`, offer},
@@ -319,6 +322,18 @@ func TestEvalRunRefusesAnUnknownAgentOrPresetAsInput(t *testing.T) {
 	}
 }
 
+// A target that pins several accounts is refused before the plan as rejected input, in the block.
+func TestEvalPreflightRefusesAnAccountLadder(t *testing.T) {
+	c := eval.Configuration{Kind: eval.ConfigTarget, Label: "codex@work,personal"}
+	_, err := applyEvalConfiguration(freshConfig(t), eval.FrozenConfig{Kind: c.Kind, Label: c.Label})
+	want := "\n✗ Invalid configuration \"codex@work,personal\" for \"coop eval run\"\n\n" +
+		"      Configuration \"codex@work,personal\" names 2 accounts, and an eval configuration must pin exactly one.\n\n" +
+		"  Help: coop help eval run\n"
+	if got := usageBlock(t, evalConfigurationRefusal(c, err)); got != want {
+		t.Errorf("account ladder refusal:\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestEvalPreflightRefusesPresetBeforeRecordingAnAgentRun(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := evalTestRepo(t)
@@ -331,7 +346,8 @@ func TestEvalPreflightRefusesPresetBeforeRecordingAnAgentRun(t *testing.T) {
 		}
 		out := captureStdout(t, func() {
 			code, err := a.evalRun(args)
-			if code != 1 || err == nil || !strings.Contains(err.Error(), "loop suites") {
+			if usage := asUsage(err); code != 2 || usage == nil || usage.Headline != `Cannot evaluate preset "demo" in an agent suite` ||
+				!strings.Contains(usage.Cause, "Compare presets with a loop suite") {
 				t.Errorf("unsupported agent preset (dry=%v): code %d, err %v", dry, code, err)
 			}
 		})

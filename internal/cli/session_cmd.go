@@ -73,91 +73,114 @@ func sessionStatePath(state string) (string, error) {
 	return state, nil
 }
 
+// sessionSyntax is what a sessions subcommand's refusals name: its path, its syntax line, and a
+// concrete example for an option given without its value.
+type sessionSyntax struct{ command, usage, example string }
+
+var (
+	sessionDoctorSyntax = sessionSyntax{"coop sessions doctor", "coop sessions doctor [--socket <path>] [--json]",
+		"coop sessions doctor --socket /path/to/control.sock"}
+	sessionCompactSyntax = sessionSyntax{"coop sessions compact", "coop sessions compact --backup <path> [--state <path>]",
+		"coop sessions compact --backup /path/to/session-backup.sqlite --state /var/lib/coop/sessions"}
+	sessionCheckSyntax = sessionSyntax{"coop sessions check", "coop sessions check [--state <path>]",
+		"coop sessions check --state /var/lib/coop/sessions"}
+	sessionQuiescenceSyntax = sessionSyntax{"coop sessions quiescence", "coop sessions quiescence [--state <path>] [--json]",
+		"coop sessions quiescence --state /var/lib/coop/sessions"}
+)
+
+// value takes the value of args[i], one of the command's single-value options, refusing a missing
+// value and a second copy of the option in the shared block.
+func (s sessionSyntax) value(args []string, i int, current string) (string, error) {
+	if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+		return "", ui.MissingOptionValue(args[i], s.command, s.example)
+	}
+	if current != "" {
+		return "", ui.RepeatedOption(args[i], s.command)
+	}
+	return args[i+1], nil
+}
+
+// refuse refuses an argument none of the command's options claimed.
+func (s sessionSyntax) refuse(arg string) error {
+	if strings.HasPrefix(arg, "-") {
+		return ui.UnknownOption(arg, s.command, "")
+	}
+	return ui.UnexpectedArgument(arg, s.command, s.usage)
+}
+
 func parseSessionDoctorFlags(args []string) (socket string, jsonOutput bool, err error) {
+	s := sessionDoctorSyntax
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			if jsonOutput {
-				return "", false, errors.New("sessions doctor: --json may be specified once")
+				return "", false, ui.RepeatedOption(args[i], s.command)
 			}
 			jsonOutput = true
 		case "--socket":
-			if socket != "" || i+1 == len(args) || strings.HasPrefix(args[i+1], "-") {
-				return "", false, errors.New("sessions doctor: --socket requires one value")
+			if socket, err = s.value(args, i, socket); err != nil {
+				return "", false, err
 			}
 			i++
-			socket = args[i]
 		default:
-			return "", false, fmt.Errorf("sessions doctor: unknown flag %q", args[i])
+			return "", false, s.refuse(args[i])
 		}
 	}
 	return socket, jsonOutput, nil
 }
 
 func parseSessionCompactFlags(args []string) (state, backup string, err error) {
+	s := sessionCompactSyntax
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		var target *string
-		switch arg {
+		switch args[i] {
 		case "--state":
-			target = &state
+			state, err = s.value(args, i, state)
 		case "--backup":
-			target = &backup
+			backup, err = s.value(args, i, backup)
 		default:
-			return "", "", fmt.Errorf("sessions compact: unknown flag %q", arg)
+			err = s.refuse(args[i])
 		}
-		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return "", "", fmt.Errorf("sessions compact: flag %s requires a value", arg)
+		if err != nil {
+			return "", "", err
 		}
 		i++
-		if *target != "" {
-			return "", "", fmt.Errorf("sessions compact: flag %s may be specified once", arg)
-		}
-		*target = args[i]
 	}
 	if backup == "" {
-		return "", "", errors.New("sessions compact: --backup <path> is required")
+		return "", "", ui.MissingArgument("--backup", s.command, s.usage)
 	}
 	return state, backup, nil
 }
 
 func parseSessionCheckFlags(args []string) (state string, err error) {
-	const command, usage = "sessions check", "coop sessions check --state /var/lib/coop/sessions"
+	s := sessionCheckSyntax
 	for i := 0; i < len(args); i++ {
 		if args[i] != "--state" {
-			if strings.HasPrefix(args[i], "-") {
-				return "", ui.UnknownOption(args[i], command, "")
-			}
-			return "", ui.UnexpectedArgument(args[i], command, usage)
+			return "", s.refuse(args[i])
 		}
-		if i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return "", ui.MissingOptionValue(args[i], command, usage)
+		if state, err = s.value(args, i, state); err != nil {
+			return "", err
 		}
 		i++
-		if state != "" {
-			return "", fmt.Errorf("%s: --state may be specified once", command)
-		}
-		state = args[i]
 	}
 	return state, nil
 }
 
 func parseSessionQuiescenceFlags(args []string) (state string, jsonOutput bool, err error) {
+	s := sessionQuiescenceSyntax
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			if jsonOutput {
-				return "", false, errors.New("sessions quiescence: --json may be specified once")
+				return "", false, ui.RepeatedOption(args[i], s.command)
 			}
 			jsonOutput = true
 		case "--state":
-			if state != "" || i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-				return "", false, errors.New("sessions quiescence: --state requires one value")
+			if state, err = s.value(args, i, state); err != nil {
+				return "", false, err
 			}
 			i++
-			state = args[i]
 		default:
-			return "", false, fmt.Errorf("sessions quiescence: unknown flag %q", args[i])
+			return "", false, s.refuse(args[i])
 		}
 	}
 	return state, jsonOutput, nil
@@ -172,7 +195,7 @@ func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
 	defer cancel()
 	snapshot, err := session.ReadQuiescence(ctx, state)
 	if err != nil {
-		return 1, err
+		return 1, quiescenceFailure(state, err)
 	}
 	if jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(snapshot); err != nil {
@@ -187,6 +210,20 @@ func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
 		return 3, nil
 	}
 	return 0, nil
+}
+
+// quiescenceFailure explains a store quiescence could not read. It reads the running service's own
+// files and creates none, so a missing one is named rather than shown as the system call that failed.
+func quiescenceFailure(state string, err error) error {
+	const headline = "Could not read session work"
+	var missing *os.PathError
+	if errors.As(err, &missing) && errors.Is(err, os.ErrNotExist) {
+		return ui.CommandFailed(headline,
+			"There is no "+filepath.Base(missing.Path)+" in "+ui.SafeInline(state)+".\n"+
+				"This command reads the running session service's database, WAL and index files.",
+			[2]string{"", "Check the --state path, and that the session service is running."})
+	}
+	return ui.CommandFailed(headline, upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
 }
 
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the

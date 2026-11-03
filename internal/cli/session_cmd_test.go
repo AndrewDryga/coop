@@ -190,12 +190,30 @@ func TestSessionQuiescenceMissingStoreFailsWithoutCreatingState(t *testing.T) {
 	if code != 1 || err == nil {
 		t.Fatalf("missing state reported idle: %d %v", code, err)
 	}
+	// The block names the missing file, never the system call that failed on it.
+	want := "\n✗ Could not read session work\n\n" +
+		"      There is no session.sqlite in " + root + ".\n" +
+		"      This command reads the running session service's database, WAL and index files.\n\n" +
+		"  Check the --state path, and that the session service is running.\n"
+	if got := usageBlock(t, err); got != want {
+		t.Errorf("missing store block:\n%s\nwant\n%s", got, want)
+	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("inspection created state", err)
 	}
-	for _, args := range [][]string{{"--state"}, {"--state", ""}, {"--json", "--json"}, {"--state", "a", "--state", "b"}, {"--unknown"}} {
-		if _, _, err := parseSessionQuiescenceFlags(args); err == nil {
-			t.Fatalf("accepted %v", args)
+	for _, tc := range []struct {
+		args     []string
+		headline string
+	}{
+		{[]string{"--state"}, `Missing value for "--state" in "coop sessions quiescence"`},
+		{[]string{"--state", ""}, `Missing value for "--state" in "coop sessions quiescence"`},
+		{[]string{"--json", "--json"}, `Option "--json" can only be used once in "coop sessions quiescence"`},
+		{[]string{"--state", "a", "--state", "b"}, `Option "--state" can only be used once in "coop sessions quiescence"`},
+		{[]string{"--unknown"}, `Unknown option "--unknown" for "coop sessions quiescence"`},
+	} {
+		_, _, err := parseSessionQuiescenceFlags(tc.args)
+		if usage := asUsage(err); usage == nil || usage.Headline != tc.headline {
+			t.Errorf("parse %q = %v, want %q", tc.args, err, tc.headline)
 		}
 	}
 }

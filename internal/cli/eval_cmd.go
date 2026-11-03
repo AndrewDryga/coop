@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -137,6 +138,10 @@ func (a *app) evalRun(args []string) (int, error) {
 	ctx, cancel := evalDeadline(started, opts.Timeout)
 	defer cancel()
 	suite, err := a.resolveEvalSuite(suitePath)
+	var unknownSuite *ui.UsageError
+	if errors.As(err, &unknownSuite) {
+		return 2, err // a suite name that is neither a starter nor a path is rejected input
+	}
 	if err != nil {
 		return 1, err
 	}
@@ -155,7 +160,7 @@ func (a *app) evalRun(args []string) (int, error) {
 		// recording a run or preparing any workspaces. Keep one selection contract.
 		for _, c := range configs {
 			if _, err := applyEvalConfiguration(a.cfg.Clone(), eval.FrozenConfig{Kind: c.Kind, Label: c.Label}); err != nil {
-				return 1, err
+				return 2, evalConfigurationRefusal(c, err)
 			}
 		}
 	}
@@ -381,9 +386,35 @@ func (a *app) resolveEvalSuite(ref string) (*eval.Suite, error) {
 	if ok {
 		ref = starter
 	} else if !strings.ContainsAny(ref, "/.") {
-		return nil, fmt.Errorf("no starter suite %q exists; run `coop eval ls` to see them, or give a path to your own suite.yaml", ref)
+		var ids []string
+		for _, s := range eval.Starters() {
+			ids = append(ids, s.ID)
+		}
+		return nil, &ui.UsageError{
+			Headline: fmt.Sprintf("Unknown suite %q for %q", ref, "coop eval run"),
+			Cause:    "Name a starter suite (" + ui.List(ids, "or") + "), or give the path to your own suite.yaml.",
+			Rows:     [][2]string{{"Suites:", "coop eval ls"}, {"Help:", ui.HelpCommand("coop eval run")}},
+		}
 	}
 	return eval.Load(ref)
+}
+
+// evalConfigurationRefusal is the rejected-input form of a configuration applyEvalConfiguration
+// refuses before the plan: a preset in an agent suite, or a target pinning several accounts.
+func evalConfigurationRefusal(c eval.Configuration, err error) error {
+	if c.Kind == eval.ConfigPreset {
+		return &ui.UsageError{
+			Headline: fmt.Sprintf("Cannot evaluate preset %q in an agent suite", c.Label),
+			Cause: "An agent suite runs one agent per trial, so it compares targets such as codex.\n" +
+				"Compare presets with a loop suite, such as queue.",
+			Rows: [][2]string{{"Suites:", "coop eval ls"}, {"Help:", ui.HelpCommand("coop eval run")}},
+		}
+	}
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Invalid configuration %q for %q", c.Label, "coop eval run"),
+		Cause:    sentence(err.Error()),
+		Rows:     [][2]string{{"Help:", ui.HelpCommand("coop eval run")}},
+	}
 }
 
 // resolveEvalConfigurations turns each positional into an evaluated configuration, using the same

@@ -26,10 +26,17 @@ func TestParseSessionConnectFlagsReportsTheActualBadArgument(t *testing.T) {
 		{[]string{"--controller"}, `Missing value for "--controller"`},
 		{[]string{"--controller", "https://controller.example", "extra"}, `Unexpected argument "extra"`},
 		{[]string{"--config", "config.json"}, `Unknown option "--config"`},
+		// Leaving the option out is not a missing value.
+		{[]string{"--token-file", "token"}, `Missing --controller for "coop sessions connect"`},
+		{[]string{"--controller", "https://a.example", "--controller", "https://b.example"}, `Option "--controller" can only be used once`},
+		// An address the worker could never use is rejected input, not a failed connection, and the
+		// refusal does not repeat it: a user name in it can carry a password.
+		{[]string{"--controller", "http://controller.example"}, `Invalid value for "--controller" in "coop sessions connect"`},
+		{[]string{"--controller", "https://user:secret@controller.example/path"}, `Invalid value for "--controller" in "coop sessions connect"`},
 	} {
 		_, err := parseSessionConnectFlags(tc.args)
 		var usage *ui.UsageError
-		if !errors.As(err, &usage) || !strings.Contains(err.Error(), tc.want) {
+		if !errors.As(err, &usage) || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
 			t.Errorf("parseSessionConnectFlags(%v) = %v, want %q usage error", tc.args, err, tc.want)
 		}
 	}

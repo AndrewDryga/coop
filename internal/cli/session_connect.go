@@ -43,6 +43,7 @@ type sessionConnectOptions struct {
 func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 	const command = "coop sessions connect"
 	const usage = command + " --controller <https-url> --token-file <path>"
+	const example = command + " --controller https://controller.example.com --token-file /path/to/token"
 	var options sessionConnectOptions
 	for i := 0; i < len(args); i++ {
 		var target *string
@@ -62,16 +63,28 @@ func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 			return options, ui.UnexpectedArgument(args[i], command, usage)
 		}
 		if *target != "" {
-			return options, fmt.Errorf("%s: %s may be specified once", command, args[i])
+			return options, ui.RepeatedOption(args[i], command)
 		}
 		if i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
-			return options, ui.MissingOptionValue(args[i], command, usage)
+			return options, ui.MissingOptionValue(args[i], command, example)
 		}
 		i++
 		*target = args[i]
 	}
 	if options.Controller == "" {
-		return options, ui.MissingOptionValue("--controller", command, usage)
+		return options, ui.MissingArgument("--controller", command, usage)
+	}
+	// Refused here, before a local service starts. The address is not echoed: one with a user name
+	// can carry a password.
+	if workerconnector.CheckControlPlaneURL(options.Controller) != nil {
+		return options, &ui.UsageError{
+			Headline: fmt.Sprintf("Invalid value for %q in %q", "--controller", command),
+			Cause:    "Use the controller's https:// address, such as https://controller.example.com.\nLeave out any path, query or user name.",
+			Rows: [][2]string{
+				{"Example:", example},
+				{"Help:", ui.HelpCommand(command)},
+			},
+		}
 	}
 	for _, path := range []*string{&options.TokenFile, &options.CAFile} {
 		if *path != "" {

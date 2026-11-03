@@ -335,7 +335,7 @@ func applyEvalConfiguration(cfg *config.Config, c eval.FrozenConfig) (string, er
 	// More than one account is a LADDER — fine for a loop that may rotate mid-run, but an eval
 	// measures ONE configuration, so it is refused rather than silently narrowed to the first.
 	if len(target.Accounts) > 1 {
-		return "", fmt.Errorf("configuration %q names %d accounts; an eval configuration must pin exactly one", c.Label, len(target.Accounts))
+		return "", fmt.Errorf("configuration %q names %d accounts, and an eval configuration must pin exactly one", c.Label, len(target.Accounts))
 	}
 	if acct := target.Account(); acct != "" {
 		cfg.SetActiveProfile(name, acct)

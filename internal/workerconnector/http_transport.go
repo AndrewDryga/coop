@@ -214,6 +214,13 @@ func sha256sum(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// CheckControlPlaneURL reports whether value is a controller address NewHTTPTransport accepts, so a
+// command can refuse a bad one as input before it starts anything.
+func CheckControlPlaneURL(value string) error {
+	_, err := parseControlPlaneURL(value, true)
+	return err
+}
+
 func parseControlPlaneURL(value string, requireTLS bool) (*url.URL, error) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {

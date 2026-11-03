@@ -89,10 +89,15 @@ func TestApprovedPromptLine(t *testing.T) {
 	}
 }
 
-// A rejected controller must not start a local service.
+// A rejected controller must not start a local service. The command refuses it as input (exit 2);
+// the transport keeps its own check for any other caller.
 func TestSessionConnectRejectsInvalidControllerBeforeStartup(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "sessions")
-	code, err := runSessionConnect(freshConfig(t), sessionConnectOptions{Controller: "http://controller.example", State: state})
+	code, err := (&app{cfg: freshConfig(t)}).cmdSessions([]string{"connect", "--controller", "http://controller.example", "--state", state})
+	if usage := asUsage(err); code != 2 || usage == nil || usage.Headline != `Invalid value for "--controller" in "coop sessions connect"` {
+		t.Fatalf("coop sessions connect with an insecure controller = %d, %v", code, err)
+	}
+	code, err = runSessionConnect(freshConfig(t), sessionConnectOptions{Controller: "http://controller.example", State: state})
 	if code != 1 || err == nil {
 		t.Fatalf("insecure controller = %d, %v", code, err)
 	}
