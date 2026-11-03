@@ -36,43 +36,49 @@ uses cgroup v2 with the `cgroupfs` driver. Other filesystems, unsupported VM ker
 container options keep the existing mount backend. See [filesystem protection](#filesystem-protection-contract)
 for the host-editing contract.
 
-With the mount backend, a secret file is covered by a read-only empty file and a secret directory
-by a read-only empty directory. On a case-insensitive disk, Coop also covers uppercase and lowercase
-spellings of a hidden filename with up to 11 letters, and every spelling of `.coopignore`.
-Longer filenames or a project with too many spellings can exceed the mount limit.
-Coop then refuses the agent or service launch. Move the file into a hidden folder, or run
-`coop approve --case-exposure` to review and remember access to the listed files with mount
-protection. Ordinary `coop approve` reviews network access without granting file exposure.
-File approval applies to those exact
-paths, including future contents, for new agent and service runs. Newly exposed paths need another
-approval; already running boxes stay unchanged. `.coopignore` cannot receive this approval.
-The one-run override `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` remains available. A qualified eBPF run
-protects those paths without either form of exposure approval.
+With the mount backend, Coop covers a secret file with a read-only empty file and a secret
+directory with a read-only empty directory. On a case-insensitive disk, it also covers the
+uppercase and lowercase spellings of a hidden filename with up to 11 letters, and every spelling
+of `.coopignore`.
+
+A longer filename, or a project with too many spellings, can exceed the mount limit. Coop then
+refuses to launch the agent or service. Either:
+
+- move the file into a hidden folder, or
+- run `coop approve --case-exposure` to review the listed files and remember their exposure under
+  mount protection. Ordinary `coop approve` reviews network access and grants no file exposure.
+
+That approval covers those exact paths, including their future contents, for new agent and
+service runs. Newly exposed paths need another approval, and running boxes stay unchanged.
+`.coopignore` cannot be approved this way. `COOP_ALLOW_CASE_EXPOSED_SECRETS=1` still exposes the
+files for a single run. A qualified eBPF run protects these paths without either kind of approval.
 
 ### Filesystem protection contract
 
 The host and its editors are trusted. Each eBPF admission captures the current hiding rules and
-protected objects. Ordinary edits to public files work immediately. Host edits and atomic saves
-to an already protected destination stay protected, including when an ancestor is replaced.
-Existing aliases keep their protection when the original file is replaced.
+the protected objects. What that means for you:
 
-Restart the affected agent or service after changing `.coopignore`, newly classifying an
-already-public object as secret, or creating an unprotected alias to a secret from the host.
-Running protection does not reload policy or revoke memory mappings that were already readable.
-When saving secret bytes atomically, prepare the temporary file outside the shared tree or inside
-an already hidden folder: a new public temporary pathname is not a protected destination.
+- Ordinary edits to public files work immediately.
+- Host edits and atomic saves to a destination that is already protected stay protected, even
+  when a parent folder is replaced. Existing aliases keep their protection when the original file
+  is replaced.
+- Restart the affected agent or service after you change `.coopignore`, mark an already-public
+  object as secret, or create an unprotected alias to a secret from the host. Running protection
+  does not reload its rules or revoke memory mappings that were already readable.
+- To save secret bytes atomically, write the temporary file outside the shared tree or inside an
+  already hidden folder. A new public temporary path is not a protected destination.
+- Protection follows the object, not its path. If a remembered secret still has another hardlink
+  in the project, removing its hiding rule alone does not make the object public. Remove the other
+  aliases and restart before you declassify the original file.
+- An explicit service-file grant allows reads of the admitted object, its aliases and later
+  in-place host edits. It never allows writes, and replacing the object needs a new admission.
 
-Protection applies to object identity. If a remembered secret still has another hardlink in the
-project, removing its hiding rule alone does not make that object public under eBPF. Remove the
-surviving aliases and restart before declassifying the original file. Explicit service-file grants
-allow reads of the admitted object, including its aliases and later in-place host edits; replacing
-that object requires re-admission. The grant does not permit writes.
-
-A separate helper owns the kernel enforcement. The agent receives no BPF privileges. If the helper
-exits, access to the protected share is denied until the workload is retired. Stopped service
-containers retain protection for a later restart. Coop removes kernel state only after all of that
-admission's consumers are gone. After a VM reboot, the launch and healthcheck guards refuse to run
-image code with an old admission; start the service through Coop to obtain fresh protection.
+A separate helper owns the kernel enforcement, and the agent receives no BPF privileges. If the
+helper exits, access to the protected share is denied until the workload is retired. Stopped
+service containers keep their protection for a later restart. Coop removes kernel state only
+after all of an admission's consumers are gone. After a VM reboot, the launch and healthcheck guards
+refuse to run image code with an old admission. Start the service through Coop to get fresh
+protection.
 
 Templates (`*.example`, `*.sample`, `*.template`) stay visible. The default patterns are built
 into co:op.
@@ -239,13 +245,23 @@ and uses a separate image tag.
 A filtered launch uses the exact image you explicitly built and approved. Build it again if its
 inputs change, co:op upgrades the client base or the image is missing.
 
+When that build is due, an interactive provider launch in a host terminal can offer
+`Build and continue?`, defaulting to No. The prompt shows a saved snapshot of the build files;
+review it, because only those saved files are approved for that build. Headless commands, editor
+connections and unattended runs never ask. They stop and name the build to run.
+
 An editor connection with open networking can build a missing project image automatically.
-Ordinary runs do not rebuild an image after its inputs change; run `coop build --egress open`
-yourself. Offline launches never run project build instructions automatically.
+Ordinary runs do not rebuild an image after its inputs change; they warn, and you run
+`coop build --egress open` yourself. Offline launches never run project build instructions
+automatically.
 
 Project builds use ordinary Docker networking. The restrictions on the running box do not apply
-during the build. See [restricted
-networking](networking.md) for the image checks and the limits of build protection.
+during the build, and `--egress` selects the runtime image without filtering build traffic. See
+[restricted networking](networking.md) for the image checks and the limits of build protection.
+
+After a build, new runs use the rebuilt image. Supervised editor sessions that run the replaced
+image restart and reconnect. Other running boxes keep the old image until their next start. An
+unchanged image restarts nothing.
 
 ### Box-only environment: box.env
 
@@ -434,9 +450,10 @@ whether they can write to it. It then asks you to approve access for this reposi
 also shows the selected Docker daemon and, for an existing plain local volume, where it stores
 the data.
 
+- Only plain local volumes are supported. Coop refuses a volume backed by a bind mount, driver
+  options or a plugin; mount an explicit repository path instead.
 - Coop creates a missing custom-named volume as plain local storage only after you answer Yes.
-- An approval does not automatically transfer to a different daemon, a replaced volume, or a
-  volume backed by a bind mount or plugin.
+- An approval does not automatically transfer to a different daemon or a replaced volume.
 - Answering No or closing the input stops the command before Compose runs.
 - Automatic box launches, filtered service containers and `coop up` without a terminal refuse
   these volumes, even if you approved them before.

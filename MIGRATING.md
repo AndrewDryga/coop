@@ -46,6 +46,9 @@ Coop now names each project's network records by the project's folder, not with 
 - Start again every worker session created before the upgrade. Its saved network rules are filed
   under the old name, so it can no longer find them.
 - A filtered project with its own `.agent/Dockerfile` needs `coop build --egress filtered` once.
+- Copies of launch network rules that earlier versions saved stay on disk, because Coop cannot
+  tell which sessions still use them. Copies made by `coop net setup` are the exception: they go
+  with their check's run record.
 
 ## v12.0.0: fork records move into Coop's private folder
 
@@ -677,3 +680,15 @@ Then paste the section's notes into the new item's `task.md`. `coop backlog add`
 path. For a `— DEFERRED (<why>)` item, carry the reason
 across. You can just drop a shipped or cancelled one. When every item has moved, delete
 `.agent/BACKLOG.md` and verify with `coop backlog`.
+
+## The /sweep Stop hook in older repos
+
+The `/sweep` skill's `Stop` hook keeps only an active sweep running and holds no other session
+open. New projects get this setup from `coop init`, but `init` preserves existing files, so
+update a repo set up by an older co:op by hand:
+
+1. Remove only the stock `Stop` group from `.claude/settings.json`. Keep `PreToolUse` and custom
+   hooks.
+2. Delete `.claude/hooks/stop-guard.sh`, but only if it's the old stock guard.
+3. Remove a stale `.agent/active`.
+4. Merge the current `.agent/skills/sweep/` files, keeping your local customizations.

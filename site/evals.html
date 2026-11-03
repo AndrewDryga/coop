@@ -122,7 +122,8 @@ run at once. <code>coop help eval run</code> lists every option.</p>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>Each case also has its own timeout. More configurations or repeats mean more paid work.</p>
+<p>Each case also has its own timeout in <code>suite.yaml</code>, and a larger <code>--timeout</code> does not raise it.
+More configurations or repeats mean more paid work.</p>
 <p><code>cloc</code> is optional. Install it for change-size figures. Grading and verdicts still work without it,
 and co:op labels the missing measurement instead of reporting a false zero.</p>
 </section><section class="doc-section reference-section" id="choose-what-to-evaluate"><h2>Choose what to evaluate</h2>
@@ -143,8 +144,9 @@ starting versions fail and completed reference versions pass. It demonstrates a 
 comparison; it is neither an official benchmark score nor a starter listed by
 <code>coop eval ls</code>.</li>
 </ul>
-<p>Each target or preset after the suite is a separate configuration, not a fallback. This command
-previews both configurations:</p>
+<p>Each target or preset after the suite is a separate configuration, not a fallback. Presets need
+a loop suite such as <code>queue</code>; <code>core</code> and other single-agent suites accept targets only. This
+command previews both configurations:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose what to evaluate code example" tabindex="0"><code class="language-sh">coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 </section><section class="doc-section reference-section" id="runtime-profiles-for-custom-agent-cases"><h2>Runtime profiles for custom agent cases</h2>
@@ -163,8 +165,8 @@ metadata, symlinks or special files. Its project Dockerfile defaults to <code>.a
 must inherit co:op&#39;s client image. The profile cannot add project environment variables,
 services, published ports or extra network access.</p>
 <p>Review the files used to build the profile. Then run <code>coop build --egress filtered</code> from the
-profile directory before starting the evaluation. The build itself uses ordinary host
-networking; it does not use the candidate&#39;s filtered network.</p>
+profile directory before starting the evaluation; evaluations never build a profile themselves.
+The build itself uses ordinary host networking; it does not use the candidate&#39;s filtered network.</p>
 <p>Profile cases run under the fixed <code>coop-adapted-offline-profile-v1</code> protocol:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Runtime profiles for custom agent cases table"><table class="ref">
 <thead>

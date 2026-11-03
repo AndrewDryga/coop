@@ -518,20 +518,14 @@ DEFAULT SESSION DATA
 Usage:
   coop sessions quiescence [--state <path>] [--json]
 
+  Before restarting a worker, drain new submissions at the controller, then
+  run this to see whether queued or running work remains. It reads the
+  running service's data, including its write-ahead log, and never migrates
+  it. Zero counts still need a graceful service shutdown to finish cleanup.
+
 OPTIONS
   --state <path>  read this session-data directory
   --json          print the snapshot as JSON
-
-BEFORE RESTARTING A WORKER
-  Drain new submissions at the controller first. This command reads every
-  committed turn and operation, including the running service's write-ahead log.
-  It requires the running service's existing database, WAL and index files.
-  It never migrates session data. Mount the data read-only when inspecting it
-  from a candidate container image: this also prevents sidecar writes if the
-  service stops during inspection.
-  Zero counts mean no durable work remains; retain graceful service shutdown
-  to finish any runtime cleanup. Dormant uncertain create and discard
-  receipts remain unresolved and do not count as running work.
 
 EXIT STATUS
   0  no queued or running work remains in the session store
@@ -540,7 +534,9 @@ EXIT STATUS
   3  work remains
 
 DEFAULT SESSION DATA
-  ~/.local/state/coop/sessions`,
+  ~/.local/state/coop/sessions
+
+Guide: https://coop.dryga.com/session-api.html#restart-and-recovery`,
 
 	"sessions compact": `coop sessions compact: back up session data and reduce its disk usage
 
@@ -663,86 +659,29 @@ Start an agent: coop claude`,
 
 Usage: coop usage [<provider>[@credential]]
 
+  Shows your accounts' limits, then a 30-day estimate (≈$.../30d) of what your
+  recorded activity would cost at standard API prices, subscription use
+  included. The estimate reads Coop and native CLI history on this computer
+  and is not a bill. Name an account to see the history and prices it uses.
+
 EXAMPLES
   coop usage
   coop usage codex
   coop usage codex@work
 
-  Limits come from the provider and cover the whole account. Dimmed reset times
-  show the time left and the date in UTC. Claude and Codex also show available
-  resets and reported expiry dates when the provider supplies them.
-  Checking usage never redeems a reset. Credits use provider units, not dollars.
-  Σ≈$.../30d is the 30-day API estimate, priced at standard API token rates,
-  including subscription activity. It reads local Coop account/editor history
-  and native CLI history on this computer, not web/mobile activity or other
-  devices. Native history uses the normal Claude, Codex, Gemini and Grok homes
-  plus their supported home overrides. Copied requests count once. A current
-  login does not identify an old request's account; unmatched records show as
-  Unassigned local usage.
-  Parsed token records are cached in Coop's host configuration folder, under
-  usage-cache. The first check reads full history; later checks reuse unchanged
-  files. Changed files are read again. The cache contains no conversation text.
-  A finished check of every provider removes the records of deleted files.
-  Select provider@credential to see which history is included and how it is
-  priced. Editor history that cannot be matched to an account is listed
-  separately. Subtotals and Total sum the selected providers' recorded
-  estimates, including shared editor history once. Incomplete coverage is
-  marked partial; missing or unpriced history is not treated as zero. Totals
-  are not bills. Saved Coop turn summaries are unpriced and excluded from
-  native-history totals.
-
-  Coop's host-managed accounts use host-only credentials for limit checks,
-  without a model prompt.
-  Gemini logins still using their original credential store need Docker for this
-  check; the helper mounts that store. If an account is busy, wait for its run
-  to finish and try again.
-  API-key and Vertex accounts may have priced token history even when they
-  have no subscription limits to report.
-
 PROVIDER REPORTS
-  Optional API spend reports use ~/.config/coop/usage-reports.json (or the XDG
-  config home). Nothing is read from provider billing APIs unless you configure
-  a source. Keep reporting keys in host environment variables, not in this file,
-  project files or agents/env. Reports are never added to local estimates.
-
-  Example usage-reports.json:
-  {
-    "reports": [
-      {"provider": "codex", "name": "work", "organization": "org-example",
-       "key_env": "COOP_REPORT_OPENAI_KEY"},
-      {"provider": "claude", "name": "work",
-       "key_env": "COOP_REPORT_CLAUDE_KEY"}
-    ]
-  }
-
-  codex needs an OpenAI organization Admin API key; organization selects its
-  scope. claude needs an Anthropic organization Admin API key; Priority Tier is
-  excluded. grok needs a separate xAI Management API key and a team field with
-  its team ID. Each provider supports one source. name labels the source; it is
-  not a saved login. Reports cover 30 completed UTC days and show the dates,
-  scope and check time. Providers may report late or revise amounts.
-  Unsupported currencies, denied access, malformed or truncated reports show
-  unavailable, not zero. Incomplete scope is partial. Provider selection
-  filters reports; provider@credential never requests an org report. Personal
-  subscription activity is not covered by these API billing sources.
-
-  Gemini reports use a Google standard billing export, not a Gemini CLI login.
-  Configure provider gemini, name, project, billing_table
-  (project.dataset.table), sku_ids (only Gemini/Vertex API SKU IDs), location,
-  gcloud_account (email), and maximum_bytes_billed (1 to 1073741824). Host
-  gcloud must be signed in to that account, with query and export-read
-  permissions. The fixed query reads only the selected project/SKUs, includes
-  credits and accepts USD billing only. It can incur BigQuery charges up to
-  your byte limit. Export gaps and unlisted SKUs stay partial; no matching rows
-  means unknown coverage, not zero spend.
-  Setup and examples: https://coop.dryga.com/usage-reports.html
+  To see your provider's own API spend beside the estimate, add a billing
+  source for it to ~/.config/coop/usage-reports.json. Coop reads no billing API
+  until you do. Keep reporting keys in host environment variables, never in
+  that file, the project or agents/env.
 
 EXIT STATUS
   0  any usable history, quota or configured report; failures stay visible
   1  no usable history, quota or configured report
   2  invalid selector or arguments
 
-Credentials: coop credentials`,
+Credentials: coop credentials
+Guide:       https://coop.dryga.com/usage-reports.html`,
 	"credentials": `coop credentials: show and manage your agent accounts
 
 Usage:
@@ -1647,35 +1586,22 @@ EXIT STATUS
 Usage:
   coop up
 
-  Starts services from .agent/compose.yml and waits for them to be ready.
-  Uses the Compose path configured in .agent/project.yaml when different.
-  Agents reach each service by its Compose name. Starting again is safe.
+  Starts the services in .agent/compose.yml, or the file box.compose names in
+  .agent/project.yaml, and waits until they are ready. Agents reach each
+  service by its Compose name. Running it again is safe. Requires Docker with
+  Compose support.
 
-  If an agent is changing this checkout, Coop waits for a safe launch window.
-  Running development and loop stacks remain isolated after startup.
-  Requires Docker with Compose support.
-  Repository binds cannot relabel host files or change mount propagation.
-  Read-only sessions require each bind source to exist before startup.
-
-  If a service asks to read a secret file through a read-only bind, Coop asks
-  at a terminal before allowing it. Otherwise the file stays hidden.
-  Secret directories and writable binds stay hidden. Approval applies to
-  this repository's exact Compose file and the service's local Docker image ID.
-  If either changes, run coop up at a terminal to review it again; an unchanged
-  approval never follows a moved image tag.
-  A missing approved image stops startup.
-
-  External or custom-named Docker volumes can contain data outside this project.
-  At a terminal, Coop names each actual volume, its read-only/read-write
-  access, which service attaches it, and the selected Docker daemon before
-  asking. Only plain local volumes are supported; a missing custom volume is
-  created after approval. A daemon, volume, or image replacement requires fresh
-  review. Declining stops startup. Automatic, filtered, and non-terminal starts
-  refuse these volumes even after approval.
-  Previously saved service-file approvals need one fresh review after upgrading.
+APPROVALS
+  Coop asks at a terminal before a service may read a hidden secret file
+  through a read-only bind, or use an external or custom-named Docker volume.
+  Declining stops startup. Until you approve, the file stays hidden.
+  Automatic, filtered and non-terminal starts refuse such volumes even after
+  approval. An approval covers this checkout's exact Compose file and the
+  service's local image, so any change asks again.
 
 Add services:  coop init --services
-Stop services: coop down`,
+Stop services: coop down
+Guide:         https://coop.dryga.com/box.html#project-services`,
 
 	"down": `coop down: stop this project's services
 
@@ -1766,11 +1692,11 @@ Usage: coop eval run <suite> <target|preset>... --timeout <duration> [<options>]
 
   Each target or preset is a separate configuration, not a fallback. Targets
   use provider[:model][/effort][@account]. Presets need a loop suite such as
-  queue; core and other single-agent suites accept targets only.
+  queue. A real run uses your accounts and may spend credits. A dry run spends
+  nothing.
 
 OPTIONS
-  --timeout <duration>  time limit, including preparation and grading;
-                        required to run
+  --timeout <duration>  time limit for the whole run; required for a real run
   --dry-run             print the plan without launching containers or providers
   --repeat <n>          trials per case and configuration (default: 1)
   --jobs <n>            concurrent trials (default: 1)
@@ -1784,53 +1710,23 @@ EXAMPLES
   coop eval run ./evals/my-suite/suite.yaml codex --repeat 3 --timeout 60m
 
 BEFORE A REAL RUN
-  Sign in with coop login <agent>. Have a working container runtime and the
-  current Coop box image. If the image is missing, run coop build --egress
-  open in a directory without a project Dockerfile. Building may download
-  dependencies. A dry run validates the plan, not credentials, runtime or
-  image readiness.
+  Sign in with coop login <agent> and have the current Coop box image. If it
+  is missing, run coop build --egress open in a folder without a project
+  Dockerfile. A dry run checks the plan, not your sign-in or image.
 
-  cloc is optional. Install it for change-size figures; grading and verdicts
-  still work when it is unavailable, and the result labels the missing
-  measurement.
-
-  Only a real run requires --timeout. It limits time, not spending.
-  The timer starts when the command starts and stops preparation, trials and
-  grading. After it expires, Coop still tries to clean up and save the final
-  record. More configurations or repetitions mean more paid work. Each case
-  also has its own timeout in suite.yaml; raising the total budget does not
-  raise that limit.
-
-CUSTOM RUNTIME PROFILES
-  Agent cases may name a clean external profile, /app workdir, agent_timeout
-  and verifier_timeout in suite.yaml. Explicitly build the profile on the host
-  with coop build --egress filtered first. Evaluations do not build profiles
-  automatically, and loop cases cannot use them.
-  Fixed limits: 1 CPU, 2 GiB memory, 128 PIDs. Candidates have filtered access
-  only to provider endpoints; grading runs offline. The declared 10 GiB storage
-  limit is not enforced or measured. This Coop-adapted workload does not match
-  every condition of the official benchmark.
-  Image and platform details shown by a dry run are provisional.
-  See https://coop.dryga.com/evals.html for profile setup.
-
-TRIAL ISOLATION
-  Each trial gets a private workspace with no source history. The hidden
-  verifier is never mounted for the model. Grading runs afterwards in a
-  separate container without credentials or network. Operator MCP servers and
-  COOP_RUN_ARGS are omitted from trials; use Coop-managed logins rather than
-  runtime args for credentials. Normal native web search/fetch are disabled,
-  including Coop-managed peers and roles. Terminal and file tools remain
-  available. This disables the clients' normal tools; it does not block custom
-  authenticated provider requests a model might construct. Normal runs are
-  unchanged.
+TRIALS
+  Each trial works in a private copy without source history. The model never
+  sees the hidden verifier, which grades afterwards without credentials or
+  network. Trials run without your MCP servers, COOP_RUN_ARGS or the clients'
+  own web search and fetch tools.
 
 EXIT STATUS
-  After the final run record is saved, exit 0 means every trial received a
-  graded pass/fail verdict, even if some failed. Incomplete coverage exits 1;
-  the run record and diagnostics remain available through coop eval inspect.
-  A dry run exits 0 after previewing the plan without running trials.
+  0  every trial got a pass or fail grade, or a dry run showed its plan
+  1  grading is incomplete, or the run could not start
+  2  rejected input, such as an unknown option, target or preset
 
-Read the result: coop eval inspect`,
+Read the result: coop eval inspect
+Guide:           https://coop.dryga.com/evals.html`,
 	"eval runs": `coop eval runs: find recorded evaluation results
 
 Usage: coop eval runs
@@ -2154,37 +2050,21 @@ Usage:
   coop build [--egress <mode>]
 
   Builds the shared image, or this project's image when it has a box
-  Dockerfile. The default path is .agent/Dockerfile; use box.dockerfile in
-  .agent/project.yaml to select another path. Run it after changing the box
-  Dockerfile or .tool-versions. Requires a running container runtime.
+  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml).
+  Run it after changing that Dockerfile or .tool-versions. Requires a running
+  container runtime.
 
 OPTIONS
   --egress <mode>  prepare the image for filtered, open or offline networking
+                   default: this project's network mode
 
-  Defaults to this project's effective network mode.
+  Filtered launches use only an image built with this command, so build again
+  after its inputs change. The build itself uses ordinary networking in every
+  mode: review the Dockerfile and the files it copies first. New runs use the
+  rebuilt image, and editor sessions on the replaced image restart.
 
-HOW IT WORKS
-  Filtered builds use Coop's locked client base and record the exact reviewed
-  build inputs. Filtered launches reuse that image; changed inputs or a missing
-  image require another explicit build. An interactive provider launch in a
-  host terminal can offer Build and continue, defaulting to No. Review the
-  saved snapshot shown by the prompt; only those files are approved for that
-  build. Other filtered launches never ask: headless commands, editor
-  connections and unattended runs.
-
-  With open networking, an editor connection builds a missing image itself,
-  and other runs only warn when project inputs change. Offline launches never
-  automatically build project instructions.
-
-  Project builds themselves use ordinary networking in every mode.
-  Review the Dockerfile and copied build files before running this command.
-  The option selects the runtime image; it does not filter build traffic.
-  Builds use the configured versions and available cache.
-  Use coop update --box-only to prepare this project's effective image.
-
-  New runs use the rebuilt image. Supervised editor sessions that run the
-  replaced image restart and reconnect. Other running boxes use the old
-  image until their next start. An unchanged image restarts nothing.`,
+Fresh rebuild: coop update --box-only
+Guide:         https://coop.dryga.com/box.html#builds-and-network-modes`,
 
 	"update": `coop update: update Coop and rebuild the box image
 

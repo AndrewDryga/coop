@@ -43,7 +43,8 @@ run at once. `coop help eval run` lists every option.
 | `--repeat 3` | Runs each case three times. |
 | `--jobs 2` | Allows two agent trials at once. |
 
-Each case also has its own timeout. More configurations or repeats mean more paid work.
+Each case also has its own timeout in `suite.yaml`, and a larger `--timeout` does not raise it.
+More configurations or repeats mean more paid work.
 
 `cloc` is optional. Install it for change-size figures. Grading and verdicts still work without it,
 and co:op labels the missing measurement instead of reporting a false zero.
@@ -66,8 +67,9 @@ and co:op labels the missing measurement instead of reporting a false zero.
   comparison; it is neither an official benchmark score nor a starter listed by
   `coop eval ls`.
 
-Each target or preset after the suite is a separate configuration, not a fallback. This command
-previews both configurations:
+Each target or preset after the suite is a separate configuration, not a fallback. Presets need
+a loop suite such as `queue`; `core` and other single-agent suites accept targets only. This
+command previews both configurations:
 
 ```sh
 coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run
@@ -95,8 +97,8 @@ must inherit co:op's client image. The profile cannot add project environment va
 services, published ports or extra network access.
 
 Review the files used to build the profile. Then run `coop build --egress filtered` from the
-profile directory before starting the evaluation. The build itself uses ordinary host
-networking; it does not use the candidate's filtered network.
+profile directory before starting the evaluation; evaluations never build a profile themselves.
+The build itself uses ordinary host networking; it does not use the candidate's filtered network.
 
 Profile cases run under the fixed `coop-adapted-offline-profile-v1` protocol:
 

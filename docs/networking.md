@@ -338,16 +338,19 @@ effective network mode is filtered.
 
 A filtered launch uses only a project image you built explicitly. If the image is missing,
 the clients changed, or the sanitized build inputs changed, co:op asks you to review and rebuild.
-Build inputs include copied scripts and file modes. An image from the old automatic-build cache
-does not count as approved; build it explicitly once for filtered use.
+Build inputs include copied scripts and file modes.
 
-Use `.agent/Dockerfile.dockerignore` to exclude files that this image does not build from, or name
-the ignore file after your configured Dockerfile. Its rules take precedence over root
-`.dockerignore`. Excluded source changes do not require another build; the running box still sees
-that source through its repository mount. For a toolchain-only image, exclude everything with
-`**` and add `!path/to/input` for each file it copies. The Dockerfile and active ignore file always
-remain part of the build fingerprint. Changes to them or to an included input require a rebuild.
-Docker exceptions cannot restore secrets, Git metadata or generated output co:op omits.
+To keep unrelated edits from requiring a rebuild, list the files this image does not build from
+in `.agent/Dockerfile.dockerignore`, or in an ignore file named after your configured Dockerfile.
+Its rules take precedence over the root `.dockerignore`.
+
+- Changes to excluded files need no rebuild. The running box still sees them through its
+  repository mount.
+- For a toolchain-only image, exclude everything with `**` and add `!path/to/input` for each file
+  it copies.
+- The Dockerfile and the active ignore file always belong to the build fingerprint, so changing
+  them or an included input requires a rebuild.
+- A Docker exception cannot restore secrets, Git metadata or generated output that co:op omits.
 
 Before starting the box, co:op checks the built image itself. The Dockerfile's `FROM` line
 alone cannot establish what the image contains. Two checks must pass:
@@ -510,12 +513,9 @@ keeps the record until cleanup finishes.
 Each run also keeps a copy of the rules it started with; the `--run` option below reads that
 copy. Coop removes the saved copy of a launch's rules only when no retained run record refers
 to it and no launch has used it for 90 days. It keeps the copy a worker session was created
-with for the whole session.
-
-Coop keeps rule copies made before this version because it cannot tell which sessions still
-use them. The exception is a copy made by `coop net setup`: Coop marks these copies as setup
-checks, so it knows no session uses them. It removes a setup copy after removing that check's
-run record. An editor session that starts no box for 90 days may need to be started again.
+with for the whole session. An editor session that starts no box for 90 days may need to be
+started again. A copy made by `coop net setup` is marked as a setup check, which no session
+uses, and goes when that check's run record does.
 
 `coop net check <url-or-host>` tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project
@@ -633,16 +633,17 @@ confirming it is stale, remove the name inside that checkout with
 `rm -- ./.coop-network-approval`, then run `coop approve` again. co:op prints these same
 recovery commands and precautions when it refuses the launch.
 
-The box can see the marker, so co:op also checks the paths in runtime mount arguments.
-You may mount the exact project directory. You may not mount a
-path inside it that an existing agent could swap before Docker opens the mount, or a writable
-parent directory that would let the agent replace the project.
+The box can see the marker, so co:op also checks the paths in runtime mount arguments:
 
-Mounts must never expose co:op's private state, even read-only. This includes the paths it
-will use for network state, forks, execution records and launch locks on a first run, before
-those paths exist. co:op also inspects existing named volumes. When it uses the marker to
-verify approval, it refuses `--volumes-from` and custom volume-driver options. To mount a cache,
-keep it outside the checkout and name its path explicitly so co:op can inspect it.
+- You may mount the exact project directory.
+- You may not mount a path inside it that an existing agent could swap before Docker opens the
+  mount, or a writable parent directory that would let the agent replace the project.
+- No mount may expose co:op's private state, even read-only. That includes the paths it will
+  use for network state, forks, execution records and launch locks on a first run, before those
+  paths exist.
+- co:op inspects existing named volumes. When it uses the marker to verify approval, it refuses
+  `--volumes-from` and custom volume-driver options. To mount a cache, keep it outside the
+  checkout and name its path explicitly so co:op can inspect it.
 
 ### Forgetting an approval
 

@@ -60,6 +60,9 @@
         <summary>On this page</summary>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#exit-codes">Exit codes</a></li>
+<li class="reference-subsection"><a href="#task-locks-and-claims">Task locks and claims</a></li>
+<li class="reference-subsection"><a href="#completion-records">Completion records</a></li>
+<li class="reference-subsection"><a href="#sweeps-and-commit-hooks">Sweeps and commit hooks</a></li>
 <li><a href="#final-review">Final review</a></li>
 <li><a href="#the-agent-folder">The .agent/ folder</a></li>
 <li><a href="#monorepos">Monorepos</a></li>
@@ -133,6 +136,7 @@ that was on top of the branch during that review.</p>
 and commits. There is one exception to the run&#39;s commit range: another session may have
 committed a task before this run started, then completed it during the run. The reviewer sees
 that task&#39;s single matching commit in the branch.</p>
+<h3 id="task-locks-and-claims">Task locks and claims</h3>
 <p>While an agent works on a task, co:op holds a lock on the host under
 <code>~/.local/state/coop/task-leases/</code>. Another loop skips that task and can work on an independent
 todo task. <code>coop tasks watch</code> reads the status stored beside the lock and shows <code>busy</code>, <code>stalled</code>
@@ -141,11 +145,12 @@ or <code>unleased</code>, without showing run IDs or PIDs.</p>
 loop takes over as soon as the operating system&#39;s lock becomes available, never because a
 timeout has passed. This also lets it resume an in-progress task that no controller has locked.</p>
 <p>When you run <code>coop tasks claim &lt;id&gt;</code>, the command records you as the owner and exits. It does
-not keep a lock open. The loop leaves your task alone and shows the owner and
-<code>coop tasks release &lt;id&gt;</code> command. Your claim stays in place until an explicit <code>release</code>,
-<code>block</code>, <code>unblock</code> or <code>done</code> clears it; it never expires.</p>
-<p>Stop running co:op controllers before a major-version upgrade. Running controllers from different
-major versions against the same task queue is not supported.</p>
+not keep a lock open. The loop leaves your task alone and shows the owner and the
+<code>coop tasks release &lt;id&gt;</code> command. Your claim never expires: only an explicit <code>release</code>,
+<code>block</code>, <code>unblock</code> or <code>done</code> clears it.</p>
+<p>Stop every running co:op controller before a major-version upgrade. Controllers from different
+major versions cannot share a task queue.</p>
+<h3 id="completion-records">Completion records</h3>
 <p>When a task completes, co:op stores a small receipt on the host&#39;s persistent task lock file.
 Other loops use that receipt to recognize the completed folder after its owner releases the
 lock. They do not have to trust task metadata that the agent can edit.</p>
@@ -154,15 +159,11 @@ of each done folder in a host-only journal. It removes the journal only after ch
 box&#39;s queue changes. If the controller crashes, the next loop uses the journal to undo any
 completion that had no authorized owner. Tasks completed outside a supervised box remain part
 of the ordinary task history.</p>
+<h3 id="sweeps-and-commit-hooks">Sweeps and commit hooks</h3>
 <p>The <code>/sweep</code> skill has a <code>Stop</code> hook that keeps an active sweep running while it has tasks to
-work on. It does not hold other sessions open. New projects already use this setup.
-<code>coop init</code> preserves existing files, so update an older repo by hand:</p>
-<ol>
-<li>Remove only the stock <code>Stop</code> group from <code>.claude/settings.json</code>. Keep <code>PreToolUse</code> and custom hooks.</li>
-<li>Delete <code>.claude/hooks/stop-guard.sh</code>, but only if it&#39;s the old stock guard.</li>
-<li>Remove a stale <code>.agent/active</code>.</li>
-<li>Merge the current <code>.agent/skills/sweep/</code> files, keeping your local customizations.</li>
-</ol>
+work on. It does not hold other sessions open. <code>coop init</code> sets it up in new projects. A repo set
+up by an older co:op needs
+<a href="https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md#the-sweep-stop-hook-in-older-repos" target="_blank" rel="nofollow noopener">a manual update</a>.</p>
 <p><code>init</code> installs a fast commit check for Claude. For other committers, <code>init</code> installs a Git
 pre-commit check at <code>.githooks/pre-commit</code> and sets <code>core.hooksPath</code>. The format check then runs
 for everyone, including Codex, Gemini and a plain <code>git commit</code>. Git tracks the hook files, but

@@ -168,6 +168,26 @@ even when an enrollment token is available. Check file ownership, trusted certif
 and the controller's renewal status, then follow the controller operator's identity-recovery
 procedure. Do not delete the identity or journal as a routine reconnect fix.
 
+Before you restart or replace a worker, drain new submissions at the controller, then run
+`coop sessions quiescence` to see whether queued or running work remains:
+
+- It reads every committed turn and operation, including the running service's write-ahead log,
+  so it needs that service's existing database, WAL and index files.
+- It never migrates session data. When you inspect the data from a candidate container image,
+  mount it read-only. That also prevents sidecar writes if the service stops during the
+  inspection.
+- Zero counts mean no durable work remains. Keep a graceful service shutdown so the service can
+  finish its runtime cleanup.
+- Dormant uncertain create and discard receipts remain unresolved and do not count as running
+  work.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | No queued or running work remains in the session store |
+| `1` | The store is unavailable, damaged or uses an unsupported schema |
+| `2` | The arguments are invalid |
+| `3` | Work remains |
+
 ### Upgrading a worker
 
 A new co:op build may need to convert the worker's session data when it first opens it. After

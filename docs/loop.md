@@ -56,6 +56,8 @@ and commits. There is one exception to the run's commit range: another session m
 committed a task before this run started, then completed it during the run. The reviewer sees
 that task's single matching commit in the branch.
 
+### Task locks and claims
+
 While an agent works on a task, co:op holds a lock on the host under
 `~/.local/state/coop/task-leases/`. Another loop skips that task and can work on an independent
 todo task. `coop tasks watch` reads the status stored beside the lock and shows `busy`, `stalled`
@@ -66,12 +68,14 @@ loop takes over as soon as the operating system's lock becomes available, never 
 timeout has passed. This also lets it resume an in-progress task that no controller has locked.
 
 When you run `coop tasks claim <id>`, the command records you as the owner and exits. It does
-not keep a lock open. The loop leaves your task alone and shows the owner and
-`coop tasks release <id>` command. Your claim stays in place until an explicit `release`,
-`block`, `unblock` or `done` clears it; it never expires.
+not keep a lock open. The loop leaves your task alone and shows the owner and the
+`coop tasks release <id>` command. Your claim never expires: only an explicit `release`,
+`block`, `unblock` or `done` clears it.
 
-Stop running co:op controllers before a major-version upgrade. Running controllers from different
-major versions against the same task queue is not supported.
+Stop every running co:op controller before a major-version upgrade. Controllers from different
+major versions cannot share a task queue.
+
+### Completion records
 
 When a task completes, co:op stores a small receipt on the host's persistent task lock file.
 Other loops use that receipt to recognize the completed folder after its owner releases the
@@ -83,14 +87,12 @@ box's queue changes. If the controller crashes, the next loop uses the journal t
 completion that had no authorized owner. Tasks completed outside a supervised box remain part
 of the ordinary task history.
 
-The `/sweep` skill has a `Stop` hook that keeps an active sweep running while it has tasks to
-work on. It does not hold other sessions open. New projects already use this setup.
-`coop init` preserves existing files, so update an older repo by hand:
+### Sweeps and commit hooks
 
-1. Remove only the stock `Stop` group from `.claude/settings.json`. Keep `PreToolUse` and custom hooks.
-2. Delete `.claude/hooks/stop-guard.sh`, but only if it's the old stock guard.
-3. Remove a stale `.agent/active`.
-4. Merge the current `.agent/skills/sweep/` files, keeping your local customizations.
+The `/sweep` skill has a `Stop` hook that keeps an active sweep running while it has tasks to
+work on. It does not hold other sessions open. `coop init` sets it up in new projects. A repo set
+up by an older co:op needs
+[a manual update](../MIGRATING.md#the-sweep-stop-hook-in-older-repos).
 
 `init` installs a fast commit check for Claude. For other committers, `init` installs a Git
 pre-commit check at `.githooks/pre-commit` and sets `core.hooksPath`. The format check then runs

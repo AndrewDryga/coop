@@ -26,6 +26,29 @@ value at standard API prices, including activity covered by a subscription. It d
 what you paid. Use `coop usage codex@personal` (or another provider/account) to see which history
 and prices the estimate includes.
 
+Incomplete coverage is marked `partial`. Missing or unpriced history is never counted as zero.
+Saved Coop turn summaries carry no prices, so the native-history totals leave them out.
+
+Coop caches the token records it parses under `usage-cache` in its host configuration folder.
+The cache holds no conversation text. The first check reads the whole history; later checks read
+only the files that changed. A finished check of every provider removes the records of deleted
+files.
+
+## Account limits
+
+Limits come from the provider and cover the whole account. A dimmed reset time shows the time
+left and the date in UTC. Claude and Codex also show available resets and their reported expiry
+dates when the provider supplies them. Checking usage never redeems a reset. Credits appear in
+the provider's own units, not dollars.
+
+Coop checks the limits of the accounts it manages with credentials that stay on the host, and
+sends no model prompt. A Gemini login that still uses its original credential store needs Docker
+for this check, because a helper container mounts that store. If an account is busy, wait for
+its run to finish and try again.
+
+API-key and Vertex accounts may have priced token history even when they have no subscription
+limits to report.
+
 ## Connect an API billing source
 
 To enable provider reports, create `~/.config/coop/usage-reports.json`. If you set the XDG config
@@ -107,8 +130,9 @@ Coop obtains a fresh short-lived access token through
 }
 ```
 
-In your billing export, find the exact SKU IDs for the Gemini or Vertex API charges you want
-to report. A SKU identifies a billing item. Replace the example SKU list with those IDs.
+`billing_table` names the export table as `project.dataset.table`. In your billing export, find
+the exact SKU IDs for the Gemini or Vertex API charges you want to report. A SKU identifies a
+billing item. Replace the example SKU list with those IDs.
 
 Coop uses a fixed query with your chosen project and SKU IDs as parameters. It includes their
 billing credits and accepts only USD billing. It does not include unrelated Vertex AI or
@@ -131,8 +155,10 @@ Provider reports appear in a separate section without an approximation sign. The
 from the provider's usage reports; they are not a final invoice. Each report covers 30 completed
 UTC days and excludes the end date. Local estimates instead use a rolling 30-day window.
 
-`Checked` shows when Coop fetched the report. The provider may still report requests late or
-revise costs. Reports with excluded usage or missing data are marked `partial`.
+`Checked` shows when Coop fetched the report, beside the report's dates and scope. The provider
+may still report requests late or revise costs. Reports with excluded usage or missing data are
+marked `partial`. Denied access, a malformed or truncated report and an unsupported currency show
+the source as unavailable, never as zero.
 
 A failed source stays visible. If one configured source fails, the reported subtotal is marked
 partial too. If none returns a usable report, Coop shows no reported spending subtotal.

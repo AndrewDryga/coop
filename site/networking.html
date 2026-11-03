@@ -454,15 +454,19 @@ of the client image reference. Plain <code>coop build</code> selects this image 
 effective network mode is filtered.</p>
 <p>A filtered launch uses only a project image you built explicitly. If the image is missing,
 the clients changed, or the sanitized build inputs changed, co:op asks you to review and rebuild.
-Build inputs include copied scripts and file modes. An image from the old automatic-build cache
-does not count as approved; build it explicitly once for filtered use.</p>
-<p>Use <code>.agent/Dockerfile.dockerignore</code> to exclude files that this image does not build from, or name
-the ignore file after your configured Dockerfile. Its rules take precedence over root
-<code>.dockerignore</code>. Excluded source changes do not require another build; the running box still sees
-that source through its repository mount. For a toolchain-only image, exclude everything with
-<code>**</code> and add <code>!path/to/input</code> for each file it copies. The Dockerfile and active ignore file always
-remain part of the build fingerprint. Changes to them or to an included input require a rebuild.
-Docker exceptions cannot restore secrets, Git metadata or generated output co:op omits.</p>
+Build inputs include copied scripts and file modes.</p>
+<p>To keep unrelated edits from requiring a rebuild, list the files this image does not build from
+in <code>.agent/Dockerfile.dockerignore</code>, or in an ignore file named after your configured Dockerfile.
+Its rules take precedence over the root <code>.dockerignore</code>.</p>
+<ul>
+<li>Changes to excluded files need no rebuild. The running box still sees them through its
+repository mount.</li>
+<li>For a toolchain-only image, exclude everything with <code>**</code> and add <code>!path/to/input</code> for each file
+it copies.</li>
+<li>The Dockerfile and the active ignore file always belong to the build fingerprint, so changing
+them or an included input requires a rebuild.</li>
+<li>A Docker exception cannot restore secrets, Git metadata or generated output that co:op omits.</li>
+</ul>
 <p>Before starting the box, co:op checks the built image itself. The Dockerfile&#39;s <code>FROM</code> line
 alone cannot establish what the image contains. Two checks must pass:</p>
 <ol>
@@ -668,11 +672,9 @@ keeps the record until cleanup finishes.</p>
 <p>Each run also keeps a copy of the rules it started with; the <code>--run</code> option below reads that
 copy. Coop removes the saved copy of a launch&#39;s rules only when no retained run record refers
 to it and no launch has used it for 90 days. It keeps the copy a worker session was created
-with for the whole session.</p>
-<p>Coop keeps rule copies made before this version because it cannot tell which sessions still
-use them. The exception is a copy made by <code>coop net setup</code>: Coop marks these copies as setup
-checks, so it knows no session uses them. It removes a setup copy after removing that check&#39;s
-run record. An editor session that starts no box for 90 days may need to be started again.</p>
+with for the whole session. An editor session that starts no box for 90 days may need to be
+started again. A copy made by <code>coop net setup</code> is marked as a setup check, which no session
+uses, and goes when that check&#39;s run record does.</p>
 <p><code>coop net check &lt;url-or-host&gt;</code> tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project
 rules and each agent&#39;s provider access. Use <code>--run &lt;run&gt;</code> to check the rules a recorded run
@@ -764,15 +766,18 @@ original checkout&#39;s access or retire its approval.</p>
 confirming it is stale, remove the name inside that checkout with
 <code>rm -- ./.coop-network-approval</code>, then run <code>coop approve</code> again. co:op prints these same
 recovery commands and precautions when it refuses the launch.</p>
-<p>The box can see the marker, so co:op also checks the paths in runtime mount arguments.
-You may mount the exact project directory. You may not mount a
-path inside it that an existing agent could swap before Docker opens the mount, or a writable
-parent directory that would let the agent replace the project.</p>
-<p>Mounts must never expose co:op&#39;s private state, even read-only. This includes the paths it
-will use for network state, forks, execution records and launch locks on a first run, before
-those paths exist. co:op also inspects existing named volumes. When it uses the marker to
-verify approval, it refuses <code>--volumes-from</code> and custom volume-driver options. To mount a cache,
-keep it outside the checkout and name its path explicitly so co:op can inspect it.</p>
+<p>The box can see the marker, so co:op also checks the paths in runtime mount arguments:</p>
+<ul>
+<li>You may mount the exact project directory.</li>
+<li>You may not mount a path inside it that an existing agent could swap before Docker opens the
+mount, or a writable parent directory that would let the agent replace the project.</li>
+<li>No mount may expose co:op&#39;s private state, even read-only. That includes the paths it will
+use for network state, forks, execution records and launch locks on a first run, before those
+paths exist.</li>
+<li>co:op inspects existing named volumes. When it uses the marker to verify approval, it refuses
+<code>--volumes-from</code> and custom volume-driver options. To mount a cache, keep it outside the
+checkout and name its path explicitly so co:op can inspect it.</li>
+</ul>
 <h3 id="forgetting-an-approval">Forgetting an approval</h3>
 <p><code>coop net forget</code> removes a project&#39;s approval. It shows the saved access, asks you to confirm
 in the terminal, then removes only that approval record. Run it in the project, or pass

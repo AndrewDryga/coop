@@ -59,6 +59,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#account-limits">Account limits</a></li>
 <li><a href="#connect-an-api-billing-source">Connect an API billing source</a></li>
 <li><a href="#google-billing-exports">Google billing exports</a></li>
 <li><a href="#reading-the-reports">Reading the reports</a></li>
@@ -112,6 +113,23 @@ it to your currently selected account.</p>
 value at standard API prices, including activity covered by a subscription. It does not show
 what you paid. Use <code>coop usage codex@personal</code> (or another provider/account) to see which history
 and prices the estimate includes.</p>
+<p>Incomplete coverage is marked <code>partial</code>. Missing or unpriced history is never counted as zero.
+Saved Coop turn summaries carry no prices, so the native-history totals leave them out.</p>
+<p>Coop caches the token records it parses under <code>usage-cache</code> in its host configuration folder.
+The cache holds no conversation text. The first check reads the whole history; later checks read
+only the files that changed. A finished check of every provider removes the records of deleted
+files.</p>
+</section><section class="doc-section reference-section" id="account-limits"><h2>Account limits</h2>
+<p>Limits come from the provider and cover the whole account. A dimmed reset time shows the time
+left and the date in UTC. Claude and Codex also show available resets and their reported expiry
+dates when the provider supplies them. Checking usage never redeems a reset. Credits appear in
+the provider&#39;s own units, not dollars.</p>
+<p>Coop checks the limits of the accounts it manages with credentials that stay on the host, and
+sends no model prompt. A Gemini login that still uses its original credential store needs Docker
+for this check, because a helper container mounts that store. If an account is busy, wait for
+its run to finish and try again.</p>
+<p>API-key and Vertex accounts may have priced token history even when they have no subscription
+limits to report.</p>
 </section><section class="doc-section reference-section" id="connect-an-api-billing-source"><h2>Connect an API billing source</h2>
 <p>To enable provider reports, create <code>~/.config/coop/usage-reports.json</code>. If you set the XDG config
 home, use <code>$XDG_CONFIG_HOME/coop/usage-reports.json</code> instead. The file must be a regular file,
@@ -181,8 +199,9 @@ This sign-in is separate from your Gemini CLI sign-in.</p>
   ]
 }
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>In your billing export, find the exact SKU IDs for the Gemini or Vertex API charges you want
-to report. A SKU identifies a billing item. Replace the example SKU list with those IDs.</p>
+<p><code>billing_table</code> names the export table as <code>project.dataset.table</code>. In your billing export, find
+the exact SKU IDs for the Gemini or Vertex API charges you want to report. A SKU identifies a
+billing item. Replace the example SKU list with those IDs.</p>
 <p>Coop uses a fixed query with your chosen project and SKU IDs as parameters. It includes their
 billing credits and accepts only USD billing. It does not include unrelated Vertex AI or
 cloud services.</p>
@@ -198,8 +217,10 @@ lack some usage or older records, and your SKU list may leave out charges.</p>
 <p>Provider reports appear in a separate section without an approximation sign. These amounts come
 from the provider&#39;s usage reports; they are not a final invoice. Each report covers 30 completed
 UTC days and excludes the end date. Local estimates instead use a rolling 30-day window.</p>
-<p><code>Checked</code> shows when Coop fetched the report. The provider may still report requests late or
-revise costs. Reports with excluded usage or missing data are marked <code>partial</code>.</p>
+<p><code>Checked</code> shows when Coop fetched the report, beside the report&#39;s dates and scope. The provider
+may still report requests late or revise costs. Reports with excluded usage or missing data are
+marked <code>partial</code>. Denied access, a malformed or truncated report and an unsupported currency show
+the source as unavailable, never as zero.</p>
 <p>A failed source stays visible. If one configured source fails, the reported subtotal is marked
 partial too. If none returns a usable report, Coop shows no reported spending subtotal.</p>
 <p>Coop keeps reported API spend separate from local estimates because they can cover the same

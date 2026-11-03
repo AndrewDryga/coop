@@ -45,6 +45,10 @@ updated: 2026-11-03
 - Every line fits 80 columns. Every two-column table aligns its second column, a wrapped
   description continues in that column, and stacked pointers align their commands. Rewrap a
   paragraph rather than leaving a one-word tail.
+- A page fits on one screen: what the command does, how to run it and its main options. Caveats
+  move to the docs page its closing `Guide:` line links, never deleted; a security fact keeps a
+  one-line summary on the page. Upgrade notes belong in MIGRATING.md, not in help or in a
+  generated template.
 
 **Why:** consistent structure lets new users scan without learning a different style for each
 page. Help needs to explain what to do, not expose the implementation. Complete examples prevent
@@ -63,6 +67,11 @@ cover older parts. The editorial bullets (practical prose, grouping by job, disc
 still ride on review, so `check: none` stays.
 
 ## Changelog
+- 2026-11-03 — the owner called usage, up, build, eval run and sessions quiescence walls of
+  caveats a user cannot act on, and the up page and the project.yaml template carried upgrade
+  notes. Added the one-screen bullet. Cut those five pages to 21–40 lines; each fact moved to
+  usage-reports, box, evals or session-api docs (missing ones added there), the upgrade notes to
+  MIGRATING.md. Swept the other pages for upgrade notes: none left.
 - 2026-11-03 — a manual test of every page found a broken WORK column on the tasks page, a
   misaligned sessions row, EXAMPLES before OPTIONS on nine pages, EXAMPLE beside EXAMPLES, init's
   bullets and net's how-to at column zero, closing pointers indented into the last section, and

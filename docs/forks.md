@@ -57,47 +57,34 @@ Isolation stays enabled when you reopen the fork, run a detached loop or connect
 You must create a new isolated fork; you cannot convert an existing ordinary fork. Ordinary forks
 and runs that write directly to your checkout keep their existing behavior.
 
+### What an isolated fork copies
+
 Coop recreates each initialized, unchanged local submodule from its exact commit, with independent
 storage. It never copies the submodule's raw Git metadata. If the recorded submodule commits
 (gitlinks) or `.gitmodules` have changed, Coop refuses the fork; those changes need a separate
 workflow. It copies Git LFS files from Git's default cache in the common directory and verifies
 them without network access. Missing or corrupt files and custom `lfs.storage` are refused.
 
+### Storage you share with the fork
+
 Isolation does not make shared storage private. Other processes can still change homes, caches
 or service data that you choose to share with the fork. Use private storage or read-only sources
 if you do not trust those processes.
 
-Coop must be able to inspect files in mounts you add, service mounts and existing volumes. If a
-path exists only on the Docker daemon's machine, or Coop cannot read it on the host, Coop cannot
-treat it as empty. Use a separate bind mount whose contents it can inspect. Coop's own private
-volumes are exempt only when Coop can identify them exactly.
+- Coop must be able to inspect files in mounts you add, service mounts and existing volumes. If a
+  path exists only on the Docker daemon's machine, or Coop cannot read it on the host, Coop cannot
+  treat it as empty. Use a separate bind mount whose contents it can inspect. Coop's own private
+  volumes are exempt only when Coop can identify them exactly.
+- Enabled dependency and toolchain caches are shared storage that you choose to trust. Coop
+  checks their exact local volume-driver configuration, but cannot promise that unreadable daemon
+  contents are safe or independent. It refuses custom cache drivers and caches backed by bind
+  mounts. This cache exception does not apply to other extra volumes or service volumes.
 
-Enabled dependency and toolchain caches are also shared storage that you choose to trust. Coop
-checks their exact local volume-driver configuration, but cannot promise that unreadable daemon
-contents are safe or independent. It refuses custom cache drivers and caches backed by bind
-mounts. This cache exception does not apply to other extra volumes or service volumes.
+### Reviewing an isolated fork
 
 When you review an isolated fork, Coop copies its committed history into private storage and
 rebases the copy onto the parent commit it recorded. This leaves both workspaces and the parent's
 Git refs unchanged. You can review even while your parent checkout has uncommitted changes.
-
-Before merging, Coop requires a clean checkout on a branch and checks the exact Git index and
-tracked-file contents. Hidden index flags or an `index.lock` it cannot account for stop the merge.
-Incoming files cannot overwrite untracked or ignored files in your checkout. Coop never merges
-untracked files from the fork, including Git metadata for a new child repository.
-
-If the rebase fails, Coop prints the path of the fork it kept and a commit that must remain
-unchanged. Keep that commit and its earlier history intact. Fix only the later commits, then
-review again. If signing failed, check your trusted signing settings first. Do not run Git's
-printed recovery commands in your fork: those commands refer to the temporary clone that Coop
-has already discarded.
-
-Coop inspects every incoming commit, including changes that disappear from the final diff. It
-refuses unsafe paths or file modes, changes to nested Git sources, files that can automatically
-run code on your host, new or changed npm install lifecycle scripts, possible credentials and
-oversized files. `--force` cannot bypass these checks. Build files that run only when explicitly
-invoked can still be reviewed and merged. Configured checks run on a separate disposable clone
-that has the same restrictions on mounting the parent checkout.
 
 `review --open` and `COOP_REVIEW_CMD` show a private copy of the committed files. Coop keeps that
 preview for your review tool and prints its path so you can remove it when you finish. A custom
@@ -110,6 +97,41 @@ Use only an editor, difftool or review command you trust to run on your host. `c
 opens the agent's actual workspace instead of a private review copy. Coop warns that Git or
 editor metadata in that workspace may run code on your machine.
 
+### Merging an isolated fork
+
+Before merging, Coop requires a clean checkout on a branch and checks the exact Git index and
+tracked-file contents. Hidden index flags or an `index.lock` it cannot account for stop the merge.
+Incoming files cannot overwrite untracked or ignored files in your checkout. Coop never merges
+untracked files from the fork, including Git metadata for a new child repository.
+
+Coop inspects every incoming commit, including changes that disappear from the final diff. It
+refuses these, and `--force` cannot bypass the refusal:
+
+- unsafe paths or file modes
+- changes to nested Git sources
+- files that can automatically run code on your host
+- new or changed npm install lifecycle scripts
+- possible credentials
+- oversized files
+
+Build files that run only when explicitly invoked can still be reviewed and merged. Configured
+checks run on a separate disposable clone that has the same restrictions on mounting the parent
+checkout.
+
+If the rebase fails, Coop prints the path of the fork it kept and a commit that must remain
+unchanged. Keep that commit and its earlier history intact. Fix only the later commits, then
+review again. If signing failed, check your trusted signing settings first. Do not run Git's
+printed recovery commands in your fork: those commands refer to the temporary clone that Coop
+has already discarded.
+
+If you keep the fork after merging, the next merge starts after the original fork commit that
+was already merged. Coop tracks that source commit separately from its rebased parent SHA.
+A reviewed result with no code changes can still complete its assigned tasks. `merge --all`
+skips a fork only when it has no new commits and no active task records to finish. Coop completes
+tasks from the exact source it reviewed; a commit trailer alone cannot authorize completion.
+
+### When a merge is interrupted
+
 Cancelling or refusing a merge before it starts leaves the parent's files, index and refs
 unchanged. Once Coop starts changing the checkout, it records each step in a journal. These
 changes do not happen all at once, so an interruption can leave the checkout partly updated.
@@ -119,12 +141,6 @@ only if the checkout exactly matches its original clean state or the complete pu
 recorded for that merge. Unrelated edits, a partly updated checkout, a changed branch or an
 `index.lock` it cannot account for stop recovery so you can resolve the mismatch. Never reset,
 stash, delete an uncertain lock or remove and recreate the fork to bypass this check.
-
-If you keep the fork after merging, the next merge starts after the original fork commit that
-was already merged. Coop tracks that source commit separately from its rebased parent SHA.
-A reviewed result with no code changes can still complete its assigned tasks. `merge --all`
-skips a fork only when it has no new commits and no active task records to finish. Coop completes
-tasks from the exact source it reviewed; a commit trailer alone cannot authorize completion.
 
 ## Re-entry resumes the session
 

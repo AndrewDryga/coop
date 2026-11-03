@@ -21,6 +21,10 @@
   its columns aligned and lists options before examples. `coop help <name>` for a name that is
   not a command, agent or preset now also points at `coop presets`.
 
+- **Shorter help for usage, up, build, eval run and sessions quiescence.** Each page now fits on
+  one screen with what to run and its main options, and ends with a link to the guide that holds
+  the details it used to list.
+
 - **Only approve file exposure deliberately.** Ordinary `coop approve` no longer asks to
   expose hidden files that eBPF protects. Mount fallback still refuses unapproved exposure;
   use `coop approve --case-exposure` to review and remember those exact paths.
