@@ -1,0 +1,278 @@
+{
+  "about": "Check a job encoder: encode each vector's job as docs/session-api.md describes. The result must equal canonical byte for byte, and its SHA-256, in lowercase hex, must equal digest. co:op refuses a job whose source.binding.resolved_at is one of refused_resolved_at.",
+  "vectors": [
+    {
+      "name": "resolved_at in whole seconds, and an & to escape in a target",
+      "job": {
+        "version": 2,
+        "job_ref": "job:one",
+        "source": {
+          "repository_ref": "repo:one",
+          "github_repository": "example/repository",
+          "github_repository_id": 17,
+          "binding": {
+            "version": 1,
+            "kind": "default",
+            "requested": {
+              "kind": "default"
+            },
+            "remote_identity": "origin",
+            "default_ref": "refs/heads/main",
+            "default_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "selected_ref": "refs/heads/main",
+            "selected_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "admitted_tree": "cccccccccccccccccccccccccccccccccccccccc",
+            "resolved_at": "2026-09-26T12:00:00Z"
+          },
+          "submodules": []
+        },
+        "companions": [],
+        "targets": [
+          "codex:gpt-6\u0026sol@default"
+        ],
+        "mode": "normal",
+        "repository_read_only": true,
+        "egress": {
+          "mode": "none",
+          "rules": [],
+          "export_destinations": false
+        },
+        "limits": {
+          "max_turns": 100,
+          "max_queued_turns": 20,
+          "max_queued_bytes": 1048576,
+          "turn_timeout_ms": 3600000,
+          "warm_idle_timeout_ms": 0,
+          "max_patch_bytes": 1048576
+        },
+        "environment": {
+          "CI": "1"
+        },
+        "check": {
+          "argv": [
+            "make",
+            "test"
+          ],
+          "environment": {
+            "DATABASE_URL": "postgres://test"
+          }
+        },
+        "resources": {
+          "cpu_millis": 2000,
+          "memory_bytes": 4294967296,
+          "pids": 512
+        }
+      },
+      "canonical": "{\"check\":{\"argv\":[\"make\",\"test\"],\"environment\":{\"DATABASE_URL\":\"postgres://test\"}},\"companions\":[],\"egress\":{\"export_destinations\":false,\"mode\":\"none\",\"rules\":[]},\"environment\":{\"CI\":\"1\"},\"job_ref\":\"job:one\",\"limits\":{\"max_patch_bytes\":1048576,\"max_queued_bytes\":1048576,\"max_queued_turns\":20,\"max_turns\":100,\"turn_timeout_ms\":3600000,\"warm_idle_timeout_ms\":0},\"mode\":\"normal\",\"repository_read_only\":true,\"resources\":{\"cpu_millis\":2000,\"memory_bytes\":4294967296,\"pids\":512},\"source\":{\"binding\":{\"admitted_tree\":\"cccccccccccccccccccccccccccccccccccccccc\",\"base_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_ref\":\"refs/heads/main\",\"kind\":\"default\",\"remote_identity\":\"origin\",\"requested\":{\"kind\":\"default\"},\"resolved_at\":\"2026-09-26T12:00:00Z\",\"selected_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"selected_ref\":\"refs/heads/main\",\"version\":1},\"github_repository\":\"example/repository\",\"github_repository_id\":17,\"repository_ref\":\"repo:one\",\"submodules\":[]},\"targets\":[\"codex:gpt-6\\u0026sol@default\"],\"version\":2}",
+      "digest": "f99e0c853235d59ca54d9e3d5eec95d2c70b1ef01e1f5fd7af1a02fef1e79b83"
+    },
+    {
+      "name": "resolved_at with five fractional digits",
+      "job": {
+        "version": 2,
+        "job_ref": "job:one",
+        "source": {
+          "repository_ref": "repo:one",
+          "github_repository": "example/repository",
+          "github_repository_id": 17,
+          "binding": {
+            "version": 1,
+            "kind": "default",
+            "requested": {
+              "kind": "default"
+            },
+            "remote_identity": "origin",
+            "default_ref": "refs/heads/main",
+            "default_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "selected_ref": "refs/heads/main",
+            "selected_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "admitted_tree": "cccccccccccccccccccccccccccccccccccccccc",
+            "resolved_at": "2026-09-26T12:00:00.12345Z"
+          },
+          "submodules": []
+        },
+        "companions": [],
+        "targets": [
+          "codex:gpt-6\u0026sol@default"
+        ],
+        "mode": "normal",
+        "repository_read_only": true,
+        "egress": {
+          "mode": "none",
+          "rules": [],
+          "export_destinations": false
+        },
+        "limits": {
+          "max_turns": 100,
+          "max_queued_turns": 20,
+          "max_queued_bytes": 1048576,
+          "turn_timeout_ms": 3600000,
+          "warm_idle_timeout_ms": 0,
+          "max_patch_bytes": 1048576
+        },
+        "environment": {
+          "CI": "1"
+        },
+        "check": {
+          "argv": [
+            "make",
+            "test"
+          ],
+          "environment": {
+            "DATABASE_URL": "postgres://test"
+          }
+        },
+        "resources": {
+          "cpu_millis": 2000,
+          "memory_bytes": 4294967296,
+          "pids": 512
+        }
+      },
+      "canonical": "{\"check\":{\"argv\":[\"make\",\"test\"],\"environment\":{\"DATABASE_URL\":\"postgres://test\"}},\"companions\":[],\"egress\":{\"export_destinations\":false,\"mode\":\"none\",\"rules\":[]},\"environment\":{\"CI\":\"1\"},\"job_ref\":\"job:one\",\"limits\":{\"max_patch_bytes\":1048576,\"max_queued_bytes\":1048576,\"max_queued_turns\":20,\"max_turns\":100,\"turn_timeout_ms\":3600000,\"warm_idle_timeout_ms\":0},\"mode\":\"normal\",\"repository_read_only\":true,\"resources\":{\"cpu_millis\":2000,\"memory_bytes\":4294967296,\"pids\":512},\"source\":{\"binding\":{\"admitted_tree\":\"cccccccccccccccccccccccccccccccccccccccc\",\"base_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_ref\":\"refs/heads/main\",\"kind\":\"default\",\"remote_identity\":\"origin\",\"requested\":{\"kind\":\"default\"},\"resolved_at\":\"2026-09-26T12:00:00.12345Z\",\"selected_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"selected_ref\":\"refs/heads/main\",\"version\":1},\"github_repository\":\"example/repository\",\"github_repository_id\":17,\"repository_ref\":\"repo:one\",\"submodules\":[]},\"targets\":[\"codex:gpt-6\\u0026sol@default\"],\"version\":2}",
+      "digest": "912849518cdb641b0d52583c78c1eb989f1d3aeeed5649f2b0714609d2cc1ba5"
+    },
+    {
+      "name": "resolved_at with one microsecond",
+      "job": {
+        "version": 2,
+        "job_ref": "job:one",
+        "source": {
+          "repository_ref": "repo:one",
+          "github_repository": "example/repository",
+          "github_repository_id": 17,
+          "binding": {
+            "version": 1,
+            "kind": "default",
+            "requested": {
+              "kind": "default"
+            },
+            "remote_identity": "origin",
+            "default_ref": "refs/heads/main",
+            "default_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "selected_ref": "refs/heads/main",
+            "selected_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "admitted_tree": "cccccccccccccccccccccccccccccccccccccccc",
+            "resolved_at": "2026-09-26T12:00:00.000001Z"
+          },
+          "submodules": []
+        },
+        "companions": [],
+        "targets": [
+          "codex:gpt-6\u0026sol@default"
+        ],
+        "mode": "normal",
+        "repository_read_only": true,
+        "egress": {
+          "mode": "none",
+          "rules": [],
+          "export_destinations": false
+        },
+        "limits": {
+          "max_turns": 100,
+          "max_queued_turns": 20,
+          "max_queued_bytes": 1048576,
+          "turn_timeout_ms": 3600000,
+          "warm_idle_timeout_ms": 0,
+          "max_patch_bytes": 1048576
+        },
+        "environment": {
+          "CI": "1"
+        },
+        "check": {
+          "argv": [
+            "make",
+            "test"
+          ],
+          "environment": {
+            "DATABASE_URL": "postgres://test"
+          }
+        },
+        "resources": {
+          "cpu_millis": 2000,
+          "memory_bytes": 4294967296,
+          "pids": 512
+        }
+      },
+      "canonical": "{\"check\":{\"argv\":[\"make\",\"test\"],\"environment\":{\"DATABASE_URL\":\"postgres://test\"}},\"companions\":[],\"egress\":{\"export_destinations\":false,\"mode\":\"none\",\"rules\":[]},\"environment\":{\"CI\":\"1\"},\"job_ref\":\"job:one\",\"limits\":{\"max_patch_bytes\":1048576,\"max_queued_bytes\":1048576,\"max_queued_turns\":20,\"max_turns\":100,\"turn_timeout_ms\":3600000,\"warm_idle_timeout_ms\":0},\"mode\":\"normal\",\"repository_read_only\":true,\"resources\":{\"cpu_millis\":2000,\"memory_bytes\":4294967296,\"pids\":512},\"source\":{\"binding\":{\"admitted_tree\":\"cccccccccccccccccccccccccccccccccccccccc\",\"base_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_ref\":\"refs/heads/main\",\"kind\":\"default\",\"remote_identity\":\"origin\",\"requested\":{\"kind\":\"default\"},\"resolved_at\":\"2026-09-26T12:00:00.000001Z\",\"selected_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"selected_ref\":\"refs/heads/main\",\"version\":1},\"github_repository\":\"example/repository\",\"github_repository_id\":17,\"repository_ref\":\"repo:one\",\"submodules\":[]},\"targets\":[\"codex:gpt-6\\u0026sol@default\"],\"version\":2}",
+      "digest": "f80344cd93c76c3fe1dde45a99b7749bb3719313f7017f0b78cfec95c46f92de"
+    },
+    {
+      "name": "resolved_at with nine fractional digits",
+      "job": {
+        "version": 2,
+        "job_ref": "job:one",
+        "source": {
+          "repository_ref": "repo:one",
+          "github_repository": "example/repository",
+          "github_repository_id": 17,
+          "binding": {
+            "version": 1,
+            "kind": "default",
+            "requested": {
+              "kind": "default"
+            },
+            "remote_identity": "origin",
+            "default_ref": "refs/heads/main",
+            "default_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "selected_ref": "refs/heads/main",
+            "selected_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "admitted_tree": "cccccccccccccccccccccccccccccccccccccccc",
+            "resolved_at": "2026-09-26T12:00:00.123456789Z"
+          },
+          "submodules": []
+        },
+        "companions": [],
+        "targets": [
+          "codex:gpt-6\u0026sol@default"
+        ],
+        "mode": "normal",
+        "repository_read_only": true,
+        "egress": {
+          "mode": "none",
+          "rules": [],
+          "export_destinations": false
+        },
+        "limits": {
+          "max_turns": 100,
+          "max_queued_turns": 20,
+          "max_queued_bytes": 1048576,
+          "turn_timeout_ms": 3600000,
+          "warm_idle_timeout_ms": 0,
+          "max_patch_bytes": 1048576
+        },
+        "environment": {
+          "CI": "1"
+        },
+        "check": {
+          "argv": [
+            "make",
+            "test"
+          ],
+          "environment": {
+            "DATABASE_URL": "postgres://test"
+          }
+        },
+        "resources": {
+          "cpu_millis": 2000,
+          "memory_bytes": 4294967296,
+          "pids": 512
+        }
+      },
+      "canonical": "{\"check\":{\"argv\":[\"make\",\"test\"],\"environment\":{\"DATABASE_URL\":\"postgres://test\"}},\"companions\":[],\"egress\":{\"export_destinations\":false,\"mode\":\"none\",\"rules\":[]},\"environment\":{\"CI\":\"1\"},\"job_ref\":\"job:one\",\"limits\":{\"max_patch_bytes\":1048576,\"max_queued_bytes\":1048576,\"max_queued_turns\":20,\"max_turns\":100,\"turn_timeout_ms\":3600000,\"warm_idle_timeout_ms\":0},\"mode\":\"normal\",\"repository_read_only\":true,\"resources\":{\"cpu_millis\":2000,\"memory_bytes\":4294967296,\"pids\":512},\"source\":{\"binding\":{\"admitted_tree\":\"cccccccccccccccccccccccccccccccccccccccc\",\"base_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"default_ref\":\"refs/heads/main\",\"kind\":\"default\",\"remote_identity\":\"origin\",\"requested\":{\"kind\":\"default\"},\"resolved_at\":\"2026-09-26T12:00:00.123456789Z\",\"selected_commit\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"selected_ref\":\"refs/heads/main\",\"version\":1},\"github_repository\":\"example/repository\",\"github_repository_id\":17,\"repository_ref\":\"repo:one\",\"submodules\":[]},\"targets\":[\"codex:gpt-6\\u0026sol@default\"],\"version\":2}",
+      "digest": "2396bbf41ba21b17d8e7be0e3911496ef319b7adbf786baac381a3763bf043eb"
+    }
+  ],
+  "refused_resolved_at": [
+    "2026-09-26T12:00:00.123450Z",
+    "2026-09-26T12:00:00.120000Z",
+    "2026-09-26T12:00:00.000000Z",
+    "2026-09-26T12:00:00.1234567891Z",
+    "2026-09-26T12:00:00+00:00",
+    "2026-09-26T12:00:00,1Z",
+    "2026-02-30T12:00:00Z"
+  ]
+}

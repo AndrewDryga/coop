@@ -1,7 +1,11 @@
 package workerproto
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -109,10 +113,37 @@ func TestJobSpecRoundTripAndDigest(t *testing.T) {
 	if err != nil || first != second {
 		t.Fatalf("job digest changed with JSON field order: %s %s %v", first, second, err)
 	}
-	const rykerDigest = "f99e0c853235d59ca54d9e3d5eec95d2c70b1ef01e1f5fd7af1a02fef1e79b83"
-	if first != rykerDigest {
-		t.Fatalf("job digest = %s, want shared Ryker vector %s", first, rykerDigest)
+	if want := loadJobDigestVectors(t).Vectors[0].Digest; first != want {
+		t.Fatalf("job digest = %s, want the first shared vector %s", first, want)
 	}
+}
+
+// jobDigestVectors is the published fixture controller authors check their encoders against
+// (docs/session-api.md, the job digest paragraph).
+type jobDigestVectors struct {
+	Vectors []struct {
+		Name      string          `json:"name"`
+		Job       json.RawMessage `json:"job"`
+		Canonical string          `json:"canonical"`
+		Digest    string          `json:"digest"`
+	} `json:"vectors"`
+	RefusedResolvedAt []string `json:"refused_resolved_at"`
+}
+
+func loadJobDigestVectors(t *testing.T) jobDigestVectors {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "job-digest-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture jobDigestVectors
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Vectors) == 0 || len(fixture.RefusedResolvedAt) == 0 {
+		t.Fatalf("the digest vectors fixture is empty: %+v", fixture)
+	}
+	return fixture
 }
 
 func TestJobSpecRejectsMissingAndDuplicateAuthority(t *testing.T) {
@@ -239,40 +270,41 @@ func TestJobSetupIsRequiredAndChangesDigest(t *testing.T) {
 	}
 }
 
-func TestJobTimestampCanonicalIdentity(t *testing.T) {
-	spec := validJobSpec()
-	spec.Targets = []string{"codex:gpt-6&sol@default"}
-	document, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
+// Controllers in other languages check their encoders against this fixture, so its bytes and
+// digests are a published contract: a change here breaks them.
+func TestJobDigestMatchesThePublishedVectors(t *testing.T) {
+	fixture := loadJobDigestVectors(t)
+	for _, vector := range fixture.Vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			job, err := DecodeJobSpec(vector.Job)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := job.CanonicalDocument()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(canonical) != vector.Canonical {
+				t.Errorf("canonical document:\n got %s\nwant %s", canonical, vector.Canonical)
+			}
+			sum := sha256.Sum256([]byte(vector.Canonical))
+			if hex.EncodeToString(sum[:]) != vector.Digest {
+				t.Errorf("the fixture's digest %s is not the SHA-256 of its canonical bytes", vector.Digest)
+			}
+			if digest, err := job.Digest(); err != nil || digest != vector.Digest {
+				t.Errorf("digest = %s, %v; want %s", digest, err, vector.Digest)
+			}
+		})
 	}
-	for timestamp, expected := range map[string]string{
-		"2026-09-26T12:00:00Z":           "f99e0c853235d59ca54d9e3d5eec95d2c70b1ef01e1f5fd7af1a02fef1e79b83",
-		"2026-09-26T12:00:00.12345Z":     "912849518cdb641b0d52583c78c1eb989f1d3aeeed5649f2b0714609d2cc1ba5",
-		"2026-09-26T12:00:00.000001Z":    "f80344cd93c76c3fe1dde45a99b7749bb3719313f7017f0b78cfec95c46f92de",
-		"2026-09-26T12:00:00.123456789Z": "2396bbf41ba21b17d8e7be0e3911496ef319b7adbf786baac381a3763bf043eb",
-	} {
-		raw := strings.Replace(string(document), "2026-09-26T12:00:00Z", timestamp, 1)
-		job, err := DecodeJobSpec([]byte(raw))
-		if err != nil {
-			t.Fatalf("canonical timestamp %q: %v", timestamp, err)
-		}
-		digest, err := job.Digest()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if digest != expected {
-			t.Errorf("timestamp %s digest = %s, want shared controller vector %s", timestamp, digest, expected)
-		}
+	const wholeSecond = "2026-09-26T12:00:00Z"
+	first := string(fixture.Vectors[0].Job)
+	if !strings.Contains(first, wholeSecond) {
+		t.Fatalf("the first vector's job has no resolved_at of %s", wholeSecond)
 	}
-	for _, timestamp := range []string{
-		"2026-09-26T12:00:00.123450Z", "2026-09-26T12:00:00.120000Z",
-		"2026-09-26T12:00:00.000000Z", "2026-09-26T12:00:00.1234567891Z",
-		"2026-09-26T12:00:00+00:00", "2026-09-26T12:00:00,1Z", "2026-02-30T12:00:00Z",
-	} {
-		raw := strings.Replace(string(document), "2026-09-26T12:00:00Z", timestamp, 1)
+	for _, timestamp := range fixture.RefusedResolvedAt {
+		raw := strings.Replace(first, wholeSecond, timestamp, 1)
 		if _, err := DecodeJobSpec([]byte(raw)); err == nil {
-			t.Fatalf("accepted noncanonical timestamp %q", timestamp)
+			t.Errorf("accepted noncanonical timestamp %q", timestamp)
 		}
 	}
 }
@@ -306,7 +338,7 @@ func TestJobSpecRejectsChangedSource(t *testing.T) {
 
 // The readonly and bare modes are gone: a job naming either is refused by name, with the shape
 // that replaces it, and never runs as normal. A read-only repository is mode normal with
-// repository_read_only, which the shared vector job above already is.
+// repository_read_only, which the published vectors' job already is.
 func TestJobSpecRefusesRemovedModes(t *testing.T) {
 	for _, mode := range []string{"readonly", "bare"} {
 		spec := validJobSpec()

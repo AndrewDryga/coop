@@ -676,6 +676,10 @@ escaped as `\u0026`, `\u003c` and `\u003e`. The digest is the SHA-256 of those b
 lowercase hex. If it differs from `expected_job_digest`, co:op refuses the session with
 `invalid_request`.
 
+To check your encoder, use the [digest test vectors](../testdata/protocol/job-digest-v2.json). Each
+one gives a job, the exact bytes co:op takes the digest of, and the digest. The file also lists
+values of `source.binding.resolved_at` that co:op refuses, such as a fraction with trailing zeros.
+
 co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
 evidence stay readable, but their turns, reviews and interrupted creates can't run until
 they are resubmitted as v2 jobs.

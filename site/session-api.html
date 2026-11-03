@@ -740,6 +740,9 @@ does: no extra whitespace, object keys in sorted order, and <code>&amp;</code>, 
 escaped as <code>\u0026</code>, <code>\u003c</code> and <code>\u003e</code>. The digest is the SHA-256 of those bytes, in
 lowercase hex. If it differs from <code>expected_job_digest</code>, co:op refuses the session with
 <code>invalid_request</code>.</p>
+<p>To check your encoder, use the <a href="https://github.com/AndrewDryga/coop/blob/main/testdata/protocol/job-digest-v2.json" target="_blank" rel="nofollow noopener">digest test vectors</a>. Each
+one gives a job, the exact bytes co:op takes the digest of, and the digest. The file also lists
+values of <code>source.binding.resolved_at</code> that co:op refuses, such as a fraction with trailing zeros.</p>
 <p>co:op does not fill in missing execution settings for v1 jobs. Historical sessions and
 evidence stay readable, but their turns, reviews and interrupted creates can&#39;t run until
 they are resubmitted as v2 jobs.</p>
