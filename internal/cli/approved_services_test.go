@@ -27,7 +27,8 @@ type composeShim struct {
 	volumes    []string
 	configJSON string // `compose config --format json`, which is where a published port comes from
 	upExit     int
-	upSays     string // what Compose said before it failed, when the transcript pins the cause
+	upSays     string   // what Compose said before it failed, when the transcript pins the cause
+	upProgress []string // Compose's own progress on stderr, in place of the [Compose output] stand-in
 	downExit   int
 	downSays   string
 	volExit    int
@@ -82,7 +83,11 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 		script.WriteString("    cat <<'JSON'\n" + s.configJSON + "\nJSON\n")
 	}
 	script.WriteString("    ;;\n")
-	script.WriteString("  *\" up \"*) echo '[Compose output]'; " + says(s.upSays) + "exit " + strconv.Itoa(s.upExit) + " ;;\n")
+	up := "echo '[Compose output]'; "
+	if len(s.upProgress) > 0 {
+		up = "printf '%s\\n' '" + strings.Join(s.upProgress, "' '") + "' >&2; "
+	}
+	script.WriteString("  *\" up \"*) " + up + says(s.upSays) + "exit " + strconv.Itoa(s.upExit) + " ;;\n")
 	script.WriteString("  *\" down \"*) echo '[Compose output]'; " + says(s.downSays) + "exit " + strconv.Itoa(s.downExit) + " ;;\n")
 	script.WriteString("esac\n")
 	if err := os.WriteFile(path, []byte(script.String()), 0o755); err != nil {
@@ -218,6 +223,40 @@ func TestApprovedServiceStart(t *testing.T) {
 			t.Errorf("an unhealthy start exited %d, want 1", code)
 		}
 		assertApprovedOutput(t, "28o-service-not-healthy", out)
+	})
+
+	// Compose 5.5 prints every network and volume event twice when it writes to a pipe, which is
+	// all Coop gives it, and concurrent events land between the two copies. This is its output from
+	// a real two-volume start (padding trimmed); coop up shows each line once, in order.
+	t.Run("28r-services-progress-once", func(t *testing.T) {
+		repo := serviceProject(t)
+		shim := composeShim{services: []string{"db", "redis"}, upProgress: []string{
+			" Volume coop-shop_data Creating",
+			" Volume coop-shop_data Creating",
+			" Volume coop-shop_cache Creating",
+			" Network coop-shop_default Creating",
+			" Network coop-shop_default Creating",
+			" Volume coop-shop_cache Creating",
+			" Volume coop-shop_data Created",
+			" Volume coop-shop_data Created",
+			" Volume coop-shop_cache Created",
+			" Volume coop-shop_cache Created",
+			" Network coop-shop_default Created",
+			" Network coop-shop_default Created",
+			" Container coop-shop-db-1 Creating",
+			" Container coop-shop-redis-1 Creating",
+			" Container coop-shop-db-1 Created",
+			" Container coop-shop-redis-1 Created",
+			" Container coop-shop-db-1 Started",
+			" Container coop-shop-redis-1 Started",
+		}}
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: shim.build(t), rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 0 {
+			t.Fatalf("cmdUp = %d, want success:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "28r-services-progress-once", out)
 	})
 
 	// A temporary directory an agent can see would let the snapshot coop validated be swapped

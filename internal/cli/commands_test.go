@@ -452,6 +452,23 @@ func TestCmdUpStopsWhenServiceDiscoveryFails(t *testing.T) {
 	}
 }
 
+// A pipe hands Compose's progress over in whatever pieces it likes, so a line split across writes
+// is still one line, a repeat is dropped wherever it lands, and a last line without its newline
+// still comes out once the command is done.
+func TestDistinctLinesDropsRepeatsAcrossWrites(t *testing.T) {
+	var out strings.Builder
+	lines := &distinctLines{w: &out}
+	for _, chunk := range []string{" Network n Crea", "ting\n Volume v Creating\n Netw", "ork n Creating\n", " Volume v Creating\nexit"} {
+		if n, err := lines.Write([]byte(chunk)); n != len(chunk) || err != nil {
+			t.Fatalf("Write(%q) = (%d, %v)", chunk, n, err)
+		}
+	}
+	lines.flush()
+	if want := " Network n Creating\n Volume v Creating\nexit"; out.String() != want {
+		t.Fatalf("passed %q, want %q", out.String(), want)
+	}
+}
+
 func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_PRESET", "")

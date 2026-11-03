@@ -1,0 +1,17 @@
+Starting services from .agent/compose.yml
+  Waiting for services to be ready.
+
+ Volume coop-shop_data Creating
+ Volume coop-shop_cache Creating
+ Network coop-shop_default Creating
+ Volume coop-shop_data Created
+ Volume coop-shop_cache Created
+ Network coop-shop_default Created
+ Container coop-shop-db-1 Creating
+ Container coop-shop-redis-1 Creating
+ Container coop-shop-db-1 Created
+ Container coop-shop-redis-1 Created
+ Container coop-shop-db-1 Started
+ Container coop-shop-redis-1 Started
+
+✓ Services ready: db, redis

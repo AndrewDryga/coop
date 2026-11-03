@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -100,7 +101,9 @@ func (a *app) cmdUp(args []string) (int, error) {
 	ui.Note("  Waiting for services to be ready.")
 	ui.Note("")
 	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
-	started, err := box.UpServicesReviewed(a.rt, repo, file, review, out, errOut, box.ConfigExposureRoots(a.cfg)...)
+	progress := &distinctLines{w: errOut}
+	started, err := box.UpServicesReviewed(a.rt, repo, file, review, out, progress, box.ConfigExposureRoots(a.cfg)...)
+	progress.flush()
 	if out.seen || errOut.seen {
 		ui.Note("")
 	}
@@ -323,6 +326,47 @@ func (s *seenWriter) Write(p []byte) (int, error) {
 		s.seen = true
 	}
 	return s.w.Write(p)
+}
+
+// distinctLines passes Compose's progress through a whole line at a time and drops any line it has
+// already passed. Compose 5 prints every network and volume event twice when its output is not a
+// terminal, sometimes with other events between the two copies, and Coop always reads it through a
+// pipe. A repeat carries nothing the first line did not.
+type distinctLines struct {
+	w       io.Writer
+	partial []byte
+	seen    map[string]bool
+}
+
+func (d *distinctLines) Write(p []byte) (int, error) {
+	d.partial = append(d.partial, p...)
+	for {
+		end := bytes.IndexByte(d.partial, '\n')
+		if end < 0 {
+			return len(p), nil
+		}
+		line := string(d.partial[:end+1])
+		d.partial = d.partial[end+1:]
+		if d.seen[line] {
+			continue
+		}
+		if d.seen == nil {
+			d.seen = map[string]bool{}
+		}
+		d.seen[line] = true
+		if _, err := io.WriteString(d.w, line); err != nil {
+			return len(p), err
+		}
+	}
+}
+
+// flush writes out a last line that never got its newline. Like the rest of the terminal output,
+// a failed write is not a reason to fail the command.
+func (d *distinctLines) flush() {
+	if len(d.partial) > 0 {
+		_, _ = d.w.Write(d.partial)
+		d.partial = nil
+	}
 }
 
 // downOptions is `coop down`'s whole grammar, and the list a correction is drawn from. The
