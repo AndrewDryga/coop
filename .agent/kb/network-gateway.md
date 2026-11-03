@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/runtime/docker_objects.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
 updated: 2026-11-03
 ---
 
@@ -230,11 +230,15 @@ version 2): each resource has a fixed name, `coop-net-<run>-<role>`, and run lab
 `AuthorizeLaunch` before each create and start, and teardown and recovery inspect each role by name
 and run labels, remove what matches, and leave a holder of the name with other labels alone
 (`runtime.ErrDockerOwnership`, reported as `NetworkRecovery.Unverified`). Absence proves a resource
-gone only when no create of it can still be running: Docker finishes a create whose client gave up
-(every Docker CLI call has a 15-second bound), so a create with no known outcome is marked
-unfinished in memory (`markUnfinished`) and teardown leaves it, and every volume it could hold,
-open in the record. Before removing a volume, recovery looks up every container the record calls
-gone and removes any Docker created late (`removeLateContainers`). Whether a supervisor is
+gone only when no create of it can still be running: Docker finishes a create whose client gave up.
+A create has its own minute (`runtime.DockerCreateTimeout`, which `filteredControlTimeout` names;
+every other Docker CLI call keeps a 15-second bound). A create with no known
+outcome is marked unfinished (`markUnfinished`), in memory and in the record as
+`Resource.UnfinishedCreate`, and teardown leaves it, and every volume it could hold, open in the
+record. Recovery takes its absence as proof only `unfinishedCreateSettle` (10 minutes) after the mark
+and reports it meanwhile as `NetworkRecovery.StillCreating`. Before removing a volume, recovery looks
+up every container the record calls gone and removes any Docker created late
+(`removeLateContainers`). Whether a supervisor is
 gone is judged from its record, never from a label. `NetworkRecovery.Sealed` means THIS pass wrote the
 receipt, never an earlier one. A record names its supervisor's host (`Supervisor.Host`, the
 supervisor labels' host field), and the pass judges only a supervisor recorded here
@@ -324,6 +328,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-03 — creates now get a minute instead of the generic 15 seconds, and
+  the record keeps an unanswered create's time, so recovery that runs while Docker is still
+  finishing it keeps the resource for `unfinishedCreateSettle` instead of recording it gone.
 - 2026-11-03 — a controller create cut off by the Docker client's 15-second bound finished after
   teardown recorded it gone, and recovery failed on its ipc volume every pass (run ac2e6d62).
   Teardown no longer takes an unfinished create's absence as proof, and recovery removes a late

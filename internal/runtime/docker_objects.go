@@ -180,7 +180,7 @@ func (d *Docker) CreateVolume(ctx context.Context, ref DockerRef) (DockerVolume,
 		return DockerVolume{}, errors.Join(ErrDockerCreateNotAttempted, errors.New("Docker volume creation requires a fresh intention"), err)
 	}
 	args := append([]string{"volume", "create", "--driver", "local"}, dockerLabelArgs(ref.Labels)...)
-	data, err := d.output(ctx, 1024, append(args, ref.Name)...)
+	data, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, append(args, ref.Name)...)
 	if err != nil {
 		if errors.Is(err, errDockerCommandNotStarted) {
 			err = errors.Join(ErrDockerCreateNotAttempted, err)

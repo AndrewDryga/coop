@@ -669,9 +669,10 @@ the final record, the status is `final record missing`. co:op attempts recovery 
 - Every filtered launch does the same before starting its own box.
 
 If recovery succeeds, you need to do nothing. If it cannot finish, co:op reports what prevented
-it, such as Docker being stopped, a different daemon at the saved endpoint, or a resource it
-could not remove. `coop net inspect` shows `⚠ Cleanup incomplete — <the blocker>` and what to
-do next. co:op retries automatically.
+it, such as Docker being stopped, a different daemon at the saved endpoint, a resource it could
+not remove, or a resource Docker may still be creating. A resource whose create went unanswered
+counts as gone only if it is still missing ten minutes later. `coop net inspect` shows
+`⚠ Cleanup incomplete — <the blocker>` and what to do next. co:op retries automatically.
 
 To recover runs now:
 

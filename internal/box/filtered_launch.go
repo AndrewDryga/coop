@@ -25,8 +25,9 @@ import (
 
 // filteredControlTimeout bounds one exact-owned runtime control call (create,
 // start, inspect). It is generous on purpose: these calls carry a box's whole
-// mount set, and a loaded host makes a slow create look like a broken one.
-const filteredControlTimeout = 60 * time.Second
+// mount set, and a loaded host makes a slow create look like a broken one. It is
+// the runtime's own bound on a create, so that bound can never cut this one short.
+const filteredControlTimeout = runtime.DockerCreateTimeout
 
 func networkMount(kind, source, target string, readonly bool) string {
 	fields := []string{"type=" + kind, "source=" + source, "target=" + target}
@@ -87,14 +88,22 @@ func sameFailure(ctx context.Context, a, b error) bool {
 
 // markUnfinished records that role's create request may have reached the daemon without an answer,
 // as when its client timed out under load. Docker can still finish such a create afterwards, so until
-// cleanup or recovery finds the resource by name and removes it, not finding it proves nothing.
-func (f *filteredExecution) markUnfinished(role string) {
+// cleanup or recovery finds the resource by name and removes it, not finding it proves nothing. The
+// run's record carries the mark past this process: recovery runs after it has exited, possibly while
+// Docker is still finishing the create.
+func (f *filteredExecution) markUnfinished(role string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.unfinished == nil {
 		f.unfinished = map[string]bool{}
 	}
 	f.unfinished[role] = true
+	f.mu.Unlock()
+	// The create's own context has usually run out by now.
+	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
+	defer cancel()
+	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+		return f.store.RecordUnfinishedCreate(ctx, r.ID, r.Revision, role, time.Now())
+	})
 }
 
 func (f *filteredExecution) createUnfinished(role string) bool {
@@ -111,7 +120,7 @@ func (f *filteredExecution) createVolume(ctx context.Context, role string) error
 	}
 	if _, err := f.docker.CreateVolume(ctx, f.createRef(role)); err != nil {
 		if !errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
-			f.markUnfinished(role)
+			err = errors.Join(err, f.markUnfinished(role))
 		}
 		return err
 	}
@@ -121,7 +130,7 @@ func (f *filteredExecution) createVolume(ctx context.Context, role string) error
 
 // createContainer creates role's container under the run's fixed name and labels. Cleanup and
 // recovery find it by that name whatever this call's outcome, so nothing is recorded first; a create
-// with no outcome is only marked unfinished in memory, so cleanup does not take its absence as proof.
+// with no outcome is marked unfinished, so neither takes its absence as proof.
 func (f *filteredExecution) createContainer(ctx context.Context, role, image string, options, command []string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
@@ -140,8 +149,7 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
 			return createErr
 		}
-		f.markUnfinished(role)
-		return errors.Join(createErr, errors.New("network container creation outcome is unknown"))
+		return errors.Join(createErr, errors.New("network container creation outcome is unknown"), f.markUnfinished(role))
 	}
 	f.mu.Lock()
 	f.ids[role] = id

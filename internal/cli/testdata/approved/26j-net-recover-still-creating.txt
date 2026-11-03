@@ -1,0 +1,6 @@
+⚠ Cleanup incomplete for network run e644f07a
+
+      2 temporary containers were removed.
+      Docker may still be creating a temporary container for this run. A later cleanup removes it.
+
+  Full details: coop net inspect e644f07a --json

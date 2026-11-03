@@ -91,7 +91,7 @@ func (d *Docker) ObserveContainerLogs(ctx context.Context, ref DockerRef, tail, 
 	if d.closed.Load() {
 		return value, nil, errDockerCommandNotStarted
 	}
-	data, err := dockerCommandOutput(ctx, d.binary, d.env, limit, true, "--config", d.clientConfig, "--host", d.endpoint, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
+	data, err := dockerCommandOutput(ctx, d.binary, d.env, dockerControlTimeout, limit, true, "--config", d.clientConfig, "--host", d.endpoint, "container", "logs", "--tail", strconv.Itoa(tail), ref.ID)
 	return value, data, err
 }
 

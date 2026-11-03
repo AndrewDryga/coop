@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T) {
@@ -42,6 +43,49 @@ func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T)
 			}
 		})
 	}
+}
+
+// slowCreateDelay is how long the fixture's "slow-create" daemon takes to answer a create.
+const slowCreateDelay = 3 * time.Second
+
+// A create has its own bound. Under load a filtered launch's controller create ran past the ordinary
+// 15 seconds while the launch allowed it a minute: the client gave up and Docker finished the create
+// anyway, leaving a container cleanup had not waited for. A caller that gives up sooner still decides,
+// and that create's outcome stays unknown.
+func TestDockerCreateOutlastsTheOrdinaryBound(t *testing.T) {
+	ordinary := dockerControlTimeout
+	dockerControlTimeout = slowCreateDelay - time.Second
+	t.Cleanup(func() { dockerControlTimeout = ordinary })
+	bind := func(t *testing.T) (*Docker, DockerRef) {
+		t.Helper()
+		rt, _ := fixtureDocker(t, dockerFixture{Mode: "slow-create"})
+		d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = d.Close() })
+		ref := dockerFixtureRef()
+		ref.ID = ""
+		return d, ref
+	}
+	t.Run("past the ordinary bound", func(t *testing.T) {
+		d, ref := bind(t)
+		if _, err := d.CreateContainer(context.Background(), DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image}); err != nil {
+			t.Errorf("container create = %v", err)
+		}
+		if _, err := d.CreateVolume(context.Background(), ref); err != nil {
+			t.Errorf("volume create = %v", err)
+		}
+	})
+	t.Run("past its caller's deadline", func(t *testing.T) {
+		d, ref := bind(t)
+		ctx, cancel := context.WithTimeout(context.Background(), slowCreateDelay/2)
+		defer cancel()
+		_, err := d.CreateContainer(ctx, DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image})
+		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrDockerCreateNotAttempted) {
+			t.Errorf("container create = %v, want an unknown outcome", err)
+		}
+	})
 }
 
 func TestDockerOutputCancelledBeforeSpawnIsNotSubmitted(t *testing.T) {

@@ -227,6 +227,9 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
 			}
+			if fixture.Mode == "slow-create" {
+				time.Sleep(slowCreateDelay)
+			}
 			fixture.Container = dockerFixtureContainer()
 			for i := 2; i+1 < len(args); i++ {
 				if args[i] == "-v" {
@@ -424,6 +427,9 @@ func TestDockerFixtureProcess(t *testing.T) {
 		case "create":
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
+			}
+			if fixture.Mode == "slow-create" {
+				time.Sleep(slowCreateDelay)
 			}
 			fixture.Volume = &DockerVolume{Name: "coop-test", Driver: "local", Scope: "local", CreatedAt: "fixture-time", Labels: dockerFixtureRef().Labels}
 			fixture.Mutations++

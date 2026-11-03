@@ -54,12 +54,15 @@ type Supervisor struct {
 
 // Resource is one of a run's five runtime objects, named before it exists. State is "planned"
 // until the run's supervisor or recovery sees it gone ("gone"); whether a planned one exists is
-// asked of the runtime by its name and labels, which only coop sets.
+// asked of the runtime by its name and labels, which only coop sets. UnfinishedCreate is when a
+// create of it went unanswered (RecordUnfinishedCreate): Docker may still finish that create, so
+// for a while after it the resource's absence proves nothing.
 type Resource struct {
-	Role  string `json:"role"`
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
-	State string `json:"state"`
+	Role             string    `json:"role"`
+	Kind             string    `json:"kind"`
+	Name             string    `json:"name"`
+	State            string    `json:"state"`
+	UnfinishedCreate time.Time `json:"unfinished_create,omitzero"`
 }
 
 // Execution is OWNER-PRIVATE storage, never a public DTO. In particular Project,

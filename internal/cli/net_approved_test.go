@@ -500,6 +500,10 @@ func TestApprovedNetRecover(t *testing.T) {
 		"26h-net-recover-unverified": {RunID: netTestRun, Pending: []string{"ipc"}, PendingVolumes: 1, Unverified: "container"},
 		"26i-net-recover-elsewhere": {RunID: netTestRun, Live: true, Elsewhere: true,
 			Skipped: "it was started on another computer or container, and only the Coop there can tell whether it is still running"},
+		// The volumes wait on the controller Docker may still create, which is why they are unverified.
+		"26j-net-recover-still-creating": {RunID: netTestRun, Removed: []string{"agent", "guard"}, RemovedContainers: 2,
+			Pending: []string{"controller (Docker may still be creating it)", "ipc", "observations"}, PendingVolumes: 2,
+			Unverified: "container", StillCreating: "container"},
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			var b bytes.Buffer

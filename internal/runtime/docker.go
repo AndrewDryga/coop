@@ -199,7 +199,7 @@ func (d *Docker) CreatePlainNamedVolume(ctx context.Context, name string) (Named
 	if _, present, err := d.InspectNamedVolume(ctx, name); err != nil || present {
 		return NamedVolumeIdentity{}, errors.Join(err, errors.New("Docker volume already exists or cannot be inspected"))
 	}
-	if _, err := d.output(ctx, 1024, "volume", "create", "--driver", "local", name); err != nil {
+	if _, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, "volume", "create", "--driver", "local", name); err != nil {
 		return NamedVolumeIdentity{}, err
 	}
 	identity, present, err := d.InspectNamedVolume(ctx, name)
@@ -279,17 +279,27 @@ func dockerName(value string) bool {
 	return value != "" && len(value) <= 128 && !strings.HasPrefix(value, "-") && strings.Trim(value, "abcdefghijklmnopqrstuvwxyz0123456789-_") == ""
 }
 
+// dockerControlTimeout bounds one Docker CLI control call, whatever context it arrives with. A var
+// so a test need not wait this long.
+var dockerControlTimeout = 15 * time.Second
+
+// DockerCreateTimeout bounds one create instead, unless its caller's context ends sooner. A create
+// prepares a writable layer and every mount, which a loaded host answers far slower than an inspect,
+// and Docker still finishes a create whose client gave up, leaving an object nobody waited for. A
+// filtered launch's limit on a helper's create is this same number (filteredControlTimeout).
+const DockerCreateTimeout = 60 * time.Second
+
 // Every control call is finite and retains bounded output. Error prose never
 // contains runtime stderr: image labels and daemon errors can contain secrets.
 func dockerOutput(ctx context.Context, binary string, env []string, limit int, args ...string) ([]byte, error) {
-	return dockerCommandOutput(ctx, binary, env, limit, false, args...)
+	return dockerCommandOutput(ctx, binary, env, dockerControlTimeout, limit, false, args...)
 }
 
-func dockerCommandOutput(ctx context.Context, binary string, env []string, limit int, combined bool, args ...string) ([]byte, error) {
+func dockerCommandOutput(ctx context.Context, binary string, env []string, timeout time.Duration, limit int, combined bool, args ...string) ([]byte, error) {
 	if ctx == nil || limit <= 0 || limit > 4<<20 {
 		return nil, errors.Join(errDockerCommandNotStarted, errors.New("invalid bounded Docker operation"))
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var out dockerBoundedOutput
 	out.limit = limit
@@ -333,10 +343,15 @@ func (w *dockerBoundedOutput) Write(data []byte) (int, error) {
 }
 
 func (d *Docker) output(ctx context.Context, limit int, args ...string) ([]byte, error) {
+	return d.outputWithin(ctx, dockerControlTimeout, limit, args...)
+}
+
+// outputWithin is output with its own bound, for a create (DockerCreateTimeout).
+func (d *Docker) outputWithin(ctx context.Context, timeout time.Duration, limit int, args ...string) ([]byte, error) {
 	if d.closed.Load() {
 		return nil, errors.Join(errDockerCommandNotStarted, errors.New("Docker lifecycle binding is closed"))
 	}
-	return dockerOutput(ctx, d.binary, d.env, limit, append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)...)
+	return dockerCommandOutput(ctx, d.binary, d.env, timeout, limit, false, append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)...)
 }
 
 // read runs one finite Docker command and hands its stdout to consume as it

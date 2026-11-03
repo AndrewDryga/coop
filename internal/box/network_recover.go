@@ -45,6 +45,9 @@ type NetworkRecovery struct {
 	// Ownership coop will not guess at is a different thing from a removal that
 	// failed.
 	Unverified string
+	// StillCreating names the kind of what was left in place because Docker may still be creating
+	// it: a create Coop stopped waiting for, too recent for its absence to prove anything.
+	StillCreating string
 }
 
 // recoverDocker is the bounded exact-owner surface recovery needs. It removes
@@ -123,7 +126,7 @@ func recoverNetworkRunsAt(ctx context.Context, evidence *networkstate.Evidence, 
 	}
 	out := make([]NetworkRecovery, 0, len(runs.pending))
 	for _, record := range runs.pending {
-		out = append(out, recoverNetworkRun(ctx, evidence, record, connect))
+		out = append(out, recoverNetworkRun(ctx, evidence, record, connect, now))
 	}
 	return out, err
 }
@@ -217,7 +220,12 @@ func supervisorRecordedHere(supervisor networkstate.Supervisor) bool {
 // it.
 var networkRecoveryOrder = []string{"agent", "guard", "controller", "ipc", "observations"}
 
-func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect) (out NetworkRecovery) {
+// unfinishedCreateSettle is how long after an unanswered create its resource's absence still proves
+// nothing. Docker finishes a create whose client gave up, and a host loaded enough to keep a client
+// waiting a minute can take minutes more; a resource still absent ten minutes on was never made.
+const unfinishedCreateSettle = 10 * time.Minute
+
+func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect, now time.Time) (out NetworkRecovery) {
 	out = NetworkRecovery{RunID: record.ID}
 	// A pid read on another host or in another PID namespace looks gone from here while its coop
 	// still runs, and that coop's own seal would then fail. Such a run is its own host's to recover.
@@ -234,7 +242,7 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 	// Only a resource still at the runtime needs its daemon. A supervisor that died after removing
 	// its containers and volumes leaves at most its files and its receipt, and neither needs it.
 	if slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool { return r.State != "gone" }) {
-		if record = recoverLeftovers(ctx, evidence, record, connect, &out); out.Skipped != "" {
+		if record = recoverLeftovers(ctx, evidence, record, connect, now, &out); out.Skipped != "" {
 			return out
 		}
 	}
@@ -262,7 +270,7 @@ func recoverNetworkRun(ctx context.Context, evidence *networkstate.Evidence, rec
 // recoverLeftovers removes what the run left at its runtime, on the daemon it
 // recorded and only there. A daemon it cannot use is reported as Skipped, with
 // nothing touched.
-func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect, out *NetworkRecovery) networkstate.Execution {
+func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, record networkstate.Execution, connect recoverConnect, now time.Time, out *NetworkRecovery) networkstate.Execution {
 	docker, daemon, err := connect(ctx, record.Endpoint)
 	if err != nil {
 		out.Skipped = "the runtime it ran on is unavailable: " + err.Error()
@@ -304,7 +312,7 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 				continue
 			}
 		}
-		next, outcome, err := recoverResource(ctx, evidence, docker, record, resource)
+		next, outcome, err := recoverResource(ctx, evidence, docker, record, resource, now)
 		record = next
 		switch {
 		case errors.Is(err, runtime.ErrDockerOwnership):
@@ -321,6 +329,10 @@ func recoverLeftovers(ctx context.Context, evidence *networkstate.Evidence, reco
 			out.countRemoved(resource.Kind)
 		case outcome == resourceAbsent:
 			// Settled without a removal: it was already gone before this pass.
+		case outcome == resourceStillCreating:
+			// A later pass looks again, and finds it gone or removes what Docker made.
+			out.Pending = append(out.Pending, role+" (Docker may still be creating it)")
+			out.StillCreating = resource.Kind
 		default:
 			out.Pending = append(out.Pending, role)
 			out.countPending(resource.Kind)
@@ -381,12 +393,13 @@ func consumersGoneFor(record networkstate.Execution, role string) bool {
 	return true
 }
 
-// The three outcomes one recorded resource can reach in a pass: coop removed
-// it, it was already gone, or it is still there.
+// The outcomes one recorded resource can reach in a pass: coop removed it, it was already gone, it
+// is still there, or it is not there yet while Docker may still be creating it.
 const (
-	resourceRemoved = "removed"
-	resourceAbsent  = "absent"
-	resourcePending = "pending"
+	resourceRemoved       = "removed"
+	resourceAbsent        = "absent"
+	resourcePending       = "pending"
+	resourceStillCreating = "still creating"
 )
 
 // countRemoved and countPending tally by the kind the record names, so a report
@@ -410,9 +423,10 @@ func (r *NetworkRecovery) countPending(kind string) {
 // recoverResource removes ONE of the run's resources and records the outcome. It finds it by the
 // run's fixed name and labels: one under that name with other labels is not the run's and stays
 // (runtime.ErrDockerOwnership). Its absence is what proves it gone, and is reported as absent,
-// never as a removal this pass performed.
+// never as a removal this pass performed. Within unfinishedCreateSettle of a create that went
+// unanswered it proves nothing yet: Docker may still be making the resource.
 func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docker recoverDocker,
-	record networkstate.Execution, resource networkstate.Resource) (networkstate.Execution, string, error) {
+	record networkstate.Execution, resource networkstate.Resource, now time.Time) (networkstate.Execution, string, error) {
 	ref := networkResourceRef(record, resource.Role)
 	if ref.Name == "" {
 		return record, resourcePending, errors.New("this run names no such container or volume, so coop will not remove anything by guess")
@@ -429,6 +443,9 @@ func recoverResource(ctx context.Context, evidence *networkstate.Evidence, docke
 	}
 	if err != nil {
 		return record, resourcePending, err
+	}
+	if !present && !resource.UnfinishedCreate.IsZero() && now.Before(resource.UnfinishedCreate.Add(unfinishedCreateSettle)) {
+		return record, resourceStillCreating, nil
 	}
 	if present {
 		if resource.Kind == "container" {

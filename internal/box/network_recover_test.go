@@ -467,6 +467,76 @@ func TestFilteredCreateThatFinishesAfterItsTimeoutIsRemovedLater(t *testing.T) {
 	}
 }
 
+// Recovery runs once the supervisor has exited, and Docker may still be finishing a create that
+// supervisor stopped waiting for. The run's record says which create went unanswered and when; until
+// unfinishedCreateSettle has passed, recovery takes nothing's absence as proof and keeps every volume
+// the resource could hold. A later pass removes what Docker made, or settles a create that never landed.
+func TestRecoveryWaitsForACreateDockerMayStillFinish(t *testing.T) {
+	for _, role := range []string{"controller", "ipc"} {
+		for _, lands := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s lands %v", role, lands), func(t *testing.T) {
+				f, d := filteredFixture(t)
+				d.ambiguous = role
+				if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("launch = %v, want the create's timeout", err)
+				}
+				_, _ = f.cleanup("launch_failed")
+				record, err := f.store.Execution(f.record.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				marked := recoveredResource(record, role).UnfinishedCreate
+				if marked.IsZero() {
+					t.Fatalf("the run's record does not say the %s create went unanswered", role)
+				}
+				departSupervisor(t, f.store, f.record.ID)
+				evidence, err := networkstate.OpenEvidence(f.store.Path(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = evidence.Close() })
+				connect := func(context.Context, string) (recoverDocker, string, error) { return d, "fixture-daemon", nil }
+
+				// Docker is still creating it.
+				results, err := recoverNetworkRunsAt(context.Background(), evidence, f.record.ID, connect, marked.Add(time.Minute))
+				kind := recoveredResource(record, role).Kind
+				if err != nil || len(results) != 1 || results[0].StillCreating != kind || len(results[0].Removed) != 0 {
+					t.Fatalf("recovery during the create = %+v, %v; want the %s kept as still being created", results, err, role)
+				}
+				record, err = evidence.Execution(f.record.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				kept := []string{role}
+				if kind == "container" {
+					kept = append(kept, "ipc", "observations") // either could be mounted by it
+				}
+				for _, kept := range kept {
+					if state := recoveredResource(record, kept).State; state != "planned" {
+						t.Fatalf("recovery recorded the %s %s while Docker may still create the %s", kept, state, role)
+					}
+				}
+
+				later := marked.Add(time.Minute)
+				if lands {
+					d.finishLateCreates()
+				} else {
+					later = marked.Add(unfinishedCreateSettle + time.Second)
+				}
+				results, err = recoverNetworkRunsAt(context.Background(), evidence, f.record.ID, connect, later)
+				if err != nil || len(results) != 1 || len(results[0].Pending) != 0 || len(results[0].Failures) != 0 || slices.Contains(results[0].Removed, role) != lands {
+					t.Fatalf("later recovery = %+v, %v; want the %s settled (removed: %v)", results, err, role, lands)
+				}
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				if len(d.containers) != 0 || len(d.volumes) != 0 {
+					t.Fatalf("recovery left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
+				}
+			})
+		}
+	}
+}
+
 // A record written by a cleanup that took a timed-out create's absence as proof names the controller
 // gone while Docker holds it and the ipc volume it mounts. Recovery looks every container up by the
 // run's names and labels before it removes a volume, so it removes the controller, then the volume.

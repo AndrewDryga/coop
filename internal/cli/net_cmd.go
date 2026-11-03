@@ -221,6 +221,10 @@ func netCleanupCauses(result box.NetworkRecovery) []string {
 	if n := result.RemovedVolumes; n != 0 {
 		out = append(out, ui.Count(n, "temporary volume")+" "+netWas(n)+" removed.")
 	}
+	// A create Docker may still finish holds back everything it could use, so it is the one cause.
+	if result.StillCreating != "" {
+		return append(out, "Docker may still be creating a temporary "+result.StillCreating+" for this run. A later cleanup removes it.")
+	}
 	if result.Unverified != "" {
 		return append(out, "Coop could not verify ownership of a remaining "+result.Unverified+".")
 	}

@@ -91,7 +91,7 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 	args = append(args, dockerLabelArgs(spec.Ref.Labels)...)
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
-	data, err := d.output(ctx, 1024, args...)
+	data, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, args...)
 	if err != nil {
 		if errors.Is(err, errDockerCommandNotStarted) {
 			err = errors.Join(ErrDockerCreateNotAttempted, err)

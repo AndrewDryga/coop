@@ -199,7 +199,32 @@ func (e *Evidence) ConfirmResourceGone(ctx context.Context, id string, revision 
 		if resource.State == "gone" {
 			return false, nil
 		}
-		resource.State = "gone"
+		resource.State, resource.UnfinishedCreate = "gone", time.Time{}
+		return true, nil
+	})
+}
+
+// RecordUnfinishedCreate notes that a create of role's resource reached the runtime and was never
+// answered, as when its client gave up under load. Docker can finish such a create after the
+// supervisor has exited, so recovery, which runs in another process, must know not to take the
+// resource's absence as proof until a while after at.
+func (s *Store) RecordUnfinishedCreate(ctx context.Context, id string, revision networkview.Count, role string, at time.Time) (Execution, error) {
+	return s.mutateExecution(ctx, id, revision, func(record *Execution) (bool, error) {
+		if err := s.ownedExecution(record); err != nil {
+			return false, err
+		}
+		resource, err := resourceAt(record, role)
+		if err != nil {
+			return false, err
+		}
+		if resource.State == "gone" || at.IsZero() {
+			return false, errors.New("an unfinished create needs a resource not yet gone and its time")
+		}
+		at = at.UTC()
+		if !resource.UnfinishedCreate.Before(at) {
+			return false, nil
+		}
+		resource.UnfinishedCreate = at
 		return true, nil
 	})
 }
