@@ -179,14 +179,15 @@ func isTasksSubcommand(s string) bool {
 }
 
 // matchTask resolves id against a set of task items: an exact ID match wins, else a unique substring
-// match (so a slug fragment works). Ambiguous or absent is an error. listCmd names the command that
-// lists this set ("coop tasks" / "coop backlog"), so the "run '…' to list" hint points at the right
-// place. Shared by findTask (the lifecycle tree) and findBacklogTask (xx_backlog).
+// match (so a slug fragment works). Ambiguous or absent is refused as rejected input (see
+// lookupExit). listCmd names the command that lists this set ("coop tasks" / "coop backlog"), so the
+// refusal points at the right listing. Shared by findTask (the lifecycle tree) and findBacklogTask
+// (xx_backlog).
 func MatchTask(items []Item, id, listCmd string) (Item, error) {
 	if id == "" {
-		// An empty fragment would substring-match every task ("" is in everything); make it a
-		// clear error instead of silently acting on the first/only one.
-		return Item{}, fmt.Errorf("need a task id (run '%s' to list)", listCmd)
+		// An empty fragment would substring-match every task ("" is in everything); refuse it
+		// instead of silently acting on the first/only one.
+		return Item{}, taskLookupRefusal("Missing task ID", listCmd)
 	}
 	for _, t := range items {
 		if t.ID == id {
@@ -203,14 +204,36 @@ func MatchTask(items []Item, id, listCmd string) (Item, error) {
 	case 1:
 		return hits[0], nil
 	case 0:
-		return Item{}, fmt.Errorf("no task matching %q (run '%s' to list)", id, listCmd)
+		return Item{}, taskLookupRefusal(fmt.Sprintf("No task matching %q", id), listCmd)
 	default:
-		var ids []string
-		for _, h := range hits {
-			ids = append(ids, h.ID)
+		refusal := &ui.UsageError{
+			Headline: fmt.Sprintf("%d tasks match %q", len(hits), id),
+			Rows:     [][2]string{{"", "Use one of these IDs."}},
 		}
-		return Item{}, fmt.Errorf("%q matches %d tasks: %s — be more specific", id, len(hits), strings.Join(ids, ", "))
+		for _, h := range hits {
+			refusal.Choices = append(refusal.Choices, ui.SafeInline(h.ID)) // a folder name can come from a box
+		}
+		return Item{}, refusal
 	}
+}
+
+// taskLookupRefusal refuses an ID that names no task, pointing at the listing that shows the IDs.
+func taskLookupRefusal(headline, listCmd string) *ui.UsageError {
+	label := "Tasks:"
+	if listCmd == "coop backlog" {
+		label = "Ideas:"
+	}
+	return &ui.UsageError{Headline: headline, Rows: [][2]string{{label, listCmd}}}
+}
+
+// lookupExit is the exit code for a task lookup that failed: 2 when the ID itself is the problem (it
+// matches no task, or several), 1 when a queue could not be read.
+func lookupExit(err error) int {
+	var refused *ui.UsageError
+	if errors.As(err, &refused) {
+		return 2
+	}
+	return 1
 }
 
 // findTask locates a task by ID across the lifecycle state dirs — an exact ID match, else a unique
@@ -364,7 +387,8 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		}
 		if !hasEq {
 			if i+1 >= len(args) {
-				return 2, fmt.Errorf("coop %s --%s needs a value", cmdLabel, flag)
+				return 2, ui.MissingOptionValue("--"+flag, "coop "+cmdLabel,
+					fmt.Sprintf(`coop %s "Fix login retries" --%s "<text>"`, cmdLabel, flag))
 			}
 			i++
 			val = args[i]
@@ -387,19 +411,36 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	}
 	slug := slugify(title)
 	if slug == "" {
-		return 2, fmt.Errorf(`that title has no letters or digits to build a task id from — use a title with at least one word, e.g. coop %s "fix login retry"`, cmdLabel)
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Invalid title for %q", "coop "+cmdLabel),
+			Cause:    "Use at least one letter or digit. The task ID is made from the title's words.",
+			Rows: [][2]string{
+				{"Example:", "coop " + cmdLabel + ` "Fix login retries"`},
+				{"Help:", ui.HelpCommand("coop " + cmdLabel)},
+			},
+		}
 	}
 	// Structured mode is all-or-nothing: every section flag must be given, so we never create a task
 	// that's half-filled and half-<…>-placeholder. Omit all the flags to get the placeholder scaffold.
 	if structured {
-		var missing []string
+		var missing, every, usage []string
 		for _, s := range taskSections {
+			every = append(every, "--"+s.flag)
+			usage = append(usage, "--"+s.flag+" <text>")
 			if strings.TrimSpace(values[s.heading]) == "" {
 				missing = append(missing, "--"+s.flag)
 			}
 		}
 		if len(missing) > 0 {
-			return 2, fmt.Errorf("coop %s: structured flags need every section — missing %s (or omit all flags to scaffold)", cmdLabel, strings.Join(missing, ", "))
+			return 2, &ui.UsageError{
+				Headline: fmt.Sprintf("Missing %s for %q", ui.List(missing, "and"), "coop "+cmdLabel),
+				Cause: "If you use any text option, include " + ui.List(every, "and") + ".\n" +
+					"Without the text options, Coop creates a template for you to fill in.",
+				Rows: [][2]string{
+					{"Usage:", "coop " + cmdLabel + ` "<title>" ` + strings.Join(usage, " ") + " [--subtask <text>...]"},
+					{"Help:", ui.HelpCommand("coop " + cmdLabel)},
+				},
+			}
 		}
 	}
 	id, setup, err := createTaskFolder(project, root, state, slug, title, values, subtasks)
@@ -770,7 +811,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	if newState == StateInProgress {
 		if err := claimRefusal(t); err != nil {
@@ -918,7 +959,7 @@ func tasksFolderRelease(root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	switch t.State {
 	case StateTodo:
@@ -1068,7 +1109,7 @@ func tasksFolderPath(root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, args[0])
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	fmt.Println(t.Dir)
 	return 0, nil
@@ -1108,7 +1149,7 @@ func tasksFolderPark(root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	if err := parkTask(root, t, reason); err != nil {
 		var refusal *parkRefusal
@@ -1169,7 +1210,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	if t.State == StateTodo {
 		record, ok, readErr := ReadAuditReopenRecord(root, t.ID)
@@ -1990,7 +2031,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, req.id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	// A plain block would park the human's answer as a fresh question — it happened: a re-run block,
 	// its first success hidden by `| tail`, asked again about something already decided. Refuse
@@ -2209,7 +2250,6 @@ type taskRemoveArgs struct {
 // Keep syntax independent of discovery: a typo must not reach an archive scan,
 // confirmation or deletion, even when the archive is empty or spans many queues.
 func parseTaskRemoveArgs(args []string) (taskRemoveArgs, error) {
-	const usage = "usage: coop tasks rm <id> [--yes]  |  coop tasks rm --all-done [--yes]"
 	if err := validateArgs("tasks rm", args, taskRemoveSpec); err != nil {
 		return taskRemoveArgs{}, err
 	}
@@ -2222,15 +2262,30 @@ func parseTaskRemoveArgs(args []string) (taskRemoveArgs, error) {
 			request.yes = true
 		default:
 			if a == "" || a == "-" {
-				return taskRemoveArgs{}, errors.New(usage)
+				return taskRemoveArgs{}, taskRemoveUsage(fmt.Sprintf("Unexpected argument %q for %q", a, "coop tasks rm"))
 			}
 			request.id = a
 		}
 	}
-	if request.allDone && request.id != "" || !request.allDone && request.id == "" {
-		return taskRemoveArgs{}, errors.New(usage)
+	switch {
+	case request.allDone && request.id != "":
+		return taskRemoveArgs{}, taskRemoveUsage(`Cannot combine a task ID and "--all-done" in "coop tasks rm"`)
+	case !request.allDone && request.id == "":
+		return taskRemoveArgs{}, taskRemoveUsage(`Missing task ID for "coop tasks rm"`)
 	}
 	return request, nil
+}
+
+// taskRemoveUsage refuses rm's arguments with both of its spellings: one task, or the whole archive.
+func taskRemoveUsage(headline string) *ui.UsageError {
+	return &ui.UsageError{
+		Headline: headline,
+		Rows: [][2]string{
+			{"Usage:", "coop tasks rm <id> [--yes]"},
+			{ui.Continuation, "coop tasks rm --all-done [--yes]"},
+			{"Help:", ui.HelpCommand("coop tasks rm")},
+		},
+	}
 }
 
 // tasksFolderRemove deletes task folders — `rm <id>` for one (any state), or
@@ -2256,7 +2311,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		ui.Note("  %s", displayPath(filepath.Join(root, StateDone)))
 		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
 		if err := ui.DestroyGate("Delete these tasks", request.yes); err != nil {
-			return 2, cancelledDeletion(err, "No tasks deleted.")
+			return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 		}
 		removed, err := removeAllDone(root)
 		if err != nil {
@@ -2271,12 +2326,12 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	}
 	t, err := FindTask(root, request.id) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	ui.Note("Permanently delete %q, including its instructions,\nprogress, and saved evidence.\n", t.Title)
 	ui.Note("  %s\n", displayPath(t.Dir))
 	if err := ui.DestroyGate("Delete this task", request.yes); err != nil {
-		return 2, cancelledDeletion(err, "No tasks deleted.")
+		return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 	}
 	removed, err := removeTaskFolderAndRecords(root, t)
 	if err != nil && removed {
@@ -2293,12 +2348,15 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 
 // cancelledDeletion turns the shared gate's bare "cancelled" into the family's decline result: a
 // declined deletion is not a failure to report with a red ✗, it is an answer — so it prints what did
-// NOT happen and returns the already-reported sentinel. Any other gate refusal (a pipe with no
-// --yes) is its own actionable message and passes through as an error.
-func cancelledDeletion(err error, nothing string) error {
+// NOT happen and returns the already-reported sentinel. A gate nothing could answer (a pipe with no
+// --yes) is refused in the shared block, pointing at command's page.
+func cancelledDeletion(err error, command, nothing string) error {
 	if err != nil && err.Error() == "cancelled" {
 		ui.Note("Cancelled. %s", nothing)
 		return ui.ErrReported
+	}
+	if errors.Is(err, ui.ErrNeedsConfirmation) {
+		return ui.ConfirmationRequired(command)
 	}
 	return err
 }

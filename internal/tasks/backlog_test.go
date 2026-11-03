@@ -254,9 +254,9 @@ func TestCmdBacklogMonorepo(t *testing.T) {
 	if tree := mustReadTaskTree(t, rootA); len(tree) != 1 || tree[0].State != StateTodo {
 		t.Fatalf("promote should land in svc-a's todo, tree = %+v", tree)
 	}
-	// an id no queue holds fails loudly.
-	if code, err := CmdBacklog(cfg, []string{"promote", "no-such-id"}); code != 1 || err == nil {
-		t.Errorf("promote of an absent id = (%d, %v), want (1, error)", code, err)
+	// an id no queue holds is refused as rejected input.
+	if code, err := CmdBacklog(cfg, []string{"promote", "no-such-id"}); code != 2 || err == nil {
+		t.Errorf("promote of an absent id = (%d, %v), want (2, error)", code, err)
 	}
 }
 

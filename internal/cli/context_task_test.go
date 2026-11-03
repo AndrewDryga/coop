@@ -41,17 +41,17 @@ func TestContextTaskQueueIdentity(t *testing.T) {
 		name, first, second, id, want, problem string
 		configured, flags                      []string
 	}{
-		{name: "duplicate exact", first: "shared", second: "shared", id: "shared", problem: "matches 2 tasks across the queues"},
-		{name: "duplicate fragment", first: "one-shared", second: "two-shared", id: "shared", problem: "matches 2 tasks across the queues"},
+		{name: "duplicate exact", first: "shared", second: "shared", id: "shared", problem: `2 tasks match "shared" across the task queues`},
+		{name: "duplicate fragment", first: "one-shared", second: "two-shared", id: "shared", problem: `2 tasks match "shared" across the task queues`},
 		{name: "exact first", first: "shared", second: "two-shared", id: "shared", want: "a/file.go"},
 		{name: "exact last", first: "one-shared", second: "shared", id: "shared", want: "b/file.go"},
 		{name: "unique later", second: "two-shared", id: "shared", want: "b/file.go"},
-		{name: "missing", first: "shared", second: "other", id: "absent", problem: "no task matching"},
+		{name: "missing", first: "shared", second: "other", id: "absent", problem: `No task matching "absent" in 2 task queues`},
 		{name: "configured", first: "shared", second: "shared", id: "shared", configured: []string{"b/.agent/tasks"}, want: "b/file.go"},
 		{name: "explicit spaced", first: "shared", second: "shared", id: "shared", configured: []string{"../outside"}, flags: []string{"--tasks", "b/.agent/tasks"}, want: "b/file.go"},
 		{name: "explicit equals", first: "shared", second: "shared", id: "shared", flags: []string{"--tasks=a/.agent/tasks"}, want: "a/file.go"},
 		{name: "repeated selectors", first: "shared", second: "other", id: "other", configured: []string{"../outside"}, flags: []string{"--tasks", "a/.agent/tasks", "--tasks=b/.agent/tasks"}, want: "b/file.go"},
-		{name: "single queue missing id", first: "shared", id: "absent", flags: []string{"--tasks=a/.agent/tasks"}, problem: "no task matching"},
+		{name: "single queue missing id", first: "shared", id: "absent", flags: []string{"--tasks=a/.agent/tasks"}, problem: `No task matching "absent"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, a := contextTaskFixture(t, tc.first, tc.second)

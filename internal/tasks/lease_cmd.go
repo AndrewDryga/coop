@@ -156,7 +156,7 @@ func bindLeaseToClaimant(root string, req leaseRequest) leaseRequest {
 func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time.Duration) (int, error) {
 	t, err := FindTask(root, req.id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	if t.State != StateInProgress {
 		return 1, fmt.Errorf("%s is %s — a lease covers work in progress; claim it first: coop tasks claim %s", t.ID, StateLabel(t.State), t.ID)

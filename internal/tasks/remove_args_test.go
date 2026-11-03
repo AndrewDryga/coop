@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type removalSnapshotEntry struct {
@@ -108,10 +110,8 @@ func TestTaskRemovalRejectsMalformedArgsBeforeTouchingState(t *testing.T) {
 						}
 						// Any of the shared syntax refusals is fine; what matters is that one of
 						// them fires BEFORE discovery, confirmation or deletion.
-						refusal := err != nil && (strings.Contains(err.Error(), "usage:") ||
-							strings.Contains(err.Error(), "Unknown option") ||
-							strings.Contains(err.Error(), "Unexpected argument"))
-						if code != 2 || !refusal {
+						var usage *ui.UsageError
+						if code != 2 || !errors.As(err, &usage) {
 							t.Errorf("malformed removal = %d, %v; want syntax refusal before discovery/confirmation", code, err)
 						}
 						assertRemovalSnapshot(t, repo, before)

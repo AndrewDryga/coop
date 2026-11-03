@@ -40,7 +40,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	}
 	for _, path := range queueFlags {
 		if path == "" {
-			return 2, errors.New("coop context: --tasks needs a queue path")
+			return 2, ui.MissingOptionValue("--tasks", "coop context", "coop context --task login-retries --tasks web/.agent/tasks")
 		}
 	}
 	var changed, asJSON, rendered bool
@@ -59,16 +59,23 @@ func (a *app) cmdContext(args []string) (int, error) {
 		case strings.HasPrefix(arg, "--task="):
 			taskID = strings.TrimPrefix(arg, "--task=")
 		case strings.HasPrefix(arg, "-") && arg != "-":
-			return 2, fmt.Errorf("coop context: unknown flag %q (supported: --changed, --task <id>, --tasks <path>, --json, --rendered)", arg)
+			return 2, unknownOptionErr(arg, "coop context", []string{"--changed", "--task", "--tasks", "--json", "--rendered"})
 		default:
 			paths = append(paths, arg)
 		}
 	}
 	if asJSON && rendered {
-		return 2, errors.New("coop context: choose --json or --rendered, not both")
+		return 2, ui.ConflictingOptions("--json", "--rendered", "coop context")
 	}
 	if len(queueFlags) > 0 && taskID == "" {
-		return 2, errors.New("coop context: --tasks requires --task <id>")
+		return 2, &ui.UsageError{
+			Headline: `Missing --task for "coop context"`,
+			Cause:    "--tasks chooses where --task looks for its task.",
+			Rows: [][2]string{
+				{"Usage:", "coop context --task <id> --tasks <path>"},
+				{"Help:", ui.HelpCommand("coop context")},
+			},
+		}
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -129,12 +136,16 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	// Explicit paths are repo-relative (that's what --changed/--task emit too). Absolute paths are
 	// rejected, and nothing may escape the repo.
 	for _, arg := range paths {
-		if filepath.IsAbs(arg) {
-			return nil, fmt.Errorf("coop context: %q is an absolute path. Use a path relative to the repository", arg)
-		}
 		clean := filepath.Clean(arg)
-		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("coop context: %q is outside the repo", arg)
+		if filepath.IsAbs(arg) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, &ui.UsageError{
+				Headline: fmt.Sprintf("Invalid path %q for %q", arg, "coop context"),
+				Cause:    "Use a path inside the repository, relative to its root.",
+				Rows: [][2]string{
+					{"Example:", "coop context internal/cli/help.go"},
+					{"Help:", ui.HelpCommand("coop context")},
+				},
+			}
 		}
 		add(clean)
 	}

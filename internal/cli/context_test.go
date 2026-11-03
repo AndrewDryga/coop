@@ -105,6 +105,27 @@ func TestCmdContext(t *testing.T) {
 	}
 }
 
+// coop context refuses its options and paths in the shared block, as rejected input.
+func TestContextRefusesInputInTheSharedBlock(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	for _, tc := range []struct {
+		args     []string
+		headline string
+	}{
+		{[]string{"--json", "--rendered"}, `Cannot combine "--json" and "--rendered" in "coop context"`},
+		{[]string{"--tasks", ".agent/tasks"}, `Missing --task for "coop context"`},
+		{[]string{"--task", "x", "--tasks", ""}, `Missing value for "--tasks" in "coop context"`},
+		{[]string{"--verbose"}, `Unknown option "--verbose" for "coop context"`},
+		{[]string{"/etc/passwd"}, `Invalid path "/etc/passwd" for "coop context"`},
+		{[]string{"../outside"}, `Invalid path "../outside" for "coop context"`},
+	} {
+		code, err := a.cmdContext(tc.args)
+		if usage := asUsage(err); code != 2 || usage == nil || usage.Headline != tc.headline {
+			t.Errorf("coop context %q = (%d, %v), want (2, %q)", tc.args, code, err, tc.headline)
+		}
+	}
+}
+
 func TestParseGitStatusPaths(t *testing.T) {
 	out := []byte(" M plain.txt\x00R  renamed \"ü\" .txt \x00old -> name.txt\x00C  copied.txt\x00source.txt\x00?? nested/untracked file.txt\x00")
 	got, err := parseGitStatusPaths(out)

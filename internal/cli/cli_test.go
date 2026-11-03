@@ -291,9 +291,15 @@ func TestExitCodeContract(t *testing.T) {
 	if code, _ := a.dispatch([]string{"fork", "rm", "a", "b"}); code != 2 {
 		t.Errorf("bad-arguments exit = %d, want 2", code)
 	}
-	// 1 — failure: rm of a task that doesn't exist.
-	if code, _ := cmdTasksFolder("", t.TempDir(), []string{"rm", "no-such-task", "--yes"}); code != 1 {
-		t.Errorf("failure (no such task) exit = %d, want 1", code)
+	// A name that refers to nothing is rejected input too, as an unknown fork or preset is.
+	if code, _ := cmdTasksFolder("", t.TempDir(), []string{"rm", "no-such-task", "--yes"}); code != 2 {
+		t.Errorf("no-such-task exit = %d, want 2", code)
+	}
+	// 1 — failure: the input was fine, but the command could not do its job (the task is done).
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateDone, "2026-01-01-shipped", "task.md"), "# Shipped\n")
+	if code, _ := cmdTasksFolder("", root, []string{"claim", "shipped"}); code != 1 {
+		t.Errorf("failure (claiming a done task) exit = %d, want 1", code)
 	}
 	// 0 — success: a pure-local listing (stdout discarded).
 	old := os.Stdout

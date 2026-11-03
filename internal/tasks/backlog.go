@@ -88,7 +88,7 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 		}
 	}
 	if len(rels) == 0 {
-		return 2, errors.New("coop backlog: no task queue configured — set COOP_TASKS or pass --tasks <path>")
+		return 2, noQueueConfigured("coop backlog")
 	}
 	root := filepath.Join(repo, rels[0])
 	if err := refuseQueueOutsideProject(repo, project, root); err != nil {
@@ -176,7 +176,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 	}
 	t, err := findBacklogTask(root, pos[0]) // resolve the (possibly substring) match first, so the gate names it
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	// The blast radius before the question: which idea, its exact folder, and what goes with it.
 	ui.Note("Delete idea: %s", t.Title)
@@ -203,7 +203,7 @@ func backlogFolderPromote(root string, args []string) (int, error) {
 	}
 	t, err := findBacklogTask(root, args[0])
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	// A parked task (coop tasks park) comes back with its question: an open decision returns it to
 	// blocked, since a todo task with an unanswered decision.md is what lint rejects.
@@ -274,7 +274,7 @@ func backlogAcrossQueues(repo string, rels []string, rest []string) (int, error)
 	}
 	rel, err := queueOfBacklogTask(repo, rels, id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	return cmdBacklogFolder("", filepath.Join(repo, rel), rest) // rm and promote never make a queue
 }
@@ -296,14 +296,17 @@ func exampleQueue(rels []string) string {
 	return rels[0]
 }
 
-// backlogCancelled turns a declined confirmation into the sentence a person expects, and keeps any
-// other gate refusal (a pipe with no --yes) as the error it is. It runs BEFORE any deletion, so it
-// can truthfully say the idea was kept.
+// backlogCancelled turns a declined confirmation into the sentence a person expects, and refuses a
+// gate nothing could answer (a pipe with no --yes) in the shared block. It runs BEFORE any
+// deletion, so it can truthfully say the idea was kept.
 func backlogCancelled(err error) error {
 	if err != nil && err.Error() == "cancelled" {
 		ui.Note("")
 		ui.Note("Cancelled. The idea was kept.")
 		return ui.Reported(err)
+	}
+	if errors.Is(err, ui.ErrNeedsConfirmation) {
+		return ui.ConfirmationRequired("coop backlog rm")
 	}
 	return err
 }

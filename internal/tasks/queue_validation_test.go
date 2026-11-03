@@ -66,8 +66,10 @@ func TestQueueMissingItemGuidanceNamesItsFamily(t *testing.T) {
 				} else {
 					code, err = CmdTasks(Host{}, cfg, []string{"path", "absent"})
 				}
-				if code != 1 || err == nil || !strings.Contains(err.Error(), "coop "+family) {
-					t.Errorf("%s missing item = (%d, %v), want its own listing hint", family, code, err)
+				// An ID that matches nothing is rejected input, refused with its family's own listing.
+				var usage *ui.UsageError
+				if code != 2 || !errors.As(err, &usage) || !strings.Contains(err.Error(), "coop "+family) {
+					t.Errorf("%s missing item = (%d, %v), want exit 2 with its own listing hint", family, code, err)
 				}
 			}
 		})

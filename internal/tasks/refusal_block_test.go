@@ -1,0 +1,195 @@
+package tasks
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
+)
+
+// refusal is err as the shared block, failing the test when it is a bare sentence instead.
+func refusal(t *testing.T, err error) *ui.UsageError {
+	t.Helper()
+	var usage *ui.UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("refusal = %#v, want the shared block", err)
+	}
+	return usage
+}
+
+// pipedStdin runs the test with no terminal on stdin, as a script or an agent runs Coop.
+func pipedStdin(t *testing.T) {
+	t.Helper()
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdin
+	os.Stdin = devnull
+	t.Cleanup(func() {
+		os.Stdin = saved
+		_ = devnull.Close()
+	})
+}
+
+// An ID that names no single task is rejected input: the block says what matched, points at the
+// family's own listing, and the command exits 2. A queue that cannot be read stays exit 1.
+func TestTaskLookupRefusalsAreRejectedInput(t *testing.T) {
+	root := t.TempDir()
+	for _, id := range []string{"2026-01-01-fix-login", "2026-01-02-fix-logout"} {
+		writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# "+id+"\n")
+	}
+	writeTaskFile(t, filepath.Join(root, StateBacklog, "2026-01-03-idea", "task.md"), "# idea\n")
+
+	_, err := FindTask(root, "absent")
+	if got, want := refusal(t, err).Render(ui.Palette{}), "\n✗ No task matching \"absent\"\n\n  Tasks: coop tasks\n"; got != want {
+		t.Errorf("missing task block:\n%q\nwant\n%q", got, want)
+	}
+	if lookupExit(err) != 2 {
+		t.Errorf("lookupExit(missing task) = %d, want 2", lookupExit(err))
+	}
+	_, err = findBacklogTask(root, "absent")
+	if got, want := refusal(t, err).Rows, [][2]string{{"Ideas:", "coop backlog"}}; !slices.Equal(got, want) {
+		t.Errorf("missing idea rows = %q, want %q", got, want)
+	}
+
+	_, err = FindTask(root, "fix")
+	ambiguous := refusal(t, err)
+	if ambiguous.Headline != `2 tasks match "fix"` ||
+		!slices.Equal(slices.Sorted(slices.Values(ambiguous.Choices)), []string{"2026-01-01-fix-login", "2026-01-02-fix-logout"}) ||
+		!slices.Equal(ambiguous.Rows, [][2]string{{"", "Use one of these IDs."}}) {
+		t.Errorf("ambiguous block = %#v, want both IDs listed", ambiguous)
+	}
+
+	if code := lookupExit(errors.New("read queue: permission denied")); code != 1 {
+		t.Errorf("lookupExit(unreadable queue) = %d, want 1", code)
+	}
+}
+
+// The add refusals are drawn in the shared block, each naming what to change.
+func TestTasksAddRefusesInTheSharedBlock(t *testing.T) {
+	root := t.TempDir()
+	_, err := tasksFolderAdd(root, []string{"Half filled", "--context", "only this"}, StateTodo, "tasks add")
+	want := "\n✗ Missing --acceptance and --approach for \"coop tasks add\"\n\n" +
+		"      If you use any text option, include --context, --acceptance, and --approach.\n" +
+		"      Without the text options, Coop creates a template for you to fill in.\n\n" +
+		"  Usage: coop tasks add \"<title>\" --context <text> --acceptance <text> --approach <text> [--subtask <text>...]\n" +
+		"  Help:  coop help tasks add\n"
+	if got := refusal(t, err).Render(ui.Palette{}); got != want {
+		t.Errorf("partial structured add:\n%s\nwant\n%s", got, want)
+	}
+
+	for _, tc := range []struct {
+		args     []string
+		headline string
+	}{
+		{[]string{"Fix login", "--context"}, `Missing value for "--context" in "coop tasks add"`},
+		{[]string{"!!!"}, `Invalid title for "coop tasks add"`},
+	} {
+		code, err := tasksFolderAdd(root, tc.args, StateTodo, "tasks add")
+		if got := refusal(t, err).Headline; code != 2 || got != tc.headline {
+			t.Errorf("add %q = (%d, %q), want (2, %q)", tc.args, code, got, tc.headline)
+		}
+	}
+	if items := mustReadTaskTree(t, root); len(items) != 0 {
+		t.Errorf("refused adds created tasks: %+v", items)
+	}
+}
+
+// A queue outside the repository is refused by name, saying whether --tasks or COOP_TASKS chose it:
+// a person may not remember setting the variable.
+func TestTaskQueuesOutsideTheRepositoryNameTheirSource(t *testing.T) {
+	repo := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "tasks")
+	_, err := TaskQueues(&config.Config{}, repo, []string{outside})
+	if got, want := refusal(t, err).Headline, `Invalid value "`+outside+`" for "--tasks"`; got != want {
+		t.Errorf("--tasks outside = %q, want %q", got, want)
+	}
+	_, err = TaskQueues(&config.Config{TasksFiles: []string{"../tasks"}}, repo, nil)
+	block := refusal(t, err)
+	if block.Headline != `Invalid value "../tasks" in COOP_TASKS` ||
+		block.Cause != "A task queue must be a folder inside this repository, such as .agent/tasks." {
+		t.Errorf("COOP_TASKS outside = %#v", block)
+	}
+}
+
+// --project is refused in the shared block when it cannot choose a queue, before anything is added.
+func TestTasksAddProjectSelectorRefusals(t *testing.T) {
+	repo := gitFolder(t)
+	for _, tc := range []struct {
+		cfg      config.Config
+		args     []string
+		headline string
+	}{
+		{config.Config{}, []string{"add", "--project", "web", "x"}, `No subprojects for "--project" in "coop tasks add"`},
+		{config.Config{}, []string{"add", "--project", "a", "--project", "b", "x"}, `Option "--project" can only be used once in "coop tasks add"`},
+		{config.Config{}, []string{"add", "x", "--project"}, `Missing value for "--project" in "coop tasks add"`},
+		{config.Config{}, []string{"--tasks", ".agent/tasks", "add", "--project", "web", "x"}, `Cannot combine "--project" and "--tasks" in "coop tasks add"`},
+		{config.Config{TasksFiles: []string{".agent/tasks"}}, []string{"add", "--project", "web", "x"}, `Cannot use "--project" while COOP_TASKS is set`},
+	} {
+		cfg := tc.cfg
+		code, err := CmdTasks(Host{}, &cfg, tc.args)
+		if got := refusal(t, err).Headline; code != 2 || got != tc.headline {
+			t.Errorf("coop tasks %q = (%d, %q), want (2, %q)", tc.args, code, got, tc.headline)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, TasksRoot)); !os.IsNotExist(err) {
+		t.Errorf("a refused add set up a queue: %v", err)
+	}
+}
+
+// watch takes only --json, once; anything else is refused in the shared block before the board opens.
+func TestTasksWatchRefusesOtherArguments(t *testing.T) {
+	cfg := validationQueues(t, 1)
+	for _, tc := range []struct {
+		args     []string
+		headline string
+	}{
+		{[]string{"watch", "--bogus"}, `Unknown option "--bogus" for "coop tasks watch"`},
+		{[]string{"watch", "--json", "--json"}, `Option "--json" can only be used once in "coop tasks watch"`},
+		{[]string{"watch", "extra"}, `Unexpected argument "extra" for "coop tasks watch"`},
+	} {
+		code, err := CmdTasks(Host{}, cfg, tc.args)
+		if got := refusal(t, err).Headline; code != 2 || got != tc.headline {
+			t.Errorf("coop tasks %q = (%d, %q), want (2, %q)", tc.args, code, got, tc.headline)
+		}
+	}
+}
+
+// Without a terminal and without --yes, a deletion is refused in the shared block that names the
+// command's page, and nothing is deleted.
+func TestDeletionWithoutATerminalIsRefusedInTheSharedBlock(t *testing.T) {
+	pipedStdin(t)
+	root := t.TempDir()
+	task := filepath.Join(root, StateTodo, "2026-01-01-keep")
+	idea := filepath.Join(root, StateBacklog, "2026-01-02-idea")
+	done := filepath.Join(root, StateDone, "2026-01-03-done")
+	for _, dir := range []string{task, idea, done} {
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# keep\n")
+	}
+	for _, tc := range []struct {
+		run  func() (int, error)
+		help string
+	}{
+		{func() (int, error) { return tasksFolderRemove(root, []string{"keep"}) }, "coop help tasks rm"},
+		{func() (int, error) { return tasksFolderRemove(root, []string{"--all-done"}) }, "coop help tasks rm"},
+		{func() (int, error) { return backlogFolderRemove(root, []string{"idea"}) }, "coop help backlog rm"},
+	} {
+		var code int
+		var err error
+		captureStderr(t, func() { code, err = tc.run() })
+		block := refusal(t, err)
+		if code != 2 || block.Headline != "Confirmation required" || !slices.Equal(block.Rows, [][2]string{{"Help:", tc.help}}) {
+			t.Errorf("piped deletion = (%d, %#v), want Confirmation required pointing at %s", code, block, tc.help)
+		}
+	}
+	for _, dir := range []string{task, idea, done} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("a refused deletion removed %s: %v", dir, err)
+		}
+	}
+}

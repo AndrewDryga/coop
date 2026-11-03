@@ -283,7 +283,7 @@ func TestIntegrationSecondaryQueueBootstrap(t *testing.T) {
 	// An id command across two queues resolves the task itself; an id found NOWHERE errors
 	// (naming the queue count) without creating anything. (`add`, which creates into a queue,
 	// still needs one target; see TestIntegrationMultiQueueRollup.)
-	if code, err := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "done", "x"}); code != 1 || err == nil || !strings.Contains(err.Error(), "2 configured queues") {
+	if code, err := a.cmdTasks([]string{"--tasks", "a/.agent/tasks", "--tasks", "b/.agent/tasks", "done", "x"}); code != 2 || err == nil || !strings.Contains(err.Error(), `No task matching "x" in 2 task queues`) {
 		t.Errorf("cross-queue done on a missing id should error naming the queues, got code=%d err=%v", code, err)
 	}
 
@@ -302,19 +302,22 @@ func TestIntegrationUmbrellaAddRequiresProject(t *testing.T) {
 	if code != 2 || err == nil {
 		t.Fatalf("umbrella add without --project = (%d, %v), want usage error", code, err)
 	}
-	msg := err.Error()
+	// The shared block, with the queues as its answer: every line a person reads is pinned.
+	block := usageBlock(t, err)
 	for _, want := range []string{
-		"this umbrella project has multiple task queues; use --project root for repo-wide work or --project <subproject> for project-local work",
-		"usage:\n  coop tasks add --project <project> \"<title>\"",
-		"root    .agent/tasks",
-		"repo-wide or cross-project work",
-		"portal  portal/.agent/tasks",
-		"runner  runner/.agent/tasks",
-		"coop tasks add --project portal \"Fix auth retry\"",
-		"--context \"portal auth retries can loop forever\"",
+		"\n✗ Choose a project for \"coop tasks add\"\n\n",
+		"      This repository has 4 task queues. Choose one with --project.\n" +
+			"      Inside a subproject's folder, add uses that subproject.\n\n",
+		"  root    .agent/tasks         repo-wide or cross-project work\n",
+		"  portal  portal/.agent/tasks\n",
+		"  runner  runner/.agent/tasks\n",
+		"  packs   packs/.agent/tasks\n",
+		"\n  Usage:   coop tasks add --project <project> \"<title>\" [<options>]\n" +
+			"  Example: coop tasks add --project portal \"Fix login retries\"\n" +
+			"  Help:    coop help tasks add\n",
 	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("umbrella add error missing %q:\n%s", want, msg)
+		if !strings.Contains(block, want) {
+			t.Errorf("umbrella add refusal missing %q:\n%s", want, block)
 		}
 	}
 	for _, rel := range []string{tasksRoot, "portal/" + tasksRoot, "runner/" + tasksRoot, "packs/" + tasksRoot} {
@@ -374,9 +377,13 @@ func TestIntegrationUmbrellaAddRejectsUnknownProject(t *testing.T) {
 	if code != 2 || err == nil {
 		t.Fatalf("unknown project = (%d, %v), want usage error", code, err)
 	}
-	for _, want := range []string{`unknown project "myproject"`, "projects:", "portal  portal/.agent/tasks"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("unknown project error missing %q:\n%s", want, err)
+	block := usageBlock(t, err)
+	for _, want := range []string{
+		"✗ Unknown project \"myproject\" for \"coop tasks add\"\n\n      Choose one of this repository's task queues.\n",
+		"  portal  portal/.agent/tasks\n",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("unknown project refusal missing %q:\n%s", want, block)
 		}
 	}
 }
@@ -413,9 +420,9 @@ func TestIntegrationMultiQueueRollup(t *testing.T) {
 	if it, err := findTask(filepath.Join(repo, "a", tasksRoot), "2026-01-01-x"); err != nil || it.State != stateInProgress {
 		t.Errorf("claim should have moved the task in queue a: state=%v err=%v", it.State, err)
 	}
-	// An id present in BOTH queues (split makes such copies) is refused, naming the queues.
+	// An id present in BOTH queues (split makes such copies) is refused as input, naming the queues.
 	writeTaskFile(t, filepath.Join(repo, "b", tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# X copy\n")
-	if code, err := run("done", "2026-01-01-x"); code != 1 || err == nil || !strings.Contains(err.Error(), "a/"+tasksRoot) {
+	if code, err := run("done", "2026-01-01-x"); code != 2 || err == nil || !strings.Contains(err.Error(), "a/"+tasksRoot) {
 		t.Errorf("ambiguous cross-queue id should error naming the queues, got code=%d err=%v", code, err)
 	}
 	// lint rolls up, and the exit code is the worst queue's (the seeded tasks lack acceptance

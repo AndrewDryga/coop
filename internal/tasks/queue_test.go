@@ -199,9 +199,9 @@ func TestFindTaskProjectChoiceShorthand(t *testing.T) {
 		t.Errorf("ambiguous shorthand resolved to %q, want a refusal", got.Name)
 	}
 	err := taskProjectAddError("web", ambiguous)
-	for _, want := range []string{"matches 2 projects", "apps/web", "site/web", "use the full path"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ambiguity error missing %q:\n%s", want, err)
-		}
+	var refusal *ui.UsageError
+	if !errors.As(err, &refusal) || refusal.Headline != `Project "web" matches 2 projects in "coop tasks add"` ||
+		refusal.Cause != "It could be apps/web or site/web. Use the full path." {
+		t.Errorf("ambiguity refusal = %#v, want the shared block naming both projects", err)
 	}
 }

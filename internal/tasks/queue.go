@@ -71,10 +71,10 @@ func extractProjectFlag(args []string) (projectName string, rest []string, err e
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--project"); ok {
 			if e != nil {
-				return "", nil, e
+				return "", nil, ui.MissingOptionValue("--project", "coop tasks add", `coop tasks add --project web "Fix login retries"`)
 			}
 			if projectName != "" {
-				return "", nil, errors.New("coop tasks add: pass --project only once")
+				return "", nil, ui.RepeatedOption("--project", "coop tasks add")
 			}
 			projectName = v
 			i += n - 1
@@ -179,55 +179,52 @@ func ambiguousTaskProjects(choices []taskProjectChoice, name string) []string {
 	return matches
 }
 
+// taskProjectAddError refuses `coop tasks add` in an umbrella project when it cannot tell which
+// queue the task belongs to: no --project at the repository root, or a --project that names no
+// single queue. The queues are the answer, so the block lists them. Names and paths come from
+// .agent/project.yaml, which a box can write, so they are escaped.
 func taskProjectAddError(name string, choices []taskProjectChoice) error {
+	const command = "coop tasks add"
+	example := "root"
+	names, rels := make([]string, len(choices)), make([]string, len(choices))
 	nameWidth, relWidth := 0, 0
-	for _, ch := range choices {
-		if len(ch.Name) > nameWidth {
-			nameWidth = len(ch.Name)
-		}
-		if len(filepath.ToSlash(ch.Rel)) > relWidth {
-			relWidth = len(filepath.ToSlash(ch.Rel))
-		}
-	}
-	firstNonRoot := ""
-	for _, ch := range choices {
-		if ch.Name != "root" {
-			firstNonRoot = ch.Name
-			break
+	for i, ch := range choices {
+		names[i], rels[i] = ui.SafeInline(ch.Name), ui.SafeInline(filepath.ToSlash(ch.Rel))
+		nameWidth, relWidth = max(nameWidth, len([]rune(names[i]))), max(relWidth, len([]rune(rels[i])))
+		if example == "root" && ch.Name != "root" {
+			example = names[i]
 		}
 	}
-	var b strings.Builder
-	if name == "" {
-		b.WriteString("coop tasks add: this umbrella project has multiple task queues; use --project root for repo-wide work or --project <subproject> for project-local work")
-	} else if dupes := ambiguousTaskProjects(choices, name); dupes != nil {
-		fmt.Fprintf(&b, "coop tasks add: %q matches %d projects (%s); use the full path",
-			name, len(dupes), strings.Join(dupes, ", "))
-	} else {
-		fmt.Fprintf(&b, "coop tasks add: unknown project %q; choose one with --project <name>", name)
+	refusal := &ui.UsageError{}
+	switch dupes := ambiguousTaskProjects(choices, name); {
+	case name == "":
+		refusal.Headline = fmt.Sprintf("Choose a project for %q", command)
+		refusal.Cause = "This repository has " + ui.Count(len(choices), "task queue") + ". Choose one with --project.\n" +
+			"Inside a subproject's folder, add uses that subproject."
+	case dupes != nil:
+		for i := range dupes {
+			dupes[i] = ui.SafeInline(dupes[i])
+		}
+		refusal.Headline = fmt.Sprintf("Project %q matches %d projects in %q", name, len(dupes), command)
+		refusal.Cause = "It could be " + ui.List(dupes, "or") + ". Use the full path."
+		example = dupes[0]
+	default:
+		refusal.Headline = fmt.Sprintf("Unknown project %q for %q", name, command)
+		refusal.Cause = "Choose one of this repository's task queues."
 	}
-	b.WriteString("\n\nusage:\n")
-	b.WriteString("  coop tasks add --project <project> \"<title>\" [--context <text> --acceptance <text> --approach <text> --subtask <text>...]\n\n")
-	b.WriteString("projects:\n")
-	for _, ch := range choices {
-		rel := filepath.ToSlash(ch.Rel)
+	for i, ch := range choices {
+		row := padRight(names[i], nameWidth) + "  " + rels[i]
 		if ch.Note != "" {
-			fmt.Fprintf(&b, "  %-*s  %-*s  %s", nameWidth, ch.Name, relWidth, rel, ch.Note)
-		} else {
-			fmt.Fprintf(&b, "  %-*s  %s", nameWidth, ch.Name, rel)
+			row = padRight(names[i], nameWidth) + "  " + padRight(rels[i], relWidth) + "  " + ch.Note
 		}
-		b.WriteByte('\n')
+		refusal.Choices = append(refusal.Choices, row)
 	}
-	b.WriteString("\nexamples:\n")
-	b.WriteString("  coop tasks add --project root \"Update shared release checklist\"\n")
-	if firstNonRoot != "" {
-		fmt.Fprintf(&b, "\n  coop tasks add --project %s \"Fix auth retry\" \\\n", firstNonRoot)
-		fmt.Fprintf(&b, "    --context %q \\\n", firstNonRoot+" auth retries can loop forever")
-		b.WriteString("    --acceptance \"make check green + retry cap test\" \\\n")
-		b.WriteString("    --approach \"cap retries and surface the final error\" \\\n")
-		b.WriteString("    --subtask \"add retry cap\" \\\n")
-		b.WriteString("    --subtask \"test the failure path\"")
+	refusal.Rows = [][2]string{
+		{"Usage:", command + ` --project <project> "<title>" [<options>]`},
+		{"Example:", command + " --project " + example + ` "Fix login retries"`},
+		{"Help:", ui.HelpCommand(command)},
 	}
-	return errors.New(b.String())
+	return refusal
 }
 
 // taskQueues resolves the task-queue path(s) for a command — the repeated --tasks flags if
@@ -263,11 +260,24 @@ func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, erro
 		}
 		rel = filepath.Clean(rel)
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("tasks path %q is outside the repo", g)
+			return nil, queueOutsideRepo(g, len(flags) > 0)
 		}
 		rels = append(rels, rel)
 	}
 	return rels, nil
+}
+
+// queueOutsideRepo refuses a task queue path that leaves the repository. fromFlag says --tasks
+// named it; otherwise COOP_TASKS did, and the person may not remember setting it.
+func queueOutsideRepo(path string, fromFlag bool) error {
+	headline := fmt.Sprintf("Invalid value %q in COOP_TASKS", path)
+	if fromFlag {
+		headline = fmt.Sprintf("Invalid value %q for %q", path, "--tasks")
+	}
+	return &ui.UsageError{
+		Headline: headline,
+		Cause:    "A task queue must be a folder inside this repository, such as .agent/tasks.",
+	}
 }
 
 // CmdTasks drives the folder task queue (.agent/tasks): one folder per task, its state the
@@ -308,8 +318,15 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		rest = append([]string{"add"}, addArgs...)
 	}
 	explicitQueues := len(flags) > 0 || len(cfg.TasksFiles) > 0
+	if projectName != "" && len(flags) > 0 {
+		return 2, ui.ConflictingOptions("--project", "--tasks", "coop tasks add")
+	}
 	if projectName != "" && explicitQueues {
-		return 2, errors.New("coop tasks add: --project cannot be combined with --tasks or COOP_TASKS; choose one queue selector")
+		return 2, &ui.UsageError{
+			Headline: `Cannot use "--project" while COOP_TASKS is set`,
+			Cause:    "COOP_TASKS already chooses the task queue. Unset it, or leave out --project.",
+			Rows:     [][2]string{{"Help:", ui.HelpCommand("coop tasks add")}},
+		}
 	}
 	if len(rest) > 0 && rest[0] == "add" && !explicitQueues {
 		choices, umbrella, err := taskProjectChoices(repo)
@@ -332,7 +349,11 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		}
 	}
 	if projectName != "" {
-		return 2, errors.New("coop tasks add: --project is only for umbrella projects with subprojects in .agent/project.yaml")
+		return 2, &ui.UsageError{
+			Headline: `No subprojects for "--project" in "coop tasks add"`,
+			Cause:    ".agent/project.yaml lists no subprojects, so this repository has one task queue.\nLeave out --project.",
+			Rows:     [][2]string{{"Help:", ui.HelpCommand("coop tasks add")}},
+		}
 	}
 	rels, err := TaskQueues(cfg, repo, flags)
 	if err != nil {
@@ -357,10 +378,16 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		}
 		jsonOutput := false
 		for _, arg := range rest[1:] {
-			if arg != "--json" || jsonOutput {
-				return 2, fmt.Errorf("coop tasks watch: unknown or repeated flag %q (only --json is supported)", arg)
+			switch {
+			case arg == "--json" && jsonOutput:
+				return 2, ui.RepeatedOption(arg, "coop tasks watch")
+			case arg == "--json":
+				jsonOutput = true
+			case strings.HasPrefix(arg, "-"):
+				return 2, unknownOptionErr(arg, "coop tasks watch", []string{"--json"})
+			default:
+				return 2, ui.UnexpectedArgument(arg, "coop tasks watch", "coop tasks watch [--json]")
 			}
-			jsonOutput = true
 		}
 		return TasksWatch(host, repo, rels, jsonOutput)
 	}
@@ -582,7 +609,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		}
 		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
 		if err := ui.DestroyGate("Delete these tasks", removal.yes); err != nil {
-			return 2, cancelledDeletion(err, "No tasks deleted.")
+			return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 		}
 		removed := 0
 		for _, rel := range rels {
@@ -637,7 +664,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 	}
 	rel, err := queueOfTask(repo, rels, id)
 	if err != nil {
-		return 1, err
+		return lookupExit(err), err
 	}
 	return CmdTasksFolder(repo, filepath.Join(repo, rel), rest)
 }
@@ -665,7 +692,7 @@ func FindTaskAcrossQueues(repo string, rels []string, id string) (Item, error) {
 		return FindTask(filepath.Join(repo, rels[0]), id)
 	}
 	if id == "" {
-		return Item{}, errors.New("need a task id (run 'coop tasks' to list)")
+		return Item{}, taskLookupRefusal("Missing task ID", "coop tasks")
 	}
 	hit, err := findTaskAcrossQueuesWith(repo, rels, id, "coop tasks", ReadTaskTree)
 	return hit.task, err
@@ -700,13 +727,22 @@ func findTaskAcrossQueuesWith(repo string, rels []string, id, listCommand string
 	case 1:
 		return pick[0], nil
 	case 0:
-		return queueTask{}, fmt.Errorf("no task matching %q in any of the %d configured queues (run '%s' to list)", id, len(rels), listCommand)
+		return queueTask{}, taskLookupRefusal(fmt.Sprintf("No task matching %q in %s", id, ui.Count(len(rels), "task queue")), listCommand)
 	}
-	where := make([]string, len(pick))
-	for i, h := range pick {
-		where[i] = h.rel + ": " + h.task.ID
+	// Each match names its queue, since the same ID can sit in two of them. Paths and folder names
+	// are escaped: a folder name can come from a box.
+	width := 0
+	for _, h := range pick {
+		width = max(width, len([]rune(ui.SafeInline(h.rel))))
 	}
-	return queueTask{}, fmt.Errorf("%q matches %d tasks across the queues (%s) — pass a single --tasks <path> to pick one", id, len(pick), strings.Join(where, ", "))
+	refusal := &ui.UsageError{
+		Headline: fmt.Sprintf("%d tasks match %q across the task queues", len(pick), id),
+		Rows:     [][2]string{{"", "Pick the queue with --tasks <path>."}},
+	}
+	for _, h := range pick {
+		refusal.Choices = append(refusal.Choices, padRight(ui.SafeInline(h.rel), width)+"  "+ui.SafeInline(h.task.ID))
+	}
+	return queueTask{}, refusal
 }
 
 // tasksLintAll rolls `coop tasks lint` up across the configured queues, each under its banner.
