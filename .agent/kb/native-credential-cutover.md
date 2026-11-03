@@ -47,7 +47,23 @@ inode-aware `authorityPathsOverlap`. Missing credential descendants still overla
 live/paused/restarting/dead binds refuse: they can retain a deleted alias's inode. Unknown
 paths, permissions and symlink loops are never inferred harmless or dropped from inventory.
 
+On Docker Desktop and OrbStack the daemon's bind sources are VM paths. `hostlessKernelMount`
+skips only the exact roots `/sys`, `/sys/fs/cgroup` and `/sys/fs/bpf`, and only on a host that has
+no `/sys`: a path below a root can reach another filesystem (bpffs links, new mount points).
+`/proc` stays refused even as a root: through `/proc/<pid>/root` a container allowed to inspect the
+VM's processes (netdata adds the ptrace capability) reaches every filesystem the VM sees, its view
+of host folders included. Trees of ordinary files (`/lib/modules`, `/var/lib/docker`, `/run` and
+its Docker socket) stay refused when a running container binds them: they can hold links or
+mounts, and a named volume bound to a host folder is mounted under `/var/lib/docker`. A stopped
+container's missing source under the VM's view of host folders (OrbStack's documented `/mnt/mac`,
+Docker Desktop's `/host_mnt`) is judged as the host path it names (`hostShareSource`), without
+asking which runtime runs: on a host without that view, the mapping can only refuse more. A
+running one with such a source still refuses.
+
 ## Changelog
+- 2026-11-03 — a stopped container's `/mnt/mac/...` or `/host_mnt/...` source is mapped to the
+  host path before the overlap check; it used to pass as an unrelated missing path. `/proc` was
+  considered and kept refused: its `/proc/<pid>/root` links reach the VM's view of host folders.
 - 2026-10-20 — made writer-lock fixture modes explicit, including same-inode normalization,
   refusal without chmod and replacement custody; verified under umask 077 and 022.
 - 2026-10-18 — canonical custody is read plainly under a plain flock (task

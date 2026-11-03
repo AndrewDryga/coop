@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -276,7 +277,7 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 					continue
 				}
 				if source.Stopped {
-					resolved, err = resolveAuthorityPath(source.Source)
+					resolved, err = resolveAuthorityPath(hostShareSource(source.Source))
 				}
 			}
 			if err != nil {
@@ -300,8 +301,11 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 // bind /sys itself) name VM paths that do not exist on the Mac. Docker reports a bind source as the
 // cleaned path it was given, and only exact mount roots are accepted: below a root, bpffs and
 // cgroupfs can hold links or new mount points. Pointing one of these roots at a host folder takes
-// root inside the VM, which this inventory never guarded against. Every other source missing on the
-// host, including the VM's own view of host folders, stays unresolved and keeps failing closed.
+// root inside the VM, which this inventory never guarded against. /proc is deliberately not one of
+// them: through /proc/<pid>/root, a container allowed to inspect the VM's processes (monitors such as
+// netdata add the ptrace capability) reaches every filesystem the VM sees, its view of the Mac's
+// folders included. Every other source a running container binds that the host cannot resolve keeps
+// failing closed.
 func hostlessKernelMount(source string) bool {
 	switch source {
 	case "/sys", "/sys/fs/cgroup", "/sys/fs/bpf":
@@ -314,6 +318,29 @@ func hostlessKernelMount(source string) bool {
 
 // hostLstat is a variable so tests can model a host that has its own /sys.
 var hostLstat = os.Lstat
+
+// vmHostShares are the folders through which a runtime's Linux VM shows the host's own files under
+// another name: OrbStack documents /mnt/mac/Users/... as the Mac's /Users/..., and Docker Desktop
+// mounts its shared folders under /host_mnt, which its own mount errors name. A stopped container
+// binding /mnt/mac/<path> mounts the host's /<path> again when it starts.
+var vmHostShares = []string{"/host_mnt", "/mnt/mac"}
+
+// hostShareSource is a stopped container's missing bind source as the host names it. Under a VM's
+// view of host folders that is the host path, so a sign-in folder bound that way overlaps like one
+// bound directly. Other sources are returned unchanged and are judged by their own nearest existing
+// ancestor. Running containers never get here: their unresolved sources fail closed.
+func hostShareSource(source string) string {
+	clean := filepath.Clean(source)
+	for _, share := range vmHostShares {
+		if clean == share {
+			return "/"
+		}
+		if rest, ok := strings.CutPrefix(clean, share+"/"); ok {
+			return "/" + rest
+		}
+	}
+	return source
+}
 
 // unresolvedMountError names the mount, so the person can find the container that holds it. The
 // path is quoted: a container's bind source can contain line breaks.

@@ -84,6 +84,40 @@ func TestLegacyMountPathsResolveOnlySafeStoppedMissingTails(t *testing.T) {
 	}
 }
 
+// OrbStack shows the Mac's /Users/me at /mnt/mac/Users/me and Docker Desktop at /host_mnt/Users/me.
+// Neither VM path exists on the host, so a stopped container binding the sign-in folder that way was
+// judged as an unrelated missing path and passed, though `docker start` would mount the folder
+// again. Such a source is judged as the host path it names; an unrelated missing source still passes,
+// and a running one still fails closed.
+func TestLegacyMountPathsMapTheVMViewOfHostFolders(t *testing.T) {
+	home, unrelated := t.TempDir(), t.TempDir()
+	for _, test := range []struct {
+		name, source, status string
+		allowed              bool
+	}{
+		{"Docker Desktop view of the sign-in folder", "/host_mnt" + home, "exited", false},
+		{"OrbStack view of the sign-in folder", "/mnt/mac" + home, "created", false},
+		{"Docker Desktop view of a removed descendant", "/host_mnt" + filepath.Join(home, "removed"), "exited", false},
+		{"OrbStack view of an ancestor", "/mnt/mac" + filepath.Dir(home), "exited", false},
+		{"OrbStack view of the whole host", "/mnt/mac", "exited", false},
+		{"Docker Desktop view of the whole host", "/host_mnt", "created", false},
+		{"unclean OrbStack view", "/mnt/mac/." + home, "exited", false},
+		{"Docker Desktop view of an unrelated removed folder", "/host_mnt" + filepath.Join(unrelated, "removed"), "exited", true},
+		{"OrbStack view of an unrelated folder", "/mnt/mac" + unrelated, "created", true},
+		{"unrelated missing VM path", "/mnt/coop-test-missing" + home, "exited", true},
+		{"name that only starts like the OrbStack view", "/mnt/macintosh" + home, "exited", true},
+		{"running OrbStack view of an unrelated folder", "/mnt/mac" + unrelated, "running", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt := legacyMountRuntime(t, test.source, test.status)
+			err := checkLegacyMountPaths(t.Context(), rt, false, home)
+			if (err == nil) != test.allowed {
+				t.Fatalf("allowed=%v, want %v: %v", err == nil, test.allowed, err)
+			}
+		})
+	}
+}
+
 func TestLegacyMountPathsRefuseInaccessibleAncestor(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can traverse mode000 directories")
