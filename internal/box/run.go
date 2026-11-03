@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -470,10 +471,40 @@ func ctxStep(ctx context.Context, step string) error {
 	return nil
 }
 
+// LaunchRefused is a launch that stopped before the runtime was asked to start the box: a host
+// check refused it or its setup failed, so no agent ran. A retry repeats the same host setup with
+// nothing changed in between, so a caller that retries attempts (the loop) stops at the first one
+// and shows the cause instead. A canceled setup is never one, and neither is a container runtime
+// that did not answer: those keep their own errors.
+type LaunchRefused struct{ Err error }
+
+func (e *LaunchRefused) Error() string { return e.Err.Error() }
+func (e *LaunchRefused) Unwrap() error { return e.Err }
+
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when
-// the container merely exited non-zero); a non-nil error means it never started.
+// the container merely exited non-zero). An error from before the runtime launch
+// boundary (OnRuntimeLaunch) is a *LaunchRefused, except a cancellation or a
+// runtime.ErrDaemonUnavailable: a daemon that did not answer may answer the next
+// attempt, so a caller keeps retrying it.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
+	var launched atomic.Bool
+	onLaunch := spec.OnRuntimeLaunch
+	spec.OnRuntimeLaunch = func() {
+		launched.Store(true)
+		if onLaunch != nil {
+			onLaunch()
+		}
+	}
+	code, err := runChecked(cfg, rt, spec)
+	if err != nil && !launched.Load() && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		!errors.Is(err, runtime.ErrDaemonUnavailable) {
+		err = &LaunchRefused{Err: err}
+	}
+	return code, err
+}
+
+func runChecked(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	if !boxAgentIdentity().valid() {
 		return -1, fmt.Errorf("this Linux user ID cannot run Coop boxes: the box user must be non-root and distinct from the gateway user 65532")
 	}

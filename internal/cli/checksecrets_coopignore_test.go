@@ -241,6 +241,7 @@ func TestEveryCommandDrawsAnUnreadableCoopignoreTheSameWay(t *testing.T) {
 		draw       func() error
 	}{
 		{"a launch", "Then try again.", func() error { return wrapped }},
+		{"a loop attempt", "Then try again.", func() error { return &box.LaunchRefused{Err: wrapped} }},
 		{"coop build", "Then run coop build again.", func() error { return buildFailure("Could not build the box", wrapped, "docker", "coop build") }},
 		{"coop update --box-only", "Then run coop update --box-only again.", func() error { return updateBoxFailure(wrapped, "docker", true) }},
 		{"coop up", "Then run coop up again.", func() error {

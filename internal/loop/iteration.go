@@ -89,11 +89,12 @@ type iterationRecovery struct {
 }
 
 // stopsTheRun reports an error no later attempt gets past, so the run stops and returns it: a
-// completion window that could not be set up, or a .coopignore the secret decider cannot read. A box
-// can plant that file mid-run, every later launch refuses it the same way, and retrying would only
-// bury its name under "Task attempt failed".
+// completion window that could not be set up, or a launch refused before the agent started — a
+// credential, mount, network or image check, or a .coopignore the secret decider cannot read (a box
+// can plant that file mid-run). Every later launch is refused the same way, and retrying would only
+// bury the cause under "Task attempt failed".
 func stopsTheRun(err error) bool {
-	return errors.Is(err, tasks.ErrCompletionWindowSetup) || errors.As(err, new(box.UnreadableCoopignore))
+	return errors.Is(err, tasks.ErrCompletionWindowSetup) || errors.As(err, new(*box.LaunchRefused))
 }
 
 func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, forkName string, cmd []string, streaming, agentCommand bool, hosts []string, windowMode completionWindowMode, reviewSubjects []string, pendingReview *tasks.PendingReviewPlan, repoReadOnly bool, sink io.Writer, peers []agents.Target, activity, assignedTask string, taskTools box.TaskToolServer, recovery iterationRecovery) (code int, output string, res *iterResult, classification iterationClassification, windows *tasks.CompletionWindowSet, err error) {

@@ -4,7 +4,7 @@ description: loop output groups startup and environment work around dim task ban
 scope: cli-output
 sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
-updated: 2026-09-14
+updated: 2026-11-03
 ---
 
 # Center loop output on the task and the actual attempt
@@ -52,6 +52,12 @@ updated: 2026-09-14
 - Give reviews compact thin-rule stage/result banners, with their own reviewer and affected
   work. A valid review or verification reopen continues automatically within the shared round
   budget; only a real stop, cap, ownership boundary or error justifies a stopping remedy.
+- A failed task or review attempt names its cause in one line: the first line of the error that
+  ended it, or the status its process exited with. The stop names the last cause, and a task's
+  log.md records it once. A launch refused before the agent started (`box.LaunchRefused`) would
+  only repeat the same host setup on a retry, so the run stops at the first one and returns the
+  refusal for the CLI to print; never retry it under a bare "Task attempt failed". A container
+  runtime that did not answer (`runtime.ErrDaemonUnavailable`) is no refusal: it keeps retrying.
 - Keep quota fallback, missing-commit repair and busy-queue explanations to one sentence each.
   Human answer recommendations use `coop tasks decisions -i`, including sibling task/help
   surfaces; listing-only documentation and noninteractive reads need not become interactive.
@@ -80,6 +86,15 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-11-03 — a manual `coop loop claude:haiku` retried a launch refused before the agent started
+  ("legacy writer mount cannot be resolved") five times, printing only "Task attempt failed", and
+  left the task's log.md untouched. box.Run now marks an error from before its runtime launch
+  boundary as `box.LaunchRefused` (never a cancellation or a daemon that did not answer, which may
+  answer the next attempt), and the loop stops on it. Swept every
+  retry and stop: work and review retries and the work stop now name the cause; preflight,
+  between, signoff and verify stop at the first refusal through `stopsTheRun`. Pinned by
+  TestFailedTaskAttemptsNameTheirCause, TestALaunchRefusalStopsTheRunAtItsFirstAttempt,
+  TestReviewAttemptsNameTheirCause and TestRunRefusesOnlyBeforeTheRuntimeLaunch.
 - 2026-09-14 — a real Emisar Frontier recovery printed and ran the same service preparation twice
   when the first credential was already rate limited. Swept work and review retries: both now reuse
   the stack only across a clean identical HEAD, while changed/dirty work remains a fresh setup.

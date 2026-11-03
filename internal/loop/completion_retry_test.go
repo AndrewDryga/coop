@@ -235,7 +235,8 @@ func TestAnUnreadableCoopignoreStopsTheRunAtItsFirstLaunch(t *testing.T) {
 			attempts := 0
 			c.boxRun = func(box.RunSpec) (int, error) {
 				attempts++
-				return -1, fmt.Errorf("prepare the box: %w", refusal) // as box.Run refuses before any launch
+				// As box.Run refuses before any launch.
+				return -1, &box.LaunchRefused{Err: fmt.Errorf("prepare the box: %w", refusal)}
 			}
 			var code int
 			var runErr error

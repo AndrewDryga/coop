@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -170,6 +171,17 @@ func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
 	}
 	if got := loopContinueCommand(agents.Target{}, false, "", nil); got != "coop loop" {
 		t.Fatalf("default continuation = %q", got)
+	}
+}
+
+// The loop stops at a launch refused before the agent started and returns the refusal, so the person
+// reads its cause, the same line `coop claude` prints for it, and the run exits 1.
+func TestALoopLaunchRefusalPrintsItsCause(t *testing.T) {
+	refusal := errors.Join(&box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")})
+	var code int
+	out := captureStderr(t, func() { code = reportExit(1, refusal) })
+	if out != "✗ legacy writer mount cannot be resolved\n" || code != 1 {
+		t.Fatalf("refused loop = exit %d, %q", code, out)
 	}
 }
 

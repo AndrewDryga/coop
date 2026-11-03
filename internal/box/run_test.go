@@ -90,6 +90,63 @@ func TestRunRepoReadOnly(t *testing.T) {
 	}
 }
 
+// Only a launch that stopped before the runtime was asked to start the box is a LaunchRefused: the
+// loop stops at the first one, since nothing ran and the same launch is refused again. A runtime
+// that fails once the launch began, a daemon that did not answer, and a setup the caller canceled
+// keep their own errors, so the loop retries them.
+func TestRunRefusesOnlyBeforeTheRuntimeLaunch(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+	launch := func(t *testing.T, spec RunSpec, rt runtime.Runtime, atLaunch func()) (int, error) {
+		t.Helper()
+		spec.Image, spec.Repo, spec.Workdir, spec.Cmd, spec.Batch, spec.Quiet = "i", t.TempDir(), "/workspace", []string{"true"}, true, true
+		spec.OnRuntimeLaunch = atLaunch
+		return Run(cfg, rt, spec)
+	}
+
+	t.Run("refused setup", func(t *testing.T) {
+		rt := recorderRuntime(t, filepath.Join(t.TempDir(), "runtime-args"))
+		code, err := launch(t, RunSpec{ForkName: "f"}, rt, func() { t.Error("a refused launch reached the runtime") })
+		var refused *LaunchRefused
+		if code != -1 || !errors.As(err, &refused) || err.Error() != "fork box requires both name and scoped owner" {
+			t.Fatalf("Run = (%d, %v), want the refusal unchanged as a LaunchRefused", code, err)
+		}
+	})
+	t.Run("runtime failure after launch", func(t *testing.T) {
+		rt := recorderRuntime(t, filepath.Join(t.TempDir(), "runtime-args"))
+		launches := 0
+		// The runtime disappears at the boundary, so starting the box itself fails.
+		code, err := launch(t, RunSpec{}, rt, func() {
+			launches++
+			if err := os.Remove(rt.Name); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if code != -1 || launches != 1 || !errors.Is(err, os.ErrNotExist) || errors.As(err, new(*LaunchRefused)) {
+			t.Fatalf("Run = (%d, %v) after %d launches, want the runtime's own start failure", code, err, launches)
+		}
+	})
+	t.Run("canceled setup", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rt := recorderRuntime(t, filepath.Join(t.TempDir(), "runtime-args"))
+		code, err := launch(t, RunSpec{Ctx: ctx}, rt, func() { t.Error("a canceled launch reached the runtime") })
+		if code != -1 || !errors.Is(err, context.Canceled) || errors.As(err, new(*LaunchRefused)) {
+			t.Fatalf("Run = (%d, %v), want the cancellation, not a refusal", code, err)
+		}
+	})
+	t.Run("daemon not answering", func(t *testing.T) {
+		// A Docker client whose daemon does not answer: every `docker info` fails.
+		shim := filepath.Join(t.TempDir(), "docker")
+		if err := os.WriteFile(shim, []byte("#!/bin/sh\n[ \"$1\" = info ] && exit 1\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code, err := launch(t, RunSpec{}, runtime.Runtime{Name: shim}, func() { t.Error("a launch reached a daemon that did not answer") })
+		if code != -1 || !errors.Is(err, runtime.ErrDaemonUnavailable) || errors.As(err, new(*LaunchRefused)) {
+			t.Fatalf("Run = (%d, %v), want the unavailable daemon, not a refusal", code, err)
+		}
+	})
+}
+
 func TestLoopRefusesUnsafeComposeBeforeAgentLaunch(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {

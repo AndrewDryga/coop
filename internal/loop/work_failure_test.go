@@ -2,6 +2,7 @@ package loop
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -91,6 +92,137 @@ func TestCustomWorkerFailuresKeepLoopExitContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A failed attempt says why in one line: the first line of the error that ended it, or the status
+// its process exited with. The stop that ends the run names the last cause and records it once in
+// the task's log.md, where whoever resumes the task finds it. A daemon that did not answer before
+// the launch is not a refusal (box.Run does not mark it one), so it is retried like any failure.
+func TestFailedTaskAttemptsNameTheirCause(t *testing.T) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	signal.Stop(signals)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("TERM", "dumb")
+	for _, tc := range []struct {
+		name, loopYAML, cause string
+		exit                  int
+		err                   error
+		beforeLaunch          bool // the box returns before its runtime launch boundary
+	}{
+		{name: "agent exit status", cause: "Claude Code exited with status 1", exit: 1},
+		{name: "work command exit status", loopYAML: "mcp: false\nwork:\n  command: [make, loop-iter]\n", cause: "make exited with status 2", exit: 2},
+		{name: "error after launch", cause: "docker: Error response from daemon: Conflict.", exit: -1,
+			err: errors.New("docker: Error response from daemon: Conflict.\nSee 'docker run --help'.")},
+		{name: "daemon not answering before launch", cause: "Docker is unavailable", exit: -1,
+			err: runtime.ErrDaemonUnavailable, beforeLaunch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			const id = "create-hello"
+			root := filepath.Join(repo, tasksRoot)
+			writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Create hello.txt\n- [ ] Write it\n")
+			if tc.loopYAML != "" {
+				writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), tc.loopYAML)
+			}
+			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+			attempts := 0
+			var code int
+			var runErr error
+			// Captured outside the bubble: the capture's pipe reader would stop virtual time.
+			output := captureStderr(t, func() {
+				synctest.Test(t, func(t *testing.T) {
+					c.boxRun = func(spec box.RunSpec) (int, error) {
+						if attempts++; attempts > maxLoopFailures {
+							t.Fatalf("unexpected attempt %d", attempts)
+						}
+						if spec.OnRuntimeLaunch != nil && !tc.beforeLaunch {
+							spec.OnRuntimeLaunch()
+						}
+						return tc.exit, tc.err
+					}
+					code, runErr = c.Run(RunSpec{
+						Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+						Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}}),
+					})
+				})
+			})
+			if code != 1 || !errors.Is(runErr, ui.ErrReported) || attempts != maxLoopFailures {
+				t.Fatalf("run = (%d, %v) after %d attempts, want exit 1 after %d\n%s", code, runErr, attempts, maxLoopFailures, output)
+			}
+			for attempt := 2; attempt <= maxLoopFailures; attempt++ {
+				retry := fmt.Sprintf("\n⚠ Task attempt failed\n\n      %s\n      Retrying in 10 seconds · attempt %d of %d.\n", tc.cause, attempt, maxLoopFailures)
+				if !strings.Contains(output, retry) {
+					t.Errorf("attempt %d does not say why it failed; want\n%s\ngot\n%s", attempt-1, retry, output)
+				}
+			}
+			stop := fmt.Sprintf("\n✗ Stopped after %d failed attempts\n\n      Last attempt: %s\n      Create hello.txt did not finish.\n\n  Task: coop tasks path %s\n", maxLoopFailures, tc.cause, id)
+			if !strings.Contains(output, stop) {
+				t.Errorf("the stop does not name the last cause; want\n%s\ngot\n%s", stop, output)
+			}
+			current, ok, err := tasks.CurrentTask(root, id)
+			if err != nil || !ok || current.State != stateInProgress {
+				t.Fatalf("the stop lost the actionable task: %+v, %v, %v", current, ok, err)
+			}
+			log, err := os.ReadFile(filepath.Join(current.Dir, "log.md"))
+			if want := fmt.Sprintf("\n- loop stopped after %d failed attempts; last attempt: %s\n", maxLoopFailures, tc.cause); err != nil || string(log) != want {
+				t.Errorf("log.md = %q, %v; want %q", log, err, want)
+			}
+		})
+	}
+}
+
+// A launch refused before the agent starts is refused the same way on every retry: the run stops at
+// the first one and returns the refusal itself, which the CLI prints, and the task's log.md records
+// it. Nothing ran in the box, so no completion window is left for the next run to recover.
+func TestALaunchRefusalStopsTheRunAtItsFirstAttempt(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("TERM", "dumb")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	const id = "create-hello"
+	root := filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Create hello.txt\n- [ ] Write it\n")
+	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+	refusal := &box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")}
+	attempts := 0
+	c.boxRun = func(box.RunSpec) (int, error) {
+		attempts++
+		return -1, refusal // as box.Run refuses before the runtime launch
+	}
+	var code int
+	var runErr error
+	output := captureStderr(t, func() {
+		code, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+			Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}})})
+	})
+	if code != 1 || !errors.Is(runErr, refusal) || runErr.Error() != refusal.Error() || attempts != 1 {
+		t.Fatalf("run = (%d, %v) after %d attempts, want exit 1 with the refusal at the first\n%s", code, runErr, attempts, output)
+	}
+	if strings.Contains(output, "Task attempt failed") || strings.Contains(output, "Stopped after") {
+		t.Errorf("a refused launch was retried:\n%s", output)
+	}
+	current, ok, err := tasks.CurrentTask(root, id)
+	if err != nil || !ok || current.State != stateInProgress {
+		t.Fatalf("the stop lost the actionable task: %+v, %v, %v", current, ok, err)
+	}
+	log, err := os.ReadFile(filepath.Join(current.Dir, "log.md"))
+	if want := "\n- loop stopped before the agent started: legacy writer mount cannot be resolved\n"; err != nil || string(log) != want {
+		t.Errorf("log.md = %q, %v; want %q", log, err, want)
+	}
+	if index, err := tasks.ReadCompletionWindowIndex(root); err != nil || len(index.Windows) != 0 {
+		t.Errorf("the refused launch left completion windows %v (%v)", index.Windows, err)
 	}
 }
 

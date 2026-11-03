@@ -639,6 +639,51 @@ func silenceDetail(c iterationClassification) string {
 	return "no provider activity"
 }
 
+// attemptSubject names what an attempt ran, for its failure line: the agent's product name, or the
+// program a custom work.command starts.
+func attemptSubject(agent string, custom []string) string {
+	if len(custom) > 0 {
+		return cleanDiagnosticLine(filepath.Base(custom[0]))
+	}
+	if ag, ok := agents.Get(agent); ok {
+		return ag.DisplayName()
+	}
+	return cleanDiagnosticLine(agent)
+}
+
+// attemptCause says in one line why an attempt failed: the first line of the error that ended it,
+// or else the status its process exited with. The process's own output is already above it.
+func attemptCause(subject string, code int, err error) string {
+	if err != nil {
+		for _, line := range strings.Split(err.Error(), "\n") {
+			if cause := cleanDiagnosticLine(line); cause != "" {
+				return cause
+			}
+		}
+	}
+	switch {
+	case code >= 125 && code <= 127:
+		// The container runtime's own statuses, which the main process can return too: claim neither.
+		return fmt.Sprintf("the container runtime returned status %d", code)
+	case code < 0:
+		return subject + " ended without an exit status"
+	}
+	return fmt.Sprintf("%s exited with status %d", subject, code)
+}
+
+// noteTaskStop records in the task's log.md why the loop stopped working it, so whoever resumes the
+// task finds the cause beside the work rather than only in a terminal that may be gone. A log that
+// cannot be written only warns: the stop and its cause are on the terminal either way.
+func noteTaskStop(task tasks.QueuedTask, note string) {
+	current, ok, err := tasks.CurrentTask(task.Root, task.Item.ID)
+	if err == nil && ok {
+		err = tasks.AppendTaskLogStrict(current.Dir, note)
+	}
+	if err != nil {
+		ui.Warn("Could not add why the loop stopped to the task's log.md: %v", err)
+	}
+}
+
 // capitalize upper-cases the first rune of a sentence fragment, so a detail can open a line.
 func capitalize(s string) string {
 	if s == "" {

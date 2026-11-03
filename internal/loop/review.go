@@ -278,12 +278,14 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 		case actRetry:
 			totalRetries++
 			ui.Alert("Review attempt failed",
-				fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
+				wrappedLoopText(attemptCause(attemptSubject(agent, nil), code, runErr), 6)+"\n"+
+					fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
 			if !ladder.SleepOrWake(10*time.Second, wake) {
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actStop:
-			return last, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)", fails)
+			return last, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)\nLast attempt: %s",
+				fails, attemptCause(attemptSubject(agent, nil), code, runErr))
 		case actAuthStop:
 			// Same rotation as the work stage: without it a between-task audit would hard-stop the
 			// run on the very credential the work stage just routed around.

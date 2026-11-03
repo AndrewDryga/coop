@@ -19,6 +19,11 @@
   The listing marks the default account once, and `coop models` lists Claude's Fable family as
   `fable`, like its other aliases.
 
+- **See why a loop attempt failed.** Each failed task or review attempt now shows its cause, and
+  the final stop names the last one and records it in the task's log.md. When Coop refuses to
+  start the agent at all, for example over a credential, mount, network approval or image
+  problem, the loop now stops at the first attempt and shows why instead of retrying five times.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

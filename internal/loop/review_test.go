@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -73,6 +74,50 @@ func TestReadOnlyReviewFallbackReusesPreparedServices(t *testing.T) {
 		!launches[1].ReuseServices || !launches[1].Quiet || launches[1].LoopPresentation {
 		t.Fatalf("review fallback launches = %+v, want narrated setup once then prepared-service reuse", launches)
 	}
+}
+
+// A failed review attempt says why, as a task attempt does, and the stage's stop carries the last
+// cause to the report that ends the review. A launch refused before the reviewer starts stops at once.
+func TestReviewAttemptsNameTheirCause(t *testing.T) {
+	repo := t.TempDir()
+	task := taskForLease(t, repo, stateDone, "task-a")
+	command := func(string, string, string, bool) ([]string, bool, bool) {
+		return []string{"review-fixture"}, false, false
+	}
+	review := func(t *testing.T, boxRun func(box.RunSpec) (int, error)) (string, error) {
+		c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", Host{})
+		c.net = newNetworkLog()
+		c.boxRun = boxRun
+		var err error
+		// Captured outside the bubble: the capture's pipe reader would stop virtual time.
+		output := captureStderr(t, func() {
+			synctest.Test(t, func(t *testing.T) {
+				_, err = c.runReview(context.Background(), repo, "image", ladder.NewRotation([]agents.Target{{Provider: "claude"}}),
+					"", "review", "signoff", command, []string{repo}, []string{task.ID}, nil, loopcfg.ReviewWritesTasks, io.Discard, nil, nil, nil)
+			})
+		})
+		return output, err
+	}
+
+	t.Run("failed attempts", func(t *testing.T) {
+		launches := 0
+		output, err := review(t, func(box.RunSpec) (int, error) { launches++; return 1, nil })
+		retry := "\n⚠ Review attempt failed\n\n      Claude Code exited with status 1\n      Retrying in 10 seconds · attempt 2 of 5.\n"
+		if launches != maxLoopFailures || !strings.Contains(output, retry) {
+			t.Errorf("launches = %d, want %d, each failure naming its cause; want\n%s\ngot\n%s", launches, maxLoopFailures, retry, output)
+		}
+		if err == nil || !strings.HasSuffix(err.Error(), "\nLast attempt: Claude Code exited with status 1") {
+			t.Errorf("review stop = %v, want it to name the last cause", err)
+		}
+	})
+	t.Run("refused launch", func(t *testing.T) {
+		refusal := &box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")}
+		launches := 0
+		output, err := review(t, func(box.RunSpec) (int, error) { launches++; return -1, refusal })
+		if launches != 1 || !errors.Is(err, refusal) || strings.Contains(output, "Review attempt failed") {
+			t.Errorf("refused review = %v after %d launches, want the refusal at the first\n%s", err, launches, output)
+		}
+	})
 }
 
 func TestWorkCredentialFallbackReusesServicesOnlyFromCleanUnchangedTree(t *testing.T) {

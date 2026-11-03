@@ -871,7 +871,9 @@ reviewAgain:
 				preparedServices = serviceFingerprint
 			}
 			if stopsTheRun(runErr) {
-				// Nothing ran in the box, so its completion window has nothing to audit.
+				// Nothing ran in the box, so its completion window has nothing to audit. The CLI
+				// prints the refusal itself, unless the launch already did.
+				noteTaskStop(assigned, "loop stopped before the agent started: "+attemptCause(attemptSubject(agent, custom), code, runErr))
 				return 1, errors.Join(runErr, lease.Release(), windows.Close())
 			}
 			// A normal provider exit with its task still in progress is usually a missed or
@@ -1547,7 +1549,8 @@ reviewAgain:
 				}
 			case actRetry:
 				ui.Alert("Task attempt failed",
-					fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
+					wrappedLoopText(attemptCause(attemptSubject(agent, custom), code, runErr), 6)+"\n"+
+						fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
 				ladder.SleepOrWake(10*time.Second, wake)
 			case actStop:
 				if waits > maxLimitWaits {
@@ -1556,8 +1559,10 @@ reviewAgain:
 						[2]string{"Continue:", continueCmd})
 					return 1, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
 				}
+				cause := attemptCause(attemptSubject(agent, custom), code, runErr)
+				noteTaskStop(assigned, fmt.Sprintf("loop stopped after %d failed attempts; last attempt: %s", fails, cause))
 				ui.Failure(fmt.Sprintf("Stopped after %d failed attempts", fails),
-					fmt.Sprintf("%s did not finish.", active),
+					wrappedLoopText("Last attempt: "+cause, 6)+"\n"+fmt.Sprintf("%s did not finish.", active),
 					[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
 				// The worker's raw status belongs to attempt telemetry, not the loop's
 				// public exit contract (2 is usage; 3 means only blocked work remains).
