@@ -548,7 +548,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	assertForkProcessContract(t, suite, firstForkRunTrace(trace), ws, provider, account, taskToolsArgv(provider, forkLoopArgv), model, effort)
 
 	result, trace = suite.run(t, []string{"fork", "merge", name}, processScenario(provider, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 1 || len(trace) != 0 || !pathExists(ws) || !pathExists(canonicalTask) {
+	if result.Err != nil || result.ExitCode != 2 || len(trace) != 0 || !pathExists(ws) || !pathExists(canonicalTask) {
 		t.Fatalf("unconfirmed merge = exit %d err %v trace %d fork %v\n%s", result.ExitCode, result.Err, len(trace), pathExists(ws), result.Stderr)
 	}
 
