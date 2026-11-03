@@ -203,6 +203,9 @@ func TestHostlessKernelMountNeedsAHostWithoutSys(t *testing.T) {
 		{"unreadable /sys", func(string) (os.FileInfo, error) { return nil, os.ErrPermission }, "/sys/fs/cgroup", false},
 		{"below a root", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/sys/fs/bpf/link", false},
 		{"trailing slash", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/sys/fs/bpf/", false},
+		// /proc/<pid>/root inside a bound procfs reaches every filesystem the VM sees, so even its
+		// root never counts as a kernel-only bind.
+		{"procfs root", func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }, "/proc", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			hostLstat = test.lstat
