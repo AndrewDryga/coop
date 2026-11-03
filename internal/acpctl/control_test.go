@@ -1590,16 +1590,40 @@ func TestACPControlPresetSuppressesLimitChunk(t *testing.T) {
 	}
 }
 
-// TestACPServeNotice: the published-port URLs are announced once, on a session/new result (which
-// carries sessionId + configOptions) — not on a ConfigOptionUpdate, not twice, and not without URLs.
+// TestACPServeNotice: the published ports are announced once, on a session/new result (which carries
+// sessionId + configOptions) — as one framed agent message in that session, not on a
+// ConfigOptionUpdate, not twice, and not without ports.
 func TestACPServeNotice(t *testing.T) {
 	c := newTestControl(t)
-	c.serveURLs = []string{"box :5173 → http://localhost:24187"}
+	c.serve = []ServePort{{Box: 5173, Host: 24187}}
 
 	result := []byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"S","configOptions":[{"id":"model"}]}}` + "\n")
 	n1 := c.serveNoticeFor(result)
-	if n1 == nil || !strings.Contains(string(n1), "localhost:24187") || !strings.Contains(string(n1), "session/update") {
-		t.Fatalf("expected a serve notice for the new session, got %s", n1)
+	var notice struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				Content       struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+				MessageID string `json:"messageId"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(n1, &notice); err != nil || notice.Method != "session/update" || notice.Params.SessionID != "S" ||
+		notice.Params.Update.SessionUpdate != "agent_message_chunk" || notice.Params.Update.Content.Type != "text" ||
+		!strings.HasPrefix(notice.Params.Update.MessageID, "coop-serve-") {
+		t.Fatalf("expected a serve notice for the new session, got %s (decode error: %v)", n1, err)
+	}
+	if !bytes.HasSuffix(n1, []byte("\n")) {
+		t.Errorf("the notice must end its line, or the editor waits for the rest of it: %q", n1)
+	}
+	want := "🌐 **Open the box's port in your browser**\n\n- Port 5173 → [localhost:24187](http://localhost:24187)"
+	if got := notice.Params.Update.Content.Text; got != want {
+		t.Errorf("serve notice text:\n got %q\nwant %q", got, want)
 	}
 	if n2 := c.serveNoticeFor(result); n2 != nil {
 		t.Errorf("the serve notice must be one-shot per session, got %s", n2)
@@ -1611,9 +1635,21 @@ func TestACPServeNotice(t *testing.T) {
 		t.Errorf("only a session/new result announces, got %s", n)
 	}
 
-	c.serveURLs = nil
+	c.serve = nil
 	if n := c.serveNoticeFor([]byte(`{"result":{"sessionId":"S3","configOptions":[1]}}` + "\n")); n != nil {
-		t.Errorf("no serve URLs → no notice, got %s", n)
+		t.Errorf("no published ports → no notice, got %s", n)
+	}
+}
+
+// TestServeNoticeText: one Markdown list item per port, so an editor never folds the ports into one
+// paragraph, each with a real link, under a title that agrees with the count.
+func TestServeNoticeText(t *testing.T) {
+	got := serveNoticeText([]ServePort{{Box: 4000, Host: 43659}, {Box: 9091, Host: 28617}})
+	want := "🌐 **Open the box's ports in your browser**\n\n" +
+		"- Port 4000 → [localhost:43659](http://localhost:43659)\n" +
+		"- Port 9091 → [localhost:28617](http://localhost:28617)"
+	if got != want {
+		t.Errorf("serve notice text:\n got %q\nwant %q", got, want)
 	}
 }
 

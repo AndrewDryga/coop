@@ -68,6 +68,10 @@ func normalizeACPSelection(sel Selection) Selection {
 	return sel
 }
 
+// ServePort is one project port the box publishes: Box is what the dev server listens on inside the
+// box, Host the stable localhost port a browser on this machine opens it at.
+type ServePort struct{ Box, Host int }
+
 // Control is coop's control layer over one ACP editor session. It rewrites the toolbar the editor
 // sees (force yolo, default the model to coop's, drop mode/subagent, prepend coop's selectors) and
 // handles their changes by restarting the box on the selected identity. The conversation survives
@@ -121,9 +125,9 @@ type Control struct {
 	heldChunk     map[string][]byte // editor sessionId -> buffered limit/auth notice awaiting the turn's outcome
 	waits         map[string]int    // editor sessionId -> CONSECUTIVE all-limited waits (see maxACPLimitWaits)
 
-	serveURLs []string        // published-port lines to show the editor (e.g. "box :5173 → http://localhost:24187")
-	reported  map[string]bool // editor sessionId -> the serve URLs were already announced in this session
-	notice    string          // one queued Notify text, shown with the next session update
+	serve    []ServePort     // published ports to announce to the editor
+	reported map[string]bool // editor sessionId -> the published ports were already announced in this session
+	notice   string          // one queued Notify text, shown with the next session update
 
 	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
 	// transcript): coop retains a budgeted plain-text history per session — it already sees both
@@ -178,7 +182,7 @@ type targetPreference struct {
 // enough for a best-effort carry. The per-session budget is cfg-owned (COOP_ACP_CARRY_TOKENS).
 const historyEntryBytes = 16 << 10
 
-func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, presets, serveURLs []string, host Host) *Control {
+func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, presets []string, serve []ServePort, host Host) *Control {
 	sel = normalizeACPSelection(sel)
 	if effort == "" {
 		effort = cfg.EffortFor(lead)
@@ -204,7 +208,7 @@ func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, pr
 		resend:         map[string]bool{},
 		heldChunk:      map[string][]byte{},
 		waits:          map[string]int{},
-		serveURLs:      serveURLs,
+		serve:          serve,
 		reported:       map[string]bool{},
 		carryBytes:     cfg.ACPCarryBytes(),
 		history:        map[string]*sessHistory{},
@@ -940,12 +944,12 @@ func (c *Control) childReset() {
 	c.mu.Unlock()
 }
 
-// serveNoticeFor returns a one-shot-per-session message listing the published-port URLs when line is a
-// session/new result (which carries both a sessionId and configOptions), or nil. The URLs are stable,
-// so once per session is enough; a box restart's session/load result is swallowed by replay and never
-// reaches here, so it won't re-announce.
+// serveNoticeFor returns a one-shot-per-session message listing the published ports when line is a
+// session/new result (which carries both a sessionId and configOptions), or nil. The host ports are
+// stable, so once per session is enough; a box restart's session/load result is swallowed by replay
+// and never reaches here, so it won't re-announce.
 func (c *Control) serveNoticeFor(line []byte) []byte {
-	if len(c.serveURLs) == 0 {
+	if len(c.serve) == 0 {
 		return nil
 	}
 	var m struct {
@@ -967,7 +971,7 @@ func (c *Control) serveNoticeFor(line []byte) []byte {
 	c.nextID++
 	n := c.nextID
 	c.mu.Unlock()
-	text := "🌐 coop is publishing this repo's ports:\n" + strings.Join(c.serveURLs, "\n")
+	text := serveNoticeText(c.serve)
 	upd := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "session/update",
@@ -982,6 +986,22 @@ func (c *Control) serveNoticeFor(line []byte) []byte {
 	}
 	b, _ := json.Marshal(upd)
 	return append(b, '\n')
+}
+
+// serveNoticeText is the published-port message: a short title, then one line per port pairing the
+// port the dev server uses in the box with the link that opens it here. Editors render agent text as
+// Markdown, so each port gets its own list item (bare newlines would fold into one paragraph) and
+// each address is a real link instead of text the editor may not detect as one.
+func serveNoticeText(ports []ServePort) string {
+	title := "Open the box's ports in your browser"
+	if len(ports) == 1 {
+		title = "Open the box's port in your browser"
+	}
+	lines := []string{"🌐 **" + title + "**", ""}
+	for _, p := range ports {
+		lines = append(lines, fmt.Sprintf("- Port %d → [localhost:%d](http://localhost:%d)", p.Box, p.Host, p.Host))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a

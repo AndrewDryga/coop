@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // Native credentials use guard-only routing. Startup must retain each available concrete
@@ -234,5 +235,24 @@ func TestACPNetworkScopeIncludesOptionalPresetClosure(t *testing.T) {
 	}
 	if !providers["codex"] || providers["claude"] || providers["gemini"] {
 		t.Fatalf("optional presets did not contribute whole supported closures: %v", providers)
+	}
+}
+
+// Open and filtered boxes both publish the serve ports (a filtered one on its gateway), so the editor
+// announces them at the host ports box.Run binds. A box with networking off publishes nothing, and an
+// announcement would send the user to a link that can never answer.
+func TestEditorServePortsFollowTheNetworkMode(t *testing.T) {
+	const repo = "/work/emisar"
+	want := []acpctl.ServePort{{Box: 4000, Host: project.HostPort(repo, 4000)}, {Box: 9091, Host: project.HostPort(repo, 9091)}}
+	for _, mode := range []egress.Mode{egress.Open, egress.Filtered} {
+		if got := editorServePorts(mode, repo, []int{4000, 9091}); !slices.Equal(got, want) {
+			t.Errorf("%s: announced %v, want %v", mode, got, want)
+		}
+	}
+	if got := editorServePorts(egress.None, repo, []int{4000, 9091}); got != nil {
+		t.Errorf("networking off must announce nothing, got %v", got)
+	}
+	if got := editorServePorts(egress.Open, repo, nil); got != nil {
+		t.Errorf("a project without serve ports must announce nothing, got %v", got)
 	}
 }

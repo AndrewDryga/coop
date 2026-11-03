@@ -569,8 +569,8 @@ serve:
 
 Each box for the repo (`coop acp`, `coop run`) maps these ports to stable host ports based on
 the repo's path. The URL stays the same between launches and differs between projects, so one
-Zed agent definition can serve all of them. In an ACP thread, co:op shows the mapping as
-`🌐 box :5173 → http://localhost:24187`. Terminal runs print it on stderr.
+Zed agent definition can serve all of them. When an ACP thread starts, co:op posts a browser link
+for each port. Terminal runs print the same links on stderr.
 
 - The dev server must bind `0.0.0.0` inside the box (`vite --host`, `next dev -H 0.0.0.0` and so
   on). A server on the container's localhost isn't reachable through the mapping.

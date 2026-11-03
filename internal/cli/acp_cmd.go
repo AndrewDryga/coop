@@ -67,6 +67,21 @@ func acpCommand(cfg *config.Config, tool string) []string {
 	return nil
 }
 
+// editorServePorts lists the .agent/project.yaml serve ports an editor session's boxes publish, for
+// the editor to announce once per thread. Host ports are deterministic (project.HostPort), so they
+// match what box.Run binds. Open and filtered boxes both publish (a filtered one on its gateway); a
+// box with networking off publishes nothing, so there is nothing to announce.
+func editorServePorts(mode egress.Mode, repo string, ports []int) []acpctl.ServePort {
+	if mode != egress.Open && mode != egress.Filtered {
+		return nil
+	}
+	var serve []acpctl.ServePort
+	for _, port := range ports {
+		serve = append(serve, acpctl.ServePort{Box: port, Host: project.HostPort(repo, port)})
+	}
+	return serve
+}
+
 // firstSignedInAgent is the provider an editor session starts when nothing names one: the first
 // signed-in provider in registry order. Its failure tells the editor's log how to sign in.
 func (a *app) firstSignedInAgent() (string, error) {
@@ -273,15 +288,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 			}
 		}
 		defer a.acpCapture.Close()
-		// Ports the inner box will publish (.agent/project.yaml serve), reported to the editor once per
-		// session. Deterministic host ports (project.HostPort), so these match what box.Run binds. Only
-		// when egress is open — otherwise nothing publishes, so nothing to announce.
-		var serveURLs []string
-		if a.cfg.Egress == "open" {
-			for _, port := range pj.Serve.Ports {
-				serveURLs = append(serveURLs, fmt.Sprintf("box :%d → http://localhost:%d", port, project.HostPort(repo, port)))
-			}
-		}
 		sel := acpctl.Selection{Account: profile, Preset: presetName}
 		if toolSet {
 			sel.Provider = tool
@@ -291,7 +297,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 			// The error quotes the preset's folder name, which a box can choose. stderr: stdout carries ACP.
 			ui.Warn("%s — left out of the editor's preset list", ui.SafeInline(err.Error()))
 		}
-		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, presets, serveURLs, acpHost())
+		// Admission above settled a.cfg.Egress to this session's network mode.
+		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, pj.Serve.Ports)
+		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, presets, serve, acpHost())
 		if a.acpCapture != nil {
 			ctrl.LimitNetworkTargets(scope)
 		}
