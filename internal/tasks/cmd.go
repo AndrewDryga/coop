@@ -79,11 +79,11 @@ func taskStateFilter(args []string) []string {
 }
 
 // filterLabel names the filtered states for the "No <…> tasks." note when a filter matches nothing.
-// It reads the states as a person says them — "in progress", not the directory's "in_progress".
+// It reads the states as a person writes them before a noun — "in-progress", not "in_progress".
 func filterLabel(only []string) string {
 	labels := make([]string, len(only))
 	for i, s := range only {
-		labels[i] = strings.ReplaceAll(StateLabel(s), "_", " ")
+		labels[i] = strings.ReplaceAll(StateLabel(s), "_", "-")
 	}
 	return strings.Join(labels, "/")
 }
@@ -419,14 +419,15 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	if structured {
 		return 0, nil // it arrived filled; there is nothing left to tell the author to do
 	}
-	// The scaffold's result is also the lesson: the exact command that would have filled it in.
+	// The scaffold's result is also the lesson: the command that would have filled it in, with this
+	// task's own title and placeholders rather than an example about some other task.
 	ui.Note("\nDescribe the problem, completion criteria, approach, and subtasks in this file.")
 	ui.Note("Next time, you can fill them in when creating the task:\n")
 	ui.Note("  coop tasks add %q \\", title)
-	ui.Note("    --context \"An expired session retries forever.\" \\")
-	ui.Note("    --acceptance \"An expired session returns to sign-in.\" \\")
-	ui.Note("    --approach \"Stop retrying after an authentication failure.\" \\")
-	ui.Note("    --subtask \"Test an expired session.\"")
+	ui.Note(`    --context "<context>" \`)
+	ui.Note(`    --acceptance "<acceptance>" \`)
+	ui.Note(`    --approach "<approach>" \`)
+	ui.Note(`    --subtask "<subtask>"`)
 	ui.Note("\nFor more details see:")
 	ui.Note("  coop help tasks add")
 	return 0, nil
@@ -795,6 +796,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			if replaced != "" {
 				note = "Previous owner: " + replaced
 			}
+			logClaim(t.Dir, opts.actor)
 			printClaimResult(t, opts.actor, note)
 		default:
 			ui.Note("%s is already %s.", t.Title, StateLabel(newState))
@@ -836,6 +838,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	}
 	switch newState {
 	case StateInProgress:
+		logClaim(filepath.Join(root, StateInProgress, t.ID), opts.actor)
 		printClaimResult(t, opts.actor, "")
 	case StateDone:
 		dir := filepath.Join(root, StateDone, t.ID)
@@ -869,6 +872,17 @@ func claimRefusal(t Item) error {
 			[2]string{"For more work, add a task:", `coop tasks add "<title>"`})
 	}
 	return nil
+}
+
+// logClaim journals who took the task in its log.md, as park, block and unblock journal theirs.
+// Best-effort: the claim already holds, and a journal line is no reason to undo it.
+func logClaim(dir string, actor ClaimActor) {
+	who := claimedBy(actor)
+	if who == "" {
+		user, host := taskOwnerIdentity()
+		who = user + "@" + host
+	}
+	appendTaskLog(dir, "Claimed by "+who)
 }
 
 // printClaimResult is the claim's result: who now holds the task, anything exceptional about how
@@ -1329,7 +1343,17 @@ func resolveAndUnblock(project, root string, t Item, answer string) error {
 			}
 		}
 	}
-	return moveBlockedAuditUnblock(root, t, transition)
+	if err := moveBlockedAuditUnblock(root, t, transition); err != nil {
+		return err
+	}
+	// Journal the answer the task came back with. Best-effort: the unblock already holds.
+	dir := filepath.Join(root, StateTodo, t.ID)
+	if recorded, _ := recordedAnswer(filepath.Join(dir, "decision.md")); recorded != "" {
+		appendTaskLog(dir, "Unblocked: "+recorded)
+	} else {
+		appendTaskLog(dir, "Unblocked")
+	}
+	return nil
 }
 
 // moveBlockedAuditUnblock writes a non-authorizing pending record, moves the folder, then activates
@@ -1975,6 +1999,11 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		body, exists, err := readOptionalTaskMetadataPath(dec)
 		written = err == nil && exists && !decisionUnwritten(string(body))
 	}
+	if req.filled {
+		appendTaskLog(taskDir, "Blocked: "+req.decision.Question)
+	} else {
+		appendTaskLog(taskDir, "Blocked for a decision in decision.md")
+	}
 	ui.OK("Blocked task: %s", t.Title)
 	ui.Note("\n  %s", displayPath(dec))
 	if earlierAnswer != "" {
@@ -2388,27 +2417,37 @@ var listStateOrder = []string{StateInProgress, StateTodo, StateBlocked, StateDon
 // tasksFolderList prints the queue, then warns about anything left at the queue root that is not
 // part of it (see warnQueueRootStrays).
 func tasksFolderList(root string, all bool, only ...string) (int, error) {
-	code, err := printTaskTree(root, all, only...)
+	code, err := printTaskTree(root, "Tasks", all, only...)
 	if err == nil {
 		warnQueueRootStrays(root)
 	}
 	return code, err
 }
 
-// printTaskTree prints the queue grouped by state. only narrows it to the given states (a
-// --blocked/--todo/… filter); empty shows every state. Each task is three lines at most — its
-// title, the facts that are exceptional about it, and its id as an OSC 8 hyperlink to its folder,
-// so it opens on click in a supporting terminal and stays plain text in a pipe. There is no count
-// footer: the section headings already carry the counts.
-func printTaskTree(root string, all bool, only ...string) (int, error) {
+// printTaskTree prints the queue grouped by state, under heading ("" when the caller already named
+// the queue). only narrows it to the given states (a --blocked/--todo/… filter); empty shows every
+// state. Each task is three lines at most — its title, the facts that are exceptional about it, and
+// its id as an OSC 8 hyperlink to its folder, so it opens on click in a supporting terminal and
+// stays plain text in a pipe. There is no count footer: the section headings already carry the counts.
+func printTaskTree(root, heading string, all bool, only ...string) (int, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return -1, err
 	}
 	p := ui.For(os.Stdout)
 	if len(items) == 0 {
-		fmt.Printf("%s\n\n", p.Bold("No tasks yet."))
+		// Saved ideas are not tasks, but "no tasks" alone would hide them. The count is best-effort:
+		// `coop backlog` is where an unreadable drawer is reported.
+		ideas, _ := ReadBacklog(root)
+		headline := "No tasks yet."
+		if len(ideas) > 0 {
+			headline += " The backlog holds " + ui.Count(len(ideas), "idea") + "."
+		}
+		fmt.Printf("%s\n\n", p.Bold(headline))
 		fmt.Printf("  Create one: coop tasks add %q\n", "Describe the work")
+		if len(ideas) > 0 {
+			fmt.Printf("  See ideas:  coop backlog\n")
+		}
 		return 0, nil
 	}
 	show := map[string]bool{}
@@ -2428,8 +2467,8 @@ func printTaskTree(root string, all bool, only ...string) (int, error) {
 		if len(ts) == 0 { // an empty lifecycle section is not an empty heading
 			continue
 		}
-		if !printed {
-			fmt.Printf("%s\n", p.Bold("Tasks"))
+		if !printed && heading != "" {
+			fmt.Printf("%s\n", p.Bold(heading))
 		}
 		printed = true
 		// The state label is colored by state (the shared key — cyan todo · yellow in progress ·
@@ -2533,12 +2572,11 @@ func bannerWidth() int {
 }
 
 // banner renders a queue's section header for the monorepo roll-up. On a terminal it's a cyan
-// marker + bold path + a dim rule filling the width — a clean divider between queues; piped, it
-// falls back to a plain "# path" so a redirect stays simple (and the roll-up tests see a stable
-// label). The matching footer rule is drawn under each queue's summary in tasksFolderList.
+// marker + bold path + a dim rule filling the width — a clean divider between queues; piped, it is
+// the queue's path alone, the same name its folder has.
 func banner(p ui.Palette, path string) string {
 	if !p.Enabled() {
-		return "# " + path
+		return path
 	}
 	visible := "▸ " + path + " "
 	rule := ""

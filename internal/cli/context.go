@@ -122,7 +122,7 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	// the NEAREST one is the queue that path belongs to, and only it goes in scope. The shell's cwd
 	// may reach the repository through a link that repo never contains, so match it by folder.
 	if rel, err := box.RepoRelative(repo, cwd); err == nil && !strings.HasPrefix(rel, "..") {
-		if sub, ok := nearestSubproject(p.Subprojects, rel); ok {
+		if sub, ok := project.NearestSubproject(p.Subprojects, rel); ok {
 			add(sub)
 		}
 	}
@@ -257,10 +257,13 @@ func contextReport(scope []string, sel []contextc.Selected) {
 	case len(scope) == 1:
 		fmt.Printf("Instructions for %s\n", scope[0])
 	default:
-		fmt.Println("Instructions for selected work")
+		// Two lists, each under its own heading, so the paths never read as instruction files.
+		fmt.Println("Selected work")
 		for _, path := range scope {
 			fmt.Printf("  %s\n", path)
 		}
+		fmt.Println()
+		fmt.Println("Instructions")
 	}
 	for _, s := range sel {
 		fmt.Println()
@@ -325,19 +328,4 @@ func contextRendered(repo string, sel []contextc.Selected) (int, error) {
 		fmt.Printf("──── %s ────\n%s\n\n", s.File, strings.TrimRight(string(data), "\n"))
 	}
 	return 0, nil
-}
-
-// nearestSubproject returns the declared member that contains rel and is the deepest such member:
-// with members that nest, a path belongs to the one closest to it, never to both.
-func nearestSubproject(subprojects []string, rel string) (string, bool) {
-	best, found := "", false
-	for _, sub := range subprojects {
-		if rel != sub && !strings.HasPrefix(rel, sub+string(filepath.Separator)) {
-			continue
-		}
-		if !found || len(sub) > len(best) {
-			best, found = sub, true
-		}
-	}
-	return best, found
 }

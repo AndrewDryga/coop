@@ -500,6 +500,22 @@ func TaskDirs(repo string) ([]string, error) {
 	return dirs, nil
 }
 
+// NearestSubproject returns the declared member that contains rel, a repo-relative path, and is the
+// deepest such member: with members that nest, a path belongs to the one closest to it, never to
+// both. `coop context` scopes work to it, and `coop tasks add` files into its queue.
+func NearestSubproject(subprojects []string, rel string) (string, bool) {
+	best, found := "", false
+	for _, sub := range subprojects {
+		if rel != sub && !strings.HasPrefix(rel, sub+string(filepath.Separator)) {
+			continue
+		}
+		if !found || len(sub) > len(best) {
+			best, found = sub, true
+		}
+	}
+	return best, found
+}
+
 func isDir(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()

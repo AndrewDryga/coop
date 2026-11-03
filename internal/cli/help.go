@@ -1017,7 +1017,8 @@ FOR AI AGENTS
 PROJECTS
   Coop includes queues listed in .agent/project.yaml.
   Use --tasks <path> to select a queue; repeat it to include several.
-  When adding a task to a project with subprojects, choose --project <name>.
+  With subprojects, coop tasks add uses the subproject you run it in.
+  Elsewhere, choose one with --project <name>.
 
   Command options: coop help tasks <command>`,
 
@@ -1045,7 +1046,8 @@ EXAMPLES
 Usage: coop tasks add "<title>" [<options>]
 
 OPTIONS
-  --project <name>     choose a subproject, or root
+  --project <name>     choose a subproject, or root; inside a subproject's
+                       folder, add uses that subproject
   --tasks <path>       choose one task queue
   --context <text>     explain the problem and why it matters
   --acceptance <text>  describe what must be true when finished

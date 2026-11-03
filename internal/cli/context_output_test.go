@@ -22,10 +22,11 @@ func TestContextReport(t *testing.T) {
 		t.Errorf("one-path report =\n%q\nwant\n%q", got, want)
 	}
 
-	// With several paths, the route line says WHICH path matched — otherwise the reader has to
-	// guess which of them pulled the file in.
+	// With several paths, each list has its own heading, so the paths never read as instruction files,
+	// and the route line says WHICH path matched — otherwise the reader has to guess which of them
+	// pulled the file in.
 	got = captureStdout(t, func() { contextReport([]string{"web/login.ts", "web/session.ts"}, sel) })
-	want = "Instructions for selected work\n  web/login.ts\n  web/session.ts\n\n  AGENTS.md\n" +
+	want = "Selected work\n  web/login.ts\n  web/session.ts\n\nInstructions\n\n  AGENTS.md\n" +
 		"    Shared agent instructions\n\n  .agent/kb/web.md\n    web/login.ts matches web/**\n\n  2 files selected\n"
 	if got != want {
 		t.Errorf("multi-path report =\n%q\nwant\n%q", got, want)

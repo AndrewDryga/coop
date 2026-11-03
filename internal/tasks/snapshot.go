@@ -200,9 +200,11 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		}
 		snapshot.Queues = append(snapshot.Queues, ProjectQueueSnapshot{Root: root, Label: label, ID: queueID, Counts: counts, Error: queueError})
 		for _, item := range items {
+			// State is the name the counts use (in_progress), not the folder (10_in_progress); code
+			// that needs the folder reads Item.State.
 			view := ProjectTaskSnapshot{
 				Queue: root, QueueLabel: label, QueueID: queueID,
-				ID: item.ID, Title: item.Title, State: item.State, Path: item.Dir, Item: item,
+				ID: item.ID, Title: item.Title, State: StateLabel(item.State), Path: item.Dir, Item: item,
 			}
 			key := snapshotTaskKey("", "", root, item.ID)
 			if instance, err := ReadTaskInstance(root, item); err == nil {

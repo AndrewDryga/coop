@@ -238,7 +238,7 @@ func backlogListAll(repo string, rels []string) (int, error) {
 	p := ui.For(os.Stdout)
 	for i, rel := range rels {
 		if i > 0 {
-			fmt.Print("\n\n\n") // three blank lines between different queues' output
+			fmt.Println() // one blank line between queues, as between the sections inside one
 		}
 		fmt.Println(banner(p, rel))
 		root := filepath.Join(repo, rel)

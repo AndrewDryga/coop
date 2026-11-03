@@ -33,9 +33,15 @@ func TestSourceLineShowsBlocked(t *testing.T) {
 
 func TestTaskWatchBarsShowTinyActiveShare(t *testing.T) {
 	c := TaskCounts{Todo: 99, Doing: 1}
-	for _, line := range []string{tasksProgressLine(ui.Palette{}, c), sourceLine(ui.Palette{}, "api", 3, c)} {
+	for _, line := range []string{tasksProgressLine(ui.Colored(), c), sourceLine(ui.Colored(), "api", 3, c)} {
 		if !strings.Contains(line, "█") {
 			t.Errorf("task-watch overall and source bars should keep a visible active cell: %q", line)
+		}
+	}
+	// Without color every segment is the same block, so the counts carry the states alone.
+	for _, line := range []string{tasksProgressLine(ui.Palette{}, c), sourceLine(ui.Palette{}, "api", 3, c)} {
+		if strings.ContainsAny(line, "█░[") {
+			t.Errorf("a colorless line draws a bar it cannot tell apart: %q", line)
 		}
 	}
 }
@@ -62,7 +68,7 @@ func TestTasksWatchFrame(t *testing.T) {
 	c, _ := TaskTreeCounts(items)
 	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0, 80), "\n")
 
-	for _, want := range []string{"2 todo", "1 in_progress", "1 blocked", "2 done"} {
+	for _, want := range []string{"2 todo", "1 in progress", "1 blocked", "2 done"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("counter should show %q:\n%s", want, joined)
 		}

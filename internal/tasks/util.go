@@ -88,6 +88,24 @@ func wrapWords(s string, w int) []string {
 	return lines
 }
 
+// shellJoin writes argv the way a shell reads it back: a plain argument as is, any other in single
+// quotes, closing and reopening them around each single quote it holds.
+func shellJoin(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		plain := arg != ""
+		for _, r := range arg {
+			plain = plain && (r < utf8.RuneSelf && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:@%+,", r)))
+		}
+		if plain {
+			quoted[i] = arg
+		} else {
+			quoted[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(quoted, " ")
+}
+
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
 // accept to run unattended (distinct from --force, which overrides a safety guard, not the prompt).
 func hasYes(args []string) bool {

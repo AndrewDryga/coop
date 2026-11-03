@@ -369,7 +369,7 @@ var terminalSources = map[string]terminalSource{
 			shape("Running project checks"), shape("Running: {}"), shape("Merged fork {} into {}")}},
 	"watch": {goFiles: []string{"internal/tasks/watch.go", "internal/tasks/lease.go", "internal/taskstate/taskstate.go", "internal/ui/live.go"},
 		shapes: []lineShape{
-			shape("[{}]  {} todo · {} in_progress · {} blocked · {} done", `"%d %s"`, `"10_in_progress"`, `"░"`),
+			shape("[{}]  {} todo · {} in progress · {} blocked · {} done", `"%d %s"`, `"10_in_progress"`, `"_", " "`, `"░"`),
 			shape("◰ {} ({}/{}) · busy {}", `"◰"`, `" (%d/%d)"`, `"busy "`), shape("○ {}", `"○"`), shape("⚑ {}", `"⚑"`)}},
 }
 

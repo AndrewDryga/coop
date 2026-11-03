@@ -179,11 +179,12 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 	if lease == nil {
 		return 1, fmt.Errorf("%s is already leased (%s) — one worker at a time; wait for it or stop it", t.ID, observed.label())
 	}
-	released := "released " + t.ID
 	defer func() { _ = lease.Release() }()
 
+	// The lease line and its release line are one pair: "✓ Leased <id>" and "✓ Released <id>: why".
+	ui.OK("Leased %s%s", t.ID, claimSuffix(req.actor))
 	if len(req.command) > 0 {
-		ui.OK("leased %s%s — running: %s", t.ID, claimSuffix(req.actor), strings.Join(req.command, " "))
+		ui.Note("  Running: %s", shellJoin(req.command))
 		cmd := exec.CommandContext(ctx, req.command[0], req.command[1:]...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
@@ -192,10 +193,11 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 		var exit *exec.ExitError
 		switch {
 		case err == nil:
-			ui.Note("%s — command finished", released)
+			ui.OK("Released %s: the command finished", t.ID)
 			return 0, nil
 		case errors.As(err, &exit):
-			ui.Note("%s — command exited %d", released, exit.ExitCode())
+			// No ✓: the lease is released, but the command failed and its status is coop's exit status.
+			ui.Note("Released %s: the command exited with status %d", t.ID, exit.ExitCode())
 			return exit.ExitCode(), nil
 		default:
 			return 1, fmt.Errorf("run %s: %w", req.command[0], err)
@@ -204,35 +206,35 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 
 	switch {
 	case req.claimant:
-		ui.OK("leased %s%s — bound to the task's claimant; holding until that process exits, the task moves, or this holder is stopped", t.ID, claimSuffix(req.actor))
+		ui.Note("  Bound to the task's claimant. Holding until that process exits, the task moves, or this holder is stopped.")
 	case req.actor.PID != 0:
-		ui.OK("leased %s%s — holding until that process exits, the task moves, or this holder is stopped", t.ID, claimSuffix(req.actor))
+		ui.Note("  Holding until that process exits, the task moves, or this holder is stopped.")
 	default:
-		ui.OK("leased %s%s — holding until the task moves or this holder is stopped (Ctrl-C)", t.ID, claimSuffix(req.actor))
+		ui.Note("  Holding until the task moves or this holder is stopped (Ctrl-C).")
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			ui.Note("%s — stopped", released)
+			ui.OK("Released %s: this holder was stopped", t.ID)
 			return 0, nil
 		case <-ticker.C:
 		}
 		if req.actor.PID != 0 && !ownerProcessLive(TaskOwnerRecord{ActorPID: req.actor.PID, ActorStart: req.actor.StartToken}) {
-			ui.Note("%s — %s (pid %d) is gone", released, label, req.actor.PID)
+			ui.OK("Released %s: %s (PID %d) has exited", t.ID, label, req.actor.PID)
 			return 0, nil
 		}
 		current, ok, err := CurrentTask(root, t.ID)
 		if err != nil {
 			return -1, err
 		}
-		if !ok || current.State != StateInProgress {
-			state := "gone"
-			if ok {
-				state = StateLabel(current.State)
-			}
-			ui.Note("%s — the task is now %s", released, state)
+		if !ok {
+			ui.OK("Released %s: the task is gone", t.ID)
+			return 0, nil
+		}
+		if current.State != StateInProgress {
+			ui.OK("Released %s: the task is now %s", t.ID, strings.ReplaceAll(StateLabel(current.State), "_", " "))
 			return 0, nil
 		}
 	}

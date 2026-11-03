@@ -28,6 +28,10 @@
   together with `--no-preflight` instead of using the last one. An unknown `--review-task` ID is
   reported before any preparation, with the command that lists completed tasks.
 
+- **Breaking for scripts: `coop tasks watch --json` names task states like its counts.** Each
+  task's `state` is now `todo`, `in_progress`, `blocked` or `done` instead of its folder name,
+  such as `10_in_progress`. Update scripts that matched the folder names.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

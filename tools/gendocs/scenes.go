@@ -200,12 +200,12 @@ const (
 )
 
 // watchFrame is one frame of `coop tasks watch` (internal/tasks/watch.go), a board redrawn in place:
-// the bar and the counts (todo · in_progress · blocked · done), then the queue: the task in progress
+// the bar and the counts (todo · in progress · blocked · done), then the queue: the task in progress
 // first, with the Corner Run spinner, its subtasks and the lease; then todo (○); then blocked (⚑).
 // Done tasks are the count.
 func watchFrame(done int, doing, subtasks string, todo, blocked []string) string {
 	counts := strings.Join([]string{
-		`<span class="s-todo">` + strconv.Itoa(len(todo)) + ` todo</span>`, `<span class="s-doing">1 in_progress</span>`,
+		`<span class="s-todo">` + strconv.Itoa(len(todo)) + ` todo</span>`, `<span class="s-doing">1 in progress</span>`,
 		`<span class="s-blocked">` + strconv.Itoa(len(blocked)) + ` blocked</span>`, `<span class="s-done">` + strconv.Itoa(done) + ` done</span>`,
 	}, dot)
 	frame := line("", stateBar(done, 1, len(blocked), done+1+len(todo)+len(blocked), 22)+"  "+counts) + line("", "") +

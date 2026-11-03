@@ -140,6 +140,30 @@ func findTaskProjectChoice(choices []taskProjectChoice, name string) (taskProjec
 	return taskProjectChoice{}, false
 }
 
+// workingSubproject is the umbrella member holding the working folder, the nearest one when members
+// nest. The shell may reach the repository through a link, so the folder is matched, not spelled.
+func workingSubproject(repo string, choices []taskProjectChoice) (taskProjectChoice, bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return taskProjectChoice{}, false
+	}
+	rel, err := box.RepoRelative(repo, cwd)
+	if err != nil || !filepath.IsLocal(rel) {
+		return taskProjectChoice{}, false
+	}
+	var members []string
+	for _, ch := range choices {
+		if ch.Name != "root" {
+			members = append(members, ch.Name)
+		}
+	}
+	member, ok := project.NearestSubproject(members, rel)
+	if !ok {
+		return taskProjectChoice{}, false
+	}
+	return findTaskProjectChoice(choices, member)
+}
+
 // ambiguousTaskProjects returns the members a shorthand name matches when there is more than one,
 // so the error can name them instead of just saying "unknown".
 func ambiguousTaskProjects(choices []taskProjectChoice, name string) []string {
@@ -294,6 +318,10 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		}
 		if umbrella {
 			if projectName == "" {
+				// Inside a subproject's folder, the work belongs to it, as `coop context` scopes it.
+				if ch, ok := workingSubproject(repo, choices); ok {
+					return tasksAddInQueue(repo, project, ch.Rel, rest[1:])
+				}
 				return 2, taskProjectAddError("", choices)
 			}
 			ch, ok := findTaskProjectChoice(choices, projectName)
@@ -487,7 +515,7 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 	p := ui.For(os.Stdout)
 	for i, rel := range rels {
 		if i > 0 {
-			fmt.Print("\n\n\n") // three blank lines between different files' output
+			fmt.Println() // one blank line between queues, as between the sections inside one
 		}
 		fmt.Println(banner(p, rel))
 		root := filepath.Join(repo, rel)
@@ -510,9 +538,11 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 			warnQueueRootStrays(root)
 			continue
 		}
-		if _, err := tasksFolderList(root, all, only...); err != nil {
+		// The banner already names the queue, so its listing carries no "Tasks" heading of its own.
+		if _, err := printTaskTree(root, "", all, only...); err != nil {
 			return -1, err
 		}
+		warnQueueRootStrays(root)
 	}
 	return 0, nil
 }
@@ -695,7 +725,7 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 			continue
 		}
 		if !first {
-			fmt.Print("\n\n\n") // three blank lines between different queues' output
+			fmt.Println() // one blank line between queues, as between the sections inside one
 		}
 		first = false
 		fmt.Println(banner(p, rel))
@@ -799,7 +829,7 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 			continue
 		}
 		if !first {
-			fmt.Print("\n\n\n") // three blank lines between different files' output
+			fmt.Println() // one blank line between queues, as between the sections inside one
 		}
 		first = false
 		fmt.Println(banner(p, rel))

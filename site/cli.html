@@ -662,7 +662,8 @@ FOR AI AGENTS
 PROJECTS
   Coop includes queues listed in .agent/project.yaml.
   Use --tasks &lt;path&gt; to select a queue; repeat it to include several.
-  When adding a task to a project with subprojects, choose --project &lt;name&gt;.
+  With subprojects, coop tasks add uses the subproject you run it in.
+  Elsewhere, choose one with --project &lt;name&gt;.
 
   Command options: coop help tasks &lt;command&gt;</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-ls-list-tasks-and-their-progress"><h2>coop tasks ls: list tasks and their progress</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks ls: list tasks and their progress code example" tabindex="0"><code>Usage: coop tasks ls [--tasks &lt;path&gt;]... [&lt;options&gt;]
 
@@ -682,7 +683,8 @@ EXAMPLES
   coop tasks ls --tasks web/.agent/tasks</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div></section><section class="doc-section reference-section" id="coop-tasks-add-create-a-task-for-you-or-an-agent"><h2>coop tasks add: create a task for you or an agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks add: create a task for you or an agent code example" tabindex="0"><code>Usage: coop tasks add &#34;&lt;title&gt;&#34; [&lt;options&gt;]
 
 OPTIONS
-  --project &lt;name&gt;     choose a subproject, or root
+  --project &lt;name&gt;     choose a subproject, or root; inside a subproject&#39;s
+                       folder, add uses that subproject
   --tasks &lt;path&gt;       choose one task queue
   --context &lt;text&gt;     explain the problem and why it matters
   --acceptance &lt;text&gt;  describe what must be true when finished

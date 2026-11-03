@@ -195,7 +195,7 @@ func TestLeaseHoldStopsWhenCancelledOrWhenTheTaskMoves(t *testing.T) {
 	// Metadata precedes the final acquisition check. The CLI announces its held lease only
 	// after that check returns, so moving on this line tests a holder, not a stale candidate.
 	wait.For(t, "holder completed lease acquisition", func() bool {
-		if strings.Contains(readOutput(), "leased moved as codex — holding until") {
+		if strings.Contains(readOutput(), "Leased moved as codex\n  Holding until") {
 			return true
 		}
 		select {

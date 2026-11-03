@@ -4,7 +4,7 @@ description: "list output echoes the canonical shape and separates grouped secti
 scope: cli-output
 sources: [internal/tasks/cmd.go, internal/tasks/queue.go, internal/cli/profiles.go]
 check: "none"
-updated: 2026-09-03
+updated: 2026-11-03
 ---
 
 # Echo canonical list shapes and give groups room to breathe
@@ -33,6 +33,10 @@ authorities and states obvious.
 Related: [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-11-03 — the multi-queue roll-ups of tasks ls, lint, decisions and backlog put three blank
+  lines between queues and a markdown-style "# <path>" header over each, plus a repeated "Tasks"
+  heading in ls. They now use one blank line and the bare queue path; a terminal still draws the
+  ruled banner. Swept every banner() caller; credentials already followed the rule.
 - 2026-09-03 — removed the retired single-file queue narrative, added the actual task renderer and
   credential-list sources, and re-verified current state/project/agent grouping. Kept `check: none`
   rather than claiming a package test enforces future list design.

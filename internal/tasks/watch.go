@@ -56,7 +56,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		showQueues := len(snapshot.Queues) > 1
 		for _, task := range snapshot.Tasks {
 			m := mergedTask{Item: task.Item, phase: task.Phase, executions: task.Executions}
-			if task.State != StateTodo && task.ownerRecord != nil {
+			if task.Item.State != StateTodo && task.ownerRecord != nil {
 				m.owner = taskOwnerLabel(*task.ownerRecord, false)
 			}
 			if showQueues {
@@ -64,7 +64,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			}
 			if task.Fork != nil {
 				m.fork = task.Fork.Name
-			} else if task.State == StateInProgress {
+			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, time.Now())
 			}
 			merged = append(merged, m)
@@ -341,23 +341,33 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int
 }
 
 // tasksProgressLine is the overall header: the merged progress bar and the per-state counts (each in
-// the state's color). No status glyph — the bar and counts already convey state.
+// the state's color). No status glyph — the bar and counts already convey state. Without color the
+// bar's segments are identical blocks, so the counts stand alone (see progressBar).
 func tasksProgressLine(p ui.Palette, c TaskCounts) string {
-	return fmt.Sprintf("%s  %s", ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.Total(), 22), tasksCountSummary(p, c))
+	return progressBar(p, c, 22) + tasksCountSummary(p, c)
+}
+
+// progressBar is a state bar of width cells and the gap after it, or "" without color: its segments
+// differ only by color, and a pipe or NO_COLOR would show one solid bar that says nothing.
+func progressBar(p ui.Palette, c TaskCounts, width int) string {
+	if !p.Enabled() {
+		return ""
+	}
+	return ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.Total(), width) + "  "
 }
 
 // sourceLine is one source's compact breakdown — its label (queue path or fork name), a small bar
 // (done cyan, in-progress yellow, blocked red), done/total, and the blocked count when any — so
 // several queues/forks each fit on one line under the overall header and live/parked work is visible.
 func sourceLine(p ui.Palette, label string, w int, c TaskCounts) string {
-	line := fmt.Sprintf("  %s  %s  %s/%d", p.Bold(padRight(label, w)), ui.ProgressBarStates(c.Done, c.Doing, c.Blocked, c.Total(), 14), p.Green(fmt.Sprintf("%d", c.Done)), c.Total())
+	line := fmt.Sprintf("  %s  %s%s/%d", p.Bold(padRight(label, w)), progressBar(p, c, 14), p.Green(fmt.Sprintf("%d", c.Done)), c.Total())
 	if c.Blocked > 0 {
 		line += p.Dim(" · ") + p.Red(fmt.Sprintf("%d blocked", c.Blocked))
 	}
 	return line
 }
 
-// tasksCountSummary is the per-state breakdown shown after the bar — todo · in_progress · blocked ·
+// tasksCountSummary is the per-state breakdown shown after the bar — todo · in progress · blocked ·
 // done — each painted by the shared state key (cyan / yellow / red / green), so a glance maps color
 // to state. Every state shows, even at zero, so the colors read as a consistent legend.
 func tasksCountSummary(p ui.Palette, c TaskCounts) string {
@@ -372,7 +382,7 @@ func tasksCountSummary(p ui.Palette, c TaskCounts) string {
 	}
 	out := make([]string, len(cells))
 	for i, cell := range cells {
-		out[i] = paintState(p, cell.state, fmt.Sprintf("%d %s", cell.n, StateLabel(cell.state)))
+		out[i] = paintState(p, cell.state, fmt.Sprintf("%d %s", cell.n, strings.ReplaceAll(StateLabel(cell.state), "_", " ")))
 	}
 	return strings.Join(out, p.Dim(" · "))
 }
