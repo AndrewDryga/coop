@@ -524,6 +524,11 @@ runtime remains with that session's exact labels. This does not make the workspa
 again. If co:op cannot read capacity, it reports busy. The worker still polls for requests that
 read data or clean up existing work.
 
+After a worker restart, an unused prepared read-only session may retain a warm-process receipt
+whose owner cannot be checked here. co:op quarantines that session before admitting new work,
+preserves its files and receipt, and checks its exact runtime labels separately. Create a fresh
+session for new work; quarantine retirement preserves the old workspace and history.
+
 `/v1/storage` measures the disk blocks allocated to files, rather than the file sizes reported
 by applications. It reads file metadata without opening file contents, so it can count private
 session data that contains credentials without reading those credentials.
@@ -551,6 +556,16 @@ and reports an entry when its ownership and cleanliness cannot be proved within 
 pass, then advances to other entries on following passes. Large or slow entries can therefore
 remain retained. Interrupted creation and eviction resume through private ownership records.
 `coop sessions check` also checks their format before an upgrade.
+
+After a Docker-volume copy, a complete current snapshot receipt may name old inodes.
+A new session preserves that cache under `.cache-held-*` and rebuilds from its authorized
+frozen source. It never rewrites the old receipt or changes existing session projections.
+Held bytes remain counted as protected storage. The upgrade check reports copied caches
+as rebuildable and held copies as preserved; malformed or unsupported receipts still refuse.
+
+Existing read-only primary workspaces whose current receipt names a copied inode are
+quarantined at startup. Their files and completed-turn history stay intact. Explicit quarantine
+retirement removes only session custody; it neither repairs ownership nor proves runtime cleanup.
 
 New source downloads and checkouts wait before allocating when free storage reaches twice the
 default reserve. Verified source cache hits continue working. This wait keeps the same durable
@@ -794,6 +809,10 @@ Repeating the exact binding leaves the session unchanged.
 | `POST` | `/v1/sessions/{id}/checkpoint` | JSON: `session_ref`, `expected_revision`, `placement_generation`, `repository_ref`; returns operation and descriptor |
 | `GET` | `/v1/operations/{id}/checkpoint-bundle` | Streamed tar, exact `Content-Length`, SHA-256 `ETag` |
 | `POST` | `/v1/sessions/{id}/workspace/restore` | Binary body plus `X-Coop-Expected-Revision` and base64-JSON `X-Coop-Workspace-Checkpoint` headers |
+
+A credential found in newly exported content refuses capture with HTTP 409
+`invalid_session_state`, including on replay of the same operation key. The workspace remains
+intact and no checkpoint bundle is published; correct the content before requesting a new capture.
 
 To capture a checkpoint, the session must be idle, writable and bound to a task. Open, exhausted
 and retained closed sessions may be captured. Capture keeps a closed session closed and cannot

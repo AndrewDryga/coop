@@ -125,3 +125,66 @@ func TestSessionHTTPRestoreChecksBinaryMutationPreflight(t *testing.T) {
 		t.Fatalf("restored HEAD=%s want %s", head, captured.Checkpoint.CommittedRevision)
 	}
 }
+
+// A completed production task spent every retry on a credential refusal hidden
+// as internal_error. Refusing export must preserve the answer and explain why.
+func TestCheckpointCredentialRefusalIsDurableAndActionable(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	ctx := t.Context()
+	const offer = "record:task_offer:checkpoint-refusal"
+	source, err := service.CreateRemoteSession(ctx, "refused-source", service.request(t, offer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = service.EnsureWorkspaceTask(ctx, "refused-task", EnsureWorkspaceTaskRequest{SessionID: source.ID, ExpectedRevision: source.Revision, Task: tasks.ControllerTaskDraft{OfferRef: offer, Title: "Preserve refused work", Prompt: "Keep the saved work.", SuccessChecks: []string{"saved work preserved"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same harmless marker harvested from the failing Terraform fixture.
+	secret := "-----BEGIN" + " PRIVATE KEY-----"
+	path := filepath.Join(source.Workspace, "refused.txt")
+	sessionWorkspaceWrite(t, path, secret)
+	body, err := json.Marshal(map[string]any{"session_ref": "refused-source", "expected_revision": source.Revision, "placement_generation": 1, "repository_ref": "repository"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(service.Service)
+	var operationID string
+	for attempt := range 2 {
+		request := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+source.ID+"/checkpoint", bytes.NewReader(body))
+		request.Header.Set("Idempotency-Key", "refused-checkpoint")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("attempt %d: status=%d body=%s", attempt, response.Code, response.Body.String())
+		}
+		var got sessionHTTPErrorResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Error.Code != "invalid_session_state" || !strings.Contains(got.Error.Detail, "workspace checkpoint contains a credential") || got.Error.OperationID == "" {
+			t.Fatalf("unactionable refusal: %+v", got)
+		}
+		if strings.Contains(response.Body.String(), secret) || strings.Contains(response.Body.String(), source.Workspace) {
+			t.Fatal("refusal exposed private content")
+		}
+		if attempt == 0 {
+			operationID = got.Error.OperationID
+		} else if got.Error.OperationID != operationID {
+			t.Fatal("replay changed operation")
+		}
+	}
+	operation, err := service.GetOperation(ctx, "refused-checkpoint")
+	if err != nil || operation.State != session.OperationFailed || operation.ErrorCode != session.CodeInvalidSessionState {
+		t.Fatalf("wrong durable refusal: %+v %v", operation, err)
+	}
+	if file, _, err := service.OpenWorkspaceCheckpointBundle(ctx, operationID); err == nil {
+		file.Close()
+		t.Fatal("refused export published a bundle")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != secret {
+		t.Fatal("refusal changed the workspace")
+	}
+}

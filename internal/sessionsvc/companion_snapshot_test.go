@@ -497,3 +497,195 @@ func TestSnapshotSweepAdvancesPastHeldOrExpiringCandidates(t *testing.T) {
 		})
 	}
 }
+
+// A Docker volume copy preserved immutable bytes but changed receipt inodes;
+// twenty stale cache entries then prevented every new multi-repository task.
+func TestCopiedSnapshotRebuildsWithoutChangingExistingWork(t *testing.T) {
+	for _, primary := range []bool{false, true} {
+		for _, deleting := range []bool{false, true} {
+			t.Run(fmt.Sprintf("primary=%t/deleting=%t", primary, deleting), func(t *testing.T) {
+				ctx := t.Context()
+				repo := storageTestRepo(t)
+				svc := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+				t.Cleanup(func() { _ = svc.Stop() })
+				if primary {
+					svc.Job.RepositoryReadOnly = true
+				} else {
+					svc.companion(t, "context", storageTestRepo(t))
+				}
+				first, err := svc.CreateRemoteSession(ctx, "before-copy", svc.request(t, "before-copy"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonical, err := filepath.EvalSymlinks(svc.stateRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				parent := filepath.Join(canonical, companionSnapshotRoot)
+				entries, err := os.ReadDir(parent)
+				if err != nil || len(entries) != 1 {
+					t.Fatalf("cache entries: %v %v", entries, err)
+				}
+				entry := filepath.Join(parent, entries[0].Name())
+				receipt, err := os.ReadFile(filepath.Join(entry, "receipt.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Keep the tree and every live projection; only replace the cache directory.
+				moved := filepath.Join(t.TempDir(), "old-directory")
+				if err := os.Rename(entry, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(entry, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(filepath.Join(moved, "tree"), filepath.Join(entry, "tree")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(entry, "receipt.json"), receipt, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if deleting {
+					if err := os.WriteFile(filepath.Join(entry, "deleting"), nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cancelled, cancel := context.WithCancel(ctx)
+				cancel()
+				if err := holdCopiedCompanionSnapshot(cancelled, entry, filepath.Base(entry), session.CompanionRepository{}); err != context.Canceled {
+					t.Fatalf("cancelled recovery: %v", err)
+				}
+				if _, err := os.Stat(entry); err != nil {
+					t.Fatal("cancelled recovery moved the cache")
+				}
+				checked, err := CheckCompanionSnapshots(svc.stateRoot)
+				if err != nil || len(checked.Damaged) != 0 || checked.Rebuildable != 1 || checked.Current != 0 || checked.Held != 0 {
+					t.Fatalf("copied disposable cache blocks upgrade: %+v %v", checked, err)
+				}
+				var second session.Session
+				for n := range 2 {
+					key := fmt.Sprintf("after-copy-%d", n)
+					second, err = svc.CreateRemoteSession(ctx, key, svc.request(t, key))
+					if err != nil {
+						t.Fatalf("copied cache stranded a new session: %v", err)
+					}
+				}
+				entries, err = os.ReadDir(parent)
+				if err != nil || len(entries) != 2 {
+					t.Fatalf("rebuild did not hold exactly one old cache: %v %v", entries, err)
+				}
+				held := ""
+				for _, e := range entries {
+					if e.Name() != filepath.Base(entry) {
+						held = filepath.Join(parent, e.Name(), "snapshot")
+					}
+				}
+				preserved, err := os.ReadFile(filepath.Join(held, "receipt.json"))
+				if err != nil || string(preserved) != string(receipt) {
+					t.Fatal("rebuild rewrote old ownership proof")
+				}
+				if _, err := os.Stat(filepath.Join(held, "tree", "payload.bin")); err != nil {
+					t.Fatal("rebuild deleted old cache content")
+				}
+				var oldPath, newPath string
+				if primary {
+					oldPath, newPath = first.Workspace, second.Workspace
+					if _, err := svc.GetChanges(ctx, first.ID); err != nil {
+						t.Fatalf("existing primary changed: %v", err)
+					}
+				} else {
+					oldPath, newPath = first.Companions[0].Workspace, second.Companions[0].Workspace
+					if err := verifySessionCompanionContext(ctx, first.Companions[0]); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before, err := os.Stat(filepath.Join(oldPath, "payload.bin"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := os.Stat(filepath.Join(newPath, "payload.bin"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if os.SameFile(before, after) {
+					t.Fatal("new cache adopted copied payload instead of rebuilding")
+				}
+				checked, err = CheckCompanionSnapshots(svc.stateRoot)
+				if err != nil || checked.Current != 1 || checked.Held != 1 || checked.Rebuildable != 0 || len(checked.Damaged) != 0 {
+					t.Fatalf("wrong rebuilt inventory: %+v %v", checked, err)
+				}
+				if _, err := readCompanionSnapshotReceipt(entry); err != nil {
+					t.Fatalf("fresh cache untrusted: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestSnapshotRecoveryDoesNotAdoptUntrustedReceipts(t *testing.T) {
+	for _, kind := range []string{"newer", "older", "malformed", "wrong-key", "wrong-base", "incomplete", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, base := strings.Repeat("a", 64), strings.Repeat("b", 40)
+			entry := filepath.Join(root, companionSnapshotRoot, key)
+			if err := os.MkdirAll(entry, 0700); err != nil {
+				t.Fatal(err)
+			}
+			receipt := companionSnapshotReceipt{Version: companionSnapshotVersion, Key: key, Commit: base, Complete: true}
+			switch kind {
+			case "newer":
+				receipt.Version++
+			case "older":
+				receipt.Version--
+			case "wrong-key":
+				receipt.Key = strings.Repeat("c", 64)
+			case "wrong-base":
+				receipt.Commit = strings.Repeat("c", 40)
+			case "incomplete":
+				receipt.Complete = false
+			}
+			data, err := json.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "malformed" {
+				data = []byte("{")
+			}
+			path := filepath.Join(entry, "receipt.json")
+			if kind == "symlink" {
+				outside := filepath.Join(root, "outside.json")
+				if err := os.WriteFile(outside, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			binding := session.CompanionRepository{BaseCommit: base}
+			if err := createCachedSessionSnapshot(t.Context(), root, binding, key, nil, nil); err == nil {
+				t.Fatal("untrusted cache silently adopted")
+			}
+			after, err := os.Lstat(entry)
+			if err != nil || !os.SameFile(before, after) {
+				t.Fatal("untrusted cache moved or removed")
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != string(data) {
+				t.Fatal("untrusted ownership data changed")
+			}
+			entries, err := os.ReadDir(filepath.Dir(entry))
+			if err != nil || len(entries) != 1 {
+				t.Fatal("untrusted cache was hidden in a hold")
+			}
+		})
+	}
+}
