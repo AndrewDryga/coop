@@ -126,6 +126,12 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			return 2, noAccountErr(target.Provider, target.Account())
 		}
 	}
+	// A first read of a large history takes a while, with nothing else on screen to say why.
+	slowNote := func() {}
+	if ui.IsTerminal(os.Stderr) {
+		timer := time.AfterFunc(time.Second, func() { ui.Note("Reading usage history on this computer…") })
+		slowNote = func() { timer.Stop() }
+	}
 	// Host reads do not initialize a runtime. The one native helper does so only when requested.
 	var runtimeMu sync.Mutex
 	var wg sync.WaitGroup
@@ -187,6 +193,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		}()
 	}
 	wg.Wait()
+	slowNote()
 	// Only an uninterrupted check of every provider whose root listing reported no failure can tell
 	// unused cache entries from live ones; to a narrower check, live entries look unused.
 	if target.Provider == "" && len(unlisted.accounts)+len(unlisted.history) == 0 && ctx.Err() == nil {
