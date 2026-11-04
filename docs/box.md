@@ -27,18 +27,19 @@ letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Publi
 writable, and ordinary public hardlinks work. `.coopignore` stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.
 
-`stat` still works on a hidden file, so `find` and tools that list a folder keep working. It shows
-the file's real size, times, mode, owner and link count. The contents and a hidden
-symlink's target stay denied, and extended attributes read as empty. A hidden directory and everything inside
-it also deny `stat`.
+Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file over
+it. A tool that opens one, such as Terraform with `terraform.tfvars`, reads it as empty and keeps working,
+and the secret stays out of reach. The box can't delete or rename a folder that holds a covered file.
 
-`ls -l` shows a hidden file with its size and times and exits 0. The file reads as having no extended
-attributes or ACLs, so the box learns nothing more than "none"; it never gets a value. A hidden symlink
-shows no target, and `readlink` on it fails. A hidden directory's entry also gets an error.
+eBPF remains the protection for everything else: other letter cases, hardlinks, files past the limit,
+hidden files created after the box starts, and hidden directories. Opening one of those returns
+`Operation not permitted`. A restart covers a hidden file created since the last start.
 
-A tool that opens the hidden file still fails. `terraform validate` works beside a `prod.tfvars`, but
-Terraform opens `terraform.tfvars` and `*.auto.tfvars` itself, `terraform fmt` opens every `.tfvars`,
-and a hidden directory stops it reading the folder. The mount backend avoids this with its empty files.
+`stat` still works on such a file, so `find` and tools that list a folder keep working. It shows the
+file's real size, times, mode, owner and link count. The contents and a hidden symlink's target stay
+denied, and extended attributes read as empty. A hidden directory and everything inside it also deny
+`stat`, and `ls -l` shows that directory's entry with an error. A hidden symlink shows no target, and
+`readlink` on it fails.
 
 Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
 hooks and cgroup configuration. Launches do not test the protection itself. After updating Docker

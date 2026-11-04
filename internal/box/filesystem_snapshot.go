@@ -292,3 +292,47 @@ func (s *filesystemSnapshot) remember() error {
 	// atomically replaced. An alias must retain its original policy-hidden path.
 	return writeHiddenFiles(s.root, record)
 }
+
+// maxHiddenFileCovers bounds the empty files one eBPF launch adds: about 0.2 s of start time, measured
+// on a Mac. Past it, or past the command line's budget, a hidden file is still denied by eBPF, which is
+// the protection. A cover only lets a tool that opens the file see it empty.
+const maxHiddenFileCovers = 1000
+
+// withHiddenFileCovers adds an empty read-only file over each hidden file an admission captured, to the
+// binds it was given. eBPF stays the boundary, so one mount per real name is enough: it already denies
+// other spellings, hidden directories and files created later. Each root is mounted at the bind whose
+// source it is; a root with no bind has nothing to cover.
+func (a *filesystemAdmission) withHiddenFileCovers(mounts []Mount) []Mount {
+	targets := map[string]string{}
+	for _, m := range mounts {
+		if m.Kind == Bind {
+			targets[m.Source] = m.Target
+		}
+	}
+	covers, bytes := 0, 0
+	for _, snapshot := range a.snapshots {
+		target, bound := targets[snapshot.root]
+		if !bound {
+			continue
+		}
+		secret := map[string]bool{}
+		for _, entry := range snapshot.policy.Entries { // sorted with parents first
+			if entry.Flags&fsfilter.Secret == 0 {
+				continue
+			}
+			secret[entry.Path] = true
+			object, known := snapshot.objects[entry.Path]
+			if !known || !object.mode.IsRegular() || secret[path.Dir(entry.Path)] {
+				continue // a hidden directory stays denied, with everything inside it
+			}
+			cover := path.Join(target, entry.Path)
+			bytes += len(cover) + coverOverhead
+			if covers >= maxHiddenFileCovers || bytes > maxCoverBytes {
+				return mounts
+			}
+			mounts = append(mounts, Mount{Kind: Decoy, Target: cover, RO: true})
+			covers++
+		}
+	}
+	return mounts
+}

@@ -102,9 +102,12 @@ tools stat every listed name and Terraform refuses a module folder otherwise. An
 allow or deny, so it cannot report the mount backend's empty-file size: stat shows the real size,
 times, mode, owner and link count. Hidden ancestors, hidden directories, a dead owner and a missing
 normalizer still deny stat. `inode_file_getattr` (lsattr) keeps the read rule; stat never calls it.
-Terraform v1.17 shows stat alone is not parity with mount covers: it stats `terraform.tfvars` and
-then opens it, so a denied stat used to fail the folder scan and a denied open now fails the load.
-Named `.tfvars` validate; auto-loaded ones, `fmt` and a hidden directory beside the `.tf` still fail.
+Terraform v1.17 stats `terraform.tfvars` and then opens it, and LSM can only allow or deny. Since
+2026-11-04 (owner decision) an eBPF launch also binds an empty read-only file over each hidden regular
+file from its snapshot, one mount per real name, capped at 1,000 and at `maxCoverBytes`
+(`withHiddenFileCovers`). The cover is a separate object, on a source the policy does not guard, so it
+opens as empty. eBPF stays the boundary: other spellings, aliases, later files and anything past the cap
+are denied. A hidden directory beside the `.tf` still fails. Measured: 1,000 covers add about 0.2 s.
 GNU `ls -l` also asks for xattrs/ACLs of each name, so on a hidden non-directory `inode_getxattr` and
 `inode_get_acl` answer ENODATA and `inode_listxattr` answers EOPNOTSUPP (a list call has no "no such
 attribute"; gnulib treats ENODATA there as a real error) via `xattr_read` and the QUIET_* verdicts. Hidden

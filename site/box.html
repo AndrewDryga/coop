@@ -108,16 +108,17 @@ Secret reads and changes return <code>Operation not permitted</code>, including 
 letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Public files remain
 writable, and ordinary public hardlinks work. <code>.coopignore</code> stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.</p>
-<p><code>stat</code> still works on a hidden file, so <code>find</code> and tools that list a folder keep working. It shows
-the file&#39;s real size, times, mode, owner and link count. The contents and a hidden
-symlink&#39;s target stay denied, and extended attributes read as empty. A hidden directory and everything inside
-it also deny <code>stat</code>.</p>
-<p><code>ls -l</code> shows a hidden file with its size and times and exits 0. The file reads as having no extended
-attributes or ACLs, so the box learns nothing more than &#34;none&#34;; it never gets a value. A hidden symlink
-shows no target, and <code>readlink</code> on it fails. A hidden directory&#39;s entry also gets an error.</p>
-<p>A tool that opens the hidden file still fails. <code>terraform validate</code> works beside a <code>prod.tfvars</code>, but
-Terraform opens <code>terraform.tfvars</code> and <code>*.auto.tfvars</code> itself, <code>terraform fmt</code> opens every <code>.tfvars</code>,
-and a hidden directory stops it reading the folder. The mount backend avoids this with its empty files.</p>
+<p>Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file over
+it. A tool that opens one, such as Terraform with <code>terraform.tfvars</code>, reads it as empty and keeps working,
+and the secret stays out of reach. The box can&#39;t delete or rename a folder that holds a covered file.</p>
+<p>eBPF remains the protection for everything else: other letter cases, hardlinks, files past the limit,
+hidden files created after the box starts, and hidden directories. Opening one of those returns
+<code>Operation not permitted</code>. A restart covers a hidden file created since the last start.</p>
+<p><code>stat</code> still works on such a file, so <code>find</code> and tools that list a folder keep working. It shows the
+file&#39;s real size, times, mode, owner and link count. The contents and a hidden symlink&#39;s target stay
+denied, and extended attributes read as empty. A hidden directory and everything inside it also deny
+<code>stat</code>, and <code>ls -l</code> shows that directory&#39;s entry with an error. A hidden symlink shows no target, and
+<code>readlink</code> on it fails.</p>
 <p>Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
 hooks and cgroup configuration. Launches do not test the protection itself. After updating Docker
 or OrbStack, run <code>coop doctor</code>: it tries to read test secrets in a real box, including through

@@ -2,8 +2,11 @@ package box
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -408,5 +411,45 @@ func TestFilesystemFinalInventoryPreservesReclassificationChecks(t *testing.T) {
 				t.Fatalf("validation = %v, want allowed %t", err, wantOK)
 			}
 		})
+	}
+}
+
+// Covers go on hidden regular files, at the bind that holds them. A hidden directory stays denied with
+// all it holds, a symlink and a public file get nothing, and the cap leaves the rest to eBPF.
+func TestWithHiddenFileCovers(t *testing.T) {
+	regular := filesystemObject{mode: 0}
+	snapshot := &filesystemSnapshot{root: "/host/repo", objects: map[string]filesystemObject{
+		".env": regular, "public.txt": regular, "secrets": {mode: fs.ModeDir}, "secrets/a": regular,
+		"link.pem": {mode: fs.ModeSymlink}, "sub/k.pem": regular,
+	}, policy: fsfilter.Policy{Entries: []fsfilter.Entry{
+		{Path: ".env", Flags: fsfilter.Secret}, {Path: "link.pem", Flags: fsfilter.Secret},
+		{Path: "public.txt"}, {Path: "secrets", Flags: fsfilter.Secret}, {Path: "secrets/a", Flags: fsfilter.Secret},
+		{Path: "sub/k.pem", Flags: fsfilter.Secret}, {Path: "unknown", Flags: fsfilter.Secret},
+	}}}
+	repo := Mount{Kind: Bind, Source: "/host/repo", Target: "/work"}
+	got := (&filesystemAdmission{snapshots: []*filesystemSnapshot{snapshot}}).withHiddenFileCovers([]Mount{repo})
+	var targets []string
+	for _, m := range got[1:] {
+		if m.Kind != Decoy || !m.RO {
+			t.Errorf("cover %+v is not a read-only decoy", m)
+		}
+		targets = append(targets, m.Target)
+	}
+	if want := []string{"/work/.env", "/work/sub/k.pem"}; !slices.Equal(targets, want) {
+		t.Errorf("covers = %q, want %q", targets, want)
+	}
+	if got := (&filesystemAdmission{snapshots: []*filesystemSnapshot{snapshot}}).withHiddenFileCovers(nil); len(got) != 0 {
+		t.Errorf("a root with no bind got covers: %+v", got)
+	}
+
+	many := &filesystemSnapshot{root: "/host/repo", objects: map[string]filesystemObject{}}
+	for i := range maxHiddenFileCovers + 5 {
+		name := fmt.Sprintf("s%d.pem", i)
+		many.objects[name] = regular
+		many.policy.Entries = append(many.policy.Entries, fsfilter.Entry{Path: name, Flags: fsfilter.Secret})
+	}
+	capped := (&filesystemAdmission{snapshots: []*filesystemSnapshot{many}}).withHiddenFileCovers([]Mount{repo})
+	if len(capped) != maxHiddenFileCovers+1 {
+		t.Errorf("%d mounts past the cap", len(capped))
 	}
 }

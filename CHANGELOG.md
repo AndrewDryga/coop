@@ -15,6 +15,11 @@
   `COOP_HOME` moves the folder on its own. A new `.gitignore` there keeps a dotfiles repository to shared
   settings, so accounts and `agents/env` never reach Git.
 
+- **Terraform works beside hidden `terraform.tfvars` under eBPF.** Each hidden file already in the
+  project gets an empty read-only file over it, up to 1,000, so a tool that opens one reads it as empty.
+  eBPF still denies everything else, including other spellings and hidden files created later. The box
+  can't delete or rename a folder that holds a covered file.
+
 - **`COOP_EGRESS=offline` is always offline.** In a project with approved network rules it ran filtered
   and could reach those sites. Now only an `--egress` flag outranks it. A saved approval still outranks
   `COOP_EGRESS=filtered` and `open`, and the run warns.

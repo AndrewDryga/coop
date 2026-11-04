@@ -1037,7 +1037,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			cfg.ExtraRunArgs = nil
 			spec.ExtraArgs = extra
 		}
-		mounts = slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind })
+		mounts = spec.filesystem.withHiddenFileCovers(slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind }))
 	} else if !spec.Login && !spec.GradeSnapshot && !spec.FormatCorrection {
 		// Remember before spelling expansion can refuse the launch. A failed
 		// attempt must still preserve identities already classified as secret.
