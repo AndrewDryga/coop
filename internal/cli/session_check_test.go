@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"github.com/AndrewDryga/coop/internal/workerconnector"
@@ -94,6 +95,19 @@ func TestRunSessionCheckReportsEachVerdictWithoutWriting(t *testing.T) {
 			}
 			return nil
 		}, 0, []string{"This build can use the session data as it is", "1 copied cache will be rebuilt from authorized sources", "1 held cache preserved; included in disk usage"}},
+		{"copied read-only primary", func(t *testing.T, state string) func() {
+			createSessionStore(t, state)
+			repo := filepath.Join(state, "job-sources", strings.Repeat("a", 64), "repository")
+			workspace := forkspace.Workspace(repo, "copied-primary")
+			if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			receipt := fmt.Sprintf(`{"version":1,"key":%q,"directory":{"device":0,"inode":0}}`, strings.Repeat("b", 64))
+			if err := os.WriteFile(filepath.Join(workspace, ".git", forkspace.ImmutablePrimaryMarker), []byte(receipt), 0600); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}, 0, []string{"This build can use the session data as it is", "1 copied read-only workspace will be quarantined; files and history stay on disk."}},
 		{"converts", func(t *testing.T, state string) func() {
 			createSessionStore(t, state)
 			setSessionSchema(t, state, session.SchemaVersion-1)

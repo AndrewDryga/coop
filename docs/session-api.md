@@ -538,6 +538,10 @@ frozen source. It never rewrites the old receipt or changes existing session pro
 Held bytes remain counted as protected storage. The upgrade check reports copied caches
 as rebuildable and held copies as preserved; malformed or unsupported receipts still refuse.
 
+Existing read-only primary workspaces whose current receipt names a copied inode are
+quarantined at startup. Their files and completed-turn history stay intact. Explicit quarantine
+retirement removes only session custody; it neither repairs ownership nor proves runtime cleanup.
+
 New source downloads and checkouts wait before allocating when free storage reaches twice the
 default reserve. Verified source cache hits continue working. This wait keeps the same durable
 worker command and resumes when space returns; it does not consume a model attempt. Fresh source

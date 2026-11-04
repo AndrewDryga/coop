@@ -912,6 +912,12 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
 		return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
 	}
+	// Generation anchors can survive a consistent volume copy while a shared
+	// primary's inode receipt cannot. Quarantine that exact known condition;
+	// do not renew its reservation or invent authority over the copied bytes.
+	if err := validateSessionPrimaryDirectory(bound); err != nil {
+		return session.Session{}, err
+	}
 	current, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
 	if err != nil {
 		return session.Session{}, err
@@ -998,6 +1004,9 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 		!(allowMissingWorkspace && errors.Is(err, os.ErrNotExist)) {
 		return err
 	}
+	if err := validateSessionPrimaryDirectory(bound); err != nil {
+		return err
+	}
 	reservation, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
 	if err != nil {
 		return err
@@ -1006,6 +1015,18 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 		return errors.New("session workspace reservation changed")
 	}
 	return nil
+}
+
+// Called under the fork lock before any reservation is renewed or used.
+func validateSessionPrimaryDirectory(bound session.Session) error {
+	if !bound.RepositoryReadOnly {
+		return nil
+	}
+	_, _, err := forkspace.ReadImmutablePrimarySnapshot(bound.Workspace)
+	if errors.Is(err, forkspace.ErrImmutablePrimaryDirectoryChanged) {
+		return fmt.Errorf("%w: %v", errSessionForkUnproven, err)
+	}
+	return err
 }
 
 // normalizedSessionMode reads a blank mode as normal: a session replayed from an operation

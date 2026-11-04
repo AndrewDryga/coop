@@ -363,7 +363,7 @@ func runSessionCheck(state string) (int, error) {
 			[2]string{"", "Check the --state path. A worker that has never run has nothing to check."})
 	}
 	var records []workerconnector.RecordCheck
-	var rebuildable, heldCaches int
+	var rebuildable, heldCaches, heldPrimaries int
 	if err == nil {
 		records, err = workerconnector.CheckJournal(connectorJournalDir(state))
 	}
@@ -381,6 +381,7 @@ func runSessionCheck(state string) (int, error) {
 	if err == nil {
 		var primary sessionsvc.CompanionSnapshotCheck
 		primary, err = sessionsvc.CheckPrimarySnapshots(state)
+		heldPrimaries = primary.Held
 		records = append(records, workerconnector.RecordCheck{Noun: "primary snapshot receipt",
 			Version: primary.Version, Current: primary.Current, Newer: primary.Newer,
 			Older: primary.Older, Damaged: primary.Damaged})
@@ -394,6 +395,9 @@ func runSessionCheck(state string) (int, error) {
 	}
 	if err == nil && heldCaches > 0 {
 		ui.Note("  %s preserved; included in disk usage.", ui.Count(heldCaches, "held cache"))
+	}
+	if err == nil && heldPrimaries > 0 {
+		ui.Note("  %s will be quarantined; files and history stay on disk.", ui.Count(heldPrimaries, "copied read-only workspace"))
 	}
 	return code, err
 }
