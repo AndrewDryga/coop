@@ -35,6 +35,9 @@ An editor session does not race its own boxes for these ports. Its supervisor ho
 and forwards it to the live box (`internal/cli/acp_serve.go`), and every box publishes on a private
 port the supervisor picks (`RunSpec.ServeBinds`), so a warm box holds nothing a person could reach and
 a switch keeps the same URL. Something else on the port is said in the thread with no link.
+The supervisor also runs one watcher in the live box over `docker exec -i`, reading `/proc/net/tcp`
+(`internal/cli/acp_serve_watch.go`), so the thread hears when a server comes up. It never probes the
+port, because a dev server would log that.
 
 ## Changelog
 - 2026-11-03 — an editor session now owns its stable ports and forwards them to its live box.

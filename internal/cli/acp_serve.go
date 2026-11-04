@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,15 +28,18 @@ var acpServeRetry = 5 * time.Second
 // boxes hold nothing a person could reach, and this forwards each stable port to the box the thread is
 // using now. It is plain TCP on the host's loopback, so it carries HTTP and websockets alike.
 type acpServeRouter struct {
-	report func(ports []acpctl.ServePort, freed []acpctl.ServePort)
-	stop   chan struct{}
-	wg     sync.WaitGroup
+	report  func(ports []acpctl.ServePort, freed []acpctl.ServePort)
+	notify  func(string)
+	execBox func(ctx context.Context, container string, argv ...string) *exec.Cmd // nil: no server watching
+	stop    chan struct{}
+	wg      sync.WaitGroup
 
 	mu        sync.Mutex
 	ports     []acpctl.ServePort
 	live      map[int]int // box port → the live box's private host port
 	listeners []net.Listener
 	conns     map[net.Conn]struct{}
+	stopWatch context.CancelFunc
 	closed    bool
 }
 
@@ -62,6 +67,7 @@ func (r *acpServeRouter) reportTo(ctrl *acpctl.Control) {
 		return
 	}
 	r.mu.Lock()
+	r.notify = ctrl.Notify
 	r.report = func(ports, freed []acpctl.ServePort) {
 		ctrl.SetServePorts(ports)
 		for _, p := range freed {
@@ -254,6 +260,9 @@ func (r *acpServeRouter) Close() {
 	}
 	r.closed = true
 	close(r.stop)
+	if r.stopWatch != nil {
+		r.stopWatch()
+	}
 	for _, listener := range r.listeners {
 		_ = listener.Close()
 	}

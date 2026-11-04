@@ -304,6 +304,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		a.acpServe = nil
 		if len(serve) > 0 && a.acpSupervise == nil {
 			a.acpServe = startACPServeRouter(serve)
+			a.acpServe.execBox = a.rt.ExecCommand
 			defer a.acpServe.Close()
 			serve = a.acpServe.Ports()
 		}
@@ -694,6 +695,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		a.acpRefresh.started(child)
 		a.acpBoxWait.started(child)
 		a.acpServe.setLive(child.ServeBinds)
+		a.acpServe.follow(child.ServeContainer)
 		rebalance(child.Provider)
 		return child, nil
 	}
@@ -1384,6 +1386,20 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
 	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts}
+	if len(serveBinds) > 0 && activityRepo != "" {
+		child.ServeContainer = func(ctx context.Context) (string, error) {
+			observations, problems := forkspace.Executions(activityRepo)
+			if len(problems) > 0 {
+				return "", errors.New("the session's execution records could not be read")
+			}
+			for _, observation := range observations {
+				if observation.Record.PID == pid && observation.Record.SourceID == superID {
+					return a.rt.AgentContainerByLabel(ctx, box.LabelExecution, observation.Record.ID)
+				}
+			}
+			return "", nil
+		}
+	}
 	if mcpPath != "" {
 		var once sync.Once
 		var servers []map[string]any

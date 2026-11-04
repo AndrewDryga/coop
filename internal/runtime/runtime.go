@@ -707,6 +707,31 @@ func (r Runtime) RemoveVolume(ctx context.Context, name string) error {
 	return nil
 }
 
+// AgentContainerByLabel names the running container carrying key=value that an agent runs in, or ""
+// when there is none yet. A box's helpers carry its label too, under names of their own.
+func (r Runtime) AgentContainerByLabel(ctx context.Context, key, value string) (string, error) {
+	if r.kind() == runtimeAppleContainer {
+		return "", errors.New("label inspection is unsupported by Apple container")
+	}
+	out, err := contextCommand(ctx, r.Name, "ps", "--filter", "label="+key+"="+value, "--format", "{{.ID}} {{.Names}}").Output()
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		id, name, ok := strings.Cut(line, " ")
+		if ok && !strings.HasPrefix(name, "coop-native-") && !strings.HasPrefix(name, "coop-broker-") {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+// ExecCommand is a command in a running container, with its stdin kept for the caller: closing it is
+// how a long-running script in the box learns the host has gone.
+func (r Runtime) ExecCommand(ctx context.Context, container string, argv ...string) *exec.Cmd {
+	return contextCommand(ctx, r.Name, append([]string{"exec", "-i", container}, argv...)...)
+}
+
 // RunningContainerIDsByLabel returns the ids of running containers carrying key=value. A real
 // no-match is an empty slice with a nil error; runtime query failures remain distinguishable.
 func (r Runtime) RunningContainerIDsByLabel(ctx context.Context, key, value string) ([]string, error) {

@@ -50,6 +50,37 @@ func (c *Control) SetServices(links []ServiceLink) {
 	c.mu.Unlock()
 }
 
+// ServeUpText is what a thread hears when a server starts listening on a serve port in its box.
+func ServeUpText(p ServePort, command string) string {
+	text := fmt.Sprintf("Port %d is up", p.Box)
+	if command = shortCommand(command); command != "" {
+		text += ": " + codeSpan(command)
+	}
+	if p.Taken {
+		return text + fmt.Sprintf(", but localhost:%d is in use by another program on this computer, so it does not reach this box.", p.Host)
+	}
+	return text + fmt.Sprintf(" → [localhost:%d](http://localhost:%d)", p.Host, p.Host)
+}
+
+// ServeLoopbackText says why a server the box runs cannot be opened: a published port reaches the
+// box's own network address, and a server bound to 127.0.0.1 does not listen there.
+func ServeLoopbackText(p ServePort, command string) string {
+	what := "It"
+	if command = shortCommand(command); command != "" {
+		what = codeSpan(command)
+	}
+	return fmt.Sprintf("⚠ **Your browser cannot reach port %d:** %s listens only on 127.0.0.1 inside the box. Bind it to 0.0.0.0.", p.Box, what)
+}
+
+// shortCommand keeps a command line short enough to read in a thread.
+func shortCommand(command string) string {
+	const limit = 80
+	if runes := []rune(strings.TrimSpace(command)); len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return strings.TrimSpace(command)
+}
+
 // SetServePorts records the stable ports' state for every later thread's start message.
 func (c *Control) SetServePorts(ports []ServePort) {
 	c.mu.Lock()
