@@ -506,6 +506,9 @@ func (grokAgent) base(cfg *config.Config) []string {
 
 func (a grokAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+// LaunchArgs changes nothing: grok's own -p already runs one prompt and exits.
+func (grokAgent) LaunchArgs(typed, native []string) []string { return slices.Concat(typed, native) }
+
 func (grokAgent) InteractiveInvocation(cmd []string) bool {
 	return nativeInteractiveCommand(cmd, []string{"-p", "--single", "--output-format", "--help", "-h", "--version", "-v", "login", "logout", "auth", "mcp", "inspect", "update"}, []string{"--model", "--effort"})
 }

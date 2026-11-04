@@ -209,6 +209,33 @@ func TestProviderScriptedNativeRoleRefusesALeadThatCannotHostIt(t *testing.T) {
 	}
 }
 
+// A preset's lead takes -p as a direct launch does, so a Codex lead runs one prompt through exec.
+func TestProviderScriptedPresetLeadRunsOnePrompt(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	name, provider := "one-prompt-lead", "codex"
+	lead := compositionTarget(provider, "one-prompt")
+	dir := filepath.Join(suite.layout.Repo, ".agent", "presets", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(fmt.Sprintf("lead: {agent: [%s]}\n", lead.String())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, trace := suite.run(t, []string{name, "-p", "fixture prompt"}, processScenario(provider, nil, 0, ""))
+	if result.Err != nil || result.ExitCode != 0 {
+		t.Fatalf("preset -p = exit %d err %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
+	}
+	runs := processEvents(trace, "runtime", "run")
+	if len(runs) != 1 || runs[0].Run == nil || runs[0].Run.Provider != provider {
+		t.Fatalf("preset -p runtime runs = %#v, want only %s", runs, provider)
+	}
+	want := processTraceArgv(directExpectedArgv(directProviderContracts[provider], lead.Model, lead.Effort, []string{"exec", "--", "fixture prompt"}))
+	if !reflect.DeepEqual(runs[0].Run.ProviderArgv, want) {
+		t.Errorf("preset -p argv = %q, want %q", runs[0].Run.ProviderArgv, want)
+	}
+	assertProcessTraceGone(t, trace)
+}
+
 func TestProviderScriptedPresetTerminalPinsFirstLeadRung(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	first, second, roleProvider := suite.providers[0], suite.providers[1], suite.providers[2]

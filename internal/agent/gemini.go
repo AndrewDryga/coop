@@ -768,6 +768,9 @@ func (geminiAgent) base(cfg *config.Config) []string {
 
 func (a geminiAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+// LaunchArgs changes nothing: gemini's own -p already runs one prompt and exits.
+func (geminiAgent) LaunchArgs(typed, native []string) []string { return slices.Concat(typed, native) }
+
 func (geminiAgent) InteractiveInvocation(cmd []string) bool {
 	return nativeInteractiveCommand(cmd, []string{"-p", "--prompt", "-o", "--output-format", "--acp", "--help", "-h", "--version", "-v", "mcp", "skills", "extensions"}, []string{"--model", "-m", "--prompt-interactive", "-i"})
 }

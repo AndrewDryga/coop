@@ -1,5 +1,10 @@
 # Migrating
 
+## Unreleased: `coop codex -p` runs one prompt
+
+`coop codex -p <name>` used to pick a Codex profile. It now runs `<name>` as a prompt, as `-p` does
+on every other agent. To pick a profile, use `coop codex --profile <name>`.
+
 ## Unreleased: boxes use filtered networking by default
 
 Boxes now use filtered networking unless you choose another mode. An agent can reach its provider

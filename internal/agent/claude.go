@@ -677,6 +677,9 @@ func (claudeAgent) base(cfg *config.Config) []string {
 
 func (a claudeAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+// LaunchArgs changes nothing: claude's own -p already runs one prompt and exits.
+func (claudeAgent) LaunchArgs(typed, native []string) []string { return slices.Concat(typed, native) }
+
 func (claudeAgent) InteractiveInvocation(cmd []string) bool {
 	return nativeInteractiveCommand(cmd, []string{"-p", "--print", "--output-format", "--input-format", "--help", "-h", "--version", "-v", "auth", "mcp", "plugin", "plugins", "doctor", "install", "update", "setup-token"}, []string{"--model", "--effort", "--append-system-prompt", "--system-prompt", "--settings", "--permission-mode", "--add-dir"})
 }

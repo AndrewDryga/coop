@@ -169,6 +169,7 @@ Usage:
 
 OPTIONS
   --peer <target>        start a read-only peer agent (no @account); repeatable
+  -p "<prompt>"          run one prompt and exit
   --                     pass all remaining arguments directly to Claude
 
 NETWORK OPTIONS
@@ -180,6 +181,7 @@ EXAMPLES
   coop claude
   coop claude:opus
   coop claude:opus/high@work
+  coop claude -p "fix the failing test"
   coop claude -- --help
 
 MODELS AND ACCOUNTS
@@ -199,6 +201,7 @@ Usage:
 
 OPTIONS
   --peer <target>        start a read-only peer agent (no @account); repeatable
+  -p "<prompt>"          run one prompt and exit
   --                     pass all remaining arguments directly to Codex
 
 NETWORK OPTIONS
@@ -210,6 +213,7 @@ EXAMPLES
   coop codex
   coop codex:gpt-6-astra
   coop codex:gpt-6-astra/high@work
+  coop codex -p "fix the failing test"
   coop codex -- --help
 
 MODELS AND ACCOUNTS
@@ -229,6 +233,7 @@ Usage:
 
 OPTIONS
   --peer <target>        start a read-only peer agent (no @account); repeatable
+  -p "<prompt>"          run one prompt and exit
   --                     pass all remaining arguments directly to Gemini
 
 NETWORK OPTIONS
@@ -240,6 +245,7 @@ EXAMPLES
   coop gemini
   coop gemini:gemini-3.8-flash
   coop gemini:gemini-3.8-flash/high@work
+  coop gemini -p "fix the failing test"
   coop gemini -- --help
 
 MODELS AND ACCOUNTS
@@ -259,6 +265,7 @@ Usage:
 
 OPTIONS
   --peer <target>        start a read-only peer agent (no @account); repeatable
+  -p "<prompt>"          run one prompt and exit
   --                     pass all remaining arguments directly to Grok
 
 NETWORK OPTIONS
@@ -270,6 +277,7 @@ EXAMPLES
   coop grok
   coop grok:grok-4.5
   coop grok:grok-4.5/high@work
+  coop grok -p "fix the failing test"
   coop grok -- --help
 
 MODELS AND ACCOUNTS

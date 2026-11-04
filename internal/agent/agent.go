@@ -472,6 +472,10 @@ type Agent interface {
 	Vendor() string
 	// Interactive is the autonomous default command — what `coop <agent>` runs.
 	Interactive(cfg *config.Config) []string
+	// LaunchArgs builds what the agent's CLI receives from `coop <agent>`: typed came before Coop's
+	// `--`, and native came after it, so native is the agent's own and stays verbatim. `-p` runs one
+	// prompt and exits on every agent; an adapter whose CLI spells that differently rewrites it here.
+	LaunchArgs(typed, native []string) []string
 	// InteractiveInvocation distinguishes native TUI commands from print/protocol commands.
 	// Host build confirmation uses this, not native-history session production.
 	InteractiveInvocation(cmd []string) bool

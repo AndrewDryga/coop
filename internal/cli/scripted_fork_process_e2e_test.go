@@ -318,6 +318,25 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if same.Err != nil || same.ExitCode != 1 || !strings.Contains(same.Stderr, "another interactive codex session is active") {
 			t.Fatalf("same-home contender = exit %d err %v\nstderr:\n%s", same.ExitCode, same.Err, same.Stderr)
 		}
+		// One prompt with -p is headless, so the session holding that lock does not refuse it.
+		promptScenario, err := json.Marshal(processScenario(provider, nil, 0, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		promptScenarioPath := filepath.Join(override.layout.Plans, "fork-overlap-prompt.json")
+		if err := os.WriteFile(promptScenarioPath, append(promptScenario, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		promptCtx, promptCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		promptResult := procharness.Run(promptCtx, procharness.Command{
+			Path: override.coopBin, Args: []string{target, "-p", "fixture prompt"},
+			Dir: override.layout.Repo, Env: replaceProcessEnv(override.env, "COOP_PROVIDER_FIXTURE_SCENARIO", promptScenarioPath),
+			MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+		})
+		promptCancel()
+		if promptResult.Err != nil || promptResult.ExitCode != 0 {
+			t.Fatalf("Codex -p beside a session = exit %d err %v\nstderr:\n%s", promptResult.ExitCode, promptResult.Err, promptResult.Stderr)
+		}
 
 		// Put the contender in another parent repository while keeping ConfigDir/account/cwd shared.
 		// Complete native homes keep these repositories independent despite identical container cwd.
@@ -410,17 +429,23 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if execResult.Err != nil || execResult.ExitCode != 0 {
 			t.Fatalf("concurrent Codex exec = exit %d err %v\nstderr:\n%s", execResult.ExitCode, execResult.Err, execResult.Stderr)
 		}
-		starts, peers := 0, 0
+		var starts [][]string
+		peers := 0
 		for _, event := range readProcessTrace(t, override.layout.Trace) {
 			if event.Source == "provider" && event.Event == "start" {
-				starts++
+				starts = append(starts, event.Argv)
 			}
 			if event.Source == "peer" && event.Event == "start" {
 				peers++
 			}
 		}
-		if starts != 4 || peers != 1 {
-			t.Fatalf("independent repository runs did not reach providers: %d starts/%d peers, want 4/1", starts, peers)
+		if len(starts) != 5 || peers != 1 {
+			t.Fatalf("independent repository runs did not reach providers: %d starts/%d peers, want 5/1", len(starts), peers)
+		}
+		// The -p run is the same command as the exec run, with the prompt kept behind a separator.
+		execArgv, promptArgv := starts[4], starts[1]
+		if want := slices.Insert(slices.Clone(execArgv), len(execArgv)-1, "--"); !slices.Equal(promptArgv, want) {
+			t.Fatalf("coop %s -p ran %q, want %q", target, promptArgv, want)
 		}
 
 		// Signal the waiting provider directly so teardown proceeds child-to-parent. Group-wide

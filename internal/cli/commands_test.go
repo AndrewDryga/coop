@@ -32,15 +32,25 @@ import (
 
 // coop's "--" separator must be consumed, not forwarded to the agent: `coop claude -- -p x` must
 // reach the agent as `-p x`, not `-- -p x` (which the agent reads as positional, dropping the flag).
-func TestDropDashDash(t *testing.T) {
-	for _, c := range []struct{ in, want []string }{
-		{[]string{"-p", "x"}, []string{"-p", "x"}},                           // no --: unchanged
-		{[]string{"--", "-p", "x"}, []string{"-p", "x"}},                     // leading -- stripped
-		{[]string{"a", "--", "b", "--", "c"}, []string{"a", "b", "--", "c"}}, // only the first --
-		{[]string{"--"}, []string{}},                                         // lone --
+// Before it the agent gets its own grammar for -p; after it, everything stays verbatim.
+func TestAgentArgs(t *testing.T) {
+	for _, c := range []struct {
+		agent    string
+		in, want []string
+	}{
+		{"claude", []string{"-p", "x"}, []string{"-p", "x"}},                           // no --: unchanged
+		{"claude", []string{"--", "-p", "x"}, []string{"-p", "x"}},                     // leading -- stripped
+		{"claude", []string{"a", "--", "b", "--", "c"}, []string{"a", "b", "--", "c"}}, // only the first
+		{"claude", []string{"--"}, []string{}},                                         // lone --
+		{"gemini", []string{"-p", "x"}, []string{"-p", "x"}},
+		{"grok", []string{"-p", "x"}, []string{"-p", "x"}},
+		{"codex", []string{"-p", "x"}, []string{"exec", "--", "x"}}, // Codex's spelling
+		{"codex", []string{"-p", "x", "--", "--json"}, []string{"exec", "--json", "--", "x"}},
+		{"codex", []string{"--", "-p", "work"}, []string{"-p", "work"}},         // Codex's own flag
+		{"npm", []string{"-p", "x", "--", "test"}, []string{"-p", "x", "test"}}, // not an agent
 	} {
-		if got := dropDashDash(c.in); !slices.Equal(got, c.want) {
-			t.Errorf("dropDashDash(%v) = %v, want %v", c.in, got, c.want)
+		if got := agentArgs(c.agent, c.in); !slices.Equal(got, c.want) {
+			t.Errorf("agentArgs(%s, %q) = %q, want %q", c.agent, c.in, got, c.want)
 		}
 	}
 }

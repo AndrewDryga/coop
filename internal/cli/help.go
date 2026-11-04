@@ -353,7 +353,7 @@ For more details see:
   coop help net`
 
 // agentHelp is `coop help <agent>` — how to run THAT agent, in its own words: the command a
-// person types, four examples, the coop flags read before a `--`, and where its models and
+// person types, five examples, the coop flags read before a `--`, and where its models and
 // accounts live. It documents coop's OWN flags because `coop <agent> --help` forwards to the
 // agent's real CLI. Every line is generated from the adapter (name, effort support), so a new
 // agent gets its page for free and none of them advertises a flag it refuses — see
@@ -378,10 +378,13 @@ func agentHelp(name string) string {
 	fmt.Fprintf(&b, "Usage:\n  coop %s[@<account>] [<options>] [-- <%s-args>...]\n\n", target, name)
 
 	b.WriteString("OPTIONS\n" + peerOptionRow + "\n")
-	b.WriteString(helpRowsAt([][2]string{{"--", "pass all remaining arguments directly to " + title}}, 25))
+	b.WriteString(helpRowsAt([][2]string{
+		{`-p "<prompt>"`, "run one prompt and exit"},
+		{"--", "pass all remaining arguments directly to " + title},
+	}, 25))
 	b.WriteString("\nNETWORK OPTIONS\n" + networkOptionRows + "\n")
 
-	fmt.Fprintf(&b, "\nEXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -- --help\n", name, example, account, name)
+	fmt.Fprintf(&b, "\nEXAMPLES\n  coop %s\n  coop %s\n  coop %s\n  coop %s -p \"fix the failing test\"\n  coop %s -- --help\n", name, example, account, name, name)
 
 	b.WriteString("\nMODELS AND ACCOUNTS\n")
 	b.WriteString(helpRows([][2]string{

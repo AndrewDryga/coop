@@ -743,6 +743,56 @@ func (codexAgent) base(cfg *config.Config) []string {
 
 func (a codexAgent) Interactive(cfg *config.Config) []string { return a.base(cfg) }
 
+// codexValueFlags are the flags of Codex's main command and of `exec` that take a value, so a value
+// is never mistaken for a subcommand or a prompt.
+var codexValueFlags = []string{"--add-dir", "--ask-for-approval", "-a", "--cd", "-C", "--color", "--config", "-c", "--disable", "--enable", "--image", "-i", "--local-provider", "--model", "-m", "--output-last-message", "-o", "--output-schema", "--profile", "-p", "--remote", "--remote-auth-token-env", "--sandbox", "-s", "--thread-source"}
+
+// codexFirstWord finds Codex's subcommand or positional prompt: the first argument that is neither a
+// flag nor a flag's value, stopping at a `--`. As in Codex, -i takes every word up to the next flag. A
+// flag missing from codexValueFlags makes its value look like that word, which only leaves what follows
+// in Codex's own grammar.
+func codexFirstWord(args []string) int {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--" || !strings.HasPrefix(args[i], "-"):
+			return i
+		case args[i] == "-i" || args[i] == "--image":
+			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+		case slices.Contains(codexValueFlags, args[i]):
+			i++
+		}
+	}
+	return len(args)
+}
+
+// LaunchArgs gives `coop codex -p "…"` the meaning -p has on every other agent. Codex runs one prompt
+// with `exec`, and its own -p picks a config profile. That stays reachable as --profile, past Coop's
+// `--`, and after a subcommand, so `resume --last -p work` still picks a profile. `exec` goes first so
+// its parser reads the typed flags; Codex passes Coop's own flags on from the main command
+// (inherit_exec_root_options). The prompt goes last behind `--`, so `help` stays a prompt and a
+// repeatable -i cannot take it.
+func (codexAgent) LaunchArgs(typed, native []string) []string {
+	for i, arg := range typed[:codexFirstWord(typed)] {
+		prompt, isFlag := strings.CutPrefix(arg, "-p")
+		if !isFlag {
+			continue
+		}
+		rest := typed[i+1:]
+		prompt = strings.TrimPrefix(prompt, "=")
+		if word := codexFirstWord(rest); prompt == "" && word < len(rest) {
+			prompt, rest = rest[word], slices.Concat(rest[:word], rest[word+1:])
+		}
+		args := slices.Concat([]string{"exec"}, typed[:i], rest, native)
+		if prompt == "" {
+			return args // no prompt typed: Codex's own error
+		}
+		return append(args, "--", prompt)
+	}
+	return slices.Concat(typed, native)
+}
+
 func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
 	// codex runs headless via an `exec` subcommand; the prompt is positional.
 	b := a.base(cfg)
@@ -816,11 +866,12 @@ func (a codexAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, b
 // ProducesSession is false for `codex exec …` — headless rollouts (source:"exec") that
 // discovery excludes, so they stay concurrent with interactive Codex sessions and need no lock.
 func (codexAgent) ProducesSession(args []string) bool {
-	return len(args) == 0 || args[0] != "exec"
+	first := codexFirstWord(args)
+	return first == len(args) || (args[first] != "exec" && args[first] != "e")
 }
 
 func (codexAgent) InteractiveInvocation(cmd []string) bool {
-	return nativeInteractiveCommand(cmd, []string{"--help", "-h", "--version", "-V", "exec", "e", "review", "app-server", "mcp-server", "login", "logout", "mcp", "completion", "debug", "cloud", "apply", "features"}, []string{"--model", "-m", "--config", "-c", "--profile", "--sandbox", "--ask-for-approval", "--cd", "-C", "--add-dir"})
+	return nativeInteractiveCommand(cmd, []string{"--help", "-h", "--version", "-V", "exec", "e", "review", "app-server", "mcp-server", "login", "logout", "mcp", "completion", "debug", "cloud", "apply", "features"}, codexValueFlags)
 }
 
 func (codexAgent) SessionIDs(home, cwd string) []string {

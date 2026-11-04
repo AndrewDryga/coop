@@ -124,8 +124,7 @@ copy of your repo, so you can keep working in yours without risking your local c
 [forks](docs/forks.md).
 
 Arguments after the agent's name go to the agent, so `coop claude --continue` resumes Claude's last
-session in the box. Codex is the exception: its `-p` picks a profile, so run a one-shot prompt with
-`coop codex exec "…"`.
+session in the box. On every agent, `-p "…"` runs one prompt and exits.
 
 co:op answers `--help`, `-h` and a leading `help` or `login` itself, and takes its own options
 such as `--peer` and `--egress`. Put `--` before them to pass them to the agent, as in

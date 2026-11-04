@@ -11,6 +11,46 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+func TestCodexLaunchArgs(t *testing.T) {
+	for _, c := range []struct {
+		name                 string
+		typed, native, wants []string
+	}{
+		{name: "nothing typed"},
+		{name: "interactive flag", typed: []string{"--search"}, wants: []string{"--search"}},
+		{name: "prompt after -p", typed: []string{"-p", "go"}, wants: []string{"exec", "--", "go"}},
+		{name: "-p with =", typed: []string{"-p=go"}, wants: []string{"exec", "--", "go"}},
+		{name: "-p joined", typed: []string{"-pfix it"}, wants: []string{"exec", "--", "fix it"}},
+		{name: "one-word prompt that names a subcommand", typed: []string{"-p", "help"}, wants: []string{"exec", "--", "help"}},
+		{name: "no prompt reaches codex's own error", typed: []string{"-p"}, wants: []string{"exec"}},
+		{name: "flag between -p and its prompt", typed: []string{"-p", "--json", "go"}, wants: []string{"exec", "--json", "--", "go"}},
+		{name: "flag between -p and a one-word prompt", typed: []string{"-p", "--model", "m", "help"}, wants: []string{"exec", "--model", "m", "--", "help"}},
+		{name: "flags on both sides", typed: []string{"--model", "m", "-p", "go", "--json"}, wants: []string{"exec", "--model", "m", "--json", "--", "go"}},
+		{name: "repeatable flag cannot take the prompt", typed: []string{"-i", "a.png", "b.png", "-p", "go"}, wants: []string{"exec", "-i", "a.png", "b.png", "--", "go"}},
+		{name: "after -p, -i still takes its words as codex does", typed: []string{"-p", "-i", "a.png", "go"}, wants: []string{"exec", "-i", "a.png", "go"}},
+		{name: "flag only exec takes", typed: []string{"-o", "out.txt", "-p", "go"}, wants: []string{"exec", "-o", "out.txt", "--", "go"}},
+		{name: "value that looks like a subcommand", typed: []string{"-C", "e", "-p", "go"}, wants: []string{"exec", "-C", "e", "--", "go"}},
+		{name: "arguments past --", typed: []string{"-p", "go"}, native: []string{"--json"}, wants: []string{"exec", "--json", "--", "go"}},
+		{name: "exec's help past --", typed: []string{"-p"}, native: []string{"--help"}, wants: []string{"exec", "--help"}},
+		{name: "-p past -- is codex's", native: []string{"-p", "work"}, wants: []string{"-p", "work"}},
+		{name: "--profile is codex's", typed: []string{"--profile", "work"}, wants: []string{"--profile", "work"}},
+		{name: "-p after exec is codex's", typed: []string{"exec", "-p", "work", "go"}, wants: []string{"exec", "-p", "work", "go"}},
+		{name: "-p after the exec alias is codex's", typed: []string{"e", "-p", "work", "go"}, wants: []string{"e", "-p", "work", "go"}},
+		{name: "-p after a flagged exec is codex's", typed: []string{"--model", "m", "exec", "-p", "work", "go"}, wants: []string{"--model", "m", "exec", "-p", "work", "go"}},
+		{name: "-p after resume still picks a profile", typed: []string{"resume", "--last", "-p", "work"}, wants: []string{"resume", "--last", "-p", "work"}},
+		{name: "-p inside another subcommand", typed: []string{"sandbox", "mkdir", "-p", "d"}, wants: []string{"sandbox", "mkdir", "-p", "d"}},
+		{name: "a prompt mentioning -p", typed: []string{"explain -p"}, wants: []string{"explain -p"}},
+	} {
+		if got := (codexAgent{}).LaunchArgs(c.typed, c.native); !slices.Equal(got, c.wants) {
+			t.Errorf("%s: LaunchArgs(%q, %q) = %q, want %q", c.name, c.typed, c.native, got, c.wants)
+		}
+	}
+	// The rewritten form must be one the session lock reads as headless.
+	if (codexAgent{}).ProducesSession((codexAgent{}).LaunchArgs([]string{"--model", "m", "-p", "go"}, nil)) {
+		t.Error("coop codex -p should not take the interactive session lock")
+	}
+}
+
 // Both managed layers Coop gives Codex, the image's and the API-key broker's mounted over it, keep
 // the background server off: with it on, the first interactive start in a home copies the whole
 // client into it and runs an updater. Codex refuses a managed file it cannot parse, and a second

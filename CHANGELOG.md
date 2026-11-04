@@ -12,9 +12,12 @@
   and named data; required setup failures stop execution, and final cleanup removes owned services
   even after project files change. Controllers use the worker's `project-runtime:1` capability.
 
-
 - **A filtered `coop fork <name> <agent>` checks your sign-in first**, instead of creating a fork that
   cannot start.
+
+- **`-p "…"` runs one prompt on every agent.** `coop codex -p "fix the failing test"` now works as it does
+  with Claude, Gemini and Grok, and `coop codex exec "…"` still works. Breaking if you pick a Codex
+  profile with `coop codex -p <name>`: use `--profile <name>`.
 
 - **`coop up` stops showing hashed container names**, and a slow first `coop usage` says it is reading
   your history.

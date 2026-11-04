@@ -4,7 +4,7 @@ description: "a coding agent is one self-registering file in `internal/agent`, n
 scope: architecture
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/provider_decisions_test.go, Makefile]
 check: "go test ./internal/agent -run 'TestRegistry|TestProviderDecisionsStayInAdapters|TestProviderDecisionGuard'"
-updated: 2026-10-09
+updated: 2026-11-04
 ---
 
 # A coding agent is one file in internal/agent — never a switch elsewhere
@@ -36,6 +36,9 @@ adding an agent a single new file.
   tests and the three independent oracle directories above are exempt.
 
 ## Changelog
+- 2026-11-04 — `LaunchArgs()` joined the interface: `-p` runs one prompt on every agent, and Codex's
+  adapter turns it into `exec` instead of a check in `cli`. `TestLaunchArgsPromptFlagIsHeadlessOnEveryAgent`
+  fails a new adapter until its `-p` matches its `Headless` form. Guard grep unchanged.
 - 2026-10-09 — extracted duplicate canonical credential fixtures into a test-only oracle. Swept
   all Go sources with the provider guard and added registry completeness; no production provider
   decision moved outside adapters. The frozen import graph rejects production fixture consumers.

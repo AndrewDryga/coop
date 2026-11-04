@@ -105,6 +105,36 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
+// `-p` means one prompt on every agent: a launch with it holds the same tokens as the loop's Headless
+// form, with the prompt last, and a new adapter whose CLI spells it differently fails here until its
+// LaunchArgs says so. A separator only protects the prompt, so it is not counted.
+func TestLaunchArgsPromptFlagIsHeadlessOnEveryAgent(t *testing.T) {
+	cleanCmdEnv(t)
+	cfg := &config.Config{}
+	tokens := func(argv []string) []string {
+		out := slices.DeleteFunc(slices.Clone(argv), func(token string) bool { return token == "--" })
+		slices.Sort(out)
+		return out
+	}
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		launch := append(ag.Interactive(cfg), ag.LaunchArgs([]string{"-p", "go"}, nil)...)
+		if got, want := tokens(launch), tokens(ag.Headless(cfg, "go")); !slices.Equal(got, want) {
+			t.Errorf("%s: -p launches %v, want the tokens of its Headless form %v", name, launch, ag.Headless(cfg, "go"))
+		}
+		if launch[len(launch)-1] != "go" {
+			t.Errorf("%s: -p launches %v, want the prompt last", name, launch)
+		}
+		if ag.InteractiveInvocation(launch) {
+			t.Errorf("%s: %v reads as an interactive session", name, launch)
+		}
+		native := []string{"-p", "work"}
+		if got := ag.LaunchArgs(nil, native); !slices.Equal(got, native) {
+			t.Errorf("%s: rewrote the agent's own arguments past --: %v", name, got)
+		}
+	}
+}
+
 func TestCommands(t *testing.T) {
 	cleanCmdEnv(t)
 	cfg := &config.Config{} // box.Run applies any MCP command args after these base commands
@@ -678,8 +708,15 @@ func TestResume(t *testing.T) {
 	if !discoverer.ProducesSession(nil) || !discoverer.ProducesSession([]string{"resume"}) {
 		t.Error("codex interactive/resume argv should produce a discoverable session")
 	}
-	if discoverer.ProducesSession([]string{"exec", "prompt"}) {
-		t.Error("codex `exec` argv should not produce a discoverable session")
+	for _, args := range [][]string{{"exec", "prompt"}, {"e", "prompt"}, {"--model", "m", "exec", "prompt"}, {"-p", "work", "exec", "prompt"}, {"-o", "out.txt", "exec", "prompt"}} {
+		if discoverer.ProducesSession(args) {
+			t.Errorf("codex %q should not produce a discoverable session", args)
+		}
+	}
+	for _, args := range [][]string{{"--model", "exec"}, {"-p", "exec"}, {"-C", "e"}, {"-i", "a.png", "exec", "prompt"}, {"--", "exec"}} {
+		if !discoverer.ProducesSession(args) {
+			t.Errorf("codex %q is an interactive launch whose word only looks like `exec`", args)
+		}
 	}
 	unsafeCodexID := "019f6a62-8f6e-7440-a55e-9df3ff5b77dd"
 	outsideCodex := filepath.Join(t.TempDir(), "outside.jsonl")

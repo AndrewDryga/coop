@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,7 +115,11 @@ func (a *app) runAgentInBox(cmd []string, agent string, peers []agents.Target) (
 	return a.runInBoxMode(cmd, agent, peers, true)
 }
 
-func (a *app) runAgentCommandInBox(cmd []string, agent string, peers []agents.Target, args []string) (int, error) {
+// runAgentCommandInBox runs an agent's autonomous default command with the arguments typed after
+// its name.
+func (a *app) runAgentCommandInBox(agent string, peers []agents.Target, args []string) (int, error) {
+	args = agentArgs(agent, args)
+	cmd := append(append([]string{}, a.defaultCmd(agent)...), args...)
 	// `codex exec` writes source:"exec" rollouts, which discovery excludes. It remains fully
 	// concurrent with interactive Codex sessions; only source:"cli" producers need serialization.
 	if !agentCommandProducesInteractiveSession(agent, args) {
@@ -399,8 +404,7 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err != nil {
 		return refusalExit(err), err
 	}
-	providerArgs := dropDashDash(args)
-	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
+	return a.runAgentCommandInBox(tool, peers, args)
 }
 
 // launchPreset runs an orchestration preset interactively (`coop <preset>`): its lead agent
@@ -432,8 +436,7 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	if err != nil {
 		return refusalExit(err), err
 	}
-	providerArgs := dropDashDash(args)
-	return a.runAgentCommandInBox(append(append([]string{}, a.defaultCmd(tool)...), providerArgs...), tool, peers, providerArgs)
+	return a.runAgentCommandInBox(tool, peers, args)
 }
 
 // nudgeIfUnauthed prints one heads-up (TTY only, never blocks) when the account this run will use
@@ -542,19 +545,21 @@ func extractRepeatable(command string, args []string, flag, usage, example strin
 	return vals, rest, nil
 }
 
-// dropDashDash removes the first "--" from args. coop uses "--" to mark the end of ITS own flags;
-// the separator must not reach the agent. Without this, `coop claude -- -p "x"` runs claude with
-// `-- -p "x"` — the agent reads everything after `--` as positional, so `-p` stops being a flag
-// (and `coop codex -- --profile w` never reaches codex's own --profile). It's stripped only here,
-// after every coop-flag extractor has run, since those need the `--` to know where coop's flags end.
-func dropDashDash(args []string) []string {
-	for i, a := range args {
-		if a == "--" {
-			out := append([]string{}, args[:i]...)
-			return append(out, args[i+1:]...)
-		}
+// agentArgs is what an agent's CLI receives from a launch: the arguments typed after its name, without
+// coop's `--`. coop uses the first "--" to mark the end of ITS own flags, and it must not reach the
+// agent: `coop claude -- -p "x"` would run claude with `-- -p "x"`, which it reads as positional, so
+// `-p` stops being a flag (and `coop codex -- --profile w` never reaches codex's own --profile). It's
+// consumed only here, after every coop-flag extractor has run, since those need the `--` to know where
+// coop's flags end.
+func agentArgs(agent string, args []string) []string {
+	typed, native := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		typed, native = args[:i], args[i+1:]
 	}
-	return args
+	if ag, ok := agents.Get(agent); ok {
+		return ag.LaunchArgs(typed, native)
+	}
+	return slices.Concat(typed, native)
 }
 
 // defaultCmd is the agent's autonomous interactive command; an unknown name runs as a

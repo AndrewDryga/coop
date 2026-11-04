@@ -413,6 +413,12 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 				t.Errorf("%s: models row lost its column gap: %q", name, line)
 			}
 		}
+		// -p is the one spelling of a one-prompt run, so every page shows it the same way.
+		for _, want := range []string{`  -p "<prompt>"          run one prompt and exit`, "  coop " + name + ` -p "fix the failing test"`} {
+			if !strings.Contains(agentHelp(name), want) {
+				t.Errorf("%s page missing %q:\n%s", name, want, agentHelp(name))
+			}
+		}
 	}
 }
 
