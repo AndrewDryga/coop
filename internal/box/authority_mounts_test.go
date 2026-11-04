@@ -126,6 +126,24 @@ func TestAuthorityMountGuardPermitsOnlySafeProjectRelations(t *testing.T) {
 	}
 }
 
+// A box that holds prompts does not keep a first approval waiting, so it can still be running once the
+// project is anchored. Its mounts pass as if that had already happened.
+func TestAuthorityMountGuardTreatsABoxThatHoldsPromptsAsAnchored(t *testing.T) {
+	project := t.TempDir()
+	descendant := filepath.Join(project, "cache")
+	if err := os.Mkdir(descendant, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "state")
+	options := []string{"-v", descendant + ":/cache:ro"}
+	if err := validateAuthorityMounts(t.Context(), RunSpec{Repo: project}, options, state, nil, authorityMountAllowlist{}); err != nil {
+		t.Fatalf("a project with no anchor yet: %v", err)
+	}
+	if err := validateAuthorityMounts(t.Context(), RunSpec{Repo: project, HandshakeOnly: true}, options, state, nil, authorityMountAllowlist{}); err == nil {
+		t.Fatal("a box that can outlive a first approval mounted a path inside the project")
+	}
+}
+
 func TestAuthorityMountGuardInspectsNamedVolumesAndOpaqueInheritance(t *testing.T) {
 	spec, state := anchoredProjectFixture(t)
 	parent := filepath.Dir(spec.Repo)

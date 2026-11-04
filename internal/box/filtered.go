@@ -40,7 +40,14 @@ type CapturedEgress struct {
 	// setting, rule or approval — so the built-in default did, and the launch says so. It is
 	// presentation only and grants nothing; a child proving a reference never carries it.
 	Default bool
+	// Pending says an editor session was admitted while its project asks for access nobody approved
+	// (NetworkAdmission.HoldPending). This capture has none of what the project's file asks for, and
+	// serves only children that hold prompts. A child proving a reference never carries it.
+	Pending *networkstate.PendingApproval
 }
+
+// HoldsOnly reports that no real box may start under this capture: only a child that holds prompts.
+func (c *CapturedEgress) HoldsOnly() bool { return c != nil && c.Pending != nil }
 
 // Close releases the authority handle a capture holds. A nil capture closes
 // nothing, so a caller can defer it unconditionally after admission.

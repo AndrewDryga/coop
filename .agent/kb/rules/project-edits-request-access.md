@@ -4,7 +4,7 @@ description: project configuration requests access; one host approval grants it,
 scope: security
 sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/cli/acp_refresh.go, internal/sessionsvc/review_scan.go, internal/hostsurface/hostsurface.go]
 check: none
-updated: 2026-10-30
+updated: 2026-11-03
 ---
 
 # Approve added access, not ordinary development
@@ -19,8 +19,9 @@ Enforce grants with actual mounts/firewalls throughout agent and service lifetim
 fixed for its lifetime: configuration edits and later approvals never widen a running box. New
 permissions require approval and a new box: a new run, or a running `coop acp` supervisor replacing
 its boxes with ones admitted again under its startup scope. A refused admission keeps the rules the
-live box runs. A request field or process/API carrier cannot become authority; see
-[[network-authority-is-proven-not-passed]].
+live box runs. An editor may connect while a request waits, on a child that runs no turn, sees the
+project read-only and gets none of what the project's file asks for; see [[acp-box-wait]]. A request
+field or process/API carrier cannot become authority; see [[network-authority-is-proven-not-passed]].
 
 **Why:** the user asked how unapproved edits could be kept from taking effect, then approved one
 high-level command and this enforcement boundary. This is not a mandate to approve every risky file.
@@ -46,6 +47,9 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-11-03 — `coop acp` connects while a request waits, on the rule that nothing the project's
+  file asks for applies until `coop approve`. Swept every `AdmitNetwork` caller: only the editor's
+  connection sets `HoldPending`; its re-admission, fork ACP, loops and runs still refuse.
 - 2026-10-30 — the user rejected a policy-owner handoff for an authorized task's CI replay
   setup: "I do not need to review such things, let agent just do it!" Swept session review,
   host classification and both fork import paths. Fixed the session publication veto; local

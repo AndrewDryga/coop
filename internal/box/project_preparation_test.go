@@ -747,16 +747,17 @@ func TestHandshakeBoxRunsTheLockedImage(t *testing.T) {
 	}
 }
 
-// Nothing runs in a handshake box to use a port or join a service network, and a real box is untouched.
+// Nothing runs in a handshake box to use a port, join a service network or change the project, and a
+// real box is untouched.
 func TestHandshakeBoxPublishesNothing(t *testing.T) {
 	real := RunSpec{Network: true, Serve: true, servePorts: []int{4000}}
-	if got := real.forHandshake(); !got.Network || !got.Serve || len(got.servePorts) != 1 {
-		t.Fatalf("a real box lost its ports or services: %+v", got)
+	if got := real.forHandshake(); !got.Network || !got.Serve || len(got.servePorts) != 1 || got.RepoReadOnly {
+		t.Fatalf("a real box lost its ports or services, or its project: %+v", got)
 	}
 	handshake := real
 	handshake.HandshakeOnly = true
-	if got := handshake.forHandshake(); got.Network || got.Serve || got.servePorts != nil {
-		t.Fatalf("a handshake box kept its ports or services: %+v", got)
+	if got := handshake.forHandshake(); got.Network || got.Serve || got.servePorts != nil || !got.RepoReadOnly {
+		t.Fatalf("a handshake box kept its ports or services, or could write the project: %+v", got)
 	}
 }
 
@@ -934,6 +935,15 @@ func TestEditorBoxStampChangesWhenAPersonMayHaveActed(t *testing.T) {
 		"the project's configuration": func() { x.write(".agent/project.yaml", "box:\n  network: false\n") },
 		"the Dockerfile":              func() { x.write(".agent/Dockerfile", reusableDockerfile+"RUN true\n") },
 		"the approved policy":         func() { capture.Fingerprint = "newer" },
+		"an approval, anywhere on this host": func() {
+			review, err := x.f.store.ReviewApproval(x.repo, egress.Filtered, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := x.f.store.Approve(t.Context(), x.repo, egress.Filtered, nil, nil, nil, review.Digest); err != nil {
+				t.Fatal(err)
+			}
+		},
 	} {
 		change()
 		next := EditorBoxStamp(capture, spec)
@@ -941,5 +951,22 @@ func TestEditorBoxStampChangesWhenAPersonMayHaveActed(t *testing.T) {
 			t.Errorf("%s left the stamp at %q", name, stamp)
 		}
 		stamp = next
+	}
+}
+
+// A capture that leaves out what its project asks for is a wait in itself, whatever else is ready.
+func TestEditorBoxReadinessSaysACaptureOnlyHolds(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	pending := &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	capture := &CapturedEgress{Store: x.f.store, Project: x.repo, Fingerprint: "policy", Pending: pending}
+	if err := EditorBoxReadiness(t.Context(), x.cfg, x.rt, capture, RunSpec{Repo: x.repo}); !errors.Is(err, pending) {
+		t.Fatalf("readiness = %v, want the pending request", err)
+	}
+	if !capture.HoldsOnly() {
+		t.Fatal("a capture with a pending request lets a real box start")
+	}
+	var none *CapturedEgress
+	if none.HoldsOnly() || (&CapturedEgress{}).HoldsOnly() {
+		t.Fatal("an ordinary capture, or none at all, was said to only hold")
 	}
 }

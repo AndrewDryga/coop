@@ -560,8 +560,154 @@ func TestACPRefreshAdmitsTheFrozenStartupScope(t *testing.T) {
 	if options[0].ExistingQualification || !options[1].ExistingQualification || options[1].InvocationMode == nil || *options[1].InvocationMode != egress.Filtered {
 		t.Fatalf("admission options = %+v then %+v, want the same flags and no host setup on refresh", options[0], options[1])
 	}
+	if !options[0].HoldPending || options[1].HoldPending {
+		t.Fatalf("admission options = %+v then %+v, want only the connection to hold a pending request: admitting again must refuse one", options[0], options[1])
+	}
 	if marked[1] {
 		t.Fatal("the refresh admitted from the configuration startup admission had already marked")
+	}
+}
+
+// newHeldRefreshHarness is a session that connected while its project asks for access nobody approved:
+// its capture and its only child hold prompts, and no real box has run yet.
+func newHeldRefreshHarness(t *testing.T) *refreshHarness {
+	t.Helper()
+	h := newRefreshHarness(t)
+	held := &box.CapturedEgress{Fingerprint: "holding-policy", Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}
+	h.r.startup, h.r.capture, h.r.running = held, held, ""
+	h.startsHolding()
+	return h
+}
+
+func (h *refreshHarness) startsHolding() *acpproxy.Child {
+	child := h.child("holding-policy")
+	child.HoldPrompts = true
+	h.r.started(child)
+	return child
+}
+
+// The whole wait, as the refresh sees it: approvals of other things leave the capture alone and say
+// nothing, since the wait is what tells the thread. The approval installs a real capture, nothing
+// replaces the child on its own, and the first real box tells new threads its rules without claiming
+// that anything old was stopped.
+func TestACPRefreshAdoptsTheApprovalASessionWaitsFor(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.refuses(reviewNeeded("this project asks for network access that has not been approved"))
+	h.r.check()
+	if !h.r.current().HoldsOnly() || len(h.notices) != 0 || len(h.reports) != 0 || h.drains != 0 || len(h.spawns) != 0 {
+		t.Fatalf("another approval changed a waiting session: holds=%v notices=%q reports=%v drains=%d spawns=%d",
+			h.r.current().HoldsOnly(), h.notices, h.reports, h.drains, len(h.spawns))
+	}
+	h.approves("approved-policy")
+	h.r.check()
+	h.clock = h.clock.Add(acpRefreshSettle)
+	h.r.check()
+	if h.r.current().Fingerprint != "approved-policy" || h.r.current().HoldsOnly() || h.drains != 1 {
+		t.Fatalf("policy=%q holds=%v drains=%d, want the approved capture installed", h.r.current().Fingerprint, h.r.current().HoldsOnly(), h.drains)
+	}
+	if len(h.spawns) != 0 || h.restarts != 0 {
+		t.Fatalf("spawns=%d restarts=%d: moving a child that holds prompts is the wait's job", len(h.spawns), h.restarts)
+	}
+	h.r.started(h.child("approved-policy"))
+	if !slices.Equal(h.networks, []string{"approved-policy"}) || len(h.notices) != 0 {
+		t.Fatalf("networks=%q notices=%q, want new threads told the rules and no word of an old box", h.networks, h.notices)
+	}
+}
+
+// An approval that leaves the policy the same still ends the wait: the capture it replaces only holds,
+// whatever its rules are.
+func TestACPRefreshReplacesACaptureThatOnlyHoldsEvenWithTheSameRules(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.approves("holding-policy")
+	h.r.check()
+	if h.r.current().HoldsOnly() || h.drains != 1 {
+		t.Fatalf("holds=%v drains=%d, want the plain capture installed", h.r.current().HoldsOnly(), h.drains)
+	}
+}
+
+// Taking the request back moves no generation, so the wait asks while the capture only holds. Once it
+// does not, a session asks only when the generation moves.
+func TestACPRefreshAsksAgainOnlyWhileACaptureOnlyHolds(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.admit = func() (*box.CapturedEgress, error) { return nil, reviewNeeded("still asking") }
+	if err := h.r.readmitHeld(); err != nil || h.admits != 1 || !h.r.current().HoldsOnly() {
+		t.Fatalf("err=%v admits=%d holds=%v, want one more refusal and the capture kept", err, h.admits, h.r.current().HoldsOnly())
+	}
+	h.admit = func() (*box.CapturedEgress, error) { return &box.CapturedEgress{Fingerprint: "plain-policy"}, nil }
+	if err := h.r.readmitHeld(); err != nil || h.admits != 2 || h.r.current().HoldsOnly() {
+		t.Fatalf("err=%v admits=%d holds=%v, want the plain capture installed with no generation moved", err, h.admits, h.r.current().HoldsOnly())
+	}
+	if err := h.r.readmitHeld(); err != nil || h.admits != 2 {
+		t.Fatalf("err=%v admits=%d, want a capture that does not hold left alone", err, h.admits)
+	}
+	var none *acpNetworkRefresh
+	if err := none.readmitHeld(); err != nil {
+		t.Fatalf("no refresh yet: %v", err)
+	}
+}
+
+// A session cannot turn into an open or offline one, so an approval of either keeps it holding, and
+// the wait says to reconnect. Approving something it can move to ends that.
+func TestACPRefreshSaysAHoldingSessionCannotMoveToTheApprovedMode(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.generation++
+	h.admit = func() (*box.CapturedEgress, error) { return nil, nil }
+	h.r.check()
+	if err := h.r.readmitHeld(); !errors.Is(err, errACPNetworkModeChanged) {
+		t.Fatalf("readmitHeld = %v, want the mode change", err)
+	}
+	if !h.r.current().HoldsOnly() || len(h.notices) != 0 {
+		t.Fatalf("holds=%v notices=%q, want it holding, and the wait to say why", h.r.current().HoldsOnly(), h.notices)
+	}
+	h.approves("filtered-again")
+	if err := h.r.readmitHeld(); err != nil || h.r.current().HoldsOnly() {
+		t.Fatalf("err=%v holds=%v, want the wait over", err, h.r.current().HoldsOnly())
+	}
+}
+
+// Anything else that stops admitting is the host's to fix, and a retry every half a minute says it once.
+func TestACPRefreshReportsAnotherRefusalWhileHoldingOnce(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.refuses(box.ErrNetworkSetupRequired)
+	h.r.check()
+	for range 3 {
+		if err := h.r.readmitHeld(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if h.admits != 4 || len(h.reports) != 1 || len(h.notices) != 1 || !strings.Contains(h.notices[0], "coop net setup") {
+		t.Fatalf("admits=%d reports=%v notices=%q, want one report of four refusals", h.admits, h.reports, h.notices)
+	}
+}
+
+// After a withdrawal nothing may run on rules admission no longer grants. With no real box to fall
+// back to, that is the capture the session connected with.
+func TestACPRefreshGoesBackToHoldingWhenAnApprovalIsWithdrawn(t *testing.T) {
+	h := newHeldRefreshHarness(t)
+	h.approves("approved-policy")
+	h.r.check()
+	h.refuses(fmt.Errorf("%w: %w", errACPApprovalWithdrawn, reviewNeeded("this project's network approval was withdrawn on this machine")))
+	h.r.check()
+	if !h.r.current().HoldsOnly() || h.drains != 2 {
+		t.Fatalf("holds=%v drains=%d, want the session back on the capture that only holds", h.r.current().HoldsOnly(), h.drains)
+	}
+}
+
+// A real box's session that lands on a holding child does not get a replacement for it: spawning one
+// every tick would start box after box. The approval still waits for the next real box.
+func TestACPRefreshPreparesNothingForAChildThatHoldsPrompts(t *testing.T) {
+	h := newRefreshHarness(t)
+	h.startsHolding()
+	h.approves("new-policy")
+	h.r.check()
+	h.clock = h.clock.Add(acpRefreshSettle)
+	h.r.check()
+	if h.r.current().Fingerprint != "new-policy" || len(h.spawns) != 0 || h.restarts != 0 {
+		t.Fatalf("policy=%q spawns=%d restarts=%d, want the approval adopted and nothing started", h.r.current().Fingerprint, len(h.spawns), h.restarts)
+	}
+	h.r.started(h.child("new-policy"))
+	if !slices.Equal(h.networks, []string{"new-policy"}) || len(h.notices) != 1 || h.notices[0] != acpRefreshMoved {
+		t.Fatalf("networks=%q notices=%q, want the move announced once a real box runs it", h.networks, h.notices)
 	}
 }
 

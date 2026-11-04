@@ -275,7 +275,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		options := a.network.admission()
 		// An editor connects first: a box that cannot start yet is the session's wait to report
 		// (acp_box_wait.go), not a reason to die before the editor gets an answer.
-		options.ProjectBuild = box.DeferProjectBuild
+		options.ProjectBuild, options.HoldPending = box.DeferProjectBuild, true
 		// The capture belongs to the SUPERVISOR: it lives as long as the editor
 		// session, and each child receives a reference to it, never authority.
 		a.acpCapture, err = a.admitACPNetwork(a.cfg, spec, options)
@@ -1286,8 +1286,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		env = append(env, "COOP_ACP_MCP_ID="+mcpRunID, box.SessionMCPHandoffEnv+"="+mcpPath)
 	}
 	// Read once, as late as possible (a reset wait above can last hours): this child either holds
-	// prompts or runs the project's box, and the proxy and the child must agree which.
-	holdPrompts := a.acpBoxWait.blockedNow()
+	// prompts or runs the project's box, and the proxy and the child must agree which. A capture that
+	// leaves out what its project asks for serves no other kind of child, whatever the wait last heard.
+	holdPrompts := a.acpBoxWait.blockedNow() || admitted.HoldsOnly()
 	if holdPrompts {
 		env = append(env, acpHandshakeEnv+"=1")
 	}

@@ -306,9 +306,13 @@ itself. This covers a co:op update that changed its client image, and an image t
 ordinary networking. Review them, then run <code>coop build --egress filtered</code> in the project.</li>
 <li>If the project has services and no network rules for them, the thread shows the rules to add. Add
 them and run <code>coop approve</code>, or set <code>box.network: false</code> to start without services.</li>
+<li>If the project asks for network access nobody approved, the thread says to run <code>coop approve</code>.
+Until then the editor talks to a box that sees your project read-only and reaches only your
+agent&#39;s provider, and none of the rules the project asks for apply.</li>
 </ul>
 <p>The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
-waiting message as usual.</p>
+waiting message as usual. The one exception is approving unrestricted access or no network at all,
+which a session started with filtered networking cannot move to: the thread asks you to reconnect.</p>
 <h3 id="files-and-terminals-on-your-computer">Files and terminals on your computer</h3>
 <p>ACP also lets the agent ask the editor to access your computer directly. Requests such as
 <code>fs/read_text_file</code>, <code>fs/write_text_file</code> and <code>terminal/*</code> run through the editor, outside the

@@ -49,6 +49,12 @@ type NetworkAdmission struct {
 	ExistingQualification bool
 	// ProjectBuild is what this launch does when its project image is not ready.
 	ProjectBuild ProjectBuildMiss
+	// HoldPending admits a project that asks for access nobody approved instead of refusing it, for an
+	// editor session that connects first and waits for `coop approve`. The capture leaves out all that
+	// the project's file asks for and says so (CapturedEgress.Pending), so only a child that holds
+	// prompts may run under it. A withdrawal or a replaced project folder still refuses, as does a mode
+	// that resolves offline: filtered would give a holding child a network that launch was denied.
+	HoldPending bool
 }
 
 // ProjectBuildMiss says what an admission does about a project image that is not ready. Whatever it
@@ -156,10 +162,15 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err := checkRuleFlags(spec, options, preview.Mode); err != nil {
 		return nil, err
 	}
-	if preview.Pending != nil {
-		return nil, fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
-	}
 	mode := preview.Mode
+	var refusal error
+	if preview.Pending != nil {
+		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
+		if !options.HoldPending || mode == egress.None {
+			return nil, refusal
+		}
+		mode, input = egress.Filtered, holdingAdmission(input)
+	}
 	cfg.SetEgress(string(mode))
 	if mode != egress.Filtered {
 		return nil, nil
@@ -198,10 +209,25 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input, qualify)
 	if err != nil {
 		_ = store.Close()
+		var unsettled *networkstate.PendingApproval
+		if refusal != nil && errors.As(err, &unsettled) {
+			return nil, refusal // a withdrawal or a replaced folder: nothing starts until a person looks
+		}
 		return nil, err
 	}
-	capture.Default = preview.Default
+	capture.Default, capture.Pending = preview.Default, preview.Pending
 	return capture, nil
+}
+
+// holdingAdmission is what a child that holds prompts runs under: the person's own flags, the host's
+// shared connectivity and what the providers need, and nothing a project's file asks for, approved or
+// not. No turn runs there to use any of it, and a service grant would start the project's sidecars.
+// It decides the mode for this one capture and changes no approval.
+func holdingAdmission(input networkstate.Admission) networkstate.Admission {
+	filtered := egress.Filtered
+	input.InvocationMode, input.ProjectMode = &filtered, nil
+	input.Requests, input.Services = nil, nil
+	return input
 }
 
 // checkRuleFlags refuses the person's own rule flags on a run that is not filtered. They only add

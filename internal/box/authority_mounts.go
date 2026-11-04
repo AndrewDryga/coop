@@ -605,7 +605,9 @@ func authorityProtection(spec RunSpec, networkState string) (projects, private, 
 		}
 		_, networkMarkerErr := os.Lstat(filepath.Join(canonical, networkstate.ProjectApprovalMarker))
 		_, serviceMarkerErr := os.Lstat(filepath.Join(canonical, serviceApprovalMarker))
-		if networkMarkerErr == nil || serviceMarkerErr == nil {
+		// A box that holds prompts does not keep a first approval waiting, so it can outlive one: its
+		// mounts have to pass as if that approval had already anchored the project.
+		if networkMarkerErr == nil || serviceMarkerErr == nil || spec.HandshakeOnly {
 			projects = append(projects, canonical)
 		} else if !errors.Is(networkMarkerErr, os.ErrNotExist) {
 			return nil, nil, nil, networkMarkerErr

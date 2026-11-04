@@ -589,8 +589,11 @@ If the project's request differs from your saved approval, co:op treats it as pe
 - Running `coop net` without a subcommand shows the same comparison under
   `⚠ New runs need your approval`.
 - Every launch stops before starting a box or its main process. It explains why and prints
-  `Review it: coop approve`. This applies to `coop run`, a named agent, `coop acp`, `coop loop`,
-  an interactive fork, fork ACP, and a fork review or merge gate.
+  `Review it: coop approve`. This applies to `coop run`, a named agent, `coop loop`, an interactive
+  fork, fork ACP, and a fork review or merge gate.
+- `coop acp` connects your editor anyway and runs no agent until you approve; see
+  [editors](integrations.md#when-the-project-box-is-not-ready). A withdrawn approval, a replaced
+  project folder or an offline setting still stops it.
 
 These messages do not appear when the project has no pending request.
 

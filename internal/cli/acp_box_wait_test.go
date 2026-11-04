@@ -17,6 +17,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -435,6 +436,85 @@ func TestSpawnedChildAndProxyAgreeOnHoldingPrompts(t *testing.T) {
 		if child.HoldPrompts != blocked || strings.Contains(string(env), acpHandshakeEnv+"=1") != blocked {
 			t.Fatalf("blocked=%v: child.HoldPrompts=%v, env has the flag: %v", blocked, child.HoldPrompts, strings.Contains(string(env), acpHandshakeEnv))
 		}
+	}
+}
+
+// A capture that leaves out what its project asks for serves only a child that holds prompts, even
+// if the wait has heard nothing yet: the proxy's promise and the child's flag still agree.
+func TestSpawnedChildUnderACaptureThatOnlyHoldsHoldsPrompts(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), Egress: "filtered"}
+	cfg.SetEgress("filtered")
+	cfg.SetActiveProfile("claude", "selected")
+	seedNativeFixture(t, cfg, "claude", "selected")
+	target := agents.Target{Provider: "claude", Accounts: []string{"selected"}}
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s\\n' \"$"+acpHandshakeEnv+"\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h := newBoxWaitHarness(t)
+	held := &box.CapturedEgress{Project: cfg.RepoOverride, Fingerprint: strings.Repeat("a", 64), QualificationID: strings.Repeat("b", 64),
+		Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}
+	a := &app{cfg: cfg, acpNetworkTargets: []agents.Target{target}, acpCapture: held, acpBoxWait: h.w}
+	child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, target, "", true, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(child.Out)
+	child.Stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.w.blockedNow() || !child.HoldPrompts || strings.TrimSpace(string(out)) != "1" {
+		t.Fatalf("blocked=%v child.HoldPrompts=%v handshake flag=%q", h.w.blockedNow(), child.HoldPrompts, out)
+	}
+}
+
+// Rules nobody approved wait for that person: the thread says what to run and nothing rebuilds, and
+// their approval ends the wait with no reconnect. The whole reason goes to the log, and never to the
+// thread, whose words are fixed.
+func TestBoxWaitLeavesPendingRulesToAPerson(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	pending := &networkstate.PendingApproval{Reason: "the Compose service \"db\" changed since it was approved"}
+	h.set(func() { h.answer = pending; h.holding = true })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatalf("a pending request is an answer, not a failure to look: %v", err)
+	}
+	said := h.lastSaid()
+	if !h.w.blockedNow() || !strings.Contains(said, "coop approve") || !strings.Contains(said, "no agent runs here") || strings.Contains(said, "Compose") {
+		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
+	}
+	h.read(func() {
+		if len(h.logged) != 1 || !errors.Is(h.logged[0], pending) || h.rebuilds != 0 {
+			t.Fatalf("logged=%v rebuilds=%d", h.logged, h.rebuilds)
+		}
+	})
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 0 {
+			t.Fatalf("moved %d times while the request waited", h.moves)
+		}
+	})
+	h.set(func() { h.answer = nil; h.sign = "approved" })
+	h.w.poll()
+	if h.w.blockedNow() || h.lastSaid() != "" {
+		t.Fatalf("blocked=%v said=%q after the approval", h.w.blockedNow(), h.lastSaid())
+	}
+	h.read(func() {
+		if h.moves != 1 || h.opened != 1 {
+			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		}
+	})
+}
+
+// An approved mode the session cannot move to has one remedy, and it is not another approval.
+func TestBoxWaitSaysToReconnectForAModeItCannotMoveTo(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.answer = errACPNetworkModeChanged })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "Reconnect your editor") || strings.Contains(said, "coop approve") {
+		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
 	}
 }
 

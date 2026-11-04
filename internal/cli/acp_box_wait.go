@@ -11,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -40,9 +41,10 @@ var errACPBoxWaiting = errors.New("the project's box is not ready")
 // session notices their `coop build` or `coop approve` by itself. Once the box can start, the holding
 // child is replaced and any held prompt goes out, with no reconnect.
 //
-// Concurrency: the session's factory and its poll loop both call refresh, one at a time. Fixed
-// sentences only reach the editor, except a services refusal, whose text is Coop's own words and
-// validated names. The whole reason goes to the agent log.
+// Concurrency: the session's factory and its poll loop both call refresh, one at a time; checking is
+// taken before the network refresh's admitting. Fixed sentences only reach the editor, except a
+// services refusal, whose text is Coop's own words and validated names. The whole reason goes to the
+// agent log.
 type acpBoxWait struct {
 	check   func(context.Context) error         // box.EditorBoxReadiness under the session's current capture
 	rebuild func(context.Context, string) error // box.RebuildApprovedProject
@@ -84,6 +86,9 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 	ctx, cancel := context.WithCancel(context.Background())
 	return &acpBoxWait{
 		check: func(ctx context.Context) error {
+			if err := a.acpRefresh.readmitHeld(); err != nil {
+				return err
+			}
 			return box.EditorBoxReadiness(ctx, a.cfg, a.rt, a.currentACPCapture(), spec)
 		},
 		rebuild: func(ctx context.Context, dfRel string) error {
@@ -130,7 +135,8 @@ func (w *acpBoxWait) refresh(ctx context.Context) error {
 	err := w.check(ctx)
 	var required *box.ProjectBuildRequired
 	var services *box.ServicesNeedRules
-	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) {
+	var pending *networkstate.PendingApproval
+	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) && !errors.As(err, &pending) && !errors.Is(err, errACPNetworkModeChanged) {
 		w.mu.Lock()
 		w.checked, w.seen = w.now(), stamp // not again until something changes: it costs a large project a second
 		w.mu.Unlock()
@@ -207,9 +213,16 @@ func (w *acpBoxWait) runRebuild(dfRel string) {
 // project build; a services refusal carries its own remedy.
 func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bool) string {
 	const waits = "Your messages wait here and go out once it is ready."
+	var pending *networkstate.PendingApproval
 	switch {
 	case blocked == nil:
 		return ""
+	case errors.As(blocked, &pending):
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval",
+			Detail:  "Nobody approved what it asks for as it is now, so no agent runs here yet. " + waits,
+			Command: "coop approve", Purpose: "in this project, on the host"})
+	case errors.Is(blocked, errACPNetworkModeChanged):
+		return "⚠ **Reconnect your editor.** You approved network access this session cannot switch to, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."
 	case required != nil && failed:
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box",
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,

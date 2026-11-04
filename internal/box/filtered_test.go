@@ -22,6 +22,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -721,6 +722,41 @@ func TestFilteredLaunchRevalidatesMountsBeforeCreatingAgent(t *testing.T) {
 	}
 	if gone, cleanupErr := f.cleanup("launch_failed"); cleanupErr != nil || !gone {
 		t.Fatalf("cleanup after revalidation failure = gone %v, err %v", gone, cleanupErr)
+	}
+}
+
+// A first approval takes the launch lock exclusively, so it waits for every box whose agent could
+// replace project paths. A box that holds prompts is not one: it sees the project read-only, and it
+// may be waiting for that very approval, which would otherwise never come.
+func TestFilteredLaunchKeepsTheMountWindowOnlyForABoxThatCanWrite(t *testing.T) {
+	for name, handshake := range map[string]bool{"a real box": false, "a box that holds prompts": true} {
+		t.Run(name, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.holdAgent = true
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.launch(ctx, RunSpec{Repo: f.record.Project, HandshakeOnly: handshake}, nil, nil, io.Discard, io.Discard)
+				done <- err
+			}()
+			select {
+			case <-d.attached:
+			case err := <-done:
+				t.Fatalf("the launch ended before its box ran: %v", err)
+			}
+			try, giveUp := context.WithTimeout(ctx, 200*time.Millisecond)
+			defer giveUp()
+			unlock, err := forkspace.LockServiceLaunch(try, f.record.Project, true)
+			if err == nil {
+				unlock()
+			}
+			if (err == nil) != handshake {
+				t.Fatalf("a first approval getting past the running box: %v, want %v", err == nil, handshake)
+			}
+			cancel()
+			<-done
+		})
 	}
 }
 

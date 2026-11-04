@@ -1,6 +1,7 @@
 package box
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -477,4 +478,124 @@ func TestNetworkStatePathStaysOutOfTheRealHome(t *testing.T) {
 			t.Errorf("XDG_STATE_HOME=%q: NetworkStatePath = %s; want a refusal", value, path)
 		}
 	}
+}
+
+// heldAdmission admits the way an editor session connects, on a fixture Docker that has no host setup:
+// admission stops right after publishing the policy it captured, which is what these tests read.
+func heldAdmission(t *testing.T, cfg *config.Config, repo string) error {
+	t.Helper()
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
+	}))
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\nwhile [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\n" +
+		"case \"$1\" in\ninfo) printf '%s\\n' '{\"ID\":\"fixture-daemon\",\"ServerVersion\":\"29.4.0\",\"KernelVersion\":\"fixture\",\"OSType\":\"linux\",\"Architecture\":\"aarch64\",\"SecurityOptions\":[]}' ;;\nimage) exit 1 ;;\n*) exit 91 ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: script}, RunSpec{Repo: repo, Workdir: repo},
+		NetworkAdmission{ExistingQualification: true, ProjectBuild: DeferProjectBuild, HoldPending: true})
+	if capture != nil {
+		_ = capture.Close()
+	}
+	return err
+}
+
+// An editor connects while its project asks for access nobody approved. What it connects under has
+// none of what the file asks for, nor anything approved earlier: a turn never runs there to use it,
+// and a service grant would start the project's sidecars. It is filtered however the file asks.
+func TestHeldAdmissionLeavesOutAllThatTheProjectAsks(t *testing.T) {
+	const earlier = "box:\n  egress_rules:\n    - to: {domain: earlier.example.com}\n      protocol: tls\n      ports: [443]\n"
+	for name, test := range map[string]struct{ approved, asks string }{
+		"rules nobody approved":                  {asks: projectRuleYAML},
+		"unrestricted access nobody approved":    {asks: "box:\n  egress: open\n"},
+		"rules changed since they were approved": {approved: earlier, asks: projectRuleYAML},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			project := filepath.Join(repo, ".agent", "project.yaml")
+			if test.approved != "" {
+				writeCopyFixture(t, project, test.approved)
+				approveFixture(t, cfg, repo)
+			}
+			writeCopyFixture(t, project, test.asks)
+			if err := heldAdmission(t, cfg, repo); !errors.Is(err, ErrNetworkSetupRequired) {
+				t.Fatalf("a held admission stopped at %v, want it to reach the host's setup", err)
+			}
+			if cfg.Egress != string(egress.Filtered) {
+				t.Fatalf("the session resolved to %q", cfg.Egress)
+			}
+			published, err := filepath.Glob(filepath.Join(root, "snapshot-*.json"))
+			if err != nil || len(published) == 0 {
+				t.Fatalf("no policy was captured: %v, %v", published, err)
+			}
+			for _, path := range published {
+				var policy egress.Snapshot
+				if err := json.Unmarshal(mustReadFile(t, path), &policy); err != nil {
+					t.Fatal(err)
+				}
+				if policy.Mode != egress.Filtered {
+					t.Errorf("%s has mode %q", filepath.Base(path), policy.Mode)
+				}
+				for _, site := range []string{"example.com", "earlier.example.com"} {
+					if policy.Domain(site, 443).Allowed {
+						t.Errorf("%s lets a holding child reach %s", filepath.Base(path), site)
+					}
+				}
+			}
+		})
+	}
+}
+
+// What HoldPending does not reach. Another caller still refuses a pending request. A withdrawal waits
+// for a person with nothing started. Offline stays offline: a filtered holding child would give the
+// session a network its posture denies. Each names the review as ever.
+func TestHeldAdmissionStillRefuses(t *testing.T) {
+	refused := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "cannot start because") || !strings.Contains(err.Error(), "Review it: coop approve") {
+			t.Fatalf("admission = %v, want the refusal naming the review", err)
+		}
+	}
+	t.Run("a caller that did not ask", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		_, err := admitFixture(t, cfg, repo, NetworkAdmission{})
+		refused(t, err)
+	})
+	t.Run("an offline posture", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		t.Setenv("COOP_EGRESS", "offline")
+		loaded, err := config.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded.ConfigDir = cfg.ConfigDir
+		refused(t, heldAdmission(t, loaded, repo))
+	})
+	t.Run("a withdrawn approval", func(t *testing.T) {
+		cfg, repo, root := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		approveFixture(t, cfg, repo)
+		review, err := ReviewProjectNetworkForget(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer review.Close()
+		if err := review.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		refused(t, heldAdmission(t, cfg, repo)) // the file still asks, and the store still refuses
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: filtered\n")
+		err = heldAdmission(t, cfg, repo)
+		refused(t, err)
+		if !strings.Contains(err.Error(), "withdrawn") {
+			t.Fatalf("the refusal hides the withdrawal: %v", err)
+		}
+		if published, _ := filepath.Glob(filepath.Join(root, "snapshot-*.json")); len(published) != 0 {
+			t.Fatalf("a withdrawn project got a policy: %v", published)
+		}
+	})
 }

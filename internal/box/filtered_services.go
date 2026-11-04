@@ -61,11 +61,12 @@ func servicesNeedRules(spec RunSpec, composeFile string) error {
 	return &ServicesNeedRules{text: b.String()}
 }
 
-// forHandshake applies HandshakeOnly: nothing runs in that box to use a port or join a service network.
-// Approved service grants stay, since the box runs the policy it was admitted under, whole.
+// forHandshake applies HandshakeOnly: nothing runs in that box to use a port or join a service network,
+// or to change the project, so it sees the project read-only. Approved service grants stay, since the
+// box runs the policy it was admitted under, whole.
 func (spec RunSpec) forHandshake() RunSpec {
 	if spec.HandshakeOnly {
-		spec.Network, spec.Serve, spec.servePorts = false, false, nil
+		spec.Network, spec.Serve, spec.servePorts, spec.RepoReadOnly = false, false, nil, true
 	}
 	return spec
 }

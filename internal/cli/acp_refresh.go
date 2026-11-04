@@ -82,10 +82,10 @@ func (a *app) admitACPNetwork(cfg *config.Config, spec box.RunSpec, options box.
 // the spec and options frozen then (lead, preset, flags and the provider/account scope, never derived
 // again from presets an agent can edit) on the configuration as it stood before that admission —
 // except that it never sets the host up. The project's request is read again, as in any admission:
-// that is how an edit nobody approved is refused.
+// that is how an edit nobody approved is refused, whether or not the session connected through one.
 func (a *app) acpReadmit(ctx context.Context, cfg *config.Config, spec box.RunSpec, options box.NetworkAdmission) (*box.CapturedEgress, error) {
 	spec.Ctx, spec.Peers = ctx, slices.Clone(spec.Peers)
-	options.ExistingQualification = true
+	options.ExistingQualification, options.HoldPending = true, false
 	return a.admitACPNetwork(cfg.Clone(), spec, options)
 }
 
@@ -134,7 +134,9 @@ type acpNetworkRefresh struct {
 	created     []*box.CapturedEgress // captures this refresh admitted, closed with the session
 	seen        uint64                // the generation capture reflects, or the last one tried
 	unreadable  bool                  // the generation could not be read last time (traced once)
-	running     string                // the policy the live box proved; "" before the first
+	running     string                // the policy the last real box proved; "" before the first
+	holding     bool                  // the live child only holds prompts: the wait moves it, and nothing here replaces it
+	modeChanged bool                  // a person approved a mode this session cannot move to, and it only holds
 	prepared    *acpproxy.Child       // a started replacement waiting for a quiet moment
 	preparedFor acpSpawn
 	preparedAt  time.Time
@@ -264,7 +266,8 @@ func (r *acpNetworkRefresh) moved() bool {
 // adopt admits again when the approval generation moved. A new capture then serves every box started
 // from now on, and parked boxes of the old one are replaced; a refusal keeps the rules the live box
 // runs (refuse). A respawn calls it too: that box is starting anyway, so it starts under the newest
-// approval, even mid-turn.
+// approval, even mid-turn. A capture that only holds is worth asking about whatever the generation
+// says: taking a request back moves nothing, and any capture that is not one replaces it.
 func (r *acpNetworkRefresh) adopt() {
 	if r == nil {
 		return
@@ -276,7 +279,7 @@ func (r *acpNetworkRefresh) adopt() {
 		return // moved() traces it; a respawn simply starts under the current capture
 	}
 	r.mu.Lock()
-	unchanged := generation == r.seen || r.closed
+	unchanged := generation == r.seen && !r.capture.HoldsOnly() || r.closed
 	r.mu.Unlock()
 	if unchanged {
 		return
@@ -292,7 +295,8 @@ func (r *acpNetworkRefresh) adopt() {
 	r.mu.Lock()
 	r.seen = generation
 	r.failed = "" // a new approval may make a replacement that failed before start
-	installed := !r.closed && capture.Fingerprint != r.capture.Fingerprint
+	r.modeChanged = false
+	installed := !r.closed && (capture.Fingerprint != r.capture.Fingerprint || r.capture.HoldsOnly())
 	if installed {
 		r.created = append(r.created, capture)
 		r.capture = capture
@@ -306,20 +310,44 @@ func (r *acpNetworkRefresh) adopt() {
 	r.drain()
 }
 
+// readmitHeld is the wait asking again for a session whose capture only holds. It returns why admitting
+// cannot end that wait however long it lasts, or nil: the capture itself says the rest.
+func (r *acpNetworkRefresh) readmitHeld() error {
+	if r == nil || !r.current().HoldsOnly() {
+		return nil
+	}
+	r.adopt()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.modeChanged {
+		return errACPNetworkModeChanged
+	}
+	return nil
+}
+
 // refuse keeps the rules the live box runs. A capture adopted earlier but not running yet is dropped
 // with the replacement prepared for it: after a withdrawal, or any later refusal, nothing may move the
-// session onto rules admission no longer grants.
+// session onto rules admission no longer grants. With no real box yet that means the rules it started
+// with. A session that only holds hears a request or a mode through the wait; retrying the same refusal
+// says nothing new.
 func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 	r.mu.Lock()
+	moved := generation != r.seen
 	r.seen = generation
 	prepared := r.prepared
 	r.prepared = nil
 	live := r.captureLocked(r.running)
+	if r.running == "" {
+		live = r.startup
+	}
 	reverted := live != nil && live != r.capture
 	if reverted {
 		r.capture = live
 	}
 	closed := r.closed
+	held := r.capture.HoldsOnly()
+	r.modeChanged = held && errors.Is(err, errACPNetworkModeChanged)
+	silent := held && (!moved && acpRefreshNotice(err) == r.shown || r.modeChanged)
 	r.mu.Unlock()
 	if prepared != nil {
 		prepared.Stop()
@@ -328,7 +356,8 @@ func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 		acpproxy.Trace("network refresh: back to policy %s", live.Fingerprint)
 		r.drain()
 	}
-	if !closed && !errors.Is(err, context.Canceled) {
+	var pending *networkstate.PendingApproval
+	if !closed && !errors.Is(err, context.Canceled) && !silent && !(held && errors.As(err, &pending)) {
 		r.report(err)
 	}
 }
@@ -356,7 +385,7 @@ func (r *acpNetworkRefresh) swap() {
 	r.mu.Lock()
 	policy := r.capture.Fingerprint
 	// Nothing switches while the generation cannot be read: a withdrawal may be what it would say.
-	due := !r.closed && !r.unreadable && known && r.running != "" && r.running != policy && r.failed != policy
+	due := !r.closed && !r.unreadable && known && !r.holding && r.running != "" && r.running != policy && r.failed != policy
 	var stale *acpproxy.Child
 	if r.prepared != nil && (!due || r.prepared.Policy != policy || !r.preparedFor.same(want)) {
 		stale, r.prepared = r.prepared, nil
@@ -449,27 +478,36 @@ func (r *acpNetworkRefresh) take(spawn acpSpawn) *acpproxy.Child {
 }
 
 // started records the box the factory hands the proxy, and tells the editor once when it is the first
-// under a newly adopted policy.
+// under a newly adopted policy. A child that holds prompts runs no rules of the session's, so it is
+// not that box. The first real one after holding from the start replaced nothing that ran, so only the
+// rules are news.
 func (r *acpNetworkRefresh) started(child *acpproxy.Child) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
+	if child.HoldPrompts {
+		r.holding = true
+		r.mu.Unlock()
+		return
+	}
 	moved := r.running != "" && child.Policy != r.running
 	if moved {
 		r.shown = ""
 	}
+	first := r.holding && r.running == ""
+	r.holding = false
 	r.running = child.Policy
 	var live *box.CapturedEgress
-	if moved {
+	if moved || first {
 		live = r.captureLocked(child.Policy)
 	}
 	r.mu.Unlock()
+	// Threads opened from now on run on this box, so their start message names its rules.
+	if live != nil && r.network != nil {
+		r.network(live)
+	}
 	if moved {
-		// Threads opened from now on run on this box, so their start message names its rules.
-		if live != nil && r.network != nil {
-			r.network(live)
-		}
 		r.notify(acpRefreshMoved)
 	}
 }

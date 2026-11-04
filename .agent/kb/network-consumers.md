@@ -28,7 +28,9 @@ startup admission's spec and options. When `coop approve` or `coop net forget` a
 approval generation, a filtered `coop acp` supervisor (not fork ACP) re-runs that exact admission —
 existing host setup only — once every thread is idle, or at once when its factory starts a box anyway
 (a respawn, a switch), and replaces its boxes under the new capture instead of changing a running
-one (`cli/acp_refresh.go`; see [[restricted-networking]]). Each spawned child receives a
+one (`cli/acp_refresh.go`; see [[restricted-networking]]). A project whose request nobody approved
+connects on a capture holding none of it, which serves only children that hold prompts until a person
+approves ([[acp-box-wait]]). Each spawned child receives a
 per-child REFERENCE through `COOP_NETWORK_CAPTURE` (`acpChildCapture` in `cli/acp_cmd.go`) — the same envelope a
 remote session uses — and an inherited one is stripped from the child environment. A filtered ACP
 child gets no `--cidfile` (the gateway engine owns its container ids) and a SIGTERM-cancelable
@@ -187,6 +189,7 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-03 — an editor session connects on a holding capture while its project's request waits.
 - 2026-11-03 — `coop net blocked` drafts TLS/443 as the labelled likely fix for a lookup-only
   refusal and finds a direct connection by the name the run resolved for its address; `net check`
   exits 3 when blocked or pending; an unnamed `net recover` lists only what it cleaned or could not;

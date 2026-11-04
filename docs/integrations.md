@@ -230,9 +230,13 @@ never works without your project's tools.
   ordinary networking. Review them, then run `coop build --egress filtered` in the project.
 - If the project has services and no network rules for them, the thread shows the rules to add. Add
   them and run `coop approve`, or set `box.network: false` to start without services.
+- If the project asks for network access nobody approved, the thread says to run `coop approve`.
+  Until then the editor talks to a box that sees your project read-only and reaches only your
+  agent's provider, and none of the rules the project asks for apply.
 
 The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
-waiting message as usual.
+waiting message as usual. The one exception is approving unrestricted access or no network at all,
+which a session started with filtered networking cannot move to: the thread asks you to reconnect.
 
 ### Files and terminals on your computer
 

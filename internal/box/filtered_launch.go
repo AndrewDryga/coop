@@ -397,7 +397,13 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if err != nil {
 		return -1, err
 	}
-	defer unlockMounts()
+	if spec.HandshakeOnly {
+		// The window keeps out a first approval while a box can replace project paths, and this one
+		// can replace none. It stays open: that approval may be the very thing this box waits for.
+		unlockMounts()
+	} else {
+		defer unlockMounts()
+	}
 	options = append(slices.Clone(options), "--user", f.agentIdentity.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
 	options = append(options, f.serveEnv...)

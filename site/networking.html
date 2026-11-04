@@ -734,8 +734,11 @@ needs, so they are not shown as access requested by the project.</p>
 <li>Running <code>coop net</code> without a subcommand shows the same comparison under
 <code>⚠ New runs need your approval</code>.</li>
 <li>Every launch stops before starting a box or its main process. It explains why and prints
-<code>Review it: coop approve</code>. This applies to <code>coop run</code>, a named agent, <code>coop acp</code>, <code>coop loop</code>,
-an interactive fork, fork ACP, and a fork review or merge gate.</li>
+<code>Review it: coop approve</code>. This applies to <code>coop run</code>, a named agent, <code>coop loop</code>, an interactive
+fork, fork ACP, and a fork review or merge gate.</li>
+<li><code>coop acp</code> connects your editor anyway and runs no agent until you approve; see
+<a href="integrations.html#when-the-project-box-is-not-ready">editors</a>. A withdrawn approval, a replaced
+project folder or an offline setting still stops it.</li>
 </ul>
 <p>These messages do not appear when the project has no pending request.</p>
 <h3 id="access-for-one-run">Access for one run</h3>

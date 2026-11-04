@@ -266,12 +266,15 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 }
 
 // EditorBoxReadiness says whether a filtered editor session's next box can start: nil, or the
-// *ProjectBuildRequired or *ServicesNeedRules a person or a rebuild has to settle first. Any other
-// error is a failure to look, and proves nothing either way. It runs the checks the launch itself
-// will, and grants nothing: the launch still makes them.
+// *ProjectBuildRequired, *ServicesNeedRules or *networkstate.PendingApproval a person or a rebuild has
+// to settle first. Any other error is a failure to look, and proves nothing either way. It runs the
+// checks the launch itself will, and grants nothing: the launch still makes them.
 func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runtime, capture *CapturedEgress, spec RunSpec) error {
 	if capture == nil || capture.Store == nil {
 		return errors.New("editor box readiness requires a host capture")
+	}
+	if capture.HoldsOnly() {
+		return capture.Pending
 	}
 	q, err := capture.Store.Qualification(capture.QualificationID)
 	if err != nil {
@@ -303,9 +306,9 @@ func editorServicesReadiness(cfg *config.Config, spec RunSpec, policy egress.Sna
 }
 
 // EditorBoxStamp changes when a person may have settled what EditorBoxReadiness reported: a project
-// build finished, or the project's configuration or Dockerfile changed. Reading the build's files on
-// every poll would cost a large project about a second; this costs three stats. It proves nothing:
-// a waiting session reads it to know when to ask EditorBoxReadiness again.
+// build or an approval finished, or the project's configuration or Dockerfile changed. Reading the
+// build's files on every poll would cost a large project about a second; this costs a few stats and one
+// small read. It proves nothing: a waiting session reads it to know when to ask EditorBoxReadiness again.
 func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	repo := projectPolicyRepo(spec)
 	stamp := func(path string) string {
@@ -315,7 +318,8 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 		}
 		return fmt.Sprintf("%d/%d", info.ModTime().UnixNano(), info.Size())
 	}
-	return strings.Join([]string{capture.Fingerprint, capture.Store.ProjectBuildReviewStamp(capture.Project),
+	generation, _ := capture.Store.ApprovalGeneration() // unreadable reads as zero: only a hint, and the recheck remains
+	return strings.Join([]string{capture.Fingerprint, capture.Store.ProjectBuildReviewStamp(capture.Project), fmt.Sprint(generation),
 		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo)))}, " ")
 }
 
