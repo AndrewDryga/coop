@@ -1373,7 +1373,7 @@ func TestBrokenFileTextKeepsTheFilesWordsInert(t *testing.T) {
 	if quoted == nil {
 		t.Fatal("fixture: the file loaded")
 	}
-	hostile := "**bold** [link](https://evil.example) <img src=x> \x1b[31m\x1b]0;title\x07 ‮evil ​word coop approve"
+	hostile := "**bold** [link](https://evil.example) <img src=x> \x1b[31m\x1b]0;title\x07 \u202eevil \u200bword coop approve"
 	for name, err := range map[string]error{
 		"what yaml quotes":      quoted,
 		"markdown and controls": errors.New(hostile),

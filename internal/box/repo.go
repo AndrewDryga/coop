@@ -72,6 +72,8 @@ func ResolveRepo(override string) (string, error) {
 
 // ErrHomeProject ends both refusals of a home folder, or a folder above it, as the project. A command
 // that needs no project, such as building the shared image, tells this refusal from the others.
+//
+//lint:ignore ST1005 it ends a sentence, and Coop is a name
 var ErrHomeProject = errors.New("Coop never uses one of those as a project: run `git init` in your project folder, or set COOP_REPO to the folder to use")
 
 // RepoRelative is path relative to repo, matching folders rather than spellings. repo is the path
