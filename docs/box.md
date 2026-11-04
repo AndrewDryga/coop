@@ -622,12 +622,18 @@ it found while starting, such as a saved sign-in that no longer works. Terminal 
 port links on stderr.
 
 - The dev server must bind `0.0.0.0` inside the box (`vite --host`, `next dev -H 0.0.0.0` and so
-  on). A server on the container's localhost isn't reachable through the mapping.
+  on). A server on the container's localhost isn't reachable through the mapping. In an editor
+  thread, co:op tells you when a server starts: it names the command and the link, or warns you
+  when the server is only on localhost.
 - Ports bind to your localhost only, never the LAN.
 - Publishing needs networking: `filtered` (the default), which publishes the port on the run's
   gateway, or `open`. See [restricted networking](networking.md).
 - A host port already in use is skipped with a note. `COOP_SERVE_URL_<port>` still carries the
-  workspace's assigned URL for configuration and discovery.
+  workspace's assigned URL for configuration and discovery. An editor session says so in the thread
+  instead of posting a link, and takes the port when it frees.
+- In an editor session the link always reaches the box the thread is using, including after you
+  switch provider or account. The session holds the port and forwards it, and its other boxes keep
+  to private ports.
 - A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The URL
   stays the same, so run the server again.
 

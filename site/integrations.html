@@ -230,7 +230,8 @@ restarts. co:op keeps the editor connected, starts another box and repeats the A
 This also works for a thread that has not received a message yet. Supervision is always on.</p>
 <h3 id="dev-servers">Dev servers</h3>
 <p>Set <code>serve.ports</code> in <a href="box.html#dev-servers-in-your-browser"><code>.agent/project.yaml</code></a> to publish the
-box&#39;s ports. The thread shows the stable <code>http://localhost:&lt;port&gt;</code> URLs you can open.</p>
+box&#39;s ports. The thread shows the stable <code>http://localhost:&lt;port&gt;</code> URLs you can open, and they keep
+reaching the box the thread is using after a switch. It also tells you when a server starts.</p>
 <h3 id="tracing-a-session">Tracing a session</h3>
 <p>To record a session&#39;s ACP traffic, run <code>touch ~/.config/coop/acp-debug</code> or set
 <code>COOP_ACP_TRACE=1</code> in the agent server&#39;s environment. Each <code>coop acp</code> server then appends traffic

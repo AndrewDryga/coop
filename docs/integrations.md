@@ -157,7 +157,8 @@ This also works for a thread that has not received a message yet. Supervision is
 ### Dev servers
 
 Set `serve.ports` in [`.agent/project.yaml`](box.md#dev-servers-in-your-browser) to publish the
-box's ports. The thread shows the stable `http://localhost:<port>` URLs you can open.
+box's ports. The thread shows the stable `http://localhost:<port>` URLs you can open, and they keep
+reaching the box the thread is using after a switch. It also tells you when a server starts.
 
 ### Tracing a session
 
