@@ -21,7 +21,7 @@ internal/acpproxy/    the ACP session proxy: survives box restarts, replays the 
 internal/consult/     read-only peer consultation instructions + wrapper
 internal/preset/      orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
 internal/project/     .agent/project.yaml — a monorepo's subprojects + the serve ports
-internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs (pure Go, no Python)
+internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs
 internal/session/     durable local remote sessions: idempotent operations, FIFO turns, events, recovery
 internal/sessionsvc/  the remote-session service ON that store: immutable jobs, Unix API, isolated ACP, workspaces, review, publication
 internal/scaffold/    `coop init` templates + the workflow skills (embedded in the binary)

@@ -599,7 +599,7 @@ roles:
             </tr>
             <tr>
               <td><code>COOP_EGRESS</code></td>
-              <td><code>filtered</code> lets the box reach only its AI provider and the destinations you approve; <code>coop init</code> sets it for the project. <code>open</code>, the built-in default, leaves the network open. <code>none</code> starts a box without network access, including access to the model. Changing this setting does not disconnect an already-running box.</td>
+              <td><code>filtered</code>, the default, lets the box reach only its AI provider and the destinations you approve. <code>open</code> leaves the network open. <code>offline</code> starts a box without network access, including access to the model. Changing this setting does not disconnect an already-running box.</td>
             </tr>
             <tr>
               <td><code>COOP_RUNTIME</code></td>
@@ -689,7 +689,7 @@ roles:
             </tr>
             <tr>
               <td>A merge refuses</td>
-              <td>Commit or stash a dirty tree first. If the policy flagged a secret or a large file, review it, then pass <code>--force</code>. Without a terminal, pass <code>--yes</code>. If the gate failed on the rebased tree, the merge rolled back: fix it and run the merge again.</td>
+              <td>Commit or stash a dirty tree first. If the policy flagged a secret or a large file, review it, then pass <code>--force</code>. Without a terminal, pass <code>--yes</code>. If the gate failed on the rebased tree, your branch is untouched: fix the fork and run the merge again.</td>
             </tr>
             <tr>
               <td>Zed can't find the agent</td>
@@ -697,7 +697,7 @@ roles:
             </tr>
             <tr>
               <td>An editor session misbehaves</td>
-              <td>Turn on tracing: set <code>COOP_ACP_TRACE=1</code> in the agent server's <code>env</code>, or <code>touch ~/.config/coop/acp-debug</code>, which also works on a server that's already running. co:op writes the editor and box traffic to <code>~/.config/coop/acp-trace-&lt;pid&gt;.log</code>, which is size-bounded and pruned. It holds prompts and file contents, so treat it as sensitive.</td>
+              <td>Turn on tracing: set <code>COOP_ACP_TRACE=1</code> in the agent server's <code>env</code>, or <code>touch ~/.config/coop/acp-debug</code>, which also works on a server that's already running. co:op writes the editor and box traffic to <code>~/.local/state/coop/acp-trace-&lt;pid&gt;.log</code>, which is size-bounded and pruned. It holds prompts and file contents, so treat it as sensitive.</td>
             </tr>
             <tr>
               <td>A loop's live view shows provider activity wrong</td>
@@ -705,7 +705,7 @@ roles:
             </tr>
             <tr>
               <td>A scaffolded Postgres 18 <code>db</code> exits 1 on <code>coop up</code></td>
-              <td>Older scaffolds mounted <code>pgdata</code> at <code>/var/lib/postgresql/data</code>, which Postgres 18 and later refuses. In <code>.agent/compose.yml</code>, move the mount up to <code>/var/lib/postgresql</code>. New scaffolds already do this.</td>
+              <td>Postgres 18 and later refuses a data mount at <code>/var/lib/postgresql/data</code>. In <code>.agent/compose.yml</code>, move the mount up to <code>/var/lib/postgresql</code>.</td>
             </tr>
           </table>
         </div>

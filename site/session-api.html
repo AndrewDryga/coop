@@ -188,8 +188,7 @@ free. By default, co:op calculates all three from the volume&#39;s measured capa
 <li>It stops accepting new workspaces when free space falls to that reserve or below.</li>
 <li>It accepts new workspaces again only when twice that reserve is free.</li>
 </ul>
-<p>If the worker can&#39;t measure its volume, or its daemon is too old to provide this endpoint, it leaves
-out the storage object and keeps polling.</p>
+<p>If the worker can&#39;t measure its volume, it leaves out the storage object and keeps polling.</p>
 <p>A workspace with no recorded session binding or no uncommitted changes can look unused, but another
 session store or an unfinished create operation may own it. co:op marks such a workspace as
 protected in <code>/v1/storage</code> and leaves it for manual inspection.</p>
@@ -344,9 +343,9 @@ runs and the approved task assigned to its workspace. Credentials, host paths an
 excluded. Destination names appear only if the session job set <code>egress.export_destinations: true</code>.</p>
 <p>The worker reports support for <code>session-evidence</code> version <code>1</code> only when its running daemon lists
 <code>session_evidence_versions</code> in <code>GET /v1/capabilities</code>. It checks this independently of the other
-capabilities, and configuration can&#39;t override the result. If an older daemon doesn&#39;t have the
-endpoint, the worker doesn&#39;t report support, and your controller can show that evidence export is
-unavailable instead of an empty network report.</p>
+capabilities, and configuration can&#39;t override the result. If the daemon doesn&#39;t list it, the worker
+doesn&#39;t report support, and your controller can show that evidence export is unavailable instead of
+an empty network report.</p>
 <p>The controller also receives blocked requests and alerts from filtered runs through the <code>network</code>
 session event. The daemon uses the same grouping, limits and destination-disclosure rules as
 <code>coop net</code>.</p>

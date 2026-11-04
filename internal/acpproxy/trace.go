@@ -25,7 +25,7 @@ import (
 //   - create the sentinel file <config>/acp-debug  (e.g. ~/.config/coop/acp-debug).
 //
 // Then every `coop acp` process appends the editor↔box wire, plus restart/spawn events, to
-// <config>/acp-trace-<pid>.log. The sentinel is re-checked while tracing is off (throttled to once a
+// <state>/acp-trace-<pid>.log. The sentinel is re-checked while tracing is off (throttled to once a
 // second), so you can switch tracing ON for an ALREADY-running server — Zed keeps one coop process
 // alive across threads — without restarting it; `rm` the sentinel to stop new processes tracing.
 //
@@ -248,7 +248,7 @@ func traceSentinelExists() bool {
 	return err == nil
 }
 
-// tracePath is <config>/acp-trace-<pid>.log — per-pid so concurrent `coop acp` servers (a claude, a
+// tracePath is <state>/acp-trace-<pid>.log — per-pid so concurrent `coop acp` servers (a claude, a
 // codex, …) don't interleave into one file. Falls back to the temp dir if config can't be resolved.
 func tracePath() string {
 	dir := traceLogDir()
