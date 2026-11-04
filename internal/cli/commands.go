@@ -694,6 +694,14 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// A stopped or failed sign-in leaves nothing anyone could recover, and may leave a provider's
+	// partial files, so the stage goes with it. Only a failed save keeps it, and names it.
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			_ = os.RemoveAll(stagingRoot)
+		}
+	}()
 	// Sign-in needs no project and gets none: the box works in an empty folder of its own, so a
 	// login run from the home folder, or from a folder Coop refuses as a project, mounts neither.
 	workspace := filepath.Join(stagingRoot, "workspace")
@@ -715,6 +723,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 		return code, err // the box already reported how the command ended
 	}
 	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool), a.rt); err != nil {
+		keepStage = true
 		return -1, fmt.Errorf("could not save the sign-in. The provider's files are kept at %s: %w", stagingRoot, err)
 	}
 	if err := os.RemoveAll(stagingRoot); err != nil {

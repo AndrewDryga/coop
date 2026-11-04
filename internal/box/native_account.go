@@ -38,8 +38,8 @@ func nativeAccountSpec(ag agents.Agent) accountAuthoritySpec {
 var errAccountInterrupted = errors.New("this account's sign-in or removal was interrupted")
 
 // NativeSignInStage has no existing credentials, repository or user history.
-// The caller retains failed native output for explicit recovery and removes a
-// successful stage only after canonical publication is confirmed.
+// The caller removes it when the sign-in stops or fails, keeps it and names it when saving fails, and
+// removes a successful stage only after canonical publication is confirmed.
 func NativeSignInStage(cfg *config.Config) (*config.Config, string, error) {
 	if cfg == nil || !filepath.IsAbs(cfg.ConfigDir) {
 		return nil, "", errors.New("invalid sign-in storage root")

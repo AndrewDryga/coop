@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A stopped sign-in cleans up after itself.** Pressing Ctrl-C during `coop login`, or a sign-in that
+  fails, no longer leaves a `.sign-in-*` folder in Coop's settings. It may hold a provider's partial
+  files. A failed save still keeps its folder and names it.
+
 - **A mistake in `project.yaml` or `loop.yaml` reads plainly.** Coop names an unknown setting, and what
   a value should be (a number, a list), instead of the Go type behind it. The refusal in your home
   folder says what to do next.
