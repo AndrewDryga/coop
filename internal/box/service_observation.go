@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,9 +70,13 @@ func observedServicePorts(ctx context.Context, rt runtime.Runtime, workspace, co
 	return observed, errors.Join(problems...)
 }
 
+func serviceContainerUp(container runtime.ServiceContainerObservation) bool {
+	return container.Status == "running" && container.Running && !container.Paused &&
+		(!container.Healthcheck || container.Health == "healthy")
+}
+
 func eligibleObservedServicePorts(container runtime.ServiceContainerObservation, network string, candidates []ServicePort) []ServicePort {
-	if container.Status != "running" || !container.Running || container.Paused ||
-		container.Healthcheck && container.Health != "healthy" || network != "" && !container.Networks[network] {
+	if !serviceContainerUp(container) || network != "" && !container.Networks[network] {
 		return nil
 	}
 	var observed []ServicePort
@@ -103,6 +109,79 @@ func discoverObservedServicePorts(ctx context.Context, rt runtime.Runtime, works
 		return nil, err
 	}
 	return observedServicePorts(ctx, rt, workspace, composeFile, owner, network, candidates)
+}
+
+// markServiceDefinitionKey asks a service start to label what it started from. Only a session asks: on
+// a loop's services, a comment edited in the file would recreate every one of them at the next `up`.
+type markServiceDefinitionKey struct{}
+
+// sessionServiceDefinition is serviceDefinition for an open session, which starts every service the file
+// resolves to, in whatever order Compose lists them.
+func sessionServiceDefinition(data []byte, services []string) string {
+	return serviceDefinition(data, slices.Sorted(slices.Values(services)))
+}
+
+// joinOpenSessionServices is joinSessionServices for an open session. It has no approval to compare
+// with, so it matches what the session itself started: the file's bytes and service list, on the label
+// that start wrote. Every service must still be up, with the ports it was given, or `up` has work to do
+// and the full launch path does it, with its wait. Reading the file opens no bind source, so the shared
+// side of the lock is enough. It reports whether this box joined.
+func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSpec, projectRepo, file, owner string, sections *launchSections, exposedRoots ...string) (startedServices, bool) {
+	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" || spec.Review {
+		return startedServices{}, false
+	}
+	unlock, err := lockServiceLaunch(ctx, projectRepo, false, RunSpec{}, sections)
+	if err != nil {
+		return startedServices{}, false
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	bound, err := rt.FreezeCompose(ctx)
+	if err != nil {
+		return startedServices{}, false
+	}
+	data, err := readValidatedCompose(file, spec.Repo, spec.RepoReadOnly)
+	if err != nil || refuseRunningServiceWriters(ctx, bound, spec.Repo) != nil {
+		return startedServices{}, false
+	}
+	args, cleanup, _, err := snapshotComposeArgsForStartData(spec.Repo, file, owner, data, true, exposedRoots...)
+	if err != nil {
+		return startedServices{}, false
+	}
+	defer cleanup()
+	services, err := resolvedComposeServices(bound, args, io.Discard)
+	if err != nil {
+		return startedServices{}, false
+	}
+	ports, err := servicePortsWithArgsContext(ctx, bound, servicePortScope(spec.Repo, owner), args)
+	if err != nil {
+		return startedServices{}, false
+	}
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return startedServices{}, false
+	}
+	definition := sessionServiceDefinition(data, services)
+	for _, service := range services {
+		container, found, err := bound.ObserveServiceContainer(ctx, map[string]string{
+			composeProjectLabel:    ComposeProjectFor(spec.Repo, owner),
+			composeWorkingDirLabel: filepath.Clean(filepath.Dir(abs)),
+			composeServiceLabel:    service,
+			composeOneoffLabel:     "False",
+			serviceDefinitionLabel: definition,
+		})
+		if err != nil || !found {
+			return startedServices{}, false
+		}
+		published := slices.DeleteFunc(slices.Clone(ports), func(port ServicePort) bool { return port.Service != service })
+		switch {
+		case container.Completed && len(published) == 0: // a one-shot step that did its work: `up` would only run it again
+		case !serviceContainerUp(container) || len(eligibleObservedServicePorts(container, "", published)) != len(published):
+			return startedServices{}, false
+		}
+	}
+	return startedServices{names: services, ports: ports}, true
 }
 
 func servicePortNames(ports []ServicePort) []string {

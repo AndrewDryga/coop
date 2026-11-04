@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -339,6 +340,50 @@ func TestBoxWaitKeepsThePoolShutUntilAColdBoxAnswers(t *testing.T) {
 	h.w.poll()
 	if fills != 2 {
 		t.Fatalf("%d fills after it answered, want one more", fills)
+	}
+}
+
+// A provider switch in an open session must not hang behind the boxes parked beside the one it took. A
+// parked box that started joined the services and leaves its neighbours alone. One that has not started
+// waits on the lock, and only its supervisor can stop them. The refill comes after the answer either way.
+func TestWarmBoxTakenInAnOpenSessionComesBeforeItsRefill(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		launched func() bool
+		yields   int
+	}{
+		{"it joined and started", func() bool { return true }, 0},
+		{"it still waits for the lock", func() bool { return false }, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fills := 0
+			h := newBoxWaitHarness(t)
+			fanOut := &acpFanOut{lead: func() string { return "claude" }, waiting: h.w.waitingNow, fill: func(string) { fills++ }}
+			h.w.opened = func() { fanOut.rebalance("claude") }
+			fanOut.start()
+			fills = 0
+			h.w.warmTaken(&acpproxy.Child{Launched: tc.launched})
+			fanOut.rebalance("claude")
+			h.w.poll()
+			if fills != 0 {
+				t.Fatalf("%d fills ahead of the box the switch took", fills)
+			}
+			wait.For(t, "the parked boxes to stop", func() bool {
+				var yields int
+				h.read(func() { yields = h.yields })
+				return yields == tc.yields
+			})
+			h.set(func() { h.serving = true })
+			h.w.poll()
+			if fills != 1 {
+				t.Fatalf("%d fills after it answered, want one", fills)
+			}
+			var yields int
+			h.read(func() { yields = h.yields })
+			if yields != tc.yields {
+				t.Fatalf("%d parked boxes stopped, want %d", yields, tc.yields)
+			}
+		})
 	}
 }
 
@@ -890,8 +935,9 @@ func TestSpawnedFilteredChildSaysWhenItsBoxStarts(t *testing.T) {
 	wait.For(t, "the child to report its box", child.Launched)
 }
 
-// An open session has no wait to report to, so nothing changes for its children.
-func TestSpawnedOpenChildHasNoLaunchToReport(t *testing.T) {
+// An open child reports nothing itself: the cidfile it already writes says when its box has started,
+// which is all a session needs when it takes a parked box (acpBoxWait.warmTaken).
+func TestSpawnedOpenChildLaunchIsItsCidfile(t *testing.T) {
 	shim := filepath.Join(t.TempDir(), "inner")
 	seen := filepath.Join(t.TempDir(), "environment")
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\nenv > '"+seen+".tmp'\nmv '"+seen+".tmp' '"+seen+"'\n"), 0o700); err != nil {
@@ -911,8 +957,21 @@ func TestSpawnedOpenChildHasNoLaunchToReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if child.Launched != nil || strings.Contains(string(env), acpLaunchedEnv) {
-		t.Fatalf("an open child has a launch to report: %v", child.Launched != nil)
+	if strings.Contains(string(env), acpLaunchedEnv) {
+		t.Fatal("an open child was asked to report its launch")
+	}
+	if child.Launched == nil || child.Launched() {
+		t.Fatal("an open child read as started before its box was")
+	}
+	found := regexp.MustCompile(`(?m)^COOP_ACP_CIDFILE=(.+)$`).FindSubmatch(env)
+	if found == nil {
+		t.Fatalf("no cidfile in its environment:\n%s", env)
+	}
+	if err := os.WriteFile(string(found[1]), []byte("cid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !child.Launched() {
+		t.Fatal("an open child whose box started read as not started")
 	}
 }
 

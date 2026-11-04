@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -620,6 +622,72 @@ case "$*" in *"label=coop --format"*) printf '%s\n' '["box-id","box","v1:scope:2
 	t.Setenv("COOP_TEST_GARBLED", "1")
 	if got, err := rt.ContainerLabels(context.Background(), "coop", "", "coop"); err == nil || got != nil {
 		t.Fatalf("an unreadable listing read as %#v, %v", got, err)
+	}
+}
+
+// `docker inspect --format` runs over decoded JSON and fails on a key that is missing, and a container
+// with no healthcheck has neither Config.Healthcheck nor State.Health. Measured on Docker 29.8: the
+// observation of any such service failed, whatever it was doing.
+func TestServiceContainerFormatReadsAContainerWithNoHealthcheck(t *testing.T) {
+	tmpl, err := template.New("").Funcs(template.FuncMap{"json": func(v any) (string, error) {
+		data, err := json.Marshal(v)
+		return string(data), err
+	}}).Option("missingkey=error").Parse(serviceContainerFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, want string
+		config     map[string]any
+		state      map[string]any
+	}{
+		{name: "none", want: `"Healthcheck":false,"Health":""`, config: map[string]any{}, state: map[string]any{}},
+		{name: "turned off", want: `"Healthcheck":false,"Health":""`,
+			config: map[string]any{"Healthcheck": map[string]any{"Test": []any{"NONE"}}}, state: map[string]any{}},
+		{name: "one", want: `"Healthcheck":true,"Health":"healthy"`,
+			config: map[string]any{"Healthcheck": map[string]any{"Test": []any{"CMD", "true"}}},
+			state:  map[string]any{"Health": map[string]any{"Status": "healthy"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.config["Labels"] = map[string]any{}
+			tc.state["Status"], tc.state["ExitCode"], tc.state["Running"], tc.state["Paused"] = "running", 0, true, false
+			var out strings.Builder
+			err := tmpl.Execute(&out, map[string]any{"Id": "x", "Config": tc.config, "State": tc.state,
+				"NetworkSettings": map[string]any{"Ports": map[string]any{}, "Networks": map[string]any{}}})
+			if err != nil || !strings.Contains(out.String(), tc.want) || !json.Valid([]byte(out.String())) {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+		})
+	}
+}
+
+// A one-shot step ended on its own with status 0. Any other ending is a service that went down, and an
+// inspection that does not say counts as one.
+func TestObserveServiceContainerTellsAFinishedStepFromAFailedOne(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	labels := map[string]string{"com.docker.compose.service": "migrate"}
+	runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
+if [ "$1" = ps ]; then printf '%s\n' "$COOP_TEST_ID"; exit 0; fi
+printf '%s\n' "$COOP_TEST_INSPECT"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_ID", id)
+	for _, tc := range []struct {
+		state string
+		want  bool
+	}{
+		{`"Status":"exited","ExitCode":0`, true},
+		{`"Status":"exited","ExitCode":1`, false},
+		{`"Status":"exited"`, false},
+		{`"Status":"running","ExitCode":0`, false},
+	} {
+		t.Setenv("COOP_TEST_INSPECT", `{"ID":"`+id+`","Labels":{"com.docker.compose.service":"migrate"},`+tc.state+`,"Running":false,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{}}`)
+		got, found, err := (Runtime{Name: runtimeCLI}).ObserveServiceContainer(t.Context(), labels)
+		if err != nil || !found || got.Completed != tc.want {
+			t.Errorf("%s: completed=%v found=%v err=%v, want completed=%v", tc.state, got.Completed, found, err, tc.want)
+		}
 	}
 }
 

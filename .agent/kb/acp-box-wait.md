@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
 updated: 2026-11-04
 ---
 
@@ -92,9 +92,21 @@ opened, which is all that lock guards. Anything else takes the full path, and it
 own parked boxes keep its own box out (a service stopped, say), the child says so on the launch-wait pipe
 (`OnOwnBoxesHoldLaunch`) and the supervisor drains the pool, since those boxes never stop by themselves. A
 parked box never asks this, or they would stop each other. After any cold box in a project with services the pool
-stays shut until it answers (`awaitAnswer`), or the refill would race it for the lock just freed. Open-mode
-services (`startServicesFileContext`) do not join yet: a warm box waits on the lock until it is taken by a switch,
-then `heedLaunchWait` drains its neighbours, and a refill can still race it.
+stays shut until it answers (`awaitAnswer`), or the refill would race it for the lock just freed.
+
+An open session joins too (`joinOpenSessionServices`). It has no approval, so it matches what it started: a
+start under a supervisor labels every service with the file's bytes and service list (`markServiceDefinitionKey`,
+never a loop's, where editing a comment would then recreate everything at the next `up`). Every service has to be
+up and healthy with its published ports, or a one-shot that exited 0 (`Completed`), or the box takes the full path.
+So after an edit to the file a refill cannot join and waits behind the running box, and nothing recreates a service
+under it. A switch to that waiting box has no `OnOwnBoxesHoldLaunch`, since it was started parked, so `warmTaken` sees
+it has not started (`Child.Launched`, an open child's cidfile) and drains its neighbours itself, and either way the
+refill waits for the answer. Measured: 60 s parked behind the lead, then live 17 s after the switch, with the services
+recreated only once the other boxes had stopped. A filtered session still takes only `heedLaunchWait` for this.
+
+Trap: `docker inspect --format` runs over decoded JSON and fails on a missing key, and a container with no
+healthcheck has neither `Config.Healthcheck` nor `State.Health`. `{{if .Config.Healthcheck}}` made
+`ObserveServiceContainer` fail for any such service on Docker 29.8; `index` is what returns nothing instead.
 
 Fork ACP shares the wait, but its hooks have no start notice, so a thread hears about it only when it
 sends a message. See [[restricted-project-builds-are-explicit]].
@@ -179,6 +191,9 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-04 — open sessions join their own services too, and a warm box a switch takes no longer waits behind its
+  neighbours. Verified with a real open `coop acp` on fake API keys in a private config folder, no prompt: a warm
+  switch was live in 0.1 s with every service container unchanged, the refill joined, and the same after an edit.
 - 2026-11-04 — the session's own box starts first after a wait and at a plain connect, and later boxes join
   its services. Verified with driver runs (7 clean in a row, then one refused over a changed grok account) and a
   plain connect then a warm switch: `db` kept its container and stayed reachable from every box.

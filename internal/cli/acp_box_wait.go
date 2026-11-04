@@ -336,6 +336,21 @@ func (w *acpBoxWait) awaitAnswer() {
 	w.moving = true
 }
 
+// warmTaken is awaitAnswer for a parked box an open session just took, in a project with services. One
+// that joined them has started, answers at once, and the refill joins too. One that has not started
+// could not join and waits on the lock: its neighbours may hold it and never stop by themselves, and a
+// parked box does not ask (box.RunSpec.OnOwnBoxesHoldLaunch), so they stop here. Either way the refill
+// waits for the answer, so it cannot get to the lock first.
+func (w *acpBoxWait) warmTaken(child *acpproxy.Child) {
+	if w == nil {
+		return
+	}
+	w.awaitAnswer()
+	if child.Launched != nil && !child.Launched() {
+		go w.yield()
+	}
+}
+
 // refresh asks whether a real box can start now, and acts on the answer. An error is a failure to
 // look, which proves nothing: the last answer stands, and a child's own launch proofs still decide.
 func (w *acpBoxWait) refresh(ctx context.Context) error {

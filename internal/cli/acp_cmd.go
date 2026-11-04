@@ -757,8 +757,13 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		acpproxy.Trace("spawn: %s box for %s@%s", kind, child.Provider, child.Account)
 		a.acpRefresh.started(child)
 		a.acpBoxWait.started(child)
-		if kind == "cold" && !child.HoldPrompts && acpProjectHasServices(boxRepo) {
-			a.acpBoxWait.awaitAnswer()
+		if !child.HoldPrompts && acpProjectHasServices(boxRepo) {
+			switch {
+			case kind == "cold":
+				a.acpBoxWait.awaitAnswer()
+			case kind == "warm" && a.acpCapture == nil:
+				a.acpBoxWait.warmTaken(child)
+			}
 		}
 		a.acpServe.setLive(child.ServeBinds)
 		a.acpServe.follow(child.ServeContainer)
@@ -1340,11 +1345,15 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			env = append(env, "COOP_ACP_CIDFILE="+cidPath)
 		}
 	}
-	// A filtered child writes no cidfile here, and only a filtered session has a wait to report to.
+	// A filtered child writes no cidfile here, so it reports its start itself. An open child's cidfile
+	// appears when its box starts, past the service launch lock.
 	var launched func() bool
-	if cidDir != "" && a.acpCapture != nil {
-		path := filepath.Join(cidDir, "launched")
-		env = append(env, acpLaunchedEnv+"="+path)
+	if cidDir != "" {
+		path := cidPath
+		if a.acpCapture != nil {
+			path = filepath.Join(cidDir, "launched")
+			env = append(env, acpLaunchedEnv+"="+path)
+		}
 		launched = func() bool {
 			_, err := os.Stat(path)
 			return err == nil

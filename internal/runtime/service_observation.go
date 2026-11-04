@@ -21,6 +21,7 @@ type ServiceContainerObservation struct {
 	ID          string
 	Labels      map[string]string
 	Status      string
+	Completed   bool // it exited by itself with status 0, which is how a one-shot step ends
 	Running     bool
 	Paused      bool
 	Healthcheck bool
@@ -30,9 +31,9 @@ type ServiceContainerObservation struct {
 }
 
 const serviceContainerFormat = `{"ID":{{json .Id}},"Labels":{{json .Config.Labels}},` +
-	`"Status":{{json .State.Status}},"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},` +
-	`"Healthcheck":{{if .Config.Healthcheck}}{{if .Config.Healthcheck.Test}}{{if eq (index .Config.Healthcheck.Test 0) "NONE"}}false{{else}}true{{end}}{{else}}false{{end}}{{else}}false{{end}},` +
-	`"Health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}},` +
+	`"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}},"Running":{{json .State.Running}},"Paused":{{json .State.Paused}},` +
+	`"Healthcheck":{{with index .Config "Healthcheck"}}{{with index . "Test"}}{{if eq (index . 0) "NONE"}}false{{else}}true{{end}}{{else}}false{{end}}{{else}}false{{end}},` +
+	`"Health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},` +
 	`"Ports":{{json .NetworkSettings.Ports}},"Networks":{{json .NetworkSettings.Networks}}}`
 
 // ObserveServiceContainer returns the one container carrying every exact ownership label. No
@@ -77,6 +78,7 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 		ID          *string                          `json:"ID"`
 		Labels      map[string]string                `json:"Labels"`
 		Status      *string                          `json:"Status"`
+		ExitCode    *int                             `json:"ExitCode"`
 		Running     *bool                            `json:"Running"`
 		Paused      *bool                            `json:"Paused"`
 		Healthcheck *bool                            `json:"Healthcheck"`
@@ -108,7 +110,8 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 	}
 	observed := ServiceContainerObservation{
 		ID: *wire.ID, Labels: wire.Labels, Status: *wire.Status, Running: *wire.Running,
-		Paused: *wire.Paused, Healthcheck: *wire.Healthcheck, Health: *wire.Health,
+		Completed: *wire.Status == "exited" && wire.ExitCode != nil && *wire.ExitCode == 0,
+		Paused:    *wire.Paused, Healthcheck: *wire.Healthcheck, Health: *wire.Health,
 		Ports: *wire.Ports, Networks: networks,
 	}
 	return observed, true, nil

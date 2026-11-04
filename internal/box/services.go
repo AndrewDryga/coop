@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -110,6 +111,10 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	}
 	// A loop's or session's own project names the process whose exit ends it (runServiceLabels).
 	if len(labels) > 0 {
+		if mark, _ := ctx.Value(markServiceDefinitionKey{}).(bool); mark {
+			labels = maps.Clone(labels)
+			labels[serviceDefinitionLabel] = sessionServiceDefinition(data, services)
+		}
 		override, cleanup, err := writeServiceLabelOverride(services, labels, workspace, exposedRoots...)
 		if err != nil {
 			return started, err

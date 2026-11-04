@@ -1680,14 +1680,19 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			var composeStderr bytes.Buffer
 			servicesInspected = true
 			reviewServicesAttempted = reviewStack
-			unlock, lockErr := lockServiceStart(serviceCtx, projectRepo, spec, sections)
-			if lockErr != nil {
-				return finish(-1, lockErr)
+			var err error
+			started, joined := joinOpenSessionServices(serviceCtx, rt, spec, projectRepo, cf, serviceOwner, sections, privateRoots...)
+			if !joined {
+				unlock, lockErr := lockServiceStart(serviceCtx, projectRepo, spec, sections)
+				if lockErr != nil {
+					return finish(-1, lockErr)
+				}
+				serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
+				serviceCtx = context.WithValue(serviceCtx, serviceCaseExposureKey{}, cfg.AllowCaseExposedSecrets)
+				serviceCtx = context.WithValue(serviceCtx, markServiceDefinitionKey{}, spec.SupervisorID != "")
+				started, err = startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
+				unlock()
 			}
-			serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
-			serviceCtx = context.WithValue(serviceCtx, serviceCaseExposureKey{}, cfg.AllowCaseExposedSecrets)
-			started, err := startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
-			unlock()
 			sections.serviceSecrets(started.hidden, cf)
 			servicePorts = started.ports
 			if err != nil {

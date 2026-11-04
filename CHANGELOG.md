@@ -8,6 +8,10 @@
   `coop build` clears, the session's own box starts before its warm boxes, and the warm boxes share the
   services it started instead of restarting them under it. A switch to another provider stays instant.
 
+- **Switching provider in an open editor session no longer waits behind the session's own boxes.** Warm
+  boxes now share the services the session started, as they do in a filtered session, and never restart them
+  under a running box. Coop can also see services that have no healthcheck, which it reported as unknown.
+
 - **The installer finishes when it runs from your home folder.** `coop build --egress open` now builds
   the shared image from there, so the install, its retry command and the next step, `coop login`, all
   work in a new terminal. Agent runs still refuse the home folder.
