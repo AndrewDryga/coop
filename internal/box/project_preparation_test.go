@@ -385,15 +385,10 @@ func (x *approvedRebuildFixture) miss() *ProjectBuildRequired {
 	return required
 }
 
-// automaticBuild snapshots the checkout as it is now, and builds it the way a launch does on its own.
+// automaticBuild is what a launch does on its own once it holds the project's lock.
 func (x *approvedRebuildFixture) automaticBuild() error {
 	x.t.Helper()
-	prepared, err := prepareApprovedRebuild(x.t.Context(), x.cfg, RunSpec{Repo: x.repo})
-	if err != nil {
-		x.t.Fatal(err)
-	}
-	defer prepared.Close()
-	_, err = buildPreparedFilteredProject(x.t.Context(), x.rt, x.cfg, x.d, x.f.store, prepared, x.candidate, io.Discard)
+	_, err := rebuildApprovedLocked(x.t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, nil, io.Discard)
 	return err
 }
 
@@ -558,11 +553,12 @@ func TestAgentEditAfterTheSnapshotIsNotBuiltOrApproved(t *testing.T) {
 	x := newApprovedRebuildFixture(t)
 	x.explicitBuild()
 	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
-	prepared, err := prepareApprovedRebuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	prepared, err := snapshotProjectBuild(t.Context(), x.f.store.Path(), x.repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
+	prepared.automatic = true
 	x.write(".agent/Dockerfile", reusableDockerfile+"RUN curl https://example.com\n")
 	// The builder reads the context it was given: it fails on the edit, so a pass means it never saw it.
 	script := filepath.Join(t.TempDir(), "docker")
@@ -594,25 +590,100 @@ func TestALaterApprovalReplacesTheEarlierOne(t *testing.T) {
 }
 
 // Two launches find the same image missing. The second waits for the project's lock, then finds the
-// first one's image and builds nothing.
+// first one's image: it builds nothing and stages nothing.
 func TestSecondAutomaticBuildReusesTheFirst(t *testing.T) {
 	x := newApprovedRebuildFixture(t)
 	x.explicitBuild()
 	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
-	waiting, err := PrepareFilteredProjectBuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer waiting.Close()
-	waiting.automatic = true
 	if err := x.automaticBuild(); err != nil {
 		t.Fatal(err)
 	}
+	// A new snapshot reaps one nobody holds, so this one tells whether a launch staged anything.
+	marker, lease, err := newProjectReviewSnapshot(t.Context(), x.f.store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
 	before := x.builds()
-	change, err := buildPreparedFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, waiting, x.candidate, io.Discard)
+	change, err := rebuildApprovedLocked(t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, nil, io.Discard)
 	if err != nil || x.builds() != before || change != (ImageChange{}) {
 		t.Fatalf("the second launch: %+v, %v after %d builds, want none after %d", change, err, x.builds(), before)
 	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the second launch staged a snapshot to find the image already built: %v", err)
+	}
+
+	// A launch that does have to build does stage one, which is what makes the marker a proof.
+	x.upgradeClient("sha256:"+strings.Repeat("6", 64), "sha256:"+strings.Repeat("7", 64))
+	if err := x.automaticBuild(); err != nil || x.builds() != before+1 {
+		t.Fatalf("a real rebuild: %v after %d builds, want %d", err, x.builds(), before+1)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a real rebuild left the abandoned snapshot, so the marker proves nothing: %v", err)
+	}
+}
+
+// A launch that finds another build of its project running waits with no copy of the checkout on
+// disk, however many windows are waiting beside it.
+func TestALaunchWaitingForTheBuildLockHoldsNoSnapshot(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.explicitBuild()
+	x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	root, err := NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	canonical, err := canonicalProjectDir(x.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = store.LockProjectBuild(t.Context(), canonical, nil, func() error {
+		said := make(chan struct{})
+		result := make(chan error, 1)
+		go func() {
+			_, err := rebuildApprovedProject(ctx, x.rt, x.cfg, x.repo, nil, io.Discard, onFirstWrite(func() { close(said) }))
+			result <- err
+		}()
+		select {
+		case <-said:
+		case err := <-result:
+			t.Fatalf("the launch did not wait for the lock: %v", err)
+		}
+		entries, err := os.ReadDir(store.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), projectReviewPrefix) {
+				t.Errorf("a waiting launch holds a snapshot: %s", entry.Name())
+			}
+		}
+		cancel()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("a cancelled wait returned %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// onFirstWrite is a writer that says when something was first written to it.
+type onFirstWrite func()
+
+func (f onFirstWrite) Write(p []byte) (int, error) {
+	f()
+	return len(p), nil
 }
 
 func TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed(t *testing.T) {

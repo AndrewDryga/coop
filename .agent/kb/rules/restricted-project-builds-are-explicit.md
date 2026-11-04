@@ -3,7 +3,7 @@ name: restricted-project-builds-are-explicit
 description: only a person approves new project build files; restricted launches rebuild by themselves only the exact files already approved
 scope: security
 sources: [internal/box/build_context_ignore.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go, internal/cli/acp_box_wait.go, internal/runtime/project_build.go]
-check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs|TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged|TestOnlyTheApprovedFilesRebuildByThemselves|TestAgentEditAfterTheCheckBuildsNothing|TestALaterApprovalReplacesTheEarlierOne|TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed|TestStagingStaysInsideTheSnapshot|TestSameNamedProjectsGetTheirOwnTags|TestAutomaticRebuildGetsAFiniteEnvironment'"
+check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs|TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged|TestOnlyTheApprovedFilesRebuildByThemselves|TestAgentEditAfterTheCheckBuildsNothing|TestALaterApprovalReplacesTheEarlierOne|TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed|TestStagingStaysInsideTheSnapshot|TestSameNamedProjectsGetTheirOwnTags|TestAutomaticRebuildGetsAFiniteEnvironment|TestSecondAutomaticBuildReusesTheFirst|TestALaunchWaitingForTheBuildLockHoldsNoSnapshot'"
 updated: 2026-11-03
 ---
 
@@ -32,7 +32,9 @@ safely it should be automatic."
 
 **How to apply:** decide an automatic rebuild on the digest of the staged snapshot, outside every
 mount, under the project's build lock, never on an earlier read of the checkout; only a person's build
-may change what counts as approved. A rebuild fetches again what the approved Dockerfile fetches, which
+may change what counts as approved. Stage it under the lock too, so a launch waiting on another build
+holds no copy; a read may only say the image is already built, which runs nothing and stages nothing.
+A rebuild fetches again what the approved Dockerfile fetches, which
 an explicit rebuild would too. Callers that only want an answer, like a model catalog refresh, refuse
 instead of building. Bind filtered reuse to the actual staged context, including copied files and
 modes, the qualified client base and immutable output image. Keep approval outside agent mounts;
@@ -49,6 +51,9 @@ turns and review gates consume no project image in any mode, and a worker never 
 instructions.
 
 ## Changelog
+- 2026-11-03 — review found automatic rebuilds staged before taking the lock, so N waiting windows held
+  N copies of the checkout. They now take the lock first; both callers (`RebuildApprovedProject`,
+  `UpdateApprovedProject`) share `rebuildApprovedLocked`, the only place a build is marked automatic.
 - 2026-11-03 — user hit `✗ this project's .agent/Dockerfile is not ready` in Zed and asked why Coop
   cannot just build; filtered became the default the same day. Approved: changed files wait, approved
   files rebuild. Swept every `AdmitNetwork` caller: direct, fork, fork ACP, loop and merge gates rebuild

@@ -108,7 +108,6 @@ type PreparedProjectBuild struct {
 	consumed                                bool
 	automatic                               bool   // no person started this build, so it builds only approved files
 	starting                                func() // called once it has decided to run the builder
-	built                                   bool   // the builder ran and its image proved good
 	lease                                   *os.File
 	cleanupDir                              string
 }
@@ -167,10 +166,6 @@ func PrepareFilteredProjectBuild(ctx context.Context, cfg *config.Config, spec R
 	if err != nil {
 		return nil, err
 	}
-	dfRel := filteredProjectDockerfile(repo)
-	if dfRel == "" {
-		return nil, errors.New("this project no longer has a box Dockerfile — run it again")
-	}
 	root, err := NetworkStatePath()
 	if err != nil {
 		return nil, err
@@ -184,7 +179,17 @@ func PrepareFilteredProjectBuild(ctx context.Context, cfg *config.Config, spec R
 		return nil, err
 	}
 	defer store.Close()
-	private, lease, err := newProjectReviewSnapshot(ctx, store.Path())
+	return snapshotProjectBuild(ctx, store.Path(), repo)
+}
+
+// snapshotProjectBuild stages what repo's build would read under parent, the owner-private network
+// root, and hashes exactly what it wrote.
+func snapshotProjectBuild(ctx context.Context, parent, repo string) (*PreparedProjectBuild, error) {
+	dfRel := filteredProjectDockerfile(repo)
+	if dfRel == "" {
+		return nil, errors.New("this project no longer has a box Dockerfile — run it again")
+	}
+	private, lease, err := newProjectReviewSnapshot(ctx, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -251,8 +256,12 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 	if b.settings != projectBuildSettings() {
 		return errors.New("project build settings changed while awaiting confirmation — run it again")
 	}
-	change, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
-	b.built = change.After != ""
+	_, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, func(rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec) (ImageChange, error) {
+		if b.repo != repo {
+			return ImageChange{}, errors.New("the reviewed build belongs to a different project")
+		}
+		return buildPreparedFilteredProject(ctx, rt, cfg, docker, store, b, candidate, errOut)
+	})
 	return err
 }
 
@@ -318,22 +327,19 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 func RebuildApprovedProject(cfg *config.Config, rt runtime.Runtime, spec RunSpec, dfRel string) error {
 	ctx, stop := signal.NotifyContext(networkAdmissionContext(spec), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	prepared, err := prepareApprovedRebuild(ctx, cfg, spec)
-	if err != nil {
-		return err
-	}
-	defer prepared.Close()
+	var starting func()
 	if !spec.Quiet {
-		prepared.starting = func() {
+		starting = func() {
 			ui.Section("Project box")
 			ui.Note("  Rebuilding %s from the files you approved: Coop's image changed or the last one is gone.", ui.SafeInline(dfRel))
 		}
 	}
 	stderr := networkLaunchStderr(spec)
-	if err := prepared.Build(ctx, rt, cfg, stderr, stderr); err != nil {
+	change, err := rebuildApprovedProject(ctx, rt, cfg, projectPolicyRepo(spec), starting, stderr, stderr)
+	if err != nil {
 		return err
 	}
-	if !spec.Quiet && prepared.built {
+	if !spec.Quiet && change.After != "" {
 		ui.Pass("Project box built")
 		ui.Note("")
 	}
@@ -347,23 +353,37 @@ func UpdateApprovedProject(ctx context.Context, rt runtime.Runtime, cfg *config.
 	if filteredProjectDockerfile(repo) == "" {
 		return BuildFilteredProject(ctx, rt, cfg, repo, out, errOut) // Coop's own images only
 	}
-	prepared, err := prepareApprovedRebuild(ctx, cfg, RunSpec{Repo: repo})
+	return rebuildApprovedProject(ctx, rt, cfg, repo, nil, out, errOut)
+}
+
+// rebuildApprovedProject takes the project's lock for a build no person started, and does all of its
+// reading under it: several editor windows finding one image missing wait with no copies of the
+// checkout on disk. starting, if set, is called once it has decided to run the builder.
+func rebuildApprovedProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, starting func(), out, errOut io.Writer) (ImageChange, error) {
+	canonical, err := canonicalProjectDir(repo)
+	if err != nil {
+		return ImageChange{}, err
+	}
+	return buildFilteredProjectWith(ctx, rt, cfg, canonical, out, errOut, func(rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec) (ImageChange, error) {
+		return rebuildApprovedLocked(ctx, rt, cfg, docker, store, repo, candidate, starting, errOut)
+	})
+}
+
+// rebuildApprovedLocked runs under the project's build lock. A launch that waited for it usually finds
+// the image built, and a read of the checkout can say so, since that runs nothing and the launch reads
+// these inputs again. Only a snapshot can say to build: this is the one place a build is marked
+// automatic, which makes it refuse unless the snapshot is what a person approved.
+func rebuildApprovedLocked(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec, starting func(), errOut io.Writer) (ImageChange, error) {
+	if checkFilteredProjectReadiness(ctx, docker, store, RunSpec{Repo: repo}, candidate.Runtime) == nil {
+		return ImageChange{}, nil
+	}
+	prepared, err := snapshotProjectBuild(ctx, store.Path(), repo)
 	if err != nil {
 		return ImageChange{}, err
 	}
 	defer prepared.Close()
-	return buildFilteredProjectWith(ctx, rt, cfg, prepared.repo, out, errOut, prepared)
-}
-
-// prepareApprovedRebuild snapshots the checkout for a build no person started: the only way to mark
-// one automatic, which is what makes the build refuse unless the snapshot is what a person approved.
-func prepareApprovedRebuild(ctx context.Context, cfg *config.Config, spec RunSpec) (*PreparedProjectBuild, error) {
-	prepared, err := PrepareFilteredProjectBuild(ctx, cfg, spec)
-	if err != nil {
-		return nil, err
-	}
-	prepared.automatic = true
-	return prepared, nil
+	prepared.automatic, prepared.starting = true, starting
+	return buildPreparedFilteredProject(ctx, rt, cfg, docker, store, prepared, candidate, errOut)
 }
 
 func projectBuildSettings() string {

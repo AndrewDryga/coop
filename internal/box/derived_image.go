@@ -135,10 +135,18 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 // The change it reports is to the project's own filtered image: without a project Dockerfile there
 // is none, since the locked client image is tagged by its definition and never replaced in place.
 func BuildFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer) (ImageChange, error) {
-	return buildFilteredProjectWith(ctx, rt, cfg, repo, out, errOut, nil)
+	return buildFilteredProjectWith(ctx, rt, cfg, repo, out, errOut, func(rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec) (ImageChange, error) {
+		if filteredProjectDockerfile(repo) == "" {
+			return ImageChange{}, nil // setup prepared the locked image; there are no project instructions
+		}
+		return buildFilteredProject(ctx, rt, cfg, docker, store, repo, candidate, errOut)
+	})
 }
 
-func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer, prepared *PreparedProjectBuild) (ImageChange, error) {
+// lockedProjectBuild is one build's own work, given the project's lock and a current host proof.
+type lockedProjectBuild func(rt runtime.Runtime, docker filteredDocker, store *networkstate.Store, repo string, candidate networkstate.CandidateSpec) (ImageChange, error)
+
+func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, out, errOut io.Writer, build lockedProjectBuild) (ImageChange, error) {
 	if errOut == nil {
 		errOut = io.Discard
 	}
@@ -177,15 +185,7 @@ func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *conf
 		if err != nil {
 			return err
 		}
-		switch {
-		case prepared != nil:
-			if prepared.repo != canonical {
-				return errors.New("the reviewed build belongs to a different project")
-			}
-			change, err = buildPreparedFilteredProject(ctx, rt, cfg, docker, store, prepared, qualification.Candidate, errOut)
-		case filteredProjectDockerfile(canonical) != "": // else setup prepared the locked image; there are no project instructions
-			change, err = buildFilteredProject(ctx, rt, cfg, docker, store, canonical, qualification.Candidate, errOut)
-		}
+		change, err = build(rt, docker, store, canonical, qualification.Candidate)
 		return err
 	})
 	return change, err
@@ -237,12 +237,6 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 		// build: snapshot verified above, kept outside every mount.
 		if !store.ProjectBuildReviewed(project, review) {
 			return ImageChange{}, &ProjectBuildRequired{Dockerfile: dfRel, Reason: "project build inputs or settings changed since the explicit build"}
-		}
-		// Another launch built these same files while this one waited for the project's lock.
-		if image := store.ApprovedProjectBuild(tag, inputs); image != "" {
-			if id, _, err := docker.Image(ctx, image); err == nil && id == image {
-				return ImageChange{}, nil
-			}
 		}
 	}
 	if prepared.starting != nil {
