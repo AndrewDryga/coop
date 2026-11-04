@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/project"
 	"io"
 	"os"
 	"path/filepath"
@@ -163,7 +164,7 @@ func Parse(name string, data []byte) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("%s: %w", name, project.PlainYAMLError(err))
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A mistake in `project.yaml` or `loop.yaml` reads plainly.** Coop names an unknown setting, and what
+  a value should be (a number, a list), instead of the Go type behind it. The refusal in your home
+  folder says what to do next.
+
 - **A fork's agent works in the project again.** A fork loop told its agent the project folder was
   inside Coop's private `.coop/task-executions`, so files it created there were committed and merged
   into your project. It now names the fork's root, and `coop fork merge` blocks a fork that changes

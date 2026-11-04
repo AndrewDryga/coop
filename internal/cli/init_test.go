@@ -736,7 +736,7 @@ func TestInitNetworkWarningKeepsEachYAMLProblemOnItsOwnLine(t *testing.T) {
 	}
 	a, _ := initApp(t, repo)
 	out := captureTerminal(t, func() { _ = reportExit(a.cmdInit(nil)) })
-	if !strings.Contains(out, "could not be checked: ") || !strings.Contains(out, "\n  line 1: field fo not found in type ") {
+	if !strings.Contains(out, "could not be checked: ") || !strings.Contains(out, "\n  line 1: unknown setting ") {
 		t.Errorf("the yaml problem is not on a line of its own:\n%s", out)
 	}
 	if strings.Contains(out, `\u000A`) {

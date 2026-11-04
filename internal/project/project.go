@@ -282,7 +282,7 @@ func Parse(data []byte) (*Project, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo doing nothing — fail loudly instead
 	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
-		return nil, fmt.Errorf("%s: %w", File, err)
+		return nil, fmt.Errorf("%s: %w", File, PlainYAMLError(err))
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
