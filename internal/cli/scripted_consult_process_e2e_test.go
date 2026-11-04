@@ -318,7 +318,10 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 	setTimeout(10)
 	t.Run("overflow", func(t *testing.T) {
 		// This case is ABOUT the bound, so it asks for one; unbounded is the default everywhere else.
-		setFixtureEnv("COOP_CONSULT_STREAM_LIMIT", 1<<20)
+		// Each 64 KiB under the bound costs the wrapper four process starts, so a small bound keeps this
+		// inside its deadlines on a host busy with other builds: a provider's attempts took 14.8 s of the
+		// 20 s allowed at 1 MiB and a load of 165, and 5 s at this size.
+		setFixtureEnv("COOP_CONSULT_STREAM_LIMIT", 128<<10)
 		t.Cleanup(func() { setFixtureEnv("COOP_CONSULT_STREAM_LIMIT", 0) })
 		for index, peer := range providers {
 			lead := providers[(index+1)%len(providers)]
