@@ -363,12 +363,14 @@ func runSessionCheck(state string) (int, error) {
 			[2]string{"", "Check the --state path. A worker that has never run has nothing to check."})
 	}
 	var records []workerconnector.RecordCheck
+	var rebuildable, heldCaches int
 	if err == nil {
 		records, err = workerconnector.CheckJournal(connectorJournalDir(state))
 	}
 	if err == nil {
 		var snapshots sessionsvc.CompanionSnapshotCheck
 		snapshots, err = sessionsvc.CheckCompanionSnapshots(state)
+		rebuildable, heldCaches = snapshots.Rebuildable, snapshots.Held
 		records = append(records, workerconnector.RecordCheck{Noun: "companion snapshot receipt",
 			Version: snapshots.Version, Current: snapshots.Current, Newer: snapshots.Newer,
 			Older: snapshots.Older, Damaged: snapshots.Damaged})
@@ -386,7 +388,14 @@ func runSessionCheck(state string) (int, error) {
 	if err != nil {
 		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
 	}
-	return reportSessionCheck(state, store, records)
+	code, err := reportSessionCheck(state, store, records)
+	if err == nil && rebuildable > 0 {
+		ui.Note("  %s will be rebuilt from authorized sources; copied bytes stay preserved.", ui.Count(rebuildable, "copied cache"))
+	}
+	if err == nil && heldCaches > 0 {
+		ui.Note("  %s preserved; included in disk usage.", ui.Count(heldCaches, "held cache"))
+	}
+	return code, err
 }
 
 func reportSessionCheck(state string, store session.StoreCheck, records []workerconnector.RecordCheck) (int, error) {

@@ -532,6 +532,12 @@ pass, then advances to other entries on following passes. Large or slow entries 
 remain retained. Interrupted creation and eviction resume through private ownership records.
 `coop sessions check` also checks their format before an upgrade.
 
+After a Docker-volume copy, a complete current snapshot receipt may name old inodes.
+A new session preserves that cache under `.cache-held-*` and rebuilds from its authorized
+frozen source. It never rewrites the old receipt or changes existing session projections.
+Held bytes remain counted as protected storage. The upgrade check reports copied caches
+as rebuildable and held copies as preserved; malformed or unsupported receipts still refuse.
+
 New source downloads and checkouts wait before allocating when free storage reaches twice the
 default reserve. Verified source cache hits continue working. This wait keeps the same durable
 worker command and resumes when space returns; it does not consume a model attempt. Fresh source
@@ -735,6 +741,10 @@ Repeating the exact binding leaves the session unchanged.
 | `POST` | `/v1/sessions/{id}/checkpoint` | JSON: `session_ref`, `expected_revision`, `placement_generation`, `repository_ref`; returns operation and descriptor |
 | `GET` | `/v1/operations/{id}/checkpoint-bundle` | Streamed tar, exact `Content-Length`, SHA-256 `ETag` |
 | `POST` | `/v1/sessions/{id}/workspace/restore` | Binary body plus `X-Coop-Expected-Revision` and base64-JSON `X-Coop-Workspace-Checkpoint` headers |
+
+A credential found in newly exported content refuses capture with HTTP 409
+`invalid_session_state`, including on replay of the same operation key. The workspace remains
+intact and no checkpoint bundle is published; correct the content before requesting a new capture.
 
 To capture a checkpoint, the session must be idle, writable and bound to a task. Open, exhausted
 and retained closed sessions may be captured. Capture keeps a closed session closed and cannot

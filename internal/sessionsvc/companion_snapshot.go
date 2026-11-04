@@ -24,6 +24,9 @@ import (
 
 const companionSnapshotRoot = "companion-snapshots"
 const companionSnapshotVersion = 1
+const heldSnapshotPrefix = ".cache-held-"
+
+var errSnapshotOwnershipChanged = errors.New("snapshot receipt ownership changed")
 
 // Each session keeps its original private directory and mutable Git metadata.
 // Only verified immutable payloads are linked from this private cache. This
@@ -130,7 +133,12 @@ func createCachedSessionSnapshot(ctx context.Context, stateRoot string, binding 
 	entry := filepath.Join(parent, key)
 	if _, markerErr := os.Lstat(filepath.Join(entry, "deleting")); markerErr == nil {
 		if _, err = pruneCompanionSnapshot(ctx, entry, key, false); err != nil {
-			return err
+			if !errors.Is(err, errSnapshotOwnershipChanged) {
+				return err
+			}
+			if err = holdCopiedCompanionSnapshot(ctx, entry, key, binding); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err = os.Lstat(entry); errors.Is(err, os.ErrNotExist) {
@@ -143,7 +151,20 @@ func createCachedSessionSnapshot(ctx context.Context, stateRoot string, binding 
 	cached := binding
 	cached.Workspace = filepath.Join(entry, "tree")
 	if err = verifyCompanionSnapshot(ctx, entry, key, cached); err != nil {
-		return err
+		// Copying a Docker volume changes inodes, not frozen source authority. Keep
+		// the old cache intact; only newly built bytes may get a new receipt.
+		if !errors.Is(err, errSnapshotOwnershipChanged) {
+			return err
+		}
+		if err = holdCopiedCompanionSnapshot(ctx, entry, key, binding); err != nil {
+			return err
+		}
+		if err = buildCompanionSnapshot(ctx, entry, key, binding, history...); err != nil {
+			return err
+		}
+		if err = verifyCompanionSnapshot(ctx, entry, key, cached); err != nil {
+			return err
+		}
 	}
 	if err = verifySnapshotHistory(ctx, cached.Workspace, history); err != nil {
 		return err
@@ -339,10 +360,61 @@ func readCompanionSnapshotReceipt(entry string) (companionSnapshotReceipt, error
 	if err != nil {
 		return receipt, err
 	}
-	if json.Unmarshal(data, &receipt) != nil || receipt.Version != companionSnapshotVersion || receipt.AllocatedBytes < 0 || !validSessionDigest(receipt.Key) || !forkspace.ValidObjectID(receipt.Commit) || !directory.sameDirectory(receipt.Directory) {
+	if json.Unmarshal(data, &receipt) != nil || receipt.Version != companionSnapshotVersion || receipt.AllocatedBytes < 0 || !validSessionDigest(receipt.Key) || !forkspace.ValidObjectID(receipt.Commit) {
 		return receipt, errors.New("snapshot receipt ownership changed")
 	}
+	if !directory.sameDirectory(receipt.Directory) {
+		return receipt, errSnapshotOwnershipChanged
+	}
 	return receipt, nil
+}
+
+// The per-key lifecycle lock is held. A stale current receipt may explain a
+// copy, but does not authorize deletion or adoption of any of its contents.
+func holdCopiedCompanionSnapshot(ctx context.Context, entry, key string, binding session.CompanionRepository) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	before, err := os.Lstat(entry)
+	if err != nil {
+		return err
+	}
+	receipt, err := readCompanionSnapshotReceipt(entry)
+	if !errors.Is(err, errSnapshotOwnershipChanged) || !receipt.Complete || receipt.Key != key || receipt.Commit != binding.BaseCommit {
+		return errors.New("copied snapshot cannot be rebuilt from this authority")
+	}
+	if marker, markerErr := os.Lstat(filepath.Join(entry, "deleting")); markerErr == nil {
+		if !marker.Mode().IsRegular() || marker.Size() != 0 {
+			return errors.New("invalid snapshot eviction marker")
+		}
+	} else if !errors.Is(markerErr, os.ErrNotExist) {
+		return markerErr
+	}
+	parent, err := os.OpenRoot(filepath.Dir(entry))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	current, err := parent.Lstat(filepath.Base(entry))
+	if err != nil || !os.SameFile(before, current) {
+		return errors.New("copied snapshot changed before preservation")
+	}
+	held, err := os.MkdirTemp(filepath.Dir(entry), heldSnapshotPrefix+key+"-")
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = os.Remove(held)
+		return err
+	}
+	if err := parent.Rename(filepath.Base(entry), filepath.Join(filepath.Base(held), "snapshot")); err != nil {
+		_ = os.Remove(held)
+		return err
+	}
+	if err := syncSnapshotDirectory(held); err != nil {
+		return err
+	}
+	return syncSnapshotDirectory(filepath.Dir(entry))
 }
 
 // A .git/index may be refreshed and configuration/refs are private metadata.

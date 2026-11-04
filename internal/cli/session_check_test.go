@@ -78,6 +78,22 @@ func TestRunSessionCheckReportsEachVerdictWithoutWriting(t *testing.T) {
 			"  Data            <state>",
 			fmt.Sprintf("  Session schema  %d", session.SchemaVersion),
 		}},
+		{"copied immutable cache", func(t *testing.T, state string) func() {
+			createSessionStore(t, state)
+			key := strings.Repeat("a", 64)
+			entry := filepath.Join(state, "companion-snapshots", key)
+			if err := os.MkdirAll(entry, 0700); err != nil {
+				t.Fatal(err)
+			}
+			receipt := fmt.Sprintf(`{"version":1,"key":%q,"commit":%q,"complete":true,"directory":{"device":0,"inode":0}}`, key, strings.Repeat("b", 40))
+			if err := os.WriteFile(filepath.Join(entry, "receipt.json"), []byte(receipt), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(state, "companion-snapshots", ".cache-held-fixture"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}, 0, []string{"This build can use the session data as it is", "1 copied cache will be rebuilt from authorized sources", "1 held cache preserved; included in disk usage"}},
 		{"converts", func(t *testing.T, state string) func() {
 			createSessionStore(t, state)
 			setSessionSchema(t, state, session.SchemaVersion-1)
