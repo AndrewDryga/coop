@@ -37,13 +37,11 @@ func targetUsage(err error, command, usage string) error {
 // noAccountErr refuses a launch that named an account this agent has no login for: the two
 // commands that resolve it — the agent's accounts, and signing this one in.
 func noAccountErr(agent, account string) error {
-	return &ui.UsageError{
-		Headline: fmt.Sprintf("No %s account named %q", titleName(agent), account),
-		Rows: [][2]string{
-			{"Accounts:", "coop credentials " + agent},
-			{"Sign in:", agents.LoginCommand(agent + "@" + account)},
-		},
+	rows := [][2]string{{"Accounts:", "coop credentials " + agent}}
+	if validProfileName(account) { // coop login refuses any other name
+		rows = append(rows, [2]string{"Sign in:", agents.LoginCommand(agent + "@" + account)})
 	}
+	return &ui.UsageError{Headline: fmt.Sprintf("No %s account named %q", titleName(agent), account), Rows: rows}
 }
 
 // accountsUnlistedErr stands in for noAccountErr when agent's accounts could not all be listed: the

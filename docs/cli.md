@@ -315,7 +315,7 @@ USE AN ACCOUNT
   coop claude@work
   coop login claude@work
 
-  The default account is marked with *.
+  The list marks the default account with "default".
 
 Account removal options:       coop help credentials rm
 Models and automatic rotation: coop help models

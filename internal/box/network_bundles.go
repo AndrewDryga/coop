@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/mcp"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // networkClient is the client kind a run launches. The zero value is the
@@ -139,7 +140,13 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		return bundle, err
 	}
 	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
-		return egress.Bundle{}, fmt.Errorf("%s account %q is not ready for restricted networking", target.Provider, account)
+		login := target.Provider
+		if target.Account() != "" && target.Account() != config.DefaultProfile {
+			login += "@" + target.Account()
+		}
+		return egress.Bundle{}, ui.CommandFailed(ag.DisplayName()+" needs you to sign in",
+			fmt.Sprintf("Filtered networking needs a usable sign-in for the %s account.", account),
+			[2]string{"Sign in:", agents.LoginCommand(login)})
 	}
 	profileDir := cfg.AgentProfileDir(target.Provider, account)
 	markerPresent := ProfileMarkerPresent(cfg, target.Provider, account)

@@ -58,7 +58,7 @@ func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
 	}}}
 	if _, err := NetworkProviderBundles(cfg, RunSpec{
 		Agent: "codex", Homes: true, Preset: p, NetworkClient: egress.ClientACP,
-	}); err == nil || !strings.Contains(err.Error(), `gemini account "default" is not ready`) {
+	}); err == nil || !strings.Contains(err.Error(), "Gemini CLI needs you to sign in") {
 		t.Fatal("missing required role was silently removed from network validation", err)
 	}
 }
@@ -309,4 +309,21 @@ func NetworkMCPDependencies(cfg *config.Config, spec RunSpec) ([]egress.Input, e
 		return nil, err
 	}
 	return networkMCPDependenciesOf(snapshot)
+}
+
+// A filtered launch with nobody signed in names the sign-in, for the default account and a named one.
+func TestNetworkTargetBundleNamesTheMissingSignIn(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered"}
+	for _, tc := range []struct {
+		target agents.Target
+		login  string
+	}{
+		{agents.Target{Provider: "claude"}, "coop login claude"},
+		{agents.Target{Provider: "claude", Accounts: []string{"work"}}, "coop login claude@work"},
+	} {
+		_, err := NetworkTargetBundle(cfg, tc.target, egress.ClientCLI)
+		if err == nil || !strings.Contains(err.Error(), tc.login) || strings.Contains(err.Error(), "not ready") {
+			t.Errorf("%+v = %v, want the remedy %q", tc.target, err, tc.login)
+		}
+	}
 }

@@ -38,7 +38,7 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	}
 	before, err := os.Lstat(source.path)
 	if err != nil || !before.Mode().IsRegular() {
-		return nil, errors.New("egress rules file must exist and be a regular file")
+		return nil, fmt.Errorf("egress rules file %s must exist and be a regular file", path)
 	}
 	file, err := os.OpenFile(source.path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {

@@ -101,6 +101,12 @@ func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 }
 
 func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, error) {
+	if options.TokenFile != "" {
+		if err := workerconnector.CheckEnrollmentTokenFile(options.TokenFile); err != nil {
+			return 1, ui.CommandFailed("Could not use the enrollment token file", "Coop found: "+err.Error()+".",
+				[2]string{"Help:", ui.HelpCommand("coop sessions connect")})
+		}
+	}
 	state, socket, err := sessionSocketPath(options.State, "")
 	if err != nil {
 		return 1, err

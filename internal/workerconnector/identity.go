@@ -336,6 +336,19 @@ func newWorkerKey() (*rsa.PrivateKey, string, []byte, error) {
 	return privateKey, string(publicPEM), privatePEM, nil
 }
 
+// CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words
+// a person can act on. The first connection reads it again and consumes it.
+func CheckEnrollmentTokenFile(path string) error {
+	_, err := readEnrollmentToken(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("no file at %s", path)
+	case err != nil:
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
 func readEnrollmentToken(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {

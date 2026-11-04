@@ -646,6 +646,9 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 	// A real run's whole-invocation deadline is required, not defaulted: an eval launches real models,
 	// and the one number that bounds what it can spend should be a decision the operator made, not
 	// one Coop guessed. A preview launches nothing, so it runs without one and its plan says so.
+	if suite == "" {
+		return "", nil, opts, ui.MissingArgument("suite", cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
+	}
 	if opts.Timeout <= 0 && !opts.DryRun {
 		return "", nil, opts, ui.MissingArgument("--timeout", cmd, "coop eval run <suite> <target|preset>... --timeout 60m")
 	}

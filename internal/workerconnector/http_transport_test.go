@@ -225,3 +225,26 @@ func writeWorkerIdentityResponse(t *testing.T, response http.ResponseWriter, req
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(identity)
 }
+
+// A worker refuses an unusable token file before it starts anything.
+func TestCheckEnrollmentTokenFile(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	if err := CheckEnrollmentTokenFile(missing); err == nil || !strings.Contains(err.Error(), "no file at "+missing) {
+		t.Errorf("missing file = %v", err)
+	}
+	open := filepath.Join(dir, "open")
+	if err := os.WriteFile(open, []byte("token"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckEnrollmentTokenFile(open); err == nil || !strings.Contains(err.Error(), open) {
+		t.Errorf("group-readable file = %v", err)
+	}
+	private := filepath.Join(dir, "private")
+	if err := os.WriteFile(private, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckEnrollmentTokenFile(private); err != nil {
+		t.Errorf("private file = %v", err)
+	}
+}

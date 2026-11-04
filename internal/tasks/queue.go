@@ -475,6 +475,13 @@ func tasksInQueue(repo, project, rel string, rest, flags []string, explicit bool
 			// how a project starts tasks before coop init, and how a secondary --tasks queue starts.
 		case (sub == "" || sub == "ls") && !explicit:
 			// The project's own queue before its first task: the empty listing, bare or not.
+		case sub != "" && !isTasksSubcommand(sub):
+			// A mistyped command is refused as one, whether or not a queue exists yet.
+		case sub == "decisions" && !explicit:
+			if len(rest) == 1 {
+				fmt.Println("No questions waiting for your answer.")
+				return 0, nil
+			}
 		default:
 			start := `coop tasks add "<title>"`
 			if len(flags) > 0 {

@@ -2502,3 +2502,13 @@ func TestNativeRemovalRefusesUnreservedPrimaryBeforeConfirmation(t *testing.T) {
 		t.Fatal("unknown primary disappeared")
 	}
 }
+
+// A fork that does not exist is named as that, before a dirty tree or a confirmation asks about it.
+func TestForkMergeNamesAMissingForkFirst(t *testing.T) {
+	repo := initRepo(t)
+	writeTaskFile(t, filepath.Join(repo, "dirty.txt"), "x\n")
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	if code, err := c.ForkMerge([]string{"nosuch"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork: nosuch") {
+		t.Errorf("ForkMerge(nosuch) = (%d, %v), want no such fork", code, err)
+	}
+}

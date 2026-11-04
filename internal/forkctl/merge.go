@@ -982,6 +982,8 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		}
 	} else if err := CheckWorkerStateFormat(repo, name); err != nil {
 		return 1, err
+	} else if !pathExists(forkspace.Workspace(repo, name)) {
+		return 1, fmt.Errorf("no such fork: %s", name) // before a dirty tree or a confirmation asks about it
 	}
 	if all {
 		for _, n := range names {

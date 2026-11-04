@@ -89,3 +89,22 @@ func validationQueues(t *testing.T, count int) *config.Config {
 	}
 	return cfg
 }
+
+// Before a project's first task, a mistyped command is still a mistyped command, and "any questions?"
+// has an answer: none.
+func TestNoQueueYetAnswersPlainly(t *testing.T) {
+	t.Chdir(initRepo(t))
+	cfg := &config.Config{}
+	var usage *ui.UsageError
+	if code, err := CmdTasks(Host{}, cfg, []string{"nosuch"}); code != 2 || !errors.As(err, &usage) || !strings.Contains(usage.Headline, "Unknown command") {
+		t.Errorf("tasks nosuch = (%d, %v), want an unknown command", code, err)
+	}
+	out := captureStdout(t, func() {
+		if code, err := CmdTasks(Host{}, cfg, []string{"decisions"}); code != 0 || err != nil {
+			t.Errorf("tasks decisions = (%d, %v), want no questions", code, err)
+		}
+	})
+	if !strings.Contains(out, "No questions waiting") {
+		t.Errorf("tasks decisions said %q", out)
+	}
+}

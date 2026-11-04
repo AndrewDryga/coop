@@ -140,6 +140,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return nil
 	}
 	if len(args) > 0 {
+		if strings.HasPrefix(args[0], "-") {
+			return 2, unknownOptionErr(args[0], "coop acp", []string{"--peer", "--egress", "--allow-domain", "--egress-rules"})
+		}
 		if terr := takeWho(args[0]); terr != nil {
 			return 2, terr
 		}
