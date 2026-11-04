@@ -1,8 +1,9 @@
 # co:op website
 
-This folder holds co:op's two landing pages, sandbox and overnight walkthroughs, docs overview and generated reference library. GitHub Pages serves them from here. The
-pages are static HTML, CSS and JavaScript. There's no framework, no build step at serve time
-and no `node_modules`. The look follows `brand/DESIGN.md`.
+This folder holds co:op's two landing pages, sandbox and overnight walkthroughs, docs overview and
+generated reference library, and GitHub Pages serves them from here. The pages are static HTML, CSS
+and JavaScript, with no framework, no build step at serve time and no `node_modules`. The look
+follows `brand/DESIGN.md`.
 
 ```
 site/
@@ -55,60 +56,78 @@ and Ryker, add up the commits on each `origin/main` that carry a `Coop-Task:` tr
 git log origin/main --grep='^Coop-Task: [^n]' --oneline | wc -l   # in each of the three repos
 ```
 
-The tool also fills the terminal windows in `docs.html`. You write the docs by hand,
-except between a `<!-- gen_site: NAME -->` and `<!-- /gen_site -->` marker, where the
-tool writes the scene named `NAME`, and the `gen_reference_index` region, where it writes
-the reference library.
+The tool also fills the terminal windows in `docs.html`. You write the docs by hand, except between
+a `<!-- gen_site: NAME -->` and `<!-- /gen_site -->` marker, where the tool writes the scene named
+`NAME`, and the `gen_reference_index` region, where it writes the reference library.
 
-The guide pages, including the provider-specific sandbox guides, are generated from their `tools/site/*.tpl.html` templates,
-with the same typography, external-link treatment and asset versioning. Edit the
-templates and run `make docs`; do not edit generated guides.
+The guide pages, including the provider-specific sandbox guides, are generated from their
+`tools/site/*.tpl.html` templates, with the same typography, external-link treatment and asset
+versioning. Edit the templates and run `make docs`. Don't edit generated guides.
 
-The guides use the shared `.guide` styles: a page-wide, left-aligned introduction with a
-short lead and ordinary prerequisite list, followed by section contents and numbered
-instructions. Keep the text measure comfortable and anchor both columns under the header.
-Use observable checkpoints and optional native disclosures; avoid repeated overviews.
-For an optional explanation, `.guide-detail.guide-help` adds a small decorative question icon
-beside the summary; the existing plus/minus remains the expand/collapse control.
-Commands that belong together can share one copy control. Join dependent setup steps with
-`&&` so a failed command stops the block. Keep interactive approvals and pasted run-ID inputs
-separate. File additions use `.code-file`.
-Put a command and its sample output in one `.terminal-example`, using the existing `.cmds`
-rows and a sibling `pre.code > samp`. Attach each output to the command that produced it.
-Keep host/agent context outside the block; use short platform labels only when results differ.
-The copy source must contain the command alone. Give long scripts a short `data-copy-label`
-for their copy button. Keep output visible without JavaScript and avoid per-output captions.
-Keep the worked path in one declared workspace and repeat queue selection on resume.
+The guides use the shared `.guide` styles: a page-wide, left-aligned introduction with a short lead
+and an ordinary prerequisite list, followed by section contents and numbered instructions. When you
+write a guide:
 
-Review new public copy in plain English. Use [Humanizer](https://github.com/blader/humanizer)
-where wording is staged, repetitive or unnecessarily formal. Keep the technical voice and
-check that each rewrite preserves the facts, commands, examples and safety limits. Edit prose
-in its source, keep heading anchors stable, and regenerate before checking the rendered page.
-Before publishing a guide, adversarially review its instructions against current source
-and inspect desktop/mobile, keyboard, no-JavaScript and copy-failure behavior. Retain the
-review findings and screenshots in the owning task. See the
-[public walkthrough rule](../.agent/kb/rules/public-walkthroughs-have-reader-proof.md).
+- Keep the line length comfortable, and start both columns directly under the header.
+- Use checkpoints the reader can observe, and native disclosures for optional content. Avoid
+  repeated overviews.
+- For an optional explanation, use `.guide-detail.guide-help` with a small decorative question icon
+  beside the summary. The existing plus/minus remains the expand/collapse control.
+- Commands that belong together can share one copy control. Join dependent setup steps with `&&` so
+  a failed command stops the block. Keep interactive approvals and pasted run-ID inputs separate.
+- Use `.code-file` to show what the reader adds to a file.
+- Put a command and its sample output in one `.terminal-example`, using the existing `.cmds` rows
+  and a sibling `pre.code > samp`. Attach each output to the command that produced it.
+- Keep the host or agent context outside the block. Use short platform labels only when results
+  differ.
+- The copy source must contain the command alone. Give long scripts a short `data-copy-label` for
+  their copy button.
+- Keep output visible without JavaScript, and avoid per-output captions.
+- Keep the worked example in one declared workspace. When the example resumes a run, repeat the
+  queue selection.
 
-The public reference pages (`networking.html`, `box.html`, `agents.html` and the other
-entries in `referenceLibrary` in `tools/gendocs/references.go`) come from `docs/*.md`.
-Edit the Markdown once for GitHub and the website. Goldmark renders CommonMark/GFM into
-`tools/site/reference.tpl.html`; the generator adds headings/contents, accessible scrolling
-tables, related links, metadata and sitemap entries. New Markdown topics need an explicit
-inventory entry; retired generated pages must be removed. The drift check rejects both.
+Platform-specific example output can use `[data-terminal-outputs]` with uniquely identified
+`[data-output-platform="macOS"]` and `[data-output-platform="Linux"]` panels. Keep each panel's
+`.terminal-platform` label in the HTML, and keep the shared command outside the panels so it has one
+copy button. The shared script adds tabs above the command, and selects Linux for a reported Linux
+platform and macOS otherwise. Without JavaScript, both labeled outputs remain readable.
 
-Markdown links to published references become local `.html` links with their fragments;
-links to source code, migrations and examples stay on GitHub. The generated CLI source is
-passed in memory so one `make docs` run updates both versions. Its explicit command
-separators become sections while help bodies remain verbatim. Unlabelled blocks and shell
-examples remain selectable: shell fences may combine alternatives or destructive commands,
-so they do not receive a whole-block Copy button. Config fences copy as one file snippet.
-Tests check code fidelity, links and fragments, stale output and same-pass CLI rendering.
+Check new public copy for plain English. Use [Humanizer](https://github.com/blader/humanizer) where
+wording is staged, repetitive or unnecessarily formal. Keep the technical voice, and check that each
+rewrite preserves the facts, commands, examples and safety limits. Edit prose in its source, keep
+heading anchors stable, and regenerate before you check the rendered page.
 
-Copy measurement uses `content_copy_succeeded`, `measurement_version: 2`, after
-the clipboard write resolves. `kind` is `install`, `command` or `configuration`;
-copied text is never included. This measures intent, not installation or activation.
-Historical `install_command_copied` counted every copy-button click, including
-unrelated commands and failed writes. Keep the event series separate.
+Before you publish a guide:
+
+- Check its instructions against the current source, and try to prove them wrong.
+- Inspect its desktop, mobile, keyboard, no-JavaScript and copy-failure behavior.
+- Keep the review findings and screenshots in the task that owns the guide.
+
+See the [public walkthrough rule](../.agent/kb/rules/public-walkthroughs-have-reader-proof.md).
+
+The public reference pages (`networking.html`, `box.html`, `agents.html` and the other entries in
+`referenceLibrary` in `tools/gendocs/references.go`) come from `docs/*.md`, so edit the Markdown
+once for GitHub and the website. Goldmark renders CommonMark/GFM into
+`tools/site/reference.tpl.html`, and the generator adds headings and contents, scrolling tables,
+related links, metadata and sitemap entries.
+
+A new Markdown topic needs an explicit entry in `referenceLibrary`, and you must remove a retired
+generated page. The drift check fails otherwise.
+
+Markdown links to published references become local `.html` links with their fragments, and links
+to source code, migrations and examples stay on GitHub. One `make docs` run updates both the
+Markdown and the website version of the CLI reference. The CLI source's explicit command separators
+become sections, and its help bodies stay verbatim.
+
+Unlabelled blocks and shell examples stay selectable. Shell fences may combine alternatives or
+destructive commands, so they don't get a whole-block Copy button. Config fences copy as one file
+snippet.
+
+Copy measurement uses `content_copy_succeeded`, with `measurement_version: 2`, after the clipboard
+write resolves. `kind` is `install`, `command` or `configuration`. Copied text is never included.
+This measures intent, not installation or activation. The `install_command_copied` events in the
+analytics counted every copy-button click, including unrelated commands and failed writes. Keep the
+two event series separate.
 
 ```bash
 make docs         # regenerate after editing a template or a scene
@@ -118,12 +137,12 @@ make docs-check   # fails if any page is stale, then runs the site's content tes
 The terminal scenes copy the CLI's real output. `terminalSources` in `tools/gendocs/site.go`
 lists the sources for each terminal: the approved transcripts under
 `internal/cli/testdata/approved/` and the Go code that prints each line. When that output changes,
-`make docs-check` fails and names the page, the terminal and the line. It keeps failing until the
-scene matches again.
+`make docs-check` fails until the scene matches again, and names the page, the terminal and the
+line.
 
-Every page loads the stylesheets and scripts with `?v=` and a short hash of those files.
-`make docs` writes the hash. Regenerate after you change any of them, since `make docs-check`
-fails until you do. Every browser then fetches the new copy instead of reusing a cached one.
+Every page loads the stylesheets and scripts with `?v=` and a short hash of those files, so browsers
+fetch the new copy instead of reusing a cached one. `make docs` writes the hash, so regenerate after
+you change any of them. `make docs-check` fails until you do.
 
 ## Deploy
 
@@ -139,18 +158,19 @@ You set it up once: in the repo, open Settings → Pages and set Source to "GitH
 The favicon, the app icons and the two social cards under `assets/img/` are committed images,
 redrawn by hand with headless Chrome and ImageMagick when the mark or a landing page's first screen
 changes. `zed-coop.png` is a real Zed screenshot, cropped by hand (see `.agent/kb/website.md`).
-Work in a scratch folder and copy the results into `assets/img/`; below, `$CHROME` is the Chrome
-or Chromium binary.
+Work in a scratch folder and copy the results into `assets/img/`. Below, `$CHROME` is the Chrome or
+Chromium binary.
 
 The navigation and footer use local copies of `brand/assets/coop-mark.svg` and
-`coop-wordmark.svg`; do not retype the logo. The icons use the matching tile,
-`brand/assets/coop-flat.svg`, and `favicon.svg` is a copy of it. Keep those copies together.
-The README uses the supplied dark/light vector lockups; `.github/assets/coop.png` is a
-512px avatar export of the same tile.
+`coop-wordmark.svg`. Don't retype the logo. The icons use the matching tile,
+`brand/assets/coop-flat.svg`, and `favicon.svg` is a copy of it. Change those copies together. The
+README uses the supplied dark/light vector lockups. `.github/assets/coop.png` is a 512px avatar
+export of the same tile.
+
 Draw the mark at 1024×1024 (an HTML page holding the SVG at `100vw` by `100vh`) and scale it down:
 `icon-192.png`, `icon-512.png`, and `favicon.ico` bundling 16, 32 and 48. `apple-touch-icon.png`
-(180) puts the glyph on a square tile with no rounded corners, since iOS rounds them;
-`icon-maskable-512.png` also scales the glyph to 64% around the centre, inside Android's round mask.
+(180) puts the glyph on a square tile with no rounded corners, since iOS rounds them.
+`icon-maskable-512.png` also scales the glyph to 64% around the center, inside Android's round mask.
 
 ```bash
 "$CHROME" --headless=new --hide-scrollbars --user-data-dir="$(mktemp -d)" --default-background-color=00000000 \
@@ -187,9 +207,3 @@ magick card.png -resize '1200x630!' -strip og-image.png
 
 Redraw a card after you change its page's hero. If the site ever moves off `coop.dryga.com`, edit
 the canonical and `og:url` base, and `site/CNAME`.
-
-Platform-specific example output can use `[data-terminal-outputs]` with uniquely identified
-`[data-output-platform="macOS"]` and `[data-output-platform="Linux"]` panels. Keep each panel’s
-`.terminal-platform` label in the HTML. The shared script adds accessible tabs above the command with arrow-key,
-Home and End navigation. It selects Linux for a reported Linux platform and macOS otherwise; without JavaScript both labeled outputs remain readable. Keep the
-shared command outside the panels so it has one copy button.

@@ -67,10 +67,9 @@
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
-<p><code>coop eval</code> runs the same tasks repeatedly, then grades the finished work independently. Use it
-to check whether changing a model, preset, loop recipe or co:op build improves the result. Keep
-the suite and planned set of trials the same before and after the change so the runs are
-comparable. The <a href="https://coop.dryga.com/docs.html#evals">website guide</a> walks through a first run.</p>
+<p><code>coop eval</code> runs the same tasks repeatedly, then an independent verifier grades the finished work.
+Use it to check whether changing a model, preset, loop recipe or co:op build improves the result.
+The <a href="https://coop.dryga.com/docs.html#evals">website guide</a> walks through a first run.</p>
 </section><section class="doc-section reference-section" id="try-it"><h2>Try it</h2>
 <ol>
 <li>
@@ -78,8 +77,7 @@ comparable. The <a href="https://coop.dryga.com/docs.html#evals">website guide</
 nothing:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try it code example" tabindex="0"><code class="language-sh">coop eval run core codex --timeout 35m --dry-run
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>A dry run validates the plan. It doesn&#39;t check that your credentials, runtime or image are
-ready.</p>
+<p>A dry run checks the plan, not whether your credentials, runtime or image are ready.</p>
 </li>
 <li>
 <p>For a real run, sign in with <code>coop login codex</code>. You also need a working container runtime and
@@ -92,14 +90,13 @@ coop eval inspect
 </li>
 <li>
 <p>Change one thing and run the same suite again. Find the run IDs with <code>coop eval runs</code>, then
-compare them with <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>. The first argument is the before
-run and the second is the after run; co:op does not use timestamps to choose the order. Inspect
-and compare show a short fingerprint of each configuration and its co:op build. This lets you
-spot a preset or recipe that changed while keeping the same name.</p>
+compare them with <code>coop eval compare &lt;before-id&gt; &lt;after-id&gt;</code>. co:op takes the order from your
+arguments, not from timestamps. Inspect and compare show a short fingerprint of each
+configuration and its co:op build, so you can spot a preset or recipe that changed while keeping
+the same name.</p>
 </li>
 </ol>
-<p>Use these flags to set the overall time limit, the number of repeats and how many trials can
-run at once. <code>coop help eval run</code> lists every option.</p>
+<p><code>coop help eval run</code> lists every option, including these:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Try it table"><table class="ref">
 <thead>
 <tr>
@@ -110,7 +107,7 @@ run at once. <code>coop help eval run</code> lists every option.</p>
 <tbody>
 <tr>
 <td><code>--timeout 35m</code></td>
-<td>Limits the whole command from the moment it starts. At the limit, preparation, trials and grading stop. Cleanup and saving the final record may finish afterward. This limits time, not spending.</td>
+<td>Limits the whole command from the moment it starts. At the limit, preparation, trials and grading stop, though cleanup and saving the final record may finish afterward. It limits time, not spending.</td>
 </tr>
 <tr>
 <td><code>--repeat 3</code></td>
@@ -122,36 +119,34 @@ run at once. <code>coop help eval run</code> lists every option.</p>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>Each case also has its own timeout in <code>suite.yaml</code>, and a larger <code>--timeout</code> does not raise it.
+<p>Each case also has its own timeout in <code>suite.yaml</code>, and a larger <code>--timeout</code> doesn&#39;t raise it.
 More configurations or repeats mean more paid work.</p>
-<p><code>cloc</code> is optional. Install it for change-size figures. Grading and verdicts still work without it,
-and co:op labels the missing measurement instead of reporting a false zero.</p>
+<p>Install <code>cloc</code> if you want change-size figures. Without it, grading and verdicts still work, and
+co:op labels the measurement as missing.</p>
 </section><section class="doc-section reference-section" id="choose-what-to-evaluate"><h2>Choose what to evaluate</h2>
 <ul>
-<li><code>core</code> has three small coding tasks for one agent. Independent checks catch deliberate near
-misses: changes that appear to solve the task but miss a requirement. Choose a provider target
-such as <code>codex:gpt-6.1-sol/xhigh</code>; this suite does not use presets.</li>
+<li><code>core</code> has three small coding tasks for one agent, with independent checks that catch near
+misses. Choose a provider target such as <code>codex:gpt-6.1-sol/xhigh</code>.</li>
 <li><code>queue</code> sends ten tasks through the real <code>coop loop</code>, including review and signoff. Use it to
 compare presets or loop recipes. Each trial works through its tasks in order and can take
 hours. For example, <code>coop eval run queue frontier --timeout 2h</code> uses your existing <code>frontier</code>
 preset. Add <code>--loop-config .agent/loop.yaml</code> to test your project&#39;s recipe.</li>
 <li><code>coop eval init ./evals/my-suite</code> creates a custom suite from a working greeting example.
 Edit <code>suite.yaml</code>, <code>files/greeting/</code> and the separate <code>verifiers/greeting/verify.sh</code>. The
-verifier&#39;s README explains grading. The manifest includes a commented example for a loop.</li>
-<li><a href="https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance" target="_blank" rel="nofollow noopener"><code>examples/evals/maintenance/</code></a> contains three independent
-maintenance loops for shell, Python and Node. Its offline checks confirm that unfinished
-starting versions fail and completed reference versions pass. It demonstrates a custom
-comparison; it is neither an official benchmark score nor a starter listed by
-<code>coop eval ls</code>.</li>
+verifier&#39;s README explains grading. <code>suite.yaml</code> includes a commented example for a loop.</li>
+<li><a href="https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance" target="_blank" rel="nofollow noopener"><code>examples/evals/maintenance/</code></a> is an example of a custom
+comparison, with three independent maintenance loops for shell, Python and Node. It isn&#39;t an
+official benchmark score, and <code>coop eval ls</code> doesn&#39;t list it as a starter.</li>
 </ul>
 <p>Each target or preset after the suite is a separate configuration, not a fallback. Presets need
-a loop suite such as <code>queue</code>; <code>core</code> and other single-agent suites accept targets only. This
-command previews both configurations:</p>
+a loop suite such as <code>queue</code>, and <code>core</code> and other single-agent suites accept targets only. This
+command previews two configurations:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose what to evaluate code example" tabindex="0"><code class="language-sh">coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 </section><section class="doc-section reference-section" id="runtime-profiles-for-custom-agent-cases"><h2>Runtime profiles for custom agent cases</h2>
-<p>For an agent case that needs its own tools, use a trusted runtime profile: a dedicated image
-you build explicitly instead of the shared image. Add these four fields to the case:</p>
+<p>For an agent case that needs its own tools, use a trusted runtime profile, which gives the case a
+dedicated image that you build yourself in place of the shared image. Add these four fields to the
+case:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Runtime profiles for custom agent cases code example" tabindex="0" data-copy-source=""><code class="language-yaml">runtime:
   profile: /absolute/path/to/clean-profile
   workdir: /app
@@ -159,15 +154,17 @@ you build explicitly instead of the shared image. Add these four fields to the c
   verifier_timeout: 15m
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 <p>Set the case&#39;s <code>timeout</code> long enough to cover preparation, the agent&#39;s work and verification.
-Loop suites do not support runtime profiles.</p>
+Loop suites don&#39;t support runtime profiles.</p>
 <p>Keep the profile outside both the suite and co:op&#39;s evaluation state. It must contain no Git
 metadata, symlinks or special files. Its project Dockerfile defaults to <code>.agent/Dockerfile</code> and
-must inherit co:op&#39;s client image. The profile cannot add project environment variables,
+must inherit co:op&#39;s client image. The profile can&#39;t add project environment variables,
 services, published ports or extra network access.</p>
-<p>Review the files used to build the profile. Then run <code>coop build --egress filtered</code> from the
-profile directory before starting the evaluation; evaluations never build a profile themselves.
-The build itself uses ordinary host networking; it does not use the candidate&#39;s filtered network.</p>
-<p>Profile cases run under the fixed <code>coop-adapted-offline-profile-v1</code> protocol:</p>
+<p>Review the files used to build the profile, then run <code>coop build --egress filtered</code> from the
+profile directory before you start the evaluation. Evaluations never build a profile themselves.
+The build uses ordinary host networking, not the filtered network of the candidate (the agent
+being evaluated).</p>
+<p>Profile cases always use the <code>coop-adapted-offline-profile-v1</code> protocol, which fixes these
+settings:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Runtime profiles for custom agent cases table"><table class="ref">
 <thead>
 <tr>
@@ -194,11 +191,11 @@ The build itself uses ordinary host networking; it does not use the candidate&#3
 </tr>
 <tr>
 <td>Storage</td>
-<td>declared as 10 GiB, but the quota is unenforced and usage is unmeasured</td>
+<td>declared as 10 GiB, but co:op doesn&#39;t enforce the quota or measure usage</td>
 </tr>
 <tr>
 <td>Candidate network</td>
-<td>only its provider&#39;s core filtered networking</td>
+<td>only the core endpoints co:op maintains for its provider, through filtered networking</td>
 </tr>
 <tr>
 <td>Grader</td>
@@ -206,18 +203,18 @@ The build itself uses ordinary host networking; it does not use the candidate&#3
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>These settings adapt the workload to co:op&#39;s runtime. They do not establish that it runs under
-the same conditions as an official benchmark. Exclude cases that depend on a disk quota or on
-running out of disk space.</p>
-<p>co:op saves a private copy of the profile. Before work starts, it records the profile&#39;s digest,
-the measured image and platform, and the time allowed for each phase. This saved copy does not
-approve a build: the original profile must remain available and unchanged for both phases. If
-you rebuild a different image after preparation, co:op refuses to start the candidate.</p>
-<p>The saved profile counts toward the suite&#39;s 2 GiB / 200,000-entry staging limit. A dry run does
-not resolve the image, so its workload fingerprint is provisional.</p>
+<p>These settings adapt the workload to co:op&#39;s runtime and don&#39;t show that it runs under the same
+conditions as an official benchmark. Exclude cases that depend on a disk quota or on running out
+of disk space.</p>
+<p>co:op saves a private copy of the profile and records its digest, image and platform before work
+starts. This saved copy doesn&#39;t approve a build. The original profile must stay available and
+unchanged for both the agent phase and the verifier phase, and if you rebuild a different image
+after preparation, co:op refuses to start the candidate.</p>
+<p>The saved profile counts toward the suite&#39;s 2 GiB and 200,000-entry limit. A dry run doesn&#39;t look
+up the image, so the workload fingerprint it shows isn&#39;t final.</p>
 </section><section class="doc-section reference-section" id="understand-a-result"><h2>Understand a result</h2>
-<p><code>coop eval inspect</code> shows the latest run. Add a run ID to inspect an older one. It shows why
-trials did not pass and where to find the saved JSON records and work. See <code>coop help eval inspect</code>
+<p><code>coop eval inspect</code> shows the latest run, or an older one if you add its run ID. It shows why
+trials didn&#39;t pass and where to find the saved JSON records and work. See <code>coop help eval inspect</code>
 for explanations of the results.</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Understand a result table"><table class="ref">
 <thead>
@@ -246,8 +243,8 @@ example because the image is missing or the account isn&#39;t signed in, the tri
 graded failure.</p>
 <p>For a real run, exit code 0 means every trial has a grade, even if some tasks failed. If grading
 is incomplete, the command exits 1 and saves the results so you can inspect what happened.
-A dry run exits 0 after showing the plan, without running trials. Code-size changes can help
-you review the work, but they are not a quality score.</p>
+A dry run exits 0 after showing the plan. Code-size changes can help you review the work, but
+they aren&#39;t a quality score.</p>
 <p>To measure what changed between two runs:</p>
 <ul>
 <li>Choose two different runs.</li>
@@ -255,54 +252,47 @@ you review the work, but they are not a quality score.</p>
 <li>Test one configuration, such as a model or preset, in each run.</li>
 </ul>
 <p>co:op also checks the saved workload IDs, which identify the tasks and how they run and are
-graded. Both runs must have an ID, and the IDs must match. If any of these requirements are not met, co:op shows
-each run&#39;s results separately.</p>
+graded. Both runs must have an ID, and the IDs must match. If any of these requirements aren&#39;t
+met, co:op shows each run&#39;s results separately.</p>
 <p><code>coop eval compare</code> checks the saved plan for each run. A missing trial stays pending. If a
-trial is recorded twice or was not part of the plan, co:op refuses to compare the results.</p>
+trial is recorded twice or wasn&#39;t part of the plan, co:op refuses to compare the results.</p>
 <p>For each task, co:op reports the change only after every repeat in both runs has a pass or fail
 grade. The overall change and its uncertainty range appear only when all tasks are fully graded
 in both runs.</p>
-<p>The report counts tasks and repeats separately. It shows the pass rate after the change minus
-the pass rate before it, in percentage points. For example, going from 60% to 70% is an increase
-of 10 percentage points.</p>
-<p>The report also gives a 95% uncertainty range for that change. A wider range means a less precise
-estimate. This applies only to the tasks you tested and assumes each trial runs independently.
-The calculation uses a conservative Hoeffding bound: <code>sqrt(log(40)/(cases*repeats))</code>. The range
-cannot extend below −100 or above +100 percentage points.</p>
-<p>Repeating a task helps estimate performance on that task. It does not tell you how the model
-will perform on new tasks. If you plan to make a decision from the comparison, run each task at
-least three times. Before you start, write down how much improvement would matter and how you
-will decide whether the results are good enough. co:op does not save those rules or choose a
-winner for you.</p>
-<p>co:op measures the finished work before running the verifier, so verifier build artifacts do
-not count as model work. If a trial does not pass, co:op keeps the candidate&#39;s original workspace
-for inspection and removes the writable copy used for grading. The grader receives only a
-sanitized snapshot. The trial details list any external links or special files left out of it.</p>
+<p>The report shows the pass rate after the change minus the pass rate before it, in percentage
+points, counting tasks and repeats separately. It also gives a 95% uncertainty range, which applies
+only to the tasks you tested and assumes each trial runs independently. The range uses a
+conservative Hoeffding bound, <code>sqrt(log(40)/(cases*repeats))</code>, and stays between −100 and +100
+percentage points.</p>
+<p>If you plan to make a decision from the comparison, run each task at least three times. Before you
+start, write down how much improvement would matter and how you&#39;ll decide. co:op doesn&#39;t save
+those rules or choose a winner for you.</p>
+<p>If a trial doesn&#39;t pass, co:op keeps the candidate&#39;s original workspace for inspection and removes
+the writable copy used for grading. The grader receives only a cleaned copy of the workspace, and
+the trial details list any symlinks that point outside the workspace and any special files left
+out of that copy.</p>
 <p>If a provider refuses a sign-in or reports a quota limit, check <code>coop credentials &lt;agent&gt;</code> before
 starting another paid run. For a timeout, check both the case&#39;s timeout in <code>suite.yaml</code> and the
 run&#39;s <code>--timeout</code>.</p>
 <p>A run with no final summary may still be running or may have been interrupted. You can inspect
-it, but you cannot compare or resume it. To try again, start a new run explicitly. Recorded
-diagnostics may contain private provider output; review them before sharing.</p>
+it, but you can&#39;t compare or resume it. To try again, start a new run yourself. Recorded
+diagnostics may contain private provider output, so review them before you share them.</p>
 <p>Each trial gets a private workspace without the source repository&#39;s Git history. The model
-cannot access the hidden verifiers. They run afterward in a separate container with no
+can&#39;t access the hidden verifiers, which run afterward in a separate container with no
 credentials or network access.</p>
-<p>co:op excludes your MCP servers and <code>COOP_RUN_ARGS</code> from trials. Those extra mounts or runtime
-flags could change the task setup without co:op recording the change. Use co:op-managed
-logins for provider credentials.</p>
-<p>The results describe the workload you tested. They do not establish equal performance across
-providers or a public benchmark ranking.</p>
+<p>co:op excludes your MCP servers and <code>COOP_RUN_ARGS</code> from trials, because they could change the
+task setup without co:op recording the change. Use co:op-managed logins for provider credentials.</p>
+<p>The results describe the workload you tested. They don&#39;t prove equal performance across
+providers, and they aren&#39;t a public benchmark ranking.</p>
 <p>co:op turns off the native client&#39;s web search and fetch tools for every evaluation candidate,
 including consultations and delegated work that co:op manages. Terminal, file and editing tools
-remain available. co:op records this setting with the run and includes it when checking whether
-workloads match.</p>
-<p>This setting relies on the client following it. It is not a firewall that stops a model from
-making its own authenticated provider requests. Regular co:op runs keep their normal web tools.</p>
+stay available. This relies on the client obeying the setting, and it won&#39;t stop a model from
+making its own authenticated provider requests. Regular co:op runs keep their normal
+web tools.</p>
 <p>Before trials start, co:op saves private copies of the suite&#39;s named inputs and hidden
-verifiers. The run uses those copies, so later edits to the source cannot change its tasks or
-the workload ID used for comparisons.
-The saved suite must fit within 2 GiB and 200,000 entries. If it does not, co:op refuses the run
-before any provider work begins.</p>
+verifiers. The run uses those copies, so later edits to the source can&#39;t change its tasks or
+the workload ID used for comparisons. The saved suite must fit within 2 GiB and 200,000 entries,
+or co:op refuses the run before any provider work begins.</p>
 </section>
         <nav class="reference-related" aria-label="Related guides">
           <h2>Related guides</h2>

@@ -2,9 +2,9 @@
 name: cli-text-is-plain-english
 description: CLI docs, website copy and messages use direct English while preserving commands, facts and safety details
 scope: cli-output
-sources: [internal/cli/help.go, internal/cli/models.go, internal/cli/usage.go, internal/box/launch_sections.go, internal/tasks/cmd.go, docs, install.sh, tools/site, tools/gendocs/references.go, site/docs.html]
+sources: [internal/cli/help.go, internal/cli/models.go, internal/cli/usage.go, internal/box/launch_sections.go, internal/tasks/cmd.go, docs, install.sh, tools/site, tools/gendocs/references.go, site/docs.html, README.md, CONTRIBUTING.md, MIGRATING.md, brand, site/README.md]
 check: none
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Write public docs and messages in plain English
@@ -45,9 +45,9 @@ happens if a step fails. Replace internal nouns such as "qualification", "custod
 "admission" with those actions unless the reader needs the exact term to use an API. Keep
 protocol fields and commands literal, and explain them in ordinary English nearby.
 
-Make conditions easy to follow. Start with what the reader needs to do, put independent
-requirements in a short list, then explain what happens if they are not met. Explain internal
-terms when they matter: “workload identity” becomes “a saved ID for the tasks and how they run”.
+Plain does not mean over-explained: see [[docs-say-it-once]]. Make conditions easy to follow.
+Start with what the reader needs to do, put independent requirements in a short list, then explain
+what happens if they are not met. Explain internal terms when they matter: “workload identity” becomes “a saved ID for the tasks and how they run”.
 Use a small example for unfamiliar measurements, such as percentage-point changes. Preserve
 the conditions, but do not make the reader decode a sentence shaped like a validation function.
 
@@ -65,6 +65,15 @@ and outputs and to use simple English where it helps. This pass used version 3.1
 control the edit; editorial judgment is still needed, so there is no keyword-ban check.
 
 ## Changelog
+- 2026-11-04 — the owner rejected that pass as over-explained, repetitive and twisted. The rule
+  [[docs-say-it-once]] now records the correction, and a second pass cuts instead of adding.
+- 2026-11-04 — the owner asked for simple English and Humanizer across the README and other
+  Markdown files. Reviewed 17 files whole: README, CONTRIBUTING, MIGRATING, ten docs, the eval
+  example, site/README.md and both brand docs. Prose now says co:op, not Coop. Two independent reviews
+  caught an overstated README sentence and a "box" that had to say "box or its Compose services",
+  both fixed. Left CHANGELOG, release notes, generated docs/cli.md, agent instructions, scaffold
+  templates and fsprobe records. "Qualified" in CLI help and errors is queued as
+  2026-11-04-replace-qualified-with-plain-words-in-cli-help-a.
 - 2026-10-21 — the user flagged the evaluation comparison explanation as too complex after
   review. Replaced stacked conditions with reader actions, explained the saved workload ID,
   separated grading requirements and added a percentage-point example. Swept the evaluation

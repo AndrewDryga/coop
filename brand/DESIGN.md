@@ -1,6 +1,6 @@
 # co:op website design guide
 
-Version 1 · September 2026. This guide set the direction for the website now at coop.dryga.com.
+Version 1 · September 2026. This guide set the direction for the website at coop.dryga.com.
 `site/assets/css/site.css` copies its token values under short names (`--bg`, `--amber`), and
 the site's icons are drawn from `assets/coop-flat.svg`. This guide, the
 [tokens](tokens.css) and the [visual reference](index.html) form one handoff.
@@ -29,25 +29,25 @@ not turn off a user's assistive display preferences.
 | Evidence | Real commands, the declared workspace, task state, changed code and verification results. Use current product behavior. Don't invent capability. |
 | Constraints | The existing static site. Fast, accessible and readable without JavaScript. |
 
-The chosen territory is a working boundary: a visible place where assigned work happens.
-The other candidates were ruled out. A terminal-only treatment would hide task
-orchestration. A green gate would copy Emisar. Literal chicken imagery would distract from the
-bounded workspace the product provides.
+The chosen direction is a working boundary: a visible place where assigned work happens. The
+other candidates were ruled out: a terminal-only treatment would hide task orchestration, a green
+gate would copy Emisar, and literal chicken imagery would distract from the bounded workspace the
+product provides.
 
 ## 2. One company, distinct products
 
-Share the design grammar. Don't copy the page composition, and don't share every brand
+Share the design rules. Don't copy the page composition, and don't share every brand
 asset.
 
 | Element | Family connection to Emisar | co:op expression |
 | --- | --- | --- |
-| Typography | Self-hosted Inter; distinctive display cut; restrained mono | Same foundation; warm text and slightly denser working examples |
-| Dark surfaces | Near-black canvas, quiet raised surfaces, thin light edges | Matte graphite; no glass or page-wide ambient glow |
+| Typography | Self-hosted Inter, distinctive display cut, restrained mono | Same foundation, with warm text and slightly denser working examples |
+| Dark surfaces | Near-black canvas, quiet raised surfaces, thin light edges | Matte graphite, with no glass or page-wide ambient glow |
 | Layout | Generous section rhythm, strong headings, evidence near claims | Task → workspace → reviewable output |
-| Controls | Compact rectangles, dark labels on solid primary buttons, visible focus | Amber primary action; cyan links and focus |
+| Controls | Compact rectangles, dark labels on solid primary buttons, visible focus | Amber primary action, with cyan links and focus |
 | Semantics | Success, warning and failure always have words/icons | Status colors separate from amber brand and cyan workspace meaning |
-| Motion | Specific transitions, the same gentle easing, reduced-motion support | Short state changes; no gate pulse or perpetual activity animation |
-| Brand device | A product-specific mechanism carries the story | The geometric coop and its circular entrance; bounded workspace diagrams |
+| Motion | Specific transitions, the same gentle easing, reduced-motion support | Short state changes, with no gate pulse or perpetual activity animation |
+| Brand device | A product-specific mechanism carries the story | The geometric coop and its circular entrance, plus bounded workspace diagrams |
 
 Protectorate stays the umbrella brand. Its forcefield mark, orange accent and brand wordmark
 are not co:op website components. Emisar's gate and emerald primary buttons belong to
@@ -65,7 +65,7 @@ repository identifiers stay `coop`. Don't use "Coop OS" as a standalone category
 sandbox and orchestration system for coding agents. co:op isn't a replacement for macOS or
 Linux.
 
-Use the approved **Contained entrance** artwork: a detached amber roof, an amber body,
+Use the approved Contained entrance artwork: a detached amber roof, an amber body,
 and a fully enclosed graphite entrance with a thin cyan rim. The enclosure suggests an
 isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or shields.
 
@@ -73,7 +73,7 @@ isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or 
 - [coop-wordmark.svg](assets/coop-wordmark.svg) is the outlined geometric lettering.
   Use it instead of typing the logo in Inter. Inter remains the website's prose/UI font.
 - [coop-lockup.svg](assets/coop-lockup.svg) combines the mark and ivory wordmark for dark
-  surfaces; [coop-lockup-light.svg](assets/coop-lockup-light.svg) uses graphite lettering.
+  surfaces. [coop-lockup-light.svg](assets/coop-lockup-light.svg) uses graphite lettering.
 - [coop-flat.svg](assets/coop-flat.svg) puts the same mark on a rounded graphite tile for
   favicons and avatars. The GitHub/avatar PNG is `.github/assets/coop.png`.
 - Use solid amber `#E6A95C`, cyan `#62D3F0`, graphite `#0E1014` and ivory `#ECE7DE`.
@@ -83,14 +83,14 @@ isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or 
 - The [approved raster](assets/approved-direction.png) records the concept. Production
   artwork uses the flat vectors, without the generated raster's texture or option label.
 - Default navigation: a 36×32px mark, 12px gap and 77.2×22.5px wordmark. The footer and
-  narrow screens use the smaller sizes in `site.css`; the smallest phones show the mark alone.
+  narrow screens use the smaller sizes in `site.css`. The smallest phones show the mark alone.
 - Around standalone artwork, leave clear space of at least one quarter of its width.
   The navigation's explicit gap is the compact exception.
 - Minimum tile size: 16px for favicons and 24px in UI. Inspect 16, 24, 32 and 64px exports.
 - Transparent corners remain transparent. Maskable and Apple icons use a full square
   graphite canvas so the platform can apply its own mask.
 - No enlarged decorative watermark behind the hero. The README uses the same approved
-  lockup; the earlier chicken illustration is superseded.
+  lockup.
 
 ## 4. Color and dark material
 
@@ -100,7 +100,7 @@ through components.
 | Token | Value | Use |
 | --- | --- | --- |
 | `--coop-bg` | `#0E1014` | All page canvas |
-| `--coop-surface` | `#15191F` | Earned panels: code, diagram, search results |
+| `--coop-surface` | `#15191F` | Panels with a clear purpose: code, diagram, search results |
 | `--coop-raised` | `#1C222B` | Menus, dialogs, small lifted controls |
 | `--coop-inset` | `#0A0C10` | Recessed terminal/code inside a panel |
 | `--coop-text` | `#ECE7DE` | Headings and primary labels |
@@ -116,7 +116,7 @@ Most of the page is neutral. Amber is the first accent. Cyan is the second, used
 purpose is visible. Don't stripe every heading, alternate colored cards, fill large areas
 with either accent or use gradient text.
 
-Amber branding doesn't mean a warning. A warning is a labeled status with a warning icon; an
+Amber branding doesn't mean a warning. A warning is a labeled status with a warning icon. An
 amber surface alone isn't one. Cyan never means "safe", "approved" or "complete". The logo's
 circular entrance is brand art. It makes no claim about a network connection.
 
@@ -134,7 +134,7 @@ The quiet surface ring isn't enough for input boundaries. Inputs use
 `--coop-control-border`, and their label stays visible. Primary amber buttons use
 `--coop-on-accent` dark text, never white text. Essential copy needs at least 4.5:1
 contrast. Large text and meaningful graphical boundaries need at least 3:1. Don't fade whole
-controls with opacity, and that includes disabled controls.
+controls with opacity, including disabled controls.
 
 ## 5. Typography
 
@@ -166,8 +166,8 @@ technical.
 | Terminal / code | 16px | 16px | 400 / 1.7 (scene cards 1.5) / normal |
 
 Use the fluid heading tokens to scale between the endpoints. Keep one H1 per page. Aim for
-14–20ch hero headings, 25ch section titles and 60–68ch body columns. Avoid manual `<br>`
-breaks that strand one word on mobile. Counts and changing values use tabular figures.
+hero headings of 14 to 20ch, section titles of 25ch and body columns of 60 to 68ch. Avoid manual
+`<br>` breaks that strand one word on mobile. Counts and changing values use tabular figures.
 Terminal alignment uses mono. No tiny, low-contrast technical captions.
 
 ## 6. Layout and responsive behavior
@@ -176,13 +176,13 @@ Use a 4px spacing base: 4, 8, 12, 16, 24, 32, 48, 64, 96 and 128px. One wrapper 
 gap. Don't combine a parent's gap and a child's margins for the same space.
 
 - Maximum content width: 1200px. Gutters: 24px desktop, 20px mobile, 16px at 320px.
-- Desktop sections: 96–128px vertical space. Mobile: 64px. Documentation: 48px between
+- Desktop sections: 96 to 128px vertical space. Mobile: 64px. Documentation: 48px between
   sections, 24px within them.
-- Desktop navigation: 72px tall; mobile: 64px. When it's sticky, keep its background
+- Desktop navigation: 72px tall. Mobile: 64px. When it's sticky, keep its background
   opaque, with a quiet bottom edge. Legibility must not depend on backdrop blur.
 - Controls: 8px radius. Panels: 16px. Nested code insets: 8px with at least 8px of
   surrounding padding. Child corners must fit their parent concentrically.
-- Buttons: 44px minimum height, 16–20px horizontal padding. Icon-only targets: at least
+- Buttons: 44px minimum height, 16 to 20px horizontal padding. Icon-only targets: at least
   44×44px. A larger hit area doesn't need a larger icon.
 - Below 768px, narrative columns become a deliberate reading sequence. At 320px, actions
   wrap or stack. Don't squeeze a desktop diagram into miniature text.
@@ -212,21 +212,21 @@ from illustrations. If you show a workflow animation, keep a complete static vie
 
 | Component | Contract |
 | --- | --- |
-| Primary action | Amber fill, dark label, slightly lighter hover; one visually dominant CTA per decision area |
-| Secondary action | Neutral surface/edge and normal text; no competing cyan fill |
-| Inline link | Cyan; underline in body copy; visible focus; avoid vague "Learn more" |
-| Focus | 2px cyan outline, 3px offset; never remove it; keep it unclipped |
+| Primary action | Amber fill, dark label, slightly lighter hover. One visually dominant CTA per decision area |
+| Secondary action | Neutral surface/edge and normal text, with no competing cyan fill |
+| Inline link | Cyan, underlined in body copy, with visible focus. Avoid vague "Learn more" |
+| Focus | 2px cyan outline, 3px offset. Never remove it, and keep it unclipped |
 | Code panel | Real selectable text, descriptive caption, neutral inset, working copy control |
-| Copy state | Default → "Copied" → default; failure says "Select and copy the command"; announce through a polite live region |
-| Task row | Plain-language task, status word/icon, optional result; mono only for ids/commands |
-| Hover row | Neutral 4% white wash; do not recolor child text or turn a metric green |
-| Status | Text plus a matching icon; only use "Passed" when verification actually passed |
+| Copy state | Default → "Copied" → default. Failure says "Select and copy the command". Announce through a polite live region |
+| Task row | Plain-language task, status word/icon, optional result. Mono only for ids/commands |
+| Hover row | Neutral 4% white wash. Do not recolor child text or turn a metric green |
+| Status | Text plus a matching icon. Use "Passed" only when verification passed |
 | Docs navigation | Active item uses a neutral wash plus a clear marker and `aria-current`, not an amber success-like pill |
-| Mobile menu | Labeled button, accurate `aria-expanded`, Escape closes and restores focus; overlay prevents accidental background interaction |
-| Search | Labeled input; visible loading, results, no-results and error states; keyboard operation |
+| Mobile menu | Labeled button, accurate `aria-expanded`, Escape closes and restores focus. Overlay prevents accidental background interaction |
+| Search | Labeled input, visible loading, results, no-results and error states, and keyboard operation |
 
 Use semantic HTML and native links and buttons. A disclosure is never a fake button on a
-`<div>`. Icons share one consistent 24-unit grid and are typically 16–20px on screen. Hide
+`<div>`. Icons share one consistent 24-unit grid and are typically 16 to 20px on screen. Hide
 decorative icons from assistive technology. Keep the label when an icon alone would leave
 people guessing.
 
@@ -301,11 +301,11 @@ into the website's own stylesheet. Don't leave two competing runtime token syste
 this guide as the design reference.
 
 The favicon and app-icon exports are committed images drawn from `assets/coop-flat.svg`, and the
-OG 1200×630 cards are screenshots of each landing page's first screen; `site/README.md`, "SEO
-assets", has the steps for both. When you implement the approved logo, change that mark first, then
-redraw favicon 16/32/48, Apple 180, PWA 192/512 and maskable-safe 512 from it, and the OG cards
-from the pages. Don't bake preview checkerboards into them. The production asset rollout is
-separate from this guide.
+OG 1200×630 cards are screenshots of each landing page's first screen. The "SEO assets" section of
+`site/README.md` has the steps for both. When you implement the approved logo, change that mark
+first, then redraw favicon 16/32/48, Apple 180, PWA 192/512 and maskable-safe 512 from it, and the
+OG cards from the pages. Don't bake preview checkerboards into them. The production asset rollout
+is separate from this guide.
 
 ### Before calling the new website done
 
@@ -313,11 +313,11 @@ separate from this guide.
 - [ ] Side by side, Emisar and co:op look related. With their logos covered, you can still
   tell them apart: shared type and craft, different color, device and composition.
 - [ ] The README, website, icons and sibling product cards use the approved Contained
-  entrance geometry and Coop colors.
+  entrance geometry and co:op colors.
 - [ ] A visitor can identify the product, the next step and the useful mechanism in five
   seconds.
-- [ ] Claims and commands match current product behavior, and examples state their
-  provenance.
+- [ ] Claims and commands match current product behavior, and examples state where they
+  came from.
 - [ ] You've rendered and inspected desktop 1440×1000, constrained 1024×900, mobile
   390×844, small 320px and short 1440×700 layouts, including the footer and the docs.
 - [ ] No clipped controls, sideways page scrolling or lost content at 200% zoom.
@@ -336,18 +336,18 @@ separate from this guide.
 
 ## 10. Source notes
 
-This guide is grounded in the repositories as inspected on 2026-09-14. The sources below are
-authoring references. They aren't runtime dependencies, and they aren't instructions to
-import Phoenix components.
+This guide is based on an inspection of the repositories on 2026-09-14. The sources below are
+references for writing this guide. They aren't runtime dependencies, and they aren't instructions
+to import Phoenix components.
 
-- Emisar: `portal/.agent/kb/rules/design-system.md`; the actual font, focus, motion and
-  surface recipes in `portal/apps/emisar_web/assets/css/app.css`; the heading, button and
-  nav components in `portal/apps/emisar_web/lib/emisar_web/components/marketing_components.ex`;
-  the narrative in `controllers/marketing_html/home.html.heex` in that same app.
+- Emisar: `portal/.agent/kb/rules/design-system.md`. The actual font, focus, motion and surface
+  recipes are in `portal/apps/emisar_web/assets/css/app.css`. The heading, button and nav
+  components are in `portal/apps/emisar_web/lib/emisar_web/components/marketing_components.ex`.
+  The narrative is in `controllers/marketing_html/home.html.heex` in that same app.
 - co:op: `site/assets/css/site.css`, `site/assets/js/site.js`, `site/index.html`,
   `site/docs.html` and `site/README.md`.
 - Protectorate: `protectorate/brand/README.md` and `protectorate/brand/DESIGN.md` in the
-  sibling repository, for the umbrella identity. They aren't the authority on website fonts.
+  sibling repository, for the umbrella identity. They don't decide the website's fonts.
 
 The creative-direction skill shaped the product-specific concept and hierarchy. The
 interface-polish skill shaped typography, dark surfaces, focus and motion. The specimen

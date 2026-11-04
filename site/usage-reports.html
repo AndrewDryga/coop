@@ -67,10 +67,10 @@
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
-<p><code>coop usage</code> shows account limits first, then estimates what your recorded activity would cost
-at API prices. It reads Coop histories and supported native CLI histories on this computer.
-Browser and mobile conversations, and histories on other computers, are not included. Deleted
-histories and unknown model prices can leave gaps.</p>
+<p><code>coop usage</code> shows account limits first, then estimates what your recorded activity would cost at
+API prices. It reads co:op histories and supported native CLI histories on this computer, and
+doesn&#39;t include browser or mobile conversations or histories on other computers. Deleted histories
+and unknown model prices can leave gaps.</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Overview table"><table class="ref ref-wide">
 <thead>
 <tr>
@@ -102,41 +102,37 @@ histories and unknown model prices can leave gaps.</p>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>If you set an override, Coop scans both it and the default location when they differ. It does
-not change either folder or its sign-ins, and it counts copied requests only once.</p>
-<p>Coop assigns a request to an account only when it finds the request in exactly one Coop account.
-Other native history appears as <code>Unassigned local usage</code>. Signing in today cannot establish
-which account made an old request. Shared editor histories appear as <code>Unassigned editor usage</code>.
-If copies point to conflicting accounts, Coop leaves the request unassigned instead of assigning
-it to your currently selected account.</p>
+<p>If you set an override, co:op scans both it and the default location when they differ. It doesn&#39;t
+change either folder or its sign-ins, and it counts copied requests only once.</p>
+<p>co:op assigns a request to an account only when it finds the request in exactly one co:op account.
+Other native history appears as <code>Unassigned local usage</code>, because signing in today can&#39;t show which
+account made an old request. Shared editor histories appear as <code>Unassigned editor usage</code>. If copies
+point to conflicting accounts, the request stays unassigned instead of going to your currently
+selected account.</p>
 <p>Provider subtotals and Total count unassigned history once. <code>≈$.../30d</code> estimates the activity&#39;s
-value at standard API prices, including activity covered by a subscription. It does not show
-what you paid. Use <code>coop usage codex@personal</code> (or another provider/account) to see which history
-and prices the estimate includes.</p>
-<p>Incomplete coverage is marked <code>partial</code>. Missing or unpriced history is never counted as zero.
-Saved Coop turn summaries carry no prices, so the native-history totals leave them out.</p>
-<p>Coop caches the token records it parses under <code>usage-cache</code> in <code>~/.local/state/coop</code>.
-The cache holds no conversation text. The first check reads the whole history; later checks read
-only the files that changed. A finished check of every provider removes the records of deleted
-files.</p>
+value at standard API prices, including activity covered by a subscription. It doesn&#39;t show what
+you paid. Use <code>coop usage codex@personal</code> (or another provider/account) to see which history and
+prices the estimate includes.</p>
+<p>Incomplete coverage shows as <code>partial</code>, and missing or unpriced history never counts as zero. Saved
+co:op turn summaries have no prices, so the native-history totals leave them out.</p>
+<p>co:op caches the token records it parses under <code>usage-cache</code> in <code>~/.local/state/coop</code>, so later
+checks read only the files that changed. The cache holds no conversation text. A finished check of
+every provider removes the records of deleted files.</p>
 </section><section class="doc-section reference-section" id="account-limits"><h2>Account limits</h2>
-<p>Limits come from the provider and cover the whole account. A dimmed reset time shows the time
-left and the date in UTC. Claude and Codex also show available resets and their reported expiry
-dates when the provider supplies them. Checking usage never redeems a reset. Credits appear in
-the provider&#39;s own units, not dollars.</p>
-<p>Coop checks the limits of the accounts it manages with credentials that stay on the host, and
+<p>Limits come from the provider and cover the whole account. A dimmed reset time shows the time left
+and the date in UTC. Claude and Codex also show available resets and their reported expiry dates
+when the provider supplies them. Checking usage never redeems a reset. Credits appear in the
+provider&#39;s own units, not dollars.</p>
+<p>co:op checks the limits of the accounts it manages using credentials that stay on the host, and it
 sends no model prompt. A Gemini login that still uses its original credential store needs Docker
-for this check, because a helper container mounts that store. If an account is busy, wait for
-its run to finish and try again.</p>
+for this check. If an account is busy, wait for its run to finish and try again.</p>
 <p>API-key and Vertex accounts may have priced token history even when they have no subscription
 limits to report.</p>
 </section><section class="doc-section reference-section" id="connect-an-api-billing-source"><h2>Connect an API billing source</h2>
-<p>To enable provider reports, create <code>~/.config/coop/usage-reports.json</code>. If you set the XDG config
-home, use <code>$XDG_CONFIG_HOME/coop/usage-reports.json</code> instead. The file must be a regular file,
-not a symlink, and can define one reporting source per provider. <code>name</code> labels the source;
-it does not select a Coop account.</p>
-<p>Coop reads this file for <code>coop usage</code> and provider summaries. It does not read it when you
-inspect a specific account.</p>
+<p>To enable provider reports, create <code>~/.config/coop/usage-reports.json</code>, or
+<code>$XDG_CONFIG_HOME/coop/usage-reports.json</code> if you set the XDG config home. The file must be a
+regular file, not a symlink, and can define one reporting source per provider. <code>name</code> labels the
+source and doesn&#39;t select a co:op account.</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Connect an API billing source code example" tabindex="0" data-copy-source=""><code class="language-json">{
   &#34;reports&#34;: [
     {
@@ -159,31 +155,30 @@ inspect a specific account.</p>
   ]
 }
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>Set the named environment variables in the host shell where you run Coop. Do not put the keys
-in this JSON file, your project or <code>agents/env</code>, which is forwarded into boxes. Reporting keys
-can have broader permissions than model API keys, so grant only the access needed for reports.</p>
-<p>Coop keeps these keys out of agent homes and containers. Its error messages include neither the
-key nor the provider&#39;s response body.</p>
+<p>Set the named environment variables in the host shell where you run co:op. Don&#39;t put the keys in
+this JSON file, your project or <code>agents/env</code>, which is forwarded into boxes. Reporting keys can have
+broader permissions than model API keys, so grant only the access needed for reports.</p>
+<p>co:op keeps these keys out of agent homes and containers, and its error messages don&#39;t include the
+key or the provider&#39;s response body.</p>
 <ul>
 <li>OpenAI: use an organization Admin API key. <code>organization</code> selects the organization sent to the
 <a href="https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs" target="_blank" rel="nofollow noopener">Costs API</a>.</li>
 <li>Anthropic: use an organization Admin API key. The key determines the organization. Its
 <a href="https://platform.claude.com/docs/en/manage-claude/usage-cost-api" target="_blank" rel="nofollow noopener">cost report</a> excludes Priority
-Tier charges, so this source is marked partial.</li>
+Tier charges, so co:op marks this source as partial.</li>
 <li>xAI: use a separate Management API key authorized to read the configured team&#39;s
-<a href="https://docs.x.ai/developers/rest-api-reference/management/billing" target="_blank" rel="nofollow noopener">billing usage</a>, not an inference
-key or prepaid balance.</li>
+<a href="https://docs.x.ai/developers/rest-api-reference/management/billing" target="_blank" rel="nofollow noopener">billing usage</a>. Don&#39;t use an
+inference key. The report reads billing usage, not a prepaid balance.</li>
 </ul>
-<p>These sources report API usage for an organization or team. That can include other applications
-and devices in the same organization or team. Personal subscriptions and ChatGPT or Claude web
-activity are not included.</p>
+<p>These sources report API usage for an organization or team, which can include other applications
+and devices in it. They don&#39;t include personal subscriptions or ChatGPT or Claude web activity.</p>
 </section><section class="doc-section reference-section" id="google-billing-exports"><h2>Google billing exports</h2>
 <p>For Google reports, set up a <a href="https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery" target="_blank" rel="nofollow noopener">standard Cloud Billing export</a>.
-The host&#39;s <code>gcloud</code> account needs access to that export and permission to create BigQuery query
-jobs in the selected project. If the configured email is not signed in, use <code>gcloud auth login</code>.
-This sign-in is separate from your Gemini CLI sign-in.</p>
-<p>Coop obtains a fresh short-lived access token through
-<code>gcloud auth print-access-token &lt;email&gt; --quiet</code>. It does not copy a Google refresh credential.</p>
+The host&#39;s <code>gcloud</code> account needs access to that export and permission to create BigQuery query jobs
+in the selected project. If the configured email isn&#39;t signed in, run <code>gcloud auth login</code>. This
+sign-in is separate from your Gemini CLI sign-in.</p>
+<p>co:op gets a fresh short-lived access token through
+<code>gcloud auth print-access-token &lt;email&gt; --quiet</code>. It doesn&#39;t copy a Google refresh credential.</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Google billing exports code example" tabindex="0" data-copy-source=""><code class="language-json">{
   &#34;reports&#34;: [
     {
@@ -199,34 +194,34 @@ This sign-in is separate from your Gemini CLI sign-in.</p>
   ]
 }
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p><code>billing_table</code> names the export table as <code>project.dataset.table</code>. In your billing export, find
-the exact SKU IDs for the Gemini or Vertex API charges you want to report. A SKU identifies a
-billing item. Replace the example SKU list with those IDs.</p>
-<p>Coop uses a fixed query with your chosen project and SKU IDs as parameters. It includes their
-billing credits and accepts only USD billing. It does not include unrelated Vertex AI or
-cloud services.</p>
-<p>If the query is incomplete, rows are missing or the currency is unsupported, Coop shows the
-report as unavailable. It does not report those missing amounts as zero.</p>
-<p>Queries can cost money. Set <code>maximum_bytes_billed</code> to limit how much data you can be charged
-for. The largest limit Coop allows is 1 GiB. Google rejects a query that exceeds the limit
-without charging for that query. Coop requests cached results, but a query may still cost money.</p>
-<p>You must create the export and arrange its permissions yourself. Coop does not create it,
-change permissions or enable billing. The report remains partial because the export may
-lack some usage or older records, and your SKU list may leave out charges.</p>
+<p><code>billing_table</code> names the export table as <code>project.dataset.table</code>. In your billing export, find the
+exact SKU IDs for the Gemini or Vertex API charges you want to report, and replace the example SKU
+list with those IDs.</p>
+<p>co:op uses a fixed query with your chosen project and SKU IDs as parameters. The query includes
+their billing credits and accepts only USD billing. It doesn&#39;t include unrelated Vertex AI or cloud
+services.</p>
+<p>If the query is incomplete, rows are missing or the currency is unsupported, co:op shows the report
+as unavailable. It doesn&#39;t report those missing amounts as zero.</p>
+<p>Queries can cost money. Set <code>maximum_bytes_billed</code> to limit how much data you can be charged for.
+The largest limit co:op allows is 1 GiB. Google rejects a query that exceeds the limit without
+charging for that query. co:op requests cached results, but a query may still cost money.</p>
+<p>You must create the export and set up its permissions yourself. co:op doesn&#39;t create it, change
+permissions or enable billing. The report stays partial because the export may lack some usage or
+older records, and your SKU list may leave out charges.</p>
 </section><section class="doc-section reference-section" id="reading-the-reports"><h2>Reading the reports</h2>
 <p>Provider reports appear in a separate section without an approximation sign. These amounts come
-from the provider&#39;s usage reports; they are not a final invoice. Each report covers 30 completed
-UTC days and excludes the end date. Local estimates instead use a rolling 30-day window.</p>
-<p><code>Checked</code> shows when Coop fetched the report, beside the report&#39;s dates and scope. The provider
-may still report requests late or revise costs. Reports with excluded usage or missing data are
-marked <code>partial</code>. Denied access, a malformed or truncated report and an unsupported currency show
-the source as unavailable, never as zero.</p>
-<p>A failed source stays visible. If one configured source fails, the reported subtotal is marked
-partial too. If none returns a usable report, Coop shows no reported spending subtotal.</p>
-<p>Coop keeps reported API spend separate from local estimates because they can cover the same
+from the provider&#39;s usage reports and aren&#39;t a final invoice. Each report covers 30 completed UTC
+days and excludes the end date. Local estimates use a rolling 30-day window instead.</p>
+<p><code>Checked</code> shows when co:op fetched the report, beside the report&#39;s dates and scope. The provider may
+still report requests late or revise costs. co:op marks reports with excluded usage or missing data
+as <code>partial</code>. Denied access, a malformed or truncated report and an unsupported currency show the
+source as unavailable, never as zero.</p>
+<p>A failed source stays visible. If one configured source fails, co:op marks the reported subtotal as
+partial too. If none returns a usable report, it shows no reported spending subtotal.</p>
+<p>co:op keeps reported API spend separate from local estimates because they can cover the same
 requests and measure different things. A provider command such as <code>coop usage codex</code> filters the
-reports. An account command such as <code>coop usage codex@personal</code> neither requests an organization
-report nor assigns its bill to that login.</p>
+reports. An account command such as <code>coop usage codex@personal</code> doesn&#39;t request an organization
+report or assign its bill to that login.</p>
 </section>
         <nav class="reference-related" aria-label="Related guides">
           <h2>Related guides</h2>

@@ -121,6 +121,8 @@ updated: <YYYY-MM-DD>                # last edit
 - [public-release-notes-are-product-focused](public-release-notes-are-product-focused.md) — record actual published releases, product changes and user actions, not failed attempts or internal decisions
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
+- [docs-say-it-once](docs-say-it-once.md) — write for a capable reader; say each thing once in the sentence you would write to a colleague, with no over-explaining or twisted wording
+- [docs-describe-the-current-product](docs-describe-the-current-product.md) — README and guides describe the product as it is today; what only older releases need stays in code, MIGRATING.md or CHANGELOG.md
 - [site-external-links-nofollow](site-external-links-nofollow.md) — every link off coop.dryga.com opens in a new tab with rel="nofollow noopener"; the site generator (tools/gendocs) adds both, never the page by hand
 - [site-ryker-product-link](site-ryker-product-link.md) — website Ryker links point to https://ryker.emisar.dev
 - [site-emisar-production-pitch](site-emisar-production-pitch.md) — connect unattended sandbox work to controlled access to real production environments when promoting Emisar
