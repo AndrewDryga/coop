@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"net/http"
@@ -248,6 +249,110 @@ func TestCurrentQualificationSelectsNewestCompatiblePresentImagePair(t *testing.
 			}
 			if got == nil || got.ID != want {
 				t.Fatalf("selected %+v, want %s", got, want)
+			}
+		})
+	}
+}
+
+// Moving a worker to another kernel stranded every filtered conversation, even
+// after explicit net setup succeeded. Future runs need fresh proof, not rewritten history.
+func TestSessionContinuesWithFreshProofAndKeepsItsFrozenAuthority(t *testing.T) {
+	for _, name := range []string{"qualified", "no fresh proof", "wrong client kind", "missing image", "changed daemon"} {
+		t.Run(name, func(t *testing.T) {
+			_, docker, candidate, images := qualificationInventoryFixture(t)
+			store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			stamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+			old := candidate
+			old.Runtime.KernelVersion = "previous-kernel"
+			if name == "changed daemon" {
+				old.Runtime.DaemonID = "previous-daemon"
+			}
+			prior := writeQualificationFixture(t, store, old, egress.ClientACP, stamp)
+			oldPath := filepath.Join(store.Path(), "qualification-"+prior.ID+".json")
+			before, err := os.ReadFile(oldPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fresh networkstate.Qualification
+			if name != "no fresh proof" {
+				client := egress.ClientACP
+				if name == "wrong client kind" {
+					client = egress.ClientCLI
+				}
+				fresh = writeQualificationFixture(t, store, candidate, client, stamp.Add(time.Hour))
+			}
+			for _, id := range []string{candidate.ClientImage, candidate.GatewayImage} {
+				if name != "missing image" {
+					writeQualificationImageFixture(t, images, id, id)
+				}
+			}
+			capture := &CapturedEgress{Store: store, QualificationID: prior.ID, SessionID: "remote_continuity", Fingerprint: strings.Repeat("e", 64)}
+			policy := egress.Snapshot{Mode: egress.Filtered, Dependencies: []egress.Dependency{{Provider: "claude", Client: egress.ClientACP}}}
+			frozenPolicy, err := json.Marshal(policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected, id, err := sessionLaunchQualification(t.Context(), docker, capture, policy, prior.Candidate, "")
+			if name == "qualified" {
+				if err != nil || id != fresh.ID || !reflect.DeepEqual(selected, candidate) {
+					t.Fatalf("fresh explicit setup did not restore the existing session: id=%s err=%v", id, err)
+				}
+			} else if err == nil {
+				t.Fatal("session launched without a compatible completed proof")
+			}
+			after, readErr := os.ReadFile(oldPath)
+			if readErr != nil || string(before) != string(after) {
+				t.Fatal("historical qualification changed", readErr)
+			}
+			afterPolicy, _ := json.Marshal(policy)
+			if capture.QualificationID != prior.ID || capture.Fingerprint != strings.Repeat("e", 64) || string(afterPolicy) != string(frozenPolicy) {
+				t.Fatal("frozen session authority changed")
+			}
+		})
+	}
+}
+
+func TestSessionImageIdentityUsesFreshProofWhenTheOldPairIsGone(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprint(fresh), func(t *testing.T) {
+			rt, _, candidate, images := qualificationInventoryFixture(t)
+			store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			old := candidate
+			old.Runtime.KernelVersion = "previous-kernel"
+			stamp := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+			prior := writeQualificationFixture(t, store, old, egress.ClientACP, stamp)
+			ref := networkstate.JobSnapshotRef{JobDigest: strings.Repeat("d", 64), SessionID: "remote_continuity"}
+			policy, err := store.CaptureJob(ref, nil, nil, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture := &CapturedEgress{Store: store, QualificationID: prior.ID, SessionID: ref.SessionID, JobDigest: ref.JobDigest, Fingerprint: policy.Fingerprint}
+			candidate.ClientImage = "sha256:" + strings.Repeat("e", 64)
+			candidate.GatewayImage = "sha256:" + strings.Repeat("f", 64)
+			if fresh {
+				writeQualificationFixture(t, store, candidate, egress.ClientACP, stamp.Add(time.Hour))
+			}
+			for _, id := range []string{candidate.ClientImage, candidate.GatewayImage} {
+				writeQualificationImageFixture(t, images, id, id)
+			}
+			image, err := FilteredImageIdentity(t.Context(), rt, capture)
+			if fresh {
+				if err != nil || image != candidate.ClientImage {
+					t.Fatalf("fresh qualified image unavailable after old pair removal: image=%s err=%v", image, err)
+				}
+			} else if err == nil {
+				t.Fatal("unqualified replacement image accepted")
+			}
+			if capture.QualificationID != prior.ID {
+				t.Fatal("frozen qualification changed")
 			}
 		})
 	}

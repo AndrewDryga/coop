@@ -1,12 +1,14 @@
 package box
 
 import (
+	"context"
 	"errors"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // networkSmokeLaunch is the explicit host preflight permit. It never appears on
@@ -57,4 +59,27 @@ func verifyNetworkCandidate(candidate networkstate.CandidateSpec, binding networ
 		return errors.New("network setup belongs to another client or gateway definition; explicit setup is required")
 	}
 	return nil
+}
+
+// sessionLaunchQualification selects proof for this launch, without changing the
+// session's frozen rules or the qualification retained in its history.
+func sessionLaunchQualification(ctx context.Context, docker *runtime.Docker, capture *CapturedEgress, policy egress.Snapshot, candidate networkstate.CandidateSpec, imageOverride string) (networkstate.CandidateSpec, string, error) {
+	binding := networkRuntimeBinding(docker.Info(), docker.Endpoint())
+	originalErr := verifyNetworkCandidate(candidate, binding, imageOverride)
+	if originalErr == nil {
+		return candidate, capture.QualificationID, nil
+	}
+	// Requalification permits a changed kernel or engine version on this daemon.
+	// It never redirects the frozen endpoint to another daemon or sets up a host.
+	if candidate.Runtime.DaemonID != binding.DaemonID {
+		return networkstate.CandidateSpec{}, "", originalErr
+	}
+	fresh, err := currentQualification(ctx, docker, capture.Store, policy, imageOverride)
+	if err != nil {
+		return networkstate.CandidateSpec{}, "", err
+	}
+	if fresh == nil {
+		return networkstate.CandidateSpec{}, "", originalErr
+	}
+	return fresh.Candidate, fresh.ID, nil
 }

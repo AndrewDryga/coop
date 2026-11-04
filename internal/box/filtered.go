@@ -292,6 +292,13 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	f.mcpScrub = scrub
 	f.unsafeRoots = filteredWritableRoots(cfg, spec)
+	qualificationID := capture.QualificationID
+	if smoke == nil && capture.SessionID != "" {
+		candidate, qualificationID, err = sessionLaunchQualification(ctx, docker, capture, policy, candidate, cfg.ImageOverride)
+		if err != nil {
+			return f, err
+		}
+	}
 	if err := verifyNetworkCandidate(candidate, networkRuntimeBinding(docker.Info(), docker.Endpoint()), cfg.ImageOverride); err != nil {
 		return f, err
 	}
@@ -353,7 +360,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	}
 	host, _ := thisHost() // "" when this coop cannot name its host; then no other coop judges the run
 	executionSpec := networkstate.ExecutionSpec{Host: host, Project: project, PolicyFingerprint: policy.Fingerprint,
-		QualificationID: capture.QualificationID, ClientImage: candidate.ClientImage, ProjectImage: projectImage,
+		QualificationID: qualificationID, ClientImage: candidate.ClientImage, ProjectImage: projectImage,
 		Runtime: "docker", DaemonID: docker.Info().ID, Endpoint: docker.Endpoint(), GatewayImage: candidate.GatewayImage,
 		SessionID: capture.SessionID, AttemptID: capture.AttemptID, JobDigest: capture.JobDigest, Protected: protected}
 	if smoke == nil {
