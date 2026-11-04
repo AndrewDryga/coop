@@ -293,6 +293,15 @@ func (a *ProjectNetworkApproval) Commit(ctx context.Context) error {
 	return a.store.Approve(ctx, a.project, a.mode, a.requests, nil, a.services, a.review.Digest)
 }
 
+// Discard is the answer "no" to a review: a first review leaves nothing behind, so the next one
+// reads like it.
+func (a *ProjectNetworkApproval) Discard(ctx context.Context) error {
+	if a == nil || a.store == nil || a.used {
+		return nil
+	}
+	return a.store.DiscardUnapprovedReview(ctx, a.project)
+}
+
 func (a *ProjectNetworkApproval) Close() error {
 	if a == nil || a.store == nil {
 		return nil

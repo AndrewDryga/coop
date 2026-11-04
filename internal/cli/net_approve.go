@@ -151,6 +151,7 @@ type netApprovalReview interface {
 	After() *networkstate.Approval
 	Pending() *networkstate.PendingApproval
 	Commit(context.Context) error
+	Discard(context.Context) error
 }
 
 func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases *box.CaseExposureReview, out io.Writer, confirm func() bool) error {
@@ -188,6 +189,10 @@ func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases
 		return err
 	}
 	if !confirmed {
+		// A decline is not an interruption: leave no marker for the next review to misread.
+		if err := review.Discard(context.WithoutCancel(ctx)); err != nil {
+			return fmt.Errorf("cancelled — nothing was approved, but the pending marker could not be removed: %w", err)
+		}
 		return errors.New("cancelled — nothing was approved")
 	}
 	// Save file access before the network generation wakes editor supervisors.

@@ -23,6 +23,7 @@ type fakeApprovalReview struct {
 	pending       *networkstate.PendingApproval
 	committed     int
 	commitErr     error
+	discarded     int
 }
 
 func (f *fakeApprovalReview) Project() string                { return "/private/tmp/project" }
@@ -31,7 +32,8 @@ func (f *fakeApprovalReview) After() *networkstate.Approval  { return f.after }
 func (f *fakeApprovalReview) Pending() *networkstate.PendingApproval {
 	return f.pending
 }
-func (f *fakeApprovalReview) Commit(context.Context) error { f.committed++; return f.commitErr }
+func (f *fakeApprovalReview) Commit(context.Context) error  { f.committed++; return f.commitErr }
+func (f *fakeApprovalReview) Discard(context.Context) error { f.discarded++; return nil }
 
 func approvalRule(domain string) egress.Rule {
 	return egress.Rule{To: egress.Destination{Domain: domain}, Protocol: "tls", Ports: []int{443}}
@@ -178,6 +180,9 @@ func TestApprovalCancelledLeavesNothingBehind(t *testing.T) {
 	}
 	if review.committed != 0 {
 		t.Error("a declined approval was committed")
+	}
+	if review.discarded != 1 {
+		t.Errorf("a declined review discarded its pending marker %d times, want once", review.discarded)
 	}
 }
 

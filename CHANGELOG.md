@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Answering n to a project's first `coop approve` leaves no marker behind.** The next review reads
+  the same as the first instead of blaming a checkout marker with no approval.
 - **A pending note is no longer taken for your answer.** A blocked task whose `**Resolution:**` line
   only says the answer is still to come, such as `pending owner direction` or `TBD`, now shows
   `Needs your answer`, `coop tasks decisions -i` asks it, and `coop loop` leaves it blocked. A real

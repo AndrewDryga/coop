@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 )
 
 var ErrApprovalChanged = errors.New("the request changed while you were reviewing it — run 'coop approve' again")
@@ -106,6 +107,38 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 		return ApprovalReview{}, nil, err
 	}
 	return ApprovalReview{Before: copyApproval(before), After: copyApproval(after), Digest: digest}, selected, nil
+}
+
+// DiscardUnapprovedReview undoes what ReviewApproval prepared when the owner declined a project's
+// FIRST review: the pending marker would otherwise make the next review say the checkout has a
+// marker but no approval, which is not what happened. A project that holds any approval keeps its
+// marker, since the marker is that approval's half. Nothing is granted or removed from authority.
+func (s *Store) DiscardUnapprovedReview(ctx context.Context, project string) error {
+	resolved, err := canonicalPath(project)
+	if err != nil {
+		return err
+	}
+	id, err := s.projectID(resolved)
+	if err != nil {
+		return err
+	}
+	return s.lockRecord(ctx, "approval", id, func() error {
+		if approval, err := s.approval(id); err != nil || approval != nil || s.shownLegacyApproval(resolved) != nil {
+			return err
+		}
+		body, err := fsidentity.ReadMarker(resolved, ProjectApprovalMarker)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		boundProject, anchor, err := parseAnyProjectAnchorBody(body)
+		if err != nil || boundProject != id {
+			return nil // not this review's marker: leave a stranger's file for 'coop approve' to explain
+		}
+		return fsidentity.Retire(s.projectAnchorBinding(resolved, id, anchor))
+	})
 }
 
 // The digest is keyed: a public value cannot be replayed as owner consent, and

@@ -429,3 +429,46 @@ func TestApprovedServiceRequestPassesItsOwnEnvelope(t *testing.T) {
 		t.Fatal("a wider port set passed the envelope")
 	}
 }
+
+// Declining a project's first review must leave it as it was before the review, so the next review
+// reads the same and the marker means an approval, not a question. An approved project keeps its
+// marker through a later decline, since the marker is half of that approval.
+func TestDiscardUnapprovedReviewLeavesNoMarkerOnlyBeforeAnApproval(t *testing.T) {
+	s, project := openStore(t), t.TempDir()
+	marker := filepath.Join(project, ProjectApprovalMarker)
+	requests := []egress.Rule{rule("reviewed.example.com")}
+	review := func() ApprovalReview {
+		t.Helper()
+		r, err := s.ReviewApproval(project, egress.Filtered, requests, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	first := review()
+	if err := s.DiscardUnapprovedReview(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("declined first review left its marker: %v", err)
+	}
+	if _, err := s.root.Lstat(projectAnchorName(first.After.ProjectID, first.After.ProjectAnchor)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("declined first review left its private anchor: %v", err)
+	}
+	second := review()
+	if second.Before != nil || second.After.ProjectAnchor == first.After.ProjectAnchor {
+		t.Fatal("the next review did not start from scratch", second.Before)
+	}
+	if err := s.Approve(context.Background(), project, egress.Filtered, requests, nil, nil, second.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DiscardUnapprovedReview(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker); err != nil {
+		t.Fatal("a decline removed an approved project's marker", err)
+	}
+	if _, err := s.Approval(project); err != nil {
+		t.Fatal(err)
+	}
+}
