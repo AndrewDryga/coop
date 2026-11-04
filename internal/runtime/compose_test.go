@@ -86,11 +86,7 @@ func TestComposeRegistryConfigStaysUnderProtectedCoopHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	home, err := coopconfig.RootDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	protected, err := filepath.EvalSymlinks(filepath.Join(home, "runfiles"))
+	protected, err := filepath.EvalSymlinks(filepath.Join(coopconfig.LocalRoot(), "runfiles"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -725,7 +725,7 @@ func TestDockerRebindUsesCapturedBinaryAndEndpoint(t *testing.T) {
 func TestDockerClientDirectoryLivesInPrivateRunfiles(t *testing.T) {
 	developers := filepath.Join(teststate.DeveloperConfigHome(), "coop")
 	rt, file := fixtureDocker(t, dockerFixture{})
-	runfiles := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "coop", "runfiles")
+	runfiles := filepath.Join(os.Getenv("XDG_STATE_HOME"), "coop", "runfiles")
 	if !filepath.IsAbs(runfiles) || pathWithin(developers, runfiles) {
 		t.Fatalf("a Docker-binding test would write into the developer's config root %s: %s", developers, runfiles)
 	}
@@ -770,7 +770,8 @@ func TestDockerClientDirectoryLivesInPrivateRunfiles(t *testing.T) {
 func TestDockerClientDirectoryFollowsALinkedCoopHome(t *testing.T) {
 	rt, _ := fixtureDocker(t, dockerFixture{})
 	target := t.TempDir()
-	if err := os.Symlink(target, filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "coop")); err != nil {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := os.Symlink(target, filepath.Join(os.Getenv("XDG_STATE_HOME"), "coop")); err != nil {
 		t.Fatal(err)
 	}
 	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
@@ -778,11 +779,7 @@ func TestDockerClientDirectoryFollowsALinkedCoopHome(t *testing.T) {
 		t.Fatalf("a linked Coop home broke the Docker binding: %v", err)
 	}
 	defer d.Close()
-	home, err := coopconfig.RootDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	swept, exists, err := coopconfig.ExistingRunfiles(&coopconfig.Config{BoxHome: home})
+	swept, exists, err := coopconfig.ExistingRunfiles(nil)
 	if err != nil || !exists || filepath.Dir(d.clientConfig) != swept {
 		t.Fatalf("client directory %s is not in the runfiles the sweep visits (%q, %v, %v)", d.clientConfig, swept, exists, err)
 	}
