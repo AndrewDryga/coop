@@ -387,7 +387,7 @@ task-channel-e2e: ## The in-box task channel: a real box completes its own task 
 # own store.
 network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair)
 	@state="$${COOP_NETWORK_TRIAL_STATE:-$$(mktemp -d)}" || exit 1; echo "network trial records: $$state"; \
-	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun)' -count=1 -timeout 45m -v ./internal/box/
+	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun|EditorBoxWait)' -count=1 -timeout 45m -v ./internal/box/
 
 clean: ## Remove build artifacts
 	@rm -f coop
