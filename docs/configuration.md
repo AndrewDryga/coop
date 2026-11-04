@@ -14,7 +14,7 @@ any other value.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `COOP_HOME` | `$XDG_CONFIG_HOME/coop`, or `~/.config/coop` | Absolute path of Coop's settings folder, for accounts and `coop.conf`. Use it to keep that folder out of a sync service such as Dropbox, without moving other tools' settings. Set it for your editor too. `coop doctor` warns about a folder inside a sync service. Coop does not move your files. |
+| `COOP_HOME` | `$XDG_CONFIG_HOME/coop`, or `~/.config/coop` | Absolute path of Coop's settings folder, for accounts and `coop.conf`. Use it to keep that folder out of a sync service such as Dropbox, without moving other tools' settings. Set it for your editor too. `coop doctor` says when the folder is inside a sync service. Coop does not move your files. |
 | `COOP_RUNTIME` | auto (Docker preferred) | Picks the runtime: `docker` or `container`. |
 | `COOP_IMAGE` | auto | Forces a specific image. It overrides `.agent/Dockerfile` detection. |
 | `COOP_BASE_IMAGE` | `coop-box` | The shared base image. `coop-box` selects co:op's own image, with a `coop-box:<definition>` tag for each box definition. |

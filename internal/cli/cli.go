@@ -123,6 +123,7 @@ func Main(argv []string) int {
 		return 1
 	}
 	box.ResolveBaseImage(cfg)
+	cfg.EnsureSettingsGitignore()
 	if !detachedWorkerReexec(argv) {
 		// Once a day, check for a newer coop in the background and mention it as the command's
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.

@@ -1322,3 +1322,34 @@ func SyncService(path string) string {
 	}
 	return ""
 }
+
+// settingsGitignore keeps a settings folder that lives in a dotfiles repository to the files meant to
+// be shared. Accounts, tokens (agents/env), history and per-machine records never reach Git.
+const settingsGitignore = `# Written by Coop if missing; edit it freely. Only shared settings reach Git.
+*
+!.gitignore
+!coop.conf
+!usage-reports.json
+!presets/
+!presets/**
+!agents/
+agents/*
+!agents/mcp.json
+!agents/defaults
+!agents/INSTRUCTIONS.md
+`
+
+// EnsureSettingsGitignore writes the settings folder's .gitignore if the folder exists and has none.
+// It is a courtesy for dotfiles repositories, so a failure is not a reason to stop a command.
+func (c *Config) EnsureSettingsGitignore() {
+	if c.BoxHome == "" {
+		return
+	}
+	path := filepath.Join(c.BoxHome, ".gitignore")
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if info, err := os.Stat(c.BoxHome); err == nil && info.IsDir() {
+		_ = WriteFileAtomic(path, []byte(settingsGitignore))
+	}
+}

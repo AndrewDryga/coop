@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -954,5 +955,45 @@ func TestRootDirHonorsCoopHome(t *testing.T) {
 	t.Setenv("COOP_HOME", "relative/path")
 	if _, err := RootDir(); err == nil {
 		t.Error("a relative COOP_HOME was accepted")
+	}
+}
+
+// Git keeps only the shared settings, and an edited file is left alone.
+func TestSettingsGitignoreKeepsOnlySharedSettings(t *testing.T) {
+	home := t.TempDir()
+	c := &Config{BoxHome: home}
+	c.EnsureSettingsGitignore()
+	repo := exec.Command("git", "-c", "core.hooksPath=/dev/null", "init", "-q", home)
+	repo.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := repo.CombinedOutput(); err != nil {
+		t.Fatal(string(out), err)
+	}
+	ignored := func(path string) bool {
+		cmd := exec.Command("git", "-C", home, "check-ignore", "-q", path)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		return cmd.Run() == nil
+	}
+	for _, path := range []string{"coop.conf", "usage-reports.json", "presets/review/preset.yaml", "agents/mcp.json", "agents/defaults", "agents/INSTRUCTIONS.md", ".gitignore"} {
+		if ignored(path) {
+			t.Errorf("%s is ignored, want it shared", path)
+		}
+	}
+	for _, path := range []string{"agents/env", "agents/claude/credentials/work/token", "agents/acp-threads/a", "runfiles/x", "usage-cache/y", "image-use/z", "acp-trace-1.log"} {
+		if !ignored(path) {
+			t.Errorf("%s reached Git", path)
+		}
+	}
+	file := filepath.Join(home, ".gitignore")
+	if err := os.WriteFile(file, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.EnsureSettingsGitignore()
+	if data, _ := os.ReadFile(file); string(data) != "mine\n" {
+		t.Errorf("an edited .gitignore was replaced: %q", data)
+	}
+	gone := &Config{BoxHome: filepath.Join(home, "missing")}
+	gone.EnsureSettingsGitignore()
+	if _, err := os.Stat(gone.BoxHome); !os.IsNotExist(err) {
+		t.Error("it created a settings folder")
 	}
 }

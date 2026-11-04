@@ -10,9 +10,10 @@
 - **`coop up` stops showing hashed container names**, and a slow first `coop usage` says it is reading
   your history.
 
-- **`coop doctor` warns when your sign-ins sit in a sync folder**, such as Dropbox, iCloud Drive, Google
-  Drive or OneDrive, following links. The new `COOP_HOME` moves Coop's settings folder on its own. Coop
-  never moves your files itself.
+- **Coop's settings folder works better with sync and Git.** `coop doctor` says when your settings and
+  sign-ins sync through Dropbox, iCloud Drive, Google Drive or OneDrive, following links. The new
+  `COOP_HOME` moves the folder on its own. A new `.gitignore` there keeps a dotfiles repository to shared
+  settings, so accounts and `agents/env` never reach Git.
 
 - **`COOP_EGRESS=offline` is always offline.** In a project with approved network rules it ran filtered
   and could reach those sites. Now only an `--egress` flag outranks it. A saved approval still outranks

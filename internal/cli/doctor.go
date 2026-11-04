@@ -159,7 +159,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	// One predicate, asked of the runtime itself, so doctor cannot drift from what Run applies.
 	hardened := a.rt.SupportsRunLimits()
 
-	warnSyncedSettings(a.cfg.BoxHome)
+	noteSyncedSettings(a.cfg.BoxHome)
 	report := &doctorReport{}
 	secrets, host, offline, taskSection, credentials, cloneSection := report.doctorSections()
 
@@ -1042,14 +1042,15 @@ func treeContains(root, needle string) bool {
 	return found
 }
 
-// warnSyncedSettings names a settings folder inside a file-sync service, where sign-ins leave this
-// machine and a sync conflict can move or remove them. Moving the data stays the person's call.
-func warnSyncedSettings(home string) {
+// noteSyncedSettings says when the settings folder sits in a file-sync service. Syncing sign-ins
+// across machines can be exactly what someone wants, so this informs and does not ask for a move. The
+// one risk worth naming: two machines refreshing a single-use sign-in at once can sign one of them out.
+func noteSyncedSettings(home string) {
 	service := config.SyncService(home)
 	if home == "" || service == "" {
 		return
 	}
-	ui.Warn("Coop's settings are in %s: %s", service, ui.SafeInline(home))
-	ui.Note("  Your sign-ins sync with them, and another machine or a sync conflict can change or remove them.")
-	ui.Note("  Move the folder out of %s, set COOP_HOME to its new path, and exclude the old one from sync.\n", service)
+	ui.Note("Coop's settings and sign-ins sync through %s: %s", service, ui.SafeInline(home))
+	ui.Note("  If one machine gets signed out after another refreshes, run coop login there.")
+	ui.Note("  To keep them on this machine only, set COOP_HOME to a folder outside %s.\n", service)
 }
