@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ func holdLaunchLock(t *testing.T, repo string) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A test can release it early from a timer, and the cleanup must not release it again.
+	release = sync.OnceFunc(release)
 	t.Cleanup(release)
 	return release
 }

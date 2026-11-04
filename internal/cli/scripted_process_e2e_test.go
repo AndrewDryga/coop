@@ -242,15 +242,16 @@ func readProcessTrace(t *testing.T, path string) []*processTrace {
 type traceShape int
 
 const (
-	noOrphanBoxSweep  traceShape = iota // a direct provider run makes no runtime call of its own before `run`
+	noOrphanBoxSweep  traceShape = iota // a direct provider run: only the two listings of a launch sweep on its way in
 	sweepsOrphanBoxes                   // this command reaps orphaned boxes and networks before it starts
 	loopWorkBox                         // sweeps, then carries the task channel around the box run
 	sessionTaskBox                      // a direct provider run that carries the task channel around its box
 )
 
 const (
-	directTraceEvents      = 8
-	sweptTraceEvents       = directTraceEvents + 4
+	baseTraceEvents        = 8
+	directTraceEvents      = baseTraceEvents + 2 // the two listings of a launch's sweep
+	sweptTraceEvents       = baseTraceEvents + 4
 	loopWorkTraceEvents    = sweptTraceEvents + 4
 	sessionTaskTraceEvents = directTraceEvents + 4
 )
@@ -302,6 +303,10 @@ func assertDirectRuntimeInvocations(t *testing.T, trace []*processTrace, shape t
 		// for a dead run's own project services, the task-channel volumes dead runs left, then one for
 		// the compose networks a dead session leaves holding a subnet.
 		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"}, []string{"volume", "<validated>"}, []string{"network", "<validated>"})
+	}
+	if !shape.sweeps() {
+		// A direct launch removes what a killed session left: containers for boxes, and for services.
+		wantPrefix = append(wantPrefix, []string{"ps", "<validated>"}, []string{"ps", "<validated>"})
 	}
 	// The daemon probe also names the daemon, which the run records for the daily temp sweep.
 	wantPrefix = append(wantPrefix, []string{"info", "--format", "{{.ID}}"})
