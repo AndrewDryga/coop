@@ -1,9 +1,8 @@
 # co:op website design guide
 
 Version 1 · September 2026. This guide set the direction for the website at coop.dryga.com.
-`site/assets/css/site.css` copies its token values under short names (`--bg`, `--amber`), and
-the site's icons are drawn from `assets/coop-flat.svg`. This guide, the
-[tokens](tokens.css) and the [visual reference](index.html) form one handoff.
+`site/assets/css/site.css` holds its token values under short names (`--bg`, `--amber`), and
+the site's icons are drawn from `assets/coop-flat.svg`.
 
 ## 1. The direction
 
@@ -80,8 +79,7 @@ isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or 
   The wordmark colon is amber. Mint belongs to semantic success states, not the logo.
 - Preserve the roof separation, circular opening, narrow cyan rim and rounded corners.
   No bevel, wood texture, gradient, glow, extra symbols or simulated lighting.
-- The [approved raster](assets/approved-direction.png) records the concept. Production
-  artwork uses the flat vectors, without the generated raster's texture or option label.
+- Production artwork uses the flat vectors.
 - Default navigation: a 36×32px mark, 12px gap and 77.2×22.5px wordmark. The footer and
   narrow screens use the smaller sizes in `site.css`. The smallest phones show the mark alone.
 - Around standalone artwork, leave clear space of at least one quarter of its width.
@@ -94,7 +92,7 @@ isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or 
 
 ## 4. Color and dark material
 
-Every exact value lives in [tokens.css](tokens.css). Don't scatter near-matching hex values
+Every exact value lives in `site/assets/css/site.css`. Don't scatter near-matching hex values
 through components.
 
 | Token | Value | Use |
@@ -296,9 +294,7 @@ reconstructions of real CLI output. Never label them as live or recorded custome
 ## 9. Implementation handoff and acceptance
 
 Keep the existing hand-written HTML/CSS/JS site. This direction needs no new framework,
-animation library, font CDN or build pipeline. When you implement it, consolidate the tokens
-into the website's own stylesheet. Don't leave two competing runtime token systems. Keep
-this guide as the design reference.
+animation library, font CDN or build pipeline. Keep this guide as the design reference.
 
 The favicon and app-icon exports are committed images drawn from `assets/coop-flat.svg`, and the
 OG 1200×630 cards are screenshots of each landing page's first screen. The "SEO assets" section of
@@ -350,5 +346,4 @@ to import Phoenix components.
   sibling repository, for the umbrella identity. They don't decide the website's fonts.
 
 The creative-direction skill shaped the product-specific concept and hierarchy. The
-interface-polish skill shaped typography, dark surfaces, focus and motion. The specimen
-demonstrates those rules. It isn't finished website content.
+interface-polish skill shaped typography, dark surfaces, focus and motion.
