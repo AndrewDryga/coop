@@ -118,8 +118,8 @@ func editorStartProblems(cfg *config.Config, skipped []presetSkip, now time.Time
 	for _, s := range skipped {
 		// The listing shows why each preset failed; naming one would not do (`coop presets init`
 		// creates a preset).
-		problems = append(problems, acpctl.Problem{Title: `The "` + s.name + `" preset is missing from the toolbar`,
-			Detail: "it could not be loaded.", Command: "coop presets", Purpose: "to see why"})
+		problems = append(problems, acpctl.Problem{Title: `The "` + s.name + `" preset is missing from the toolbar.`,
+			Detail: "It could not be loaded.", Command: "coop presets", Purpose: "on the host, to see why"})
 	}
 	return problems
 }
@@ -151,12 +151,12 @@ func signInProblems(cfg *config.Config, provider string, now time.Time) []acpctl
 	}
 	var problems []acpctl.Problem
 	for _, account := range dead {
-		title := ag.DisplayName() + " isn't available"
+		title := ag.DisplayName() + " isn't available."
 		if working || len(dead) > 1 {
-			title = ag.DisplayName() + ` account "` + account + `" isn't available`
+			title = ag.DisplayName() + ` account "` + account + `" isn't available.`
 		}
-		problems = append(problems, acpctl.Problem{Title: title, Detail: "its saved sign-in no longer works.",
-			Command: agents.LoginCommand(provider + "@" + account)})
+		problems = append(problems, acpctl.Problem{Title: title, Detail: "Its saved sign-in no longer works.",
+			Command: agents.LoginCommand(provider + "@" + account), Purpose: "on the host"})
 	}
 	return problems
 }

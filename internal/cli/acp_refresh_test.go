@@ -209,7 +209,7 @@ func TestACPRefreshKeepsTheBoxWhenAdmissionFails(t *testing.T) {
 		t.Fatalf("admits=%d reports=%d policy=%q spawns=%d drains=%d restarts=%d, want one refused admission and nothing replaced",
 			h.admits, len(h.reports), h.r.current().Fingerprint, len(h.spawns), h.drains, h.restarts)
 	}
-	if len(h.notices) != 1 || !strings.Contains(h.notices[0], "Run coop approve") {
+	if len(h.notices) != 1 || !strings.Contains(h.notices[0], "```\ncoop approve\n```") {
 		t.Fatalf("notices = %q, want the review notice once", h.notices)
 	}
 	h.approves("new-policy")
@@ -496,14 +496,14 @@ func TestACPRefreshNoticeKeepsDetailsInTheLog(t *testing.T) {
 		err  error
 		want string
 	}{
-		{reviewNeeded("these rules changed: " + detail), "Run coop approve"},
-		{box.ErrNetworkSetupRequired, "Run coop net setup, then reconnect the editor"},
+		{reviewNeeded("these rules changed: " + detail), "```\ncoop approve\n```"},
+		{box.ErrNetworkSetupRequired, "then reconnect the editor:\n\n```\ncoop net setup\n```"},
 		{fmt.Errorf("%w: %w", errACPApprovalWithdrawn, reviewNeeded(detail)), "approval was withdrawn"},
 		{errACPNetworkModeChanged, "network access changed"},
 		{errors.New("docker exploded " + detail), "The reason is in the agent log"},
 	} {
 		notice := acpRefreshNotice(tc.err)
-		if !strings.Contains(notice, tc.want) || strings.Contains(notice, "googleapis") || strings.Contains(notice, "/Users/") || !strings.HasPrefix(notice, "Coop ") {
+		if !strings.Contains(notice, tc.want) || strings.Contains(notice, "googleapis") || strings.Contains(notice, "/Users/") || !strings.HasPrefix(notice, "⚠ **Coop ") {
 			t.Errorf("notice for %q = %q, want %q, Coop as the subject and no detail", tc.err, notice, tc.want)
 		}
 	}
@@ -748,7 +748,7 @@ func TestACPReadmitRefusesAChangedOrWithdrawnProjectBeforeTheRuntime(t *testing.
 
 	project("proxy.golang.org", "storage.googleapis.com")
 	_, err = a.acpReadmit(t.Context(), cfg, spec, box.NetworkAdmission{})
-	if err == nil || !strings.Contains(err.Error(), "Review it: coop approve") || !strings.Contains(acpRefreshNotice(err), "Run coop approve") {
+	if err == nil || !strings.Contains(err.Error(), "Review it: coop approve") || !strings.Contains(acpRefreshNotice(err), "```\ncoop approve\n```") {
 		t.Fatalf("re-admitting an edited project = %v", err)
 	}
 

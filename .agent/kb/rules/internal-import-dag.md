@@ -448,3 +448,6 @@ this one has it.
 - 2026-11-02 — added `sessionsvc -> safefile`: closed companion GC reads its private
   staging receipt and payload through a pinned, non-symlink directory descriptor.
   Reusing the leaf keeps deletion authority anchored while a path can be replaced.
+
+- 2026-11-03 — added the test-only `testutil/threadtext` leaf: three packages write thread messages, and
+  one checker holds them to the same rule (`acp-thread-messages-are-structured`).

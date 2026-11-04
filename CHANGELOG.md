@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
+  its own line and short paragraphs, and every command to run is a code block you can copy.
+
 - **Grok works on a project's first run.** A project with no Grok history no longer says "Not signed
   in" when your account is fine.
 

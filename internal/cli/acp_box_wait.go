@@ -36,7 +36,7 @@ const (
 	// acpBoxStartFailedText is what a thread hears while real boxes keep exiting as they start, whatever
 	// the reason: Coop's refusal, a broken sidecar, a Dockerfile that no longer fits. The child that
 	// failed already wrote why to the agent log, so this need not, and need not know every reason.
-	acpBoxStartFailedText = "⚠ **Coop could not start this project's box.** The reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."
+	acpBoxStartFailedText = "⚠ **Coop could not start this project's box.**\n\nThe reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."
 )
 
 // errACPBoxWaiting keeps the warm pool empty while the session's boxes cannot start: nothing it parks
@@ -323,23 +323,24 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 	case blocked == nil:
 		return ""
 	case errors.As(blocked, &pending):
-		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval",
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval.",
 			Detail:  "Nobody approved what it asks for as it is now, so no agent runs here yet. " + waits,
 			Command: "coop approve", Purpose: "in this project, on the host"})
 	case errors.Is(blocked, errACPNetworkModeChanged):
-		return "⚠ **Reconnect your editor.** You approved network access this session cannot switch to, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."
+		return acpctl.ProblemText(acpctl.Problem{Title: "Reconnect your editor.",
+			Detail: "You approved network access this session cannot switch to, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."})
 	case required != nil && failed:
-		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box",
+		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box.",
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
 	case required != nil && required.Approved:
-		return "**Rebuilding this project's box.** Your approved build files did not change, so this needs nothing from you. " + waits
+		return "**Rebuilding this project's box.**\n\nYour approved build files did not change, so this needs nothing from you. " + waits
 	case required != nil:
-		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build",
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
 			Detail:  "You have not approved its build files as they are now, and a build runs them with open networking, so Coop waits for you. " + waits + " Review the Dockerfile and the files it copies.",
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
 	default:
-		return "⚠ **This project's box cannot start yet.** " + waits + "\n\n```\n" + blocked.Error() + "\n```"
+		return "⚠ **This project's box cannot start yet.**\n\n" + waits + "\n\n" + acpctl.CodeBlock(blocked.Error())
 	}
 }
 

@@ -755,7 +755,7 @@ func (p *proxy) setChild(c *Child) {
 
 // sessionEndedNoBoxText is what every open thread hears when even a child that only holds prompts
 // cannot start, which is what a stopped Docker looks like.
-const sessionEndedNoBoxText = "⚠ **This session stopped.** Coop could not start any box for this project. The reason is in the agent log. Fix it, then reconnect your editor."
+const sessionEndedNoBoxText = "⚠ **This session stopped.**\n\nCoop could not start any box for this project. The reason is in the agent log. Fix it, then reconnect your editor."
 
 // answeredInitialize reports whether this child, still the live one, gave the editor's initialize a
 // successful answer.
@@ -2469,9 +2469,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 			p.controlMu.Unlock()
 			return errReplaySuperseded
 		}
-		line := SessionMessageLine(f.editorID,
-			"⚠ This session could not be re-established after the box restarted: "+f.msg+
-				"\nSwitch the provider or account back (or close the conflicting session), then send a message to retry.")
+		line := SessionMessageLine(f.editorID, replayFailedText(f.msg))
 		traceLine("box→editor(replay-failed)", line)
 		_, _ = p.out.Write(line)
 		p.controlMu.Unlock()
@@ -3041,12 +3039,26 @@ func SessionMessageLine(sid, text string) []byte {
 			"sessionId": sid,
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": text},
+				"content":       map[string]any{"type": "text", "text": ThreadText(text)},
 			},
 		},
 	}
 	b, _ := json.Marshal(upd)
 	return append(b, '\n')
+}
+
+// replayFailedText is what a thread hears when its session did not come back on a restarted box. The
+// message is the adapter's, or a recovery of Coop's that can hold a code block, so it stands alone.
+func replayFailedText(message string) string {
+	return "⚠ **This session could not be re-established after the box restarted.**\n\n" + message +
+		"\n\nSwitch the provider or account back (or close the conflicting session), then send a message to retry."
+}
+
+// ThreadText sets what Coop writes into a thread apart from what is around it. An editor appends the
+// chunks of a running message with nothing between them, and a closing code fence with the agent's next
+// words on its line does not close.
+func ThreadText(text string) string {
+	return "\n\n" + text + "\n\n"
 }
 
 // errorMessage extracts the human message from a JSON-RPC error object, falling back to the
@@ -3186,7 +3198,7 @@ func sessionIDCollisionResponse(id, sessionID string) []byte {
 
 func authenticationUnavailableResponse(id, provider, methodID string) []byte {
 	message, _ := json.Marshal(fmt.Sprintf(
-		"Authentication method %q is not advertised by provider %s. Use its Account selector, or run coop login %s@account on the host.",
+		"Authentication method %q is not advertised by provider %s.\n\nUse its Account selector, or run this on the host with your account's name:\n\n```\ncoop login %s@account\n```",
 		methodID, provider, provider,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32602,"message":` + string(message) + `}}` + "\n")

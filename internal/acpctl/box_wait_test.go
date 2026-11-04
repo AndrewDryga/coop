@@ -8,6 +8,12 @@ import (
 
 func noticeText(t *testing.T, line []byte) string {
 	t.Helper()
+	return strings.Trim(noticeTextRaw(t, line), "\n")
+}
+
+// noticeTextRaw is a notice exactly as a thread gets it, with the blank lines that set it apart.
+func noticeTextRaw(t *testing.T, line []byte) string {
+	t.Helper()
 	var notice struct {
 		Params struct {
 			Update struct {

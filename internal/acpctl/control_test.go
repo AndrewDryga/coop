@@ -1331,7 +1331,7 @@ func TestACPControlAuthenticationGivesPinnedLoginRecovery(t *testing.T) {
 	if restart {
 		t.Fatal("a pinned account with no automatic fallback must not restart-loop")
 	}
-	if !bytes.Contains(out, []byte("Sign in to claude@personal on the host: coop login claude@personal")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
+	if !bytes.Contains(out, []byte("Sign in to claude@personal on the host:\\n\\n```\\ncoop login claude@personal\\n```")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
 		t.Fatalf("pinned account recovery is not actionable: %s", out)
 	}
 }
@@ -1413,7 +1413,7 @@ func TestACPControlGrokRejectedLoginFollowsTheCredentialPolicy(t *testing.T) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if restart || json.Unmarshal(out, &shown) != nil || shown.Error.Message != "Sign in to grok@personal on the host: coop login grok@personal" {
+	if restart || json.Unmarshal(out, &shown) != nil || shown.Error.Message != "Sign in to grok@personal on the host:\n\n```\ncoop login grok@personal\n```" {
 		t.Fatalf("a pinned Grok account was not told how to sign in again, out=%s restart=%v", out, restart)
 	}
 }

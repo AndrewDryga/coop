@@ -40,7 +40,7 @@ func TestACPNotifyRidesTheNextSessionUpdateOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if notice.Method != "session/update" || notice.Params.SessionID != "S" || notice.Params.Update.SessionUpdate != "agent_message_chunk" ||
-		notice.Params.Update.Content.Text != "Coop could not apply the newly approved network rules.\n\nan older notice" {
+		notice.Params.Update.Content.Text != "\n\nCoop could not apply the newly approved network rules.\n\nan older notice\n\n" {
 		t.Fatalf("the notices are not each queued text once, in the order they last happened, in the update's session: %s", lines[0])
 	}
 	if again := toEd(c, chunk); bytes.Count(again, []byte("\n")) != 1 || bytes.Contains(again, []byte("Coop could not")) {

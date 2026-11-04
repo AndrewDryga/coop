@@ -100,6 +100,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [cli-text-is-plain-english](cli-text-is-plain-english.md) — plain CLI and website copy that preserves facts, commands and safety details
 - [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
+- [acp-thread-messages-are-structured](acp-thread-messages-are-structured.md) — a thread message has its title alone on a line, short paragraphs, and each command to run as a fenced code block
 - [acp-waits-and-switches-are-visible](acp-waits-and-switches-are-visible.md) — announce automatic quota fallback and every newly queued account wait
 - [login-guidance-at-provider-start](login-guidance-at-provider-start.md) — put sign-in guidance below Starting and separate success from shutdown
 - [help-output-style](help-output-style.md) — UPPERCASE help headings, aligned command rows, practical prose and numbered how-tos

@@ -34,8 +34,8 @@ type NetworkLimit struct {
 }
 
 // Problem is something the person should fix that would otherwise reach only the editor's log.
-// Title and Detail are plain text. Command, when set, is shown as code to run, followed by Purpose
-// ("to see why"), if any.
+// Title and Detail are plain text, and Title is a sentence. Command, when set, is shown as a code block
+// to run, introduced by Purpose ("on the host, to see why").
 type Problem struct{ Title, Detail, Command, Purpose string }
 
 // maxNamedAllowances is how many approved destinations the network line names before it counts them.
@@ -69,7 +69,7 @@ func ServeLoopbackText(p ServePort, command string) string {
 	if command = shortCommand(command); command != "" {
 		what = codeSpan(command)
 	}
-	return fmt.Sprintf("⚠ **Your browser cannot reach port %d:** %s listens only on 127.0.0.1 inside the box. Bind it to 0.0.0.0.", p.Box, what)
+	return fmt.Sprintf("⚠ **Your browser cannot reach port %d.**\n\n%s listens only on 127.0.0.1 inside the box. Bind it to 0.0.0.0.", p.Box, what)
 }
 
 // shortCommand keeps a command line short enough to read in a thread.
@@ -240,24 +240,26 @@ func networkText(n NetworkLimit) string {
 	for i := range allowed {
 		allowed[i] = markdownText(allowed[i])
 	}
-	line := "**Internet is filtered.** Allowed: " + strings.Join(allowed, ", ") + "."
-	if !named {
-		line += " " + codeSpan("coop net") + " lists them."
+	text := "**Internet is filtered.**\n\nAllowed: " + allowed[0] + "."
+	if len(allowed) > 1 {
+		text = "**Internet is filtered.**\n\nAllowed:\n\n- " + strings.Join(allowed, "\n- ")
 	}
-	return line + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + " and run " +
-		codeSpan("coop approve") + ". Open threads pick it up on their own."
+	if !named {
+		text += "\n\nTo see them all, run this on the host:\n\n" + CodeBlock("coop net")
+	}
+	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
+		CodeBlock("coop approve") + "\n\nOpen threads pick it up on their own."
 }
 
-// problemText renders one problem on one line: the title in bold, the detail, then what to run.
-// ProblemText renders a problem the way a thread's start message does.
+// ProblemText renders a problem the way a thread's start message does: the title alone on its line, the
+// detail, then what to run.
 func ProblemText(p Problem) string {
-	text := "⚠ **" + markdownText(p.Title) + ":** " + markdownText(p.Detail)
+	text := "⚠ **" + markdownText(p.Title) + "**"
+	if p.Detail != "" {
+		text += "\n\n" + markdownText(p.Detail)
+	}
 	if p.Command != "" {
-		text += " Run " + codeSpan(p.Command)
-		if p.Purpose != "" {
-			text += " " + markdownText(p.Purpose)
-		}
-		text += "."
+		text += "\n\nRun this " + markdownText(p.Purpose) + ":\n\n" + CodeBlock(visible(p.Command))
 	}
 	return text
 }
@@ -313,6 +315,28 @@ func markdownText(s string) string {
 // inside cannot end the span, with hidden characters shown escaped as in markdownText.
 func codeSpan(s string) string {
 	s = visible(s)
+	longest := longestBackticks(s)
+	fence := strings.Repeat("`", longest+1)
+	if longest > 0 {
+		return fence + " " + s + " " + fence
+	}
+	return fence + s + fence
+}
+
+// CodeBlock shows text as a code block of its own, which an editor offers to copy whole: every command
+// a thread asks the person to run goes in one. A backtick inside cannot end it, and hidden characters are
+// shown escaped as in markdownText, line by line.
+func CodeBlock(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = visible(line)
+	}
+	text = strings.Join(lines, "\n")
+	fence := strings.Repeat("`", max(3, longestBackticks(text)+1))
+	return fence + "\n" + text + "\n" + fence
+}
+
+func longestBackticks(s string) int {
 	longest, run := 0, 0
 	for _, r := range s {
 		if r == '`' {
@@ -322,9 +346,5 @@ func codeSpan(s string) string {
 			run = 0
 		}
 	}
-	fence := strings.Repeat("`", longest+1)
-	if longest > 0 {
-		return fence + " " + s + " " + fence
-	}
-	return fence + s + fence
+	return longest
 }

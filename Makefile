@@ -390,6 +390,9 @@ network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run 
 	@state="$${COOP_NETWORK_TRIAL_STATE:-$$(mktemp -d)}" || exit 1; echo "network trial records: $$state"; \
 	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun|EditorBoxWait)' -count=1 -timeout 45m -v ./internal/box/
 
+thread-messages-check: ## Every message Coop writes into an editor thread has its titles, paragraphs and code blocks in order
+	@go test ./internal/acpctl ./internal/acpproxy ./internal/cli -run '^TestThreadMessagesAreStructured$$' -count=1
+
 clean: ## Remove build artifacts
 	@rm -f coop
 	@rm -rf dist
@@ -397,6 +400,7 @@ clean: ## Remove build artifacts
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
+.PHONY: thread-messages-check
 .PHONY: build install test test-minimal-path cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace

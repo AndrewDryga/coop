@@ -693,8 +693,8 @@ func (c *Control) maybeRecoverAuthentication(line []byte) (out []byte, restart, 
 				return c.configOptionUpdate(session), true, true
 			}
 			currentTarget, nextTarget := loginTarget(provider, currentAccount), loginTarget(provider, next)
-			msg := fmt.Sprintf("Sign in to %s on the host: %s. Coop switched this session to %s — send your last message again.",
-				agents.DisplayTarget(currentTarget), agents.LoginCommand(currentTarget), agents.DisplayTarget(nextTarget))
+			msg := fmt.Sprintf("%s\n\nCoop switched this session to %s. Send your last message again.",
+				signInText(currentTarget), agents.DisplayTarget(nextTarget))
 			return rewriteErrorMessage(line, msg), true, true
 		}
 	}
@@ -712,10 +712,12 @@ func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte
 	target := loginTarget(provider, account)
 	// Authentication is not a usage limit: the account has to be signed in again on the HOST,
 	// where the credential lives, and no wait or resend will fix it.
-	return rewriteErrorMessage(line, fmt.Sprintf(
-		"Sign in to %s on the host: %s",
-		agents.DisplayTarget(target), agents.LoginCommand(target),
-	))
+	return rewriteErrorMessage(line, signInText(target))
+}
+
+// signInText names the account to sign in to and the command that does it.
+func signInText(target string) string {
+	return fmt.Sprintf("Sign in to %s on the host:\n\n%s", agents.DisplayTarget(target), CodeBlock(agents.LoginCommand(target)))
 }
 
 type nativeTargetResult struct {
@@ -1241,7 +1243,7 @@ func (c *Control) statusMessage(session, text string) []byte {
 			"sessionId": session,
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": text},
+				"content":       map[string]any{"type": "text", "text": acpproxy.ThreadText(text)},
 				"messageId":     fmt.Sprintf("coop-notice-%d", n),
 			},
 		},
@@ -2634,8 +2636,8 @@ func (c *Control) injectedResponse(request, response []byte) []byte {
 	if req.Params.ModelID != "" {
 		setting = "model=" + req.Params.ModelID
 	}
-	text := fmt.Sprintf("Coop could not apply ACP target setting %s: %s. The adapter may be running a different target.", setting, detail)
-	return acpproxy.SessionMessageLine(req.Params.SessionID, text)
+	return acpproxy.SessionMessageLine(req.Params.SessionID, ProblemText(Problem{Title: "Coop could not apply an ACP target setting.",
+		Detail: fmt.Sprintf("%s: %s. The adapter may be running a different target.", setting, detail)}))
 }
 
 // sessionCwdMethods are the editor requests that carry a cwd naming the repo to work in.
@@ -2721,7 +2723,7 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	}
 	if h.Method == "authenticate" || h.Method == "logout" {
 		provider, account := c.authenticationTarget()
-		message := fmt.Sprintf("Sign in on the host: %s", agents.LoginCommand(loginTarget(provider, account)))
+		message := "Sign in on the host:\n\n" + CodeBlock(agents.LoginCommand(loginTarget(provider, account)))
 		return true, rpcErrorResponse(h.ID, -32601, message), nil, false
 	}
 	// Remember each session's in-flight prompt so a rate-limit rotation/wait can re-send it, and

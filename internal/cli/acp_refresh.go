@@ -48,19 +48,23 @@ const acpRefreshMoved = "Coop moved this session to a new box with the network r
 // acpRefreshNotice is what the editor shows when a network approval change could not be applied.
 // Fixed sentences only: an admission error can name hosts and paths, and those stay in the agent log.
 func acpRefreshNotice(err error) string {
+	kept := acpctl.Problem{Title: "Coop kept this session's network rules."}
 	var pending *networkstate.PendingApproval
 	switch {
 	case errors.Is(err, errACPNetworkModeChanged):
-		return "Coop kept this session's network rules: this project's network access changed. Reconnect the editor to use it."
+		kept.Detail = "This project's network access changed. Reconnect the editor to use it."
 	case errors.Is(err, errACPApprovalWithdrawn):
-		return "Coop kept this session's network rules, but this project's approval was withdrawn. Reconnect the editor to apply the withdrawal."
+		kept.Detail = "This project's approval was withdrawn. Reconnect the editor to apply the withdrawal."
 	case errors.As(err, &pending):
-		return "Coop kept this session's network rules: this project's requested access needs review. Run coop approve to apply it."
+		kept.Detail = "This project's requested access needs review."
+		kept.Command, kept.Purpose = "coop approve", "in this project, on the host, to apply it"
 	case errors.Is(err, box.ErrNetworkSetupRequired):
-		return "Coop kept this session's network rules: this host's network setup is out of date. Run coop net setup, then reconnect the editor."
+		kept.Detail = "This host's network setup is out of date."
+		kept.Command, kept.Purpose = "coop net setup", "on the host, then reconnect the editor"
 	default:
-		return "Coop kept this session's network rules: the new rules could not be applied. The reason is in the agent log; reconnect the editor to try again."
+		kept.Detail = "The new rules could not be applied. The reason is in the agent log. Reconnect the editor to try again."
 	}
+	return acpctl.ProblemText(kept)
 }
 
 // acpAdmit runs a filtered `coop acp` supervisor's startup admission again (see acpReadmit).

@@ -90,6 +90,7 @@ var allowedEdges = map[string][]string{
 	"testutil/procharness":  nil,
 	"testutil/starttoken":   {"processidentity"},
 	"testutil/teststate":    nil,
+	"testutil/threadtext":   nil,
 	"testutil/wait":         nil,
 	"testutil/workertls":    nil,
 	"ui":                    {"safetext"},
