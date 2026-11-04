@@ -205,7 +205,7 @@ GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-proces
 GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 
 check: export GOCACHE := $(GATE_GOCACHE)
-check: check-static ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
+check: trim-gate-cache check-static ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
 	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
 	@$(MAKE) --no-print-directory -j4 $(addprefix gate-,$(GATE_TEST_OWNERS))
 
@@ -219,6 +219,20 @@ gate-%: FORCE
 	fi
 
 FORCE:
+
+# Go keeps a cache entry for five days, so a busy day grows this cache without bound. Go refreshes an
+# entry's time whenever it uses one over an hour old, so an entry untouched for 180 minutes is in no
+# running gate's working set: removing it costs at most a rebuild, and a gate running in another
+# checkout keeps its own. Only the 00..ff folders hold entries; README, trim.txt and testexpire.txt
+# stay. Never go clean -cache here. The result is checked by looking again: BSD find exits 0 when it
+# cannot delete a file, and any find fails when a gate trimming at the same moment got there first.
+GATE_CACHE_OLD = find "$(GATE_GOCACHE)" -mindepth 2 -maxdepth 2 -type f -path '*/[0-9a-f][0-9a-f]/*' -mmin +180
+trim-gate-cache:
+	@if [ -d "$(GATE_GOCACHE)" ]; then \
+	  $(GATE_CACHE_OLD) -delete 2>/dev/null; \
+	  left="$$($(GATE_CACHE_OLD) | wc -l | tr -d ' ')"; \
+	  [ "$$left" = 0 ] || { echo "Could not remove $$left old entries from $(GATE_GOCACHE): check its permissions"; exit 1; }; \
+	fi
 
 check-static: mod-check gateway-sources-check filesystem-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
 check-unit: test-minimal-path ## Free ordinary unit tests, with only the host programs CONTRIBUTING.md requires
@@ -378,7 +392,7 @@ help: ## List targets
 .PHONY: build install test test-minimal-path cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
-.PHONY: check-static check-unit check-process check-race
+.PHONY: trim-gate-cache check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
 .PHONY: require-git-lfs

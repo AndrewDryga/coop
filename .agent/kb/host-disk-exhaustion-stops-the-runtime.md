@@ -2,8 +2,8 @@
 name: host-disk-exhaustion-stops-the-runtime
 description: a host out of disk OR memory kills the container runtime mid-run; both surface as unexplained "unexpected EOF" failures, never as a resource error
 subsystem: loop
-sources: [internal/box/run.go, internal/loop/loop.go, internal/cli/commands.go, internal/acpproxy/proxy.go]
-updated: 2026-10-17
+sources: [Makefile, internal/box/run.go, internal/loop/loop.go, internal/cli/commands.go, internal/acpproxy/proxy.go]
+updated: 2026-11-03
 ---
 A long loop can fill the host disk, and when it does the failure does NOT look like a disk problem.
 It looks like the loop breaking: `error waiting for container: unexpected EOF`, then
@@ -69,7 +69,15 @@ session is torn down: every box respawn fails instantly, `acpproxy` hits its 5-r
 so every later session fails identically until that window is reloaded. Restarting the runtime is
 not enough; the editor has to reconnect.
 
+The gate's own build cache is one of the largest regenerable consumers: it reached 19.5 GB on
+2026-11-03, the day parallel workers filled the disk. `make check` now starts with
+`trim-gate-cache`, which deletes entries no build has used for 180 minutes. Go refreshes an entry's
+time when it uses one over an hour old, so that age cannot reach a running gate's working set. A
+younger floor can: a 30-minute trim removed standard-library entries under running builds.
+
 ## Changelog
+- 2026-11-03 — recorded the gate cache trim and why its floor is 180 minutes, after a 19.5 GB cache
+  and a worker build burst stopped OrbStack; a manual run freed 6 GB under a running gate.
 - 2026-08-03 — created after a full host disk stopped the OrbStack VM mid-run and presented as five unexplained iteration failures; records the diagnosis path and why prune alone does not return space.
 - 2026-08-24 — memory exhaustion recorded as a second cause with the same signature (jetsam took the VM while the disk had 53 GiB free); adds `unified-kill.log` as the discriminator and the ACP teardown path, which fails differently from the loop's retry. Same run fixed the misleading diagnosis it caused: `image inspect` cannot tell a dead daemon from a missing image, so `resolveImage` (`internal/cli/commands.go`) and the loop reported "not built — run 'coop build'" while the image was present the whole time; all three call sites (`resolveImage`, now `requireLaunchImage` in `internal/cli/commands.go`; the loop's image guard; and the fork merge gate, now `ensureGateImage` in `internal/forkctl/merge.go`) now probe `EnsureDaemon` on that branch first.
 - 2026-08-10 — sources repointed: the loop engine moved out of `internal/cli` into `internal/loop`; the `iteration failed (n/5) — retrying`

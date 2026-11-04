@@ -355,7 +355,7 @@ func TestReleaseModuleHygiene(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "\nCI_OWNERS := check-static ") || !strings.Contains(text, "\ncheck: check-static ") ||
+	if !strings.Contains(text, "\nCI_OWNERS := check-static ") || !strings.Contains(text, "\ncheck: trim-gate-cache check-static ") ||
 		!strings.Contains(text, "\ncheck-static: mod-check gateway-sources-check ") {
 		t.Error("canonical union must begin with static module/freshness checks before behavioral owners")
 	}
@@ -417,7 +417,7 @@ func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, step := range []string{"\ncheck: check-static ", "$(addprefix gate-,$(GATE_TEST_OWNERS))"} {
+	for _, step := range []string{"\ncheck: trim-gate-cache check-static ", "$(addprefix gate-,$(GATE_TEST_OWNERS))"} {
 		if !strings.Contains(string(makefile), step) {
 			t.Errorf("make check must run check-static, then every GATE_TEST_OWNERS owner: %q is gone", step)
 		}
