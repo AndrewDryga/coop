@@ -90,7 +90,7 @@ if getent hosts example.org >/dev/null 2>&1; then exit 36; fi
 // verdict. Colors follow out — a terminal gets them, a file or NO_COLOR does not.
 func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, out, errOut io.Writer) (networkstate.Qualification, error) {
 	if ctx == nil || cfg == nil {
-		return networkstate.Qualification{}, errors.New("coop net setup needs host configuration and a cancelable context")
+		return networkstate.Qualification{}, errors.New("network setup needs host configuration and a cancelable context")
 	}
 	// Ask the runtime first. Setting this host up creates an owner key and an authority root, and
 	// a runtime that can never serve a filtered box would leave both behind for nothing.

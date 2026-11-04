@@ -18,28 +18,6 @@ import (
 // a command that could not do its job draws the same block through ui.CommandFailed (exit 1).
 const refusalStyleCard = ".agent/kb/rules/command-output-tiers.md"
 
-// adHocRefusals counts, per file, the ad-hoc refusals written before the shared block existed. A
-// count may only fall: a new one fails, and so does a fixed one until its entry is lowered here, so
-// the debt cannot grow back. A file not listed may have none.
-var adHocRefusals = map[string]int{
-	"box/derived_image.go":       1,
-	"box/network_setup.go":       1,
-	"cli/acp_cmd.go":             1,
-	"cli/context.go":             3,
-	"cli/fork_cmd.go":            18,
-	"cli/help.go":                1,
-	"cli/net_diagnostic.go":      1,
-	"cli/session_cmd.go":         1,
-	"forkctl/merge.go":           1,
-	"forkctl/review.go":          3,
-	"forkctl/rm.go":              4,
-	"forkctl/supervise.go":       3,
-	"networkstate/diagnostic.go": 2,
-	"tasks/cmd.go":               13,
-	"tasks/lease_cmd.go":         7,
-	"tasks/queue.go":             2,
-}
-
 // TestRefusalsUseTheSharedBlock is the check for refusalStyleCard's error shapes. It reads source:
 // every non-test .go file under internal/ (testdata excluded) is parsed, and three shapes count as
 // an ad-hoc refusal, each printed as a lone "✗ <lowercase sentence>" line:
@@ -104,25 +82,10 @@ func TestRefusalsUseTheSharedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := map[string]bool{}
-	for file := range found {
-		files[file] = true
-	}
-	for file := range adHocRefusals {
-		files[file] = true
-	}
-	for _, file := range slices.Sorted(maps.Keys(files)) {
-		got, allowed := len(found[file]), adHocRefusals[file]
-		_, listed := adHocRefusals[file]
-		switch {
-		case got > allowed:
-			t.Errorf("%s has %d ad-hoc refusals; adHocRefusals allows %d. Build a ui.UsageError for rejected "+
-				"input (exit 2) or a ui.CommandFailed for a command that could not do its job (exit 1); see %s.\n  %s",
-				file, got, allowed, refusalStyleCard, strings.Join(found[file], "\n  "))
-		case got < allowed || listed && allowed == 0:
-			t.Errorf("%s has %d ad-hoc refusals and adHocRefusals allows %d: lower its entry, or remove it "+
-				"at 0, so the fixed ones stay fixed", file, got, allowed)
-		}
+	for _, file := range slices.Sorted(maps.Keys(found)) {
+		t.Errorf("%s has %d ad-hoc refusals. Build a ui.UsageError for rejected input (exit 2) or a ui.CommandFailed "+
+			"for a command that could not do its job (exit 1); see %s.\n  %s",
+			file, len(found[file]), refusalStyleCard, strings.Join(found[file], "\n  "))
 	}
 }
 

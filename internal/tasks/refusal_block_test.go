@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -157,6 +158,66 @@ func TestTasksWatchRefusesOtherArguments(t *testing.T) {
 		if got := refusal(t, err).Headline; code != 2 || got != tc.headline {
 			t.Errorf("coop tasks %q = (%d, %q), want (2, %q)", tc.args, code, got, tc.headline)
 		}
+	}
+}
+
+// The claim, lease, block and decisions parsers refuse in the shared block, before any move, and a
+// process Coop cannot bind to is a failure of the command rather than bad input.
+func TestTaskActionParsersRefuseInTheSharedBlock(t *testing.T) {
+	pipedStdin(t)
+	cfg := validationQueues(t, 1)
+	for _, tc := range []struct {
+		args     []string
+		code     int
+		headline string
+	}{
+		{[]string{"claim", "x", "--as"}, 2, `Missing value for "--as" in "coop tasks claim"`},
+		{[]string{"claim", "x", "--as", "not ok"}, 2, `Invalid value "not ok" for "--as" in "coop tasks claim"`},
+		{[]string{"claim", "x", "--pid", "zero"}, 2, `Invalid value "zero" for "--pid" in "coop tasks claim"`},
+		{[]string{"claim", "x", "--pid", "999999999"}, 1, `No live process with a readable identity at PID 999999999`},
+		{[]string{"lease", "x", "--"}, 2, `Missing command after -- for "coop tasks lease"`},
+		{[]string{"lease", "x", "--pid"}, 2, `Missing value for "--pid" in "coop tasks lease"`},
+		{[]string{"lease", "x", "--as", "not ok"}, 2, `Invalid value "not ok" for "--as" in "coop tasks lease"`},
+		{[]string{"lease", "x", "--pid", "zero"}, 2, `Invalid value "zero" for "--pid" in "coop tasks lease"`},
+		{[]string{"lease", "x", "--bogus=1"}, 2, `Unknown option "--bogus" for "coop tasks lease"`},
+		{[]string{"claim", "x", "--bogus=1"}, 2, `Unknown option "--bogus" for "coop tasks claim"`},
+		{[]string{"claim", "x", "--tasks"}, 2, `Missing value for "--tasks" in "coop tasks"`},
+		{[]string{"lease", "x", "y"}, 2, `Unexpected argument "y" for "coop tasks lease"`},
+		{[]string{"lease", "x", "--pid", "999999999"}, 1, `No live process with a readable identity at PID 999999999`},
+		{[]string{"block", "x", "y"}, 2, `Unexpected argument "y" for "coop tasks block"`},
+		{[]string{"block", "x", "--answer=1"}, 2, `Unknown option "--answer" for "coop tasks block"`},
+		{[]string{"block", "x", "--why", "w"}, 2, `Missing --question, --option, --recommendation for "coop tasks block"`},
+		{[]string{"decisions", "--bogus"}, 2, `Unknown option "--bogus" for "coop tasks decisions"`},
+		{[]string{"decisions", "extra"}, 2, `Unexpected argument "extra" for "coop tasks decisions"`},
+	} {
+		code, err := CmdTasks(Host{}, cfg, tc.args)
+		if got := refusal(t, err).Headline; code != tc.code || got != tc.headline {
+			t.Errorf("coop tasks %q = (%d, %q), want (%d, %q)", tc.args, code, got, tc.code, tc.headline)
+		}
+	}
+}
+
+// A suggestion must work as written, so these commands, which need more than the mistyped option,
+// point at their help instead of dropping the rest of the command.
+func TestUnknownOptionsDoNotSuggestAnIncompleteCommand(t *testing.T) {
+	cfg := validationQueues(t, 1)
+	for _, args := range [][]string{{"claim", "x", "--ass", "y"}, {"lease", "x", "--ass", "y"}, {"block", "x", "--questoin", "q"}} {
+		_, err := CmdTasks(Host{}, cfg, args)
+		for _, row := range refusal(t, err).Rows {
+			if row[0] == "Did you mean:" {
+				t.Errorf("coop tasks %q suggests %q", args, row[1])
+			}
+		}
+	}
+	code, err := tasksFolderBlock(t.TempDir(), []string{"x", "--why"})
+	var example string
+	for _, row := range refusal(t, err).Rows {
+		if row[0] == "Example:" {
+			example = row[1]
+		}
+	}
+	if code != 2 || !strings.Contains(example, "--question") || !strings.Contains(example, "--recommendation") {
+		t.Errorf("block --why = %d, example %q; want one that would be accepted", code, example)
 	}
 }
 

@@ -39,7 +39,7 @@ func groupHelp(cmd string) (int, error) {
 		printTopicHelp(cmd, h)
 		return 0, nil
 	}
-	return 2, fmt.Errorf("no help registered for command group %q", cmd)
+	return 2, ui.UnknownCommand("coop "+cmd, "", "coop help")
 }
 
 // helpText renders the top-level command reference: one command per line, grouped, with a

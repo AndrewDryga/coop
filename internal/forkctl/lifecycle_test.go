@@ -269,8 +269,8 @@ func TestOneForkName(t *testing.T) {
 	if n, err := oneForkName("rm", nil); n != "" || err != nil {
 		t.Errorf("oneForkName(0) = (%q, %v), want (\"\", nil)", n, err)
 	}
-	if _, err := oneForkName("rm", []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), "got a, b") {
-		t.Errorf("oneForkName(2) should error naming both, got %v", err)
+	if _, err := oneForkName("rm", []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), `Unexpected argument "b" for "coop fork rm"`) {
+		t.Errorf("oneForkName(2) should refuse the second name, got %v", err)
 	}
 }
 
@@ -283,8 +283,8 @@ func TestForkVerbsRejectSecondPositional(t *testing.T) {
 		"review": a.ForkReview, "path": a.ForkPath, "open": a.ForkOpenEditor,
 	} {
 		code, err := fn([]string{"aaa", "bbb"})
-		if code != 2 || err == nil || !strings.Contains(err.Error(), "one name (got aaa, bbb)") {
-			t.Errorf("fork %s a b = (%d, %v), want (2, 'takes one name (got aaa, bbb)')", verb, code, err)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), `Unexpected argument "bbb" for "coop fork `+verb+`"`) {
+			t.Errorf("fork %s a b = (%d, %v), want (2, the second name refused)", verb, code, err)
 		}
 	}
 }
@@ -1320,5 +1320,21 @@ func TestForkRmRefusesRetiredGeneration(t *testing.T) {
 	after, err := os.Stat(ws)
 	if err != nil || !os.SameFile(before, after) || forkspace.GitOut(ws, "rev-parse", "HEAD") != head {
 		t.Fatalf("workspace changed: %v", err)
+	}
+}
+
+// A refused name is told the rule it broke, whichever one that is.
+func TestInvalidForkNameStatesTheRuleItBroke(t *testing.T) {
+	for name, want := range map[string]string{
+		"a/b":      "Use letters, digits",
+		"foo.lock": "end with '.' or '.lock'",
+		"a..b":     "contain '..'",
+		"foo.":     "end with '.' or '.lock'",
+		"-foo":     "start with '.' or '-'",
+		"logs":     "the name of a fork command",
+	} {
+		if got := InvalidForkName(name, "coop fork merge").Cause; !strings.Contains(got, want) {
+			t.Errorf("InvalidForkName(%q) cause = %q, want it to say %q", name, got, want)
+		}
 	}
 }

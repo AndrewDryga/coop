@@ -3,7 +3,7 @@ name: command-output-tiers
 description: "Unprefixed human output, truthful progress, useful results, and readable consequences"
 scope: cli-output
 sources: [internal/ui/ui.go, internal/ui/usage.go, internal/ui/section.go, internal/box/launch_sections.go, internal/box/run.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/session_cmd.go, internal/cli/models.go, internal/cli/eval_cmd.go, internal/forkctl/merge.go, internal/forkctl/rm.go]
-check: "none"
+check: "go test ./internal -run TestRefusalsUseTheSharedBlock"
 updated: 2026-11-03
 ---
 
@@ -70,13 +70,20 @@ updated: 2026-11-03
 as needed rather than introducing another styling layer. Keep raw command output, ACP, JSON,
 completion scripts, and supervised bounded logs on their existing streams. An in-app task design
 is not proof the live helpers conform; regression tests must exercise all output tiers.
-TestRefusalsUseTheSharedBlock (`go test ./internal`) counts the ad-hoc refusals each file still
-has (an error opening with a lowercase "coop …", `return 2` with a hand-written error, a lowercase
-`ui.Error`): a new one fails, and a fixed one fails until its count is lowered.
+TestRefusalsUseTheSharedBlock (`go test ./internal`) fails on any ad-hoc refusal: an error opening
+with a lowercase "coop …", `return 2` with a hand-written error, a lowercase `ui.Error`.
+`UsageError.Render` and the Alert, Failure, Warning and Fail blocks escape control characters in
+every value. A line break stays one, so a cause quoting text a box chose goes through the CLI's
+`safeErrorText` first, which escapes a break inside a quoted path.
 
 See also [[help-output-style]] and [[no-color-in-width-fields]].
 
 ## Changelog
+- 2026-11-03 — converted the last 62 counted refusals (`coop fork`, forkctl, the `coop tasks` claim,
+  lease, block and decisions parsers, `coop net` outside a project, `coop context`), so the check has
+  no allowance table left. Traced first: nothing compares these texts except tests. The blocks now
+  escape their values, because `reportExit`'s plain-line path did and they did not (a project route
+  naming a file with an escape sequence reached the terminal through `coop context`).
 - 2026-11-03 — a manual test listed refusals still printed as one lowercase `✗` line. Moved into
   the shared block: task IDs that match no task or several (now exit 2, with the family's listing
   or the matches), `tasks add` structured flags, `--project`, `--tasks`/COOP_TASKS outside the

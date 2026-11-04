@@ -39,6 +39,21 @@ func SafeInline(value string) string {
 	return out.String()
 }
 
+// safeText is a block's value with the text a box could have chosen escaped: a cause can quote a file
+// name or a runtime's error. Line breaks and tabs stay, since blocks lay out with them, so a caller
+// quoting text that may hold a line break of its own escapes it first (the CLI's safeErrorText).
+func safeText(value string) string {
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		cells := strings.Split(line, "\t")
+		for j, cell := range cells {
+			cells[j] = SafeInline(cell)
+		}
+		lines[i] = strings.Join(cells, "\t")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Raw SGR codes — always defined. Both the stderr-gated package vars below and the
 // stream-scoped Palette draw from these, so the escape sequences live in exactly one place.
 const (
@@ -183,15 +198,15 @@ func Warn(format string, a ...any) {
 // form, for a heads-up with nothing further to say.
 func Warning(headline, reason, action string) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s⚠%s %s\n", cYellow, cReset, headline)
+	fmt.Fprintf(&b, "%s⚠%s %s\n", cYellow, cReset, safeText(headline))
 	if reason != "" {
 		b.WriteString("\n")
-		for _, line := range strings.Split(strings.TrimRight(reason, "\n"), "\n") {
+		for _, line := range strings.Split(strings.TrimRight(safeText(reason), "\n"), "\n") {
 			b.WriteString("      " + line + "\n")
 		}
 	}
 	if action != "" {
-		b.WriteString("\n  " + action + "\n")
+		b.WriteString("\n  " + safeText(action) + "\n")
 	}
 	emit(b.String())
 }

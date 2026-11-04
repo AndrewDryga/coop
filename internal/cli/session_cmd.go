@@ -287,7 +287,7 @@ func runSessionCompact(state, backup string) (int, error) {
 	}
 	backup, err = filepath.Abs(filepath.Clean(backup))
 	if err != nil {
-		return 2, fmt.Errorf("resolve session backup path: %w", err)
+		return 1, ui.CommandFailed("Cannot resolve the session backup path", safeErrorText(err))
 	}
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()

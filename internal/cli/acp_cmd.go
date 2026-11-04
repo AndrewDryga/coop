@@ -149,6 +149,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if leftover := args[consumed:]; len(leftover) > 0 {
 		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]")
 	}
+	presetFromEnv := false
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the
 	// supervisor re-execs the inner box with the resolved spawn target in the env
 	// (COOP_ACP_TARGET, wire grammar) plus the preset whose roles mount (COOP_ACP_PRESET). The
@@ -157,12 +158,17 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// rung fully replaces the launch identity instead of leaking the old lead's model/account.
 	if innerProcess {
 		if ps, selected := os.LookupEnv("COOP_ACP_PRESET"); selected {
-			presetName = ps
+			presetName, presetFromEnv = ps, true
 		}
 		if tv := os.Getenv("COOP_ACP_TARGET"); tv != "" {
 			t, terr := agents.ParseTarget(tv)
 			if terr != nil {
-				return 2, fmt.Errorf("COOP_ACP_TARGET: %v", terr)
+				// The environment can carry tokens, so this states the form and never echoes the value.
+				return 2, &ui.UsageError{
+					Headline: "Invalid COOP_ACP_TARGET for \"coop acp\"",
+					Cause:    "Use an agent, with an optional model, effort and account, such as claude:opus/high@work.",
+					Rows:     [][2]string{{"Help:", "coop help acp"}},
+				}
 			}
 			tool, toolSet = t.Provider, true
 			model, effort, profile = t.Model, t.Effort, t.Account()
@@ -177,6 +183,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	p, err := a.loadRunPreset("coop acp", presetName)
 	if err != nil {
+		if presetFromEnv {
+			// The environment can carry tokens, so this never echoes the value.
+			return 2, &ui.UsageError{
+				Headline: "Invalid COOP_ACP_PRESET for \"coop acp\"",
+				Cause:    "Coop could not load the preset it names.",
+				Rows:     [][2]string{{"Help:", "coop help acp"}},
+			}
+		}
 		return refusalExit(err), err
 	}
 	tool = presetLeadAgent(p, tool, toolSet)

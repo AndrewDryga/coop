@@ -85,7 +85,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	flags, rest, err := tasks.ExtractTasksFlags(args)
+	flags, rest, err := tasks.ExtractTasksFlags(loopCommand, args)
 	if err != nil {
 		return 2, err
 	}

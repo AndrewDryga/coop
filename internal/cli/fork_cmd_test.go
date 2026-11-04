@@ -50,7 +50,7 @@ func TestForkVerbsRejectUnsafeName(t *testing.T) {
 		for verb, fn := range verbs {
 			code, err := fn([]string{name})
 			wantInvalidName := !strings.HasPrefix(name, "-")
-			if code != 2 || err == nil || (wantInvalidName && !strings.Contains(err.Error(), "invalid fork name")) {
+			if code != 2 || err == nil || (wantInvalidName && !strings.Contains(err.Error(), "Invalid fork name")) {
 				t.Errorf("fork %s %q = (%d, %v), want an exit-2 rejection before side effects", verb, name, code, err)
 			}
 		}
@@ -94,7 +94,7 @@ func TestCmdForkRefusesVerbTypo(t *testing.T) {
 			cfg := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
 			a := &app{cfg: cfg}
 			code, err := a.cmdFork([]string{tc.word})
-			if code != 2 || err == nil || !strings.Contains(err.Error(), "did you mean 'coop fork "+tc.suggestion+"'") {
+			if code != 2 || err == nil || !strings.Contains(err.Error(), "Did you mean: coop fork "+tc.suggestion) || !strings.Contains(err.Error(), "To make a fork by that name: coop fork ") {
 				t.Fatalf("cmdFork(%q) = (%d, %v), want a suggestion for %s", tc.word, code, err, tc.suggestion)
 			}
 			entries, err := os.ReadDir(cfg.BoxHome)
@@ -186,7 +186,7 @@ func TestParseForkCreatePeer(t *testing.T) {
 	if _, err := parseForkCreate([]string{"perf", "claude", "--peer", "codex"}); err == nil {
 		t.Error("parseForkCreate: --peer without --loop must error (name peers on a loop)")
 	}
-	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--consult"`) {
 		t.Errorf("parseForkCreate: --consult is retired — should be an unknown flag now, got %v", err)
 	}
 }
@@ -234,7 +234,7 @@ func TestParseForkCreateFreshConfirmation(t *testing.T) {
 			t.Errorf("parseForkCreate(%s) = fa{fresh:%v yes:%v} err=%v, want fresh+yes", flag, fa.fresh, fa.yes, err)
 		}
 	}
-	if _, err := parseForkCreate([]string{"myfork", "--yes"}); err == nil || !strings.Contains(err.Error(), "only applies with --fresh") {
+	if _, err := parseForkCreate([]string{"myfork", "--yes"}); err == nil || !strings.Contains(err.Error(), `Option "--yes" needs "--fresh"`) {
 		t.Fatalf("parseForkCreate(--yes without --fresh) = %v, want scoped-flag refusal", err)
 	}
 }
@@ -796,17 +796,17 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := "usage: coop fork myfork acp [<target>] [--peer <target>...] [--egress <mode>]"
-	if code != 2 || err == nil || err.Error() != wantUsage {
-		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantUsage)
+	wantUsage := "Usage: coop fork myfork acp [<target>] [--peer <target>...] [--egress <mode>]"
+	if code != 2 || err == nil || !strings.Contains(err.Error(), `Unexpected argument "--credential"`) || !strings.Contains(err.Error(), wantUsage) {
+		t.Errorf("fork acp --credential = (%d, %v), want (2, the option refused with %q)", code, err, wantUsage)
 	}
-	for _, args := range [][]string{
-		{"claude:opus", "codex:high"},
-		{"claude:opus", "junk"},
+	for extra, args := range map[string][]string{
+		"codex:high": {"claude:opus", "codex:high"},
+		"junk":       {"claude:opus", "junk"},
 	} {
 		code, err = a.forkACP("myfork", args)
-		if code != 2 || err == nil || err.Error() != wantUsage {
-			t.Errorf("fork acp %v = (%d, %v), want (2, %q)", args, code, err, wantUsage)
+		if code != 2 || err == nil || !strings.Contains(err.Error(), `Unexpected argument "`+extra+`"`) || !strings.Contains(err.Error(), wantUsage) {
+			t.Errorf("fork acp %v = (%d, %v), want (2, %q refused with %q)", args, code, err, extra, wantUsage)
 		}
 	}
 	if got := a.cfg.ActiveModel("claude"); got != "" {
@@ -1338,8 +1338,8 @@ func TestParseForkContinue(t *testing.T) {
 	if fa, err := parseForkCreate([]string{"demo", "codex", "--continue"}); err != nil || !fa.cont || fa.agent != "codex" {
 		t.Errorf("parseForkCreate(demo codex --continue) = {cont:%v agent:%q}, err=%v", fa.cont, fa.agent, err)
 	}
-	if _, err := parseForkCreate([]string{"demo", "codex", "--continue", "--new"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("parseForkCreate(--continue --new) = %v, want mutually exclusive error", err)
+	if _, err := parseForkCreate([]string{"demo", "codex", "--continue", "--new"}); err == nil || !strings.Contains(err.Error(), `Cannot combine "--continue" and "--new"`) {
+		t.Errorf("parseForkCreate(--continue --new) = %v, want the two options refused together", err)
 	}
 }
 
@@ -1893,5 +1893,81 @@ func TestForkFreshRefusesRetiredGeneration(t *testing.T) {
 	after, err := os.Stat(ws)
 	if err != nil || !os.SameFile(before, after) || forkspace.GitOut(ws, "rev-parse", "HEAD") != head {
 		t.Fatalf("workspace changed: %v", err)
+	}
+}
+
+// parseForkCreate refuses in the shared block with the option that was wrong, so a person reads the
+// same shape here as everywhere else and nothing about the fork has been touched yet.
+func TestForkCreateRefusalsUseTheSharedBlock(t *testing.T) {
+	for _, tc := range []struct {
+		args     []string
+		headline string
+	}{
+		{[]string{"api", "claude", "--tasks"}, `Missing value for "--tasks" in "coop fork"`},
+		{[]string{"api", "claude", "--tasks="}, `Missing value for "--tasks" in "coop fork"`},
+		{[]string{"api", "claude", "--loop", "--peer"}, `Missing value for "--peer" in "coop fork"`},
+		{[]string{"api", "claude", "--loop", "--peer="}, `Missing value for "--peer" in "coop fork"`},
+		{[]string{"api", "claude", "--tasks", "q"}, `Option "--tasks" needs "--loop" in "coop fork"`},
+		{[]string{"api", "claude", "--peer", "codex"}, `Option "--peer" needs "--loop" in "coop fork"`},
+		{[]string{"api", "claude", "--yes"}, `Option "--yes" needs "--fresh" in "coop fork"`},
+		{[]string{"api", "claude", "--continue", "--new"}, `Cannot combine "--continue" and "--new" in "coop fork"`},
+		{[]string{"api", "claude", "codex"}, `Unexpected argument "codex" for "coop fork"`},
+		{[]string{"api", "claude", "--bogus"}, `Unknown option "--bogus" for "coop fork"`},
+		{[]string{"a/b", "claude"}, `Invalid fork name "a/b" for "coop fork"`},
+		{[]string{"api", "claude", "--_detached", "--fresh"}, "Cannot start the detached fork worker"},
+		{[]string{"api", "--_detached"}, "Cannot start the detached fork worker"},
+	} {
+		_, err := parseForkCreate(tc.args)
+		usage := asUsage(err)
+		if usage == nil || usage.Headline != tc.headline {
+			t.Errorf("parseForkCreate(%q) = %v, want the block headed %q", tc.args, err, tc.headline)
+			continue
+		}
+		// Coop starts the detached worker itself, so a bad start is not the person's input.
+		wantExit := 2
+		if strings.HasPrefix(tc.headline, "Cannot start") {
+			wantExit = 1
+		}
+		if got := refusalExit(err); got != wantExit {
+			t.Errorf("parseForkCreate(%q) exits %d, want %d", tc.args, got, wantExit)
+		}
+	}
+}
+
+// A near miss offers only what would be accepted: acp follows a fork's name, and a word that cannot
+// name a fork gets no offer to make one.
+func TestForkVerbTypoOffersOnlyWhatWouldWork(t *testing.T) {
+	make := func(word string) [2]string {
+		return [2]string{"To make a fork by that name:", "coop fork " + word + " claude"}
+	}
+	for _, tc := range []struct {
+		word, verb string
+		rows       [][2]string
+	}{
+		{"lss", "ls", [][2]string{{"Did you mean:", "coop fork ls"}, make("lss")}},
+		{"acpp", "acp", [][2]string{{"Did you mean:", "coop fork <name> acp"}, make("acpp")}},
+		{"acp", "acp", [][2]string{{"Did you mean:", "coop fork <name> acp"}}},
+		{"rm.", "rm", [][2]string{{"Did you mean:", "coop fork rm"}}},
+		{"-ls", "ls", [][2]string{{"Did you mean:", "coop fork ls"}}},
+	} {
+		if got := forkVerbTypoErr(tc.word, tc.verb).Rows; !slices.Equal(got, tc.rows) {
+			t.Errorf("forkVerbTypoErr(%q) rows = %q, want %q", tc.word, got, tc.rows)
+		}
+	}
+}
+
+// A queue that cannot be read is not bad input, and the two are told apart by the exit code.
+func TestForkQueueThatCannotBeReadIsACommandFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, stateTodo), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := forkCanonicalQueues(t.TempDir(), root)
+	if usage := asUsage(err); usage == nil || !strings.HasPrefix(usage.Headline, "Cannot read the task queue") || refusalExit(err) != 1 {
+		t.Errorf("forkCanonicalQueues over a broken queue = %v (exit %d), want a command failure", err, refusalExit(err))
+	}
+	_, err = forkCanonicalQueues(t.TempDir(), filepath.Join(root, "missing"))
+	if usage := asUsage(err); usage == nil || !strings.HasPrefix(usage.Headline, `Invalid value`) || refusalExit(err) != 2 {
+		t.Errorf("forkCanonicalQueues over a missing folder = %v (exit %d), want rejected input", err, refusalExit(err))
 	}
 }

@@ -305,9 +305,6 @@ var addOptions = func() []string {
 	return append(out, "--subtask")
 }()
 
-// claimOptionNames are `coop tasks claim`'s options, for the same reason.
-var claimOptionNames = []string{"--as", "--pid", "--force"}
-
 // sectionsFilled reports whether every required section came from structured flags.
 func sectionsFilled(values map[string]string) bool {
 	for _, s := range taskSections {
@@ -752,28 +749,28 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 		case "--as", "--pid":
 			if !hasValue {
 				if i+1 >= len(args) {
-					return "", opts, fmt.Errorf("coop tasks claim: %s needs a value", key)
+					return "", opts, ui.MissingOptionValue(key, "coop tasks claim", actorOptionExample("coop tasks claim", key))
 				}
 				i++
 				value = args[i]
 			}
 			if key == "--as" {
 				if label := claimActorLabel(value); label == "" || label != value {
-					return "", opts, errors.New("coop tasks claim: --as takes a short label made of letters, digits, and the characters -_@.: only")
+					return "", opts, invalidActorLabel(value, "coop tasks claim")
 				}
 				opts.actor.Label = value
 				continue
 			}
 			n, err := strconv.Atoi(value)
 			if err != nil || n <= 1 {
-				return "", opts, errors.New("coop tasks claim: --pid takes the process id of the claiming agent")
+				return "", opts, invalidActorPID(value, "coop tasks claim", "claiming")
 			}
 			opts.actor.PID = n
 		case "--force":
 			opts.force = true
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return "", opts, unknownOptionErr(args[i], "coop tasks claim", claimOptionNames)
+				return "", opts, ui.UnknownOption(key, "coop tasks claim", "")
 			}
 			if id != "" {
 				return "", opts, ui.UnexpectedArgument(args[i], "coop tasks claim", "coop tasks claim <task-id>")
@@ -787,6 +784,26 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 	return id, opts, nil
 }
 
+// actorOptionExample is a spelling of --as or --pid that works, for the commands that take them.
+func actorOptionExample(command, option string) string {
+	if option == "--pid" {
+		return command + " login-retries --pid 4242"
+	}
+	return command + " login-retries --as reviewer"
+}
+
+func invalidActorLabel(value, command string) error {
+	return ui.InvalidOptionValue(value, "--as", command, "Use a short label made of letters, digits and the characters -_@.:", actorOptionExample(command, "--as"))
+}
+
+func invalidActorPID(value, command, role string) error {
+	return ui.InvalidOptionValue(value, "--pid", command, "Use the process ID of the "+role+" agent.", actorOptionExample(command, "--pid"))
+}
+
+func noLiveActorProcess(pid int) error {
+	return ui.CommandFailed(fmt.Sprintf("No live process with a readable identity at PID %d", pid), "It is not running, or its identity cannot be read.")
+}
+
 // tasksFolderClaim is the `coop tasks claim` entry: it binds the claim to the process that made it
 // (see captureClaimActor) before the move so the queue can show who holds the task and whether
 // they are still alive.
@@ -798,7 +815,7 @@ func tasksFolderClaim(root string, args []string) (int, error) {
 	requested := opts.actor.PID
 	opts.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), opts.actor)
 	if requested != 0 && opts.actor.PID == 0 {
-		return 1, fmt.Errorf("coop tasks claim: no live process with a readable identity at pid %d — it is not running, or its identity cannot be read", requested)
+		return 1, noLiveActorProcess(requested)
 	}
 	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", opts)
 }
@@ -1267,7 +1284,11 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 		return -1, err
 	}
 	if answer == "" && t.HasDecision && !resolved {
-		return 2, fmt.Errorf("%s has no resolution yet — write the **Resolution:** in its decision.md, or pass it inline: coop tasks unblock %s \"<answer>\"", t.ID, args[0])
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Task %q has no resolution yet", t.ID),
+			Cause:    "Write the **Resolution:** in its decision.md, or give the answer here.",
+			Rows:     [][2]string{{"Example:", fmt.Sprintf("coop tasks unblock %s \"<answer>\"", args[0])}, {"Help:", "coop help tasks unblock"}},
+		}
 	}
 	if err := resolveAndUnblock(project, root, t, answer); err != nil {
 		return -1, unblockRetryError(t.ID, answer != "", err)
@@ -1955,24 +1976,24 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			if req.id != "" {
-				return req, errors.New("coop tasks block: too many arguments (one task id at most)")
+				return req, ui.UnexpectedArgument(arg, "coop tasks block", "coop tasks block <task-id>")
 			}
 			req.id = arg
 			continue
 		}
 		flag, value, hasValue := strings.Cut(arg, "=")
 		if !slices.Contains(blockTextFlags, flag) {
-			return req, fmt.Errorf("coop tasks block: unknown flag %q (known: %s)", arg, strings.Join(blockTextFlags, ", "))
+			return req, ui.UnknownOption(flag, "coop tasks block", "")
 		}
 		if !hasValue {
 			if i+1 >= len(args) {
-				return req, fmt.Errorf("coop tasks block %s needs a value", flag)
+				return req, ui.MissingOptionValue(flag, "coop tasks block", `coop tasks block login-retries --question "<question>" --why "<why>" --option "<option>" --recommendation "<choice>"`)
 			}
 			i++
 			value = args[i]
 		}
 		if flag != "--option" && seen[flag] {
-			return req, fmt.Errorf("coop tasks block: %s can only be used once", flag)
+			return req, ui.RepeatedOption(flag, "coop tasks block")
 		}
 		seen[flag] = true
 		req.filled = true
@@ -2008,11 +2029,19 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 			missing = append(missing, "--recommendation")
 		}
 		if len(missing) > 0 {
-			return req, fmt.Errorf("coop tasks block: a decision request needs a question, why the task is blocked, at least one option and a recommendation — missing %s (or omit them all to write decision.md yourself)", strings.Join(missing, ", "))
+			return req, &ui.UsageError{
+				Headline: fmt.Sprintf("Missing %s for \"coop tasks block\"", strings.Join(missing, ", ")),
+				Cause:    "A decision request needs a question, why the task is blocked, at least one option and a recommendation.\nGive them all, or none to write decision.md yourself.",
+				Rows:     [][2]string{{"Help:", "coop help tasks block"}},
+			}
 		}
 		// The question is decision.md's heading, which is one line.
 		if strings.ContainsAny(req.decision.Question, "\r\n") {
-			return req, errors.New("coop tasks block: --question must be one line; put the explanation in --why")
+			return req, &ui.UsageError{
+				Headline: "Option \"--question\" must be one line in \"coop tasks block\"",
+				Cause:    "Put the explanation in --why.",
+				Rows:     [][2]string{{"Help:", "coop help tasks block"}},
+			}
 		}
 	}
 	return req, nil
@@ -2793,7 +2822,7 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 		case "-i", "--interactive":
 			interactive = true
 		default:
-			return 2, fmt.Errorf("coop tasks decisions: unknown flag %q (only -i / --interactive)", a)
+			return 2, decisionsArgumentErr(a)
 		}
 	}
 	var decisions, answered []Item
@@ -2890,13 +2919,29 @@ func decisionRefs(root, label string, decisions []Item) []decisionRef {
 	return refs
 }
 
+// decisionsArgumentErr refuses an argument coop tasks decisions does not take.
+func decisionsArgumentErr(arg string) error {
+	if strings.HasPrefix(arg, "-") {
+		return unknownOptionErr(arg, "coop tasks decisions", []string{"-i", "--interactive"})
+	}
+	return ui.UnexpectedArgument(arg, "coop tasks decisions", "coop tasks decisions [-i]")
+}
+
+func decisionsNeedTerminalErr() error {
+	return &ui.UsageError{
+		Headline: "\"coop tasks decisions -i\" needs an interactive terminal",
+		Cause:    "Run it directly in your terminal, or answer one decision with coop tasks unblock.",
+		Rows:     [][2]string{{"Example:", "coop tasks unblock login-retries \"<answer>\""}, {"Help:", "coop help tasks decisions"}},
+	}
+}
+
 // decisionsInteractive walks the open decisions one at a time on a tty (`coop tasks decisions -i`):
 // each is shown in full, an answer is read and recorded (unblocking the task), and :n / :p move
 // between them, :q stops. It needs a real terminal — in a pipe or the unattended loop there's
 // nobody to answer, so it errors instead of hanging.
 func decisionsInteractive(project, root string, decisions []Item) (int, error) {
 	if !ui.IsTerminal(os.Stdin) {
-		return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
+		return 2, decisionsNeedTerminalErr()
 	}
 	return runDecisionBrowser(project, decisionRefs(root, "", decisions), os.Stdin, os.Stdout)
 }

@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -49,11 +48,11 @@ func LegacyForkQueueWithWork(workspace string) (string, error) {
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
 // is an error, not a silently-dropped flag.
-func ExtractTasksFlags(args []string) (tasks []string, rest []string, err error) {
+func ExtractTasksFlags(command string, args []string) (tasks []string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
 		if v, n, ok, e := flagValue(args, i, "--tasks"); ok {
 			if e != nil {
-				return nil, nil, e
+				return nil, nil, ui.MissingOptionValue("--tasks", command, command+" --tasks .agent/tasks")
 			}
 			tasks = append(tasks, v)
 			i += n - 1
@@ -284,7 +283,7 @@ func queueOutsideRepo(path string, fromFlag bool) error {
 // parent directory. The subcommands (ls/lint/add/claim/release/block/unblock/done/rm/
 // decisions) live in cmd.go; a bare `coop tasks` lists the queue.
 func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
-	flags, rest, err := ExtractTasksFlags(args)
+	flags, rest, err := ExtractTasksFlags("coop tasks", args)
 	if err != nil {
 		return 2, err
 	}
@@ -789,7 +788,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		case "-i", "--interactive":
 			interactive = true
 		default:
-			return 2, fmt.Errorf("coop tasks decisions: unknown flag %q (only -i / --interactive)", a)
+			return 2, decisionsArgumentErr(a)
 		}
 	}
 	if interactive {
@@ -826,7 +825,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 			return 0, nil
 		}
 		if !ui.IsTerminal(os.Stdin) {
-			return 2, errors.New("coop tasks decisions -i needs an interactive terminal")
+			return 2, decisionsNeedTerminalErr()
 		}
 		code, err := runDecisionBrowser(repo, refs, os.Stdin, os.Stdout)
 		printAnsweredDecisions(p, answered, true)

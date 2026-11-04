@@ -194,7 +194,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 		// launch an agent. Catch a near-miss of a real subcommand and suggest it instead of creating.
 		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil {
 			if verb, ok := forkVerbNearMiss(args, pathExists(forkspace.Workspace(repo, args[0]))); ok {
-				return 2, fmt.Errorf("unknown fork command %q — did you mean 'coop fork %s'? (give a target or preset, e.g. 'coop fork %s claude', to make a fork by that name)", args[0], verb, args[0])
+				return 2, forkVerbTypoErr(args[0], verb)
 			}
 		}
 		return a.forkCreate(args)
@@ -225,6 +225,20 @@ func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
 	return nearestCommand(args[0], forkspace.VerbList())
 }
 
+// forkVerbTypoErr refuses a word near a fork command. It offers that command and, when the word could
+// name a fork, how to make one. acp is the one command that follows a fork's name.
+func forkVerbTypoErr(word, verb string) *ui.UsageError {
+	suggestion := "coop fork " + verb
+	if verb == "acp" {
+		suggestion = "coop fork <name> acp"
+	}
+	refusal := ui.UnknownCommand("coop fork "+word, suggestion, "")
+	if forkspace.ValidName(word) {
+		refusal.Rows = append(refusal.Rows, [2]string{"To make a fork by that name:", "coop fork " + word + " claude"})
+	}
+	return refusal
+}
+
 // forkArgs is the parsed form of `coop fork <name> [<target|preset>] [flags]`.
 type forkArgs struct {
 	name       string
@@ -250,10 +264,20 @@ type forkArgs struct {
 	network networkFlags
 }
 
+const (
+	forkCreateUsage  = "coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]"
+	forkTasksExample = "coop fork myfork claude --loop --tasks .agent/tasks"
+)
+
+func missingForkPeer() error {
+	return ui.MissingRepeatableOptionValue("--peer", "coop fork",
+		"coop fork <name> <target> --loop --peer <target> [--peer <target>...]", "coop fork myfork claude --loop --peer codex")
+}
+
 func parseForkCreate(args []string) (forkArgs, error) {
 	fa := forkArgs{} // no implicit default — provider required (positional target or the preset lead)
 	if len(args) == 0 || args[0] == "" {
-		return fa, ui.MissingArgument("fork name", "coop fork", "coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]")
+		return fa, ui.MissingArgument("fork name", "coop fork", forkCreateUsage)
 	}
 	fa.name = args[0]
 	rest := args[1:]
@@ -272,7 +296,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			// model + single account fold into the one-off selection) OR a PRESET NAME (loaded by
 			// forkCreate). A run picks ONE, so a second bare word errors.
 			if fa.agentSet || fa.preset != "" {
-				return fa, fmt.Errorf("coop fork: unexpected argument %q (the fork's agent/preset is already set — a run picks one)", x)
+				return fa, ui.UnexpectedArgument(x, "coop fork", forkCreateUsage)
 			}
 			if !isTargetHead(x) {
 				fa.preset = x
@@ -306,23 +330,23 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.loop = true
 		case x == "--tasks", x == "-t":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
+				return fa, ui.MissingOptionValue("--tasks", "coop fork", forkTasksExample)
 			}
 			i++
 			fa.tasks = rest[i]
 		case strings.HasPrefix(x, "--tasks="):
 			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
-				return fa, errors.New("coop fork --tasks needs a path to a tasks folder")
+				return fa, ui.MissingOptionValue("--tasks", "coop fork", forkTasksExample)
 			}
 		case x == "--peer":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
-				return fa, errors.New("coop fork --peer needs a peer: --peer <target> (repeatable)")
+				return fa, missingForkPeer()
 			}
 			i++
 			fa.peers = append(fa.peers, rest[i])
 		case strings.HasPrefix(x, "--peer="):
 			if v := strings.TrimPrefix(x, "--peer="); v == "" {
-				return fa, errors.New("coop fork --peer needs a peer: --peer <target> (repeatable)")
+				return fa, missingForkPeer()
 			} else {
 				fa.peers = append(fa.peers, v)
 			}
@@ -330,30 +354,30 @@ func parseForkCreate(args []string) (forkArgs, error) {
 			fa.worker = true
 			fa.loop = true
 		default:
-			return fa, fmt.Errorf("coop fork: unexpected argument %q", x)
+			return fa, ui.UnknownOption(x, "coop fork", "")
 		}
 	}
 	if !forkspace.ValidName(fa.name) {
-		return fa, fmt.Errorf("invalid fork name %q (use letters, digits, '.', '_', or '-'; not a reserved verb)", fa.name)
+		return fa, forkctl.InvalidForkName(fa.name, "coop fork")
 	}
 	if !fa.loop && fa.tasks != "" {
-		return fa, errors.New("coop fork --tasks only applies with --loop")
+		return fa, ui.OptionNeedsAnother("--tasks", "--loop", "coop fork")
 	}
 	if fa.cont && fa.newSession {
-		return fa, errors.New("coop fork: --continue and --new are mutually exclusive")
+		return fa, ui.ConflictingOptions("--continue", "--new", "coop fork")
 	}
 	if fa.yes && !fa.fresh {
-		return fa, errors.New("coop fork: --yes only applies with --fresh")
+		return fa, ui.OptionNeedsAnother("--yes", "--fresh", "coop fork")
 	}
 	if fa.worker && (fa.fresh || fa.force || fa.yes || fa.detach || fa.cont || fa.newSession) {
-		return fa, errors.New("coop fork: internal detached worker received a parent-only lifecycle flag")
+		return fa, ui.CommandFailed("Cannot start the detached fork worker", "It received an option only the parent command takes. Coop starts this worker itself, so this is a bug in Coop.")
 	}
 	if fa.worker && !fa.agentSet && fa.preset == "" {
-		return fa, errors.New("coop fork: internal detached worker needs the parent's target or preset")
+		return fa, ui.CommandFailed("Cannot start the detached fork worker", "It did not receive the parent's target or preset. Coop starts this worker itself, so this is a bug in Coop.")
 	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
-		return fa, errors.New("coop fork --peer only applies with --loop (name each peer: --peer <target>)")
+		return fa, ui.OptionNeedsAnother("--peer", "--loop", "coop fork")
 	}
 	// A peer typed wrong is refused here, before the fork is created or any account is checked.
 	// Whether each peer can sign in depends on the fork's agent and rotation: forkCreate checks it
@@ -370,7 +394,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 	fc := a.forkctl()
 	fa, err := parseForkCreate(args)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	var repo string
 	var forkIdentity forkspace.Identity
@@ -471,7 +495,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return -1, err
 		}
 		if !pathExists(abs) {
-			return -1, fmt.Errorf("coop fork --tasks: no such tasks folder: %s", fa.tasks)
+			return 2, ui.InvalidOptionValue(fa.tasks, "--tasks", "coop fork", "No such folder.", forkTasksExample)
 		}
 		fa.tasks = abs
 	}
@@ -956,7 +980,7 @@ func newSessionID() string {
 // is right there to load.
 func (a *app) forkACP(name string, rest []string) (int, error) {
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, forkctl.InvalidForkName(name, "coop fork")
 	}
 	companionRepositories, err := sessionCompanionRepositoriesFromEnvironment()
 	if err != nil {
@@ -978,9 +1002,18 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if _, err := resolvePeerTargets("coop fork "+name, peerVals, agents.Names()); err != nil {
 		return 2, err
 	}
-	usage := fmt.Sprintf("usage: coop fork %s acp [<target>] [--peer <target>...] [--egress <mode>]", name)
 	if len(rest) > 1 || (len(rest) == 1 && !isTargetHead(rest[0])) {
-		return 2, errors.New(usage)
+		extra := rest[0]
+		if isTargetHead(extra) {
+			extra = rest[1]
+		}
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Unexpected argument %q for %q", extra, "coop fork "+name+" acp"),
+			Rows: [][2]string{
+				{"Usage:", "coop fork " + name + " acp [<target>] [--peer <target>...] [--egress <mode>]"},
+				{"Help:", "coop help fork"},
+			},
+		}
 	}
 	// --model/--credential are retired — name the fork's ACP session in the positional target
 	// (coop fork <name> acp claude:opus@work), like plain `coop acp`. Without one, the fork's own
@@ -1488,10 +1521,10 @@ func forkCanonicalQueues(repo, override string) ([]string, error) {
 		}
 		root = filepath.Clean(root)
 		if _, err := os.Lstat(root); err != nil {
-			return nil, fmt.Errorf("coop fork --tasks: %s is not a task queue", override)
+			return nil, ui.InvalidOptionValue(override, "--tasks", "coop fork", "It is not a task queue.", forkTasksExample)
 		}
 		if _, err := tasks.ReadTaskTree(root); err != nil {
-			return nil, fmt.Errorf("coop fork --tasks: %w", err)
+			return nil, ui.CommandFailed(fmt.Sprintf("Cannot read the task queue %q", override), safeErrorText(err))
 		}
 		return []string{root}, nil
 	}

@@ -194,11 +194,11 @@ func TestForkPositionalPreset(t *testing.T) {
 		t.Errorf("fork positional target = {agent:%q model:%q cred:%q preset:%q, %v}", fa.agent, fa.model, fa.credential, fa.preset, err)
 	}
 	// A run picks ONE: a target AND a preset in the same fork (two who-runs) errors.
-	if _, err := parseForkCreate([]string{"api", "claude", "frontier", "--loop"}); err == nil || !strings.Contains(err.Error(), "already set") {
+	if _, err := parseForkCreate([]string{"api", "claude", "frontier", "--loop"}); err == nil || !strings.Contains(err.Error(), `Unexpected argument "frontier"`) {
 		t.Errorf("fork: a target plus a preset must error, got %v", err)
 	}
 	// --preset is retired — now just an unknown flag.
-	if _, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier"}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+	if _, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--preset"`) {
 		t.Errorf("fork: --preset should be an unknown flag now, got %v", err)
 	}
 }

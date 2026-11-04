@@ -33,7 +33,7 @@ var backlogArgSpecs = map[string]taskArgSpec{
 
 // CmdBacklog drives `coop backlog` — the staging drawer for unscheduled ideas.
 func CmdBacklog(cfg *config.Config, args []string) (int, error) {
-	flags, rest, err := ExtractTasksFlags(args)
+	flags, rest, err := ExtractTasksFlags("coop backlog", args)
 	if err != nil {
 		return 2, err
 	}

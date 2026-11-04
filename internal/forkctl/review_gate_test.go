@@ -295,7 +295,7 @@ func TestForkReviewWarnsWhenUncommittedWorkIsOmitted(t *testing.T) {
 
 func TestForkReviewGateRejectsOpen(t *testing.T) {
 	c := &Control{cfg: &config.Config{}}
-	if code, err := c.ForkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+	if code, err := c.ForkReview([]string{"perf", "--gate", "--open"}); code != 2 || err == nil || !strings.Contains(err.Error(), `Cannot combine "--gate" and "--open"`) {
 		t.Fatalf("ForkReview(--gate --open) = (%d, %v), want usage rejection", code, err)
 	}
 }

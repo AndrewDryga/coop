@@ -45,15 +45,15 @@ func Caution(format string, a ...any) {
 // read. A multi-line reason keeps every line at the same depth.
 func Fail(headline, reason, remedy string) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "  %s✗ %s%s\n", cRed, headline, cReset)
+	fmt.Fprintf(&b, "  %s✗ %s%s\n", cRed, safeText(headline), cReset)
 	if reason != "" {
 		b.WriteString("\n")
-		for _, line := range strings.Split(strings.TrimRight(reason, "\n"), "\n") {
+		for _, line := range strings.Split(strings.TrimRight(safeText(reason), "\n"), "\n") {
 			b.WriteString("        " + line + "\n")
 		}
 	}
 	if remedy != "" {
-		b.WriteString("\n    " + remedy + "\n")
+		b.WriteString("\n    " + safeText(remedy) + "\n")
 	}
 	emit(b.String())
 }
@@ -64,10 +64,10 @@ func Fail(headline, reason, remedy string) {
 // failure INSIDE a launch section; this one stands on its own, after arbitrary agent output.
 func block(paint func(string) string, mark, headline, cause string, rows [][2]string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s\n", paint(mark+" "+headline))
+	fmt.Fprintf(&b, "\n%s\n", paint(mark+" "+safeText(headline)))
 	if cause != "" {
 		b.WriteString("\n")
-		for _, line := range strings.Split(strings.TrimRight(cause, "\n"), "\n") {
+		for _, line := range strings.Split(strings.TrimRight(safeText(cause), "\n"), "\n") {
 			b.WriteString("      " + line + "\n")
 		}
 	}
@@ -80,7 +80,7 @@ func block(paint func(string) string, mark, headline, cause string, rows [][2]st
 		}
 		b.WriteString("\n")
 		for _, r := range rows {
-			fmt.Fprintf(&b, "  %s%s %s\n", r[0], strings.Repeat(" ", w-len([]rune(r[0]))), r[1])
+			fmt.Fprintf(&b, "  %s%s %s\n", r[0], strings.Repeat(" ", w-len([]rune(r[0]))), safeText(r[1]))
 		}
 	}
 	return b.String()

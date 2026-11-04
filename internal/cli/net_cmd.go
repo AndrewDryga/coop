@@ -1418,7 +1418,8 @@ func netProject(override string) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", errors.New("not inside a project — 'coop net runs --all-projects' shows every recorded run")
+		return "", ui.CommandFailed("Not inside a project", "Run this inside a project, or list every recorded run.",
+			[2]string{"Every run:", "coop net runs --all-projects"})
 	}
 	return repo, nil
 }

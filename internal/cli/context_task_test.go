@@ -145,7 +145,8 @@ func TestContextTaskMetadataRefusals(t *testing.T) {
 			var code int
 			var err error
 			out := captureStdout(t, func() { code, err = a.cmdContext([]string{"--json", "--changed", "--task=shared"}) })
-			if code != 2 || err == nil || out != "" {
+			// A queue Coop will not trust is the command failing, not bad input, so it exits 1.
+			if code != 1 || err == nil || out != "" {
 				t.Fatalf("unsafe metadata context=(%d, %v), output=%q", code, err, out)
 			}
 			if calls, err := os.ReadFile(trace); err != nil || len(calls) != 0 {
@@ -218,5 +219,22 @@ func TestContextWithoutTaskIgnoresQueues(t *testing.T) {
 	ctxWrite(t, filepath.Join(repo, ".agent", "project.yaml"), "context: [\n")
 	if code, err := a.cmdContext([]string{"--task=shared", "--tasks=a/.agent/tasks"}); code != 2 || err == nil {
 		t.Fatalf("explicit queue bypassed project config: (%d, %v)", code, err)
+	}
+}
+
+// A task that cannot be read is the command failing, not bad input, even though the same lookup
+// refuses an ID that matches nothing with exit 2.
+func TestContextTaskThatCannotBeReadIsACommandFailure(t *testing.T) {
+	repo, a := contextTaskFixture(t, "login-retries", "")
+	task := filepath.Join(repo, "a", tasksRoot, stateTodo, "login-retries", "task.md")
+	if err := os.Remove(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "elsewhere.md"), task); err != nil {
+		t.Fatal(err)
+	}
+	code, err := a.cmdContext([]string{"--task", "login-retries"})
+	if usage := asUsage(err); usage == nil || usage.Headline != "Cannot read the task queue" || code != 1 {
+		t.Errorf("coop context on an unreadable task = (%d, %v), want exit 1 in the shared block", code, err)
 	}
 }

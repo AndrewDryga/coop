@@ -10,9 +10,11 @@
   going" instead of "raw network packets". `--json` keeps the codes.
 
 - **Rejected input exits 2 everywhere.** A task or idea ID that matches nothing, `coop fork merge`
-  without a terminal or `--yes`, and an unknown eval suite or a preset given to an agent-only suite
-  now exit 2 like other bad input (they exited 1). Their messages use the same refusal block as the
-  rest of Coop: what went wrong, why, and the command to run next.
+  without a terminal or `--yes`, a missing `coop fork --tasks` folder, and an unknown eval suite or
+  a preset given to an agent-only suite now exit 2 like other bad input (they exited 1). Their
+  messages use the same refusal block as the rest of Coop: what went wrong, why, and the command to
+  run next. That block now also covers the `coop fork` and `coop tasks` option parsers, `coop net`
+  outside a project and `coop context`, and it escapes control characters in anything it prints.
 
 - **Launches leave your project alone.** With eBPF file protection, every launch used to create a
   `.coop-fs-probe-…` folder in the project root and run a test container before the agent

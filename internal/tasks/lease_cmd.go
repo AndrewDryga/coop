@@ -61,6 +61,8 @@ type leaseRequest struct {
 	command  []string
 }
 
+const leaseUsage = "coop tasks lease <task-id> [--as <label>] [--pid <n>] [-- <command>...]"
+
 // parseLeaseArgs reads `coop tasks lease <id> [--as <label>] [--pid <n>] [-- <command...>]`.
 func parseLeaseArgs(args []string) (leaseRequest, error) {
 	var req leaseRequest
@@ -68,7 +70,7 @@ func parseLeaseArgs(args []string) (leaseRequest, error) {
 		if args[i] == "--" {
 			req.command = args[i+1:]
 			if len(req.command) == 0 {
-				return req, errors.New("coop tasks lease: nothing follows -- (drop it to hold the lease until stopped)")
+				return req, ui.MissingArgument("command after --", "coop tasks lease", leaseUsage)
 			}
 			break
 		}
@@ -77,35 +79,35 @@ func parseLeaseArgs(args []string) (leaseRequest, error) {
 		case "--as", "--pid":
 			if !hasValue {
 				if i+1 >= len(args) {
-					return req, fmt.Errorf("coop tasks lease: %s needs a value", key)
+					return req, ui.MissingOptionValue(key, "coop tasks lease", actorOptionExample("coop tasks lease", key))
 				}
 				i++
 				value = args[i]
 			}
 			if key == "--as" {
 				if label := claimActorLabel(value); label == "" || label != value {
-					return req, errors.New("coop tasks lease: --as takes a short label made of letters, digits, and the characters -_@.: only")
+					return req, invalidActorLabel(value, "coop tasks lease")
 				}
 				req.actor.Label = value
 				continue
 			}
 			n, err := strconv.Atoi(value)
 			if err != nil || n <= 1 {
-				return req, errors.New("coop tasks lease: --pid takes the process id of the working agent")
+				return req, invalidActorPID(value, "coop tasks lease", "working")
 			}
 			req.actor.PID = n
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return req, fmt.Errorf("coop tasks lease: unknown flag %q (supported: --as, --pid, and -- <command>)", args[i])
+				return req, ui.UnknownOption(key, "coop tasks lease", "")
 			}
 			if req.id != "" {
-				return req, errors.New("coop tasks lease: too many arguments (expected one task id; put a command after --)")
+				return req, ui.UnexpectedArgument(args[i], "coop tasks lease", leaseUsage)
 			}
 			req.id = args[i]
 		}
 	}
 	if req.id == "" {
-		return req, ui.MissingArgument("task ID", "coop tasks lease", "coop tasks lease <task-id> [--as <label>] [--pid <n>] [-- <command>...]")
+		return req, ui.MissingArgument("task ID", "coop tasks lease", leaseUsage)
 	}
 	return req, nil
 }
@@ -123,7 +125,7 @@ func tasksFolderLease(root string, args []string) (int, error) {
 	requested := req.actor.PID
 	req.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), req.actor)
 	if requested != 0 && req.actor.PID == 0 {
-		return 1, fmt.Errorf("coop tasks lease: no live process with a readable identity at pid %d — it is not running, or its identity cannot be read", requested)
+		return 1, noLiveActorProcess(requested)
 	}
 	if requested == 0 && req.actor.PID == 0 {
 		req = bindLeaseToClaimant(root, req)

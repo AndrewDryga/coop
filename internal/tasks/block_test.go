@@ -264,22 +264,22 @@ func TestBlockRejectsAnIncompleteRequestBeforeMoving(t *testing.T) {
 		args []string
 		want string
 	}{
-		"no question":       {[]string{"t", "--why", "W", "--option", "A", "--recommendation", "A"}, "missing --question"},
-		"no why":            {[]string{"t", "--question", "Q?", "--option", "A", "--recommendation", "A"}, "missing --why"},
-		"no option":         {[]string{"t", "--question", "Q?", "--why", "W", "--recommendation", "A"}, "missing --option"},
-		"blank option":      {[]string{"t", "--question", "Q?", "--why", "W", "--option", "   ", "--recommendation", "A"}, "missing --option"},
-		"no recommendation": {[]string{"t", "--question", "Q?", "--why", "W", "--option", "A"}, "missing --recommendation"},
-		"blank question":    {[]string{"t", "--question", " ", "--why", "W", "--option", "A", "--recommendation", "A"}, "missing --question"},
+		"no question":       {[]string{"t", "--why", "W", "--option", "A", "--recommendation", "A"}, `Missing --question for`},
+		"no why":            {[]string{"t", "--question", "Q?", "--option", "A", "--recommendation", "A"}, `Missing --why for`},
+		"no option":         {[]string{"t", "--question", "Q?", "--why", "W", "--recommendation", "A"}, `Missing --option for`},
+		"blank option":      {[]string{"t", "--question", "Q?", "--why", "W", "--option", "   ", "--recommendation", "A"}, `Missing --option for`},
+		"no recommendation": {[]string{"t", "--question", "Q?", "--why", "W", "--option", "A"}, `Missing --recommendation for`},
+		"blank question":    {[]string{"t", "--question", " ", "--why", "W", "--option", "A", "--recommendation", "A"}, `Missing --question for`},
 		"question on two lines": {[]string{"t", "--question", "Q?\nMore", "--why", "W", "--option", "A", "--recommendation", "A"},
-			"--question must be one line"},
-		"repeated question":    {[]string{"t", "--question", "Q?", "--question", "R?"}, "--question can only be used once"},
-		"repeated suggestion":  {[]string{"t", "--recommendation", "A", "--recommendation", "B"}, "--recommendation can only be used once"},
-		"missing flag value":   {[]string{"t", "--question"}, "--question needs a value"},
-		"unknown flag":         {[]string{"t", "--answer", "A"}, `unknown flag "--answer"`},
-		"two task ids":         {[]string{"t", "other"}, "too many arguments"},
+			`Option "--question" must be one line`},
+		"repeated question":    {[]string{"t", "--question", "Q?", "--question", "R?"}, `Option "--question" can only be used once`},
+		"repeated suggestion":  {[]string{"t", "--recommendation", "A", "--recommendation", "B"}, `Option "--recommendation" can only be used once`},
+		"missing flag value":   {[]string{"t", "--question"}, `Missing value for "--question"`},
+		"unknown flag":         {[]string{"t", "--answer", "A"}, `Unknown option "--answer"`},
+		"two task ids":         {[]string{"t", "other"}, `Unexpected argument "other"`},
 		"no task id":           {[]string{"--question", "Q?"}, "coop tasks block <task-id>"},
 		"no arguments at all":  {nil, "coop tasks block <task-id>"},
-		"unknown short option": {[]string{"t", "-q", "Q?"}, `unknown flag "-q"`},
+		"unknown short option": {[]string{"t", "-q", "Q?"}, `Unknown option "-q"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

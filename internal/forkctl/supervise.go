@@ -250,7 +250,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 			follow = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, fmt.Errorf("coop fork logs: unknown flag %q", x)
+				return 2, ui.UnknownOption(x, "coop fork logs", "")
 			}
 			pos = append(pos, x)
 		}
@@ -260,7 +260,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 		return 2, err
 	}
 	if name != "" && !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork logs")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
@@ -434,7 +434,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 		return 2, err
 	}
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork stop")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {

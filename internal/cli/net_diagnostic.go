@@ -328,7 +328,8 @@ type netCheckJSON struct {
 func (a *app) netCheckCurrent(opts netDiagnosticOptions) (int, error) {
 	repo, err := netProject(a.cfg.RepoOverride)
 	if err != nil {
-		return 1, errors.New("coop net check answers for a project — run it inside one, or pass --run <run> for a recorded run")
+		return 1, ui.CommandFailed("\"coop net check\" needs a project", "Run it inside a project, or pass --run <run> for a recorded run.",
+			[2]string{"Help:", "coop help net check"})
 	}
 	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	if err != nil {

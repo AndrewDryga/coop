@@ -34,7 +34,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 			i += n - 1
 		}
 	}
-	queueFlags, args, err := tasks.ExtractTasksFlags(args)
+	queueFlags, args, err := tasks.ExtractTasksFlags("coop context", args)
 	if err != nil {
 		return 2, err
 	}
@@ -89,7 +89,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	}
 	scope, err := a.contextScope(repo, p, paths, changed, taskID, queueFlags)
 	if err != nil {
-		return 2, err
+		return refusalExit(err), err
 	}
 	sel, err := contextc.Compile(repo, p.Context.Routes, scope)
 	if err != nil {
@@ -225,16 +225,19 @@ func (a *app) taskScopePaths(repo, id string, queueFlags []string) ([]string, er
 	}
 	t, err := tasks.FindTaskAcrossQueues(repo, rels, id)
 	if err != nil {
+		if asUsage(err) == nil { // a queue that could not be read, not an ID that matched nothing
+			return nil, ui.CommandFailed("Cannot read the task queue", safeErrorText(err))
+		}
 		return nil, err
 	}
 	metadata, err := tasks.OpenTaskMetadataRoot(t.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
+		return nil, ui.CommandFailed(fmt.Sprintf("Cannot read task %q", t.ID), safeErrorText(err))
 	}
 	defer metadata.Close()
 	data, err := tasks.ReadTaskMetadataFile(metadata, "task.md")
 	if err != nil {
-		return nil, fmt.Errorf("coop context: reading task %s: %w", t.ID, err)
+		return nil, ui.CommandFailed(fmt.Sprintf("Cannot read task %q", t.ID), safeErrorText(err))
 	}
 	return tasks.FrontmatterList(string(data), "paths"), nil
 }
@@ -333,7 +336,7 @@ func contextRendered(repo string, sel []contextc.Selected) (int, error) {
 	for _, s := range sel {
 		data, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(s.File)))
 		if err != nil {
-			return 1, fmt.Errorf("coop context: reading %s: %w", s.File, err)
+			return 1, ui.CommandFailed(fmt.Sprintf("Cannot read %q", s.File), safeErrorText(err))
 		}
 		// The separator is Coop's; everything between separators is the file, preserved whole.
 		fmt.Printf("──── %s ────\n%s\n\n", s.File, strings.TrimRight(string(data), "\n"))

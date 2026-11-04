@@ -74,7 +74,7 @@ func TestTaskQueuesMonorepo(t *testing.T) {
 }
 
 func TestExtractTasksFlags(t *testing.T) {
-	flags, rest, err := ExtractTasksFlags([]string{"--tasks", "a", "list", "--tasks=b", "--debug"})
+	flags, rest, err := ExtractTasksFlags("coop tasks", []string{"--tasks", "a", "list", "--tasks=b", "--debug"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,8 +87,9 @@ func TestExtractTasksFlags(t *testing.T) {
 
 	// A value-bearing flag with no value is an error, not a silently-dropped flag.
 	for _, bad := range [][]string{{"--tasks"}, {"list", "--tasks"}, {"--tasks="}, {"--tasks", "--debug"}} {
-		if _, _, err := ExtractTasksFlags(bad); err == nil {
-			t.Errorf("extractTasksFlags(%v) should error on a missing value", bad)
+		_, _, err := ExtractTasksFlags("coop loop", bad)
+		if want := `Missing value for "--tasks" in "coop loop"`; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ExtractTasksFlags(%v) = %v, want %q", bad, err, want)
 		}
 	}
 }

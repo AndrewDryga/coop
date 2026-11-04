@@ -573,6 +573,29 @@ func TestDistinctLinesDropsRepeatsAcrossWrites(t *testing.T) {
 	}
 }
 
+// The inner process reads its target and preset from the environment, which can carry tokens, so a
+// refusal names the variable and never its value.
+func TestACPInnerRefusalsNeverEchoTheEnvironment(t *testing.T) {
+	const secret = "sk-secret-token"
+	for name, env := range map[string]map[string]string{
+		"COOP_ACP_PRESET": {"COOP_ACP_PRESET": secret, "COOP_ACP_TARGET": "claude"},
+		"COOP_ACP_TARGET": {"COOP_ACP_TARGET": "claude:" + secret + ":bad target"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("COOP_ACP_INNER", "1")
+			for key, value := range env {
+				t.Setenv(key, value)
+			}
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(), BaseImage: "test-base", ImageOverride: "test-image", Homes: true, Egress: "none"}
+			a := &app{cfg: cfg, rt: recordingRuntime(t, filepath.Join(t.TempDir(), "runtime-args")), rtSet: true}
+			code, err := a.cmdACP(nil)
+			if code != 2 || err == nil || !strings.Contains(err.Error(), name) || strings.Contains(err.Error(), secret) {
+				t.Errorf("cmdACP = (%d, %v), want exit 2 naming %s without its value", code, err, name)
+			}
+		})
+	}
+}
+
 func TestACPInnerEmptyPresetSelectionClearsPositionalPreset(t *testing.T) {
 	t.Setenv("COOP_ACP_INNER", "1")
 	t.Setenv("COOP_ACP_PRESET", "")

@@ -125,13 +125,26 @@ func stopForkServices(rt runtime.Runtime, repo, name string, exposedRoots ...str
 	return errors.Join(failures...)
 }
 
+// InvalidForkName refuses a name forkspace would not accept. command is the refused command's path.
+func InvalidForkName(name, command string) *ui.UsageError {
+	cause := "Use letters, digits, '.', '_' and '-'.\nA name cannot start with '.' or '-', contain '..', or end with '.' or '.lock'."
+	if forkspace.Reserved(name) {
+		cause = "A fork cannot take the name of a fork command."
+	}
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("Invalid fork name %q for %q", name, command),
+		Cause:    cause,
+		Rows:     [][2]string{{"Help:", ui.HelpCommand(command)}},
+	}
+}
+
 // oneForkName returns the single fork name from the parsed positionals, rejecting a second one. The
 // rm/merge/stop/logs families used to let a later positional silently overwrite the first — acting on
 // only the last and printing success — a data-loss footgun (`fork rm a b` looks like it removed both).
 // Zero positionals returns "" so callers can apply their own "name required" usage error.
 func oneForkName(verb string, pos []string) (string, error) {
 	if len(pos) > 1 {
-		return "", fmt.Errorf("coop fork %s takes one name (got %s)", verb, strings.Join(pos, ", "))
+		return "", ui.UnexpectedArgument(pos[1], "coop fork "+verb, "coop fork "+verb+" <name>")
 	}
 	if len(pos) == 0 {
 		return "", nil
@@ -305,7 +318,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		return 2, ui.MissingArgument("fork name", "coop fork rm", "coop fork rm <name> [--force] [--yes]")
 	}
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork rm")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
@@ -494,7 +507,7 @@ func (c *Control) ForkPath(args []string) (int, error) {
 		return 2, ui.MissingArgument("fork name", "coop fork path", "coop fork path <name>")
 	}
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork path")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {
@@ -520,7 +533,7 @@ func (c *Control) ForkOpenEditor(args []string) (int, error) {
 		return 2, ui.MissingArgument("fork name", "coop fork open", "coop fork open <name>")
 	}
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork open")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {

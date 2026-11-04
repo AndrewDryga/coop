@@ -123,7 +123,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			gate = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, fmt.Errorf("coop fork review: unknown flag %q", x)
+				return 2, ui.UnknownOption(x, "coop fork review", "")
 			}
 			pos = append(pos, x)
 		}
@@ -136,10 +136,12 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		return 2, ui.MissingArgument("fork name", "coop fork review", "coop fork review <name> [--stat | --tool | --open] [--gate]")
 	}
 	if !forkspace.ValidExistingName(name) {
-		return 2, fmt.Errorf("invalid fork name %q", name)
+		return 2, InvalidForkName(name, "coop fork review")
 	}
 	if gate && open {
-		return 2, errors.New("coop fork review: --gate cannot be combined with --open; use --stat or --tool so the review scratch can be removed reliably")
+		conflict := ui.ConflictingOptions("--gate", "--open", "coop fork review")
+		conflict.Cause = "Use --gate with --stat or --tool, so Coop can remove the review's temporary copy reliably."
+		return 2, conflict
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {

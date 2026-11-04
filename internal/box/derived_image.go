@@ -315,7 +315,9 @@ func proveDerivedImage(ctx context.Context, docker filteredDocker, store *networ
 // proveDerivedLayers reads both layer chains from the runtime. A derived image
 // carries its base's layers, in order, before its own.
 func proveDerivedLayers(ctx context.Context, docker filteredDocker, locked, built, dfRel string) error {
-	unreadable := fmt.Errorf("coop could not check the image this project's %s built against its own client image — run it again, or run with --egress open", dfRel)
+	unreadable := ui.CommandFailed("Cannot check this project's image",
+		fmt.Sprintf("Coop could not compare the image this project's %s built with its own client image.", dfRel),
+		[2]string{"", "Run it again, or run with --egress open."})
 	lockedID, base, err := docker.ImageLayers(ctx, locked)
 	if err != nil || lockedID != locked {
 		return unreadable

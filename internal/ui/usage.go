@@ -54,14 +54,15 @@ const Continuation = "\x00continuation"
 // all start past the widest label. Padding is computed on PLAIN text and color applied after, so
 // a NO_COLOR or redirected run has the same columns with no escape sequences. A cause carrying
 // newlines keeps every line at the same six spaces — the constraint and the fix it implies are one
-// block, not a second paragraph.
+// block, not a second paragraph. Every value is made safe here, in the one place they all pass: a
+// cause can quote a file name or a runtime's error, and a box could have chosen either.
 func (e *UsageError) Render(p Palette) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s\n", p.Red("✗ "+e.Headline))
+	fmt.Fprintf(&b, "\n%s\n", p.Red("✗ "+safeText(e.Headline)))
 	if e.Cause != "" {
 		b.WriteString("\n")
 		for _, line := range strings.Split(e.Cause, "\n") {
-			fmt.Fprintf(&b, "      %s\n", line)
+			fmt.Fprintf(&b, "      %s\n", safeText(line))
 		}
 	}
 	// The values that would settle the refusal are the answer itself, not a
@@ -69,7 +70,7 @@ func (e *UsageError) Render(p Palette) string {
 	if len(e.Choices) > 0 {
 		b.WriteString("\n")
 		for _, choice := range e.Choices {
-			fmt.Fprintf(&b, "  %s\n", choice)
+			fmt.Fprintf(&b, "  %s\n", safeText(choice))
 		}
 	}
 	if len(e.Rows) > 0 {
@@ -88,16 +89,16 @@ func (e *UsageError) Render(p Palette) string {
 			case Continuation:
 				// A second spelling of the row above — it sits under that row's VALUE, so the two
 				// read as one usage rather than as two unrelated instructions.
-				fmt.Fprintf(&b, "  %s %s\n", strings.Repeat(" ", w), r[1])
+				fmt.Fprintf(&b, "  %s %s\n", strings.Repeat(" ", w), safeText(r[1]))
 				continue
 			case "":
 				// A plain action sentence: it answers the headline on its own, so it sits at the
 				// label column rather than pretending to continue a labeled row.
-				b.WriteString("  " + r[1] + "\n")
+				b.WriteString("  " + safeText(r[1]) + "\n")
 				continue
 			}
 			label := r[0] + strings.Repeat(" ", w-len([]rune(r[0])))
-			fmt.Fprintf(&b, "  %s %s\n", label, r[1])
+			fmt.Fprintf(&b, "  %s %s\n", label, safeText(r[1]))
 		}
 	}
 	return b.String()
@@ -241,6 +242,14 @@ func UnexpectedArgument(arg, command, usage string) *UsageError {
 func ConflictingOptions(first, second, command string) *UsageError {
 	return &UsageError{
 		Headline: fmt.Sprintf("Cannot combine %q and %q in %q", first, second, command),
+		Rows:     [][2]string{{"Help:", HelpCommand(command)}},
+	}
+}
+
+// OptionNeedsAnother refuses an option that only works alongside another one.
+func OptionNeedsAnother(option, needed, command string) *UsageError {
+	return &UsageError{
+		Headline: fmt.Sprintf("Option %q needs %q in %q", option, needed, command),
 		Rows:     [][2]string{{"Help:", HelpCommand(command)}},
 	}
 }
