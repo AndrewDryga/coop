@@ -106,6 +106,14 @@ func (f *filteredExecution) markUnfinished(role string) error {
 	})
 }
 
+// runID is this run's ID. Launch steps run side by side, and one whose create lost its answer rewrites
+// f.record through markUnfinished, so even this unchanging field is read under the lock.
+func (f *filteredExecution) runID() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.record.ID
+}
+
 func (f *filteredExecution) createUnfinished(role string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -115,7 +123,7 @@ func (f *filteredExecution) createUnfinished(role string) bool {
 func (f *filteredExecution) createVolume(ctx context.Context, role string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.runID(), role); err != nil {
 		return err
 	}
 	if _, err := f.docker.CreateVolume(ctx, f.createRef(role)); err != nil {
@@ -134,7 +142,7 @@ func (f *filteredExecution) createVolume(ctx context.Context, role string) error
 func (f *filteredExecution) createContainer(ctx context.Context, role, image string, options, command []string) error {
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.runID(), role); err != nil {
 		return err
 	}
 	create := f.docker.CreateContainer
@@ -201,7 +209,7 @@ func (f *filteredExecution) startHelper(ctx context.Context, role string) error 
 	}
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
-	if err := f.store.AuthorizeLaunch(ctx, f.record.ID, role); err != nil {
+	if err := f.store.AuthorizeLaunch(ctx, f.runID(), role); err != nil {
 		return err
 	}
 	return f.docker.StartContainer(ctx, f.ref(role))
