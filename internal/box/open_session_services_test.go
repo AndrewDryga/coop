@@ -20,15 +20,16 @@ import (
 // openSessionDaemon is a Docker that remembers what a session started. The containers exist once the
 // test says so, and carry whatever definition the start wrote in its label override.
 type openSessionDaemon struct {
-	calls, overrides, definition, inspectDB, inspectMigrate string
-	rt                                                      runtime.Runtime
+	calls, overrides, definition, inspectDB, inspectMigrate, config string
+	rt                                                              runtime.Runtime
 }
 
 func newOpenSessionDaemon(t *testing.T) *openSessionDaemon {
 	t.Helper()
 	dir := t.TempDir()
 	d := &openSessionDaemon{calls: filepath.Join(dir, "calls"), overrides: filepath.Join(dir, "overrides"),
-		definition: filepath.Join(dir, "definition"), inspectDB: filepath.Join(dir, "inspect-db"), inspectMigrate: filepath.Join(dir, "inspect-migrate")}
+		definition: filepath.Join(dir, "definition"), inspectDB: filepath.Join(dir, "inspect-db"), inspectMigrate: filepath.Join(dir, "inspect-migrate"), config: filepath.Join(dir, "config")}
+	d.resolve(t, migrateOneShot)
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(d.calls) + "\n" +
 		"prev=\n" +
@@ -39,7 +40,7 @@ func newOpenSessionDaemon(t *testing.T) *openSessionDaemon {
 		"def=$(cat " + strconv.Quote(d.definition) + " 2>/dev/null)\n" +
 		"case \"$*\" in\n" +
 		"  *'config --services'*) printf '%s\\n' migrate db ;;\n" +
-		"  *'config --format json'*) printf '%s\\n' '{\"services\":{\"db\":{\"expose\":[\"5432\"]},\"migrate\":{}}}' ;;\n" +
+		"  *'config --format json'*) cat " + strconv.Quote(d.config) + " ;;\n" +
 		"  'ps -q -a'*\"label=" + serviceDefinitionLabel + "=${def:-none}\"*) case \"$*\" in\n" +
 		"    *'service=db'*) test -s " + strconv.Quote(d.inspectDB) + " && printf '%s\\n' " + strings.Repeat("a", 64) + " ;;\n" +
 		"    *'service=migrate'*) test -s " + strconv.Quote(d.inspectMigrate) + " && printf '%s\\n' " + strings.Repeat("b", 64) + " ;;\n" +
@@ -53,6 +54,16 @@ func newOpenSessionDaemon(t *testing.T) *openSessionDaemon {
 	}
 	d.rt = runtime.Runtime{Name: shim}
 	return d
+}
+
+// migrateOneShot is the file as Compose resolves it, with db waiting for migrate to finish.
+const migrateOneShot = `{"services":{"db":{"expose":["5432"],"depends_on":{"migrate":{"condition":"service_completed_successfully","required":true}}},"migrate":{}}}`
+
+func (d *openSessionDaemon) resolve(t *testing.T, config string) {
+	t.Helper()
+	if err := os.WriteFile(d.config, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (d *openSessionDaemon) forgetCalls(t *testing.T) {
@@ -154,6 +165,23 @@ func TestAnOpenSessionsLaterBoxJoinsWhatItsFirstBoxStarted(t *testing.T) {
 		}
 	})
 
+	// A step that says it never restarts is as finished as one another service waits for.
+	t.Run("beside a step that never restarts", func(t *testing.T) {
+		arrange(t, running, finished)
+		d.resolve(t, `{"services":{"db":{"expose":["5432"]},"migrate":{"restart":"no"}}}`)
+		t.Cleanup(func() { d.resolve(t, migrateOneShot) })
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+		spec := session
+		spec.Ctx = ctx
+		if code, err := Run(cfg, d.rt, spec); err != nil || code != 0 {
+			t.Fatalf("later box: Run = %d, %v", code, err)
+		}
+		if calls := d.called(t); strings.Contains(calls, " up ") {
+			t.Fatalf("a later box touched the running services:\n%s", calls)
+		}
+	})
+
 	// Anything but what the session started has to go the whole way, and that way waits for the lock
 	// the running box holds: it never reaches `up` while a box uses the services.
 	stopped := finished
@@ -167,7 +195,14 @@ func TestAnOpenSessionsLaterBoxJoinsWhatItsFirstBoxStarted(t *testing.T) {
 		db, migrate openSessionContainer
 		spec        RunSpec
 		editFile    bool
+		config      string
 	}{
+		{name: "a service that stopped cleanly", db: running, migrate: finished, spec: session,
+			config: `{"services":{"db":{"expose":["5432"]},"migrate":{}}}`},
+		{name: "a service waited on only until it starts", db: running, migrate: finished, spec: session,
+			config: `{"services":{"db":{"expose":["5432"],"depends_on":{"migrate":{"condition":"service_started","required":true}}},"migrate":{}}}`},
+		{name: "a service that restarts on failure", db: running, migrate: finished, spec: session,
+			config: `{"services":{"db":{"expose":["5432"]},"migrate":{"restart":"on-failure"}}}`},
 		{name: "a service that went down", db: stopped, migrate: finished, spec: session},
 		{name: "a service that is not healthy", db: sick, migrate: finished, spec: session},
 		{name: "a one-shot step that failed", db: running, migrate: stopped, spec: session},
@@ -177,6 +212,10 @@ func TestAnOpenSessionsLaterBoxJoinsWhatItsFirstBoxStarted(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			arrange(t, tc.db, tc.migrate)
+			if tc.config != "" {
+				d.resolve(t, tc.config)
+				t.Cleanup(func() { d.resolve(t, migrateOneShot) })
+			}
 			if tc.editFile {
 				original, err := os.ReadFile(compose)
 				if err != nil {

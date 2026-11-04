@@ -21,7 +21,7 @@ type ServiceContainerObservation struct {
 	ID          string
 	Labels      map[string]string
 	Status      string
-	Completed   bool // it exited by itself with status 0, which is how a one-shot step ends
+	Completed   bool // it exited with status 0: how a one-shot step ends, and also how a service shut down cleanly ends
 	Running     bool
 	Paused      bool
 	Healthcheck bool

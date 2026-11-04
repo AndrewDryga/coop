@@ -97,7 +97,10 @@ stays shut until it answers (`awaitAnswer`), or the refill would race it for the
 An open session joins too (`joinOpenSessionServices`). It has no approval, so it matches what it started: a
 start under a supervisor labels every service with the file's bytes and service list (`markServiceDefinitionKey`,
 never a loop's, where editing a comment would then recreate everything at the next `up`). Every service has to be
-up and healthy with its published ports, or a one-shot that exited 0 (`Completed`), or the box takes the full path.
+up and healthy with its published ports, or a declared one-shot that exited 0 (`declaredOneShots`), or the box takes
+the full path. Exit 0 alone proves nothing: `redis SHUTDOWN` or a `docker stop` ends the same way. So a step counts only
+when another service waits for it with `service_completed_successfully` or it says `restart: "no"`; an undeclared
+standalone step waits behind the running box like any stopped service.
 So after an edit to the file a refill cannot join and waits behind the running box, and nothing recreates a service
 under it. A switch to that waiting box has no `OnOwnBoxesHoldLaunch`, since it was started parked, so `warmTaken` sees
 it has not started (`Child.Launched`, an open child's cidfile) and drains its neighbours itself, and either way the
@@ -191,6 +194,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-04 — exit 0 no longer makes any service a finished step: the file has to declare it. A broken file's reason
+  is one escaped line of text, since an editor does not wrap a code block.
 - 2026-11-04 — open sessions join their own services too, and a warm box a switch takes no longer waits behind its
   neighbours. Verified with a real open `coop acp` on fake API keys in a private config folder, no prompt: a warm
   switch was live in 0.1 s with every service container unchanged, the refill joined, and the same after an edit.

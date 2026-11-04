@@ -40,3 +40,6 @@ literally and still reads.
 - 2026-11-04 — the owner saw a services refusal cut off in Zed, since all of it sat in one code block. Only what
   to copy goes in a block now, and `threadtext.Check` fails a block line that ends like a sentence. Sweep: that
   refusal was the only text with a sentence in a block; the rest of the thread texts pass the new check.
+- 2026-11-04 — why a project file is broken sat in a block with no stop at its end, so the check missed it and up to
+  600 characters ran off the panel. It is one escaped line of text now, and the check also fails a long line of many
+  plain words. Sweep: no other thread text trips the wider check.

@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A new box in an editor session no longer reports a stopped service as running.** A service that shut down
+  cleanly now starts again. A step counts as finished only if another service waits for it with
+  `service_completed_successfully` or it sets `restart: "no"`.
+
+- **A broken project file reads whole in an editor.** Why `.agent/project.yaml` does not load is now wrapped text,
+  not a code block that ran off the panel.
+
+- **A Dockerfile whose heredoc mentions `.agent/project.yaml` now builds.** Coop still refuses a real `COPY` of it.
+
 - **An editor session in a project with services no longer hangs after a wait.** Once `coop approve` or
   `coop build` clears, the session's own box starts before its warm boxes, and the warm boxes share the
   services it started instead of restarting them under it. A switch to another provider stays instant.

@@ -460,7 +460,7 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 	case errors.As(blocked, &broken):
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's " + project.File + " has a problem.",
 			Detail: "Nothing in that file applies, so no agent runs here yet. Fix the file, and this session moves on by itself. " + waits}) +
-			"\n\n" + acpctl.CodeBlock(brokenFileReason(broken))
+			"\n\nWhat it says: " + acpctl.MarkdownText(brokenFileReason(broken))
 	case errors.Is(blocked, box.ErrProjectNotAdmitted):
 		return acpBoxFailedText(acpproxy.ChildExited)
 	case errors.As(blocked, &busy):
@@ -515,10 +515,11 @@ func acpSentence(part string) string {
 }
 
 // brokenFileReason is what a thread shows of why the project's file does not load. An error can quote
-// the file, which anyone who can edit the project wrote and which can be a megabyte, so it is escaped
-// and cut short here, and goes whole to the agent log.
+// the file, which anyone who can edit the project wrote and which can be a megabyte, so it is cut short
+// here, and goes whole to the agent log. yaml's errors span lines, which MarkdownText would show as
+// escape codes, so it is one line of words; the caller makes those literal with MarkdownText.
 func brokenFileReason(err error) string {
-	reason := []rune(safeErrorText(err))
+	reason := []rune(strings.Join(strings.Fields(safeErrorText(err)), " "))
 	if len(reason) > acpBrokenFileReasonLimit {
 		return string(reason[:acpBrokenFileReasonLimit]) + "…"
 	}

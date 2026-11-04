@@ -92,6 +92,15 @@ func servicePortsWithArgsContext(ctx context.Context, rt runtime.Runtime, worksp
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	config, err := resolvedServiceConfig(ctx, rt, args)
+	if err != nil {
+		return nil, err
+	}
+	return parseServicePortsChecked(config, workspacePath)
+}
+
+// resolvedServiceConfig is `compose config --format json`, bounded and cancellable.
+func resolvedServiceConfig(ctx context.Context, rt runtime.Runtime, args []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var out boundedServiceConfig
@@ -107,7 +116,7 @@ func servicePortsWithArgsContext(ctx context.Context, rt runtime.Runtime, worksp
 	if code != 0 {
 		return nil, fmt.Errorf("compose config --format json exited with status %d", code)
 	}
-	return parseServicePortsChecked(out.Bytes(), workspacePath)
+	return out.Bytes(), nil
 }
 
 // parseServicePorts is the pure core of ServicePorts: given `docker compose config --format json`

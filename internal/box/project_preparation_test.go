@@ -631,6 +631,22 @@ func TestRefuseCopiedProjectFileReadsWhatDockerReads(t *testing.T) {
 		"COPY .agent/*.yaml /opt/\n",
 		"COPY .agent/project.yaml* /opt/\n",
 		"FROM scratch AS tools\nCOPY .agent/project.yaml /opt/\nFROM tools\n",
+		// A heredoc ends, and what follows is an instruction again.
+		"RUN cat <<EOF\nhello\nEOF\nCOPY .agent/project.yaml /opt/\n",
+		"RUN cat <<EOF\r\nhello\r\nEOF\r\nCOPY .agent/project.yaml /opt/\r\n",
+		"RUN cat <<-EOF\n\thello\n\tEOF\nCOPY .agent/project.yaml /opt/\n",
+		"RUN cat <<A <<B\none\nA\ntwo\nB\nCOPY .agent/project.yaml /opt/\n",
+		"RUN cat <<EOF \\\n  > /tmp/inner\nhello\nEOF\nCOPY .agent/project.yaml /opt/\n",
+		"COPY <<EOF .agent/project.yaml /opt/\nhello\nEOF\n",
+		// None of these opens one, as Docker reads them, so the next line is an instruction.
+		"RUN cat<<EOF\nCOPY .agent/project.yaml /opt/\n",
+		"RUN cat <<<EOF\nCOPY .agent/project.yaml /opt/\n",
+		"RUN echo \"<<EOF\"\nCOPY .agent/project.yaml /opt/\n",
+		"RUN echo '<<EOF'\nCOPY .agent/project.yaml /opt/\n",
+		"RUN [\"cat\", \"<<EOF\"]\nCOPY .agent/project.yaml /opt/\n",
+		"ENV NOTE <<EOF\nCOPY .agent/project.yaml /opt/\n",
+		// Only the line holding exactly its name ends a body.
+		"RUN cat <<EOF\n EOF\nEOF2\nEOF\nCOPY .agent/project.yaml /opt/\n",
 	} {
 		if refuseCopiedProjectFile([]byte(dockerfile), ".agent/Dockerfile") == nil {
 			t.Errorf("not refused: %q", dockerfile)
@@ -653,6 +669,18 @@ func TestRefuseCopiedProjectFileReadsWhatDockerReads(t *testing.T) {
 		"COPY main.go /home/node/.agent/project.yaml\n",
 		"RUN echo COPY .agent/project.yaml /opt/\n",
 		"ONBUILD COPY .agent/project.yaml /opt/\n",
+		// A heredoc's body is text, and the image never holds the file.
+		"RUN cat > /tmp/inner <<EOF\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"RUN <<EOF\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"run cat 3<<EOF\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"RUN cat <<'EOF'\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"RUN cat <<\"EOF\"\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"RUN cat <<-EOF\n\tCOPY .agent/project.yaml /opt/\n\tEOF\n",
+		"RUN cat <<A <<B\nCOPY .agent/project.yaml /opt/\nA\nCOPY .agent/project.yaml /opt/\nB\n",
+		"RUN cat <<EOF \\\n  > /tmp/inner\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"COPY <<EOF /opt/inner\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"ONBUILD RUN cat <<EOF\nCOPY .agent/project.yaml /opt/\nEOF\n",
+		"RUN cat <<EOF\n# a comment line in the body\nCOPY .agent/project.yaml /opt/ \\\nEOF\n",
 	} {
 		if err := refuseCopiedProjectFile([]byte(dockerfile), ".agent/Dockerfile"); err != nil {
 			t.Errorf("refused %q: %v", dockerfile, err)

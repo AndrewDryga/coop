@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -123,9 +124,10 @@ func sessionServiceDefinition(data []byte, services []string) string {
 
 // joinOpenSessionServices is joinSessionServices for an open session. It has no approval to compare
 // with, so it matches what the session itself started: the file's bytes and service list, on the label
-// that start wrote. Every service must still be up, with the ports it was given, or `up` has work to do
-// and the full launch path does it, with its wait. Reading the file opens no bind source, so the shared
-// side of the lock is enough. It reports whether this box joined.
+// that start wrote. Every service must still be up, with the ports it was given, or be a declared one-shot
+// that finished (declaredOneShots), or `up` has work to do and the full launch path does it, with its wait.
+// Reading the file opens no bind source, so the shared side of the lock is enough. It reports whether this
+// box joined.
 func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSpec, projectRepo, file, owner string, sections *launchSections, exposedRoots ...string) (startedServices, bool) {
 	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" || spec.Review {
 		return startedServices{}, false
@@ -154,7 +156,15 @@ func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSp
 	if err != nil {
 		return startedServices{}, false
 	}
-	ports, err := servicePortsWithArgsContext(ctx, bound, servicePortScope(spec.Repo, owner), args)
+	config, err := resolvedServiceConfig(ctx, bound, args)
+	if err != nil {
+		return startedServices{}, false
+	}
+	ports, err := parseServicePortsChecked(config, servicePortScope(spec.Repo, owner))
+	if err != nil {
+		return startedServices{}, false
+	}
+	oneShots, err := declaredOneShots(config)
 	if err != nil {
 		return startedServices{}, false
 	}
@@ -176,12 +186,41 @@ func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSp
 		}
 		published := slices.DeleteFunc(slices.Clone(ports), func(port ServicePort) bool { return port.Service != service })
 		switch {
-		case container.Completed && len(published) == 0: // a one-shot step that did its work: `up` would only run it again
+		case container.Completed && oneShots[service] && len(published) == 0: // a one-shot step that did its work: `up` would only run it again
 		case !serviceContainerUp(container) || len(eligibleObservedServicePorts(container, "", published)) != len(published):
 			return startedServices{}, false
 		}
 	}
 	return startedServices{names: services, ports: ports}, true
+}
+
+// declaredOneShots names the services the resolved file says finish by design: another service waits for
+// one to complete, or it says it never restarts. Exiting with status 0 cannot tell on its own, since a
+// long-running service that is shut down cleanly ends the same way, and `up` has to start that one again.
+func declaredOneShots(configJSON []byte) (map[string]bool, error) {
+	var cfg struct {
+		Services map[string]struct {
+			Restart   string `json:"restart"`
+			DependsOn map[string]struct {
+				Condition string `json:"condition"`
+			} `json:"depends_on"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		return nil, fmt.Errorf("parse resolved service configuration: %w", err)
+	}
+	oneShots := make(map[string]bool)
+	for name, service := range cfg.Services {
+		if service.Restart == "no" {
+			oneShots[name] = true
+		}
+		for dependency, wait := range service.DependsOn {
+			if wait.Condition == "service_completed_successfully" {
+				oneShots[dependency] = true
+			}
+		}
+	}
+	return oneShots, nil
 }
 
 func servicePortNames(ports []ServicePort) []string {

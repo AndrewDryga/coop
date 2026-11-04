@@ -11,7 +11,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"unicode"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -77,11 +80,18 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 // found, or, when a pattern also matches another file, build an image without it and say nothing.
 // This only explains: the file stays out of the image whatever this reads, so a form it misses still
 // cannot bake it in. A plain search would refuse working builds, since a comment, a RUN, a COPY's
-// destination and another stage's file can all name it without needing it.
+// destination, another stage's file and a heredoc's body can all name it without needing it.
 func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
 	var instruction strings.Builder
-	for _, line := range strings.Split(string(dockerfile), "\n") {
-		line = strings.TrimSpace(line)
+	var bodies []heredoc
+	for _, raw := range strings.Split(string(dockerfile), "\n") {
+		if len(bodies) > 0 { // its lines are text, and no comment or continuation applies to them
+			if bodies[0].endsAt(raw) {
+				bodies = bodies[1:]
+			}
+			continue
+		}
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue // Docker drops both, even inside a continued instruction
 		}
@@ -93,6 +103,7 @@ func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
 		if copiesProjectFile(instruction.String()) {
 			return fmt.Errorf("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
 		}
+		bodies = heredocsOf(instruction.String())
 		instruction.Reset()
 	}
 	return nil
@@ -123,6 +134,88 @@ func copiesProjectFile(instruction string) bool {
 		}
 	}
 	return false
+}
+
+// heredoc is a body that follows an instruction, up to the line holding only its name. A `<<-` body may
+// indent that line with tabs.
+type heredoc struct {
+	name  string
+	chomp bool
+}
+
+func (h heredoc) endsAt(line string) bool {
+	line = strings.TrimRight(line, "\r")
+	if h.chomp {
+		line = strings.TrimLeft(line, "\t")
+	}
+	return line == h.name
+}
+
+var heredocWord = regexp.MustCompile(`^[0-9]*<<(-?)([^<]*)$`)
+
+// heredocsOf reads the bodies one instruction opens, the way Docker's parser does: only RUN, COPY and
+// ADD can have one, directly or under ONBUILD, and the whole shell word must be the opener, so neither
+// `cat<<EOF` nor a quoted "<<EOF" opens anything.
+func heredocsOf(instruction string) []heredoc {
+	words := shellWords(instruction)
+	if len(words) > 1 && strings.EqualFold(words[0].raw, "ONBUILD") {
+		words = words[1:]
+	}
+	if len(words) == 0 || !slices.ContainsFunc([]string{"RUN", "COPY", "ADD"}, func(name string) bool { return strings.EqualFold(words[0].raw, name) }) {
+		return nil
+	}
+	var bodies []heredoc
+	for _, word := range words[1:] {
+		match := heredocWord.FindStringSubmatch(word.raw)
+		if match == nil {
+			continue
+		}
+		if name := word.text[len(word.raw)-len(match[2]):]; name != "" { // the opener itself has no quotes
+			bodies = append(bodies, heredoc{name: name, chomp: match[1] == "-"})
+		}
+	}
+	return bodies
+}
+
+// shellWord is one word of an instruction: as written, and with its quotes and escapes taken off.
+type shellWord struct{ raw, text string }
+
+func shellWords(s string) []shellWord {
+	var (
+		words     []shellWord
+		raw, text strings.Builder
+		quote     rune
+		escaped   bool
+	)
+	for _, r := range s {
+		switch {
+		case escaped:
+			escaped = false
+			text.WriteRune(r)
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case r == quote:
+			quote = 0
+		case quote != 0:
+			text.WriteRune(r)
+		case r == '"' || r == '\'':
+			quote = r
+		case unicode.IsSpace(r):
+			if raw.Len() > 0 {
+				words = append(words, shellWord{raw.String(), text.String()})
+				raw.Reset()
+				text.Reset()
+			}
+			continue
+		default:
+			text.WriteRune(r)
+		}
+		raw.WriteRune(r)
+	}
+	if raw.Len() > 0 {
+		words = append(words, shellWord{raw.String(), text.String()})
+	}
+	return words
 }
 
 // readImageID reads the image id a build wrote with --iidfile.

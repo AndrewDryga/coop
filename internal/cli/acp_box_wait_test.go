@@ -1365,52 +1365,57 @@ func TestBoxWaitStopsBlamingAFileThatLoads(t *testing.T) {
 	}
 }
 
-// Anyone who can edit the project writes this text, and an error can quote it. Whatever it holds stays
-// inside its one code block as text: it cannot close the block, draw a link, act on a terminal or start
-// a line of its own, and a megabyte of it stays out of the thread.
+// Anyone who can edit the project writes this text, and an error can quote it. Whatever it holds wraps
+// as ordinary text: it opens no code block, which an editor would not wrap, draws no link, image or
+// heading, cannot act on a terminal, stays in its one line, and a megabyte of it stays out of the thread.
 func TestBrokenFileTextKeepsTheFilesWordsInert(t *testing.T) {
 	_, quoted := project.Parse([]byte("\"evil\\n[x](https://evil.example)\\n```\": 1\n"))
 	if quoted == nil {
 		t.Fatal("fixture: the file loaded")
 	}
-	hostile := "**bold** [link](https://evil.example) <img src=x> \x1b[31m\x1b]0;title\x07 \u202eevil \u200bword coop approve"
+	hostile := "**bold** [link](https://evil.example) ![img](https://evil.example/a.png) <img src=x> www.evil.example \x1b[31m\x1b]0;title\x07 \u202eevil \u200bword coop approve"
+	unescaped := regexp.MustCompile(`(^|[^\\])[\[\]()<>*_` + "`" + `#!]|[^\\]\.[^\s\\]|[^\\]:/`)
 	for name, err := range map[string]error{
 		"what yaml quotes":      quoted,
 		"markdown and controls": errors.New(hostile),
 		"a fence":               errors.New("before\n```\n\n" + hostile + "\n\n````\nafter"),
+		"a heading underline":   errors.New("before\n---\nafter\n===\n# heading"),
+		"a line of its own":     errors.New("- item\n\n    indented\n> quote"),
 		"a megabyte":            errors.New(strings.Repeat("`[x](y) ", 1<<17)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			text := acpBoxWaitText(&box.BrokenProjectFile{Err: err}, nil, false)
-			lines := strings.Split(text, "\n")
-			opened := slices.IndexFunc(lines, func(line string) bool { return strings.HasPrefix(line, "```") })
-			if opened < 0 || !strings.Contains(strings.Join(lines[:opened], "\n"), "has a problem") {
-				t.Fatalf("no code block after the fixed words:\n%s", text)
+			paragraphs := strings.Split(text, "\n\n")
+			reason := paragraphs[len(paragraphs)-1]
+			if !strings.Contains(text, "has a problem") || !strings.HasPrefix(reason, "What it says: ") {
+				t.Fatalf("the file's words do not follow the fixed ones:\n%s", text)
 			}
-			fence := lines[opened]
-			if strings.Trim(fence, "`") != "" || lines[len(lines)-1] != fence {
-				t.Fatalf("the code block is not the end of the message:\n%s", text)
+			if strings.Contains(text, "```") {
+				t.Fatalf("a code block, which an editor does not wrap:\n%s", text)
 			}
-			for _, line := range lines[opened+1 : len(lines)-1] {
-				if strings.HasPrefix(line, fence) {
-					t.Fatalf("the file's words closed the code block:\n%s", text)
-				}
+			if len(paragraphs) != 3 || strings.Contains(reason, "\n") {
+				t.Fatalf("the file's words started a line of their own:\n%s", text)
+			}
+			if bad := unescaped.FindString(strings.TrimPrefix(reason, "What it says: ")); bad != "" {
+				t.Fatalf("%q is still Markdown in\n%s", bad, text)
 			}
 			for _, r := range text {
 				if r < 0x20 && r != '\n' || r == 0x7f || r == 0x202E || r == 0x200B {
 					t.Fatalf("a hidden character %U reached the thread:\n%q", r, text)
 				}
 			}
-			if len([]rune(text)) > 2*acpBrokenFileReasonLimit {
+			// Escaping at most doubles what is shown, and the fixed words are short.
+			if len([]rune(text)) > 3*acpBrokenFileReasonLimit {
 				t.Fatalf("the thread got %d characters of the file", len([]rune(text)))
 			}
 		})
 	}
-	// A line break yaml quotes as written stays in its line.
-	text := acpBoxWaitText(&box.BrokenProjectFile{Err: quoted}, nil, false)
-	if slices.ContainsFunc(strings.Split(text, "\n"), func(line string) bool { return strings.HasPrefix(line, "[x]") }) {
-		t.Fatalf("what a key quotes started a line of its own:\n%s", text)
+	// yaml's own line breaks read as spaces, not as escape codes.
+	if got := brokenFileReason(errors.New("yaml: unmarshal errors:\n  line 3: no")); got != "yaml: unmarshal errors: line 3: no" {
+		t.Fatalf("lines = %q", got)
 	}
+	// A long reason is what a code block would have run off the panel's edge with.
+	threadtext.Check(t, acpBoxWaitText(&box.BrokenProjectFile{Err: errors.New(strings.Repeat("did not find expected key ", 30))}, nil, false))
 	if got := brokenFileReason(errors.New(strings.Repeat("é", acpBrokenFileReasonLimit+1))); !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
 		t.Fatalf("cut short = %q", got)
 	}
