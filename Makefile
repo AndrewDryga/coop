@@ -370,6 +370,10 @@ box-runtime-e2e: ## Init/reaping, signal, and entrypoint descendant-supervision 
 	@test -n "$$COOP_RUNTIME" || { echo 'COOP_RUNTIME is required (for example: COOP_RUNTIME=docker make box-runtime-e2e)'; exit 2; }
 	@go test -tags boxruntimee2e -run '^TestRuntime(Init|Entrypoint|Compose)' -count=1 -v ./internal/box/
 
+# Test binaries move HOME into a folder of their own, and the docker CLI finds its plugins (Buildx,
+# Compose) under its config folder. These suites drive a real Docker, so they keep the person's.
+filesystem-runtime-e2e network-runtime-e2e box-runtime-e2e task-channel-e2e: export DOCKER_CONFIG ?= $(HOME)/.docker
+
 filesystem-runtime-e2e: ## Filesystem enforcement and crash recovery on a supported APFS Docker runtime (needs a local client image)
 	@test -n "$$COOP_FILESYSTEM_CLIENT_IMAGE" || { echo 'COOP_FILESYSTEM_CLIENT_IMAGE must name a locally built client image'; exit 2; }
 	@COOP_FILESYSTEM_RUNTIME_TEST=1 go test -tags filesystemruntimee2e -run '^TestFilesystem' -count=1 -timeout 15m -v ./internal/box/
