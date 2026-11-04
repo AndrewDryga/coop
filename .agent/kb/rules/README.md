@@ -188,6 +188,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [batch-slow-gates-when-requested](batch-slow-gates-when-requested.md) — validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them
 - [requested-outcome-controls-stopping](requested-outcome-controls-stopping.md) — full implementation requests continue past verified slices through the requested final acceptance criteria
 - [run-the-real-invocation-last](run-the-real-invocation-last.md) — a green gate is not proof a feature works; the last check is the user’s own command, in a real repo, after the last commit
+- [cleanup-keeps-working-features](cleanup-keeps-working-features.md) — a cleanup removes only what nothing can reach or run; a feature that works today stays unless the owner names it for removal
 - [fix-the-bug-not-the-feature](fix-the-bug-not-the-feature.md) — root-cause the misbehavior; deleting the feature is never the fix without the human
 - [gate-is-one-recipe](gate-is-one-recipe.md) — Make owns the broad check union and its CI partitions, never a second workflow check list
 - [small-work-to-the-queue](small-work-to-the-queue.md) — ready work goes to `00_todo/`; only the genuinely large or unscoped goes to the backlog
