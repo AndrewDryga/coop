@@ -451,3 +451,7 @@ this one has it.
 
 - 2026-11-03 — added the test-only `testutil/threadtext` leaf: three packages write thread messages, and
   one checker holds them to the same rule (`acp-thread-messages-are-structured`).
+
+- 2026-11-03 — added `acpproxy -> safetext`: the ACP trace records text a box chose and shows its hidden
+  characters as codes at the one place every trace line passes. `acpctl` reuses that function for thread
+  text instead of its own copy, so its edge to `safetext` is gone.

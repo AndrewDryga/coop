@@ -1,6 +1,7 @@
 package acpproxy
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -279,5 +280,38 @@ func TestAdapterIdentityNamesTheClient(t *testing.T) {
 		if got := adapterIdentity([]byte(result)); got != want {
 			t.Errorf("adapterIdentity(%s) = %q, want %q", result, got, want)
 		}
+	}
+}
+
+// A box chooses much of what is traced, and a trace is read with cat: a newline must not fake a line, and
+// an escape sequence must not act on the terminal.
+func TestTraceKeepsBoxTextOnItsLine(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("COOP_ACP_TRACE", "1")
+	resetTrace(t)
+
+	hostile := "x\n22:14:25.039 | forged line " + string(rune(27)) + "]0;title" + string(rune(7))
+	Trace("replay failed: %s", hostile)
+	traceLine("box→editor", []byte(hostile+"\n"))
+
+	b, err := os.ReadFile(filepath.Join(dir, "coop", fmt.Sprintf("acp-trace-%d.log", os.Getpid())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.ContainsAny(b, string(rune(27))+string(rune(7))) {
+		t.Errorf("an escape sequence reached the trace: %q", b)
+	}
+	var forged int
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "22:14:25.039") {
+			forged++
+		}
+		if strings.Contains(line, "forged line") && !strings.Contains(line, fmt.Sprintf("%cu000A", 92)) {
+			t.Errorf("the newline does not show as its code: %q", line)
+		}
+	}
+	if forged != 0 {
+		t.Errorf("a box wrote %d lines of its own into the trace:\n%s", forged, b)
 	}
 }

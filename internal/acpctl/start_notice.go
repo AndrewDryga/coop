@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/AndrewDryga/coop/internal/safetext"
+	"github.com/AndrewDryga/coop/internal/acpproxy"
 )
 
 // ServePort is one project port the box publishes: Box is what the dev server listens on inside the
@@ -259,7 +259,7 @@ func ProblemText(p Problem) string {
 		text += "\n\n" + markdownText(p.Detail)
 	}
 	if p.Command != "" {
-		text += "\n\nRun this " + markdownText(p.Purpose) + ":\n\n" + CodeBlock(visible(p.Command))
+		text += "\n\nRun this " + markdownText(p.Purpose) + ":\n\n" + CodeBlock(acpproxy.Visible(p.Command))
 	}
 	return text
 }
@@ -271,32 +271,12 @@ func count(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// visible shows each character that would act on the display, break the line, turn the text
-// around or draw as nothing (safetext.Hidden) as its \u escape, the way the terminal shows them, so
-// a name Coop repeats stays on its line and cannot pass for another.
-func visible(s string) string {
-	var b strings.Builder
-	previous := rune(-1)
-	for _, r := range s {
-		switch hidden := safetext.Hidden(previous, r); {
-		case !hidden:
-			b.WriteRune(r)
-		case r > 0xFFFF:
-			fmt.Fprintf(&b, "\\U%08X", r)
-		default:
-			fmt.Fprintf(&b, "\\u%04X", r)
-		}
-		previous = r
-	}
-	return b.String()
-}
-
 // markdownText makes text Coop did not write itself (an account, preset, service or MCP server
-// name, an approved domain) literal in Markdown. Hidden characters are shown escaped (visible). Every character Markdown could read as a link, an image,
+// name, an approved domain) literal in Markdown. Hidden characters are shown escaped (acpproxy.Visible). Every character Markdown could read as a link, an image,
 // emphasis, code, HTML or an entity is backslash-escaped, and so are the ones GFM autolinking keys
 // on: a dot inside a word (www.example.com), a colon before a slash (https://) and an at sign.
 func markdownText(s string) string {
-	runes := []rune(visible(s))
+	runes := []rune(acpproxy.Visible(s))
 	var b strings.Builder
 	for i, r := range runes {
 		next := rune(0)
@@ -314,7 +294,7 @@ func markdownText(s string) string {
 // codeSpan shows s as inline code: fenced by one more backtick than its longest run, so a backtick
 // inside cannot end the span, with hidden characters shown escaped as in markdownText.
 func codeSpan(s string) string {
-	s = visible(s)
+	s = acpproxy.Visible(s)
 	longest := longestBackticks(s)
 	fence := strings.Repeat("`", longest+1)
 	if longest > 0 {
@@ -329,7 +309,7 @@ func codeSpan(s string) string {
 func CodeBlock(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = visible(line)
+		lines[i] = acpproxy.Visible(line)
 	}
 	text = strings.Join(lines, "\n")
 	fence := strings.Repeat("`", max(3, longestBackticks(text)+1))

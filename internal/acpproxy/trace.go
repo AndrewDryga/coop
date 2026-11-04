@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/safetext"
 )
 
 // ACP wire tracing — an opt-in diagnostic for when an editor's ACP session misbehaves (a lost
@@ -91,8 +92,10 @@ func traceLog() io.Writer {
 
 // writeLocked appends one line (no trailing newline) to the trace, rotating to .log.1 first if the
 // line would push the current file past the cap. Caller holds traceMu and has confirmed tracing is on.
+// Much of what is traced was written by a box, and a trace is read with cat and tail, so it is cleaned
+// here, where every call passes.
 func writeLocked(s string) {
-	line := []byte(s + "\n")
+	line := []byte(Visible(s) + "\n")
 	w := traceOut
 	if traceWritten+int64(len(line)) > traceMaxBytes {
 		if w = rotateLocked(); w == nil {
@@ -101,6 +104,26 @@ func writeLocked(s string) {
 	}
 	n, _ := w.Write(line)
 	traceWritten += int64(n)
+}
+
+// Visible shows each character that would act on a terminal, break the line, turn the text around or
+// draw as nothing (safetext.Hidden) as its code, the way the terminal output shows them, so that text a
+// box chose stays on its line and cannot pass for other text.
+func Visible(s string) string {
+	var b strings.Builder
+	previous := rune(-1)
+	for _, r := range s {
+		switch hidden := safetext.Hidden(previous, r); {
+		case !hidden:
+			b.WriteRune(r)
+		case r > 0xFFFF:
+			fmt.Fprintf(&b, "%cU%08X", 92, r)
+		default:
+			fmt.Fprintf(&b, "%cu%04X", 92, r)
+		}
+		previous = r
+	}
+	return b.String()
 }
 
 // rotateLocked renames the current log to <path>.1 (replacing any prior backup) and reopens a fresh

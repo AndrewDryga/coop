@@ -40,8 +40,8 @@ const (
 // The scan is tag-agnostic on purpose, so the frozen graph never depends on which tags or GOOS the
 // gate happens to run under.
 var allowedEdges = map[string][]string{
-	"acpctl":                {"acpproxy", "agent", "config", "ladder", "preset", "safefile", "safetext"},
-	"acpproxy":              {"config"},
+	"acpctl":                {"acpproxy", "agent", "config", "ladder", "preset", "safefile"},
+	"acpproxy":              {"config", "safetext"},
 	"agent":                 {"config", "egress", "mcp", "safefile"},
 	"box":                   {"agent", "config", "consult", "egress", "forkspace", "fsfilter", "fsidentity", "fsimage", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "randid", "runtime", "safefile", "secretscan", "shadowpath", "taskchannel", "ui"},
 	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "gitdiff", "hostsurface", "ladder", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "randid", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
