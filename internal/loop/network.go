@@ -155,8 +155,7 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 	if r.RawPackets > 0 {
 		// No destination was recorded for these, so the block says so instead of inventing one —
 		// but the attempt did meet the boundary, and that absence is itself evidence.
-		ui.Alert(fmt.Sprintf("Blocked %s in %s", ui.Count(int(r.RawPackets), "raw network packet"), strings.ToLower(stage)),
-			"No remote address details were recorded for these packets.")
+		ui.Alert(fmt.Sprintf("%s: %s", stage, r.Raw), r.RawAdvice)
 	}
 	for _, alert := range r.Alerts {
 		ui.Alert("The network filter raised an alert", alert)

@@ -328,6 +328,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-03 — every reason code the gateway records reads as plain words in `coop net inspect`;
+  `TestEveryRecordedReasonHasPlainText` reads the gateway source, so a new code needs a sentence.
 - 2026-11-03 — creates now get a minute instead of the generic 15 seconds, and
   the record keeps an unanswered create's time, so recovery that runs while Docker is still
   finishing it keeps the resource for `unfinishedCreateSettle` instead of recording it gone.

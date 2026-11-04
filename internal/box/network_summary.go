@@ -36,12 +36,13 @@ type NetworkReport struct {
 	Denials []NetworkDenial
 	Omitted int
 	Allowed string
-	// Raw is the kernel's tally of refused raw packets, rendered; RawPackets is
-	// how many it counted (0 when nothing was refused OR nothing was measured).
-	// They are counted, never attributed: the filter drops them without
-	// recording a destination.
-	Raw        string
+	// RawPackets is the kernel's tally of refused raw packets (0 when nothing was
+	// refused OR nothing was measured). They are counted, never attributed: the
+	// filter drops them without recording a destination. Raw and RawAdvice say so
+	// in the words `coop net inspect` uses.
 	RawPackets uint64
+	Raw        string
+	RawAdvice  string
 	// Gateway counts the refusals at Coop's OWN listeners — a connection dialed
 	// straight at the guard, a frame its DNS listener could not read as a query.
 	// They are kept apart from Denials because they name no destination: folding
@@ -92,11 +93,13 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 	groups := map[string]*NetworkDenial{}
 	var ordered []*NetworkDenial // first-seen order, which is the order evidence arrived
 	first, drafted := "", ""
+	var remote []networkview.Denial
 	for _, denial := range snapshot.Denials {
 		if networkreport.LocalRefusal(denial) {
 			out.Gateway++
 			continue
 		}
+		remote = append(remote, denial)
 		basis := denialBasis(denial.Kind)
 		where := denial.Name
 		if where == "" {
@@ -133,15 +136,15 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 		out.Denials = append(out.Denials, *g)
 	}
 	out.Allowed = allowedTraffic(snapshot.Counters)
-	out.Raw = rawRefusals(snapshot.Counters)
 	if snapshot.Counters != nil && snapshot.Counters.DeniedPackets != nil {
 		out.RawPackets = uint64(*snapshot.Counters.DeniedPackets)
+		out.Raw, out.RawAdvice = networkreport.PacketTally(remote, out.RawPackets)
 	}
 	for i, alert := range snapshot.Alerts {
 		if i >= maxSummaryAlerts {
 			break
 		}
-		out.Alerts = append(out.Alerts, alertLine(alert))
+		out.Alerts = append(out.Alerts, networkreport.AlertText(alert))
 	}
 	return out
 }
@@ -174,40 +177,6 @@ func allowedTraffic(counters *networkview.Counters) string {
 	}
 	return fmt.Sprintf("allowed: %s, %s sent, %s received",
 		networkreport.ConnectionCount(counters.Connections), networkreport.ByteCount(counters.SentBytes), networkreport.ByteCount(counters.ReceivedBytes))
-}
-
-// rawRefusals reports the packets the kernel refused. It deliberately names no
-// destination: nothing recorded one, and a plausible guess would be a fiction.
-// A measured zero says nothing worth a line; UNKNOWN still does.
-func rawRefusals(counters *networkview.Counters) string {
-	if counters == nil || counters.DeniedPackets == nil {
-		return "refused raw packets: UNKNOWN — the kernel counters were not recorded"
-	}
-	if *counters.DeniedPackets == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%s refused too, with no destination recorded (%s of them to protected addresses)",
-		networkreport.Plural(uint64(*counters.DeniedPackets), "raw packet"), countText(counters.ProtectedPackets))
-}
-
-// countText renders a retained counter as a decimal string, matching how it is
-// stored. A nil counter is UNKNOWN — a metric nobody measured is not a zero.
-func countText(value *networkview.Count) string {
-	if value == nil {
-		return "UNKNOWN"
-	}
-	return strconv.FormatUint(uint64(*value), 10)
-}
-
-// alertLine states the observed facts, the window and the threshold that fired,
-// and nothing else. An encrypted byte count is not evidence of intent.
-func alertLine(alert networkview.Alert) string {
-	line := fmt.Sprintf("%s (%s): %s over %sms, threshold %s %s", alert.Category, alert.Severity, alert.State,
-		strconv.FormatUint(uint64(alert.WindowMillis), 10), strconv.FormatUint(uint64(alert.Threshold.Value), 10), alert.Threshold.Unit)
-	if alert.Facts.Reason != "" {
-		line += " — " + alert.Facts.Reason
-	}
-	return line
 }
 
 // report folds this execution's retained evidence into the run's summary. Call

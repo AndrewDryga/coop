@@ -320,3 +320,19 @@ func TestNetworkLogSeparatesCoopsOwnGatewayAndOffersNoUnrunnableLookup(t *testin
 		t.Errorf("a gateway-only iteration claimed the box could not reach something:\n%s", only)
 	}
 }
+
+// A packet the filter counted has no destination, so the block prints the report's own words for it
+// and never a raw-socket term.
+func TestNetworkIterationPrintsThePacketTally(t *testing.T) {
+	out := captureStderr(t, func() {
+		printNetworkIteration(box.NetworkReport{RunID: "r", RawPackets: 4, Raw: "4 packets were blocked", RawAdvice: "Check its own error."}, "Task attempt 7")
+	})
+	for _, want := range []string{"Task attempt 7: 4 packets were blocked", "Check its own error."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("block %q is missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "raw") {
+		t.Errorf("block %q still talks about raw packets", out)
+	}
+}

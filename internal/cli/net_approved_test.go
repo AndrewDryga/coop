@@ -377,6 +377,16 @@ func TestEveryRetainedReasonHasItsOwnSentence(t *testing.T) {
 		"gateway_admission_invalid", "gateway_destination_unknown", "service_proxy_client_unrecognized",
 		"controller_message_invalid", "controller_socket_unavailable", "controller_stopped",
 		"enforcement_unavailable", "clock_unavailable", "clock_deadline_invalid", "observation_unavailable", "upstream_unreachable", "unsupported_capability",
+		"upstream_connection_failed", "upstream_establishment_exhausted", "upstream_reset", "upstream_outcome_unavailable",
+		"local_reset", "normal_close", "proxy_end_missing", "socket_absent", "socket_observation_unavailable",
+		"credential_broker_request_refused", "credential_broker_credential_refused", "credential_broker_redirect_refused", "credential_broker_upstream_unavailable",
+		"credential_broker_address_unavailable", "credential_broker_configuration_invalid", "credential_broker_listener_unavailable",
+		"credential_broker_stopped", "credential_broker_unavailable", "clock_namespace_mismatch", "clock_unsupported",
+		"collector_configuration_invalid", "collector_unavailable", "enforcement_shutdown_unconfirmed", "gateway_configuration_invalid",
+		"gateway_generation_used", "gateway_role_invalid", "gateway_listener_stopped", "gateway_listener_unavailable", "gateway_shutdown_unconfirmed",
+		"gateway_socket_occupied", "gateway_start_timeout", "kernel_counters_invalid", "maintenance_shutdown_unconfirmed",
+		"observation_generation_used", "observation_invalid", "observation_limit", "observation_storage_unavailable",
+		"observer_end_after_workload_unproven", "socket_inventory_invalid", "terminal_clock_unavailable", "terminal_observation_unavailable",
 	} {
 		message := networkstate.DiagnosticReason(reason)
 		if message == "" || !strings.HasSuffix(message, ".") || strings.Contains(message, reason) {

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Network reports use plain words.** `coop net inspect` and `coop net blocked` explain every
+  reason the network gateway records in a sentence, instead of showing codes such as
+  `upstream_reset`. A loop now says "4 packets were blocked, and Coop did not record where they were
+  going" instead of "raw network packets". `--json` keeps the codes.
+
 - **Rejected input exits 2 everywhere.** A task or idea ID that matches nothing, `coop fork merge`
   without a terminal or `--yes`, and an unknown eval suite or a preset given to an agent-only suite
   now exit 2 like other bad input (they exited 1). Their messages use the same refusal block as the

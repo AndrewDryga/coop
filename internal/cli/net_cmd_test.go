@@ -497,7 +497,7 @@ func TestInspectSeparatesRefusalsAtCoopsOwnListeners(t *testing.T) {
 	got := renderNetRun(networkreport.View{ID: netTestRun}, inspection)
 	want := "\n⚠ Traffic to 2 remote addresses was blocked\n" +
 		"  unapproved.example.org · DNS\n" +
-		"  named.example.org · DNS — dns_query_invalid\n" +
+		"  named.example.org · DNS — a message the gateway could not read as a query\n" +
 		"To see why: coop net blocked unapproved.example.org --run e644f07a\n" +
 		"\n⚠ Coop's own gateway refused 5 requests from inside the box\n" +
 		"  TLS — a connection made straight to the gateway's own port ×3\n" +

@@ -84,16 +84,28 @@ func TestRunReportNeverFabricatesZeroTraffic(t *testing.T) {
 }
 
 func TestRunReportSummarizesAlerts(t *testing.T) {
-	snapshot := networkview.Snapshot{Alerts: []networkview.Alert{{ID: "x", Category: "denial_burst", Severity: "warning",
-		State: "open", WindowMillis: 5000, Threshold: networkview.AlertThreshold{Value: 20, Unit: "denials"},
-		Facts: networkview.AlertFacts{Reason: "sustained refusals"}}}}
+	snapshot := networkview.Snapshot{Alerts: []networkview.Alert{
+		{ID: "x", Category: "denial_burst_dns", Severity: "warning", State: "open", WindowMillis: 5000,
+			Threshold: networkview.AlertThreshold{Value: 20, Unit: "denied_dns_queries"}, Facts: networkview.AlertFacts{DNSQueries: 24}},
+		{ID: "y", Category: "health_resolver", Severity: "warning", State: "open", WindowMillis: 5000,
+			Threshold: networkview.AlertThreshold{Value: 5000, Unit: "unhealthy_milliseconds"},
+			Facts:     networkview.AlertFacts{HealthStatus: "degraded", Reason: "last_lookup_exchange_failed"}},
+	}}
 	report := networkRunReport("run1", snapshot)
-	if len(report.Alerts) != 1 {
+	if len(report.Alerts) != 2 {
 		t.Fatalf("alerts = %q", report.Alerts)
 	}
-	for _, want := range []string{"denial_burst", "warning", "5000ms", "threshold 20 denials", "sustained refusals"} {
+	for _, want := range []string{"a burst of blocked DNS lookups", "warning", "24 in 5s", "over a threshold of 20"} {
 		if !strings.Contains(report.Alerts[0], want) {
 			t.Errorf("alert line %q is missing %q", report.Alerts[0], want)
+		}
+	}
+	if want := "DNS resolution was degraded for at least 5s (warning) — its last lookup failed"; report.Alerts[1] != want {
+		t.Errorf("health alert = %q, want %q", report.Alerts[1], want)
+	}
+	for _, alert := range report.Alerts {
+		if strings.Contains(alert, "_") {
+			t.Errorf("alert line %q still carries a raw code", alert)
 		}
 	}
 	if report.Quiet() {
@@ -159,10 +171,16 @@ func TestRunReportCountsRawRefusalsAsHittingTheBoundary(t *testing.T) {
 	if report.RawPackets != 4 {
 		t.Errorf("RawPackets = %d, want 4", report.RawPackets)
 	}
-	for _, want := range []string{"4 raw packets refused", "1 of them to protected addresses", "no destination recorded"} {
-		if !strings.Contains(report.Raw, want) {
-			t.Errorf("raw line %q is missing %q", report.Raw, want)
-		}
+	if want := "4 packets were blocked, and Coop did not record where they were going"; report.Raw != want || report.RawAdvice == "" {
+		t.Errorf("raw = %q with advice %q, want %q with advice", report.Raw, report.RawAdvice, want)
+	}
+	// Beside a direct connection's own row the count is a total, as coop net inspect says.
+	direct := networkRunReport("run1", networkview.Snapshot{
+		Counters: &networkview.Counters{DeniedPackets: &denied, ProtectedPackets: &protected},
+		Denials:  []networkview.Denial{{ID: "d1", Kind: "direct_tcp_attempt", Peer: "10.0.0.5"}},
+	})
+	if want := "4 packets were dropped in all, direct connections included"; direct.Raw != want || direct.RawAdvice != "" {
+		t.Errorf("raw beside a direct connection = %q with advice %q, want %q alone", direct.Raw, direct.RawAdvice, want)
 	}
 	// Zero refused packets is a measurement, not a boundary hit.
 	zero := networkview.Count(0)

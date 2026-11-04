@@ -521,7 +521,7 @@ func endpointReason(reason string) string {
 	case "":
 		return "no connection detail was recorded"
 	}
-	return reason
+	return evidenceReasonText(reason)
 }
 
 // ------------------------------------------------------------ exceptions ----
@@ -624,8 +624,7 @@ func refusalKind(kind string) string {
 }
 
 // refusalReasonText translates a retained reason code the way `explain`
-// would, in one clause. An unknown code is shown as itself: a guess would be a
-// worse answer than the code.
+// would, in one clause.
 func refusalReasonText(reason string) string {
 	switch reason {
 	case "protected_destination", "unsafe_dns_answer":
@@ -638,6 +637,8 @@ func refusalReasonText(reason string) string {
 		return "the connection carried no usable name"
 	case "dns_type_unsupported":
 		return "a lookup for something other than an address"
+	case "dns_query_invalid":
+		return "a message the gateway could not read as a query"
 	case "tls_direct_dial_refused":
 		return "dialed straight at the gateway"
 	case "upstream_unreachable", "upstream_connection_failed":
@@ -647,7 +648,17 @@ func refusalReasonText(reason string) string {
 	case "observation_unavailable":
 		return "it could not be observed"
 	}
-	return reason
+	// evidenceReasonText's clauses are written for health rows, where "it" is the gateway; on this
+	// row "it" would read as the destination. So the explain sentence comes first.
+	if networkstate.KnownReason(reason) {
+		return reasonSentence(reason)
+	}
+	return evidenceReasonText(reason)
+}
+
+// reasonSentence is the sentence `coop net blocked` prints for a code, as a clause a row can carry.
+func reasonSentence(reason string) string {
+	return strings.TrimSuffix(networkstate.DiagnosticReason(reason), ".")
 }
 
 // LocalRefusal reports whether a denial is the gateway refusing something
@@ -689,21 +700,16 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	}
 	// "Traffic" is the subject, so the verb never changes with the count.
 	out := &warning{headline: "Traffic to " + ui.Count(len(destinations), "remote address", "remote addresses") + " was blocked"}
+	tally, advice := PacketTally(remote, packets)
 	if len(groups) == 0 {
-		out.headline = unrecordedPackets(packets, "packet")
-		out.rows = append(out.rows, "Coop only counts such packets. If a program failed because of this, check its own error for the address it wanted.")
+		out.headline = tally
+		out.rows = append(out.rows, advice)
 	}
 	for _, group := range groups {
 		out.rows = append(out.rows, times(group.Label, group.Count))
 	}
-	switch {
-	case len(groups) == 0 || packets == 0:
-	case slices.ContainsFunc(remote, func(denial networkview.Denial) bool { return denial.Kind == "direct_tcp_attempt" }):
-		// The filter counted a direct connection's own packets too, so beside its row the count
-		// is a total: calling it packets with no address recorded would contradict the row above.
-		out.rows = append(out.rows, Plural(packets, "packet")+" "+was(int(min(packets, 2)))+" dropped in all, direct connections included")
-	default:
-		out.rows = append(out.rows, unrecordedPackets(packets, "other packet"))
+	if len(groups) != 0 && tally != "" {
+		out.rows = append(out.rows, tally)
 	}
 	// The action names the thing a human recognizes. Approval guidance is
 	// offered only when the evidence itself proves a rule that would have
@@ -726,8 +732,25 @@ func blockedWarning(p ui.Palette, view View, observed networkview.Snapshot) *war
 	return out
 }
 
-// unrecordedPackets says what a run's packet tally means: the filter drops these without recording
-// where they were going, so no report can say more about them.
+// PacketTally says what a run's packet tally means beside the denials the report lists for it, plus
+// the one thing a reader can do when no denial explains the packets. `coop net inspect` and a loop's
+// alert both use it, so they cannot disagree.
+func PacketTally(remote []networkview.Denial, packets uint64) (sentence, advice string) {
+	switch {
+	case packets == 0:
+		return "", ""
+	case len(remote) == 0:
+		return unrecordedPackets(packets, "packet"), "Coop only counts such packets. If a program failed because of this, check its own error for the address it wanted."
+	case slices.ContainsFunc(remote, func(denial networkview.Denial) bool { return denial.Kind == "direct_tcp_attempt" }):
+		// The filter counted a direct connection's own packets too, so beside its row the count
+		// is a total: calling it packets with no address recorded would contradict the row above.
+		return Plural(packets, "packet") + " " + was(int(min(packets, 2))) + " dropped in all, direct connections included", ""
+	}
+	return unrecordedPackets(packets, "other packet"), ""
+}
+
+// unrecordedPackets says what a tally means when nothing recorded it: the filter drops these without
+// recording where they were going, so no report can say more about them.
 func unrecordedPackets(packets uint64, noun string) string {
 	where := "where they were going"
 	if packets == 1 {
@@ -847,13 +870,19 @@ func AlertText(alert networkview.Alert) string {
 		what, observed, threshold = "an upload rate rise", ui.Bytes(uint64(facts.SentBytes))+" sent", threshold+"× the earlier rate"
 	case "health_enforcer", "health_gateway", "health_resolver", "health_collector":
 		layer := layerName(strings.TrimPrefix(alert.Category, "health_"))
-		row := layer + " was " + unknownIfEmpty(facts.HealthStatus) + " for " + duration(uint64(alert.WindowMillis)) + " (" + alert.Severity + ")"
+		// The window is the threshold that fired the alert, not a measured outage.
+		row := layer + " was " + unknownIfEmpty(facts.HealthStatus)
+		if alert.Threshold.Value != 0 {
+			row += " for at least " + duration(uint64(alert.Threshold.Value))
+		}
+		row += " (" + alert.Severity + ")"
 		if facts.Reason != "" {
 			row += " — " + evidenceReasonText(facts.Reason)
 		}
 		return row
 	default:
-		what, observed = alert.Category, strconv.FormatUint(uint64(facts.Packets), 10)+" "+alert.Threshold.Unit
+		what, observed = "an alert this Coop version cannot explain ("+ui.SafeInline(alert.Category)+")",
+			strconv.FormatUint(uint64(facts.Packets), 10)+" "+ui.SafeInline(alert.Threshold.Unit)
 	}
 	row := what + " (" + alert.Severity + ") — " + observed
 	if alert.WindowMillis != 0 {
@@ -949,7 +978,9 @@ func coverageGaps(coverage networkview.Coverage) []string {
 }
 
 // evidenceReasonText translates the collector's loss and coverage codes. The
-// codes are retained as they are in --json; an unknown one is shown verbatim.
+// codes are retained as they are in --json. A code with no clause here gets the
+// sentence `coop net blocked` prints, which also speaks for a code this build
+// does not know: a guess would be a worse answer than naming it.
 func evidenceReasonText(reason string) string {
 	switch reason {
 	case "":
@@ -991,15 +1022,81 @@ func evidenceReasonText(reason string) string {
 	case "gateway_unavailable":
 		return "it could not be reached"
 	case "enforcement_unavailable":
-		return "the packet filter could not be read"
+		return "it was not ready"
 	case "controller_observation_unavailable":
 		return "the controller could not be observed"
 	case "controller_request_refused":
 		return "the controller refused a request"
 	case "gateway_connection_capacity":
 		return "it ran out of connection capacity"
+	case "additional_proxy_gaps":
+		return "the proxy's records had more gaps than Coop lists"
+	case "connection_counter_saturated":
+		return "the connection counter reached its limit"
+	case "counter_saturated":
+		return "a counter reached its limit"
+	case "counter_overflow":
+		return "a session total grew too large to count"
+	case "duplicate_flow_registration":
+		return "one connection was registered twice"
+	case "flow_join_capacity":
+		return "too many connections were waiting to be matched"
+	case "kernel_counter_discontinuity":
+		return "the kernel counters jumped between readings"
+	case "last_lookup_answer_rejected":
+		return "its last lookup got an answer Coop refused"
+	case "last_lookup_exchange_failed":
+		return "its last lookup failed"
+	case "last_lookup_succeeded":
+		return "its last lookup worked"
+	case "maintenance_observation_gap":
+		return "part of Coop's own maintenance traffic was missed"
+	case "observation_sequence_saturated":
+		return "the observer's event counter reached its limit"
+	case "owned_run_set_incomplete":
+		return "the session's list of runs is incomplete"
+	case "proxy_connected_event_missing":
+		return "the proxy never reported a connection opening"
+	case "proxy_connection_identity_changed":
+		return "a connection changed identity in the proxy's records"
+	case "proxy_flow_owner_missing":
+		return "a connection in the proxy's records had no known owner"
+	case "proxy_flow_stale":
+		return "the proxy stopped updating a connection"
+	case "proxy_meter_discontinuity":
+		return "a connection's byte count jumped between readings"
+	case "proxy_observation_gap":
+		return "part of the proxy's records was missed"
+	case "proxy_peer_mismatch":
+		return "the proxy and the gateway named different remote addresses"
+	case "proxy_shutdown_unconfirmed":
+		return "the proxy did not confirm it shut down"
+	case "resolver_initialized":
+		return "it had only just started"
+	case "run_measurement_incomplete":
+		return "one of the session's runs was only partly measured"
+	case "run_observation_loss":
+		return "one of the session's runs lost records"
+	case "socket_join_pending":
+		return "some sockets were still waiting to be matched"
+	case "socket_join_expired":
+		return "a socket was not matched to a connection in time"
+	case "socket_join_terminal":
+		return "the run ended before a socket was matched to a connection"
+	case "socket_join_clock_unavailable":
+		return "a socket could not be matched, because the clock could not be read"
+	case "attribution_pending":
+		return "a socket was not matched to a connection yet"
+	case "kernel_closing_remnant":
+		return "a connection the kernel was still closing"
+	case "source_event_loss":
+		return "the gateway lost some of its records"
+	case "source_sequence_regressed":
+		return "the gateway's record numbers went backwards"
+	case "upstream_failure_counter_saturated":
+		return "the failure counter reached its limit"
 	}
-	return reason
+	return reasonSentence(reason)
 }
 
 func layerName(layer string) string {
