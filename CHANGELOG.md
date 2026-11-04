@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A filtered `coop fork <name> <agent>` checks your sign-in first**, instead of creating a fork that
+  cannot start.
+
 - **`coop up` stops showing hashed container names**, and a slow first `coop usage` says it is reading
   your history.
 

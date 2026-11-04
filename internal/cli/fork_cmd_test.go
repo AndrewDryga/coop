@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -481,6 +482,7 @@ func TestInteractiveForkUsesSharedNetworkAdmission(t *testing.T) {
 	git(t, repo, "commit", "-qm", "request filtered network")
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
+	signInCred(t, a.cfg, "claude", "default")
 	code, err := a.forkCreate([]string{"networked", "claude", "--allow-domain", "example.com"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
 		t.Fatalf("interactive fork without approval = (%d, %v)", code, err)
@@ -528,6 +530,7 @@ func TestForkFirstStartThatStopsShortIsShownAsNeverStarted(t *testing.T) {
 	git(t, repo, "commit", "-qm", "request filtered network")
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
+	signInCred(t, a.cfg, "claude", "default")
 	code, err := a.forkCreate([]string{"networked", "claude"})
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
 		t.Fatalf("first start = (%d, %v), want the admission refusal", code, err)
@@ -1971,3 +1974,23 @@ func TestForkQueueThatCannotBeReadIsACommandFailure(t *testing.T) {
 		t.Errorf("forkCanonicalQueues over a missing folder = %v (exit %d), want rejected input", err, refusalExit(err))
 	}
 }
+
+// A filtered interactive fork with nobody signed in refuses before making the fork. An open one can
+// still sign in from inside, so it is made as before.
+func TestInteractiveForkChecksItsLoginWhenFiltered(t *testing.T) {
+	repo := initRepo(t)
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+	if code, err := a.forkCreate([]string{"perf", "claude"}); code != -1 || err == nil || !strings.HasPrefix(err.Error(), "no sign") {
+		t.Fatalf("filtered fork with no login = (%d, %v), want the sign-in refusal", code, err)
+	}
+	if forks := filepath.Dir(forkspace.Workspace(repo, "perf")); pathExists(forks) {
+		t.Fatalf("the refused fork left %s", forks)
+	}
+	if a.forkRunsFiltered(repo, ptr(egress.Open)) || !a.forkRunsFiltered(repo, ptr(egress.Filtered)) {
+		t.Error("--egress did not decide the fork's network mode")
+	}
+}
+
+func ptr[T any](value T) *T { return &value }

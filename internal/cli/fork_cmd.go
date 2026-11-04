@@ -525,6 +525,20 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			}
 		}
 	}
+	// A filtered box cannot start without a sign-in, so an interactive fork must not be created just to
+	// fail. An open one can still sign in from inside, so that stays the warning it was.
+	if !fa.loop && !fa.fresh && fa.agent != "" && !pathExists(ws) && a.forkRunsFiltered(repo, fa.network.admission().InvocationMode) {
+		ladder, err := oneOffLadder(fa.model, fa.credential, fa.effort)
+		if err != nil {
+			return 2, err
+		}
+		if ladder == nil && a.preset != nil && fa.agent == a.preset.Lead().Provider {
+			ladder = a.preset.LeadTargets
+		}
+		if _, err := a.buildRotation(fa.agent, ladder); err != nil {
+			return -1, err
+		}
+	}
 	// --fresh recreates an existing fork by destroying it first — run the same guard `fork rm` uses so
 	// it can't silently discard an agent's unmerged/uncommitted work (--fresh --force overrides). Do it
 	// BEFORE resolveLaunchImage (like parseForkCreate's flag checks): fail fast, never spin up an image to refuse.
@@ -1574,4 +1588,14 @@ func forkAssignmentsBlocked(assignments []tasks.LocatedForkAssignment) bool {
 		}
 	}
 	return false
+}
+
+// forkRunsFiltered is the network mode a new fork's first run would use, as far as can be told before
+// it exists: anything uncertain answers no, and the launch itself then decides.
+func (a *app) forkRunsFiltered(repo string, invocation *egress.Mode) bool {
+	if mode := invocation; mode != nil {
+		return *mode == egress.Filtered
+	}
+	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
+	return err == nil && access.Mode == egress.Filtered
 }
