@@ -25,6 +25,11 @@
 - **A filtered box cannot make Zed load a remote image.** An image pointing at an outside address now
   reaches the thread as a plain link you have to click, even when written one byte at a time.
 
+- **A box that hangs no longer leaves your editor waiting.** A filtered `coop acp` box that starts but
+  does not answer now gets a minute. Then your editor connects to a box that holds your messages, the
+  thread says what happened, and Coop keeps trying. Pulling images, starting services and waiting for
+  another box do not count toward that minute: they get 5 minutes.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 

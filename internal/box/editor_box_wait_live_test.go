@@ -436,6 +436,55 @@ func TestEditorBoxWaitHoldsAPromptUntilServicesAreSettled(t *testing.T) {
 	editor.reachedTheBox(session)
 }
 
+// A box that starts and never answers: every node process in this image blocks at startup, the adapter
+// included, and the clients stay byte-identical, so the image's proofs accept it. The editor's first
+// request is answered by a holding child in about a minute, the thread says why, a message waits, and a
+// fixed Dockerfile moves the session onto a box that answers. Nothing ever reaches a model.
+func TestEditorBoxWaitMovesOffABoxThatNeverAnswers(t *testing.T) {
+	requireLiveBoxWait(t)
+	hung := "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\nUSER root\nRUN echo " + randid.Hex(8) + " > /coop-box-wait\n" +
+		"RUN printf 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);\\n' > /opt/hang.js\nENV NODE_OPTIONS=--require=/opt/hang.js\nUSER node\n"
+	repo := waitRepo(t, map[string]string{".agent/Dockerfile": hung})
+	removeProjectImages(t, repo)
+	waitRun(t, repo, liveCoop(t), "build", "--egress", "filtered")
+	editor := startWaitEditor(t, repo)
+	connecting := time.Now()
+	session := editor.connect()
+	if took := time.Since(connecting); took < time.Minute || took > 3*time.Minute {
+		t.Fatalf("the editor was answered %s after connecting, want about a minute:\n%s", took, editor.log())
+	}
+	editor.hear("did not answer", time.Minute)
+	if !strings.Contains(editor.log(), "so the proxy stopped it") {
+		t.Fatalf("the trace does not say the box was stopped:\n%s", editor.log())
+	}
+	editor.prompt(session)
+	editor.waitLog("holding editor prompt", time.Minute)
+	if reason := editor.cancel(session); reason != "cancelled" {
+		t.Fatalf("cancelling the held prompt ended it with %q", reason)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte(waitDockerfile()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, repo, liveCoop(t), "build", "--egress", "filtered")
+	// The notice goes out with the next session update, and a new thread is one. A thread opened while a
+	// box is being tried is refused and can ask again, as an editor's person can.
+	heard := func() bool {
+		return slices.ContainsFunc(editor.said, func(s string) bool { return strings.Contains(s, "is ready") })
+	}
+	for id, until := 20.0, time.Now().Add(5*time.Minute); !heard(); id++ {
+		if time.Now().After(until) {
+			t.Fatalf("the session never said its box is ready; it said %q:\n%s", editor.said, editor.log())
+		}
+		editor.send(map[string]any{"id": id, "method": "session/new", "params": map[string]any{"cwd": repo, "mcpServers": []any{}}})
+		editor.answer(id, 3*time.Minute)
+		for wait := time.Now().Add(5 * time.Second); !heard(); {
+			if _, ok := editor.take(wait); !ok {
+				break
+			}
+		}
+	}
+}
+
 // writeOntoTheAdapter does what any program in the session's box can: write lines straight onto the
 // adapter's stdout, as if the adapter had said them.
 func writeOntoTheAdapter(t *testing.T, repo string, lines ...string) {

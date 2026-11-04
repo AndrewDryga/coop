@@ -17,6 +17,7 @@ import (
 type failingHarness struct {
 	*holdingHarness
 	failed atomic.Int32
+	how    atomic.Int32 // the last ChildFailure
 }
 
 func newFailingHarness(t *testing.T, children ...*fakeChild) *failingHarness {
@@ -24,7 +25,10 @@ func newFailingHarness(t *testing.T, children ...*fakeChild) *failingHarness {
 	f := &failingHarness{}
 	r := &Restarter{}
 	hooks := &Hooks{PromptHeld: func(string) []byte { return []byte(heldStatus) }}
-	opts := RunOpts{Restarter: r, ChildFailed: func() { f.failed.Add(1) }}
+	opts := RunOpts{Restarter: r, ChildFailed: func(how ChildFailure) {
+		f.how.Store(int32(how))
+		f.failed.Add(1)
+	}}
 	f.holdingHarness = &holdingHarness{proxyHarness: newProxyHarnessChildren(t, children, hooks, opts), r: r, editor: make(chan string, 32)}
 	return f
 }
@@ -92,7 +96,7 @@ func TestEditorsInitializeDuringAReplacementGetsItsAnswer(t *testing.T) {
 	first, second := realChild(), holdingChild()
 	r := &Restarter{}
 	failed := make(chan struct{})
-	h := newProxyHarnessChildren(t, []*fakeChild{first, second}, nil, RunOpts{Restarter: r, ChildFailed: func() { close(failed); <-block }})
+	h := newProxyHarnessChildren(t, []*fakeChild{first, second}, nil, RunOpts{Restarter: r, ChildFailed: func(ChildFailure) { close(failed); <-block }})
 	var release sync.Once
 	t.Cleanup(func() { release.Do(func() { close(block) }) })
 	first.outW.Close()

@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how a filtered editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go]
+sources: [internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go]
 updated: 2026-11-04
 ---
 
@@ -80,10 +80,35 @@ arrives mid-replacement), since an editor reads an error there as a dead server.
 holding child that still owes the editor something after `acpBoxWaitMoveDeadline`, for a hung adapter or
 an unfinished sign-in.
 
+A box that hangs goes the same way. `watchFirstAnswer` (one per child, from `startChild`, only with
+`ChildFailed` set) stops a child that does not answer the first thing it is asked, and the run loop then
+treats it like one that exited: `ChildFailed` hears `ChildSilent` or `ChildNotReady`, the next child holds
+prompts, and its answer becomes the editor's. A hung child wrote no reason anywhere, so these two texts say
+what Coop saw. A replay that goes quiet after its first answer (`replayIdleTimeout`) counts as `ChildSilent`
+too; open and offline sessions still end there, and their first box is still not watched.
+
+The minute (`childAnswerWindow`) opens at `RunSpec.OnRuntimeLaunch`, the boundary the loop's provider
+watchdog arms at, and never before the child is asked. An inner child reports it by creating a file its
+supervisor named (`COOP_ACP_LAUNCHED`, `acpReportLaunch`, `Child.Launched`). Everything before it is host work
+a minute must not cut short: `LockServiceLaunch` has no limit of its own and a running box holds it for
+life, `up --no-start` pulls missing images, and `up -d --wait` waits for health. Measured first answers: about
+6 s in a plain project, 18 to 46 s after a move in a project with services, 48 to 76 s connecting in emisar.
+Stopping one of those loses work the retry repeats, so they answer only to `replayStartupGrace`, which is
+now `ChildNotReady` and a retry rather than the end of the session. Past the boundary only the adapter is
+left: `coop-entry`'s toolchain provisioning is the base image's, and a filtered image has none. So a box waiting
+before that point can be silent for 5 minutes: the editor gets no earlier answer, on purpose.
+
+Trap: a holding child takes the shared side of `LockServiceLaunch` to validate its mounts, so whoever holds the
+exclusive side keeps it waiting too. A running box holds only the shared side, so it blocks a box with services and
+not the holding child. An exclusive holder is what can delay the holding child's answer past the 5 minutes.
+
+Trap: while a real box is tried, no child is live. Prompts and a reopened thread's `session/load` wait, but a
+`session/new` gets "The agent is switching" (`switchPendingResponse`). A try that hangs lasts over a minute,
+against 30 s on the holding child, so a second thread opened then often has to ask again.
+
 Limits. A refusal a holding child meets too (an unreadable `.coopignore`, a preset that no longer loads,
 `COOP_RUN_ARGS` with a path inside the project) ends at the cap with its reason in the log. A broken
-project.yaml still ends `coop acp` at connect, where no capture exists yet. A real box that hangs instead
-of exiting waits out `replayStartupGrace`, then ends the session.
+project.yaml still ends `coop acp` at connect, where no capture exists yet.
 
 A project's own client hooks do run in a holding child at session/new. Measured with Claude's SessionStart:
 the hook ran, the project was read-only, and it could reach only the provider. The owner chose on 2026-11-03
@@ -92,6 +117,9 @@ to keep this rather than start the adapter with hooks off.
 ## Changelog
 - 2026-11-04 — a services refusal reads whole in a thread, and `coop approve` shows it when it has nothing to
   approve. Verified with a real `coop acp`, pasting the rule out of the thread's own block.
+- 2026-11-04 — a box that hangs is stopped and held like one that exits, and says so. Verified on real
+  Docker: an adapter that blocks at startup (answered at 68 s, retried, moved once fixed), a lock released at
+  100 s (not cut short), and a lock never released (stopped at 5 min).
 - 2026-11-03 — recorded that a project's hooks run in a holding child, by the owner's choice.
 - 2026-11-03 — a box that keeps refusing keeps the session connected, on a child with no project rules,
   no sidecars and no project file. Verified on real Docker against a serve port on TLS, a broken

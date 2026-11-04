@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // boxWaitHarness drives an acpBoxWait with its boundaries faked: what readiness answers, the signs a
@@ -567,7 +568,7 @@ func TestBoxWaitHoldsAfterAFailedStartAndRetries(t *testing.T) {
 	if err := h.w.refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	said := h.lastSaid()
 	if !h.w.blockedNow() || !h.w.waitingNow() || !strings.Contains(said, "could not start") || !strings.Contains(said, "agent log") {
 		t.Fatalf("blocked=%v waiting=%v said=%q", h.w.blockedNow(), h.w.waitingNow(), said)
@@ -596,7 +597,7 @@ func TestBoxWaitHoldsAfterAFailedStartAndRetries(t *testing.T) {
 
 	// It failed again. The thread already knows, and the log has the child's own output.
 	h.set(func() { h.holding = false })
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	h.read(func() {
 		if len(h.said) != 1 || len(h.logged) != 1 {
 			t.Fatalf("said=%q logged=%v, want each once however many retries fail", h.said, h.logged)
@@ -633,10 +634,169 @@ func TestBoxWaitHoldsAfterAFailedStartAndRetries(t *testing.T) {
 	})
 }
 
+// A box that never answers writes no reason of its own, so the thread hears what Coop saw. It is
+// retried as one that exits is, and each way of failing is said once.
+func TestBoxWaitSaysWhenABoxDidNotAnswer(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.w.childFailed(acpproxy.ChildSilent)
+	if said := h.lastSaid(); !h.w.blockedNow() || !h.w.waitingNow() || !strings.Contains(said, "did not answer") || !strings.Contains(said, "a minute") {
+		t.Fatalf("blocked=%v waiting=%v said=%q", h.w.blockedNow(), h.w.waitingNow(), said)
+	}
+	h.read(func() {
+		if len(h.logged) != 1 || !strings.Contains(h.logged[0].Error(), "did not answer") {
+			t.Fatalf("logged=%v", h.logged)
+		}
+	})
+
+	h.set(func() { h.holding, h.clock = true, h.clock.Add(acpBoxWaitRecheck) })
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 1 || h.opened != 0 {
+			t.Fatalf("moves=%d opened=%d, want one real box tried and no fan-out", h.moves, h.opened)
+		}
+	})
+	if h.w.blockedNow() {
+		t.Fatal("the retry's child would hold prompts")
+	}
+
+	// It hung again: the thread already knows.
+	h.w.childFailed(acpproxy.ChildSilent)
+	h.read(func() {
+		if len(h.said) != 1 || len(h.logged) != 1 {
+			t.Fatalf("said=%q logged=%v, want each once however many retries hang", h.said, h.logged)
+		}
+	})
+	if !h.w.blockedNow() {
+		t.Fatal("a child spawned after a hung retry would be a real box")
+	}
+
+	// Failing another way is news, and only a box still getting ready may have been waiting on something.
+	h.w.childFailed(acpproxy.ChildNotReady)
+	if said := h.lastSaid(); !strings.Contains(said, "took too long") || !strings.Contains(said, "another box") {
+		t.Fatalf("said=%q", said)
+	}
+	h.w.childFailed(acpproxy.ChildExited)
+	if said := h.lastSaid(); !strings.Contains(said, "could not start") {
+		t.Fatalf("said=%q", said)
+	}
+	h.read(func() {
+		if len(h.said) != 3 || len(h.logged) != 3 {
+			t.Fatalf("said=%q logged=%v", h.said, h.logged)
+		}
+	})
+}
+
+// What a person must settle comes first, and once it is settled the thread hears the hang again.
+func TestBoxWaitPutsAHungBoxBehindWhatReadinessSays(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.w.childFailed(acpproxy.ChildSilent)
+	h.set(func() { h.answer, h.holding, h.clock = errNeedsAPerson, true, h.clock.Add(acpBoxWaitRecheck) })
+	h.w.poll()
+	if said := h.lastSaid(); !strings.Contains(said, "needs a build") {
+		t.Fatalf("said=%q", said)
+	}
+	h.set(func() { h.answer, h.sign = nil, "built" })
+	h.w.poll()
+	if said := h.lastSaid(); !strings.Contains(said, "did not answer") {
+		t.Fatalf("said=%q, want the hang reported until a box keeps running", said)
+	}
+}
+
+// A filtered child says when its box starts, through a file only its supervisor named: the proxy gives
+// a box a minute from then, not from the spawn.
+func TestSpawnedFilteredChildSaysWhenItsBoxStarts(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), Egress: "filtered"}
+	cfg.SetEgress("filtered")
+	cfg.SetActiveProfile("claude", "selected")
+	seedNativeFixture(t, cfg, "claude", "selected")
+	target := agents.Target{Provider: "claude", Accounts: []string{"selected"}}
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nread go\n: > \"$"+acpLaunchedEnv+"\"\nread stop\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h := newBoxWaitHarness(t)
+	held := &box.CapturedEgress{Project: cfg.RepoOverride, Fingerprint: strings.Repeat("a", 64), QualificationID: strings.Repeat("b", 64),
+		Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}
+	a := &app{cfg: cfg, rt: runtime.Runtime{Name: fakeDocker(t)}, rtSet: true, acpNetworkTargets: []agents.Target{target}, acpCapture: held, acpBoxWait: h.w}
+	child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, target, "", true, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Stop()
+	if child.Launched == nil || child.Launched() {
+		t.Fatal("the child reported its box before it started")
+	}
+	if _, err := child.In.Write([]byte("go\n")); err != nil {
+		t.Fatal(err)
+	}
+	wait.For(t, "the child to report its box", child.Launched)
+}
+
+// An open session has no wait to report to, so nothing changes for its children.
+func TestSpawnedOpenChildHasNoLaunchToReport(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "inner")
+	seen := filepath.Join(t.TempDir(), "environment")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nenv > '"+seen+".tmp'\nmv '"+seen+".tmp' '"+seen+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: fakeDocker(t)}, rtSet: true}
+	child, err := a.spawnBox(t.Context(), shim, []string{"acp"}, "super", nil, agents.Target{Provider: "claude"}, "", false, io.Discard, forkspace.ExecutionRoleProbe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Stop()
+	wait.For(t, "the child to record its environment", func() bool {
+		_, err := os.Stat(seen)
+		return err == nil
+	})
+	env, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Launched != nil || strings.Contains(string(env), acpLaunchedEnv) {
+		t.Fatalf("an open child has a launch to report: %v", child.Launched != nil)
+	}
+}
+
+// fakeDocker is a docker that answers nothing: these spawn no real box, and stopping one must not go
+// looking on the machine's real Docker.
+func fakeDocker(t *testing.T) string {
+	t.Helper()
+	docker := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return docker
+}
+
+// Only a supervisor's child reports, to the path its supervisor named, and only at the launch boundary.
+func TestACPReportLaunchWritesTheSupervisorsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "launched")
+	t.Setenv(acpLaunchedEnv, path)
+	t.Setenv("COOP_ACP_INNER", "")
+	var spec box.RunSpec
+	acpReportLaunch(&spec)
+	if spec.OnRuntimeLaunch != nil {
+		t.Fatal("a process no supervisor started reports its launch")
+	}
+	t.Setenv("COOP_ACP_INNER", "1")
+	acpReportLaunch(&spec)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("reported before the launch: %v", err)
+	}
+	spec.OnRuntimeLaunch()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A box that started but never answered is not proof, however long it has been running.
 func TestBoxWaitEndsAFailedStartOnlyOnABoxThatAnswered(t *testing.T) {
 	h := newBoxWaitHarness(t)
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	h.set(func() { h.holding, h.clock = true, h.clock.Add(acpBoxWaitRecheck) })
 	h.w.poll()
 	h.set(func() { h.holding, h.clock = false, h.clock.Add(10*acpproxy.ChildStartWindow) })
@@ -650,7 +810,7 @@ func TestBoxWaitEndsAFailedStartOnlyOnABoxThatAnswered(t *testing.T) {
 func TestBoxWaitStaysQuietAboutABoxBeingTriedAgain(t *testing.T) {
 	h := newBoxWaitHarness(t)
 	h.w.started(&acpproxy.Child{HoldPrompts: true})
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	h.w.started(&acpproxy.Child{})
 	h.read(func() {
 		if len(h.notices) != 0 {
@@ -663,7 +823,7 @@ func TestBoxWaitStaysQuietAboutABoxBeingTriedAgain(t *testing.T) {
 // tried, and the thread hears that instead. Once it is settled, a real box may be tried again.
 func TestBoxWaitPutsAFailedStartBehindWhatReadinessSays(t *testing.T) {
 	h := newBoxWaitHarness(t)
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	h.set(func() { h.answer, h.holding, h.clock = errNeedsAPerson, true, h.clock.Add(acpBoxWaitRecheck) })
 	h.w.poll()
 	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "needs a build") {
@@ -690,7 +850,7 @@ func TestBoxWaitPutsAFailedStartBehindWhatReadinessSays(t *testing.T) {
 // by a real box, which is the tight loop this all exists to avoid.
 func TestBoxWaitRetriesOnlyFromThePollLoop(t *testing.T) {
 	h := newBoxWaitHarness(t)
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	h.set(func() { h.clock = h.clock.Add(time.Hour) })
 	if err := h.w.refreshStale(t.Context()); err != nil {
 		t.Fatal(err)
@@ -793,7 +953,7 @@ func TestSpawnedHoldingChildRunsUnderItsOwnRules(t *testing.T) {
 	}
 
 	// A holding child proves its own, and says so for the refresh and the warm pool.
-	h.w.childFailed()
+	h.w.childFailed(acpproxy.ChildExited)
 	child, out, err = spawn(a)
 	if err != nil || !child.HoldPrompts || !strings.Contains(out, strings.Repeat(holding, 16)) || strings.Contains(out, strings.Repeat(real, 16)) || child.Policy != strings.Repeat(holding, 16) || admits != 1 {
 		t.Fatalf("a holding child: err=%v holds=%v policy=%q out=%q admits=%d", err, child.HoldPrompts, child.Policy, out, admits)
@@ -914,7 +1074,7 @@ func TestNoBoxWaitForAnUnfilteredSession(t *testing.T) {
 }
 
 func TestACPChildEnvNeverInheritsTheHandshakeFlag(t *testing.T) {
-	if got := cleanACPChildEnv([]string{acpHandshakeEnv + "=1", "PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin"}) {
+	if got := cleanACPChildEnv([]string{acpHandshakeEnv + "=1", acpLaunchedEnv + "=/elsewhere", "PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin"}) {
 		t.Fatalf("cleaned = %v", got)
 	}
 }

@@ -58,6 +58,11 @@ type Child struct {
 	// MCPServers returns this child's final shared tool projection, after initialize. The caller
 	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
 	MCPServers func() ([]map[string]any, error)
+	// Launched reports whether this child's box has started, for watchFirstAnswer. Nil if it cannot tell.
+	Launched func() bool
+
+	answered atomic.Bool  // it has answered something it was asked: watchFirstAnswer is done with it
+	stopped  atomic.Int32 // a ChildFailure, once the proxy stopped it for not answering
 }
 
 // Factory starts one child. ctx is cancelled on shutdown or when its spawn attempt
@@ -187,7 +192,8 @@ var (
 // it's deliberately generous. It's the "ready" gate: once the agent answers once, the box is up and
 // replayIdleTimeout takes over. replayIdleTimeout bounds the gap between replay responses thereafter
 // — so a hang mid-replay (e.g. the agent makes a client request session/load never gets a reply to)
-// fails fast instead of freezing the editor. Vars, not consts, so tests can shrink them.
+// fails fast instead of freezing the editor. A caller that can hold prompts has watchFirstAnswer use
+// the grace instead, for a box that has not started yet. Vars, not consts, so tests can shrink them.
 var (
 	replayStartupGrace = 5 * time.Minute
 	replayIdleTimeout  = 60 * time.Second
@@ -226,11 +232,12 @@ type RunOpts struct {
 	Restarter *Restarter
 	// NoEditorHostAccess closes the way out of a box through the editor: see host_access.go.
 	NoEditorHostAccess bool
-	// ChildFailed, when set, is called when a child that runs turns ends by itself before it could
-	// serve (it never answered initialize, or it answered and exited within ChildStartWindow). The caller's
-	// next child should hold prompts, so a box that keeps refusing to start costs the editor nothing:
-	// only children that hold prompts then count toward the rapid-fail cap. Called before the next spawn.
-	ChildFailed func()
+	// ChildFailed, when set, is called when a child that runs turns could not serve: it ended by itself
+	// without answering initialize or within ChildStartWindow of starting, or it never answered and the
+	// proxy stopped it (watchFirstAnswer). The caller's next child should hold prompts, so a box that keeps
+	// refusing to start costs the editor nothing: only children that hold prompts then count toward the
+	// rapid-fail cap. Called before the next spawn.
+	ChildFailed func(ChildFailure)
 }
 
 // reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
@@ -259,6 +266,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		out:            clientOut,
 		hooks:          hooks,
 		noHostAccess:   opts.NoEditorHostAccess,
+		watchAnswers:   opts.ChildFailed != nil,
 		bindings:       opts.Bindings,
 		stopping:       opts.Stopping,
 		authentication: map[authenticationScope]authenticationState{},
@@ -420,7 +428,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 			rapid = 0
 		case opts.ChildFailed != nil && !child.HoldPrompts:
 			if !answered || lived < ChildStartWindow {
-				opts.ChildFailed()
+				opts.ChildFailed(child.failure())
 			} else {
 				rapid = 0
 			}
@@ -493,8 +501,14 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 				if p.reloading.Load() { // same race, one step later — prefer the reload over a give-up
 					return &reloadError{Snap: p.snapshot()}
 				}
-				p.failAllPending()
-				return rerr
+				if !p.watchAnswers || !errors.Is(rerr, errReplayTimeout) {
+					p.failAllPending()
+					return rerr
+				}
+				// It stopped answering partway, and the next child can hold prompts: this is one more child
+				// that could not start. The abandoned read still owns nr, so the pump gets nothing to read.
+				next.stopped.Store(int32(ChildSilent))
+				nr = bufio.NewReader(strings.NewReader(""))
 			}
 			break
 		}
@@ -622,6 +636,7 @@ type proxy struct {
 	hooks *Hooks // coop's control layer (nil → pure pass-through)
 
 	noHostAccess bool // this session's boxes may not reach the host through the editor
+	watchAnswers bool // a child that does not answer can be replaced by one that holds prompts (watchFirstAnswer)
 	// announcedInitialized keeps Hooks.Initialized a once-per-process signal: it means "the editor
 	// has been answered", not "a child initialized", so a restart or a provider switch must not
 	// re-fire it.
@@ -1376,6 +1391,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			if (op.method == "session/load" || op.method == "session/resume") && p.reactivating[op.adapterID] == id {
 				delete(p.reactivating, op.adapterID)
 			}
+			if wasSetup && setupOp.method == "initialize" {
+				child.answered.Store(true)
+			}
 			success := responseSucceeded(h)
 			if wasSetup && setupOp.generation == generation && success {
 				switch setupOp.method {
@@ -1856,6 +1874,9 @@ func (p *proxy) traceExit(child *Child, lived time.Duration, clientGone <-chan s
 		case <-clientGone:
 			reason = "editor disconnected"
 		default:
+			if child.failure() != ChildExited {
+				reason = "it did not answer, so the proxy stopped it; respawning"
+			}
 		}
 	}
 	target := child.Provider
@@ -2143,6 +2164,9 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	}
 	var recreate []string // turned sessions whose transcript didn't reload — re-created in a second round
 	timeout := replayStartupGrace
+	if p.watchAnswers {
+		timeout += childAnswerWindow // watchFirstAnswer decides this and ends the read: this is its backstop
+	}
 	childEOF := false
 	initID := replayPrefix + "initialize"
 	authReplayID := replayPrefix + "authenticate"
@@ -2176,6 +2200,7 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		for len(expect) > 0 {
 			line, err := readLineCtx(br, timeout)
 			if len(line) > 0 {
+				c.answered.Store(true)
 				if h := parse(line); h.isResponse() {
 					id := string(trimQuotes(h.ID))
 					recoveryMessage, recoveryHandled := "", false

@@ -40,5 +40,8 @@ func (p *proxy) startChild(ctx context.Context, factory Factory, epoch uint64) (
 		cancel()
 		stop()
 	}
+	if p.watchAnswers {
+		go p.watchFirstAnswer(attempt, child, childAnswerWindow, replayStartupGrace)
+	}
 	return child, nil
 }

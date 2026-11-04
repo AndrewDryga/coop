@@ -28,16 +28,14 @@ const (
 	acpBoxWaitFresh = 2 * time.Second
 	// acpHandshakeEnv tells an inner child to run box.RunSpec.HandshakeOnly.
 	acpHandshakeEnv = "COOP_ACP_HANDSHAKE_BOX"
+	// acpLaunchedEnv names the file an inner child creates when its box starts (acpReportLaunch).
+	acpLaunchedEnv = "COOP_ACP_LAUNCHED"
 	// acpBoxWaitMoveDeadline is how long a session waits for a holding child to finish what the editor
 	// asked of it before replacing it anyway. A handshake takes seconds, so this is a hung adapter or a
 	// sign-in nobody finished; a person finishing one has this long.
 	acpBoxWaitMoveDeadline = 2 * time.Minute
 	// acpBoxReadyNotice is what the editor shows once the session runs on the project's own box.
 	acpBoxReadyNotice = "This project's box is ready, and this session moved onto it."
-	// acpBoxStartFailedText is what a thread hears while real boxes keep exiting as they start, whatever
-	// the reason: Coop's refusal, a broken sidecar, a Dockerfile that no longer fits. The child that
-	// failed already wrote why to the agent log, so this need not, and need not know every reason.
-	acpBoxStartFailedText = "⚠ **Coop could not start this project's box.**\n\nThe reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."
 	// acpBoxNotStarting titles what a thread hears while something has to settle before a box can start.
 	acpBoxNotStarting = "This project's box cannot start yet."
 )
@@ -50,6 +48,17 @@ var errACPBoxWaiting = errors.New("the project's box is not ready")
 // a supervisor sets the flag: its children's environment is cleaned of an inherited one.
 func acpHoldingChild() bool {
 	return os.Getenv("COOP_ACP_INNER") != "" && os.Getenv(acpHandshakeEnv) == "1"
+}
+
+// acpReportLaunch makes a filtered child tell its supervisor when its box is about to start: the proxy
+// allows a box that has started a minute to answer, and everything before this point much longer. A
+// supervisor sets the path, and a failed write only leaves the box under the longer limit.
+func acpReportLaunch(spec *box.RunSpec) {
+	path := os.Getenv(acpLaunchedEnv)
+	if os.Getenv("COOP_ACP_INNER") == "" || path == "" {
+		return
+	}
+	spec.OnRuntimeLaunch = func() { _ = os.WriteFile(path, nil, 0o600) }
 }
 
 // acpBoxWait keeps an editor connected while its filtered project box cannot start. The session runs
@@ -86,17 +95,18 @@ type acpBoxWait struct {
 	moveWanted time.Time // when the poll loop first could not move; only the poll loop touches it
 
 	mu          sync.Mutex
-	blocked     error     // why a real box cannot start now; nil when it can
-	checked     time.Time // when the question was last asked, whatever the answer
-	building    bool      // a rebuild is running
-	failed      bool      // the rebuild failed: what it could not do needs a person
-	startFailed bool      // a real box exited as it started, and none has run since
-	retrying    bool      // a real box is being tried again; startFailed clears once it keeps running
-	retriedAt   time.Time // when that started
-	said        string    // what publish was last told
-	seen        string    // the stamp blocked was answered under
-	onHold      bool      // the last child handed to the proxy holds prompts
-	closed      bool      // no rebuild may start now
+	blocked     error                 // why a real box cannot start now; nil when it can
+	checked     time.Time             // when the question was last asked, whatever the answer
+	building    bool                  // a rebuild is running
+	failed      bool                  // the rebuild failed: what it could not do needs a person
+	startFailed bool                  // a real box could not start, and none has run since
+	failedHow   acpproxy.ChildFailure // how the last one failed
+	retrying    bool                  // a real box is being tried again; startFailed clears once it keeps running
+	retriedAt   time.Time             // when that started
+	said        string                // what publish was last told
+	seen        string                // the stamp blocked was answered under
+	onHold      bool                  // the last child handed to the proxy holds prompts
+	closed      bool                  // no rebuild may start now
 
 	closing sync.Once
 }
@@ -140,7 +150,7 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 }
 
 // blockedNow is the last answer: a child spawned now holds prompts if real boxes cannot start, or the
-// last one exited as it started and it is not time to try another.
+// last one could not and it is not time to try another.
 func (w *acpBoxWait) blockedNow() bool {
 	if w == nil {
 		return false
@@ -161,25 +171,25 @@ func (w *acpBoxWait) waitingNow() bool {
 	return w.blocked != nil || w.startFailed
 }
 
-// childFailed is the proxy saying a real box exited by itself as it started. Whatever the reason, it
-// is in the agent log, and the next child holds prompts. Only a child that keeps running ends this,
-// so a retry that fails again says nothing new.
-func (w *acpBoxWait) childFailed() {
+// childFailed is the proxy saying a real box could not start: it exited by itself, or the proxy stopped
+// it for not answering. The next child holds prompts. Only a child that keeps running ends this, so a
+// retry that fails the same way again says nothing new.
+func (w *acpBoxWait) childFailed(how acpproxy.ChildFailure) {
 	if w == nil {
 		return
 	}
 	w.mu.Lock()
-	first := !w.startFailed
-	w.startFailed, w.retrying, w.checked = true, false, w.now()
+	first := !w.startFailed || w.failedHow != how
+	w.startFailed, w.failedHow, w.retrying, w.checked = true, how, false, w.now()
 	text := w.said
 	if w.blocked == nil {
-		text = acpBoxStartFailedText
+		text = acpBoxFailedText(how)
 	}
 	repeat := text == w.said
 	w.said = text
 	w.mu.Unlock()
 	if first {
-		w.log(errors.New("this project's box exited as it started, and the reason should be above. This session waits on a box that only holds messages, and tries again every 30 seconds and when the project changes"))
+		w.log(acpBoxFailedLog(how))
 	}
 	if !repeat {
 		w.publish(text)
@@ -187,11 +197,42 @@ func (w *acpBoxWait) childFailed() {
 }
 
 // childFailedHook is childFailed for the proxy, which counts every failure itself with no wait.
-func (w *acpBoxWait) childFailedHook() func() {
+func (w *acpBoxWait) childFailedHook() func(acpproxy.ChildFailure) {
 	if w == nil {
 		return nil
 	}
 	return w.childFailed
+}
+
+// acpBoxFailedText is what a thread hears while real boxes keep failing this way. A child that exits
+// already wrote why to the agent log, whatever the reason: Coop's refusal, a broken sidecar, a Dockerfile
+// that no longer fits. So this need not, and need not know every reason. A child that does not answer
+// wrote nothing, so the thread hears what Coop saw, and since such a try costs up to the time it waited,
+// no number of seconds between tries.
+func acpBoxFailedText(how acpproxy.ChildFailure) string {
+	const keepsTrying = "Coop keeps trying, and tries at once when the project changes. Your messages wait here and go out once it is ready."
+	switch how {
+	case acpproxy.ChildSilent:
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box did not answer.",
+			Detail: "It started, but the agent inside said nothing for a minute, so Coop stopped it. Anything it printed is in the agent log. " + keepsTrying})
+	case acpproxy.ChildNotReady:
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box took too long to start.",
+			Detail: "After 5 minutes it was still getting ready, so Coop stopped it. It may have been waiting for another box in this project, pulling images or starting services. " + keepsTrying})
+	}
+	return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not start this project's box.",
+		Detail: "The reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."})
+}
+
+// acpBoxFailedLog is what the agent log hears the first time.
+func acpBoxFailedLog(how acpproxy.ChildFailure) error {
+	const waits = "This session waits on a box that only holds messages, and keeps trying"
+	switch how {
+	case acpproxy.ChildSilent:
+		return errors.New("this project's box started, but the agent inside did not answer the editor for a minute, so it was stopped. " + waits)
+	case acpproxy.ChildNotReady:
+		return errors.New("this project's box was still getting ready after 5 minutes, so it was stopped. It may have been waiting for another box in this project, pulling images or starting services. " + waits)
+	}
+	return errors.New("this project's box exited as it started, and the reason should be above. This session waits on a box that only holds messages, and tries again every 30 seconds and when the project changes")
 }
 
 // retryFailedStart lets the next spawn be a real box again, if nothing else stands in its way.
@@ -280,7 +321,7 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 	}
 	text := acpBoxWaitText(blocked, required, w.failed)
 	if text == "" && w.startFailed {
-		text = acpBoxStartFailedText
+		text = acpBoxFailedText(w.failedHow)
 	}
 	repeat := text == w.said
 	w.said = text

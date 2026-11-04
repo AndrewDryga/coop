@@ -236,6 +236,10 @@ never works without your project's tools.
 - If the box exits as it starts for any other reason, such as a service that changed since you
   approved it or a project file that no longer parses, the thread says so and the agent log has the
   reason. co:op tries again every 30 seconds and whenever the project changes.
+- If the box starts but does not answer within a minute, co:op stops it, says so in the thread and
+  keeps trying. Time before the box starts does not count, because pulling images, starting services
+  and waiting for another box in the project can take a while. That has 5 minutes, then the thread
+  says the box took too long and co:op keeps trying.
 
 The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
 waiting message as usual. The one exception is approving unrestricted access or no network at all,

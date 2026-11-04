@@ -1662,7 +1662,8 @@ PROJECT BOX
   onto the box once it is ready. Build files you approved with coop build
   rebuild by themselves; new or changed ones wait for you to run it. Network
   access nobody approved waits for you to run coop approve. A box that exits
-  as it starts is tried again every 30 seconds, and the agent log says why.
+  as it starts is tried again every 30 seconds, and the agent log says why. A
+  box that starts but does not answer within a minute is treated the same way.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor&#39;s agent environment to record a trace.

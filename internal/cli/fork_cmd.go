@@ -1161,6 +1161,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if capture != nil {
 		spec.CapturedEgress = capture
 		spec.HandshakeOnly = innerProcess && os.Getenv(acpHandshakeEnv) == "1"
+		acpReportLaunch(&spec)
 		// This child is the exact owner of the gateway it starts: nothing else may
 		// seal its receipt or remove its containers. The daemon ends a turn's child
 		// with a signal, so that signal has to arrive as a cancellation this run can

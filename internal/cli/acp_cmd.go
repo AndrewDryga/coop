@@ -424,6 +424,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		spec.CapturedEgress = capture
 		spec.HandshakeOnly = os.Getenv(acpHandshakeEnv) == "1"
+		acpReportLaunch(&spec)
 		// A filtered child owns a gateway, two volumes and a receipt. The
 		// supervisor stops it with a signal, so that signal has to arrive as a
 		// cancellation this run can clean up after.
@@ -1115,7 +1116,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", acpServeBindsEnv, "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", acpServeBindsEnv, "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, acpLaunchedEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv:
 			continue
 		}
@@ -1272,6 +1273,16 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 			env = append(env, "COOP_ACP_CIDFILE="+cidPath)
 		}
 	}
+	// A filtered child writes no cidfile here, and only a filtered session has a wait to report to.
+	var launched func() bool
+	if cidDir != "" && a.acpCapture != nil {
+		path := filepath.Join(cidDir, "launched")
+		env = append(env, acpLaunchedEnv+"="+path)
+		launched = func() bool {
+			_, err := os.Stat(path)
+			return err == nil
+		}
+	}
 	if activityRole != forkspace.ExecutionRoleProbe {
 		id := newSupervisorID()
 		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
@@ -1405,7 +1416,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
-	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts}
+	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts, Launched: launched}
 	if len(serveBinds) > 0 && activityRepo != "" {
 		child.ServeContainer = func(ctx context.Context) (string, error) {
 			observations, problems := forkspace.Executions(activityRepo)

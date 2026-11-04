@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
+	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkstate"
@@ -72,7 +73,9 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 	approved := &box.ProjectBuildRequired{Approved: true}
 	pending := &networkstate.PendingApproval{}
 	for name, text := range map[string]string{
-		"box start failed":  acpBoxStartFailedText,
+		"box start failed":  acpBoxFailedText(acpproxy.ChildExited),
+		"box silent":        acpBoxFailedText(acpproxy.ChildSilent),
+		"box not ready":     acpBoxFailedText(acpproxy.ChildNotReady),
 		"box ready":         acpBoxReadyNotice,
 		"rules moved":       acpRefreshMoved,
 		"wait: approval":    acpBoxWaitText(pending, nil, false),
