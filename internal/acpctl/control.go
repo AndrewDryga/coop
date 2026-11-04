@@ -583,7 +583,7 @@ func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	if rewritten, rotated := c.maybeRotate(line); rotated {
 		return rewritten, true
 	}
-	line = hideAuthenticationMethods(line)
+	line = acpproxy.HideAuthenticationMethods(line)
 	// Buffer a rate-limit notice chunk until the turn's outcome is known — suppressed if the turn then
 	// rate-limits (a seamless resend), flushed otherwise. This never drops a legit chunk that merely
 	// mentions "rate limit"/"quota"/429, because a chunk is only dropped when a rate-limit error follows.
@@ -716,44 +716,6 @@ func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte
 		"Sign in to %s on the host: %s",
 		agents.DisplayTarget(target), agents.LoginCommand(target),
 	))
-}
-
-// hideAuthenticationMethods removes provider-owned login actions from Coop's immutable editor-facing
-// initialize contract. Provider switches negotiate fresh capabilities internally, but ACP has no
-// notification that can replace the editor's original auth menu; leaving it visible produces a stale
-// generic Authenticate button for the wrong provider. Coop's Account selector and login command own it.
-func hideAuthenticationMethods(line []byte) []byte {
-	if !bytes.Contains(line, []byte(`"authMethods"`)) && !bytes.Contains(line, []byte(`"auth"`)) {
-		return line
-	}
-	var message map[string]json.RawMessage
-	if json.Unmarshal(line, &message) != nil {
-		return line
-	}
-	var result map[string]json.RawMessage
-	if json.Unmarshal(message["result"], &result) != nil || len(result["protocolVersion"]) == 0 {
-		return line
-	}
-	result["authMethods"] = json.RawMessage("[]")
-	if raw := result["agentCapabilities"]; len(raw) > 0 {
-		var capabilities map[string]json.RawMessage
-		if json.Unmarshal(raw, &capabilities) == nil {
-			delete(capabilities, "auth") // newer ACP versions advertise logout here
-			if encodedCapabilities, err := json.Marshal(capabilities); err == nil {
-				result["agentCapabilities"] = encodedCapabilities
-			}
-		}
-	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return line
-	}
-	message["result"] = encoded
-	encoded, err = json.Marshal(message)
-	if err != nil {
-		return line
-	}
-	return append(encoded, '\n')
 }
 
 type nativeTargetResult struct {

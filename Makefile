@@ -386,7 +386,7 @@ task-channel-e2e: ## The in-box task channel: a real box completes its own task 
 # Docker. Its fixture container has a fixed name, so two runs on one daemon break each other.
 # Records go to a fresh owner-only folder or the one COOP_NETWORK_TRIAL_STATE names, never Coop's
 # own store.
-network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair; the editor box wait also uses a signed-in Claude when there is one)
+network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair; the editor tests also use a signed-in Claude when there is one)
 	@state="$${COOP_NETWORK_TRIAL_STATE:-$$(mktemp -d)}" || exit 1; echo "network trial records: $$state"; \
 	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun|EditorBoxWait)' -count=1 -timeout 45m -v ./internal/box/
 

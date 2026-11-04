@@ -546,7 +546,7 @@ roles:
           <li>At a usage limit, co:op moves to your next signed-in account and sends your prompt again, or waits for the nearest reset if every account is at its limit.</li>
           <li>A box restart (<code>coop build</code>, <code>coop update</code> or running out of memory) replays the handshake, so your editor stays connected.</li>
         </ul>
-        <p class="callout callout-warn">The agent’s permission prompts stay off, just as in a terminal run. ACP also lets it ask your editor to read files, write files or run commands on your computer. co:op forwards these requests; the editor controls their permissions.</p>
+        <p class="callout callout-warn">The agent’s permission prompts stay off, just as in a terminal run. ACP also lets it ask your editor to read files, write files or run commands on your computer. A filtered session refuses these requests. An open or offline session forwards them, and the editor controls their permissions.</p>
         <p>Terminal and loop runs do not have this editor channel. See the <a href="integrations.html#files-and-terminals-on-your-computer">ACP security note</a> before connecting an editor.</p>
         <p>To open a dev server from the box in your browser, list its port under <code>serve:</code> in a committed <code>.agent/project.yaml</code> and bind the server to <code>0.0.0.0</code> inside the box. The thread then shows the address the box publishes it on, <code>http://localhost:&lt;port&gt;</code>.</p>
         <p class="callout">Desktop apps don't always get your shell's <code>PATH</code>. If your editor can't find <code>coop</code>, use the full path from <code>command -v coop</code> as the <code>command</code>.</p>

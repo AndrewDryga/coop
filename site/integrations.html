@@ -319,16 +319,23 @@ which a session started with filtered networking cannot move to: the thread asks
 If even the waiting box cannot start, which is what a stopped Docker looks like, the session ends and
 the thread says why.</p>
 <h3 id="files-and-terminals-on-your-computer">Files and terminals on your computer</h3>
-<p>ACP also lets the agent ask the editor to access your computer directly. Requests such as
-<code>fs/read_text_file</code>, <code>fs/write_text_file</code> and <code>terminal/*</code> run through the editor, outside the
-box. co:op forwards these requests to Zed without filtering them. In a test, Gemini&#39;s adapter wrote
-project files this way when the editor offered it, while Claude&#39;s and Codex&#39;s did their work inside
-the box.</p>
-<p>When you use ACP, your editor&#39;s file and terminal restrictions are part of the security
-boundary. A prompt-injected agent could ask the editor to read or write an absolute path outside
-the repo on your computer.</p>
-<p><code>coop claude</code> and <code>coop loop</code> do not have this editor channel. These additional file and
-terminal risks apply when you control an agent from an editor over ACP.</p>
+<p>ACP lets an agent ask the editor to work on your computer directly, outside the box. Requests such
+as <code>fs/read_text_file</code>, <code>fs/write_text_file</code> and <code>terminal/*</code> run through the editor, and a login
+button can run a command there.</p>
+<p>A filtered session closes this way out. co:op does not tell the agent the editor can do this, refuses
+such a request if anything in the box sends one, and hides the login buttons. It also refuses to open
+a link the box chose. The agent can still ask you a question in the editor. It works on the project
+inside the box as usual, so it sees what is saved on disk, not your unsaved edits. In a test with this
+closed, Claude, Codex and Gemini all edited project files inside the box.</p>
+<p>This does not stop your editor from showing what an agent writes. Zed loads a remote image in an
+agent&#39;s message by itself, so a message can still send data to an address outside the rules. co:op
+does not close this yet.</p>
+<p>An open or offline session still forwards these requests to Zed without filtering them. In a test,
+Gemini&#39;s adapter wrote project files this way when the editor offered it, while Claude&#39;s and Codex&#39;s
+did their work inside the box. In those sessions your editor&#39;s file and terminal restrictions are
+part of the security boundary: a prompt-injected agent could ask the editor to read or write an
+absolute path outside the repo on your computer.</p>
+<p><code>coop claude</code> and <code>coop loop</code> do not have this editor channel.</p>
 </section><section class="doc-section reference-section" id="mcp-servers"><h2>MCP servers</h2>
 <p>Define MCP servers in one shared file for all agents. <code>coop init</code> creates an empty
 <code>~/.config/coop/agents/mcp.json</code> using the standard <code>{ &#34;mcpServers&#34;: { ... } }</code> format. It connects

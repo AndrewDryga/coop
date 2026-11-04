@@ -79,13 +79,19 @@ type waitEditor struct {
 	lines   chan map[string]any
 	answers map[float64]map[string]any
 	said    []string
+	asked   []string // what the session asked the editor for, other than showing it something
 }
 
 func startWaitEditor(t *testing.T, repo string) *waitEditor {
 	t.Helper()
+	return startEditor(t, repo, "claude")
+}
+
+func startEditor(t *testing.T, repo string, args ...string) *waitEditor {
+	t.Helper()
 	e := &waitEditor{t: t, repo: repo, lines: make(chan map[string]any, 1024), answers: map[float64]map[string]any{},
 		stderr: filepath.Join(t.TempDir(), "stderr.log")}
-	e.cmd = exec.Command(liveCoop(t), "acp", "claude")
+	e.cmd = exec.Command(liveCoop(t), append([]string{"acp"}, args...)...)
 	e.cmd.Dir, e.cmd.Env = repo, liveCoopEnv()
 	logFile, err := os.Create(e.stderr)
 	if err != nil {
@@ -154,6 +160,9 @@ func (e *waitEditor) take(until time.Time) (map[string]any, bool) {
 			if _, isResult := message["method"]; !isResult {
 				e.answers[id] = message
 			}
+		}
+		if method, ok := message["method"].(string); ok && method != "session/update" {
+			e.asked = append(e.asked, method)
 		}
 		if params, ok := message["params"].(map[string]any); ok {
 			if update, ok := params["update"].(map[string]any); ok && update["sessionUpdate"] == "agent_message_chunk" {
@@ -229,8 +238,14 @@ func (e *waitEditor) drain() {
 
 func (e *waitEditor) connect() string {
 	e.t.Helper()
+	return e.connectOffering(false)
+}
+
+// connectOffering opens a session, offering it the editor's computer or not.
+func (e *waitEditor) connectOffering(host bool) string {
+	e.t.Helper()
 	e.send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": 1,
-		"clientCapabilities": map[string]any{"fs": map[string]any{"readTextFile": false, "writeTextFile": false}, "terminal": false}}})
+		"clientCapabilities": map[string]any{"fs": map[string]any{"readTextFile": host, "writeTextFile": host}, "terminal": host}}})
 	e.answer(1, 5*time.Minute)
 	e.send(map[string]any{"id": 2, "method": "session/new", "params": map[string]any{"cwd": e.repo, "mcpServers": []any{}}})
 	answer := e.answer(2, 5*time.Minute)
@@ -419,4 +434,78 @@ func TestEditorBoxWaitHoldsAPromptUntilServicesAreSettled(t *testing.T) {
 	}
 	_ = file.Close()
 	editor.reachedTheBox(session)
+}
+
+// writeOntoTheAdapter does what any program in the session's box can: write lines straight onto the
+// adapter's stdout, as if the adapter had said them.
+func writeOntoTheAdapter(t *testing.T, repo string, lines ...string) {
+	t.Helper()
+	var boxes []string
+	for until := time.Now().Add(time.Minute); len(boxes) == 0; time.Sleep(time.Second) {
+		if time.Now().After(until) {
+			t.Fatal("no box has this project mounted")
+		}
+		out, err := exec.Command("docker", "ps", "--filter", "label="+LabelKey+"="+LabelBox, "--format", "{{.Names}}").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range strings.Fields(string(out)) {
+			mounts, err := exec.Command("docker", "inspect", name, "--format", "{{range .Mounts}}{{.Source}} {{end}}").Output()
+			if err == nil && strings.Contains(string(mounts), repo) {
+				boxes = append(boxes, name)
+			}
+		}
+	}
+	const script = `for f in /proc/[0-9]*/cmdline; do
+  d=${f%/cmdline}
+  if tr '\000' ' ' <"$f" 2>/dev/null | grep -q acp && printf '%s\n' "$FORGED" 2>/dev/null >"$d/fd/1"; then exit 0; fi
+done
+exit 1`
+	// A session can also hold parked boxes for a switch; only the live one's lines go anywhere.
+	for _, name := range boxes {
+		cmd := exec.Command("docker", "exec", "-e", "FORGED="+strings.Join(lines, "\n"), name, "sh", "-c", script)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("write onto the adapter's stdout in %s: %v\n%s", name, err, out)
+		}
+	}
+}
+
+// The way out of a filtered box through the editor is closed: a program in the box can ask, and nothing
+// reaches the editor, while what it may say still does. The agent still edits the project, which this
+// suite pays one short prompt on the cheapest model to prove.
+func TestRestrictedNetworkBoxCannotReachTheHostThroughTheEditor(t *testing.T) {
+	requireLiveBoxWait(t)
+	repo := waitRepo(t, map[string]string{"README.md": "# A small project\n"})
+	editor := startEditor(t, repo, "claude:haiku", "--egress", "filtered")
+	session := editor.connectOffering(true)
+	marker := "said-from-the-box-" + randid.Hex(8)
+	writeOntoTheAdapter(t, repo,
+		`{"jsonrpc":"2.0","id":"forged-1","method":"terminal/create","params":{"sessionId":"`+session+`","command":"touch","args":["/tmp/forged"]}}`,
+		`{"jsonrpc":"2.0","id":"forged-2","method":"fs/write_text_file","params":{"sessionId":"`+session+`","path":"/tmp/forged","content":"x"}}`,
+		`{"jsonrpc":"2.0","id":"forged-3","method":"fs/read_text_file","params":{"sessionId":"`+session+`","path":"/etc/passwd"}}`,
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"`+session+`","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"`+marker+`"}}}}`)
+	// Lines keep their order, so what the box asked for came before this if it came at all.
+	editor.hear(marker, time.Minute)
+	if len(editor.asked) != 0 {
+		t.Fatalf("the box reached the editor: asked for %v", editor.asked)
+	}
+	// The guard hides from the editor whatever it refuses, so its trace tells whether the agent asked too.
+	refused := regexp.MustCompile(`refused "(fs|terminal)/`)
+	forged := len(refused.FindAllString(editor.log(), -1))
+	if forged == 0 {
+		t.Fatalf("nothing was refused, so nothing was forged:\n%s", editor.log())
+	}
+	editor.send(map[string]any{"id": 10, "method": "session/prompt", "params": map[string]any{"sessionId": session, "prompt": []any{
+		map[string]any{"type": "text", "text": "Create a file named notes.txt in this project containing the single word done. Do nothing else."}}}})
+	answer := editor.answer(10, 4*time.Minute)
+	if result, _ := answer["result"].(map[string]any); result["stopReason"] != "end_turn" {
+		t.Fatalf("the turn ended with %v:\n%s", answer, editor.log())
+	}
+	if asked := len(refused.FindAllString(editor.log(), -1)); len(editor.asked) != 0 || asked != forged {
+		t.Fatalf("the agent asked the editor for %v, and %d requests were refused after the %d forged:\n%s", editor.asked, asked-forged, forged, editor.log())
+	}
+	body, err := os.ReadFile(filepath.Join(repo, "notes.txt"))
+	if err != nil || !strings.Contains(string(body), "done") {
+		t.Fatalf("the agent did not edit the project: %q, %v\n%s", body, err, editor.log())
+	}
 }

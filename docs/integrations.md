@@ -245,18 +245,27 @@ the thread says why.
 
 ### Files and terminals on your computer
 
-ACP also lets the agent ask the editor to access your computer directly. Requests such as
-`fs/read_text_file`, `fs/write_text_file` and `terminal/*` run through the editor, outside the
-box. co:op forwards these requests to Zed without filtering them. In a test, Gemini's adapter wrote
-project files this way when the editor offered it, while Claude's and Codex's did their work inside
-the box.
+ACP lets an agent ask the editor to work on your computer directly, outside the box. Requests such
+as `fs/read_text_file`, `fs/write_text_file` and `terminal/*` run through the editor, and a login
+button can run a command there.
 
-When you use ACP, your editor's file and terminal restrictions are part of the security
-boundary. A prompt-injected agent could ask the editor to read or write an absolute path outside
-the repo on your computer.
+A filtered session closes this way out. co:op does not tell the agent the editor can do this, refuses
+such a request if anything in the box sends one, and hides the login buttons. It also refuses to open
+a link the box chose. The agent can still ask you a question in the editor. It works on the project
+inside the box as usual, so it sees what is saved on disk, not your unsaved edits. In a test with this
+closed, Claude, Codex and Gemini all edited project files inside the box.
 
-`coop claude` and `coop loop` do not have this editor channel. These additional file and
-terminal risks apply when you control an agent from an editor over ACP.
+This does not stop your editor from showing what an agent writes. Zed loads a remote image in an
+agent's message by itself, so a message can still send data to an address outside the rules. co:op
+does not close this yet.
+
+An open or offline session still forwards these requests to Zed without filtering them. In a test,
+Gemini's adapter wrote project files this way when the editor offered it, while Claude's and Codex's
+did their work inside the box. In those sessions your editor's file and terminal restrictions are
+part of the security boundary: a prompt-injected agent could ask the editor to read or write an
+absolute path outside the repo on your computer.
+
+`coop claude` and `coop loop` do not have this editor channel.
 
 ## MCP servers
 

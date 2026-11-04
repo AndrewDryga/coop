@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A filtered editor session stays in its box.** An agent in a filtered `coop acp` session can no
+  longer reach your computer through your editor. Coop does not tell it the editor can read files or
+  run terminals, refuses those requests if anything in the box sends one, and hides login buttons
+  that could run a command on your computer. The agent works on the project inside the box as usual,
+  so it sees what is saved on disk, not your unsaved edits. Open and offline sessions are unchanged.
+
 - **Editor sessions stay connected.** `coop acp` now connects while a project's network rules wait
   for `coop approve`, says so in the thread and moves on by itself once you approve. It also stays
   connected when a box exits as it starts: it says why in the thread and the agent log, and retries

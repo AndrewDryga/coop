@@ -224,6 +224,8 @@ type RunOpts struct {
 	Stopping func()
 	// Restarter, when set, is bound to this run so the caller can restart its child between turns.
 	Restarter *Restarter
+	// NoEditorHostAccess closes the way out of a box through the editor: see host_access.go.
+	NoEditorHostAccess bool
 	// ChildFailed, when set, is called when a child that runs turns ends by itself before it could
 	// serve (it never answered initialize, or it answered and exited within ChildStartWindow). The caller's
 	// next child should hold prompts, so a box that keeps refusing to start costs the editor nothing:
@@ -256,6 +258,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	p := &proxy{
 		out:            clientOut,
 		hooks:          hooks,
+		noHostAccess:   opts.NoEditorHostAccess,
 		bindings:       opts.Bindings,
 		stopping:       opts.Stopping,
 		authentication: map[authenticationScope]authenticationState{},
@@ -614,6 +617,8 @@ type proxy struct {
 	forceFailed    map[string]string                           // adapter session id -> setting failure; prompts fail loudly
 
 	hooks *Hooks // coop's control layer (nil → pure pass-through)
+
+	noHostAccess bool // this session's boxes may not reach the host through the editor
 	// announcedInitialized keeps Hooks.Initialized a once-per-process signal: it means "the editor
 	// has been answered", not "a child initialized", so a restart or a provider switch must not
 	// re-fire it.
@@ -709,6 +714,9 @@ func (p *proxy) restore(snap Snapshot) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.initialize = clone(snap.Initialize)
+	if p.noHostAccess {
+		p.initialize = withoutEditorHostAccess(p.initialize)
+	}
 	if p.authentication == nil {
 		p.authentication = map[authenticationScope]authenticationState{}
 	}
@@ -882,6 +890,10 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		traceLine("coop→box(resume)", line)
 	}
 	original := parse(line)
+	if p.noHostAccess && original.Method == "initialize" {
+		// Kept this way for every child's replay too.
+		line = withoutEditorHostAccess(line)
+	}
 	if p.reloading.Load() && original.isRequest() {
 		_, _ = p.out.Write(errorResponse(string(original.ID)))
 		return
@@ -1283,6 +1295,9 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			return nil
 		}
 		traceLine("box→editor", line)
+		if p.noHostAccess && refuseEditorHostAccess(child, line) {
+			return nil
+		}
 		// Translate the box's session id back to the one the editor knows, so coop's hooks and the
 		// editor always see the editor's id (a no-op unless a session was re-created under a new one).
 		line = p.remapToEditor(line)
@@ -1479,7 +1494,7 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			}
 		}
 		if len(out) > 0 {
-			_, _ = p.out.Write(out)
+			_, _ = p.out.Write(p.forEditor(out))
 		}
 		if announceInitialized {
 			go p.hooks.Initialized() // the editor is unblocked; deferred startup work may run now
@@ -2724,7 +2739,7 @@ func (p *proxy) answerInitialize(id string, result json.RawMessage) {
 	}
 	if len(line) > 0 {
 		traceLine("box→editor(replay-initialize)", line)
-		_, _ = p.out.Write(line)
+		_, _ = p.out.Write(p.forEditor(line))
 	}
 	p.mu.Lock()
 	announce := !p.announcedInitialized && p.hooks != nil && p.hooks.Initialized != nil

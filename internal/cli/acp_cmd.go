@@ -757,7 +757,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// The parked boxes — and a replacement still waiting — are independent of the active one, so they
 	// stop while it does; the calls after Run then wait for that same teardown to finish.
 	stopping := func() { go reapPool(); go closeRefresh(); go a.acpBoxWait.close() }
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter, ChildFailed: a.acpBoxWait.childFailedHook()})
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{NoEditorHostAccess: a.acpCapture != nil, Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter, ChildFailed: a.acpBoxWait.childFailedHook()})
 	// Run stopped the active box. Wait here for the parked boxes and a waiting replacement too: no
 	// inner child of this generation may run when its project services go, and a reload's execve
 	// would skip the deferred calls.
