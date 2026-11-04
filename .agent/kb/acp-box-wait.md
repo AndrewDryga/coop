@@ -80,7 +80,12 @@ Limits. A refusal a holding child meets too (an unreadable `.coopignore`, a pres
 project.yaml still ends `coop acp` at connect, where no capture exists yet. A real box that hangs instead
 of exiting waits out `replayStartupGrace`, then ends the session.
 
+A project's own client hooks do run in a holding child at session/new. Measured with Claude's SessionStart:
+the hook ran, the project was read-only, and it could reach only the provider. The owner chose on 2026-11-03
+to keep this rather than start the adapter with hooks off.
+
 ## Changelog
+- 2026-11-03 — recorded that a project's hooks run in a holding child, by the owner's choice.
 - 2026-11-03 — a box that keeps refusing keeps the session connected, on a child with no project rules,
   no sidecars and no project file. Verified on real Docker against a serve port on TLS, a broken
   project.yaml and an approved service edited before the box was killed.
