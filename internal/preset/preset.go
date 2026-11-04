@@ -20,6 +20,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/safefile"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
+	"github.com/AndrewDryga/coop/internal/yamltext"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -147,11 +148,6 @@ type yamlRole struct {
 	Subagent   string    `yaml:"subagent"`
 	Commit     string    `yaml:"commit"`
 	Concurrent string    `yaml:"concurrent"`
-	// Not implemented in v1 — they imply enforcement that doesn't exist yet, so
-	// setting them must fail loud instead of silently granting nothing.
-	Permissions any `yaml:"permissions"`
-	WritePaths  any `yaml:"write_paths"`
-	DenyPaths   any `yaml:"deny_paths"`
 }
 
 // roots returns the preset search roots in precedence order: the repo's
@@ -409,6 +405,10 @@ func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, er
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&y); err != nil {
+		var problems *yaml.TypeError
+		if errors.As(yamltext.Plain(err), &problems) {
+			return bad(append([]string{"Coop could not read this file as YAML."}, problems.Errors...)...)
+		}
 		return bad("Coop could not read this file as YAML.", strings.TrimSpace(err.Error()))
 	}
 
@@ -554,11 +554,6 @@ func loadRole(name string, y yamlRole, readFile func(string) ([]byte, error)) (R
 		}
 		r.Targets = append(r.Targets, t)
 	}
-	if y.Permissions != nil || y.WritePaths != nil || y.DenyPaths != nil {
-		return bad(role+" sets permissions, write_paths, or deny_paths.",
-			"Coop cannot enforce path-level permissions yet, so declaring them would only pretend to.")
-	}
-
 	// Mode-specific shape.
 	switch r.Mode {
 	case ModeNative:

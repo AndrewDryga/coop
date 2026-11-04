@@ -46,6 +46,7 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-04 — +1 edge: `preset -> yamltext`, so a preset's unknown key is refused in the same plain words as `project.yaml` and `loop.yaml`.
 - 2026-11-04 — box imports workerproto for the controller-frozen project runtime selector. The
   sandbox executor consumes the same small validated runtime grant as the worker API, avoiding a
   second authority schema or importing sessionsvc. workerproto imports no box package, so no cycle

@@ -66,7 +66,7 @@ var allowedEdges = map[string][]string{
 	"networkreport":         {"egress", "networkstate", "networkview", "ui"},
 	"networkstate":          {"egress", "fsidentity", "networkview", "processidentity", "randid"},
 	"networkview":           {"egress"},
-	"preset":                {"agent", "safefile", "shadowpath"},
+	"preset":                {"agent", "safefile", "shadowpath", "yamltext"},
 	"processidentity":       nil,
 	"project":               {"egress", "yamltext"},
 	"randid":                nil,

@@ -143,10 +143,9 @@ func TestLoadValidation(t *testing.T) {
 		{"commit allow rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, commit: allow}}", nil, `Only "never" is supported`},
 		{"concurrent group rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, concurrent: \"group:a\"}}", nil, `Only "never" is supported`},
 		{"commit on consult", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: codex, commit: never}}", nil, "only apply to mode: delegate"},
-		{"permissions rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, permissions: rw}}", nil, "Coop cannot enforce path-level permissions"},
-		{"write_paths rejected", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, write_paths: [a]}}", nil, "Coop cannot enforce path-level permissions"},
 		{"bad role name", "lead: {agent: claude}\nroles: {Fast Role: {mode: consult, agent: codex}}", nil, "Role name"},
 		{"unknown field", "lead: {agent: claude, sidekick: yes}", nil, "could not read this file as YAML"},
+		{"unknown role key named plainly", "lead: {agent: claude}\nroles: {r: {mode: delegate, agent: gemini, permissions: rw}}", nil, `line 2: unknown setting "permissions"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
