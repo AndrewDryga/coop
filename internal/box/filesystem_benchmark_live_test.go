@@ -18,7 +18,11 @@ import (
 )
 
 // This opt-in measurement keeps every admission alive during the workload, so
-// the concurrency rows include the cost of all attached LSM programs.
+// the concurrency rows include the cost of all attached LSM programs. Run it with a locally built,
+// trusted clients image:
+//
+//	COOP_FILESYSTEM_BENCHMARK=1 COOP_FILESYSTEM_CLIENT_IMAGE=<cached-coop-clients-image> \
+//	go test -tags filesystemruntimee2e ./internal/box -run '^TestFilesystemPerformanceRuntime$' -count=5 -timeout 30m -v
 func TestFilesystemPerformanceRuntime(t *testing.T) {
 	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
 	if os.Getenv("COOP_FILESYSTEM_BENCHMARK") != "1" || image == "" {

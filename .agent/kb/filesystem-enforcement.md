@@ -34,6 +34,10 @@ to close existing hardlink aliases. It persists
 semantic origins under the shared hidden-file record lock before policy publication. A rejected
 admission therefore cannot forget old identities after a host atomic save. Legacy mount
 persistence preserves prior omitted identities at surviving aliases instead of erasing them.
+
+Don't judge a path by the guest kernel's link count. On OrbStack `i_nlink` can stay stale after the
+host adds a hard link to a warmed path (host count 2, kernel count 1, read allowed), and only in some
+runs, so one passing run proves nothing. Admission uses object identities for this reason.
 Removing a rule declassifies its original object only when no remembered alias survives.
 
 Host device/inode values group aliases only. The loader opens the actual guest objects with
@@ -232,6 +236,7 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-04 — retired tools/fsprobe and its card; its one lasting trap, the stale link count, is above.
 - 2026-11-04 — xattr/ACL reads on a hidden non-directory answer ENODATA/EOPNOTSUPP so `ls -l` exits 0; live suite asserts it.
 - 2026-11-04 — ran `ls -l`, `readlink`, `stat`, `find` and `cat` beside a hidden file and symlink in a real box
   on virtiofs and corrected `docs/box.md`: `ls -l` exits 1 there.
@@ -280,4 +285,4 @@ from the ordinary checks on mount hosts, where an unhidden hardlink would reveal
   batches complete exact-ID cgroup inventories while retaining final daemon verification.
 - 2026-11-01 — documented integrated APFS Docker backend, its explicit snapshot contract,
   identity persistence, service reuse and reviewed crash/partial-attachment cleanup. Earlier
-  cached-link-count diagnostic results remain historical evidence in tools/fsprobe/RESULTS.md.
+  cached-link-count diagnostic results are in Git history, at tools/fsprobe/RESULTS.md.
