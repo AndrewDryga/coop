@@ -439,7 +439,7 @@ const (
 )
 
 // runApprove answers every question it hears, returning those questions and what was printed.
-func runApprove(t *testing.T, a *app, repo string, answer func(string) bool) (code int, err error, asked []string, out string) {
+func runApprove(t *testing.T, a *app, repo string, answer func(string) bool) (code int, asked []string, out string, err error) {
 	t.Helper()
 	out = captureStderr(t, func() {
 		code, err = a.approveProject(t.Context(), repo, false, func(prompt string) bool {
@@ -447,7 +447,7 @@ func runApprove(t *testing.T, a *app, repo string, answer func(string) bool) (co
 			return answer(prompt)
 		})
 	})
-	return code, err, asked, out
+	return code, asked, out, err
 }
 
 // A box stuck on missing service rules: one yes shows them, writes them where the file's own layout
@@ -455,7 +455,7 @@ func runApprove(t *testing.T, a *app, repo string, answer func(string) bool) (co
 // service's definition is saved with them, so a later edit asks again.
 func TestApproveAddsTheServiceRulesItShowed(t *testing.T) {
 	a, repo := servicesProject(t, "", "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n  api:\n    image: example/api:1\n    expose: [\"3000\", \"9229\"]\n")
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 1 || asked[0] != serviceRulesPrompt {
 		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
@@ -475,7 +475,7 @@ func TestApproveAddsTheServiceRulesItShowed(t *testing.T) {
 		t.Fatalf("approval = %+v, %v; want it saved with both digests", access.Approval, err)
 	}
 	// Nothing left to say.
-	if code, err, asked, out = runApprove(t, a, repo, func(string) bool { return false }); code != 0 || err != nil || len(asked) != 0 || out != netApproveUnchanged+"\n" {
+	if code, asked, out, err = runApprove(t, a, repo, func(string) bool { return false }); code != 0 || err != nil || len(asked) != 0 || out != netApproveUnchanged+"\n" {
 		t.Fatalf("again: code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
 	// Approval saved the definition, so changing it asks again.
@@ -490,7 +490,7 @@ func TestApproveAddsTheServiceRulesItShowed(t *testing.T) {
 // Comments and order survive, and rules already approved stay approved beside the new ones.
 func TestApproveKeepsTheFileItAddsRulesTo(t *testing.T) {
 	a, repo := servicesProject(t, approveWithHistory, approveCompose)
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 2 || asked[0] != netApprovePrompt || asked[1] != serviceRulesPrompt {
 		t.Fatalf("a pending rule and missing service rules are two questions: code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
@@ -508,7 +508,7 @@ func TestApproveKeepsTheFileItAddsRulesTo(t *testing.T) {
 // No changes nothing, exits 0, and says what stays blocked. The default answer is no.
 func TestApproveDecliningServiceRulesChangesNothing(t *testing.T) {
 	a, repo := servicesProject(t, approveOtherRule, approveCompose)
-	code, err, _, _ := runApprove(t, a, repo, func(prompt string) bool { return prompt == netApprovePrompt })
+	code, _, _, err := runApprove(t, a, repo, func(prompt string) bool { return prompt == netApprovePrompt })
 	if code != 0 || err != nil {
 		t.Fatalf("declining the rules after approving the domain: %d, %v", code, err)
 	}
@@ -517,7 +517,7 @@ func TestApproveDecliningServiceRulesChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := directoryListing(t, root, repo)
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return false })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return false })
 	if code != 0 || err != nil || len(asked) != 1 {
 		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
 	}
@@ -538,7 +538,7 @@ func TestApproveDecliningServiceRulesChangesNothing(t *testing.T) {
 // offered on top of an answer of no.
 func TestApproveDecliningThePendingRulesOffersNothing(t *testing.T) {
 	a, repo := servicesProject(t, approveServiceRule, approveCompose)
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return false })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return false })
 	if code != 1 || err == nil || len(asked) != 1 || asked[0] != netApprovePrompt || strings.Contains(out, "cannot start") {
 		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
@@ -551,7 +551,7 @@ func TestApproveDecliningThePendingRulesOffersNothing(t *testing.T) {
 func TestApproveWithOnlyAServicesNetworkOffersNothing(t *testing.T) {
 	a, repo := servicesProject(t, "", "")
 	a.cfg.ServicesNet = "shared"
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 0 {
 		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
 	}
@@ -570,7 +570,7 @@ func TestApproveWithOnlyAServicesNetworkOffersNothing(t *testing.T) {
 func TestApproveCoversAServiceDependency(t *testing.T) {
 	const compose = "services:\n  api:\n    image: example/api:1\n    expose: [\"3000\"]\n    depends_on: [db]\n  db:\n    image: postgres:18\n"
 	a, repo := servicesProject(t, "", compose)
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 1 {
 		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
@@ -580,7 +580,7 @@ func TestApproveCoversAServiceDependency(t *testing.T) {
 	}
 
 	a, repo = servicesProject(t, "", compose)
-	code, err, _, _ = runApprove(t, a, repo, func(string) bool {
+	code, _, _, err = runApprove(t, a, repo, func(string) bool {
 		edited := strings.Replace(compose, "postgres:18", "example/other:1", 1)
 		if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(edited), 0o600); err != nil {
 			t.Fatal(err)
@@ -595,7 +595,7 @@ func TestApproveCoversAServiceDependency(t *testing.T) {
 // A port Coop cannot tell is never guessed: that service stays the person's, shown as a rule to finish.
 func TestApproveNeverGuessesAPort(t *testing.T) {
 	a, repo := servicesProject(t, "", servicesCompose)
-	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 1 {
 		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
 	}
@@ -617,7 +617,7 @@ func TestApproveNeverGuessesAPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := directoryListing(t, root, repo)
-	code, err, asked, out = runApprove(t, a, repo, func(string) bool { return true })
+	code, asked, out, err = runApprove(t, a, repo, func(string) bool { return true })
 	if code != 0 || err != nil || len(asked) != 0 {
 		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
 	}
@@ -651,7 +651,7 @@ func TestApproveDoesNotCarryALaterEditAlong(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, repo := servicesProject(t, "", approveCompose)
-			code, err, _, _ := runApprove(t, a, repo, func(string) bool {
+			code, _, _, err := runApprove(t, a, repo, func(string) bool {
 				edit(t, repo)
 				return true
 			})
