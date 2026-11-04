@@ -1,6 +1,4 @@
-# This folder ships no secrets. Test/demo fixtures are created in temp dirs at
-# runtime and cleaned up, so there's nothing to ignore here by default — this
-# file just keeps stray local experiments out of git.
+# stray local experiments
 *.local
 .DS_Store
 
@@ -10,7 +8,7 @@
 # GoReleaser build output (make snapshot / release)
 /dist/
 
-# python bytecode cache (tools/*.py)
+# python bytecode cache (examples/evals fixtures)
 __pycache__/
 
 # coop working state (commit knowledge, ignore state)
