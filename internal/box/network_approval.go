@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io/fs"
 	"slices"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // Posture sources, in the order admission resolves them. They are display
@@ -130,6 +132,9 @@ type projectNetworkReviewInputs struct {
 	needs     bool
 }
 
+// approvalWaitNotice is how long approval waits on a starting box before it says so.
+var approvalWaitNotice = 2 * time.Second
+
 // Test-only scheduling point for proving that marker transitions are decided under the
 // cross-box launch lock. Production leaves it nil.
 var afterNetworkReviewInputsLoaded func()
@@ -216,7 +221,10 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 		return nil, openErr
 	}
 
+	// A box still starting holds this for as long as that takes, so say so rather than seem stuck.
+	waiting := time.AfterFunc(approvalWaitNotice, func() { ui.Note("Waiting for a box in this project to finish starting.") })
 	unlockTransition, err := forkspace.LockServiceLaunch(ctx, inputs.canonical, true)
+	waiting.Stop()
 	if err != nil {
 		return nil, fmt.Errorf("wait for active boxes before anchoring network approval: %w", err)
 	}

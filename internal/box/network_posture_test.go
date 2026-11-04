@@ -96,6 +96,45 @@ func TestFirstNetworkApprovalCanCancelWhileWaitingForSandboxMounts(t *testing.T)
 	}
 }
 
+// A first approval waits for any box still starting. A person sees why, not a command that seems stuck,
+// and an approval that does not wait says nothing.
+func TestApprovalSaysWhenItWaitsForABox(t *testing.T) {
+	previous := approvalWaitNotice
+	approvalWaitNotice = 20 * time.Millisecond
+	t.Cleanup(func() { approvalWaitNotice = previous })
+	const said = "Waiting for a box in this project to finish starting."
+	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
+	shared, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := captureStderr(t, func() {
+		done := make(chan error, 1)
+		go func() {
+			_, err := ReviewProjectNetwork(cfg, repo)
+			done <- err
+		}()
+		time.Sleep(300 * time.Millisecond)
+		shared()
+		if err := <-done; err != nil {
+			t.Errorf("review after the box finished: %v", err)
+		}
+	})
+	if !strings.Contains(out, said) {
+		t.Errorf("a waiting approval said %q, want %q", out, said)
+	}
+	approvalWaitNotice = time.Minute
+	cfg, repo, _ = postureFixture(t, requestFixtureYAML)
+	out = captureStderr(t, func() {
+		if _, err := ReviewProjectNetwork(cfg, repo); err != nil {
+			t.Errorf("review: %v", err)
+		}
+	})
+	if strings.Contains(out, said) {
+		t.Errorf("an approval that did not wait said %q", out)
+	}
+}
+
 func TestNetworkApprovalMarkerDisappearanceTransitionsUnderLaunchLock(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
 	approveFixture(t, cfg, repo)
