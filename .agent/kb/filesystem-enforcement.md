@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-03
 ---
 
@@ -23,6 +23,10 @@ complete generic error instead. Successful fallback stays quiet, and `Filesystem
 reports the selected backend to diagnostics.
 The helper image builds solely from sources embedded in the Coop binary; its compiler/libraries
 stay inside Docker. `make filesystem-sources-check` detects stale embedded sources.
+A failed helper build reports the failed step's own lines from its private log before cleanup
+deletes that log (`filesystemBuildDetail`). The log's end cannot be used: BuildKit's footer repeats
+the command, excerpts the Dockerfile, and keeps only the step's last ten lines, which lost the
+first compiler error in the November 2 failure.
 
 One host walk applies the shared shadow-policy decider and remembered identities. Policy discovery
 prunes hidden descendants and .git as the mount backend does, while identity inventory visits both
@@ -211,6 +215,9 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-03 — a failed helper build shows the failed step's output instead of the BuildKit footer
+  (fixture: the real November 2 log). Checked the card's build paragraph against `filesystem.go`
+  and `fsimage`; other sections were not reverified.
 - 2026-11-03 — the daily sweep retires custody whose workspace is gone (a timed-out setup check left
   coop-fs-65dafdb1…-owner on the owner's Mac), and an unfinished create settles after ten minutes.
 - 2026-11-03 — review: the doctor probe got a positive control, retiring an old probe whose

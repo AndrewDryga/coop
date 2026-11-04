@@ -36,6 +36,99 @@ func TestFilesystemBuildDiagnosticSurvivesCleanup(t *testing.T) {
 	}
 }
 
+// The fixture is the log of a real failed helper build. Its first compiler error is above the last
+// ten step lines BuildKit repeats in its footer, and the footer alone fills the old last 20 lines.
+func TestFilesystemBuildDiagnosticKeepsTheCompilerError(t *testing.T) {
+	err := filesystemBuildError(context.Canceled, filepath.Join("testdata", "filesystem_helper_build_failure.log"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Filesystem helper build output:",
+		"loader.c: In function 'recover':",
+		"loader.c:334:105: error: '%s' directive output may be truncated",
+		"cc1: all warnings being treated as errors",
+		"did not complete successfully: exit code: 1",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in:\n%v", want, err)
+		}
+	}
+	for _, wrapper := range []string{"Dockerfile:15", ">>>", "#8 "} {
+		if strings.Contains(err.Error(), wrapper) {
+			t.Errorf("kept the wrapper %q in:\n%v", wrapper, err)
+		}
+	}
+	if len(err.Error()) > 17000 {
+		t.Fatalf("unbounded diagnostic: %d bytes", len(err.Error()))
+	}
+}
+
+func TestFilesystemBuildDiagnosticSelectsTheCause(t *testing.T) {
+	footer := "------\n > [build 5/5] RUN make:\n------\nDockerfile:15\n--------------------\n" +
+		strings.Repeat("  15 | >>> "+strings.Repeat("x", 1024)+"\n", 40) +
+		"--------------------\nERROR: failed to build: failed to solve: process \"/bin/sh -c make\" did not complete successfully: exit code: 137\n"
+	var compile strings.Builder
+	compile.WriteString("#8 [build 5/5] RUN make\n#8 0.1 go: downloading golang.org/x/sys v0.49.0\n#8 0.2 loader.c:10:3: error: unknown type name 'first_cause'\n")
+	for i := range 60 {
+		compile.WriteString("#8 0.3 loader.c:" + strconv.Itoa(i+20) + ":3: note: cascade " + strconv.Itoa(i) + "\n")
+	}
+	compile.WriteString("#8 0.4 cc1: all warnings being treated as errors\n#8 ERROR: process \"/bin/sh -c make\" did not complete successfully: exit code: 1\n")
+	for _, tc := range []struct {
+		name   string
+		log    string
+		want   []string
+		reject []string
+	}{
+		{
+			name:   "the first of many compiler errors survives a footer larger than the old window",
+			log:    compile.String() + footer,
+			want:   []string{"error: unknown type name 'first_cause'", "note: cascade 59", "cc1: all warnings being treated as errors", "lines omitted", "exit code: 137"},
+			reject: []string{"go: downloading", "note: cascade 30", ">>>"},
+		},
+		{
+			name: "a package manager failure, with another stage's lines mixed in",
+			log: "#5 [build 2/5] RUN apt-get update\n#6 [other 1/1] RUN sleep\n#5 0.1 Get:1 https://snapshot.debian.org/ bookworm InRelease\n#6 0.1 unrelated stage output\n" +
+				"#5 0.2 E: Failed to fetch https://snapshot.debian.org/ 503 Service Unavailable\n#5 ERROR: process \"/bin/sh -c apt-get update\" did not complete successfully: exit code: 100\n#6 CANCELED\n" + footer,
+			want:   []string{"Get:1 https://snapshot.debian.org/", "E: Failed to fetch https://snapshot.debian.org/ 503 Service Unavailable", "exit code: 137"},
+			reject: []string{"unrelated stage output", ">>>", "lines omitted"},
+		},
+		{
+			name: "a step that failed without output reads from the end of the log",
+			log: "#3 [internal] load metadata for docker.io/library/golang:1.27.3-bookworm\n#3 ERROR: pull access denied\n------\n > [internal] load metadata:\n------\n" +
+				"ERROR: failed to build: failed to solve: golang:1.27.3-bookworm: pull access denied\n",
+			want: []string{"ERROR: failed to build: failed to solve: golang:1.27.3-bookworm: pull access denied"},
+		},
+		{
+			name:   "a long line keeps both of its ends",
+			log:    "#8 0.1 start-of-line " + strings.Repeat("y", 8192) + " end-of-line\n#8 ERROR: exit code: 1\nERROR: failed to solve\n",
+			want:   []string{"start-of-line", "end-of-line", "ERROR: failed to solve"},
+			reject: []string{strings.Repeat("y", 1024)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "build.log")
+			if err := os.WriteFile(file, []byte(tc.log), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := filesystemBuildError(context.Canceled, file)
+			if !errors.Is(err, context.Canceled) || len(err.Error()) > 17000 || strings.Count(err.Error(), "\n") > 24 {
+				t.Fatalf("unusable bounded diagnostic (%d bytes): %v", len(err.Error()), err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("missing %q in:\n%v", want, err)
+				}
+			}
+			for _, reject := range tc.reject {
+				if strings.Contains(err.Error(), reject) {
+					t.Errorf("kept %q in:\n%v", reject, err)
+				}
+			}
+		})
+	}
+}
+
 func TestFilesystemSelectionReportsQuietFallback(t *testing.T) {
 	var reports []FilesystemReport
 	spec := RunSpec{Quiet: true, OnFilesystemReport: func(report FilesystemReport) { reports = append(reports, report) }}

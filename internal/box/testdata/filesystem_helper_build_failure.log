@@ -1,0 +1,75 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load remote build context
+#1 CACHED
+
+#2 copy /context /
+#2 CACHED
+
+#3 [internal] load metadata for docker.io/library/golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132
+#3 DONE 0.0s
+
+#4 [build 1/5] FROM docker.io/library/golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132
+#4 DONE 0.0s
+
+#5 [build 2/5] RUN rm -f /etc/apt/sources.list.d/*  && printf '%s\n'     'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261101T000000Z bookworm main'     'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20261101T000000Z bookworm-security main' > /etc/apt/sources.list  && apt-get update  && apt-get install -y --no-install-recommends     clang-16=1:16.0.6-15~deb12u1 libbpf-dev=1:1.1.2-0+deb12u1     libelf-dev=0.188-2.1 zlib1g-dev=1:1.2.13.dfsg-1  && rm -rf /var/lib/apt/lists/*
+#5 CACHED
+
+#6 [build 3/5] WORKDIR /src
+#6 CACHED
+
+#7 [build 4/5] COPY . .
+#7 CACHED
+
+#8 [build 5/5] RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state  && chmod 1777 /out/tmp  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries  && ! grep -q 'not found' /tmp/coop-fs-libraries  && awk '/=> \// { print $3 } $1 ~ /^\// { print $1 }' /tmp/coop-fs-libraries     | while read -r library; do cp -L --parents "$library" /out/ || exit 1; done  && cp LICENSE /out/usr/share/coop-fs/LICENSE  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/  && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/
+#8 0.147 go: downloading golang.org/x/sys v0.49.0
+#8 0.189 go: downloading golang.org/x/text v0.43.0
+#8 3.966 internal/fsfilter/assets/loader.c: In function 'recover':
+#8 3.966 internal/fsfilter/assets/loader.c:334:105: error: '%s' directive output may be truncated writing up to 131071 bytes into a region of size 4104 [-Werror=format-truncation=]
+#8 3.966   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+#8 3.966       |                                                                                                         ^~
+#8 3.967 internal/fsfilter/assets/loader.c:334:63: note: 'snprintf' output between 13 and 131084 bytes into a destination of size 4116
+#8 3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+#8 3.967       |                                                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#8 3.967 internal/fsfilter/assets/loader.c:334:185: error: '%s' directive output may be truncated writing up to 131071 bytes into a region of size 4106 [-Werror=format-truncation=]
+#8 3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+#8 3.967       |                                                                                                                                                                                         ^~
+#8 3.967 internal/fsfilter/assets/loader.c:334:145: note: 'snprintf' output between 11 and 131082 bytes into a destination of size 4116
+#8 3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+#8 3.967       |                                                                                                                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#8 4.052 cc1: all warnings being treated as errors
+#8 ERROR: process "/bin/sh -c mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state  && chmod 1777 /out/tmp  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/\"$(gcc -print-multiarch)\" -Wall -Werror     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries  && ! grep -q 'not found' /tmp/coop-fs-libraries  && awk '/=> \\// { print $3 } $1 ~ /^\\// { print $1 }' /tmp/coop-fs-libraries     | while read -r library; do cp -L --parents \"$library\" /out/ || exit 1; done  && cp LICENSE /out/usr/share/coop-fs/LICENSE  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/  && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/" did not complete successfully: exit code: 1
+------
+ > [build 5/5] RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state  && chmod 1777 /out/tmp  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries  && ! grep -q 'not found' /tmp/coop-fs-libraries  && awk '/=> \// { print $3 } $1 ~ /^\// { print $1 }' /tmp/coop-fs-libraries     | while read -r library; do cp -L --parents "$library" /out/ || exit 1; done  && cp LICENSE /out/usr/share/coop-fs/LICENSE  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/  && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/:
+3.967 internal/fsfilter/assets/loader.c:334:63: note: 'snprintf' output between 13 and 131084 bytes into a destination of size 4116
+3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+3.967       |                                                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+3.967 internal/fsfilter/assets/loader.c:334:185: error: '%s' directive output may be truncated writing up to 131071 bytes into a region of size 4106 [-Werror=format-truncation=]
+3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+3.967       |                                                                                                                                                                                         ^~
+3.967 internal/fsfilter/assets/loader.c:334:145: note: 'snprintf' output between 11 and 131082 bytes into a destination of size 4116
+3.967   334 |     for (int i = 0; i < count; i++) { char label[PATH_MAX+20];snprintf(label,sizeof(label),"close.begin %s",paths[i]);perf(label);close(fds[i]);snprintf(label,sizeof(label),"close.end %s",paths[i]);perf(label); }
+3.967       |                                                                                                                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4.052 cc1: all warnings being treated as errors
+------
+Dockerfile:15
+--------------------
+  14 |     COPY . .
+  15 | >>> RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state \
+  16 | >>>  && chmod 1777 /out/tmp \
+  17 | >>>  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs \
+  18 | >>>  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin \
+  19 | >>>  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/"$(gcc -print-multiarch)" -Wall -Werror \
+  20 | >>>     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o \
+  21 | >>>  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel \
+  22 | >>>  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries \
+  23 | >>>  && ! grep -q 'not found' /tmp/coop-fs-libraries \
+  24 | >>>  && awk '/=> \// { print $3 } $1 ~ /^\// { print $1 }' /tmp/coop-fs-libraries \
+  25 | >>>     | while read -r library; do cp -L --parents "$library" /out/ || exit 1; done \
+  26 | >>>  && cp LICENSE /out/usr/share/coop-fs/LICENSE \
+  27 | >>>  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright \
+  28 | >>>     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/ \
+  29 | >>>  && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/
+  30 |     
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state  && chmod 1777 /out/tmp  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin  && clang-16 -O2 -g -target bpfel -mcpu=v3 -I/usr/include/\"$(gcc -print-multiarch)\" -Wall -Werror     -c internal/fsfilter/assets/filter.c -o /out/usr/local/libexec/coop-fs/filter.o  && gcc -O2 -Wall -Werror internal/fsfilter/assets/loader.c -lbpf -lelf -lz -o /out/usr/local/libexec/coop-fs-kernel  && ldd /out/usr/local/libexec/coop-fs-kernel > /tmp/coop-fs-libraries  && ! grep -q 'not found' /tmp/coop-fs-libraries  && awk '/=> \\// { print $3 } $1 ~ /^\\// { print $1 }' /tmp/coop-fs-libraries     | while read -r library; do cp -L --parents \"$library\" /out/ || exit 1; done  && cp LICENSE /out/usr/share/coop-fs/LICENSE  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/  && cp internal/fsfilter/assets/loader.c internal/fsfilter/assets/filter.c /out/usr/share/coop-fs/" did not complete successfully: exit code: 1
