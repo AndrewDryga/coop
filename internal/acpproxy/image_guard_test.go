@@ -159,7 +159,7 @@ func fetches(t *testing.T, lines []byte) []string {
 	t.Helper()
 	var images []string
 	for _, document := range zedMarkdown(t, lines) {
-		images = append(images, remoteImages(t, document)...)
+		images = append(images, loadedImages(t, document)...)
 	}
 	return images
 }
@@ -187,6 +187,18 @@ func TestNoLineMakesTheEditorFetchAnImage(t *testing.T) {
 	}
 	for name, lines := range map[string][]string{
 		"a message":                {messageLine(t, evilImage)},
+		"a project path":           {messageLine(t, "![x](evil.png)")},
+		"a path cut in two":        {messageLine(t, "![x](ev"), messageLine(t, "il.png)")},
+		"a path after half data":   {messageLine(t, "![x](data:"), messageLine(t, "a)")},
+		"a path definition":        {messageLine(t, "[x]: evil.png\n\n![x]")},
+		"a path definition cut":    {messageLine(t, "![x]\n\n[x"), messageLine(t, "]: evil.png")},
+		"a definition's path, cut": {messageLine(t, "![x]\n\n[x]: ev"), messageLine(t, "il.png")},
+		"a path after the answer":  {messageLine(t, "![x]\n\n[x"), turnAnswer, messageLine(t, "]: evil.png")},
+		"a colon after the answer": {messageLine(t, "![x]\n\n[x]"), turnAnswer, messageLine(t, ": evil.png")},
+		"a path after a colon":     {messageLine(t, "![x]\n\n[x]:"), turnAnswer, messageLine(t, " evil.png")},
+		"a new line in a new text": {messageLine(t, "![x]\n\n"), turnAnswer, messageLine(t, "[x]: evil.png")},
+		"a list item, then a path": {messageLine(t, "![x]\n\n- "), turnAnswer, messageLine(t, "[x]: evil.png")},
+		"a name that defines":      {messageLine(t, "![@a]\n\n"), linkLine(t, "file:///a%5D%3Aevil.png")},
 		"two writes":               {messageLine(t, "![x](https:"), messageLine(t, "//evil.example/)")},
 		"the `!` alone":            {messageLine(t, "!"), messageLine(t, "[x](https://evil.example/)")},
 		"the `]` alone":            {messageLine(t, "![x]"), messageLine(t, "(https://evil.example/)")},
@@ -269,7 +281,8 @@ func TestALinkThatSpellsAnImageGoesNowhere(t *testing.T) {
 		"file:///a/b!":             true,
 		"foo:[x]:":                 true,
 		`foo\`:                     true,
-		"file:///[::1]:8080/a":     false,
+		"file:///[::1]:8080/a":     true,
+		"file:///a%5D%3Aevil.png":  true,
 		"file:///a/%5Bb%5D.rs":     false,
 		"https://evil.example/![x": true,
 		"file:///a?symbol=%21%5Bx%5D%28https%3A%2F%2Fevil.example%2F%29#L1":   true,

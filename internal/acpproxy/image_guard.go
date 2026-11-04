@@ -20,8 +20,8 @@ const maxStreamID = 1 << 10
 // notMarkdown names what reaches a diff view or a terminal, where a backslash would only be wrong.
 var notMarkdown = map[string]bool{"oldText": true, "newText": true, "terminal_output": true}
 
-// imageGuard is what a filtered session writes to the editor through, so that no line can carry a remote
-// image whoever built it: Coop's own lines hold a box's words too, as in a failed setting's error. Each
+// imageGuard is what a filtered session writes to the editor through, so that no line can carry an image
+// the editor would load, whoever built it: Coop's own lines hold a box's words too, as in a failed setting's error. Each
 // text gets the escaper's rules. A session's text chunks are one stream, so it is the guard that holds
 // back what they leave undecided, and sends that before anything else the session says.
 type imageGuard struct {
@@ -313,7 +313,7 @@ func (t *lineText) encoded(line []byte, message map[string]any) []byte {
 		Trace("dropped a line for the editor: a link in it spells an image")
 		return nil
 	case t.changed:
-		Trace("escaped a line for the editor, which would have loaded a remote image")
+		Trace("escaped a line for the editor, which would have loaded an image")
 		return encodedLine(message)
 	}
 	return line
@@ -370,5 +370,6 @@ func spellsImage(uri string) bool {
 		decoded.WriteByte(uri[i])
 	}
 	text := decoded.String()
-	return strings.Contains(text, "![") || escapeWhole(text, sealText) != text
+	// `[@a]: b](uri)` defines `@a` with a local address, so a `]:` counts wherever it stands in a name.
+	return strings.Contains(text, "![") || strings.Contains(text, "]:") || escapeWhole(text, sealText) != text
 }

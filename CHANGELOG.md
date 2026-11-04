@@ -61,6 +61,9 @@
 - **A filtered box cannot make Zed load a remote image.** An image pointing at an outside address now
   reaches the thread as a plain link you have to click, even when written one byte at a time.
 
+- **A filtered box cannot make Zed load an image from a file either.** An image with a file path is now a plain
+  link, because a box can make that path point anywhere on your computer. Image data still shows inline.
+
 - **A box that hangs no longer leaves your editor waiting.** A filtered `coop acp` box that starts but
   does not answer now gets a minute. Then your editor connects to a box that holds your messages, the
   thread says what happened, and Coop keeps trying. Pulling images and starting services do not count

