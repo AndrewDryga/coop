@@ -770,7 +770,7 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 			opts.force = true
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return "", opts, ui.UnknownOption(key, "coop tasks claim", "")
+				return "", opts, unknownOptionErr(key, "coop tasks claim", []string{"--as", "--pid", "--force"})
 			}
 			if id != "" {
 				return "", opts, ui.UnexpectedArgument(args[i], "coop tasks claim", "coop tasks claim <task-id>")
@@ -1983,7 +1983,7 @@ func parseBlockArgs(args []string) (blockRequest, error) {
 		}
 		flag, value, hasValue := strings.Cut(arg, "=")
 		if !slices.Contains(blockTextFlags, flag) {
-			return req, ui.UnknownOption(flag, "coop tasks block", "")
+			return req, unknownOptionErr(flag, "coop tasks block", blockTextFlags)
 		}
 		if !hasValue {
 			if i+1 >= len(args) {

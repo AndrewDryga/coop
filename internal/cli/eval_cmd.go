@@ -636,7 +636,7 @@ func parseEvalRunArgs(args []string) (suite string, positionals []string, opts e
 				return "", nil, opts, err
 			}
 		case strings.HasPrefix(arg, "-"):
-			return "", nil, opts, unknownOptionErr(arg, "eval run", evalRunOptions)
+			return "", nil, opts, unknownOptionErr(arg, "coop eval run", evalRunOptions)
 		case suite == "":
 			suite = arg
 		default:

@@ -18,7 +18,7 @@ func (a *app) evalInspect(args []string) (int, error) {
 		return 2, rejectArgs("eval inspect", args[1:])
 	}
 	if len(args) == 1 && strings.HasPrefix(args[0], "-") {
-		return 2, unknownOptionErr(args[0], "eval inspect", nil)
+		return 2, unknownOptionErr(args[0], "coop eval inspect", nil)
 	}
 	root, err := evalStateRoot()
 	if err != nil {

@@ -197,18 +197,36 @@ func TestTaskActionParsersRefuseInTheSharedBlock(t *testing.T) {
 	}
 }
 
-// A suggestion must work as written, so these commands, which need more than the mistyped option,
-// point at their help instead of dropping the rest of the command.
-func TestUnknownOptionsDoNotSuggestAnIncompleteCommand(t *testing.T) {
+// A suggestion must work as written, so it keeps the task ID and the value the person typed, quoted.
+func TestUnknownOptionSuggestionsKeepTheRestOfTheCommand(t *testing.T) {
 	cfg := validationQueues(t, 1)
-	for _, args := range [][]string{{"claim", "x", "--ass", "y"}, {"lease", "x", "--ass", "y"}, {"block", "x", "--questoin", "q"}} {
-		_, err := CmdTasks(Host{}, cfg, args)
+	typed := os.Args
+	t.Cleanup(func() { os.Args = typed })
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"claim", "x", "--ass", "y"}, "coop tasks claim x --as y"},
+		{[]string{"lease", "x", "--pdi=42", "--", "make", "test"}, "coop tasks lease x --pid=42 -- make test"},
+		{[]string{"block", "x", "--questoin", "why not?"}, "coop tasks block x --question 'why not?'"},
+		{[]string{"done", "x", "--forse"}, "coop tasks done x --force"},
+	} {
+		os.Args = append([]string{"coop", "tasks"}, tc.args...)
+		_, err := CmdTasks(Host{}, cfg, tc.args)
+		var got string
 		for _, row := range refusal(t, err).Rows {
 			if row[0] == "Did you mean:" {
-				t.Errorf("coop tasks %q suggests %q", args, row[1])
+				got = row[1]
 			}
 		}
+		if got != tc.want {
+			t.Errorf("coop tasks %q suggests %q, want %q", tc.args, got, tc.want)
+		}
 	}
+}
+
+// Without every required option, the example shows them all, so it too would be accepted.
+func TestBlockExampleWouldBeAccepted(t *testing.T) {
 	code, err := tasksFolderBlock(t.TempDir(), []string{"x", "--why"})
 	var example string
 	for _, row := range refusal(t, err).Rows {

@@ -210,12 +210,11 @@ func unknownSubcommandErr(family, verb string, valid []string) error {
 // command when the typo has an obvious fix. command is the full owning path ("coop tasks claim");
 // valid is that command's real option list, so a suggestion can never name one it would refuse.
 func unknownOptionErr(option, command string, valid []string) error {
-	guess, _ := nearestCommand(option, valid)
-	suggestion := ""
-	if guess != "" {
-		suggestion = command + " " + guess
+	option, _, _ = strings.Cut(option, "=") // a value is not part of the name, and may be secret
+	if guess, _ := nearestCommand(option, valid); guess != "" {
+		return ui.UnknownOptionNear(option, command, guess)
 	}
-	return ui.UnknownOption(option, command, suggestion)
+	return ui.UnknownOption(option, command, "")
 }
 
 // flagValue parses one `--flag value` or `--flag=value` occurrence at args[i]. ok reports whether

@@ -98,7 +98,7 @@ func parseLeaseArgs(args []string) (leaseRequest, error) {
 			req.actor.PID = n
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return req, ui.UnknownOption(key, "coop tasks lease", "")
+				return req, unknownOptionErr(key, "coop tasks lease", []string{"--as", "--pid"})
 			}
 			if req.id != "" {
 				return req, ui.UnexpectedArgument(args[i], "coop tasks lease", leaseUsage)

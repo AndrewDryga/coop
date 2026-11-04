@@ -101,12 +101,11 @@ func unknownSubcommandErr(family, verb string, valid []string) error {
 // command when the typo has an obvious fix. command is the full owning path ("coop models"); valid
 // is that command's real option list, so the suggestion can never name an option it would refuse.
 func unknownOptionErr(option, command string, valid []string) error {
-	guess, _ := nearestCommand(option, valid)
-	suggestion := ""
-	if guess != "" {
-		suggestion = command + " " + guess
+	option, _, _ = strings.Cut(option, "=") // a value is not part of the name, and may be secret
+	if guess, _ := nearestCommand(option, valid); guess != "" {
+		return ui.UnknownOptionNear(option, command, guess)
 	}
-	return ui.UnknownOption(option, command, suggestion)
+	return ui.UnknownOption(option, command, "")
 }
 
 // gitOutputBytes is forkspace.GitOutErr for NUL-separated or whitespace-significant output: the raw bytes,

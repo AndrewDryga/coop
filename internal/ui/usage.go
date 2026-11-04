@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -160,6 +161,57 @@ func UnknownOption(option, command, suggestion string) *UsageError {
 	}
 	e.Rows = [][2]string{{"See available options:", HelpCommand(command)}}
 	return e
+}
+
+// UnknownOptionNear is UnknownOption for a typo with an obvious correction. It offers the command the
+// person typed with only that option replaced, so the suggestion can be run as written. A command
+// line it cannot find the option on, as in a test calling a parser directly, falls back to the command
+// and the flag; one too long or too odd to repeat points at help instead.
+func UnknownOptionNear(option, command, guess string) *UsageError {
+	suggestion, typed := correctedCommand(os.Args[1:], option, guess)
+	if !typed {
+		suggestion = command + " " + guess
+	}
+	return UnknownOption(option, command, suggestion)
+}
+
+// correctedCommand rebuilds a command line with its first copy of option replaced by guess, keeping
+// a value given as --opt=value. typed reports whether the option was on the line at all.
+func correctedCommand(args []string, option, guess string) (command string, typed bool) {
+	const longest = 200 // past this, a suggestion is a wall of the person's own text
+	parts := []string{"coop"}
+	for _, arg := range args {
+		switch {
+		case typed:
+		case arg == option:
+			arg, typed = guess, true
+		case strings.HasPrefix(arg, option+"="):
+			arg, typed = guess+strings.TrimPrefix(arg, option), true
+		}
+		quoted, ok := shellWord(arg)
+		if !ok {
+			return "", typed || slices.Contains(args, option)
+		}
+		parts = append(parts, quoted)
+	}
+	command = strings.Join(parts, " ")
+	if !typed || len(command) > longest {
+		return "", typed
+	}
+	return command, true
+}
+
+// shellWord quotes one argument for a shell. A control character has no form a person could paste.
+func shellWord(arg string) (string, bool) {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@%+,", r))
+	}) < 0 {
+		return arg, true
+	}
+	if SafeInline(arg) != arg {
+		return "", false
+	}
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'", true
 }
 
 // UnknownValue refuses a positional VALUE its command does not accept — an agent name, a preset,
