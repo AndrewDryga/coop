@@ -862,3 +862,22 @@ func TestOrchestratorBoardReadsWholeWithoutTheScript(t *testing.T) {
 		t.Error("22:01 no longer writes task 0 as the task in hand")
 	}
 }
+
+// The guides show what their installer prints. Finalizing a release renames a changelog heading, so this
+// moves at each release by itself.
+func TestGuidesShowTheLatestRelease(t *testing.T) {
+	root := t.TempDir()
+	changelog := "# Changelog\n\n## Unreleased\n\n- a change\n\n## 12.1.0\n\n- older\n\n## 12.0.1\n"
+	if err := os.WriteFile(filepath.Join(root, "CHANGELOG.md"), []byte(changelog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := latestRelease(root); err != nil || got != "12.1.0" {
+		t.Fatalf("latestRelease = %q, %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "CHANGELOG.md"), []byte("## Unreleased\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := latestRelease(root); err == nil {
+		t.Fatal("a changelog with no release must stop the build, not print an empty version")
+	}
+}

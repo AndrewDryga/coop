@@ -11,6 +11,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"maps"
@@ -40,6 +41,10 @@ func sitePages(root string, generated map[string]string) (map[string]string, err
 		return nil, err
 	}
 	version, err := assetVersion(root)
+	if err != nil {
+		return nil, err
+	}
+	release, err := latestRelease(root)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +81,7 @@ func sitePages(root string, generated map[string]string) (map[string]string, err
 		filepath.Join("site", "docs.html"):         stampAssets(externalLinks(filled), version),
 	}
 	for _, name := range []string{"sandbox-guide", "overnight-guide", "claude-code-sandbox", "codex-sandbox", "gemini-cli-sandbox", "grok-cli-sandbox"} {
-		guide, err := fillTemplate(root, name+".tpl.html", nil)
+		guide, err := fillTemplate(root, name+".tpl.html", []block{{"release", release}})
 		if err != nil {
 			return nil, err
 		}
@@ -279,6 +284,23 @@ func externalLinks(page string) string {
 }
 
 var assetLink = regexp.MustCompile(`(assets/(?:css|js)/[\w.-]+\.(?:css|js))\?v=[\w-]+`)
+
+var releaseHeading = regexp.MustCompile(`(?m)^## (\d+\.\d+\.\d+)\s*$`)
+
+// latestRelease is the newest version the changelog has released, the one the guides' installer gets.
+// Finalizing a release renames its heading, so the generated-docs check holds the guides' sample to it
+// at every release with nobody having to remember.
+func latestRelease(root string) (string, error) {
+	changelog, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	if err != nil {
+		return "", err
+	}
+	heading := releaseHeading.FindSubmatch(changelog)
+	if heading == nil {
+		return "", errors.New("CHANGELOG.md names no released version")
+	}
+	return string(heading[1]), nil
+}
 
 // assetVersion is a short hash of the stylesheets and scripts, put on their links (?v=) so a browser
 // holding an older copy fetches the new one the moment any of them changes.
