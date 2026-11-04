@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor links stay on the box you are using.** In an editor session, each dev server link keeps
+  reaching the box the thread is on, after a provider or account switch and after `coop approve`,
+  at the same address. If another program holds the port, the thread says so instead of posting a
+  link that opens that program. The thread also tells you when a server starts, or warns you when it
+  only listens on 127.0.0.1 inside the box. A filtered box's agent is now told its links too.
+
+- **Forced closes and typos.** `coop tasks done --force` refuses while a loop's final review is
+  running, because the review could undo it. The in-box task tool now says a force-closed task is
+  already done. A mistyped option's suggestion keeps the rest of your command.
+
+- **Helper failures name their cause.** A filesystem helper that fails to build shows the compiler's
+  own error, and `coop doctor` shows what a failed image step said instead of only its exit code.
+
 - **Editors connect even when the project box is not ready.** `coop acp` used to exit before
   answering, so an editor showed a dead server. It now connects, says why in the thread and holds
   your messages, and no agent runs until the box is ready. The session then moves onto the box and

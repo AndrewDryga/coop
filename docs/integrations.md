@@ -238,8 +238,9 @@ waiting message as usual.
 
 ACP also lets the agent ask the editor to access your computer directly. Requests such as
 `fs/read_text_file`, `fs/write_text_file` and `terminal/*` run through the editor, outside the
-box. co:op forwards these requests to Zed without filtering them. Claude's adapter normally uses
-this client-side `fs` access.
+box. co:op forwards these requests to Zed without filtering them. In a test, Gemini's adapter wrote
+project files this way when the editor offered it, while Claude's and Codex's did their work inside
+the box.
 
 When you use ACP, your editor's file and terminal restrictions are part of the security
 boundary. A prompt-injected agent could ask the editor to read or write an absolute path outside
