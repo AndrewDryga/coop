@@ -155,9 +155,9 @@ func (c *Control) startNoticeFor(line []byte) []byte {
 		// What the person has to do comes first. The rest describes a box that is not running yet, and
 		// it says so: a link posted as live would open nothing.
 		if text != "" {
-			text = "Nothing is published and no project rules apply yet. Once the box is running:\n\n" + text
+			text = threadSectionBreak + "Nothing is published and no project rules apply yet. Once the box is running:\n\n" + text
 		}
-		text = strings.TrimSuffix(c.boxWait+"\n\n"+text, "\n\n")
+		text = c.boxWait + text
 	}
 	c.mu.Unlock()
 	if text == "" {
@@ -201,8 +201,12 @@ func startNoticeText(ports []ServePort, services []ServiceLink, network *Network
 	for _, p := range problems {
 		blocks = append(blocks, ProblemText(p))
 	}
-	return strings.Join(blocks, "\n\n")
+	return strings.Join(blocks, threadSectionBreak)
 }
+
+// threadSectionBreak sets the sections of a thread message apart. Zed puts space under a paragraph and
+// none under a list, so a title after a list sits closer to what it follows than to its own text.
+const threadSectionBreak = "\n\n---\n\n"
 
 // serviceAddress links a browser scheme. Anything else (postgresql, redis) is shown whole as code,
 // ready for the client that speaks it.
@@ -246,9 +250,9 @@ func networkText(n NetworkLimit) string {
 		text = "**Internet is filtered.**\n\nAllowed:\n\n- " + strings.Join(allowed, "\n- ")
 	}
 	if !named {
-		text += "\n\nTo see them all, run this on the host:\n\n" + CodeBlock("coop net")
+		text += threadSectionBreak + "To see them all, run this on the host:\n\n" + CodeBlock("coop net")
 	}
-	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
+	return text + threadSectionBreak + "To allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
 		CodeBlock("coop approve") + "\n\nOpen threads pick it up on their own."
 }
 

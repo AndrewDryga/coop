@@ -13,6 +13,8 @@ An editor renders what Coop writes into a thread as Markdown. Write for that:
 
 - A title goes alone on its line, then a blank line: `⚠ **Title.**` for something to fix, `**Title.**` for a
   state. Never run a sentence on after it.
+- Separate the sections of a message with a `---` rule. Zed puts space under a paragraph and none under a list, so
+  without one a title after a list sits closer to the list than to its own text.
 - Short paragraphs follow, one thought each. Several items are a list; one item stays a sentence.
 - Every command the person should run is its own fenced code block (`acpctl.CodeBlock`), introduced by a line
   saying where to run it ("Run this in this project, on the host:"). An editor offers to copy a block whole. Never
@@ -32,6 +34,7 @@ code block. Only `LoadError::Other` (a `session/new` failure that is not auth) i
 literally and still reads.
 
 ## Changelog
+- 2026-11-04 — the owner saw a title closer to the list above it than to its own text: sections now take a `---` rule.
 - 2026-11-03 — created after the owner asked for this. Sweep: every text in `internal/acpctl`, the session texts in
   `internal/cli/acp_box_wait.go`, `acp_refresh.go` and `acp_start_notice.go`, and `internal/acpproxy/proxy.go`.
   Found and fixed: the network block, problems, the box wait, refresh notices, sign-in errors, the replay failure,

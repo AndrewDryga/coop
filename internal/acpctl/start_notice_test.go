@@ -93,7 +93,7 @@ func TestACPStartNotice(t *testing.T) {
 // Each block appears only when it has something to say, in order: the box's ports, the project's
 // services, a filtered session's limits, problems.
 func TestStartNoticeText(t *testing.T) {
-	limits := "To allow another site, add it to `.agent/project.yaml`, then run this in this project, on the host:\n\n" +
+	limits := "---\n\nTo allow another site, add it to `.agent/project.yaml`, then run this in this project, on the host:\n\n" +
 		"```\ncoop approve\n```\n\nOpen threads pick it up on their own."
 	grok := Problem{Title: "Grok isn't available.", Detail: "Its saved sign-in no longer works.", Command: "coop login grok@default", Purpose: "on the host"}
 	grokText := "⚠ **Grok isn't available.**\n\nIts saved sign-in no longer works.\n\nRun this on the host:\n\n```\ncoop login grok@default\n```"
@@ -127,7 +127,7 @@ func TestStartNoticeText(t *testing.T) {
 			name:    "a long network list is counted",
 			network: &NetworkLimit{Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"docs"}, Other: 1},
 			want: "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- 5 approved network rules\n- 1 MCP server\n- 1 other destination\n\n" +
-				"To see them all, run this on the host:\n\n```\ncoop net\n```\n\n" + limits,
+				"---\n\nTo see them all, run this on the host:\n\n```\ncoop net\n```\n\n" + limits,
 		},
 		{
 			name:     "a problem with its fix",
@@ -141,9 +141,9 @@ func TestStartNoticeText(t *testing.T) {
 			// Nothing approved: the provider is still reachable, never "nothing is allowed".
 			network:  &NetworkLimit{},
 			problems: []Problem{grok},
-			want: "**Open the box's port in your browser**\n\n- Port 4000 → [localhost:43659](http://localhost:43659)\n\n" +
-				"**Project services**\n\n- db → `postgresql://localhost:31372`\n\n" +
-				"**Internet is filtered.**\n\nAllowed: the agent's provider.\n\n" + limits + "\n\n" + grokText,
+			want: "**Open the box's port in your browser**\n\n- Port 4000 → [localhost:43659](http://localhost:43659)\n\n---\n\n" +
+				"**Project services**\n\n- db → `postgresql://localhost:31372`\n\n---\n\n" +
+				"**Internet is filtered.**\n\nAllowed: the agent's provider.\n\n" + limits + "\n\n---\n\n" + grokText,
 		},
 	} {
 		if got := startNoticeText(tc.ports, tc.services, tc.network, tc.problems); got != tc.want {

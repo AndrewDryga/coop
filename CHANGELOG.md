@@ -83,8 +83,8 @@
   other boxes in the project stop. A terminal, a loop and an editor thread now say what it waits for, what to
   do about it, and when the wait ends. An editor connects at once and sends your messages when the box is ready.
 
-- **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
-  its own line and short paragraphs, and every command to run is a code block you can copy.
+- **Editor messages are easier to read.** What Coop writes into an editor thread now has sections set
+  apart by a line, a title on its own line and short paragraphs, and every command to run is a code block you can copy.
 
 - **The fix for services with no network rules reads in full.** An editor thread no longer cuts it off
   at the panel's edge: the reason and the remedy are text that wraps, and only the rules and

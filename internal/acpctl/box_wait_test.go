@@ -42,7 +42,7 @@ func TestBoxWaitIsToldToNewThreadsAndHeldMessages(t *testing.T) {
 		t.Fatalf("the held message heard %q", got)
 	}
 	got := noticeText(t, c.startNoticeFor([]byte(`{"jsonrpc":"2.0","id":1,"result":{"sessionId":"T1"}}`)))
-	if !strings.HasPrefix(got, "Run coop build.\n\nNothing is published and no project rules apply yet. Once the box is running:\n\n") || !strings.Contains(got, "provider") {
+	if !strings.HasPrefix(got, "Run coop build.\n\n---\n\nNothing is published and no project rules apply yet. Once the box is running:\n\n") || !strings.Contains(got, "provider") {
 		t.Fatalf("the new thread heard %q", got)
 	}
 	c.SetBoxWait("")
