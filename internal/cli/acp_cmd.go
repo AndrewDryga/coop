@@ -392,6 +392,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		ActivitySource: os.Getenv("COOP_ACP_SUPERVISOR"),
 		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	}
+	spec.HandshakeOnly = os.Getenv(acpHandshakeEnv) == "1"
+	spec.OnServiceLaunchWait = acpLaunchWaitReporter()
 	controllerJob, err := box.ControllerJobFromEnvironment()
 	if err != nil {
 		return 1, err
@@ -436,7 +438,6 @@ func (a *app) cmdACP(args []string) (int, error) {
 			return 1, fmt.Errorf("selected ACP scope is no longer available under this session's network rules: %w", err)
 		}
 		spec.CapturedEgress = capture
-		spec.HandshakeOnly = os.Getenv(acpHandshakeEnv) == "1"
 		acpReportLaunch(&spec)
 		// A filtered child owns a gateway, two volumes and a receipt. The
 		// supervisor stops it with a signal, so that signal has to arrive as a
@@ -474,7 +475,7 @@ func (a *app) ensureACPImage() error {
 		// Never build the unused ordinary project tag on an editor connect. A box that cannot start
 		// yet is not a failure here: the session connects and waits. Nor is failing to look, which
 		// proves nothing: the first child's own proofs decide, and the wait takes over if they refuse.
-		if a.acpBoxWait == nil {
+		if a.acpCapture == nil {
 			return errors.New("a filtered editor session needs the policy its supervisor admitted")
 		}
 		if err := a.acpBoxWait.refresh(context.Background()); err != nil {
@@ -565,7 +566,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	if err != nil {
 		return 1, err
 	}
-	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: boxRepo, Workdir: boxRepo, Agent: ctrl.LeadProvider(), Network: a.cfg.Network},
+	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: boxRepo, Workdir: boxRepo, Agent: ctrl.LeadProvider(), Network: a.cfg.Network, SupervisorID: superID},
 		func() { boxOpened() })
 	defer a.acpBoxWait.close() // from here on, a rebuild may be running in its own process group
 
@@ -1148,7 +1149,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", acpServeBindsEnv, "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, acpLaunchedEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", acpServeBindsEnv, "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, acpLaunchedEnv, acpLaunchWaitEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv:
 			continue
 		}
@@ -1364,6 +1365,21 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 	}
 	cmd := exec.Command(self, inner...)
+	// A child that holds prompts starts no services, and a probe's wait is nobody's.
+	var waitR, waitW *os.File
+	if a.acpBoxWait != nil && !holdPrompts {
+		if waitR, waitW, err = os.Pipe(); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if preparing {
+				_ = waitR.Close()
+			}
+			_ = waitW.Close() // the child holds the write end now
+		}()
+		cmd.ExtraFiles = []*os.File{waitW}
+		env = append(env, acpLaunchWaitEnv+"=3")
+	}
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
 	// Own process group: a plain Process.Kill() reaps only the inner `coop` and orphans its
@@ -1449,6 +1465,10 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
 	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts, Launched: launched}
+	if waitR != nil {
+		a.acpBoxWait.follow(child, waitR)
+		child.WaitsForLock = func() bool { return a.acpBoxWait.waitsForLock(child) }
+	}
 	if len(serveBinds) > 0 && activityRepo != "" {
 		child.ServeContainer = func(ctx context.Context) (string, error) {
 			observations, problems := forkspace.Executions(activityRepo)

@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -35,6 +38,10 @@ const (
 	// asked of it before replacing it anyway. A handshake takes seconds, so this is a hung adapter or a
 	// sign-in nobody finished; a person finishing one has this long.
 	acpBoxWaitMoveDeadline = 2 * time.Minute
+	// acpLaunchWaitEnv names the descriptor an inner child tells its supervisor on that it waits for the
+	// service launch lock. Its stdout is the editor's wire and its stderr carries what the box writes,
+	// and neither may decide what a session does next.
+	acpLaunchWaitEnv = "COOP_ACP_LAUNCH_WAIT_FD"
 	// acpBoxReadyNotice is what the editor shows once the session runs on the project's own box.
 	acpBoxReadyNotice = "This project's box is ready, and this session moved onto it."
 	// acpBoxNotStarting titles what a thread hears while something has to settle before a box can start.
@@ -69,7 +76,9 @@ func acpReportLaunch(spec *box.RunSpec) {
 // a child that only answers the handshake (acpproxy.Child.HoldPrompts) and shows why it waits. Files a
 // person already approved rebuild in the background; anything else waits for that person, and the
 // session notices their `coop build`, their `coop approve` or their fixed project file by itself. Once
-// the box can start, the holding child is replaced and any held prompt goes out, with no reconnect.
+// the box can start, the holding child is replaced and any held prompt goes out, with no reconnect. An
+// open or offline session has one thing to wait for: other boxes that keep its own from starting the
+// project's services.
 //
 // Concurrency: the session's factory and its poll loop both call refresh, one at a time; checking is
 // taken before the network refresh's admitting. Fixed sentences only reach the editor, except a
@@ -85,9 +94,15 @@ type acpBoxWait struct {
 	force   func() bool                         // replace it anyway
 	publish func(string)                        // what threads hear now; "" when nothing waits
 	notify  func(string)                        // shown once, with the next session update
-	log     func(error)                         // the agent log
-	opened  func()                              // real boxes can start again: the warm pool may fill
-	now     func() time.Time                    // the clock; tests set it
+	// announce is publish for a wait that can begin with every thread idle: each open one hears it now.
+	announce func(string)
+	lockBusy func() error // box.EditorServiceLaunchBusy: the lock alone, which costs a few stats
+	replace  func() bool  // replace a child that has answered nothing, since it waits to start
+	log      func(error)  // the agent log
+	opened   func()       // real boxes can start again: the warm pool may fill
+	// filtered: a real box that keeps failing also holds prompts. Others keep the proxy's rapid-fail rule.
+	filtered bool
+	now      func() time.Time // the clock; tests set it
 
 	ctx    context.Context // ends the rebuild and the poll loop
 	cancel context.CancelFunc
@@ -112,23 +127,30 @@ type acpBoxWait struct {
 	onHold      bool                  // the last child handed to the proxy holds prompts
 	closed      bool                  // no rebuild may start now
 
+	live          *acpproxy.Child          // the last child handed to the proxy
+	launchWaits   map[*acpproxy.Child]bool // real children that say they wait for the lock now, parked or not
+	launchWaitNew bool                     // the live one said so, and the poll loop has not acted on it
+
 	closing sync.Once
 }
 
-// newACPBoxWait wires a filtered session's wait to its supervisor; nil for an open or offline session.
-// spec names the box the session's boxes would run: its project, workspace and agent.
+// newACPBoxWait wires a session's wait to its supervisor. spec names the box the session's boxes would
+// run: its project, workspace, agent and supervisor.
 func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter, spec box.RunSpec, opened func()) *acpBoxWait {
-	if a.acpCapture == nil {
-		return nil
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &acpBoxWait{
+		filtered: a.acpCapture != nil,
 		check: func(ctx context.Context) error {
 			if err := a.acpRefresh.readmitHeld(); err != nil {
 				return err
 			}
-			return box.EditorBoxReadiness(ctx, a.cfg, a.rt, a.currentACPCapture(), spec)
+			capture := a.currentACPCapture()
+			if capture == nil {
+				return box.EditorUnfilteredBoxReadiness(a.cfg, a.rt, spec)
+			}
+			return box.EditorBoxReadiness(ctx, a.cfg, a.rt, capture, spec)
 		},
+		lockBusy: func() error { return box.EditorServiceLaunchBusy(spec) },
 		rebuild: func(ctx context.Context, dfRel string) error {
 			build := spec
 			build.Ctx, build.Quiet, build.Stderr = ctx, true, os.Stderr // stdout is the editor's wire
@@ -145,11 +167,16 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 				restarter.TellHeld()
 			}
 		},
-		notify: ctrl.Notify,
-		log:    func(err error) { ui.Warn("%s", safeErrorText(err)) }, // a project's file can be quoted in it
-		opened: opened,
-		now:    time.Now,
-		ctx:    ctx, cancel: cancel, kicks: make(chan struct{}, 1),
+		announce: func(text string) {
+			ctrl.SetBoxWait(text)
+			restarter.TellOpen(text)
+		},
+		replace: restarter.ReplaceUnstarted,
+		notify:  ctrl.Notify,
+		log:     func(err error) { ui.Warn("%s", safeErrorText(err)) }, // a project's file can be quoted in it
+		opened:  opened,
+		now:     time.Now,
+		ctx:     ctx, cancel: cancel, kicks: make(chan struct{}, 1),
 	}
 }
 
@@ -200,9 +227,10 @@ func (w *acpBoxWait) childFailed(how acpproxy.ChildFailure) {
 	}
 }
 
-// childFailedHook is childFailed for the proxy, which counts every failure itself with no wait.
+// childFailedHook is childFailed for the proxy, which counts every failure itself with no wait. That
+// includes an open or offline session, whose wait is only for the lock.
 func (w *acpBoxWait) childFailedHook() func(acpproxy.ChildFailure) {
-	if w == nil {
+	if w == nil || !w.filtered {
 		return nil
 	}
 	return w.childFailed
@@ -285,7 +313,8 @@ func (w *acpBoxWait) refresh(ctx context.Context) error {
 	err := w.check(ctx)
 	var required *box.ProjectBuildRequired
 	var services *box.ServicesNeedRules
-	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) && acpHeldAnswer(err) == nil && !errors.Is(err, box.ErrProjectNotAdmitted) {
+	var busy *box.ServiceLaunchBusy
+	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) && !errors.As(err, &busy) && acpHeldAnswer(err) == nil && !errors.Is(err, box.ErrProjectNotAdmitted) {
 		w.mu.Lock()
 		w.checked, w.seen = w.now(), stamp // not again until something changes: it costs a large project a second
 		w.mu.Unlock()
@@ -336,7 +365,12 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 			w.log(blocked)
 		}
 	}
-	if !repeat {
+	var busy *box.ServiceLaunchBusy
+	switch {
+	case repeat:
+	case errors.As(blocked, &busy):
+		w.announce(text)
+	default:
 		w.publish(text)
 	}
 	if cleared {
@@ -368,6 +402,7 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 	var broken *box.BrokenProjectFile
 	var pending *networkstate.PendingApproval
 	var services *box.ServicesNeedRules
+	var busy *box.ServiceLaunchBusy
 	switch {
 	case blocked == nil:
 		return ""
@@ -377,6 +412,9 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 			"\n\n" + acpctl.CodeBlock(brokenFileReason(broken))
 	case errors.Is(blocked, box.ErrProjectNotAdmitted):
 		return acpBoxFailedText(acpproxy.ChildExited)
+	case errors.As(blocked, &busy):
+		title, details := busy.Say()
+		return "**" + title + ".**\n\n" + strings.Join(details, "\n\n") + "\n\nYour messages wait here and go out once this session's box is ready."
 	case errors.As(blocked, &pending):
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval.",
 			Detail:  "Nobody approved what it asks for as it is now, so no agent runs here yet. " + waits,
@@ -447,6 +485,7 @@ func (w *acpBoxWait) kick() {
 // child once a real box can start. A failed start gets that same question, and its answer only says
 // nothing else stands in the way: the next real box's own proofs are the only way to know.
 func (w *acpBoxWait) poll() {
+	w.heedLaunchWait()
 	w.mu.Lock()
 	waiting, building, seen, checked := w.blocked != nil || w.startFailed && !w.retrying, w.building, w.seen, w.checked
 	w.mu.Unlock()
@@ -482,9 +521,106 @@ func (w *acpBoxWait) started(child *acpproxy.Child) {
 	w.mu.Lock()
 	moved := w.onHold && !child.HoldPrompts && !w.startFailed // after a failed start, confirmStart says so
 	w.onHold = child.HoldPrompts
+	w.live = child
+	waits := w.launchWaits[child] // a parked box handed over while it waits: now it is this session's wait
+	w.launchWaitNew = w.launchWaitNew || waits
 	w.mu.Unlock()
 	if moved {
 		w.notify(acpBoxReadyNotice)
+	}
+	if waits {
+		w.kick()
+	}
+}
+
+// follow hears what child says about the service launch lock until it exits. Only the session's own
+// child waits for anyone: a parked box's wait is nobody's news until the session takes that box.
+func (w *acpBoxWait) follow(child *acpproxy.Child, word io.ReadCloser) {
+	go func() {
+		defer func() { _ = word.Close() }()
+		b := make([]byte, 1)
+		for {
+			_, err := word.Read(b)
+			waiting := err == nil && b[0] == acpLaunchWaiting
+			w.mu.Lock()
+			if w.launchWaits == nil {
+				w.launchWaits = map[*acpproxy.Child]bool{}
+			}
+			if waiting {
+				w.launchWaits[child] = true
+			} else {
+				delete(w.launchWaits, child)
+			}
+			heed := waiting && child == w.live
+			w.launchWaitNew = w.launchWaitNew || heed
+			w.mu.Unlock()
+			if heed {
+				w.kick()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+}
+
+// heedLaunchWait acts on the session's child saying it waits for the lock, however it came to: the check
+// before it started saw a free lock, or the box was parked. It answers nothing while it waits, so with no
+// thread yet the editor shows no more than a spinner, and a replacement would end the session once
+// acpproxy's replay grace ran out. So the threads hear why and a child that holds prompts takes over,
+// and poll moves off it when the lock comes free. If the lock is free again or only the session's own
+// boxes hold it, it has nobody to wait for that a thread could do anything about, and it keeps trying.
+func (w *acpBoxWait) heedLaunchWait() {
+	w.mu.Lock()
+	heard := w.launchWaitNew
+	w.launchWaitNew = false
+	w.mu.Unlock()
+	if !heard {
+		return
+	}
+	w.checking.Lock()
+	defer w.checking.Unlock()
+	stamp := w.stamp()
+	var busy *box.ServiceLaunchBusy
+	if !errors.As(w.lockBusy(), &busy) {
+		// What it said no longer shields it from the first-answer limit: a wait on the session's own
+		// parked boxes never ends by itself, and with no thread told, the limit is what ends it.
+		w.mu.Lock()
+		delete(w.launchWaits, w.live)
+		w.mu.Unlock()
+		return
+	}
+	w.settle(busy, nil, stamp)
+	w.replace()
+}
+
+// waitsForLock reports that child said it waits for the lock, and nothing has answered that yet.
+func (w *acpBoxWait) waitsForLock(child *acpproxy.Child) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.launchWaits[child]
+}
+
+// What a child says on acpLaunchWaitEnv: one byte for each change.
+const (
+	acpLaunchWaiting = 'w'
+	acpLaunchDone    = 'd'
+)
+
+// acpLaunchWaitReporter is how an inner child tells its supervisor about the lock, nil if it did not ask.
+func acpLaunchWaitReporter() func(waiting bool) {
+	fd, err := strconv.Atoi(os.Getenv(acpLaunchWaitEnv))
+	if err != nil || fd < 3 {
+		return nil
+	}
+	syscall.CloseOnExec(fd) // docker has no use for it, and would hold it open after this child is gone
+	word := os.NewFile(uintptr(fd), "launch wait")
+	return func(waiting bool) {
+		b := byte(acpLaunchDone)
+		if waiting {
+			b = acpLaunchWaiting
+		}
+		_, _ = word.Write([]byte{b}) // a supervisor that stopped listening is stopping this child too
 	}
 }
 

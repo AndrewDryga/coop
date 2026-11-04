@@ -15,7 +15,6 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -320,9 +319,9 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if projectRepo == "" {
 		projectRepo = spec.Repo
 	}
-	unlockLaunch, err := forkspace.LockServiceLaunch(ctx, projectRepo, true)
+	unlockLaunch, err := lockServiceStart(ctx, projectRepo, spec, sections)
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("wait for a safe service launch: %w", err)
+		return "", nil, nil, nil, err
 	}
 	defer unlockLaunch()
 	// Review the exact validated bytes that every Compose invocation below uses, before anything

@@ -16,6 +16,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -284,10 +285,10 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 }
 
 // EditorBoxReadiness says whether a filtered editor session's next box can start: nil, or the
-// *BrokenProjectFile, *ProjectBuildRequired, *ServicesNeedRules, *networkstate.PendingApproval or
-// ErrProjectNotAdmitted a person or a rebuild has to settle first. Any other error is a failure to look,
-// and proves nothing either way. It runs the checks the launch itself will, and grants nothing: the
-// launch still makes them.
+// *BrokenProjectFile, *ProjectBuildRequired, *ServicesNeedRules, *networkstate.PendingApproval,
+// ErrProjectNotAdmitted or *ServiceLaunchBusy a person or a rebuild has to settle first. Any other error
+// is a failure to look, and proves nothing either way. It runs the checks the launch itself will, and
+// grants nothing: the launch still makes them.
 func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runtime, capture *CapturedEgress, spec RunSpec) error {
 	if capture == nil || capture.Store == nil {
 		return errors.New("editor box readiness requires a host capture")
@@ -320,7 +321,13 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if err != nil {
 		return err
 	}
-	return editorServicesReadiness(cfg, spec, p, policy)
+	if err := editorServicesReadiness(cfg, spec, p, policy); err != nil {
+		return err
+	}
+	if len(serviceGrants(policy)) == 0 {
+		return nil // it starts no services, so nothing running keeps it out
+	}
+	return EditorServiceLaunchBusy(spec)
 }
 
 // editorServicesReadiness is prepareFilteredExecution's services refusal, asked early.
@@ -360,11 +367,20 @@ func ProjectServicesRefusal(ctx context.Context, cfg *config.Config, repo string
 }
 
 // EditorBoxStamp changes when a person may have settled what EditorBoxReadiness reported: a project
-// build or an approval finished, or the project's configuration or Dockerfile changed. Reading the
-// build's files on every poll would cost a large project about a second; this costs a few stats and one
-// small read. It proves nothing: a waiting session reads it to know when to ask EditorBoxReadiness again.
+// build or an approval finished, the project's configuration or Dockerfile changed, or the service
+// launch lock came free. Reading the build's files on every poll would cost a large project about a
+// second; this costs a few stats and one small read. It proves nothing: a waiting session reads it to
+// know when to ask EditorBoxReadiness again. An open or offline session has only the lock to watch.
 func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	repo := projectPolicyRepo(spec)
+	authority, _, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		authority = repo
+	}
+	taken, _ := forkspace.ServiceLaunchTaken(authority) // a failure to look reads as free: only a hint
+	if capture == nil {
+		return fmt.Sprint(taken)
+	}
 	stamp := func(path string) string {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -374,7 +390,7 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	}
 	generation, _ := capture.Store.ApprovalGeneration() // unreadable reads as zero: only a hint, and the recheck remains
 	return strings.Join([]string{capture.Fingerprint, capture.Store.ProjectBuildReviewStamp(capture.Project), fmt.Sprint(generation),
-		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo)))}, " ")
+		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo))), fmt.Sprint(taken)}, " ")
 }
 
 // RebuildApprovedProject rebuilds files a person already approved, with no prompt. It decides on the

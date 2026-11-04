@@ -60,6 +60,9 @@ type Child struct {
 	MCPServers func() ([]map[string]any, error)
 	// Launched reports whether this child's box has started, for watchFirstAnswer. Nil if it cannot tell.
 	Launched func() bool
+	// WaitsForLock reports that this child says it waits for the project's service launch lock. Nil if
+	// it cannot say.
+	WaitsForLock func() bool
 
 	answered atomic.Bool  // it has answered something it was asked: watchFirstAnswer is done with it
 	stopped  atomic.Int32 // a ChildFailure, once the proxy stopped it for not answering

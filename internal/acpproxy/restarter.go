@@ -114,6 +114,28 @@ func (r *Restarter) ForceOffHolding() bool {
 	return holding
 }
 
+// ReplaceUnstarted replaces a real child that has answered nothing, because it is still waiting to
+// start, and reports whether it did. Nothing can have reached its adapter, and the editor's initialize
+// or the replay it was in goes to the replacement.
+func (r *Restarter) ReplaceUnstarted() bool {
+	p := r.bound()
+	if p == nil {
+		return false
+	}
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.mu.Lock()
+	unstarted := p.candidate != nil && !p.candidate.HoldPrompts ||
+		p.child != nil && !p.child.HoldPrompts && (p.initResult == nil || p.initGeneration != p.generation)
+	unstarted = unstarted && !p.reloading.Load() && !p.shuttingDown
+	p.mu.Unlock()
+	if unstarted {
+		Trace("replacing the child that waits to start")
+		p.triggerRestart()
+	}
+	return unstarted
+}
+
 // Serving reports whether the live child runs turns and has answered initialize.
 func (r *Restarter) Serving() bool {
 	p := r.bound()
@@ -147,6 +169,13 @@ func (r *Restarter) TellHeld() {
 		if status := p.hooks.PromptHeld(sid); len(status) > 0 {
 			_, _ = p.out.Write(status)
 		}
+	}
+}
+
+// TellOpen writes text into every open thread, whether or not it has a prompt waiting.
+func (r *Restarter) TellOpen(text string) {
+	if p := r.bound(); p != nil {
+		p.tellOpenThreads(text)
 	}
 }
 

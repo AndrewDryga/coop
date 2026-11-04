@@ -9,9 +9,7 @@ import (
 	"slices"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
-	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // CaseExposureReview captures paths, not their contents: approving a path also
@@ -100,10 +98,9 @@ func ReviewCaseExposure(ctx context.Context, cfg *config.Config, repo string) (*
 		review.anchor = anchor
 		return review, nil
 	}
-	ui.Note("Waiting for a safe launch window to record file access.")
 	// The existing service identity provides the same copy-resistant binding
 	// and private-state protection. Creation is serialized with box launches.
-	unlock, err := forkspace.LockServiceLaunch(ctx, repo, true)
+	unlock, err := LockServiceLaunch(ctx, repo)
 	if err != nil {
 		return nil, err
 	}

@@ -1949,7 +1949,7 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 }
 
 // A stale/activity observation is no longer a workspace-wide refusal. The mount-launch barrier,
-// held by actual boxes, owns the dangerous start window instead.
+// held by actual boxes, owns the dangerous start window instead, and only that makes coop up wait.
 func TestCmdUpAllowsAnIndependentStackBesideARecordedBox(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
@@ -1972,9 +1972,8 @@ func TestCmdUpAllowsAnIndependentStackBesideARecordedBox(t *testing.T) {
 	var code int
 	var runErr error
 	out := captureStderr(t, func() { code, runErr = a.cmdUp(nil) })
-	if code != 0 || runErr != nil || !strings.Contains(out, "Waiting for a safe service-launch window") ||
-		!strings.Contains(out, "local-loop") {
-		t.Fatalf("cmdUp beside a recorded box = (%d, %v); want a named wait and success\n%s", code, runErr, out)
+	if code != 0 || runErr != nil || strings.Contains(out, "Waiting for another") {
+		t.Fatalf("cmdUp beside a recorded box = (%d, %v); want success with no wait\n%s", code, runErr, out)
 	}
 	if err := forkspace.EndExecution(repo, running); err != nil {
 		t.Fatal(err)

@@ -93,6 +93,9 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 		"kept: other":        acpRefreshNotice(errors.New("no")),
 		"wait: broken file":  acpBoxWaitText(&box.BrokenProjectFile{Err: errors.New(".agent/project.yaml: yaml: line 1: did not find expected node content")}, nil, false),
 		"wait: not admitted": acpBoxWaitText(box.ErrProjectNotAdmitted, nil, false),
+		"wait: a box":        acpBoxWaitText(&box.ServiceLaunchBusy{Boxes: []string{"a loop in fork perf"}}, nil, false),
+		"wait: boxes":        acpBoxWaitText(&box.ServiceLaunchBusy{Boxes: []string{"a loop", "an editor session"}}, nil, false),
+		"wait: a command":    acpBoxWaitText(&box.ServiceLaunchBusy{}, nil, false),
 	} {
 		t.Run(name, func(t *testing.T) { threadtext.Check(t, text) })
 	}

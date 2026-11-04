@@ -13,6 +13,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -1090,6 +1091,13 @@ func TestEditorBoxStampChangesWhenAPersonMayHaveActed(t *testing.T) {
 		"the project's configuration": func() { x.write(".agent/project.yaml", "box:\n  network: false\n") },
 		"the Dockerfile":              func() { x.write(".agent/Dockerfile", reusableDockerfile+"RUN true\n") },
 		"the approved policy":         func() { capture.Fingerprint = "newer" },
+		"the service launch lock": func() {
+			release, err := forkspace.LockServiceLaunch(t.Context(), x.repo, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(release)
+		},
 		"an approval, anywhere on this host": func() {
 			review, err := x.f.store.ReviewApproval(x.repo, egress.Filtered, nil, nil, nil)
 			if err != nil {

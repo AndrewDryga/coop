@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -48,22 +47,14 @@ func (a *app) cmdUp(args []string) (int, error) {
 			fmt.Sprintf("%s does not exist.", p.ComposeRel()),
 			"Add services with coop init --services.")
 	}
-	// A running box now holds the shared side of the mount-launch barrier. Name the wait before
-	// taking the exclusive side so an interactive command never looks hung.
-	live, err := box.LiveBoxes(repo, "")
-	if err != nil {
-		return -1, err
-	}
-	if len(live) > 0 {
-		ui.Note("Waiting for a safe service-launch window (%s).", box.DescribeLiveBoxes(live))
-	}
 	rel, _ := filepath.Rel(repo, file)
 	// Resolve the private snapshot area before saying a start is under way: a TMPDIR an agent can
 	// see is a refusal, and a refusal printed under "Starting services…" claims work that never began.
 	if err := box.CheckServiceTempDir(repo, box.ConfigExposureRoots(a.cfg)...); err != nil {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
-	unlockLaunch, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
+	// A running box holds the shared side of the mount-launch barrier, so this can wait, and says so.
+	unlockLaunch, err := box.LockServiceLaunch(context.Background(), repo)
 	if err != nil {
 		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")
 	}

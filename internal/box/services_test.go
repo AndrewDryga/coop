@@ -779,8 +779,8 @@ func TestLiveBoxesExcludesOwnExecution(t *testing.T) {
 	if err != nil || len(live) != 1 || live[0].Record.ID != first.ID {
 		t.Fatalf("live boxes = %v, %v; want the one running box", live, err)
 	}
-	if got := DescribeLiveBoxes(live); !strings.Contains(got, "interactive in "+filepath.Base(repo)) {
-		t.Fatalf("description = %q", got)
+	if got := liveBoxNames(live); !slices.Equal(got, []string{"a box in a terminal"}) {
+		t.Fatalf("names = %q", got)
 	}
 	if err := forkspace.EndExecution(repo, first); err != nil {
 		t.Fatal(err)

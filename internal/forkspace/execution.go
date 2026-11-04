@@ -325,6 +325,22 @@ func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func()
 	}
 }
 
+// ServiceLaunchTaken reports whether a service launch would have to wait right now. Asking holds the
+// exclusive side for an instant, which anyone else's wait polls past, and says nothing about who holds it.
+func ServiceLaunchTaken(repo string) (bool, error) {
+	once, cancel := context.WithCancel(context.Background())
+	cancel() // flockWaiting tries once before it looks at its context
+	unlock, err := LockServiceLaunch(once, repo, true)
+	if errors.Is(err, context.Canceled) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	unlock()
+	return false, nil
+}
+
 // serviceLaunchLockOpened is a test seam between opening the lock file and locking it, where the
 // sweep can remove it.
 var serviceLaunchLockOpened = func(string) {}

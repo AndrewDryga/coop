@@ -252,8 +252,8 @@ func appendUniqueAuthorityPath(paths []string, path string) []string {
 // enterAuthorityMountWindow makes validation and the following runtime lifetime one shared
 // interval. A first project anchor takes the matching exclusive lock, so a launch validated before
 // that transition cannot start afterwards with mount authority the anchored policy would refuse.
-func enterAuthorityMountWindow(ctx context.Context, repo string, validate func() error) (func(), error) {
-	unlock, err := forkspace.LockServiceLaunch(ctx, repo, false)
+func enterAuthorityMountWindow(ctx context.Context, repo string, sections *launchSections, validate func() error) (func(), error) {
+	unlock, err := lockServiceLaunch(ctx, repo, false, RunSpec{}, sections)
 	if err != nil {
 		return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
 	}

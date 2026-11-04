@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -646,21 +647,34 @@ func LiveBoxes(repo, except string) ([]forkspace.ExecutionObservation, error) {
 	return live, nil
 }
 
-// DescribeLiveBoxes names running boxes for a refusal: kind and workspace, deduplicated.
-func DescribeLiveBoxes(live []forkspace.ExecutionObservation) string {
-	var parts []string
-	seen := map[string]bool{}
+// liveBoxNames names running boxes for a person, in Coop's own words, each kind once. A fork's name is
+// validated when its record is read, so it can reach an editor thread.
+func liveBoxNames(live []forkspace.ExecutionObservation) []string {
+	var names []string
 	for _, observation := range live {
-		part := string(observation.Record.Kind) + " in " + filepath.Base(observation.Record.Workspace)
-		if observation.Record.Fork != nil {
-			part = string(observation.Record.Kind) + " in fork " + observation.Record.Fork.Name
+		name := "another box"
+		switch observation.Record.Kind {
+		case forkspace.ExecutionLocalLoop, forkspace.ExecutionForkLoop:
+			name = "a loop"
+		case forkspace.ExecutionInteractive, forkspace.ExecutionForkInteractive:
+			name = "a box in a terminal"
+		case forkspace.ExecutionACP, forkspace.ExecutionForkACP:
+			name = "an editor session"
+		case forkspace.ExecutionRemoteSession:
+			name = "a remote session"
+		case forkspace.ExecutionReview:
+			name = "a review"
+		case forkspace.ExecutionGate:
+			name = "a gate"
 		}
-		if !seen[part] {
-			seen[part] = true
-			parts = append(parts, part)
+		if observation.Record.Fork != nil {
+			name += " in fork " + observation.Record.Fork.Name
+		}
+		if !slices.Contains(names, name) {
+			names = append(names, name)
 		}
 	}
-	return strings.Join(parts, ", ")
+	return names
 }
 
 // autoUpServices reports whether box.Run should auto-start sibling services before launching a

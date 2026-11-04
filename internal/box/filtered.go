@@ -116,6 +116,7 @@ type filteredExecution struct {
 	services            []networkgateway.ServiceBinding
 	serviceProxyClients []networkgateway.ServiceProxyClient
 	preparedServices    *preparedFilteredServices
+	sections            *launchSections // the launch's narration, for a wait on the service launch lock
 	// taskVolume is the run-private task-channel volume coop created THIS run (taskchannel.go).
 	// It is coop-owned, holds only the coop socket, and is mounted read-only, so it is exempt from
 	// the workload volume-exposure check the same way this run's generated files are — its backing
@@ -297,7 +298,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 			ui.Detail("waiting for Docker to start this box (%s so far)", elapsed.Round(time.Second))
 		}
 	}
-	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), ids: map[string]string{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg}
+	f := &filteredExecution{store: capture.Store, docker: docker, policy: policy, agentIdentity: boxAgentIdentity(), ids: map[string]string{}, taskVolume: spec.taskVolume, authMarkers: authMarkers, authoritySpec: spec, authorityConfig: cfg, sections: sections}
 	f.native = spec.native
 	if brokerPlan != nil {
 		f.broker = &credentialBrokerRun{plan: brokerPlan}

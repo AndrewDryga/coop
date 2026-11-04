@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
@@ -370,9 +369,9 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		projectRepo = f.record.Project // trusted execution record; synthetic/recovery launches may omit RunSpec.Repo
 	}
 	if f.preparedServices != nil {
-		unlock, err := forkspace.LockServiceLaunch(ctx, projectRepo, true)
+		unlock, err := lockServiceStart(ctx, projectRepo, spec, f.sections)
 		if err != nil {
-			return -1, fmt.Errorf("wait for a safe service launch: %w", err)
+			return -1, err
 		}
 		err = f.preparedServices.start(ctx)
 		unlock()
@@ -393,7 +392,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if revalidate == nil {
 		revalidate = func() error { return nil }
 	}
-	unlockMounts, err := enterAuthorityMountWindow(ctx, projectRepo, revalidate)
+	unlockMounts, err := enterAuthorityMountWindow(ctx, projectRepo, f.sections, revalidate)
 	if err != nil {
 		return -1, err
 	}

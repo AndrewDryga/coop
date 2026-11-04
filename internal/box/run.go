@@ -243,6 +243,10 @@ type RunSpec struct {
 	// deadline can only cancel work Ctx can actually reach. It must return promptly: the launch
 	// waits on it. A nil hook is the ordinary run, signaling nothing.
 	OnRuntimeLaunch func()
+	// OnServiceLaunchWait, when set, hears that this box started waiting for the other boxes in its
+	// project to let it start its services (true), and that the wait ended (false). A supervisor with
+	// no terminal tells its threads; everyone else reads the launch's own narration.
+	OnServiceLaunchWait func(waiting bool)
 
 	// StartingNotice is optional interactive guidance directly below the Starting heading.
 	// It is presentation only, never a runtime callback or serialized launch authority.
@@ -1673,9 +1677,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			var composeStderr bytes.Buffer
 			servicesInspected = true
 			reviewServicesAttempted = reviewStack
-			unlock, lockErr := forkspace.LockServiceLaunch(serviceCtx, projectRepo, true)
+			unlock, lockErr := lockServiceStart(serviceCtx, projectRepo, spec, sections)
 			if lockErr != nil {
-				return finish(-1, fmt.Errorf("wait for a safe service launch: %w", lockErr))
+				return finish(-1, lockErr)
 			}
 			serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
 			serviceCtx = context.WithValue(serviceCtx, serviceCaseExposureKey{}, cfg.AllowCaseExposedSecrets)
@@ -1880,13 +1884,19 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if activityRepo == "" {
 		activityRepo = spec.Repo
 	}
-	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, func() error {
+	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, sections, func() error {
 		return validateAuthorityMounts(spec.Ctx, spec, finalOptions, networkState, volumeReader, authorityAllow)
 	})
 	if err != nil {
 		return finish(-1, err)
 	}
-	defer unlockMounts()
+	if spec.HandshakeOnly {
+		// As in a filtered launch: this box can replace no project path, and what it holds prompts
+		// for may be this window closing.
+		unlockMounts()
+	} else {
+		defer unlockMounts()
+	}
 	if spec.filesystem != nil {
 		if err := recordRunDaemon(artifacts.runDir, spec.filesystem.docker.Info().ID); err != nil {
 			return finish(-1, err)

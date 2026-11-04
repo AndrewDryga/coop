@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -41,6 +43,9 @@ type boxWaitHarness struct {
 	moves    int
 	forces   int
 	said     []string
+	told     []string // what every open thread heard
+	busyNow  error
+	replaces int
 	notices  []string
 	logged   []error
 	opened   int
@@ -113,6 +118,23 @@ func newBoxWaitHarness(t *testing.T) *boxWaitHarness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.said = append(h.said, text)
+		},
+		announce: func(text string) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.said = append(h.said, text)
+			h.told = append(h.told, text)
+		},
+		lockBusy: func() error {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return h.busyNow
+		},
+		replace: func() bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.replaces++
+			return true
 		},
 		notify: func(text string) {
 			h.mu.Lock()
@@ -988,13 +1010,18 @@ func TestSpawnedHoldingChildRunsUnderItsOwnRules(t *testing.T) {
 func TestACPConnectsWhenItCannotLookAtTheBox(t *testing.T) {
 	h := newBoxWaitHarness(t)
 	h.set(func() { h.answer = errCouldNotLook })
-	a := &app{cfg: openNetwork(&config.Config{}), acpBoxWait: h.w}
+	a := &app{cfg: openNetwork(&config.Config{}), acpBoxWait: h.w, acpCapture: &box.CapturedEgress{}}
 	a.cfg.SetEgress("filtered")
 	if err := a.ensureACPImage(); err != nil {
 		t.Fatalf("connect = %v", err)
 	}
 	if h.w.blockedNow() {
 		t.Fatal("a failure to look blocked the first real box")
+	}
+	// Every session has a wait now, so the wait no longer stands for the policy.
+	a.acpCapture = nil
+	if err := a.ensureACPImage(); err == nil || !strings.Contains(err.Error(), "needs the policy") {
+		t.Fatalf("a filtered session with no admitted policy connected: %v", err)
 	}
 }
 
@@ -1243,23 +1270,328 @@ func TestBoxWaitCloseStopsTheRebuild(t *testing.T) {
 	}
 }
 
-// Open and offline sessions have no wait, and every call on it is safe.
-func TestNoBoxWaitForAnUnfilteredSession(t *testing.T) {
+// A process with no session, such as a model probe, has no wait, and every call on it is safe.
+func TestNoSessionMeansNoBoxWait(t *testing.T) {
 	var w *acpBoxWait
-	if w.blockedNow() || w.refresh(t.Context()) != nil || w.refreshStale(t.Context()) != nil {
+	if w.blockedNow() || w.refresh(t.Context()) != nil || w.refreshStale(t.Context()) != nil || w.childFailedHook() != nil {
 		t.Fatal("a nil wait reported something")
 	}
 	w.start()
 	w.close()
 	w.started(&acpproxy.Child{})
-	a := &app{}
-	if a.newACPBoxWait(nil, nil, box.RunSpec{}, nil) != nil {
-		t.Fatal("an unfiltered session got a wait")
+}
+
+// An open or offline session waits for the lock and nothing else. A real box that keeps failing there
+// is still the proxy's to count, as it always was.
+func TestAnUnfilteredSessionWaitsOnlyForTheLock(t *testing.T) {
+	repo, cancelled := t.TempDir(), func() {}
+	defer func() { cancelled() }()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  db:\n    image: postgres:18\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{Egress: "open", AutoUp: true, Network: true}, rt: runtime.Runtime{Name: "docker"}}
+	w := a.newACPBoxWait(&acpctl.Control{}, &acpproxy.Restarter{}, box.RunSpec{Repo: repo}, func() {})
+	cancelled = w.cancel
+	if w.childFailedHook() != nil {
+		t.Fatal("an unfiltered session would hold prompts for a real box that fails")
+	}
+	if err := w.check(t.Context()); err != nil {
+		t.Fatalf("a free lock read as %v", err)
+	}
+	free := w.stamp()
+	release, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var busy *box.ServiceLaunchBusy
+	if err := w.check(t.Context()); !errors.As(err, &busy) {
+		t.Fatalf("a taken lock read as %v", err)
+	}
+	if w.stamp() == free {
+		t.Fatal("a waiting session would not notice the lock coming free")
 	}
 }
 
-func TestACPChildEnvNeverInheritsTheHandshakeFlag(t *testing.T) {
-	if got := cleanACPChildEnv([]string{acpHandshakeEnv + "=1", acpLaunchedEnv + "=/elsewhere", "PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin"}) {
+func TestACPChildEnvNeverInheritsAParentsWord(t *testing.T) {
+	if got := cleanACPChildEnv([]string{acpHandshakeEnv + "=1", acpLaunchedEnv + "=/elsewhere", acpLaunchWaitEnv + "=3", "PATH=/usr/bin"}); !slices.Equal(got, []string{"PATH=/usr/bin"}) {
 		t.Fatalf("cleaned = %v", got)
+	}
+}
+
+var errAnotherBoxRuns = &box.ServiceLaunchBusy{Boxes: []string{"a loop"}}
+
+// A box in the way is a wait like any other: the next child holds prompts, every open thread hears why
+// at once, idle or not, and the lock coming free ends it, with no rebuild and nobody's approval.
+func TestBoxWaitTellsEveryThreadAboutAnotherBox(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.answer, h.holding = errAnotherBoxRuns, true })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatalf("a box in the way is an answer, not a failure to look: %v", err)
+	}
+	if !h.w.blockedNow() {
+		t.Fatal("a child spawned now would wait on the lock with the editor unanswered")
+	}
+	h.read(func() {
+		if len(h.told) != 1 || len(h.said) != 1 || len(h.logged) != 1 || h.rebuilds != 0 {
+			t.Fatalf("told=%q said=%q logged=%v rebuilds=%d", h.told, h.said, h.logged, h.rebuilds)
+		}
+		for _, want := range []string{"Waiting for another box in this project", "Running now: a loop.", "Close it to go on sooner", "wait here"} {
+			if !strings.Contains(h.told[0], want) {
+				t.Fatalf("the threads heard %q, want %q in it", h.told[0], want)
+			}
+		}
+	})
+	h.w.poll()
+	h.read(func() {
+		if len(h.told) != 1 || h.moves != 0 {
+			t.Fatalf("while nothing changed it told %q and moved %d times", h.told, h.moves)
+		}
+	})
+	h.set(func() { h.answer, h.sign = nil, "lock free" })
+	h.w.poll()
+	h.read(func() {
+		if h.w.blockedNow() || h.moves != 1 || h.opened != 1 || h.said[len(h.said)-1] != "" {
+			t.Fatalf("blocked=%v moves=%d opened=%d said=%q", h.w.blockedNow(), h.moves, h.opened, h.said)
+		}
+	})
+}
+
+// waitWord starts following what a child says on the pipe its supervisor gave it.
+func waitWord(t *testing.T, w *acpBoxWait, child *acpproxy.Child) *os.File {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = write.Close() })
+	w.follow(child, read)
+	return write
+}
+
+func say(t *testing.T, word *os.File, what byte) {
+	t.Helper()
+	if _, err := word.Write([]byte{what}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// heard waits until follow has recorded child's state, then runs what the poll loop would.
+func (h *boxWaitHarness) heard(t *testing.T, child *acpproxy.Child, waiting bool) {
+	t.Helper()
+	wait.For(t, "the wait to hear the child", func() bool {
+		h.w.mu.Lock()
+		defer h.w.mu.Unlock()
+		return h.w.launchWaits[child] == waiting
+	})
+	h.w.poll()
+}
+
+// The check before a child starts can see a free lock that is taken a moment later, and such a child
+// answers nothing: with no thread yet the editor shows a spinner, and a replacement would end the session
+// when its replay grace ran out. So its word puts the session on a child that holds prompts.
+func TestBoxWaitReplacesTheSessionsChildThatSaysItWaits(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.busyNow = errAnotherBoxRuns })
+	child := &acpproxy.Child{}
+	h.w.started(child)
+	word := waitWord(t, h.w, child)
+	say(t, word, acpLaunchWaiting)
+	h.heard(t, child, true)
+	h.read(func() {
+		if h.replaces != 1 || len(h.told) != 1 || !strings.Contains(h.told[0], "Running now: a loop.") {
+			t.Fatalf("replaces=%d told=%q", h.replaces, h.told)
+		}
+	})
+	if !h.w.blockedNow() {
+		t.Fatal("the child replacing it would wait on the lock too")
+	}
+	h.w.poll()
+	h.read(func() {
+		if h.replaces != 1 {
+			t.Fatalf("replaced %d times for one word", h.replaces)
+		}
+	})
+}
+
+// A parked box's wait is nobody's news, until the session takes that box while it still waits.
+func TestBoxWaitIgnoresAParkedChildUntilTheSessionTakesIt(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.busyNow = errAnotherBoxRuns })
+	parked := &acpproxy.Child{}
+	h.w.started(&acpproxy.Child{})
+	word := waitWord(t, h.w, parked)
+	say(t, word, acpLaunchWaiting)
+	h.heard(t, parked, true)
+	h.read(func() {
+		if h.replaces != 0 || len(h.told) != 0 {
+			t.Fatalf("a parked box replaced the session's %d times and told %q", h.replaces, h.told)
+		}
+	})
+	h.w.started(parked)
+	h.w.poll()
+	h.read(func() {
+		if h.replaces != 1 || len(h.told) != 1 {
+			t.Fatalf("taking a box that waits: replaces=%d told=%q", h.replaces, h.told)
+		}
+	})
+
+	// One that got through before the session took it is simply running.
+	h = newBoxWaitHarness(t)
+	h.set(func() { h.busyNow = errAnotherBoxRuns })
+	h.w.started(&acpproxy.Child{})
+	through := &acpproxy.Child{}
+	word = waitWord(t, h.w, through)
+	say(t, word, acpLaunchWaiting)
+	h.heard(t, through, true)
+	say(t, word, acpLaunchDone)
+	h.heard(t, through, false)
+	h.w.started(through)
+	h.w.poll()
+	h.read(func() {
+		if h.replaces != 0 || len(h.told) != 0 {
+			t.Fatalf("a box that got through: replaces=%d told=%q", h.replaces, h.told)
+		}
+	})
+}
+
+// A lock that came free as the child said so, or that only the session's own parked boxes hold, is
+// nothing a thread can act on, and the child keeps trying.
+func TestBoxWaitLeavesAChildWithNobodyToWaitFor(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	child := &acpproxy.Child{}
+	h.w.started(child)
+	word := waitWord(t, h.w, child)
+	say(t, word, acpLaunchWaiting)
+	h.heard(t, child, true)
+	h.read(func() {
+		if h.replaces != 0 || len(h.told) != 0 || h.w.blockedNow() {
+			t.Fatalf("replaces=%d told=%q blocked=%v", h.replaces, h.told, h.w.blockedNow())
+		}
+	})
+	if h.w.waitsForLock(child) {
+		t.Fatal("a wait nobody can end is shielded from the first-answer limit for good")
+	}
+}
+
+// A child's word shields it from the first-answer limit from the moment it says so, whatever the poll
+// loop has got to, and for as long as the wait lasts.
+func TestAChildThatSaysItWaitsIsShieldedUntilItSaysItIsDone(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	child := &acpproxy.Child{}
+	h.w.started(child)
+	if h.w.waitsForLock(child) {
+		t.Fatal("a child that said nothing reads as waiting")
+	}
+	word := waitWord(t, h.w, child)
+	say(t, word, acpLaunchWaiting)
+	wait.For(t, "the word to arrive", func() bool { return h.w.waitsForLock(child) })
+	say(t, word, acpLaunchDone)
+	wait.For(t, "the end of the wait", func() bool { return !h.w.waitsForLock(child) })
+}
+
+// A child's exit ends what it said, so a dead pipe never leaves the session believing a box waits.
+func TestBoxWaitForgetsAChildThatExited(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	child := &acpproxy.Child{}
+	word := waitWord(t, h.w, child)
+	say(t, word, acpLaunchWaiting)
+	h.heard(t, child, true)
+	if err := word.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h.heard(t, child, false)
+	h.w.started(child)
+	h.read(func() {
+		if h.w.launchWaitNew {
+			t.Fatal("a child that exited still counts as waiting")
+		}
+	})
+}
+
+// The real path: a child the supervisor spawns is handed the descriptor, its word reaches the wait, and
+// the descriptor never reaches anything the child runs: a process that kept it open would keep the pipe
+// from ending when the child does.
+func TestSpawnedChildCanTellItsSupervisorItWaits(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf w >&\"$"+acpLaunchWaitEnv+"\"\nread line\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true, acpBoxWait: h.w}
+	child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, agents.Target{Provider: "claude"}, "", false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.heard(t, child, true)
+	child.Stop()
+	h.heard(t, child, false)
+}
+
+// A child that holds prompts starts no services, so nothing is listening for it.
+func TestSpawnedHoldingChildGetsNoWaitDescriptor(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.answer = errNeedsAPerson })
+	_ = h.w.refresh(t.Context())
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s\\n' \"[$"+acpLaunchWaitEnv+"]\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true, acpBoxWait: h.w}
+	child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, agents.Target{Provider: "claude"}, "", false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(child.Out)
+	child.Stop()
+	if err != nil || !child.HoldPrompts || strings.TrimSpace(string(out)) != "[]" {
+		t.Fatalf("hold=%v descriptor=%q err=%v", child.HoldPrompts, out, err)
+	}
+}
+
+// An inner child keeps the descriptor to itself: docker and Compose inherit nothing else it opened, and
+// this was inherited, so it has to be marked by hand.
+func TestLaunchWaitReporterWritesOneByteAndHidesTheDescriptor(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	cloexec := func() bool {
+		flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, write.Fd(), syscall.F_GETFD, 0)
+		if errno != 0 {
+			t.Fatal(errno)
+		}
+		return flags&syscall.FD_CLOEXEC != 0
+	}
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, write.Fd(), syscall.F_SETFD, 0); errno != 0 {
+		t.Fatal(errno)
+	}
+	if cloexec() {
+		t.Fatal("the fixture did not clear the flag")
+	}
+	t.Setenv(acpLaunchWaitEnv, strconv.Itoa(int(write.Fd())))
+	report := acpLaunchWaitReporter()
+	if report == nil || !cloexec() {
+		t.Fatalf("reporter=%v, close-on-exec=%v", report != nil, cloexec())
+	}
+	report(true)
+	report(false)
+	got := make([]byte, 2)
+	if _, err := io.ReadFull(read, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string([]byte{acpLaunchWaiting, acpLaunchDone}) {
+		t.Fatalf("wrote %q", got)
+	}
+	for _, unset := range []string{"", "not a number", "2"} {
+		t.Setenv(acpLaunchWaitEnv, unset)
+		if acpLaunchWaitReporter() != nil {
+			t.Fatalf("%q gave a reporter, and a child would write to whatever that descriptor is", unset)
+		}
 	}
 }

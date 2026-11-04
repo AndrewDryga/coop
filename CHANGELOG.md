@@ -34,8 +34,8 @@
 
 - **A box that hangs no longer leaves your editor waiting.** A filtered `coop acp` box that starts but
   does not answer now gets a minute. Then your editor connects to a box that holds your messages, the
-  thread says what happened, and Coop keeps trying. Pulling images, starting services and waiting for
-  another box do not count toward that minute: they get 5 minutes.
+  thread says what happened, and Coop keeps trying. Pulling images and starting services do not count
+  toward that minute: they get 5 minutes.
 
 - **A broken project file no longer disconnects your editor.** `coop acp` connects even when
   `.agent/project.yaml` does not load. The thread says what is wrong and where, your messages wait,
@@ -44,6 +44,10 @@
 - **A killed editor session no longer leaves its services running.** The next `coop acp` in that
   project removes what the killed session left before it starts anything, and `coop down` removes it
   too. Services of a session that is still running are never touched.
+
+- **A box that has to wait for another one says so.** A box starting your project's services waits until the
+  other boxes in the project stop. A terminal, a loop and an editor thread now say what it waits for, what to
+  do about it, and when the wait ends. An editor connects at once and sends your messages when the box is ready.
 
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.

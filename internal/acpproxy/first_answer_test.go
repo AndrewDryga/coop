@@ -200,6 +200,29 @@ func TestAReplacementStillGettingReadyAnswersToTheLimitToo(t *testing.T) {
 	_ = h.shutdown()
 }
 
+// A wait for the lock has no limit, so a child that says it is waiting is not late. Only what it spends on
+// anything else counts.
+func TestAChildWaitingForTheLockIsNotStoppedAtTheLimit(t *testing.T) {
+	shrinkFirstAnswer(t, 600*time.Millisecond, 60*time.Millisecond)
+	var waiting atomic.Bool
+	waiting.Store(true)
+	child := realChild()
+	child.waitsForLock = waiting.Load
+	h := newFailingHarness(t, child, holdingChild())
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	readLine(t, h.childIn[0])
+	time.Sleep(300 * time.Millisecond) // several limits
+	if h.failed.Load() != 0 {
+		t.Fatalf("a child waiting for the lock was stopped: %d failed starts", h.failed.Load())
+	}
+	// Past its wait it answers to the limit again, counted from the end of the wait.
+	waiting.Store(false)
+	wait.For(t, "the limit to apply again", func() bool { return h.failed.Load() == 1 })
+	h.answerInitializeReplay(1)
+	readLine(t, h.clientOut) // the editor gets the holding child's answer
+	_ = h.shutdown()
+}
+
 // A child with nothing to answer is not silent, however long it waits for an editor that has not asked.
 func TestAChildNobodyAskedIsNotStopped(t *testing.T) {
 	const window = 100 * time.Millisecond

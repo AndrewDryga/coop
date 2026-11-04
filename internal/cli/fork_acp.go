@@ -53,7 +53,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	hooks := fixedForkACPHooks(ctrl, repo, workspace)
 	// A fork's box is its project's, so the project's box decides whether it can start.
 	restarter := &acpproxy.Restarter{}
-	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: workspace, PolicyRepo: repo, Workdir: workspace, Agent: target.Provider, Network: a.cfg.Network}, func() {})
+	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: workspace, PolicyRepo: repo, Workdir: workspace, Agent: target.Provider, Network: a.cfg.Network, SupervisorID: superID}, func() {})
 	defer a.acpBoxWait.close()
 	if err := a.acpBoxWait.refresh(context.Background()); err != nil {
 		acpproxy.Trace("box wait: could not look: %v", err) // proves nothing: the first child's own proofs decide

@@ -24,8 +24,9 @@ type fakeChild struct {
 	provider  string
 	mcp       string
 	// holdPrompts makes this fake a child that only answers the editor's handshake.
-	holdPrompts bool
-	launched    func() bool // Child.Launched
+	holdPrompts  bool
+	launched     func() bool // Child.Launched
+	waitsForLock func() bool // Child.WaitsForLock
 }
 
 type blockingWriteCloser struct {
@@ -62,7 +63,7 @@ func newFakeChild() *fakeChild {
 }
 
 func (f *fakeChild) child() *Child {
-	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, HoldPrompts: f.holdPrompts, Launched: f.launched, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, HoldPrompts: f.holdPrompts, Launched: f.launched, WaitsForLock: f.waitsForLock, Stop: func() { f.outW.Close(); f.inR.Close() }}
 	if f.mcp != "" {
 		marker := f.mcp
 		child.MCPServers = func() ([]map[string]any, error) {

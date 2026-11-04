@@ -1,16 +1,17 @@
 ---
 name: acp-box-wait
-description: how a filtered editor session stays connected while its project box cannot start, and why no turn runs meanwhile
+description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
+sources: [internal/box/service_launch_wait.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
 updated: 2026-11-04
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
 `box.DeferProjectBuild`, and the supervisor asks `box.EditorBoxReadiness` itself: a project file that
 does not load (`*BrokenProjectFile`), a project build miss (`*ProjectBuildRequired`), services with no
-rules (`*ServicesNeedRules`) or rules nobody approved (`*networkstate.PendingApproval`). Any other
-error is a failure to look, and proves nothing.
+rules (`*ServicesNeedRules`), rules nobody approved (`*networkstate.PendingApproval`), or another box
+holding the service launch lock (`*box.ServiceLaunchBusy`). Any other error is a failure to look, and
+proves nothing.
 
 Rules nobody approved come first, since no capture exists for them to run under. `HoldPending` admits
 `holdingAdmission`: the person's flags, the host's MCP and the provider bundles, and nothing from the
@@ -45,7 +46,7 @@ reason through `safeErrorText`.
 Trap: a first approval takes `LockServiceLaunch` exclusively, and every box holds the shared side for
 its lifetime, so a holding child would deadlock the approval it waits for. A holding child therefore
 sees the project read-only, passes the mount guard as if anchored (`authorityProtection`), and drops
-the window once validated. A real box in the project still makes a first approval wait, in silence.
+the window once validated. A real box in the project still makes a first approval wait, and says so.
 
 While blocked, `spawnBox` starts a child with `COOP_ACP_HANDSHAKE_BOX=1`: `RunSpec.HandshakeOnly` runs
 the locked client image and reads no project file, without serve ports, services, task tools or a writable project,
@@ -77,12 +78,29 @@ startup skips a blocked session, or the pool stays off for its whole life.
 Fork ACP shares the wait, but its hooks have no start notice, so a thread hears about it only when it
 sends a message. See [[restricted-project-builds-are-explicit]].
 
+Trap: the lock's other waiter is the session's own next box. A box that starts the project's services
+takes the lock exclusively, so it waits for every other running box in the project, for as long as they
+run, and it answers nothing meanwhile: with no thread open the editor shows only a spinner, and a
+replacement would end the session once `replayStartupGrace` ran out. So readiness also reports
+`*box.ServiceLaunchBusy`, when this box would wait now, and that holds in every network mode: an open or
+offline session has this wait and no other (`EditorUnfilteredBoxReadiness`, `filtered` false). Every open
+thread hears it at once (`announce`, `Restarter.TellOpen`), since it can begin with all of them idle. The
+lock can also be taken just after the check, so a real child says it waits on the descriptor named by
+`COOP_ACP_LAUNCH_WAIT_FD` (never stdout, the wire, or stderr, which carries what a box writes), and
+`heedLaunchWait` puts the session on a holding child (`Restarter.ReplaceUnstarted`). A parked box's word is
+nobody's news until the session takes that box. Only a session's own parked boxes holding the lock is not
+a wait to report: nobody can close them. `EditorBoxStamp` watches the lock, so the session moves when it
+comes free. A holding child in any mode drops the mount window once validated, or it would hold the lock
+it waits for. The terminal and loop side of this is `box.lockServiceLaunch`: try for two seconds, say what
+it waits for, wait, say it ended. Every caller goes through it, and `forkspace.LockServiceLaunch` is only
+for code nobody is waiting on.
+
 A services refusal comes in parts (`box.ServicesNeedRules`), since a thread cannot show the terminal's text
 whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason and the remedy as text and only the
 rules and `coop approve` as blocks, and the terminal and the agent log keep `Error()`. `coop approve` has nothing
 to approve in that state, so it asks the same check (`box.ProjectServicesRefusal`) and shows the refusal too.
 
-Readiness asks about those four things only, on purpose, and about the file first: read as a file that
+Readiness asks about those five things only, on purpose, and about the file first: read as a file that
 asks for nothing, it would send a person off to build what it does not ask for. Any other refusal (an
 approved service whose definition changed, a serve port the policy grants TLS on) shows up as a real
 child ending by itself. The proxy decides that in its run loop, not in `spawnBox`'s wait goroutine,
@@ -96,7 +114,7 @@ own question cannot make a tight loop; only a real box that answered and outlive
 With `ChildFailed` set, only children that hold prompts count toward the rapid-fail cap, and one that
 never answered counts however long it took to die, or a slow refusal would respawn forever. Reaching
 the cap is what a stopped Docker looks like: every open thread hears why, and the session ends. Open
-and offline sessions have no wait and keep the old rule. An `initialize` the first child never answered
+and offline sessions wait only for the lock and keep the old rule for a box that fails. An `initialize` the first child never answered
 gets the replacement's answer (`answerInitialize`, or held in `restartHeld` under the empty name if it
 arrives mid-replacement), since an editor reads an error there as a dead server. `poll` replaces a
 holding child that still owes the editor something after `acpBoxWaitMoveDeadline`, for a hung adapter or
@@ -140,6 +158,9 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-04 — a box that waits for the service launch lock says so in a terminal, a loop and a thread, and
+  open and offline sessions wait on a holding child too, as `run.go` takes the same lock for them. Verified
+  on real Docker: open and filtered terminals and an open editor thread beside a running box.
 - 2026-11-04 — a services refusal reads whole in a thread, and `coop approve` shows it when it has nothing to
   approve. Verified with a real `coop acp`, pasting the rule out of the thread's own block.
 - 2026-11-04 — a box that hangs is stopped and held like one that exits, and says so. Verified on real

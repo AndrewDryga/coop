@@ -66,7 +66,7 @@ type app struct {
 	acpHoldAdmission    acpAdmit                                     // the rules a child that holds prompts runs under, admitted each time one starts
 	acpRefresh          *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
 	acpServe            *acpServeRouter                              // an editor session's stable serve ports, forwarded to its live box
-	acpBoxWait          *acpBoxWait                                  // a filtered editor session's wait for a project box that cannot start yet; set before serving
+	acpBoxWait          *acpBoxWait                                  // an editor session's wait for a project box that cannot start yet; set before serving
 	acpPeers            []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
 	acpNetworkTargets   []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
 	acpAccountBindings  map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts

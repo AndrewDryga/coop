@@ -41,6 +41,8 @@ func (c *Child) stopUnanswered(why ChildFailure) {
 // on real projects), waiting for another box's service launch lock. Stopping any of those at a minute
 // would throw away work the next try has to redo, so they answer only to limit, the bound a replacement's
 // first answer has always had. A child that cannot say when its box starts (Launched is nil) gets limit too.
+// A child that says it waits for the lock is not late, since that wait has no limit: the limit counts only
+// what it spends on anything else, and its supervisor decides what a session does in the meantime.
 func (p *proxy) watchFirstAnswer(ctx context.Context, c *Child, window, limit time.Duration) {
 	ticker := time.NewTicker(window / 60)
 	defer ticker.Stop()
@@ -60,6 +62,10 @@ func (p *proxy) watchFirstAnswer(ctx context.Context, c *Child, window, limit ti
 				continue
 			}
 			asked = now
+		}
+		if c.WaitsForLock != nil && c.WaitsForLock() {
+			asked = now
+			continue
 		}
 		if started.IsZero() && c.Launched != nil && c.Launched() {
 			started = now
