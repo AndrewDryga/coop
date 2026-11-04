@@ -1679,8 +1679,10 @@ func TestAsyncCreateTerminatesOnBrokenExistingWorkspaceAnchor(t *testing.T) {
 	}
 	ready := make(chan struct{})
 	var op session.Operation
+	broken := make(chan struct{})
 	service.testBeforeCreatePin = func() error {
 		<-ready
+		defer close(broken)
 		policy, err := service.resolveJobExecution(context.Background(), job)
 		if err != nil {
 			return err
@@ -1703,8 +1705,12 @@ func TestAsyncCreateTerminatesOnBrokenExistingWorkspaceAnchor(t *testing.T) {
 		t.Fatalf("async create = %+v, err=%v", op, err)
 	}
 	close(ready)
+	// The clock starts once the fixture has broken the anchor: building that workspace is real Git work,
+	// and under gate load it took the whole of the 5 s this wait used to allow (measured 5.1 s of 7.6 s).
+	// A create that survives a broken anchor still fails here at once, by reaching another final state.
+	<-broken
 	var current session.Operation
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(60 * time.Second)
 	for {
 		current, err = service.Store().GetOperationByID(context.Background(), op.ID)
 		if err == nil && sessionOperationReached(t, current, session.OperationFailed) {
