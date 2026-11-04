@@ -49,6 +49,7 @@ type boxWaitHarness struct {
 	notices  []string
 	logged   []error
 	opened   int
+	yields   int
 	clock    time.Time
 	rebuilds int
 	rebuild  chan error // each rebuild waits for one result
@@ -150,6 +151,11 @@ func newBoxWaitHarness(t *testing.T) *boxWaitHarness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.opened++
+		},
+		yield: func() {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.yields++
 		},
 		now: func() time.Time {
 			h.mu.Lock()
@@ -253,8 +259,14 @@ func TestBoxWaitLeavesChangedFilesToAPerson(t *testing.T) {
 	// A person's build finishes.
 	h.set(func() { h.answer, h.sign = nil, "two" })
 	h.w.poll()
-	if h.w.blockedNow() || h.moves != 1 || h.opened != 1 || h.lastSaid() != "" {
+	if h.w.blockedNow() || h.moves != 1 || h.opened != 0 || h.lastSaid() != "" {
 		t.Fatalf("blocked=%v moves=%d opened=%d said=%q", h.w.blockedNow(), h.moves, h.opened, h.lastSaid())
+	}
+	h.set(func() { h.holding, h.serving = false, true })
+	h.w.poll()
+	h.w.poll()
+	if h.opened != 1 {
+		t.Fatalf("opened=%d once the replacement answered, want the fan-out once", h.opened)
 	}
 	if len(h.logged) != 1 {
 		t.Fatalf("the agent log got %v, want the reason once", h.logged)
@@ -271,6 +283,119 @@ func TestBoxWaitRetriesTheMove(t *testing.T) {
 	h.w.poll()
 	if h.moves != 2 {
 		t.Fatalf("moves=%d, want two tries", h.moves)
+	}
+}
+
+// A warm box that reaches the service launch lock ahead of the session's own box holds it shared while
+// it stays parked, and the session's box then never starts. So after a wait clears, no fill starts
+// until the box moved onto has answered: not when the wait clears, and not when that box is spawned.
+func TestBoxWaitStartsTheSessionsBoxBeforeItsWarmBoxes(t *testing.T) {
+	var order []string
+	h := newBoxWaitHarness(t)
+	fanOut := &acpFanOut{lead: func() string { return "claude" }, waiting: h.w.waitingNow, fill: func(string) { order = append(order, "warm") }}
+	h.w.opened = func() { fanOut.rebalance("claude") }
+	h.set(func() { h.answer, h.holding = errNeedsAPerson, true })
+	_ = h.w.refresh(t.Context())
+	fanOut.start() // the holding child answered initialize
+	fanOut.rebalance("claude")
+	if len(order) != 0 {
+		t.Fatalf("filled while the box could not start: %v", order)
+	}
+
+	h.set(func() { h.answer, h.sign = nil, "built" })
+	h.w.poll()                 // the wait clears, and the session moves
+	fanOut.rebalance("claude") // the factory re-centres on the replacement it just spawned
+	h.w.poll()
+	if len(order) != 0 {
+		t.Fatalf("filled ahead of the session's own box: %v", order)
+	}
+
+	order = append(order, "lead answered")
+	h.set(func() { h.holding, h.serving = false, true })
+	h.w.poll()
+	if !slices.Equal(order, []string{"lead answered", "warm"}) {
+		t.Fatalf("start order %v, want the warm boxes right after the session's own box", order)
+	}
+}
+
+// A cold box in a project with services may have to start them, so a fill after that spawn also waits for
+// its answer, even long after the fan-out opened.
+func TestBoxWaitKeepsThePoolShutUntilAColdBoxAnswers(t *testing.T) {
+	var fills int
+	h := newBoxWaitHarness(t)
+	fanOut := &acpFanOut{lead: func() string { return "claude" }, waiting: h.w.waitingNow, fill: func(string) { fills++ }}
+	h.w.opened = func() { fanOut.rebalance("claude") }
+	fanOut.start()
+	if fills != 1 {
+		t.Fatalf("%d fills once the fan-out started, want 1", fills)
+	}
+	h.w.awaitAnswer()
+	fanOut.rebalance("claude")
+	h.w.poll()
+	if fills != 1 {
+		t.Fatalf("%d fills ahead of the box just spawned, want the first only", fills)
+	}
+	h.set(func() { h.serving = true })
+	h.w.poll()
+	if fills != 2 {
+		t.Fatalf("%d fills after it answered, want one more", fills)
+	}
+}
+
+// A box of the session that only its own parked boxes keep out says so, and the supervisor stops them.
+// That word is not a wait: nothing is told to a thread, and it does not read as the end of one.
+func TestBoxWaitStopsParkedBoxesWhenTheSessionsBoxNeedsTheLock(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := &acpproxy.Child{}
+	h.w.follow(child, read)
+	if _, err := write.Write([]byte{acpLaunchWaiting, acpLaunchOwnBoxes}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var yields int
+		h.read(func() { yields = h.yields })
+		if yields == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the parked boxes were never stopped")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !h.w.waitsForLock(child) {
+		t.Fatal("that word read as the end of the wait")
+	}
+	_ = write.Close()
+}
+
+// A connect in a project with services has no timer to start the fan-out while the lead still starts
+// them. Anywhere else the timer stays, so a lead that never answers leaves the others ready.
+func TestFanOutWaitsForTheLeadOnlyInAProjectWithServices(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		hasServices bool
+		early       int
+	}{{"services", true, 0}, {"no services", false, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fills := make(chan string, 4)
+			fanOut := &acpFanOut{lead: func() string { return "claude" }, waiting: func() bool { return false }, fill: func(active string) { fills <- active }}
+			defer fanOut.arm(tc.hasServices, time.Millisecond)()
+			fanOut.rebalance("claude") // the lead's own spawn
+			time.Sleep(50 * time.Millisecond)
+			if got := len(fills); got != tc.early {
+				t.Fatalf("%d fills before the lead answered, want %d", got, tc.early)
+			}
+			fanOut.start()
+			fanOut.start()
+			if got := len(fills); got != 1 {
+				t.Fatalf("%d fills after the lead answered, want exactly one", got)
+			}
+		})
 	}
 }
 
@@ -544,8 +669,8 @@ func TestBoxWaitLeavesPendingRulesToAPerson(t *testing.T) {
 		t.Fatalf("blocked=%v said=%q after the approval", h.w.blockedNow(), h.lastSaid())
 	}
 	h.read(func() {
-		if h.moves != 1 || h.opened != 1 {
-			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		if h.moves != 1 || h.opened != 0 {
+			t.Fatalf("moves=%d opened=%d, want the session moved by itself, and no warm box ahead of it", h.moves, h.opened)
 		}
 	})
 }
@@ -573,8 +698,8 @@ func TestBoxWaitLeavesServiceRulesToAPerson(t *testing.T) {
 		t.Fatalf("blocked=%v said=%q once it was settled", h.w.blockedNow(), h.lastSaid())
 	}
 	h.read(func() {
-		if h.moves != 1 || h.opened != 1 {
-			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		if h.moves != 1 || h.opened != 0 {
+			t.Fatalf("moves=%d opened=%d, want the session moved by itself, and no warm box ahead of it", h.moves, h.opened)
 		}
 	})
 }
@@ -1154,13 +1279,15 @@ func TestBoxWaitSaysWhatIsWrongWithTheProjectFile(t *testing.T) {
 		t.Fatalf("blocked=%v said=%q, want the approval, and no word of the file", h.w.blockedNow(), said)
 	}
 	h.set(func() { h.answer, h.sign = nil, "approved" })
+	unblocked := 0
+	h.w.unblocked = func() { unblocked++ }
 	h.w.poll()
 	if h.w.blockedNow() || h.lastSaid() != "" {
 		t.Fatalf("blocked=%v said=%q after the fix", h.w.blockedNow(), h.lastSaid())
 	}
 	h.read(func() {
-		if h.moves != 1 || h.opened != 1 {
-			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		if h.moves != 1 || h.opened != 0 || unblocked != 1 {
+			t.Fatalf("moves=%d opened=%d unblocked=%d, want the session moved by itself, what the file says read first, and no warm box ahead of it", h.moves, h.opened, unblocked)
 		}
 	})
 }
@@ -1293,7 +1420,7 @@ func TestAnUnfilteredSessionWaitsOnlyForTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{Egress: "open", AutoUp: true, Network: true}, rt: runtime.Runtime{Name: "docker"}}
-	w := a.newACPBoxWait(&acpctl.Control{}, &acpproxy.Restarter{}, box.RunSpec{Repo: repo}, func() {})
+	w := a.newACPBoxWait(&acpctl.Control{}, &acpproxy.Restarter{}, box.RunSpec{Repo: repo}, func() {}, func() {})
 	cancelled = w.cancel
 	if w.childFailedHook() != nil {
 		t.Fatal("an unfiltered session would hold prompts for a real box that fails")
@@ -1354,7 +1481,7 @@ func TestBoxWaitTellsEveryThreadAboutAnotherBox(t *testing.T) {
 	h.set(func() { h.answer, h.sign = nil, "lock free" })
 	h.w.poll()
 	h.read(func() {
-		if h.w.blockedNow() || h.moves != 1 || h.opened != 1 || h.said[len(h.said)-1] != "" {
+		if h.w.blockedNow() || h.moves != 1 || h.opened != 0 || h.said[len(h.said)-1] != "" {
 			t.Fatalf("blocked=%v moves=%d opened=%d said=%q", h.w.blockedNow(), h.moves, h.opened, h.said)
 		}
 	})
@@ -1575,22 +1702,23 @@ func TestLaunchWaitReporterWritesOneByteAndHidesTheDescriptor(t *testing.T) {
 		t.Fatal("the fixture did not clear the flag")
 	}
 	t.Setenv(acpLaunchWaitEnv, strconv.Itoa(int(write.Fd())))
-	report := acpLaunchWaitReporter()
+	report, own := acpLaunchWaitReporter()
 	if report == nil || !cloexec() {
 		t.Fatalf("reporter=%v, close-on-exec=%v", report != nil, cloexec())
 	}
 	report(true)
 	report(false)
-	got := make([]byte, 2)
+	own()
+	got := make([]byte, 3)
 	if _, err := io.ReadFull(read, got); err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string([]byte{acpLaunchWaiting, acpLaunchDone}) {
+	if string(got) != string([]byte{acpLaunchWaiting, acpLaunchDone, acpLaunchOwnBoxes}) {
 		t.Fatalf("wrote %q", got)
 	}
 	for _, unset := range []string{"", "not a number", "2"} {
 		t.Setenv(acpLaunchWaitEnv, unset)
-		if acpLaunchWaitReporter() != nil {
+		if report, _ := acpLaunchWaitReporter(); report != nil {
 			t.Fatalf("%q gave a reporter, and a child would write to whatever that descriptor is", unset)
 		}
 	}

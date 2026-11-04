@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -451,6 +452,109 @@ func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) 
 	data, readErr := os.ReadFile(recorder)
 	if readErr != nil || !strings.Contains(string(data), "compose -p "+ComposeProjectFor(repo, owner)) {
 		t.Fatalf("filtered launch did not use its private Compose project: %v\n%s", readErr, data)
+	}
+}
+
+// A later box of an editor session uses the services its session already runs: it starts nothing, so it
+// needs no exclusive lock while the boxes already running hold the shared side, and it cannot recreate
+// a service under them. Anything that does not match goes the whole way and stays visible there.
+func TestSessionBoxJoinsTheServicesItsSessionRuns(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := []byte("services:\n  db:\n    image: app:1\n    depends_on: [cache]\n  cache:\n    image: redis:8\n")
+	if err := os.WriteFile(compose, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const owner = "supervisor-one"
+	session := RunSpec{Repo: repo, ActivitySource: owner, SupervisorID: owner}
+	running := serviceDefinition(body, []string{"cache", "db"})
+	fixture := func() *filteredDaemonFixture {
+		return &filteredDaemonFixture{serviceDefinition: running,
+			composeServices: map[string]string{"db": strings.Repeat("a", 64), "cache": strings.Repeat("b", 64)},
+			extraNetworks: []runtime.DockerNetwork{{Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true,
+				Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}}}
+	}
+	resolve := func(t *testing.T, ctx context.Context, docker filteredDocker, spec RunSpec) (*preparedFilteredServices, string, error) {
+		t.Helper()
+		recorder := filepath.Join(t.TempDir(), "runtime.log")
+		_, bindings, clients, prepared, err := resolveServiceBindings(ctx, docker, overrideRecorderRuntime(t, recorder), spec, compose,
+			&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+		if err == nil && (len(bindings) != 1 || len(clients) != 2) {
+			t.Fatalf("bindings=%v clients=%v, want db bound and both services allowed to the proxy", bindings, clients)
+		}
+		data, _ := os.ReadFile(recorder)
+		return prepared, string(data), err
+	}
+
+	t.Run("joins beside a running box and starts nothing", func(t *testing.T) {
+		unlock, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		prepared, calls, err := resolve(t, ctx, fixture(), session)
+		if err != nil {
+			t.Fatalf("a later box waited on, or failed at, what the running box holds: %v", err)
+		}
+		if !prepared.joined || strings.Contains(calls, " up ") {
+			t.Fatalf("joined=%v, and Compose was called:\n%s", prepared.joined, calls)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		spec   RunSpec
+		change func(*filteredDaemonFixture)
+	}{
+		{name: "services started from other bytes", spec: session, change: func(d *filteredDaemonFixture) { d.serviceDefinition = "another" }},
+		{name: "a service stopped", spec: session, change: func(d *filteredDaemonFixture) { delete(d.composeServices, "cache") }},
+		{name: "no supervisor", spec: RunSpec{Repo: repo, ActivitySource: owner}},
+		{name: "another session's project", spec: RunSpec{Repo: repo, ActivitySource: "supervisor-two", SupervisorID: "supervisor-two"},
+			change: func(d *filteredDaemonFixture) { d.extraNetworks = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docker := fixture()
+			if tc.change != nil {
+				tc.change(docker)
+			}
+			prepared, calls, err := resolve(t, t.Context(), docker, tc.spec)
+			if prepared != nil && prepared.joined {
+				t.Fatal("joined services it does not match")
+			}
+			if strings.Count(calls, " up --no-start ") == 0 && err == nil {
+				t.Fatalf("neither a launch nor a refusal:\n%s", calls)
+			}
+			if prepared != nil {
+				prepared.cleanup()
+			}
+		})
+	}
+}
+
+// A joined box goes straight to the shared side of the lock, so the box already running cannot hold it
+// up, and it never runs Compose.
+func TestFilteredLaunchOfAJoinedBoxTakesNoExclusiveLock(t *testing.T) {
+	f, docker := filteredFixture(t)
+	address := netip.MustParseAddr("172.31.0.16")
+	f.servicesNet = ComposeProject(f.record.Project) + "_filtered"
+	f.preparedServices = &preparedFilteredServices{joined: true, addresses: map[string]netip.Addr{"db": address}}
+	docker.networkMembers = map[string]netip.Addr{strings.Repeat("a", 64): address}
+	docker.composeServices = map[string]string{"db": strings.Repeat("a", 64)}
+	unlock, err := forkspace.LockServiceLaunch(t.Context(), f.record.Project, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	if code, err := f.launch(ctx, RunSpec{Repo: f.record.Project}, nil, nil, io.Discard, io.Discard); err != nil || code != 7 {
+		t.Fatalf("filtered launch = (%d, %v)", code, err)
 	}
 }
 

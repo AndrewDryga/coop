@@ -368,7 +368,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if projectRepo == "" {
 		projectRepo = f.record.Project // trusted execution record; synthetic/recovery launches may omit RunSpec.Repo
 	}
-	if f.preparedServices != nil {
+	if f.preparedServices != nil && !f.preparedServices.joined {
 		unlock, err := lockServiceStart(ctx, projectRepo, spec, f.sections)
 		if err != nil {
 			return -1, err

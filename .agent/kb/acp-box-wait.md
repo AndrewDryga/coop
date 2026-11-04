@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
 updated: 2026-11-04
 ---
 
@@ -72,8 +72,29 @@ turn is running. The move itself is the wait's job, through `MoveOffHolding`, si
 would never fire with a prompt held.
 
 Trap: warm boxes. A fill while blocked would park a box that can serve no switch, so fills return
-`errACPBoxWaiting` and `boxOpened` starts the fan-out when the session clears. The warm-off check at
-startup skips a blocked session, or the pool stays off for its whole life.
+`errACPBoxWaiting`, and the warm-off check at startup skips a blocked session, or the pool stays off for
+its whole life. The fan-out comes when the box moved onto has answered (`confirmMove`), not when the wait
+clears: every box takes `LockServiceLaunch` exclusively to start services and then holds the shared side
+for its life, so a warm box that got there first left the session's own box waiting on the lock with its
+messages unsent, for as long as the warm box stayed parked. For the same reason a plain connect in a
+project with a Compose file has no `leadAnswerGrace` timer (`acpFanOut.arm`): the lead answers first, however
+long its services take, and a lead that never answers leaves the pool empty there.
+
+Trap: a later box of a session must not start services at all. `up --no-start --force-recreate` runs in
+preparation and again at launch on the session's own Compose project, with the exclusive lock dropped in
+between. That gap explains `db` going away under a running box, seen once in 2026-11 and read from the code, not caught
+live: a warm box can recreate the services stopped before the lead takes its shared side, then wait at launch,
+leaving `db` created and not started. And with the lead holding the shared side, a warm box could never get the exclusive lock, so it
+would never park and a switch to it would race the other warm boxes for the lock. So a box of a supervised
+session whose services already run the same approved bytes and closure (`coop.service-definition`, checked
+under the shared lock by `joinSessionServices`) joins them: no Compose, no exclusive lock, no bind source
+opened, which is all that lock guards. Anything else takes the full path, and its wait. If only the session's
+own parked boxes keep its own box out (a service stopped, say), the child says so on the launch-wait pipe
+(`OnOwnBoxesHoldLaunch`) and the supervisor drains the pool, since those boxes never stop by themselves. A
+parked box never asks this, or they would stop each other. After any cold box in a project with services the pool
+stays shut until it answers (`awaitAnswer`), or the refill would race it for the lock just freed. Open-mode
+services (`startServicesFileContext`) do not join yet: a warm box waits on the lock until it is taken by a switch,
+then `heedLaunchWait` drains its neighbours, and a refill can still race it.
 
 Fork ACP shares the wait, but its hooks have no start notice, so a thread hears about it only when it
 sends a message. See [[restricted-project-builds-are-explicit]].
@@ -158,6 +179,9 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-04 — the session's own box starts first after a wait and at a plain connect, and later boxes join
+  its services. Verified with driver runs (7 clean in a row, then one refused over a changed grok account) and a
+  plain connect then a warm switch: `db` kept its container and stayed reachable from every box.
 - 2026-11-04 — a box that waits for the service launch lock says so in a terminal, a loop and a thread, and
   open and offline sessions wait on a holding child too, as `run.go` takes the same lock for them. Verified
   on real Docker: open and filtered terminals and an open editor thread beside a running box.

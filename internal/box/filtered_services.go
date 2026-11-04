@@ -3,6 +3,8 @@ package box
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -210,6 +212,7 @@ type preparedFilteredServices struct {
 	addresses      map[string]netip.Addr
 	cleanup        func()
 	allowCases     bool
+	joined         bool // an earlier box of this session started them, and this one must not touch them
 }
 
 func (s *preparedFilteredServices) check(ctx context.Context, docker filteredDocker, network, project string) error {
@@ -319,6 +322,13 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if projectRepo == "" {
 		projectRepo = spec.Repo
 	}
+	if joined := joinSessionServices(ctx, docker, rt, spec, projectRepo, composeFile, approval, grants, sections); joined != nil {
+		bindings, clients, err := filteredServiceGrants(grants, joined.closure, joined.addresses, joined.network)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		return joined.network, bindings, clients, &preparedFilteredServices{joined: true, addresses: joined.addresses}, nil
+	}
 	unlockLaunch, err := lockServiceStart(ctx, projectRepo, spec, sections)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -352,13 +362,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 	}
 	rt = bound
-	selected := make([]string, 0, len(grants))
-	for _, grant := range grants {
-		if name := grant.Rule.To.Service; !slices.Contains(selected, name) {
-			selected = append(selected, name)
-		}
-	}
-	slices.Sort(selected)
+	selected := grantedServices(grants)
 	if err := refuseRunningServiceWriters(ctx, rt, spec.Repo); err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -419,6 +423,9 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	}
 	seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
 	labels := runServiceLabels(spec, owner)
+	if labels != nil {
+		labels[serviceDefinitionLabel] = serviceDefinition(data, closure)
+	}
 	seed, err := filteredServiceOverride(network, closure, seedSubnet, nil, labels)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -458,19 +465,10 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		cleanupFinal()
 		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
 	}
-	var bindings []networkgateway.ServiceBinding
-	for _, grant := range grants {
-		name := grant.Rule.To.Service
-		address, ok := addresses[name]
-		if !ok {
-			cleanupFinal()
-			return "", nil, nil, nil, fmt.Errorf("the approved service %q has no prepared address on %s", name, network)
-		}
-		bindings = append(bindings, networkgateway.ServiceBinding{Name: name, RuleID: grant.ID, Address: address})
-	}
-	clients := make([]networkgateway.ServiceProxyClient, 0, len(closure))
-	for _, name := range closure {
-		clients = append(clients, networkgateway.ServiceProxyClient{Name: name, Address: addresses[name]})
+	bindings, clients, err := filteredServiceGrants(grants, closure, addresses, network)
+	if err != nil {
+		cleanupFinal()
+		return "", nil, nil, nil, err
 	}
 	keepSnapshot = true
 	prepared := &preparedFilteredServices{runtime: rt, repo: spec.Repo, file: composeFile, data: data, owner: owner,
@@ -479,6 +477,101 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		readOnly:       spec.RepoReadOnly, override: finalPath, roots: slices.Clone(exposedRoots), selected: selected, names: selected, sections: sections, addresses: addresses,
 		cleanup: func() { cleanupFinal(); cleanupSnapshot() }}
 	return network, bindings, clients, prepared, nil
+}
+
+// serviceDefinitionLabel marks a session's service container with what it was started from.
+const serviceDefinitionLabel = "coop.service-definition"
+
+// serviceDefinition names the approved file's exact bytes and the services started from it.
+func serviceDefinition(data []byte, closure []string) string {
+	sum := sha256.Sum256(append(append(slices.Clone(data), 0), strings.Join(closure, "\x00")...))
+	return hex.EncodeToString(sum[:])
+}
+
+func grantedServices(grants []egress.Grant) []string {
+	selected := make([]string, 0, len(grants))
+	for _, grant := range grants {
+		if name := grant.Rule.To.Service; !slices.Contains(selected, name) {
+			selected = append(selected, name)
+		}
+	}
+	slices.Sort(selected)
+	return selected
+}
+
+func filteredServiceGrants(grants []egress.Grant, closure []string, addresses map[string]netip.Addr, network string) ([]networkgateway.ServiceBinding, []networkgateway.ServiceProxyClient, error) {
+	var bindings []networkgateway.ServiceBinding
+	for _, grant := range grants {
+		name := grant.Rule.To.Service
+		address, ok := addresses[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("the approved service %q has no prepared address on %s", name, network)
+		}
+		bindings = append(bindings, networkgateway.ServiceBinding{Name: name, RuleID: grant.ID, Address: address})
+	}
+	clients := make([]networkgateway.ServiceProxyClient, 0, len(closure))
+	for _, name := range closure {
+		clients = append(clients, networkgateway.ServiceProxyClient{Name: name, Address: addresses[name]})
+	}
+	return bindings, clients, nil
+}
+
+type joinedServices struct {
+	network   string
+	closure   []string
+	addresses map[string]netip.Addr
+}
+
+// joinSessionServices lets a box of an editor session use the services an earlier box of that session
+// started, if they still run what this box would start. Starting them again would need the exclusive
+// launch lock, which every running box holds shared for its life, and would recreate them under those
+// boxes. Joining opens no bind source, which is all the exclusive lock guards, so the shared side is
+// enough to keep a launch out while this looks. Anything else returns nil, and the full launch path
+// decides and reports.
+func joinSessionServices(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, projectRepo, composeFile string, approval *networkstate.Approval, grants []egress.Grant, sections *launchSections) *joinedServices {
+	owner := runServiceOwner(spec)
+	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" {
+		return nil
+	}
+	unlock, err := lockServiceLaunch(ctx, projectRepo, false, RunSpec{}, sections)
+	if err != nil {
+		return nil
+	}
+	defer unlock()
+	data, err := readValidatedCompose(composeFile, spec.Repo, spec.RepoReadOnly)
+	if err != nil || checkApprovedServicesData(approval, data) != nil || refuseRunningServiceWriters(ctx, rt, spec.Repo) != nil {
+		return nil
+	}
+	var doc composeDoc
+	if yaml.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	closure, err := composeServiceClosure(doc.Services, grantedServices(grants))
+	if err != nil {
+		return nil
+	}
+	composeProject := ComposeProjectFor(spec.Repo, owner)
+	definition := serviceDefinition(data, closure)
+	for _, name := range closure {
+		if _, err := docker.LabeledComposeServiceID(ctx, composeProject, name, serviceDefinitionLabel, definition); err != nil {
+			return nil
+		}
+	}
+	networks, err := docker.Networks(ctx)
+	if err != nil {
+		return nil
+	}
+	name := composeProject + "_filtered"
+	for _, candidate := range networks {
+		if candidate.Name != name {
+			continue
+		}
+		// The launch's own check proves each service sits at the address worked out here.
+		if _, addresses, err := filteredServiceAddresses(candidate, closure); err == nil {
+			return &joinedServices{network: name, closure: closure, addresses: addresses}
+		}
+	}
+	return nil
 }
 
 // composeFailure is a failed Compose step with Compose's own last lines: the exit status alone hides

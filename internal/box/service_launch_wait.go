@@ -50,6 +50,9 @@ func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec Ru
 	if tell {
 		spec.OnServiceLaunchWait(true)
 	}
+	if exclusive && own && spec.OnOwnBoxesHoldLaunch != nil && spec.ActivityRole != forkspace.ExecutionRoleWarm {
+		spec.OnOwnBoxesHoldLaunch()
+	}
 	unlock, err = forkspace.LockServiceLaunch(ctx, repo, exclusive)
 	if err != nil {
 		return nil, err

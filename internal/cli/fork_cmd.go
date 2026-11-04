@@ -1161,7 +1161,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	if innerProcess {
 		spec.HandshakeOnly = os.Getenv(acpHandshakeEnv) == "1"
-		spec.OnServiceLaunchWait = acpLaunchWaitReporter()
+		spec.OnServiceLaunchWait, spec.OnOwnBoxesHoldLaunch = acpLaunchWaitReporter()
 	}
 	if capture != nil {
 		spec.CapturedEgress = capture

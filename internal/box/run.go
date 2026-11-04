@@ -247,6 +247,9 @@ type RunSpec struct {
 	// project to let it start its services (true), and that the wait ended (false). A supervisor with
 	// no terminal tells its threads; everyone else reads the launch's own narration.
 	OnServiceLaunchWait func(waiting bool)
+	// OnOwnBoxesHoldLaunch, when set, hears that only this session's parked boxes keep its own box from
+	// starting services. They never stop by themselves, so its supervisor has to stop them.
+	OnOwnBoxesHoldLaunch func()
 
 	// StartingNotice is optional interactive guidance directly below the Starting heading.
 	// It is presentation only, never a runtime callback or serialized launch authority.

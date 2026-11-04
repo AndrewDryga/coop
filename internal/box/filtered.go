@@ -173,6 +173,7 @@ type filteredDocker interface {
 	NetworkMembers(context.Context, string) (map[string]netip.Addr, error)
 	Networks(context.Context) ([]runtime.DockerNetwork, error)
 	ComposeServiceID(context.Context, string, string) (string, error)
+	LabeledComposeServiceID(context.Context, string, string, string, string) (string, error)
 }
 
 // All policy and exposure checks precede runtime mutation. A returned execution

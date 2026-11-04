@@ -393,7 +393,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		Homes:          a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
 	}
 	spec.HandshakeOnly = os.Getenv(acpHandshakeEnv) == "1"
-	spec.OnServiceLaunchWait = acpLaunchWaitReporter()
+	spec.OnServiceLaunchWait, spec.OnOwnBoxesHoldLaunch = acpLaunchWaitReporter()
 	controllerJob, err := box.ControllerJobFromEnvironment()
 	if err != nil {
 		return 1, err
@@ -516,6 +516,58 @@ func (a *app) ensureACPImage() error {
 // feel: a provider switch is a human decision, many seconds away, and the fills take about a second.
 const leadAnswerGrace = 3 * time.Second
 
+// acpFanOut decides when the warm pool first fills. Before the editor has its initialize answer,
+// warming waits. A spawn that happens in that window is the LEAD's own, and re-centring the pool on it
+// would start the very fan-out being deferred, so the gate, not the call site, decides. Every later
+// spawn is a switch, where the editor is not blocked on anything and re-centring immediately is what
+// keeps the next switch warm.
+type acpFanOut struct {
+	lead    func() string // the provider the session runs now
+	waiting func() bool   // the session's own box is not up yet (acpBoxWait.waitingNow)
+	fill    func(string)  // re-centre the pool on this provider
+	open    atomic.Bool
+	once    sync.Once
+}
+
+func (f *acpFanOut) start() {
+	f.once.Do(func() {
+		f.open.Store(true)
+		f.fillNow(f.lead())
+	})
+}
+
+func (f *acpFanOut) fillNow(active string) {
+	if !f.waiting() { // otherwise the fan-out comes when the session's box can start (boxOpened)
+		f.fill(active)
+	}
+}
+
+// rebalance re-centres the pool after a spawn, once the fan-out has started.
+func (f *acpFanOut) rebalance(active string) {
+	if f.open.Load() {
+		f.fillNow(active)
+	}
+}
+
+// arm starts the fan-out by itself after grace: a lead that never answers (a box that waits out a
+// reset, or fails outright) must still leave the other providers ready. A project with services goes
+// without this. Every box takes the service launch lock to start them, so the lead must get there
+// first, however long that takes, and a later box then joins what the lead started.
+func (f *acpFanOut) arm(hasServices bool, grace time.Duration) (stop func()) {
+	if hasServices {
+		return func() {}
+	}
+	timer := time.AfterFunc(grace, f.start)
+	return func() { timer.Stop() }
+}
+
+// acpProjectHasServices reports whether a box in repo may start project services. A project file that
+// does not load ends the session elsewhere, with its reason.
+func acpProjectHasServices(repo string) bool {
+	pj, err := project.Load(repo)
+	return err == nil && box.ComposeFileAt(repo, pj.ComposeRel()) != ""
+}
+
 // cmdACPSupervise serves the editor on stdio and runs the real `coop acp <rest>` as a
 // child (COOP_ACP_INNER set so the child runs the box, not another supervisor). When
 // the child's container dies, acpproxy starts a new child and replays the ACP
@@ -561,13 +613,13 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// Filtered sessions connect before their project box is ready. rebalance is not armed yet, so the
 	// wait reaches it through this name: it fires only once a blocked session clears, long after.
 	restarter := &acpproxy.Restarter{}
-	var boxOpened func()
+	var boxOpened, boxYield func()
 	boxRepo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return 1, err
 	}
 	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: boxRepo, Workdir: boxRepo, Agent: ctrl.LeadProvider(), Network: a.cfg.Network, SupervisorID: superID},
-		func() { boxOpened() })
+		func() { boxOpened() }, func() { boxYield() })
 	defer a.acpBoxWait.close() // from here on, a rebuild may be running in its own process group
 
 	// The image is the one thing every child needs and no child can create. Build it HERE — once, in
@@ -622,50 +674,30 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	})
 	// After any spawn — Run's first one included — the pool re-centres on the provider now in use:
 	// warm the others, the one just left included, and drop a spare of the active one.
-	rebalanceNow := func(active string) {
-		if a.acpBoxWait.waitingNow() {
-			return // the fan-out comes when the session's box can start (boxOpened)
-		}
+	//
+	// Filling at connect used to start three more containers in the same millisecond as the lead's own,
+	// and the lead's adapter then booted on a machine busy starting them. Measured 2026-09-21 on this
+	// host: the whole initialize is ~0.97 s with the pool on versus ~0.81 s with COOP_ACP_WARM=0, while
+	// the time BEFORE the first spawn is identical (~0.12 s either way) — so the cost is not coop's own
+	// startup work, it is contention with the fan-out. Deferring the fan-out until the editor has been
+	// answered keeps the pool (a switch is a human decision away, many seconds later) and gives the
+	// editor its answer at the unwarmed speed.
+	fanOut := &acpFanOut{lead: ctrl.LeadProvider, waiting: a.acpBoxWait.waitingNow, fill: func(active string) {
 		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
-	}
-	// Before the editor has its initialize answer, warming waits. A spawn that happens in that window
-	// is the LEAD's own, and re-centring the pool on it would start the very fan-out being deferred —
-	// so the gate, not the call site, decides. Every later spawn is a switch, where the editor is not
-	// blocked on anything and re-centring immediately is what keeps the next switch warm.
-	var fanOutOpen atomic.Bool
-	rebalance := func(active string) {
-		if fanOutOpen.Load() {
-			rebalanceNow(active)
-		}
-	}
+	}}
+	rebalance := fanOut.rebalance
+	// The box moved onto publishes the ports a fixed file names, so they are read before it starts.
 	var fixedProject sync.Once
-	boxOpened = func() {
+	a.acpBoxWait.unblocked = func() {
 		if a.acpCapture != nil && a.acpCapture.BrokenFile {
 			fixedProject.Do(func() { a.readFixedProject(ctrl, boxRepo, superID) })
 		}
+	}
+	boxOpened = func() {
+		a.acpBoxWait.unblocked()
 		rebalance(ctrl.LeadProvider())
 	}
-	// Warm the others so a later provider switch swaps to a hot adapter — but NOT while the editor is
-	// still waiting for its initialize answer.
-	//
-	// Filling here used to start three more containers in the same millisecond as the lead's own, and
-	// the lead's adapter then booted on a machine busy starting them. Measured 2026-09-21 on this
-	// host: the whole initialize is ~0.97 s with the pool on versus ~0.81 s with COOP_ACP_WARM=0,
-	// while the time BEFORE the first spawn is identical (~0.12 s either way) — so the cost is not
-	// coop's own startup work, it is contention with the fan-out. Deferring the fan-out until the
-	// editor has been answered keeps the pool (a switch is a human decision away, many seconds later)
-	// and gives the editor its answer at the unwarmed speed.
-	//
-	// The fallback matters as much as the deferral: a lead that never answers — a box that waits out
-	// a reset, or fails outright — must still leave the other providers ready, which is what the
-	// eager fill was really for. So whichever comes first wins, and it happens exactly once.
-	var fanOut sync.Once
-	startFanOut := func() {
-		fanOut.Do(func() {
-			fanOutOpen.Store(true)
-			rebalanceNow(ctrl.LeadProvider())
-		})
-	}
+	boxYield = pool.Drain
 	// A filtered session follows `coop approve` without the editor reconnecting: it admits again when
 	// the host's approval generation moves and replaces its boxes between turns (acp_refresh.go). A
 	// replacement starts parked, like a warm box, on the selection the next spawn would use; parked
@@ -683,9 +715,8 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		return child, err
 	})
 	// Armed only now: a warm fill reads the refresh (currentACPCapture) built just above.
-	ctrl.OnInitialized(startFanOut)
-	fanOutFallback := time.AfterFunc(leadAnswerGrace, startFanOut)
-	defer fanOutFallback.Stop()
+	ctrl.OnInitialized(fanOut.start)
+	defer fanOut.arm(acpProjectHasServices(boxRepo), leadAnswerGrace)()
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		t, psName, ok := ctrl.SpawnTarget()
 		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
@@ -726,6 +757,9 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		acpproxy.Trace("spawn: %s box for %s@%s", kind, child.Provider, child.Account)
 		a.acpRefresh.started(child)
 		a.acpBoxWait.started(child)
+		if kind == "cold" && !child.HoldPrompts && acpProjectHasServices(boxRepo) {
+			a.acpBoxWait.awaitAnswer()
+		}
 		a.acpServe.setLive(child.ServeBinds)
 		a.acpServe.follow(child.ServeContainer)
 		rebalance(child.Provider)

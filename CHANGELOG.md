@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor session in a project with services no longer hangs after a wait.** Once `coop approve` or
+  `coop build` clears, the session's own box starts before its warm boxes, and the warm boxes share the
+  services it started instead of restarting them under it. A switch to another provider stays instant.
+
 - **The installer finishes when it runs from your home folder.** `coop build --egress open` now builds
   the shared image from there, so the install, its retry command and the next step, `coop login`, all
   work in a new terminal. Agent runs still refuse the home folder.

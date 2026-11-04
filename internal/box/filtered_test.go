@@ -30,6 +30,7 @@ import (
 )
 
 type filteredDaemonFixture struct {
+	serviceDefinition                      string // what LabeledComposeServiceID finds on composeServices
 	mu                                     sync.Mutex
 	f                                      *filteredExecution
 	containers                             map[string]runtime.DockerContainer
@@ -129,6 +130,15 @@ func (d *filteredDaemonFixture) ComposeServiceID(_ context.Context, _, service s
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if id, ok := d.composeServices[service]; ok {
+		return id, nil
+	}
+	return "", errors.New("service " + service + " is not running as exactly one container")
+}
+
+func (d *filteredDaemonFixture) LabeledComposeServiceID(_ context.Context, _, service, _, value string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if id, ok := d.composeServices[service]; ok && d.serviceDefinition == value {
 		return id, nil
 	}
 	return "", errors.New("service " + service + " is not running as exactly one container")

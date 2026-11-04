@@ -370,3 +370,38 @@ func TestFilteredLaunchSaysWhenItsServicesWaitForAnotherBox(t *testing.T) {
 		t.Fatalf("said %q", got)
 	}
 }
+
+// Only the session's own box asks for its parked neighbours to stop. A parked box asking the same would
+// have them stop each other.
+func TestOnlyTheSessionsOwnBoxAsksParkedBoxesToStop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		role forkspace.ExecutionRole
+		want int
+	}{{"the session's box", forkspace.ExecutionRoleActive, 1}, {"another parked box", forkspace.ExecutionRoleWarm, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func(old time.Duration) { serviceLaunchWaitNotice = old }(serviceLaunchWaitNotice)
+			serviceLaunchWaitNotice = time.Millisecond
+			repo := t.TempDir()
+			recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleWarm})
+			held, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			asked := 0
+			spec := RunSpec{ActivitySource: "session", ActivityRole: tc.role, OnOwnBoxesHoldLaunch: func() { asked++; held() },
+				OnServiceLaunchWait: func(bool) { t.Error("a thread heard about the session's own boxes") }}
+			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+			defer cancel()
+			unlock, err := lockServiceLaunch(ctx, repo, true, spec, nil)
+			if err == nil {
+				unlock()
+			} else {
+				held()
+			}
+			if asked != tc.want {
+				t.Fatalf("asked %d times, want %d", asked, tc.want)
+			}
+		})
+	}
+}

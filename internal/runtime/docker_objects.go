@@ -285,14 +285,27 @@ func (d *Docker) NetworkMembers(ctx context.Context, network string) (map[string
 // running container ID. Ambiguity fails: two replicas are two addresses, and a
 // grant names exactly one destination.
 func (d *Docker) ComposeServiceID(ctx context.Context, project, service string) (string, error) {
+	return d.composeServiceID(ctx, project, service)
+}
+
+// LabeledComposeServiceID is ComposeServiceID for a running container that also carries label=value.
+func (d *Docker) LabeledComposeServiceID(ctx context.Context, project, service, label, value string) (string, error) {
+	if !dockerToken(label, 128) || !dockerToken(value, 512) || strings.Contains(label, "=") {
+		return "", errors.New("invalid Compose service label")
+	}
+	return d.composeServiceID(ctx, project, service, "--filter", "label="+label+"="+value)
+}
+
+func (d *Docker) composeServiceID(ctx context.Context, project, service string, filters ...string) (string, error) {
 	if !dockerToken(project, 256) || !dockerToken(service, 256) {
 		return "", errors.New("invalid Compose service reference")
 	}
 	if err := d.Verify(ctx); err != nil {
 		return "", err
 	}
-	data, err := d.output(ctx, 64<<10, "container", "ls", "--no-trunc", "--filter", "label=com.docker.compose.project="+project,
-		"--filter", "label=com.docker.compose.service="+service, "--format", "{{.ID}}")
+	args := append([]string{"container", "ls", "--no-trunc", "--filter", "label=com.docker.compose.project=" + project,
+		"--filter", "label=com.docker.compose.service=" + service, "--format", "{{.ID}}"}, filters...)
+	data, err := d.output(ctx, 64<<10, args...)
 	if err != nil {
 		return "", err
 	}
