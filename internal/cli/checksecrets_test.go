@@ -180,7 +180,7 @@ func TestScanVisibleTreeIncludeIgnoredSkipsShadowedAndDeps(t *testing.T) {
 	}
 	mk(".env", "GH="+token+"\n")                // shadowed → never scanned, either mode
 	mk("node_modules/pkg/index.js", "x="+token) // dependency dir → pruned
-	mk("secrets.txt", "token: "+token+"\n")     // plain visible file → flagged
+	mk("notes.txt", "token: "+token+"\n")       // plain visible file → flagged
 
 	scan, err := scanVisibleTree(repo, true)
 	if err != nil {
@@ -193,7 +193,7 @@ func TestScanVisibleTreeIncludeIgnoredSkipsShadowedAndDeps(t *testing.T) {
 	if strings.Contains(joined, "node_modules") {
 		t.Errorf("dependency dirs must be pruned:\n%s", joined)
 	}
-	if !strings.Contains(joined, "secrets.txt") {
+	if !strings.Contains(joined, "notes.txt") {
 		t.Errorf("missed the token in a visible file:\n%s", joined)
 	}
 }
