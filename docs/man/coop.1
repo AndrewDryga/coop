@@ -1967,6 +1967,12 @@ SWITCHING AGENTS
   a Gemini API key, not Vertex AI. Switching never changes this session's
   network rules.
 
+PROJECT BOX
+  With filtered networking the editor connects even when this project's box
+  cannot start yet. Messages wait, the thread says why, and the session moves
+  onto the box once it is ready. Build files you approved with coop build
+  rebuild by themselves; new or changed ones wait for you to run it.
+
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.
   Trace files are saved as ~/.config/coop/acp-trace-<pid>.log and may contain

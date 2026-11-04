@@ -51,12 +51,28 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 
 	ctrl := newForkACPControl(a.cfg, target, workspace)
 	hooks := fixedForkACPHooks(ctrl, repo, workspace)
+	// A fork's box is its project's, so the project's box decides whether it can start.
+	restarter := &acpproxy.Restarter{}
+	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: workspace, PolicyRepo: repo, Workdir: workspace, Agent: target.Provider, Network: a.cfg.Network}, func() {})
+	defer a.acpBoxWait.close()
+	if err := a.acpBoxWait.refresh(context.Background()); err != nil {
+		return 1, err
+	}
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
-		return a.spawnBox(ctx, self, inner, superID, nil, target, "", false, os.Stderr)
+		if err := a.acpBoxWait.refreshStale(ctx); err != nil {
+			acpproxy.Trace("box wait: could not look: %v", err)
+		}
+		child, err := a.spawnBox(ctx, self, inner, superID, nil, target, "", false, os.Stderr)
+		if err == nil {
+			a.acpBoxWait.started(child)
+		}
+		return child, err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{})
+	a.acpBoxWait.start()
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }})
+	a.acpBoxWait.close()
 	cleanupErr := a.reapACPBoxes(superID)
 	if cleanupErr == nil {
 		a.removeACPServices(workspace, superID) // the fork's own children ran its services in the fork
@@ -87,6 +103,7 @@ func fixedForkACPHooks(ctrl *acpctl.Control, repo, workspace string) *acpproxy.H
 		InjectedResponse: base.InjectedResponse,
 		AutoReply:        base.AutoReply,
 		ChildReset:       base.ChildReset,
+		PromptHeld:       base.PromptHeld,
 		ToEditor: func(line []byte) ([]byte, bool) {
 			ctrl.ObserveNativeTargetResponse(line)
 			return line, false

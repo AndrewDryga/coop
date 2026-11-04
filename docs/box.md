@@ -250,9 +250,11 @@ them with ordinary networking.
 
 When a build of changed files is due, an interactive provider launch in a host terminal can offer
 `Build and continue?`, defaulting to No. The prompt shows a saved snapshot of the build files;
-review it, because only those saved files are approved for that build. Headless commands, editor
-connections and unattended runs never ask. They stop and name the build to run. `coop update`
-rebuilds approved files and leaves changed ones for `coop build`, because an update is not a review.
+review it, because only those saved files are approved for that build. Headless commands and
+unattended runs never ask. They stop and name the build to run. `coop update` rebuilds approved
+files and leaves changed ones for `coop build`, because an update is not a review. An editor
+connects anyway, holds your messages and says what to run; see
+[editors](integrations.md#when-the-project-box-is-not-ready).
 
 An editor connection with open networking can build a missing project image automatically.
 Ordinary runs do not rebuild an image after its inputs change; they warn, and you run

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editors connect even when the project box is not ready.** `coop acp` used to exit before
+  answering, so an editor showed a dead server. It now connects, says why in the thread and holds
+  your messages, and no agent runs until the box is ready. The session then moves onto the box and
+  sends what was waiting, with no reconnect.
+
 - **Network reports use plain words.** `coop net inspect` and `coop net blocked` explain every
   reason the network gateway records in a sentence, instead of showing codes such as
   `upstream_reset`. A loop now says "4 packets were blocked, and Coop did not record where they were

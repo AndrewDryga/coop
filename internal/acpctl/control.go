@@ -126,6 +126,7 @@ type Control struct {
 	serve        []ServePort
 	services     []ServiceLink
 	network      *NetworkLimit
+	boxWait      string          // why messages wait for the project's box; "" when they do not
 	problems     []Problem       // found before the first thread opened; told once, to that thread
 	problemsTold bool            // the first thread's start message went out
 	told         map[string]bool // problem texts already shown or queued, so none repeats
@@ -1235,6 +1236,12 @@ func (c *Control) waitStatus(session, provider, account string, at, now time.Tim
 
 // promptHeld is presentation only: the proxy still owns this unadmitted prompt.
 func (c *Control) promptHeld(session string) []byte {
+	c.mu.Lock()
+	wait := c.boxWait
+	c.mu.Unlock()
+	if wait != "" {
+		return c.statusMessage(session, wait)
+	}
 	provider, account, at := c.selectedCooldown()
 	now := time.Now()
 	if at.After(now) {

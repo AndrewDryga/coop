@@ -1137,7 +1137,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	// A local fork ACP launch admits here. A remote session already froze its
 	// policy in the daemon, including open/offline runs that carry no capture.
 	if capture == nil && !innerProcess && sessionsvc.RunIDFromEnv() == "" {
-		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
+		options := a.network.admission()
+		if !repositoryReadOnly { // this one has a supervisor below, to connect first and report the wait
+			options.ProjectBuild = box.DeferProjectBuild
+		}
+		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, options)
 		if err != nil {
 			return 1, err
 		}
@@ -1150,6 +1154,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	if capture != nil {
 		spec.CapturedEgress = capture
+		spec.HandshakeOnly = innerProcess && os.Getenv(acpHandshakeEnv) == "1"
 		// This child is the exact owner of the gateway it starts: nothing else may
 		// seal its receipt or remove its containers. The daemon ends a turn's child
 		// with a signal, so that signal has to arrive as a cancellation this run can

@@ -54,12 +54,20 @@ func (c *Control) SetNetwork(limit NetworkLimit) {
 	c.mu.Unlock()
 }
 
+// SetBoxWait records why messages wait for the project's box, for every thread that opens and every
+// message sent from now on; "" says they no longer wait. The supervisor writes it, in fixed sentences.
+func (c *Control) SetBoxWait(text string) {
+	c.mu.Lock()
+	c.boxWait = text
+	c.mu.Unlock()
+}
+
 // AddStartProblems records problems found while the session started. They go out once, with the
 // first thread's start message, or with the next session update once that message has gone.
 func (c *Control) AddStartProblems(problems ...Problem) {
 	for _, p := range problems {
 		c.mu.Lock()
-		text := problemText(p)
+		text := ProblemText(p)
 		fresh, late := !c.told[text], c.problemsTold
 		c.told[text] = true
 		if fresh && !late {
@@ -101,6 +109,11 @@ func (c *Control) startNoticeFor(line []byte) []byte {
 		problems, c.problemsTold = c.problems, true
 	}
 	text := startNoticeText(c.serve, c.services, c.network, problems)
+	if c.boxWait != "" {
+		// The ports and services above belong to a box that is not running yet, but they will be right
+		// once it is. What the person has to do comes first.
+		text = strings.TrimSuffix(c.boxWait+"\n\n"+text, "\n\n")
+	}
 	c.mu.Unlock()
 	if text == "" {
 		return nil
@@ -137,7 +150,7 @@ func startNoticeText(ports []ServePort, services []ServiceLink, network *Network
 		blocks = append(blocks, networkText(*network))
 	}
 	for _, p := range problems {
-		blocks = append(blocks, problemText(p))
+		blocks = append(blocks, ProblemText(p))
 	}
 	return strings.Join(blocks, "\n\n")
 }
@@ -188,7 +201,8 @@ func networkText(n NetworkLimit) string {
 }
 
 // problemText renders one problem on one line: the title in bold, the detail, then what to run.
-func problemText(p Problem) string {
+// ProblemText renders a problem the way a thread's start message does.
+func ProblemText(p Problem) string {
 	text := "⚠ **" + markdownText(p.Title) + ":** " + markdownText(p.Detail)
 	if p.Command != "" {
 		text += " Run " + codeSpan(p.Command)

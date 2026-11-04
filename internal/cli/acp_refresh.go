@@ -169,8 +169,10 @@ func (a *app) newACPNetworkRefresh(ctrl *acpctl.Control, restarter *acpproxy.Res
 			target, preset, ok := ctrl.PeekSpawnTarget()
 			return acpSpawn{target: target, preset: preset, ok: ok}, ok
 		},
-		spawn:   func(want acpSpawn) (*acpproxy.Child, error) { return spawn(ctx, want) },
-		idle:    restarter.Idle,
+		spawn: func(want acpSpawn) (*acpproxy.Child, error) { return spawn(ctx, want) },
+		// A child that only holds prompts runs no turn, so an approval can land under a held prompt:
+		// that approval may be the very thing the prompt is waiting for.
+		idle:    func() bool { return restarter.Idle() || restarter.Holding() },
 		restart: restarter.RestartIfIdle,
 		drain:   drain,
 		log:     func(err error) { ui.Warn("kept this session's network rules: %v", err) },

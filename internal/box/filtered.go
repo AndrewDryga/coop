@@ -252,8 +252,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	// box.network is the old join-everything switch; in filtered mode a sidecar
 	// is reached through an approved `to: {service: <name>}` grant, one exact
 	// container at a time, never by joining a shared network.
-	if len(approvedServices) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
-		return nil, servicesNeedRules(spec, composeFile)
+	if err := checkServicesHaveRules(cfg, spec, composeFile, approvedServices); err != nil {
+		return nil, err
 	}
 	exposed := []string{spec.Repo, project}
 	exposed = append(exposed, ConfigExposureRoots(cfg)...)
@@ -390,7 +390,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 
 func (f *filteredExecution) selectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, candidate networkstate.CandidateSpec, projectImage bool) error {
 	f.image = candidate.ClientImage
-	if projectImage {
+	if projectImage && !spec.HandshakeOnly {
 		derived, tag, err := filteredProjectImage(ctx, rt, cfg, f.docker, f.store, spec, candidate)
 		if err != nil {
 			return err

@@ -2,7 +2,7 @@
 name: restricted-project-builds-are-explicit
 description: only a person approves new project build files; restricted launches rebuild by themselves only the exact files already approved
 scope: security
-sources: [internal/box/build_context_ignore.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go, internal/runtime/project_build.go]
+sources: [internal/box/build_context_ignore.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go, internal/cli/acp_box_wait.go, internal/runtime/project_build.go]
 check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs|TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged|TestOnlyTheApprovedFilesRebuildByThemselves|TestAgentEditAfterTheCheckBuildsNothing|TestALaterApprovalReplacesTheEarlierOne|TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed|TestStagingStaysInsideTheSnapshot|TestSameNamedProjectsGetTheirOwnTags|TestAutomaticRebuildGetsAFiniteEnvironment'"
 updated: 2026-11-03
 ---
@@ -18,7 +18,8 @@ captured before consent. A decision covers only those bytes, that Dockerfile pat
 and those build settings, never later edits, and a later approval replaces it. Headless, editor,
 loop, controller and in-box callers cannot acquire this permission by having a tty, and an editor
 approval button does not count: an editor can answer its own prompts. `coop update` approves nothing:
-it rebuilds approved files and leaves others for `coop build`. Offline launches build nothing.
+it rebuilds approved files and leaves others for `coop build`. An editor session connects anyway and
+waits, running no turn (see [[acp-box-wait]]). Offline launches build nothing.
 Open-network editor connections may prepare a missing project image automatically; ordinary runs only
 warn on stale project inputs and need an explicit build. Explicit host builds remain available; say
 plainly that their networking is not restricted by the run's egress policy.

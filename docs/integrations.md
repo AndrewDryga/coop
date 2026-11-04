@@ -217,6 +217,22 @@ base image, install them as shown in [box.md](box.md#your-own-image-agentdockerf
 Filtered runs must inherit co:op's client base and keep its client versions. Without the
 required adapter, `coop acp` fails with an error such as `codex-acp: not found`.
 
+### When the project box is not ready
+
+With filtered networking, your editor connects even if this project's box cannot start yet. The
+thread says why, and anything you send waits. The agent does not run until the box is ready, so it
+never works without your project's tools.
+
+- If your build files have not changed since you last ran `coop build`, co:op rebuilds them by
+  itself. This covers a co:op update that changed its client image, and an image that went missing.
+- If they are new or changed, they wait for you: an agent can edit them, and a build runs them with
+  ordinary networking. Review them, then run `coop build --egress filtered` in the project.
+- If the project has services and no network rules for them, the thread shows the rules to add. Add
+  them and run `coop approve`, or set `box.network: false` to start without services.
+
+The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
+waiting message as usual.
+
 ### Files and terminals on your computer
 
 ACP also lets the agent ask the editor to access your computer directly. Requests such as

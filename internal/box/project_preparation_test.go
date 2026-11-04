@@ -633,6 +633,7 @@ func TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed(t *testing.T) {
 		"any other failure":         {options: rebuild, first: io.ErrUnexpectedEOF, admits: 1, want: io.ErrUnexpectedEOF},
 		"a caller that did not ask": {first: approved, admits: 1, want: approved},
 		"a caller that refuses":     {options: NetworkAdmission{ProjectBuild: RefuseProjectBuild}, first: approved, admits: 1, want: approved},
+		"an editor connecting":      {options: NetworkAdmission{ProjectBuild: DeferProjectBuild}, first: approved, admits: 1, want: approved},
 		"an editor re-admitting":    {options: NetworkAdmission{ExistingQualification: true, ProjectBuild: RebuildApproved}, first: approved, admits: 1, want: approved},
 		"a failed rebuild":          {options: rebuild, first: approved, rebuild: io.ErrClosedPipe, rebuilds: 1, admits: 1, want: io.ErrClosedPipe},
 	} {
@@ -655,6 +656,110 @@ func TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed(t *testing.T) {
 				t.Fatalf("err %v, %d admits, %d rebuilds; want %v, %d, %d", err, admits, rebuilds, test.want, test.admits, test.rebuilds)
 			}
 		})
+	}
+}
+
+// A box that only answers an editor's handshake runs Coop's locked image, however the project's own
+// build stands. It is the only filtered box that needs no project build, and no turn runs in it.
+func TestHandshakeBoxRunsTheLockedImage(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	f := &filteredExecution{store: x.f.store, docker: x.d}
+	if err := f.selectImage(t.Context(), recorderRuntime(t, recorder), x.cfg, RunSpec{Repo: x.repo, HandshakeOnly: true, Quiet: true}, x.candidate, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.image != x.candidate.ClientImage {
+		t.Fatalf("the handshake box runs %q", f.image)
+	}
+	if err := f.selectImage(t.Context(), recorderRuntime(t, recorder), x.cfg, RunSpec{Repo: x.repo, Quiet: true}, x.candidate, true); err == nil {
+		t.Fatal("a real box started with no project build")
+	}
+}
+
+// Nothing runs in a handshake box to use a port or join a service network, and a real box is untouched.
+func TestHandshakeBoxPublishesNothing(t *testing.T) {
+	real := RunSpec{Network: true, Serve: true, servePorts: []int{4000}}
+	if got := real.forHandshake(); !got.Network || !got.Serve || len(got.servePorts) != 1 {
+		t.Fatalf("a real box lost its ports or services: %+v", got)
+	}
+	handshake := real
+	handshake.HandshakeOnly = true
+	if got := handshake.forHandshake(); got.Network || got.Serve || got.servePorts != nil {
+		t.Fatalf("a handshake box kept its ports or services: %+v", got)
+	}
+}
+
+// The editor's early answer matches the refusal the launch would give.
+func TestEditorServicesReadiness(t *testing.T) {
+	services := egress.Snapshot{Grants: []egress.Grant{{Rule: egress.Rule{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}}}}
+	for name, test := range map[string]struct {
+		yaml    string
+		compose bool
+		policy  egress.Snapshot
+		network bool
+		refuses bool
+	}{
+		"no services":               {yaml: "", network: true},
+		"services and no rules":     {yaml: "", compose: true, network: true, refuses: true},
+		"services turned off":       {yaml: "box:\n  network: false\n", compose: true, network: true},
+		"session without a network": {yaml: "", compose: true},
+		"services with rules":       {yaml: "", compose: true, network: true, policy: services},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pinHome(t)
+			repo, write := gitProject(t, reusableDockerfile)
+			if test.yaml != "" {
+				write(".agent/project.yaml", test.yaml)
+			}
+			if test.compose {
+				write(".agent/compose.yml", "services:\n  db:\n    image: postgres\n    ports: [\"5432\"]\n")
+			}
+			err := editorServicesReadiness(&config.Config{}, RunSpec{Repo: repo, Agent: "claude", Network: test.network}, test.policy)
+			var refused *ServicesNeedRules
+			if test.refuses != errors.As(err, &refused) || (!test.refuses && err != nil) {
+				t.Fatalf("readiness = %v, want refusal %v", err, test.refuses)
+			}
+			if test.refuses && (!strings.Contains(err.Error(), "coop approve") || !strings.Contains(err.Error(), "box.network: false")) {
+				t.Fatalf("the refusal names no remedy: %v", err)
+			}
+		})
+	}
+}
+
+// An editor connects first: admission skips the build question and goes on to qualify the host, so a
+// box can start. Any other launch still refuses before that work.
+func TestFilteredAdmissionDefersTheProjectBuildForAnEditor(t *testing.T) {
+	cfg, _, root := admissionFixture(t)
+	repo, _ := gitProject(t, reusableDockerfile)
+	canonical, err := canonicalProjectDir(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
+	}))
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\nwhile [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\n" +
+		"case \"$1\" in\ninfo) printf '%s\\n' '{\"ID\":\"fixture-daemon\",\"ServerVersion\":\"29.4.0\",\"KernelVersion\":\"fixture\",\"OSType\":\"linux\",\"Architecture\":\"aarch64\",\"SecurityOptions\":[]}' ;;\nimage) exit 1 ;;\n*) exit 91 ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mode := egress.Filtered
+	options := NetworkAdmission{InvocationMode: &mode, ExistingQualification: true}
+	options.ProjectBuild = DeferProjectBuild
+	if _, err := AdmitNetwork(cfg.Clone(), runtime.Runtime{Name: script}, RunSpec{Repo: canonical}, options); !errors.Is(err, ErrNetworkSetupRequired) {
+		t.Fatalf("a deferred admission stopped at %v, want it to reach the host's setup", err)
+	}
+	options.ProjectBuild = RefuseProjectBuild
+	var required *ProjectBuildRequired
+	if _, err := AdmitNetwork(cfg.Clone(), runtime.Runtime{Name: script}, RunSpec{Repo: canonical}, options); !errors.As(err, &required) {
+		t.Fatalf("an ordinary admission = %v, want the build refusal", err)
 	}
 }
 
@@ -736,5 +841,34 @@ func TestSameNamedProjectsGetTheirOwnTags(t *testing.T) {
 	tag := filteredProjectTag(first, fixtureLockedImage)
 	if derivedImageProject(tag) == "" {
 		t.Fatalf("reclaim no longer recognizes %q as a project image", tag)
+	}
+}
+
+// A waiting editor session reads this every two seconds instead of the project's build files, so it
+// has to change whenever a person may have settled the wait.
+func TestEditorBoxStampChangesWhenAPersonMayHaveActed(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	capture := &CapturedEgress{Store: x.f.store, Project: x.repo, Fingerprint: "policy"}
+	spec := RunSpec{Repo: x.repo}
+	stamp := EditorBoxStamp(capture, spec)
+	if again := EditorBoxStamp(capture, spec); again != stamp {
+		t.Fatalf("nothing changed, but the stamp did: %q, %q", stamp, again)
+	}
+	for name, change := range map[string]func(){
+		"a project build finished": func() {
+			if err := x.f.store.RecordProjectBuildReview(x.repo, strings.Repeat("a", 64)); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"the project's configuration": func() { x.write(".agent/project.yaml", "box:\n  network: false\n") },
+		"the Dockerfile":              func() { x.write(".agent/Dockerfile", reusableDockerfile+"RUN true\n") },
+		"the approved policy":         func() { capture.Fingerprint = "newer" },
+	} {
+		change()
+		next := EditorBoxStamp(capture, spec)
+		if next == stamp {
+			t.Errorf("%s left the stamp at %q", name, stamp)
+		}
+		stamp = next
 	}
 }

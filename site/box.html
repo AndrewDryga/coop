@@ -301,9 +301,11 @@ itself. If the files changed, they wait for you: an agent can edit them, and a p
 them with ordinary networking.</p>
 <p>When a build of changed files is due, an interactive provider launch in a host terminal can offer
 <code>Build and continue?</code>, defaulting to No. The prompt shows a saved snapshot of the build files;
-review it, because only those saved files are approved for that build. Headless commands, editor
-connections and unattended runs never ask. They stop and name the build to run. <code>coop update</code>
-rebuilds approved files and leaves changed ones for <code>coop build</code>, because an update is not a review.</p>
+review it, because only those saved files are approved for that build. Headless commands and
+unattended runs never ask. They stop and name the build to run. <code>coop update</code> rebuilds approved
+files and leaves changed ones for <code>coop build</code>, because an update is not a review. An editor
+connects anyway, holds your messages and says what to run; see
+<a href="integrations.html#when-the-project-box-is-not-ready">editors</a>.</p>
 <p>An editor connection with open networking can build a missing project image automatically.
 Ordinary runs do not rebuild an image after its inputs change; they warn, and you run
 <code>coop build --egress open</code> yourself. Offline launches never run project build instructions

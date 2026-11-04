@@ -1,6 +1,9 @@
 package acpproxy
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // Restarter restarts the child from outside the hooks, at a quiet moment — the supervisor moving a
 // session onto a box admitted under a newly approved network policy, for one. Bind it through
@@ -57,6 +60,74 @@ func (r *Restarter) RestartIfIdle() bool {
 		p.triggerRestart()
 	}
 	return idle
+}
+
+// Holding reports whether the live child only holds prompts (Child.HoldPrompts): no agent is working,
+// whatever the editor has waiting.
+func (r *Restarter) Holding() bool {
+	p := r.bound()
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.child != nil && p.child.HoldPrompts
+}
+
+// MoveOffHolding replaces a child that only holds prompts, now that the box it stood in for can start,
+// and reports whether it did. Held prompts go to the replacement. It waits only for what the holding
+// child still owes the editor; a prompt reserved for a resend owes nothing here, since none runs.
+func (r *Restarter) MoveOffHolding() bool {
+	p := r.bound()
+	if p == nil {
+		return false
+	}
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.mu.Lock()
+	movable := p.movableOffHoldingLocked()
+	p.mu.Unlock()
+	if movable {
+		Trace("moving off the child that holds prompts")
+		p.triggerRestart()
+	}
+	return movable
+}
+
+// TellHeld shows Hooks.PromptHeld's current status again in every thread with a prompt waiting: what
+// they wait for has changed. A thread with none hears it when it sends one.
+func (r *Restarter) TellHeld() {
+	p := r.bound()
+	if p == nil || p.hooks == nil || p.hooks.PromptHeld == nil {
+		return
+	}
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.restartHeld))
+	for sid := range p.restartHeld {
+		ids = append(ids, sid)
+	}
+	p.mu.Unlock()
+	sort.Strings(ids)
+	for _, sid := range ids {
+		if status := p.hooks.PromptHeld(sid); len(status) > 0 {
+			_, _ = p.out.Write(status)
+		}
+	}
+}
+
+func (p *proxy) movableOffHoldingLocked() bool {
+	if p.child == nil || !p.child.HoldPrompts || p.initResult == nil || p.initGeneration != p.generation || p.candidate != nil ||
+		p.restarting || p.reloading.Load() || p.shuttingDown || len(p.injected) != 0 || len(p.forceByID) != 0 || len(p.forceBySess) != 0 {
+		return false
+	}
+	for id := range p.pending {
+		if request, ok := p.sessionReqs[id]; !ok || request.method != "session/prompt" || request.admitted {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *proxy) idleLocked() bool {

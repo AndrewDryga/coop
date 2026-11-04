@@ -15,7 +15,9 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -252,6 +254,60 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 	change, err := buildFilteredProjectWith(ctx, rt, cfg, b.repo, out, errOut, b)
 	b.built = change.After != ""
 	return err
+}
+
+// EditorBoxReadiness says whether a filtered editor session's next box can start: nil, or the
+// *ProjectBuildRequired or *ServicesNeedRules a person or a rebuild has to settle first. Any other
+// error is a failure to look, and proves nothing either way. It runs the checks the launch itself
+// will, and grants nothing: the launch still makes them.
+func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runtime, capture *CapturedEgress, spec RunSpec) error {
+	if capture == nil || capture.Store == nil {
+		return errors.New("editor box readiness requires a host capture")
+	}
+	q, err := capture.Store.Qualification(capture.QualificationID)
+	if err != nil {
+		return err
+	}
+	docker, err := runtime.BindDocker(ctx, rt, q.Candidate.Runtime.Endpoint, q.Candidate.Runtime.DaemonID)
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	if err := checkFilteredProjectReadiness(ctx, docker, capture.Store, spec, q.Candidate.Runtime); err != nil {
+		return err
+	}
+	policy, err := capture.Store.LoadSnapshot(capture.Project, capture.Fingerprint)
+	if err != nil {
+		return err
+	}
+	return editorServicesReadiness(cfg, spec, policy)
+}
+
+// editorServicesReadiness is prepareFilteredExecution's services refusal, asked early.
+func editorServicesReadiness(cfg *config.Config, spec RunSpec, policy egress.Snapshot) error {
+	p, err := project.Load(projectPolicyRepo(spec))
+	if err != nil {
+		return err
+	}
+	cfg = applyProjectPolicy(cfg, p, &spec)
+	return checkServicesHaveRules(cfg, spec, ComposeFileAt(spec.Repo, p.ComposeRel()), serviceGrants(policy))
+}
+
+// EditorBoxStamp changes when a person may have settled what EditorBoxReadiness reported: a project
+// build finished, or the project's configuration or Dockerfile changed. Reading the build's files on
+// every poll would cost a large project about a second; this costs three stats. It proves nothing:
+// a waiting session reads it to know when to ask EditorBoxReadiness again.
+func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
+	repo := projectPolicyRepo(spec)
+	stamp := func(path string) string {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "-"
+		}
+		return fmt.Sprintf("%d/%d", info.ModTime().UnixNano(), info.Size())
+	}
+	return strings.Join([]string{capture.Fingerprint, capture.Store.ProjectBuildReviewStamp(capture.Project),
+		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo)))}, " ")
 }
 
 // RebuildApprovedProject rebuilds files a person already approved, with no prompt. It decides on the

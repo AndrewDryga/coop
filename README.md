@@ -58,12 +58,12 @@ namespace to keep credentials outside the box. Apple's
 when both are present. The `coop` binary is static.
 
 `coop update` updates the binary, then uses the installed version to prepare the image for this
-project's network mode. Filtered projects build on the pinned client base; open and offline
-images refresh their base components. If a filtered project needs a build later, an interactive
-provider launch can offer Build and continue. Review the saved snapshot before approving;
-unattended runs still require an explicit host build. Each release carries pinned agent CLIs and
-ACP adapters. To build
-from source, run `git clone https://github.com/AndrewDryga/coop && cd coop && make install`.
+project's network mode. Filtered projects rebuild the files you approved with `coop build` on the
+pinned client base; open and offline images refresh their base components. If a filtered project's
+build files are new or changed, an interactive provider launch can offer Build and continue.
+Review the saved snapshot before approving; unattended runs wait for `coop build` on the host, and
+an editor connects and holds your messages until it finishes. Each release carries pinned agent
+CLIs and ACP adapters. To build from source, run `git clone https://github.com/AndrewDryga/coop && cd coop && make install`.
 
 <a name="verifying-a-download"></a>
 <details><summary>Verifying a download</summary>

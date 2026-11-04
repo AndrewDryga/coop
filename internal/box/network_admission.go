@@ -61,6 +61,9 @@ const (
 	RefuseProjectBuild ProjectBuildMiss = iota
 	// RebuildApproved rebuilds files a person already approved, then admits.
 	RebuildApproved
+	// DeferProjectBuild admits without looking: an editor session connects first and asks
+	// EditorBoxReadiness itself. The launch's own proofs still refuse a project image that is not ready.
+	DeferProjectBuild
 )
 
 // AdmitNetwork resolves this launch's network posture and, for filtered mode,
@@ -117,6 +120,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	spec.projectEnv = p.Box.Env
+	spec.deferProjectBuild = options.ProjectBuild == DeferProjectBuild
 	root, err := NetworkStatePath()
 	if err != nil {
 		return nil, err
@@ -394,8 +398,10 @@ func admitFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, 
 		return nil, err
 	}
 	defer docker.Close()
-	if err := checkFilteredProjectReadiness(ctx, docker, store, spec, networkRuntimeBinding(docker.Info(), docker.Endpoint())); err != nil {
-		return nil, err
+	if !spec.deferProjectBuild {
+		if err := checkFilteredProjectReadiness(ctx, docker, store, spec, networkRuntimeBinding(docker.Info(), docker.Endpoint())); err != nil {
+			return nil, err
+		}
 	}
 	qualification, err := ensureNetworkQualification(ctx, func() (*networkstate.Qualification, error) {
 		return currentQualification(ctx, docker, store, policy, cfg.ImageOverride)

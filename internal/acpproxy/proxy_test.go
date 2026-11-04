@@ -23,6 +23,8 @@ type fakeChild struct {
 	inW, outW *io.PipeWriter
 	provider  string
 	mcp       string
+	// holdPrompts makes this fake a child that only answers the editor's handshake.
+	holdPrompts bool
 }
 
 type blockingWriteCloser struct {
@@ -59,7 +61,7 @@ func newFakeChild() *fakeChild {
 }
 
 func (f *fakeChild) child() *Child {
-	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, HoldPrompts: f.holdPrompts, Stop: func() { f.outW.Close(); f.inR.Close() }}
 	if f.mcp != "" {
 		marker := f.mcp
 		child.MCPServers = func() ([]map[string]any, error) {

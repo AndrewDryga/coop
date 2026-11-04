@@ -47,6 +47,10 @@ type Child struct {
 	Account   string     // successful authentication is scoped to this concrete credential too
 	Image     string     // the box image it started from, when known; a warm box is reused only on it
 	Policy    string     // the network policy fingerprint it proved, if filtered; a warm box is reused only under it
+	// HoldPrompts marks a child that only answers the editor's handshake, because the box it should
+	// run in is not ready. Everything else reaches it, but no prompt does, so no turn ever runs here:
+	// the proxy holds each one until Restarter.MoveOffHolding replaces the child.
+	HoldPrompts bool
 	// MCPServers returns this child's final shared tool projection, after initialize. The caller
 	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
 	MCPServers func() ([]map[string]any, error)
@@ -798,6 +802,12 @@ func (p *proxy) forwardClient(line []byte, origin clientOrigin) {
 	p.forwardClientControlled(line, origin, origin == originEditor)
 }
 
+// notAPromptRequest is a frame that could start a turn without being a prompt the proxy can hold: a
+// session/prompt with no id, or a JSON-RPC batch, which parse cannot see into.
+func notAPromptRequest(h header, line []byte) bool {
+	return h.Method == "session/prompt" && !h.isRequest() || bytes.HasPrefix(bytes.TrimSpace(line), []byte("["))
+}
+
 // forwardClientControlled runs with controlMu already held for editor traffic. Replay uses it to
 // atomically reopen admission and preserve the order of prompts queued behind a replacement.
 func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, controlHeld bool) {
@@ -815,9 +825,27 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		p.cancelPrompt(sessionID(original.Params), line)
 		return
 	}
-	if origin == originEditor && original.Method == "session/prompt" && original.isRequest() {
+	if notAPromptRequest(original, line) {
+		// A prompt with no id to answer, or a batch that could hide one: nothing to hold, and no turn
+		// runs on a child that holds prompts.
 		p.mu.Lock()
-		if p.restarting {
+		holding := p.child != nil && p.child.HoldPrompts
+		p.mu.Unlock()
+		if holding {
+			Trace("dropping a frame that could start a turn on the child that holds prompts")
+			return
+		}
+	}
+	if original.Method == "session/prompt" && original.isRequest() {
+		p.mu.Lock()
+		// A child that holds prompts never gets one, wherever it came from. A resend's own path skips
+		// such a child too (replayAt), and this is the line that makes the promise.
+		holding := p.child != nil && p.child.HoldPrompts
+		if holding || origin == originEditor && p.restarting {
+			waitFor := "wait for the switch to finish"
+			if holding {
+				waitFor = "wait for the project's box to be ready"
+			}
 			sid := sessionID(original.Params)
 			s := p.sessions[sid]
 			known := sid != "" && s != nil && !s.closed
@@ -827,7 +855,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			if known && !duplicate && !tooLarge {
 				if tooMany {
 					p.mu.Unlock()
-					_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), "too many sessions already have a prompt waiting; wait for the switch to finish, then send it again"))
+					_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), "too many sessions already have a prompt waiting; "+waitFor+", then send it again"))
 					return
 				}
 				p.restartHeld[sid] = clientLine{line: clone(line), origin: origin}
@@ -845,9 +873,14 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 				p.mu.Unlock()
 				reason := "this session already has a prompt waiting; do not retry until that prompt completes"
 				if tooLarge {
-					reason = "the prompt is too large to hold during a provider switch; wait for the switch to finish, then send it again"
+					reason = "the prompt is too large to hold for now; " + waitFor + ", then send it again"
 				}
 				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), reason))
+				return
+			}
+			if holding { // no thread this session knows, so nothing to hold it for, and no turn runs here
+				p.mu.Unlock()
+				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), "this thread is not open yet; reopen it, then send the message again"))
 				return
 			}
 		}
@@ -1311,13 +1344,13 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 				case "session/close":
 					if p.closeSessionLocked(op.editorID, op.adapterID, true) {
 						closedID = op.editorID
-						held = p.dropSessionForceLocked(op.adapterID)
+						held = append(p.dropSessionForceLocked(op.adapterID), p.dropRestartHeldLocked(op.editorID)...)
 						heldLifecycle = "closed"
 					}
 				case "session/delete":
 					if p.deleteSessionLocked(op.editorID, op.adapterID, true) {
 						endedID = op.editorID
-						held = p.dropSessionForceLocked(op.adapterID)
+						held = append(p.dropSessionForceLocked(op.adapterID), p.dropRestartHeldLocked(op.editorID)...)
 						heldLifecycle = "deleted"
 					}
 				}
@@ -2253,6 +2286,16 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 		p.controlMu.Unlock()
 		return fmt.Errorf("replay returned duplicate native session id %q for editor sessions %q and %q", adapterID, first, second)
 	}
+	if childEOF {
+		// A prompt only reserved for a resend still waits for a child that lives.
+		p.mu.Lock()
+		for id := range p.pending {
+			if request, ok := p.sessionReqs[id]; ok && request.method == "session/prompt" && !request.admitted {
+				keep[id] = true
+			}
+		}
+		p.mu.Unlock()
+	}
 	swapped, accepted, swapErr := p.swapChildAt(c, keep, keepSessions, nil, bindings, freshInitResult, freshAuthMethods, epoch, true)
 	p.controlMu.Unlock()
 	if swapErr != nil {
@@ -2350,7 +2393,8 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	// as pending, and its response reaches the editor, completing the turn the editor still shows
 	// as running. ResumePrompt is deliberately called again here: the first call only reserved the
 	// request id, while SessionRecreated above armed the carry preamble for the final prompt bytes.
-	if p.hooks != nil && p.hooks.ResumePrompt != nil {
+	// A child that holds prompts runs no turn, so a resend stays reserved for the box that replaces it.
+	if p.hooks != nil && p.hooks.ResumePrompt != nil && !c.HoldPrompts {
 		for _, eid := range sortedReplayBindings(accepted) {
 			p.controlMu.Lock()
 			if !p.replaySessionActive(c, epoch, eid) {
@@ -2369,6 +2413,11 @@ func (p *proxy) replayAt(c *Child, br *bufio.Reader, epoch uint64) error {
 	}
 	if !p.replayChildActive(c, epoch) {
 		return errReplaySuperseded
+	}
+	if childEOF {
+		// Held prompts wait for the next child: a thread was told its message goes out when the box is
+		// ready, and this one never was. failAllPending still answers them if the proxy gives up.
+		return nil
 	}
 	return p.releaseRestartHeld(c, epoch)
 }

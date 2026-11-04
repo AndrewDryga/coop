@@ -274,9 +274,10 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 		return ImageChange{}, err
 	}
 	// Bind what was actually staged, not a later read of a concurrently edited checkout. Only a
-	// person's build changes what counts as approved; an automatic one just matched it.
+	// person's build can change what counts as approved: an automatic one matched it above, so writing
+	// it again only tells a waiting editor session that a build finished (EditorBoxStamp).
 	err = store.ApproveProjectBuild(tag, inputs, built)
-	if err == nil && !prepared.automatic {
+	if err == nil {
 		err = store.RecordProjectBuildReview(project, review)
 	}
 	if err != nil {

@@ -32,8 +32,8 @@ import (
 func servicesNeedRules(spec RunSpec, composeFile string) error {
 	name := networkLaunchName(spec)
 	if composeFile == "" {
-		return fmt.Errorf("%s cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n"+
-			"  Unset COOP_SERVICES_NET, or set box.network: false in %s", name, project.File)
+		return &ServicesNeedRules{text: fmt.Sprintf("%s cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n"+
+			"  Unset COOP_SERVICES_NET, or set box.network: false in %s", name, project.File)}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s cannot start because filtered boxes reach project services only through approved network rules\n\n", name)
@@ -58,8 +58,32 @@ func servicesNeedRules(spec RunSpec, composeFile string) error {
 	}
 	b.WriteString("  Then review it: coop approve\n")
 	b.WriteString("  To start without project services, set box.network: false.")
-	return errors.New(b.String())
+	return &ServicesNeedRules{text: b.String()}
 }
+
+// forHandshake applies HandshakeOnly: nothing runs in that box to use a port or join a service network.
+// Approved service grants stay, since the box runs the policy it was admitted under, whole.
+func (spec RunSpec) forHandshake() RunSpec {
+	if spec.HandshakeOnly {
+		spec.Network, spec.Serve, spec.servePorts = false, false, nil
+	}
+	return spec
+}
+
+// checkServicesHaveRules is the refusal itself, shared by the launch and an editor session asking early.
+func checkServicesHaveRules(cfg *config.Config, spec RunSpec, composeFile string, approved []egress.Grant) error {
+	if len(approved) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
+		return servicesNeedRules(spec, composeFile)
+	}
+	return nil
+}
+
+// ServicesNeedRules is a filtered box that cannot start until a person gives the project's services
+// network rules or turns them off. An editor session waits for that instead of exiting. The text
+// names only Coop's words and validated service names and ports (serviceRuleDrafts).
+type ServicesNeedRules struct{ text string }
+
+func (e *ServicesNeedRules) Error() string { return e.text }
 
 // serviceDraft is one Compose service a filtered box could ask for, with the
 // TCP ports its definition declares (none when it declares none).

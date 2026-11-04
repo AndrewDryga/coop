@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 )
@@ -142,6 +143,16 @@ func (s *Store) RecordProjectBuildReview(project, review string) error {
 		return err
 	}
 	return s.publish(projectBuildReviewName(id), data, true)
+}
+
+// ProjectBuildReviewStamp changes each time a build of project finishes, for a session waiting on one.
+// It proves nothing: the session then asks the real question.
+func (s *Store) ProjectBuildReviewStamp(project string) string {
+	info, err := s.root.Stat(projectBuildReviewName(projectBuildReviewID(project)))
+	if err != nil {
+		return "-"
+	}
+	return fmt.Sprintf("%d/%d", info.ModTime().UnixNano(), info.Size())
 }
 
 // LockProjectBuild runs one build of a project at a time across processes: two editor windows, a loop

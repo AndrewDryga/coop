@@ -134,6 +134,13 @@ type RunSpec struct {
 	// Login runs only the selected provider's sign-in flow. Project service/tool setup is not
 	// part of authentication; network policy and secret-shadowing protections still apply.
 	Login bool
+	// HandshakeOnly runs Coop's locked client image without the project's layers, so an editor can
+	// connect while the project's own box is not ready. No agent turn runs in it: the proxy holds
+	// every prompt (acpproxy.Child.HoldPrompts). It is the same network policy on less software, so
+	// it needs no project build and grants nothing. Only a host supervisor sets it.
+	HandshakeOnly bool
+
+	deferProjectBuild bool // admission only: NetworkAdmission.ProjectBuild said an editor session asks for itself
 
 	ForceNoTTY      bool               // ACP: attach stdin (-i) but never allocate a tty
 	ForwardStdin    bool               // coop run/shell: attach a piped or redirected stdin (-i) for the command to read
@@ -667,6 +674,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		spec.Network, spec.Serve = false, false
 		projectEnv, composeFile, spec.servePorts = nil, "", nil
 	}
+	spec = spec.forHandshake()
 	if spec.FormatCorrection {
 		if !spec.AgentCommand || !spec.Batch || !spec.RepoReadOnly {
 			return -1, errors.New("review format correction requires a read-only batch agent command")

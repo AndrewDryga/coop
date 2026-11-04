@@ -72,6 +72,7 @@
 <li class="reference-subsection"><a href="#filtered-networking">Filtered networking</a></li>
 <li class="reference-subsection"><a href="#forks">Forks</a></li>
 <li class="reference-subsection"><a href="#services-and-custom-images">Services and custom images</a></li>
+<li class="reference-subsection"><a href="#when-the-project-box-is-not-ready">When the project box is not ready</a></li>
 <li class="reference-subsection"><a href="#files-and-terminals-on-your-computer">Files and terminals on your computer</a></li>
 <li><a href="#mcp-servers">MCP servers</a></li>
 <li class="reference-subsection"><a href="#where-the-file-lives">Where the file lives</a></li>
@@ -293,6 +294,20 @@ services on a separate network for the editor session.</p>
 base image, install them as shown in <a href="box.html#your-own-image-agentdockerfile">box.md</a>.
 Filtered runs must inherit co:op&#39;s client base and keep its client versions. Without the
 required adapter, <code>coop acp</code> fails with an error such as <code>codex-acp: not found</code>.</p>
+<h3 id="when-the-project-box-is-not-ready">When the project box is not ready</h3>
+<p>With filtered networking, your editor connects even if this project&#39;s box cannot start yet. The
+thread says why, and anything you send waits. The agent does not run until the box is ready, so it
+never works without your project&#39;s tools.</p>
+<ul>
+<li>If your build files have not changed since you last ran <code>coop build</code>, co:op rebuilds them by
+itself. This covers a co:op update that changed its client image, and an image that went missing.</li>
+<li>If they are new or changed, they wait for you: an agent can edit them, and a build runs them with
+ordinary networking. Review them, then run <code>coop build --egress filtered</code> in the project.</li>
+<li>If the project has services and no network rules for them, the thread shows the rules to add. Add
+them and run <code>coop approve</code>, or set <code>box.network: false</code> to start without services.</li>
+</ul>
+<p>The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
+waiting message as usual.</p>
 <h3 id="files-and-terminals-on-your-computer">Files and terminals on your computer</h3>
 <p>ACP also lets the agent ask the editor to access your computer directly. Requests such as
 <code>fs/read_text_file</code>, <code>fs/write_text_file</code> and <code>terminal/*</code> run through the editor, outside the
