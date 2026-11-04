@@ -34,8 +34,8 @@ func useEmptyMainConfig(t *testing.T) {
 func TestFallbackErrorLineEscapesBoxChosenText(t *testing.T) {
 	color := regexp.MustCompile("\x1b\\[[0-9;]*m")
 	for _, tc := range []struct{ name, file, want string }{
-		{"a value", "serve:\n  ports: [\"evil\\x1b[2J\\nfake\"]\n", "cannot unmarshal !!str `evil\\u001B[2...` into int"},
-		{"a key", "\"evil\\x1b[2J\\nfake\": 1\n", "field evil\\u001B[2J\\u000Afake not found"},
+		{"a value", "serve:\n  ports: [\"evil\\x1b[2J\\nfake\"]\n", `"evil\u001B[2..." should be a number`},
+		{"a key", "\"evil\\x1b[2J\\nfake\": 1\n", `unknown setting "evil\u001B[2J\u000Afake"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := project.Parse([]byte(tc.file))

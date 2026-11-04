@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	yamlUnknownField = regexp.MustCompile(`field (.+) not found in type \S+$`)
+	yamlUnknownField = regexp.MustCompile(`(?s)field (.+) not found in type \S+$`)
 	yamlWrongType    = regexp.MustCompile("cannot unmarshal !!\\w+ `(.*)` into (\\S+)$")
 )
 

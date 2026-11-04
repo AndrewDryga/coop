@@ -686,7 +686,7 @@ func TestInitEscapesNamesABoxChose(t *testing.T) {
 		}, "Could not add services to " + shown + "/compose.yml"},
 		{"a project.yaml it cannot check network access with", nil, func(t *testing.T, repo string) {
 			write(t, repo, ".agent/project.yaml", yamlName+"\": true\n")
-		}, "field " + shown + " not found"},
+		}, `unknown setting "` + shown + `"`},
 		{"the project's own Compose file", nil, func(t *testing.T, repo string) {
 			write(t, repo, name+"/compose.yml", "services: {}\n")
 		}, "Services: " + shown + "/compose.yml"},
