@@ -169,6 +169,11 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		if !options.HoldPending || mode == egress.None {
 			return nil, refusal
 		}
+		// A holding child runs filtered. Where nothing filtered can run, no child can hold the session,
+		// and the review is still what the project asks of the person first.
+		if checkFilteredRuntime(rt) != nil || checkFilteredSupport(cfg) != nil {
+			return nil, refusal
+		}
 		mode, input = egress.Filtered, holdingAdmission(input)
 	}
 	cfg.SetEgress(string(mode))

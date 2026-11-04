@@ -638,6 +638,36 @@ func TestHeldAdmissionStillRefuses(t *testing.T) {
 		loaded.ConfigDir = cfg.ConfigDir
 		refused(t, heldAdmission(t, loaded, repo))
 	})
+	// A holding child runs filtered, so where filtered cannot run nothing can hold the session. The
+	// review still comes first: the person acts on it before the runtime matters.
+	cannotHold := func(t *testing.T, cfg *config.Config, repo string, rt runtime.Runtime) {
+		t.Helper()
+		_, err := AdmitNetwork(cfg, rt, RunSpec{Repo: repo, Workdir: repo},
+			NetworkAdmission{ExistingQualification: true, ProjectBuild: DeferProjectBuild, HoldPending: true})
+		refused(t, err)
+	}
+	t.Run("a runtime with no gateway", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		cannotHold(t, cfg, repo, runtime.Runtime{Name: "container"})
+	})
+	t.Run("a runtime with no gateway, on an open posture", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		t.Setenv("COOP_EGRESS", "open")
+		loaded, err := config.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded.ConfigDir = cfg.ConfigDir
+		cannotHold(t, loaded, repo, runtime.Runtime{Name: "container"})
+	})
+	t.Run("an image of the person's own", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		cfg.ImageOverride = "my-image"
+		cannotHold(t, cfg, repo, noSetupDocker(t))
+	})
 	t.Run("a withdrawn approval", func(t *testing.T) {
 		cfg, repo, root := admissionFixture(t)
 		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
