@@ -126,7 +126,7 @@ git -c user.name=&#x27;Sandbox demo&#x27; \
     -c commit.gpgsign=false \
     commit -m &#x27;Create sandbox demo&#x27; &amp;&amp;
 coop init</code></li></ul>
-<p><code>coop init</code> sets filtered networking for this new project.</p>
+<p><code>coop init</code> asks which languages and services this project uses. Press Enter at both questions to skip them. It also sets filtered networking for this new project.</p>
 <p>Create a file with a fake secret:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="dummy secret setup">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
@@ -149,7 +149,7 @@ Protecting secrets
   ✓ .envrc is hidden
   …
 
-✓ All 37 checks passed</samp></pre>
+✓ All 40 checks passed</samp></pre>
 </div>
 <p>Start Grok CLI:</p>
 <ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="start the agent">coop_review_base=$(git rev-parse HEAD) &amp;&amp;
@@ -180,6 +180,7 @@ wc: .env.coop-demo: Operation not permitted
 </div>
 
 <p>The agent can read <code>README.md</code>, but co:op blocks access to the secret or shows it as an empty file.</p>
+<p>If you are also signed in to Claude, <code>coop init</code> adds Claude Code settings to this project. Grok follows the rule for <code>.env</code> files in those settings and refuses to run this command. Run <code>! wc -c README.md .env.coop-demo</code> in Grok instead. The <code>!</code> runs it directly in the sandbox.</p>
 <p>Files matching <code>.env.*</code> are protected automatically. To hide other files or folders, add them to <a href="box.html#your-own-paths-coopignore">.coopignore</a>.</p>
 <p>To scan project files for credentials, open a second terminal in the demo folder and run:</p>
 <div class="terminal-example">
@@ -243,17 +244,25 @@ HTTP 000</samp></pre>
 <pre class="code terminal-table" tabindex="0" aria-label="Recent network runs"><samp>Recent network runs
 
   RUN       WHEN         ACTIVITY
-  317fc92d  today 18:51  no external connections · 8 blocked</samp></pre>
+  4813670b  today 23:56  2 connections · 4 blocked</samp></pre>
 </div>
-<p>Find the session you just closed by its start time. Here, its run ID is <code>317fc92d</code>. Replace that ID with yours in the command below to see why the request was blocked:</p>
+<p>Find the session you just closed by its start time. Here, its run ID is <code>4813670b</code>. Replace that ID with yours in the command below to see why the request was blocked:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li><code data-copy-source>coop net blocked example.com --run 317fc92d</code></li></ul>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net blocked example.com --run 4813670b</code></li></ul>
 <pre class="code"><samp>example.com was blocked
-  Run 317fc92d · today at 18:51
+  Run 4813670b · today at 23:57
 
 No approved rule allowed this DNS lookup. It happened 4 times.
 
-The record has no connection type or port to use in a rule.</samp></pre>
+Likely fix: most programs look up a name to connect over HTTPS on port 443.
+If this one did, add this rule under box.egress_rules in .agent/project.yaml:
+
+  - to: {domain: &quot;example.com&quot;}
+    protocol: tls
+    ports: [443]
+
+Then run:
+  coop approve</samp></pre>
 </div>
 </section>
 <section class="doc-section guide-section" id="allow-website"><h2><span class="guide-step" aria-hidden="true">09</span>Allow just one website</h2>
@@ -296,22 +305,24 @@ The record has no connection type or port to use in a rule.</samp></pre>
 <pre class="code terminal-table" tabindex="0" aria-label="Recent network runs"><samp>Recent network runs
 
   RUN       WHEN         ACTIVITY
-  baf22d50  today 18:52  1 connection
-  317fc92d  today 18:51  no external connections · 8 blocked</samp></pre>
+  04e9cfd3  today 23:57  5 connections
+  4813670b  today 23:56  2 connections · 4 blocked</samp></pre>
 </div>
-<p>Here, the session with allowed traffic is <code>baf22d50</code>. Replace it with your run ID below to inspect its traffic:</p>
+<p>Here, the session where you allowed <code>example.com</code> is <code>04e9cfd3</code>, the newer one. Replace it with your run ID below to inspect its traffic:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect baf22d50</code></li></ul>
-<pre class="code"><samp>Network run baf22d501bca66d3a7622b59e8ef001c
+<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect 04e9cfd3</code></li></ul>
+<pre class="code"><samp>Network run 04e9cfd376dbbd6c371eec146fcbb15b
 
-  Allowed   1 connection · 773 B sent · 5.4 KB received
+  Allowed   5 connections · 344.6 KB sent · 1.3 MB received
+    cli-chat-proxy.grok.com:443 · TLS
+    …
     example.com:443 · TLS
-  …</samp></pre>
+    …</samp></pre>
 </div>
 <p>The first session showed <code>example.com</code> blocked. This one shows a connection to <code>example.com:443</code>.</p>
 <p>For the full record, including whether the session and cleanup finished, use JSON:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect baf22d50 --json</code></li></ul>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net inspect 04e9cfd3 --json</code></li></ul>
 <pre class="code"><samp>{
   &quot;receipt&quot;: {
     &quot;finality&quot;: &quot;final&quot;,
@@ -323,7 +334,7 @@ The record has no connection type or port to use in a rule.</samp></pre>
 <p>The values shown above mean the run ended, its network record is complete, and cleanup finished. Follow up on any warnings. <code>UNKNOWN</code> means co:op could not measure something. It does not mean zero.</p>
 <p>To export the receipt:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li><code data-copy-source>coop net export baf22d50</code></li></ul>
+<ul class="cmds" role="list"><li><code data-copy-source>coop net export 04e9cfd3</code></li></ul>
 </div>
 <details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>What does the export include?</summary><div><p><code>coop net inspect … --json</code> puts these fields under <code>receipt</code>. In an export, they are at the top level.</p><p>Exports hide remote names and addresses by default. Add <code>--include-addresses</code> to include them, and review the file before sharing it. The digest is a checksum, not a signature. See <a href="networking.html#observed-versus-counted">what the network record measures</a>.</p></div></details>
 

@@ -4,7 +4,7 @@ description: public walkthroughs need a coherent worked path, observable checkpo
 scope: docs
 sources: [tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/README.md, brand/DESIGN.md]
 check: none
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Public walkthroughs need reader proof
@@ -43,6 +43,10 @@ not establish publication quality.
   ledger. Source review, syntax checks and fixtures are separate evidence. Add short output
   excerpts at consequential steps; label variable samples and expected results, preserve
   unexecuted/login-blocked rows, and never present a fixture as a real provider session.
+- Replay the published blocks in a real terminal with the real agent before calling a guide
+  verified. A non-terminal run skips interactive prompts, and a raw container misses the agent's
+  own permission rules and the environment its shell tool really gets. Take sample output from
+  those sessions, since a raw container's run list looks nothing like an agent's.
 - Do not add terminal-location captions such as “Host terminal” or “Inside Claude Code ·
   shell tool” above provider-guide commands. Let the surrounding steps establish where to
   run them; explain transitions once in ordinary prose.
@@ -126,3 +130,12 @@ not establish publication quality.
   Swept all four provider variants; grouped their static contents, moved network inspection
   beside its demonstrations and made the second-terminal/original-shell transitions explicit.
   The two general guides have different workflows and remain unchanged.
+
+- 2026-11-04 — owner approved the real signed-in replay of all four provider guides on macOS.
+  Found three things no earlier check could: `coop init` asks two questions the guides never
+  mentioned, so the next pasted block goes into them; Claude Code refuses the secret check through
+  the `.env` deny rule `coop init` writes (and Grok follows it when that file exists); Claude Code
+  hides its token variable from its shell tool, so the published credential script could only fail.
+  Swept all four guides, fixed these, and replaced raw-container samples with real session output.
+  Added the `coop init` note to the general sandbox guide too; the overnight guide does not run it.
+  Samples are short excerpts where a real value varies by reader, such as the setup-file count.
