@@ -850,6 +850,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return 1, err
 		}
 	}
+	a.sweepBeforeFirstBox(ws) // a killed session's services in this fork would break the ones about to start
 	code, err = a.runBox(spec)
 	agentRan = code >= 0 // runBox says -1 when it stops before the box runs; otherwise it is the box's exit
 	if err == nil {

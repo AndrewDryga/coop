@@ -20,7 +20,7 @@ const orphanSweepTimeout = 10 * time.Second
 // a coop killed by SIGKILL (or a reboot mid-run) never fires `--rm`, and nothing else watches the
 // box, so an orphan keeps a provider session burning tokens with no host-side observer. Cleanup is
 // pull-only, so it rides the entry points that already reap: loop start, fork start, and `coop
-// build`'s recycle. An editor session sweeps less, see sweepBeforeEditorBoxes.
+// build`'s recycle. An editor session or direct launch sweeps less, see sweepBeforeFirstBox.
 //
 // Failure is silent by design. This is not the command the user ran: a broken runtime is about to
 // be reported loudly by that command's own box work, and a runtime with no label inspection at all
@@ -35,17 +35,17 @@ func (a *app) sweepOrphanBoxes(repo string) {
 	noteSettledFilteredRuns(result.RecoveredFilteredRuns)
 }
 
-// sweepBeforeEditorBoxes removes what killed runs left in repo, before an editor session starts its
-// first box. A person who works in an editor may run no loop, fork or build in a project for days, and
-// a killed session's services run until something removes them. It finishes before the box starts
+// sweepBeforeFirstBox removes what killed runs left in repo, before an editor session or a direct
+// `coop <agent>` or `coop run` starts its first box. A person who works there may run no loop, fork or
+// build in a project for days, and a killed session's services run until something removes them. It finishes before the box starts
 // because a dead stack can break that box's own services: one with a writable bind into the
 // repository gets them refused, and one holding a fixed host port makes them fail to start.
 //
-// So every connect waits for it, and it pays for two listings and nothing else. The first box's launch
+// So every launch waits for it, and it pays for two listings and nothing else. The first box's launch
 // retires the filesystem helpers and settles a filtered run (runBox), and the session's own sweeps take
 // dead task channels. The pass over every project's unused networks stays with the commands that have
 // time for it; a killed session's own network goes with its services.
-func (a *app) sweepBeforeEditorBoxes(repo string) {
+func (a *app) sweepBeforeFirstBox(repo string) {
 	if a.ensureRuntime() != nil {
 		return
 	}

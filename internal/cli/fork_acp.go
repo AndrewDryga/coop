@@ -58,7 +58,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	if err := a.acpBoxWait.refresh(context.Background()); err != nil {
 		acpproxy.Trace("box wait: could not look: %v", err) // proves nothing: the first child's own proofs decide
 	}
-	a.sweepBeforeEditorBoxes(workspace) // the fork's own children run their boxes and services in the fork
+	a.sweepBeforeFirstBox(workspace) // the fork's own children run their boxes and services in the fork
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		if err := a.acpBoxWait.refreshStale(ctx); err != nil {
 			acpproxy.Trace("box wait: could not look: %v", err)

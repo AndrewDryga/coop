@@ -264,3 +264,24 @@ func TestSettleNetworkRunsCountsRunsBesideUnreadableRecords(t *testing.T) {
 		t.Fatalf("settled = %d; want the readable run counted", settled)
 	}
 }
+
+// A direct `coop run` or agent launch removes a killed session's leftovers before its own box starts:
+// the dead stack's fixed port or writable bind would break the services this launch is about to start.
+func TestDirectLaunchSweepsKilledRunsBeforeItsBox(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: "coop-box", Homes: true, Egress: "open", RepoOverride: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	calls := filepath.Join(t.TempDir(), "runtime-args")
+	a := &app{cfg: cfg, rt: nativeOnlineRuntime(t, calls), rtSet: true}
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = a.cmdRun([]string{"--egress", "open", "--", "true"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("coop run = (%d, %v)\n%s", code, err, out)
+	}
+	got := sweepEvents(t, calls)
+	survey, started := strings.Index(got, boxSurveyListing), strings.Index(got, "\nrun ")
+	if survey < 0 || started < 0 || survey > started {
+		t.Fatalf("the box survey (at %d) must precede the box start (at %d):\n%s", survey, started, got)
+	}
+}

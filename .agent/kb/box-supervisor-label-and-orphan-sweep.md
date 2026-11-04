@@ -268,7 +268,8 @@ Traps:
 - 2026-11-04 — `coop acp` and `coop fork <name> acp` now sweep too. They ran no sweep, so a person who
   only works in an editor kept a killed session's services for as long as the project stayed open: 8
   hours of Postgres and Keycloak on 2026-11-03, reproduced by SIGKILLing a real supervisor. See
-  `sweepBeforeEditorBoxes`: boxes and services only, finished before the first box, because a dead stack
+  `sweepBeforeFirstBox` (also run before a direct `coop <agent>`, `coop run` and `coop fork <name> <agent>`
+  launch, 2026-11-04): boxes and services only, finished before the first box, because a dead stack
   with a writable bind or a fixed host port breaks the next session's services. `coop down` removes
   them as well, and `ReapOrphanServices` now takes the project's networks too. A session's service
   label is read as its child starts (`rememberSessionSupervisor`): a child waiting at the service
