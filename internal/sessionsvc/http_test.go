@@ -124,12 +124,16 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 5 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 6 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
 	}
 	jobs, ok := document["job_spec_versions"].([]any)
 	if !ok || len(jobs) != 1 || jobs[0] != float64(2) {
 		t.Fatalf("job spec versions = %#v", document["job_spec_versions"])
+	}
+	projectRuntime, ok := document["project_runtime_versions"].([]any)
+	if !ok || len(projectRuntime) != 1 || projectRuntime[0] != float64(1) {
+		t.Fatalf("project runtime versions = %#v", document["project_runtime_versions"])
 	}
 	evidence, ok := document["session_evidence_versions"].([]any)
 	if !ok || len(evidence) != 1 || evidence[0] != float64(workerproto.SessionEvidenceVersion) {

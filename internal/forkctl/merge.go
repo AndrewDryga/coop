@@ -334,6 +334,9 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 		spec.CapturedEgress = capture
 		c.host.settleFilteredRuns(c.rt)
 	}
+	if request.Runtime != nil {
+		spec.ControllerRuntime = &box.ControllerRuntime{Version: 1, JobDigest: request.JobDigest, Repository: request.Repository, Runtime: request.Runtime}
+	}
 	code, err := box.Run(launchCfg, c.rt, spec)
 	if err != nil {
 		return run, err

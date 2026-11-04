@@ -67,6 +67,7 @@ type executionConfig struct {
 	Environment        map[string]string
 	Check              workerproto.JobCheck
 	Resources          workerproto.JobResources
+	Runtime            *workerproto.JobRuntime
 	MaxTurns           int
 	MaxQueuedTurns     int
 	MaxQueuedBytes     int
@@ -2822,9 +2823,15 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 		unlockWorkspace()
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeDiscardPlanStale, Detail: boundedSessionServiceError(err)})
 	}
-	// A controller job's boxes never start its repository's services (box.RunSpec.ControllerJob), so
-	// only a historical session can own a Compose project to remove. The job's project file is
-	// repository code: it must not decide, or fail, a worker's cleanup.
+	// Controller services are selected by immutable ownership labels: project files may be
+	// edited or gone at discard. Settle their runtime custody before deleting the workspace.
+	if s.rt.Name != "" && sessionHasProjectRuntime(sess) {
+		if err := box.StopControllerServices(ctx, s.rt, workspacePlan.Workspace, true); err != nil {
+			_ = preflight.close()
+			unlockWorkspace()
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("remove controller project services: %w", err))
+		}
+	}
 	if s.rt.Name != "" && sess.JobDigest == "" {
 		if err := box.DownServices(
 			s.rt,

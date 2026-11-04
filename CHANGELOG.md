@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Controller jobs can use their project's tools and test services.** An explicit frozen runtime
+  grant selects the project Dockerfile and Compose stack. Each job gets its own database network
+  and named data; required setup failures stop execution, and final cleanup removes owned services
+  even after project files change. Controllers use the worker's `project-runtime:1` capability.
+
+
 - **A filtered `coop fork <name> <agent>` checks your sign-in first**, instead of creating a fork that
   cannot start.
 

@@ -86,9 +86,10 @@ type RunSpec struct {
 	// IsolatedParent carries the trusted publication boundary into disposable gate
 	// clones, which have no persistent fork generation. Remote/model input cannot set it.
 	IsolatedParent string `json:"-"`
-	// ControllerJob suppresses repository-authored box settings for a Ryker-owned session.
+	// ControllerJob suppresses repository-authored settings outside its frozen runtime grant.
 	// The host child sets this only from the daemon's session environment, never from a box.
-	ControllerJob bool `json:"-"`
+	ControllerJob     bool               `json:"-"`
+	ControllerRuntime *ControllerRuntime `json:"-"`
 	// GradeSnapshot marks this launch as `coop eval`'s grader running against a trial snapshot, and
 	// turns OFF secret shadowing of the mounted tree — a grader must see what the candidate actually
 	// wrote, including a file named like a secret. It is refused together with Homes, so it can never
@@ -648,6 +649,24 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.networkSmoke != nil && spec.CapturedEgress == nil {
 		return -1, errors.New("network preflight requires a filtered capture")
 	}
+	if spec.ControllerJob && !spec.FormatCorrection && !spec.HandshakeOnly {
+		if spec.ControllerRuntime == nil {
+			var err error
+			spec.ControllerRuntime, err = ControllerRuntimeFromEnvironment()
+			if err != nil {
+				return -1, err
+			}
+		}
+		if spec.ControllerRuntime != nil {
+			var err error
+			spec.Image, err = prepareControllerImage(cfg, rt, spec.ControllerRuntime, spec.Stderr)
+			if err != nil {
+				return -1, err
+			}
+		}
+	} else if spec.ControllerRuntime != nil {
+		return -1, errors.New("project runtime requires a controller job")
+	}
 	policyRepo := projectPolicyRepo(spec)
 	var p *project.Project
 	var err error
@@ -683,10 +702,22 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// the operator's original config and MCP source, not merely that disposable copy.
 	authorityConfig := cfg
 	projectEnv := p.Box.Env
+	if spec.ControllerRuntime != nil {
+		projectEnv = spec.ControllerRuntime.Runtime.Environment
+	}
 	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
 	if spec.ControllerJob || spec.HandshakeOnly {
 		composeFile = ""
+	}
+	if spec.ControllerRuntime != nil && !spec.HandshakeOnly && !spec.FormatCorrection {
+		composeFile = ComposeFileAt(spec.Repo, spec.ControllerRuntime.Runtime.Compose)
+		if spec.ControllerRuntime.Runtime.Compose == "" {
+			composeFile = ""
+		}
+		if spec.ControllerRuntime.Runtime.Compose != "" && composeFile == "" && !(spec.Review && p.Review.Compose != "") {
+			return -1, errors.New("required project Compose file is missing or empty")
+		}
 	}
 	serviceOwner := runServiceOwner(spec)
 	spec.servePorts = p.Serve.Ports
@@ -762,6 +793,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.Review && !spec.FormatCorrection {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
+			if spec.ControllerJob && composeFile == "" {
+				return -1, errors.New("required review Compose file is missing or empty")
+			}
 		}
 		review := []string{"-e", "COOP_REVIEW=1"}
 		keys := make([]string, 0, len(p.Review.Env))
@@ -781,6 +815,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		} else {
 			spec.ExtraArgs = append(spec.ExtraArgs, review...)
 		}
+	}
+	if spec.ControllerRuntime != nil && composeFile != "" && (cfg.Egress != "open" || !rt.SupportsCompose()) {
+		return -1, errors.New("required project services need an open Compose-capable runtime")
 	}
 	var mcpSnapshot []byte
 	mcpPresent := false
@@ -1559,6 +1596,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// same lifecycle lock as rm/fresh/merge and validates the exact workspace generation, so either
 	// the reservation wins and mutation refuses, or mutation wins and this launch fails closed.
 	reviewServicesAttempted := false
+	controllerServicesAttempted := false
 	finish := func(code int, runErr error) (int, error) {
 		var filesystemCleanup error
 		if spec.filesystem != nil && filtered == nil && !filesystemClosed {
@@ -1571,8 +1609,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		// A review's stack is as disposable as its candidate: containers, network and volumes.
 		if reviewServicesAttempted {
-			cleanupErr := DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
+			var cleanupErr error
+			if spec.ControllerRuntime != nil {
+				cleanupErr = StopControllerServices(context.Background(), rt, spec.Repo, true)
+			} else {
+				cleanupErr = DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
+			}
 			runErr = errors.Join(runErr, cleanupErr)
+		} else if controllerServicesAttempted && runErr != nil {
+			runErr = errors.Join(runErr, StopControllerServices(context.Background(), rt, spec.Repo, false))
 		}
 		// A filtered run ends its activity only after exact runtime cleanup has
 		// confirmed the workload is gone.
@@ -1653,7 +1698,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		services.state = servicesUnknown
 	}
 	serviceNetwork := cfg.ServicesNet
-	if serviceNetwork == "" || serviceOwner != "" || spec.Review && composeFile != "" {
+	if spec.ControllerJob || serviceNetwork == "" || serviceOwner != "" || spec.Review && composeFile != "" {
 		serviceNetwork = ComposeProjectFor(spec.Repo, serviceOwner) + "_default"
 	}
 	servicesInspected := false
@@ -1661,7 +1706,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// reviews alone. Egress must be open: the stack's network carries the box's own traffic.
 	reviewStack := spec.ControllerJob && spec.Review && p.Review.Compose != "" && composeFile != "" &&
 		cfg.Egress == "open" && rt.SupportsCompose()
-	if composeFile != "" && (autoUpServices(cfg, spec, rt) || reviewStack) {
+	controllerStack := spec.ControllerRuntime != nil && composeFile != "" && cfg.Egress == "open" && rt.SupportsCompose()
+	if composeFile != "" && (autoUpServices(cfg, spec, rt) || reviewStack || controllerStack) {
 		projectRepo := spec.ActivityRepo
 		if projectRepo == "" {
 			projectRepo = spec.Repo
@@ -1679,7 +1725,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// continue-without-services behavior.
 			var composeStderr bytes.Buffer
 			servicesInspected = true
-			reviewServicesAttempted = reviewStack
+			reviewServicesAttempted = reviewStack || controllerStack && spec.Review
+			controllerServicesAttempted = controllerStack
 			var err error
 			started, joined := joinOpenSessionServices(serviceCtx, rt, spec, projectRepo, cf, serviceOwner, sections, privateRoots...)
 			if !joined {
@@ -1690,6 +1737,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				serviceCtx = context.WithValue(serviceCtx, isolatedServiceParentKey{}, spec.IsolatedParent)
 				serviceCtx = context.WithValue(serviceCtx, serviceCaseExposureKey{}, cfg.AllowCaseExposedSecrets)
 				serviceCtx = context.WithValue(serviceCtx, markServiceDefinitionKey{}, spec.SupervisorID != "")
+				if spec.ControllerRuntime != nil {
+					serviceCtx = context.WithValue(serviceCtx, controllerServicesKey{}, cfg)
+				}
 				started, err = startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 				unlock()
 			}
@@ -1701,12 +1751,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 					sections.servicesRefused(err.Error())
 					return finish(-1, ui.Reported(err))
 				}
-				if spec.Review {
+				if spec.Review || controllerStack {
 					detail := strings.TrimSpace(composeStderr.String())
 					if detail != "" {
 						err = fmt.Errorf("%w: %s", err, detail)
 					}
-					return finish(-1, fmt.Errorf("start review services: %w", err))
+					return finish(-1, fmt.Errorf("start required project services: %w", err))
 				}
 				sections.servicesFailed(boundedCause(composeStderr.String(), err), started.ports...)
 				if !sections.on {
@@ -1728,8 +1778,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return finish(-1, err)
 	}
 	networkName := ""
-	if cfg.Egress == "open" && (spec.Network || reviewStack) && rt.Silent("network", "inspect", serviceNetwork) {
+	if cfg.Egress == "open" && (spec.Network || reviewStack || controllerStack) && rt.Silent("network", "inspect", serviceNetwork) {
 		networkName = serviceNetwork
+	}
+	if controllerStack && networkName == "" {
+		return finish(-1, errors.New("required project services network is unavailable"))
 	}
 	if open != nil {
 		// Its address exists only once it runs, so the helper starts here — on the box's own network,

@@ -1009,6 +1009,16 @@ func (r Runtime) RemoveByLabel(ctx context.Context, key, value string) (int, err
 // RemoveByLabels force-removes every container matching all supplied labels. Sorting the filters
 // keeps runtime calls deterministic while the runtime performs the ownership intersection.
 func (r Runtime) RemoveByLabels(ctx context.Context, labels map[string]string) (int, error) {
+	return r.removeByLabels(ctx, labels, false)
+}
+
+// RemoveByLabelsWithAnonymousVolumes also removes the selected containers' anonymous volumes.
+// Named volumes remain available for the next session turn and are retired only on final discard.
+func (r Runtime) RemoveByLabelsWithAnonymousVolumes(ctx context.Context, labels map[string]string) (int, error) {
+	return r.removeByLabels(ctx, labels, true)
+}
+
+func (r Runtime) removeByLabels(ctx context.Context, labels map[string]string, anonymousVolumes bool) (int, error) {
 	if len(labels) == 0 {
 		return 0, errors.New("at least one container label is required")
 	}
@@ -1030,7 +1040,12 @@ func (r Runtime) RemoveByLabels(ctx context.Context, labels map[string]string) (
 	}
 	n := 0
 	for _, id := range ids {
-		out, err := contextCommand(ctx, r.Name, "rm", "-f", id).CombinedOutput()
+		args := []string{"rm", "-f"}
+		if anonymousVolumes {
+			args = append(args, "--volumes")
+		}
+		args = append(args, id)
+		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
 		if err != nil {
 			if ctx.Err() != nil {
 				err = ctx.Err()

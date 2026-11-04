@@ -306,6 +306,7 @@ type sessionReadyDTO struct {
 
 type sessionCapabilitiesDTO struct {
 	JobSpecVersions                    []int `json:"job_spec_versions"`
+	ProjectRuntimeVersions             []int `json:"project_runtime_versions"`
 	ControllerToolsVersions            []int `json:"controller_tools_versions"`
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
 	// SessionEvidenceVersions is the proof that this daemon serves GET /v1/sessions/{id}/evidence
@@ -374,6 +375,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
 			JobSpecVersions:                    []int{2},
+			ProjectRuntimeVersions:             []int{1},
 			ControllerToolsVersions:            []int{1},
 			RepositoryFreshnessReceiptVersions: []int{2},
 			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},

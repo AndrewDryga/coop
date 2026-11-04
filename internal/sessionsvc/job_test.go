@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -461,5 +463,67 @@ func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T)
 	}
 	if _, err := service.store.GetOperation(context.Background(), "job-http-wrong"); !errors.Is(err, session.ErrOperationNotFound) {
 		t.Fatalf("wrong digest was journaled: %v", err)
+	}
+}
+
+// Work used to run without the repository's tools or database. Only the controller's frozen
+// setup may fix that: an inherited host value or an agent-edited workspace cannot grant it.
+func TestProjectRuntimeChildUsesTheFrozenJobAndPrivateSource(t *testing.T) {
+	repo, _ := gitrepo.NewCommitted(t)
+	fixture := newReviewTestService(t, repo, 1<<20, nil)
+	defer fixture.Stop()
+	fixture.Job.Runtime = &workerproto.JobRuntime{Version: 1, Dockerfile: ".agent/Dockerfile", Compose: "compose.test.yml", Environment: map[string]string{}}
+	bound := createReviewSession(t, fixture, "runtime-child")
+	env, err := controllerRuntimeChildEnvironment(bound)
+	if err != nil || len(env) != 1 {
+		t.Fatalf("runtime child environment = %v, error %v", env, err)
+	}
+	var grant struct {
+		Version    int                     `json:"version"`
+		JobDigest  string                  `json:"job_digest"`
+		Repository string                  `json:"repository"`
+		Runtime    *workerproto.JobRuntime `json:"runtime"`
+	}
+	if json.Unmarshal([]byte(strings.TrimPrefix(env[0], box.ControllerRuntimeEnv+"=")), &grant) != nil ||
+		grant.Version != 1 || grant.JobDigest != bound.JobDigest || grant.Repository != bound.Repository ||
+		grant.Repository == bound.Workspace || grant.Runtime == nil || !reflect.DeepEqual(grant.Runtime, fixture.Job.Runtime) {
+		t.Fatalf("child lost frozen private runtime authority: %s", env[0])
+	}
+	t.Setenv(box.ControllerRuntimeEnv, "forged-host-grant")
+	for _, item := range sessionACPChildEnvironment(bound.Repository, nil, false, t.TempDir(), "session-one", nil, "docker") {
+		if strings.HasPrefix(item, box.ControllerRuntimeEnv+"=") {
+			t.Fatalf("inherited host runtime grant reached child: %s", item)
+		}
+	}
+	bound.JobDigest = strings.Repeat("0", 64)
+	if _, err := controllerRuntimeChildEnvironment(bound); err == nil {
+		t.Fatal("changed frozen job identity granted a project runtime")
+	}
+}
+
+func TestJobWithoutRuntimePassesNoNewRuntimeAuthority(t *testing.T) {
+	job := emptyWorkerJob()
+	document, err := json.Marshal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := job.Digest()
+	env, err := controllerRuntimeChildEnvironment(session.Session{JobDocument: document, JobDigest: digest})
+	if err != nil || len(env) != 0 {
+		t.Fatalf("retained job gained runtime authority: %v, %v", env, err)
+	}
+}
+
+// Project defaults are below controller values, but still cannot impersonate a provider's
+// credential or native-home configuration when they are composed into the agent environment.
+func TestProjectRuntimeCannotSetProviderOwnedEnvironment(t *testing.T) {
+	for _, key := range []string{"OPENAI_API_KEY", "ANTHROPIC_MODEL", "CODEX_SQLITE_HOME"} {
+		t.Run(key, func(t *testing.T) {
+			job := emptyWorkerJob()
+			job.Runtime = &workerproto.JobRuntime{Version: 1, Environment: map[string]string{key: "untrusted"}}
+			if err := validateJobEnvironmentOwnership(job, "/home/node"); err == nil {
+				t.Fatalf("project runtime overrode provider-owned variable %s", key)
+			}
+		})
 	}
 }

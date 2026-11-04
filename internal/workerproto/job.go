@@ -33,6 +33,36 @@ type JobSpec struct {
 	Environment        map[string]string `json:"environment"`
 	Check              JobCheck          `json:"check"`
 	Resources          JobResources      `json:"resources"`
+	Runtime            *JobRuntime       `json:"runtime,omitempty"`
+}
+
+// JobRuntime is the narrow project setup a controller resolved at the frozen source. Empty
+// paths select the shared toolchain or no services. Environment contains project defaults, below
+// review overrides and controller-enforced values; repository policy cannot widen this grant.
+type JobRuntime struct {
+	Version     int               `json:"version"`
+	Dockerfile  string            `json:"dockerfile"`
+	Compose     string            `json:"compose"`
+	Environment map[string]string `json:"environment"`
+}
+
+// The host-parent relay carries one runtime document. Bound encoded project defaults so every
+// accepted job fits that relay even when JSON escaping expands its literal values.
+const maxProjectEnvironmentBytes = 64 << 10
+
+func (r JobRuntime) Validate() error {
+	if r.Version != 1 || !validJobRuntimePath(r.Dockerfile) || !validJobRuntimePath(r.Compose) || !validJobEnvironment(r.Environment) {
+		return errors.New("invalid job project runtime")
+	}
+	encoded, err := json.Marshal(r.Environment)
+	if err != nil || len(encoded) > maxProjectEnvironmentBytes {
+		return errors.New("project defaults exceed 64 KiB of encoded JSON")
+	}
+	return nil
+}
+
+func validJobRuntimePath(value string) bool {
+	return value == "" || len(value) <= 1024 && validJobSubmodulePath(value)
 }
 
 type JobCheck struct {
@@ -194,9 +224,14 @@ func requireJobFields(document []byte) error {
 		return value, nil
 	}
 	root, err := object(document, []string{"version", "job_ref", "companions", "targets", "mode",
-		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source")
+		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source", "runtime")
 	if err != nil {
 		return err
+	}
+	if raw, ok := root["runtime"]; ok {
+		if _, err := object(raw, []string{"version", "dockerfile", "compose", "environment"}); err != nil {
+			return fmt.Errorf("job runtime: %w", err)
+		}
 	}
 	if _, ok := root["source"]; !ok {
 		return errors.New("job specification is missing source")
@@ -370,6 +405,9 @@ func (s JobSpec) Validate() error {
 		if err := s.Source.validate(); err != nil {
 			return err
 		}
+	}
+	if s.Runtime != nil && (s.Source == nil || s.RepositoryReadOnly || s.Runtime.Validate() != nil) {
+		return errors.New("job project runtime requires a writable source and valid setup")
 	}
 	if len(s.Companions) > 32 {
 		return errors.New("job has too many companion repositories")

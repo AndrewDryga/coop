@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,10 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-04 — box imports workerproto for the controller-frozen project runtime selector. The
+  sandbox executor consumes the same small validated runtime grant as the worker API, avoiding a
+  second authority schema or importing sessionsvc. workerproto imports no box package, so no cycle
+  or presentation edge is added.
 - 2026-11-03 — networkreport imports egress: `coop net inspect` and a box's network summary name a
   raw traffic row by its rule (`10.42.8.0/24:5432 · TCP`) instead of a keyed ID, so the one renderer
   of a rule as a destination row reads (`RuleText`, formerly cli's `netRuleText`) moved down to

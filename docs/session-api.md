@@ -31,11 +31,11 @@ keep the worker running. Ctrl-C stops both the connector and the daemon it start
 A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes
 Git LFS. On a native worker, install `git-lfs` with your package manager.
 
-A worker never builds or runs a repository's `.agent/Dockerfile` for a job. You configure the
-worker's image separately from repository code. Jobs use the worker's base image
-(`COOP_BASE_IMAGE`), except that filtered jobs use co:op's locked client image. Install the tools
-your jobs need in the base image. A normal-mode job also installs the tools listed in the
-repository's `.tool-versions` when its box starts.
+Jobs use the worker's base image (`COOP_BASE_IMAGE`) unless the controller grants a project
+runtime. That grant can select a project Dockerfile and an isolated Compose test stack. The worker
+builds the toolchain from its private frozen source and gives Work and review the same image.
+Filtered jobs use co:op's locked client image and refuse custom controller toolchains. A normal-mode
+job also installs the tools listed in the repository's `.tool-versions` when its box starts.
 
 Before the worker accepts filtered jobs, run [`coop net setup`](networking.md#fleet-workers-and-docker-in-docker)
 as the worker's OS user, using the same Docker endpoint and network state directory. This prepares
@@ -588,7 +588,7 @@ prevents repeated stops and starts as cleanup frees space. New work must leave
 writes in its workspace.
 
 Before reporting support for `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
-`controller-tools:1` or `review-commit-message:1`, the connector checks the running daemon's
+`controller-tools:1`, `project-runtime:1` or `review-commit-message:1`, the connector checks the running daemon's
 `GET /v1/capabilities` response for the matching version. If it cannot verify a capability,
 it leaves it out of the next hello. The controller can distinguish an unsupported evidence
 export from a supported report with no observed activity.
@@ -664,6 +664,35 @@ may use repository defaults, but it must choose and include every setting before
 Work and review containers use that same saved configuration, with review-only environment
 variables added for the check. There is no local policy name, policy catalog, separate source
 selector or worker JSON file.
+
+Writable source jobs may additionally include an optional project runtime:
+
+```json
+"runtime": {
+  "version": 1,
+  "dockerfile": ".agent/Dockerfile",
+  "compose": "dev/services.yml",
+  "environment": {"PGHOST": "db"}
+}
+```
+
+These are canonical repository-relative paths resolved by the controller at the frozen source.
+An empty Dockerfile uses the shared image; an empty Compose path starts no services. Retained jobs
+without this field keep their exact authority and digest. Send runtime-bearing jobs only to workers
+advertising `project-runtime:1`, proven by `project_runtime_versions: [1]` on the local daemon.
+The runtime's `environment` holds frozen project defaults, with a 64 KiB limit measured as escaped
+JSON. Candidate `review.env` overrides those defaults. The job's root `environment` and
+`check.environment` remain controller authority and override candidate values.
+
+Work gets its own Compose project and default network, and services get finite job resource caps.
+At least one service must join the default network; custom-only network topologies are refused
+before startup. Service aliases and additional project networks are preserved. Required setup
+failures stop the command. Host ports and globally named/external volumes are refused or
+removed from the job setup. Named data volumes survive ordinary turns on the same worker;
+anonymous volumes and tmpfs are disposable. Final discard removes owned containers, networks and
+named volumes before deleting the workspace, using immutable labels even if project files changed.
+A replacement worker reconstructs test services; checkpoints do not transfer database volumes.
+A candidate's `review.compose` can replace the Work stack with a separate disposable review stack.
 
 Send version-2 jobs only to workers that report `job-setup:2`. A new connector can still be
 connected to an old daemon, so the connector checks the running daemon before reporting support.
@@ -1255,9 +1284,10 @@ runs, the exact saved network permissions. It ignores the repository's `box:` se
 worker's runtime arguments, environment file and MCP configuration. It uses the saved work
 environment plus check-only overrides, with the same CPU, memory and process limits as model
 turns. It also applies the candidate's [`review:` settings](configuration.md#review-checks).
-Where the job and `review.env` set the same variable, the job's value wins. The check uses the
-same worker-configured image, or locked filtered client image, as the turns. It never builds or
-uses an image from the job repository's Dockerfile.
+Where the job and `review.env` set the same variable, the job's value wins. Project defaults in
+`runtime.environment` apply below `review.env`. The check uses the
+same granted project toolchain or worker-configured image as the turns. Without a project runtime,
+it continues to use the worker-configured image, or locked filtered client image.
 
 The check can create ignored build files in its temporary checkout. If it changes the reviewed
 source, the result cannot be published. Publication is also blocked when no check is configured,

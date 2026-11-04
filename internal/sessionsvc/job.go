@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -88,6 +89,38 @@ func sessionJobSpec(bound session.Session) (workerproto.JobSpec, error) {
 	return job, nil
 }
 
+// sessionHasProjectRuntime is a custody check, not admission: historical documents keep their
+// cleanup path without being decoded through a newer execution contract.
+func sessionHasProjectRuntime(bound session.Session) bool {
+	var document map[string]json.RawMessage
+	if json.Unmarshal(bound.JobDocument, &document) != nil {
+		return false
+	}
+	value := document["runtime"]
+	return len(value) != 0 && string(value) != "null"
+}
+
+// controllerRuntimeChildEnvironment carries only validated, persisted job authority to the
+// host child. Its source repository is worker-private; the writable workspace is never a
+// source of new runtime authority, and the COOP_ variable never enters the agent box.
+func controllerRuntimeChildEnvironment(bound session.Session) ([]string, error) {
+	if bound.JobDigest == "" {
+		return nil, nil
+	}
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := box.EncodeControllerRuntime(bound.JobDigest, bound.Repository, job.Runtime)
+	if err != nil {
+		return nil, err
+	}
+	if encoded == "" {
+		return nil, nil
+	}
+	return []string{box.ControllerRuntimeEnv + "=" + encoded}, nil
+}
+
 // resolveJobExecution converts authenticated controller authority to the service's execution snapshot.
 // Source paths are derived from the private state root, never taken from the job document.
 func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSpec) (executionConfig, error) {
@@ -106,7 +139,7 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 		OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: job.RepositoryReadOnly,
 		Egress:             executionNetwork{Mode: egress.Mode(job.Egress.Mode), ExportDestinations: job.Egress.ExportDestinations},
-		Environment:        job.Environment, Check: job.Check, Resources: job.Resources,
+		Environment:        job.Environment, Check: job.Check, Resources: job.Resources, Runtime: job.Runtime,
 		MaxTurns: job.Limits.MaxTurns, MaxQueuedTurns: job.Limits.MaxQueuedTurns,
 		MaxQueuedBytes: job.Limits.MaxQueuedBytes, TurnTimeout: time.Duration(job.Limits.TurnTimeoutMS) * time.Millisecond,
 		WarmIdleTimeout: time.Duration(job.Limits.WarmIdleTimeoutMS) * time.Millisecond,
@@ -160,6 +193,11 @@ func validateJobEnvironmentOwnership(job workerproto.JobSpec, homeInBox string) 
 			}
 			if _, present := job.Check.Environment[key]; present {
 				return fmt.Errorf("job check environment cannot set provider-owned variable %s", key)
+			}
+			if job.Runtime != nil {
+				if _, present := job.Runtime.Environment[key]; present {
+					return fmt.Errorf("job runtime environment cannot set provider-owned variable %s", key)
+				}
 			}
 		}
 	}

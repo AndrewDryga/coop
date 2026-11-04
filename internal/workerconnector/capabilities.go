@@ -11,6 +11,7 @@ import (
 
 type sessionCapabilities struct {
 	JobSpecVersions                    []int `json:"job_spec_versions"`
+	ProjectRuntimeVersions             []int `json:"project_runtime_versions,omitempty"`
 	ControllerToolsVersions            []int `json:"controller_tools_versions"`
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
 	// SessionEvidenceVersions proves the daemon serves the session evidence read this connector
@@ -38,6 +39,9 @@ func LiveCapabilities(ctx context.Context, api API) []workerproto.Capability {
 	var document sessionCapabilities
 	if decoder.Decode(&document) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return result
+	}
+	if proves(document.ProjectRuntimeVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "project-runtime", Version: "1"})
 	}
 	if proves(document.JobSpecVersions, 2) {
 		result = append(result, workerproto.Capability{Name: "job-setup", Version: "2"})

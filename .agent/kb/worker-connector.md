@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/workerconnector/activity_narration.go]
-updated: 2026-10-28
+sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/box/controller_runtime.go, .agent/kb/controller-project-runtime.md, internal/workerconnector/activity_narration.go]
+updated: 2026-11-04
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -11,6 +11,14 @@ shape is a poll loop, not a server: the connector opens a single outbound mutual
 controller and forwards protocol-v2 `api_request` envelopes to the owner-private Unix API.
 Method, relative path, allowed headers and JSON or streamed body carry every API endpoint without
 product-specific commands. The connector never listens on TCP or accepts a shell command (`internal/cli/session_connect.go`).
+
+
+A version-2 job can additionally carry the optional version-1 project runtime selectors described in
+`.agent/kb/controller-project-runtime.md`. `project-runtime:1` is advertised only when the local daemon proves
+`project_runtime_versions: [1]`. The selectors and literal environment come from controller-owned
+job authority, not a mutable workspace policy. Retained jobs without runtime keep their exact
+canonical documents. Services use a workspace-private project; named data survives ordinary turns,
+while label-owned final cleanup settles containers, networks and volumes before workspace removal.
 
 The traps the code does not make obvious:
 

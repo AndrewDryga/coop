@@ -36,6 +36,7 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 		return ReviewGateResult{Configured: true, Passed: true}, nil
 	}))
 	defer service.Stop()
+	service.Job.Runtime = &workerproto.JobRuntime{Version: 1, Dockerfile: ".agent/Dockerfile", Compose: "compose.test.yml", Environment: map[string]string{}}
 	service.Job.Environment = map[string]string{"CI": "1", "SHARED": "work"}
 	service.Job.Check.Argv = []string{"make", "test"}
 	service.Job.Check.Environment = map[string]string{"SHARED": "review", "DATABASE_URL": "postgres://test-db/app"}
@@ -60,7 +61,7 @@ func TestSessionServiceRunReviewCleanGreenReplayAndIsolation(t *testing.T) {
 		gateRequest.OperationID != dossier.OperationID ||
 		!reflect.DeepEqual(gateRequest.Command, []string{"make", "test"}) ||
 		!reflect.DeepEqual(gateRequest.Environment, map[string]string{"CI": "1", "SHARED": "review", "DATABASE_URL": "postgres://test-db/app"}) ||
-		gateRequest.Resources != service.Job.Resources {
+		gateRequest.Resources != service.Job.Resources || !reflect.DeepEqual(gateRequest.Runtime, service.Job.Runtime) {
 		t.Fatalf("gate lost saved job authority: %+v", gateRequest)
 	}
 	if !dossier.Publishable || dossier.Rebase != ReviewRebaseClean || dossier.Gate != ReviewGatePassed || dossier.CandidateHead == "" || dossier.CandidateTree == "" || len(dossier.Patch) == 0 || dossier.PatchTruncated {

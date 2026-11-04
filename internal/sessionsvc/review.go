@@ -107,6 +107,7 @@ type ReviewGateRequest struct {
 	Command                                               []string
 	Environment                                           map[string]string
 	Resources                                             workerproto.JobResources
+	Runtime                                               *workerproto.JobRuntime
 	Output                                                io.Writer
 }
 
@@ -637,7 +638,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 			Repository: intent.Repository, Candidate: candidate.dir, StateRoot: s.stateRoot, OperationID: op.ID,
 			SessionID: bound.ID, JobDigest: bound.JobDigest, NetworkMode: string(policy.Egress.Mode),
 			NetworkFingerprint: bound.NetworkFingerprint, NetworkQualification: bound.NetworkQualification,
-			Command: append([]string(nil), policy.Check.Argv...), Environment: gateEnvironment, Resources: policy.Resources,
+			Command: append([]string(nil), policy.Check.Argv...), Environment: gateEnvironment, Resources: policy.Resources, Runtime: policy.Runtime,
 			Output: gateLog,
 		})
 		output := gateLog.finish(gateResult, openErr)

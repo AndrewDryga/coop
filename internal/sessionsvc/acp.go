@@ -2002,7 +2002,13 @@ func (r *sessionTurnRunner) stopSessionServices(parent context.Context, bound se
 	}
 	ctx, cancel := context.WithTimeout(parent, sessionRuntimeReapTimeout)
 	defer cancel()
-	if err := box.StopSessionServices(ctx, r.rt, bound.Workspace, bound.Repository); err != nil {
+	stopServices := func() error {
+		if sessionHasProjectRuntime(bound) {
+			return box.StopControllerServices(ctx, r.rt, bound.Workspace, false)
+		}
+		return box.StopSessionServices(ctx, r.rt, bound.Workspace, bound.Repository)
+	}
+	if err := stopServices(); err != nil {
 		// Carry the cause: "session services cleanup failed" alone cannot tell a
 		// slow daemon from a broken compose project, and the difference is the fix.
 		return acpFailure(
@@ -2209,6 +2215,11 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if r.store == nil || r.store.ID() == "" {
 		return nil, acpFailure(sessionACPProcessError, "session store ownership is unavailable")
 	}
+	runtimeEnv, err := controllerRuntimeChildEnvironment(bound)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session project runtime is invalid"), err)
+	}
+	env = append(env, runtimeEnv...)
 	env = append(env, "COOP_SESSION_STORE_ID="+r.store.ID())
 	if outputRoot != "" {
 		env = append(env, SessionOutputRootEnv+"="+outputRoot)

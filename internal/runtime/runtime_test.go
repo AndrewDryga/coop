@@ -1163,3 +1163,24 @@ func TestForegroundClientCancellationKeepsControllerAlive(t *testing.T) {
 		})
 	}
 }
+
+// Per-turn cleanup must remove image-declared or explicit anonymous volumes while keeping
+// named database volumes, which final workspace discard owns separately.
+func TestOwnedContainerCleanupRemovesAnonymousVolumes(t *testing.T) {
+	runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+	events := filepath.Join(t.TempDir(), "events")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(events) + "\nif [ \"$1\" = ps ]; then echo owned-sidecar; fi\n"
+	if err := os.WriteFile(runtimeCLI, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Runtime{Name: runtimeCLI}).RemoveByLabelsWithAnonymousVolumes(context.Background(), map[string]string{"com.docker.compose.project": "private-job"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "rm -f --volumes owned-sidecar") || strings.Contains(string(data), "volume rm") {
+		t.Fatalf("cleanup did not preserve named data while removing anonymous data: %s", data)
+	}
+}

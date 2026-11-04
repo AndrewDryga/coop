@@ -430,7 +430,7 @@ func ImageForRepo(repo, baseImage, override string) string {
 }
 
 // SharedImage selects the operator's override or the resolved base without consulting repository
-// files. Controller jobs and eval trials must not choose an image from their source repository.
+// files. Jobs without a project-runtime grant and eval trials use this shared selection.
 func SharedImage(baseImage, override string) string {
 	if override != "" {
 		return override

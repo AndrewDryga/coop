@@ -153,4 +153,5 @@ card is still TRUE; only reading it against its `sources` does that.
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 - [session-evidence-export](session-evidence-export.md) — one bounded versioned read exports a session's network posture, observation, receipt and bound task; every section states its own availability and unknown never collapses into zero
 - [worker-connector](worker-connector.md) — the outbound worker journals before executing, resends results until acknowledged, moves workspaces only as verified bundles, and never falls back to local execution
+- [controller-project-runtime](controller-project-runtime.md) — frozen toolchain/service selectors, private database lifetime, capability proof and cleanup
 - [worker-storage-accounting](worker-storage-accounting.md) — allocated blocks not apparent size, a hardlinked baseline charged once, a discard that renames before it deletes, used-byte watermarks over a free-byte reserve, and unknown that is never zero

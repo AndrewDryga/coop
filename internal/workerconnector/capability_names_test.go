@@ -96,3 +96,25 @@ func TestReviewCommitMessageCapabilityRequiresExactLiveProof(t *testing.T) {
 		}
 	}
 }
+
+// A new connector must not promise project runtimes while its older daemon still ignores them.
+func TestProjectRuntimeCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want bool
+	}{
+		{`{"project_runtime_versions":[1]}`, true},
+		{`{}`, false},
+		{`{"project_runtime_versions":[2]}`, false},
+		{`{"project_runtime_versions":[1,2]}`, false},
+		{`{"project_runtime_versions":[1],"unknown":true}`, false},
+	} {
+		found := false
+		for _, capability := range LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)}) {
+			found = found || capability.Name == "project-runtime" && capability.Version == "1"
+		}
+		if found != test.want {
+			t.Fatalf("project runtime capability for %s = %t, want %t", test.body, found, test.want)
+		}
+	}
+}

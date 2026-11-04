@@ -116,11 +116,11 @@ several workers at once, give each a separate <code>--state</code> directory. Us
 keep the worker running. Ctrl-C stops both the connector and the daemon it started.</p>
 <p>A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes
 Git LFS. On a native worker, install <code>git-lfs</code> with your package manager.</p>
-<p>A worker never builds or runs a repository&#39;s <code>.agent/Dockerfile</code> for a job. You configure the
-worker&#39;s image separately from repository code. Jobs use the worker&#39;s base image
-(<code>COOP_BASE_IMAGE</code>), except that filtered jobs use co:op&#39;s locked client image. Install the tools
-your jobs need in the base image. A normal-mode job also installs the tools listed in the
-repository&#39;s <code>.tool-versions</code> when its box starts.</p>
+<p>Jobs use the worker&#39;s base image (<code>COOP_BASE_IMAGE</code>) unless the controller grants a project
+runtime. That grant can select a project Dockerfile and an isolated Compose test stack. The worker
+builds the toolchain from its private frozen source and gives Work and review the same image.
+Filtered jobs use co:op&#39;s locked client image and refuse custom controller toolchains. A normal-mode
+job also installs the tools listed in the repository&#39;s <code>.tool-versions</code> when its box starts.</p>
 <p>Before the worker accepts filtered jobs, run <a href="networking.html#fleet-workers-and-docker-in-docker"><code>coop net setup</code></a>
 as the worker&#39;s OS user, using the same Docker endpoint and network state directory. This prepares
 and checks the networking setup. The session API requires those checks to remain valid; it does
@@ -649,7 +649,7 @@ prevents repeated stops and starts as cleanup frees space. New work must leave
 <code>storage.reserve_bytes</code> free. These checks do not limit how much data an already-running task
 writes in its workspace.</p>
 <p>Before reporting support for <code>job-setup:2</code>, <code>repository-freshness:2</code>, <code>session-evidence:1</code>,
-<code>controller-tools:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
+<code>controller-tools:1</code>, <code>project-runtime:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
 <code>GET /v1/capabilities</code> response for the matching version. If it cannot verify a capability,
 it leaves it out of the next hello. The controller can distinguish an unsupported evidence
 export from a supported report with no observed activity.</p>
@@ -731,6 +731,30 @@ may use repository defaults, but it must choose and include every setting before
 Work and review containers use that same saved configuration, with review-only environment
 variables added for the check. There is no local policy name, policy catalog, separate source
 selector or worker JSON file.</p>
+<p>Writable source jobs may additionally include an optional project runtime:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Sessions code example" tabindex="0" data-copy-source=""><code class="language-json">&#34;runtime&#34;: {
+  &#34;version&#34;: 1,
+  &#34;dockerfile&#34;: &#34;.agent/Dockerfile&#34;,
+  &#34;compose&#34;: &#34;dev/services.yml&#34;,
+  &#34;environment&#34;: {&#34;PGHOST&#34;: &#34;db&#34;}
+}
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>These are canonical repository-relative paths resolved by the controller at the frozen source.
+An empty Dockerfile uses the shared image; an empty Compose path starts no services. Retained jobs
+without this field keep their exact authority and digest. Send runtime-bearing jobs only to workers
+advertising <code>project-runtime:1</code>, proven by <code>project_runtime_versions: [1]</code> on the local daemon.
+The runtime&#39;s <code>environment</code> holds frozen project defaults, with a 64 KiB limit measured as escaped
+JSON. Candidate <code>review.env</code> overrides those defaults. The job&#39;s root <code>environment</code> and
+<code>check.environment</code> remain controller authority and override candidate values.</p>
+<p>Work gets its own Compose project and default network, and services get finite job resource caps.
+At least one service must join the default network; custom-only network topologies are refused
+before startup. Service aliases and additional project networks are preserved. Required setup
+failures stop the command. Host ports and globally named/external volumes are refused or
+removed from the job setup. Named data volumes survive ordinary turns on the same worker;
+anonymous volumes and tmpfs are disposable. Final discard removes owned containers, networks and
+named volumes before deleting the workspace, using immutable labels even if project files changed.
+A replacement worker reconstructs test services; checkpoints do not transfer database volumes.
+A candidate&#39;s <code>review.compose</code> can replace the Work stack with a separate disposable review stack.</p>
 <p>Send version-2 jobs only to workers that report <code>job-setup:2</code>. A new connector can still be
 connected to an old daemon, so the connector checks the running daemon before reporting support.
 Remote reviews use the submitted job&#39;s check, not the worker&#39;s <code>COOP_GATE</code> or the repository&#39;s
@@ -1372,9 +1396,10 @@ runs, the exact saved network permissions. It ignores the repository&#39;s <code
 worker&#39;s runtime arguments, environment file and MCP configuration. It uses the saved work
 environment plus check-only overrides, with the same CPU, memory and process limits as model
 turns. It also applies the candidate&#39;s <a href="configuration.html#review-checks"><code>review:</code> settings</a>.
-Where the job and <code>review.env</code> set the same variable, the job&#39;s value wins. The check uses the
-same worker-configured image, or locked filtered client image, as the turns. It never builds or
-uses an image from the job repository&#39;s Dockerfile.</p>
+Where the job and <code>review.env</code> set the same variable, the job&#39;s value wins. Project defaults in
+<code>runtime.environment</code> apply below <code>review.env</code>. The check uses the
+same granted project toolchain or worker-configured image as the turns. Without a project runtime,
+it continues to use the worker-configured image, or locked filtered client image.</p>
 <p>The check can create ignored build files in its temporary checkout. If it changes the reviewed
 source, the result cannot be published. Publication is also blocked when no check is configured,
 the check fails or cannot start.</p>

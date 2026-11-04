@@ -72,6 +72,10 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// auto-up warning, so a refused file names exactly why.
 	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.Name == "docker" && filesystemProfileCandidate(workspace))
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
+	controller, _ := ctx.Value(controllerServicesKey{}).(*config.Config)
+	if err == nil && controller != nil {
+		err = validateControllerServices(data)
+	}
 	if err == nil && review != nil {
 		err = review.verify(ctx, rt, workspace, file, data)
 	}
@@ -96,7 +100,10 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	}
 	// Publish each `expose`d sidecar port to its stable per-workspace host port via a merged
 	// override (the base file's `expose` publishes nothing, so this adds the only host mapping).
-	ports := servicePortsWithArgs(rt, servicePortScope(workspace, owner), args)
+	var ports []ServicePort
+	if controller == nil {
+		ports = servicePortsWithArgs(rt, servicePortScope(workspace, owner), args)
+	}
 	if sp := ports; len(sp) > 0 {
 		override, cleanup, err := writeServiceOverride(sp, workspace, exposedRoots...)
 		if err != nil {
@@ -116,6 +123,14 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 			labels[serviceDefinitionLabel] = sessionServiceDefinition(data, services)
 		}
 		override, cleanup, err := writeServiceLabelOverride(services, labels, workspace, exposedRoots...)
+		if err != nil {
+			return started, err
+		}
+		defer cleanup()
+		args = append(args, "-f", override)
+	}
+	if controller != nil {
+		override, cleanup, err := controllerServiceOverride(controller, services, workspace, exposedRoots...)
 		if err != nil {
 			return started, err
 		}
@@ -144,7 +159,15 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		upArgs = append(upArgs, "--remove-orphans")
 	}
 	upArgs = append(upArgs, selected...)
-	if err := runCompose(rt, stdout, stderr, "up", upArgs); err != nil {
+	composeCtx := context.Background()
+	if controller != nil {
+		composeCtx = ctx
+	}
+	upCode, upErr := rt.RunComposeContext(composeCtx, nil, stdout, stderr, upArgs...)
+	if upErr == nil && upCode != 0 {
+		upErr = fmt.Errorf("compose up exited with status %d", upCode)
+	}
+	if err := upErr; err != nil {
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, owner, network, ports)
 		started.ports = observed
 		return started, errors.Join(err, observeErr)
