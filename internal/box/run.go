@@ -137,11 +137,11 @@ type RunSpec struct {
 	// Login runs only the selected provider's sign-in flow. Project service/tool setup is not
 	// part of authentication; network policy and secret-shadowing protections still apply.
 	Login bool
-	// HandshakeOnly runs Coop's locked client image without the project's layers, and with the project
-	// read-only, so an editor can connect while the project's own box is not ready. No agent turn runs
-	// in it: the proxy holds every prompt (acpproxy.Child.HoldPrompts). It is the same or a narrower
-	// network policy on less software, so it needs no project build and grants nothing. Only a host
-	// supervisor sets it.
+	// HandshakeOnly runs Coop's locked client image without the project's layers or its project file,
+	// and with the project read-only, so an editor can connect while the project's own box is not
+	// ready. No agent turn runs in it: the proxy holds every prompt (acpproxy.Child.HoldPrompts). Its
+	// policy holds none of the project's rules (AdmitHoldingNetwork), so it needs no project build,
+	// starts no service and grants nothing. Only a host supervisor sets it.
 	HandshakeOnly bool
 
 	deferProjectBuild bool // admission only: NetworkAdmission.ProjectBuild said an editor session asks for itself
@@ -655,6 +655,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		local.AutoUp = false
 		cfg = &local
 		spec.Network, spec.Serve, spec.Cache = false, false, false
+	} else if spec.HandshakeOnly {
+		// Nothing here comes from the project's file: no agent turn runs to need it, an agent can edit
+		// it, and this box has to start when the file no longer parses, to say so.
+		p = &project.Project{}
+		local := *cfg
+		local.AutoUp = false
+		cfg = &local
 	} else {
 		p, err = project.Load(policyRepo)
 		if err != nil {
@@ -668,7 +675,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	projectEnv := p.Box.Env
 	spec.projectEnv = projectEnv
 	composeFile := ComposeFileAt(spec.Repo, p.ComposeRel())
-	if spec.ControllerJob {
+	if spec.ControllerJob || spec.HandshakeOnly {
 		composeFile = ""
 	}
 	serviceOwner := runServiceOwner(spec)

@@ -175,6 +175,20 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if mode != egress.Filtered {
 		return nil, nil
 	}
+	capture, err := captureFilteredNetwork(cfg, rt, spec, options, canonical, root, exposed, input, mcpSnapshot)
+	if err != nil {
+		var unsettled *networkstate.PendingApproval
+		if refusal != nil && errors.As(err, &unsettled) {
+			return nil, refusal // a withdrawal or a replaced folder: nothing starts until a person looks
+		}
+		return nil, err
+	}
+	capture.Default, capture.Pending = preview.Default, preview.Pending
+	return capture, nil
+}
+
+// captureFilteredNetwork is the filtered half of an admission, once the mode and the inputs are settled.
+func captureFilteredNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission, canonical, root string, exposed []string, input networkstate.Admission, mcpSnapshot []byte) (*CapturedEgress, error) {
 	// A runtime without the gateway is refused here even when the default chose filtered: a run
 	// nobody chose open for never quietly becomes one.
 	if err := checkFilteredRuntime(rt); err != nil {
@@ -186,6 +200,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	// The shared file's destinations are derived only now, once the posture is filtered and before
 	// the store is opened — the order the store's preview is built for, and what prepareFiltered
 	// already does for sessions.
+	var err error
 	if input.Automatic, err = networkMCPDependenciesOf(mcpSnapshot); err != nil {
 		return nil, err
 	}
@@ -209,14 +224,42 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	capture, err := admitFilteredNetwork(cfg, rt, spec, store, canonical, input, qualify)
 	if err != nil {
 		_ = store.Close()
-		var unsettled *networkstate.PendingApproval
-		if refusal != nil && errors.As(err, &unsettled) {
-			return nil, refusal // a withdrawal or a replaced folder: nothing starts until a person looks
-		}
 		return nil, err
 	}
-	capture.Default, capture.Pending = preview.Default, preview.Pending
 	return capture, nil
+}
+
+// AdmitHoldingNetwork captures holdingAdmission for an editor session whose real boxes run under
+// another capture: a child that holds prompts runs under this one, so nothing of the project's can stop
+// it. It reads no project file, which an agent may have broken, and never sets the host up. A
+// withdrawal or a replaced folder still refuses.
+func AdmitHoldingNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) (*CapturedEgress, error) {
+	if cfg == nil {
+		return nil, errors.New("restricted networking needs host configuration")
+	}
+	canonical, err := canonicalProjectDir(projectPolicyRepo(spec))
+	if err != nil {
+		return nil, err
+	}
+	spec.deferProjectBuild, options.ExistingQualification = true, true
+	root, err := NetworkStatePath()
+	if err != nil {
+		return nil, err
+	}
+	exposed, err := networkExposureRoots(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	input, err := networkAdmissionInput(cfg, &project.Project{}, options, exposed)
+	if err != nil {
+		return nil, err
+	}
+	mcpSnapshot, err := networkMCPSnapshot(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SetEgress(string(egress.Filtered))
+	return captureFilteredNetwork(cfg, rt, spec, options, canonical, root, exposed, holdingAdmission(input), mcpSnapshot)
 }
 
 // holdingAdmission is what a child that holds prompts runs under: the person's own flags, the host's

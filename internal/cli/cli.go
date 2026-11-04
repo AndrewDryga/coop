@@ -63,6 +63,7 @@ type app struct {
 	network             networkFlags                                 // this launch's --egress/--allow-domain/--egress-rules, resolved by box.AdmitNetwork
 	acpCapture          *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
 	acpAdmission        acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
+	acpHoldAdmission    acpAdmit                                     // the rules a child that holds prompts runs under, admitted each time one starts
 	acpRefresh          *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
 	acpServe            *acpServeRouter                              // an editor session's stable serve ports, forwarded to its live box
 	acpBoxWait          *acpBoxWait                                  // a filtered editor session's wait for a project box that cannot start yet; set before serving
@@ -403,8 +404,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// reported as such rather than as a missing runtime.
 	switch sub {
 	case "run", "shell", "acp", "up", "down", "build":
-		if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
-			return -1, err
+		if !acpHoldingChild() { // it reads no project file, and is what keeps an editor told about a broken one
+			if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
+				return -1, err
+			}
 		}
 		if err := a.ensureRuntime(); err != nil {
 			return -1, err

@@ -40,7 +40,10 @@ func (a *app) resolveLaunchImage() (repo, img string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if job { // a job's project file configures nothing (box.Run skips it), so it cannot refuse the launch
+	// A job's project file configures nothing (box.Run skips it), and nor does a holding child's, so
+	// neither can refuse the launch.
+	holding := acpHoldingChild()
+	if job || holding {
 		repo, err = box.ResolveRepo(a.cfg.RepoOverride)
 	} else {
 		repo, _, err = loadProject(a.cfg.RepoOverride)
@@ -52,7 +55,7 @@ func (a *app) resolveLaunchImage() (repo, img string, err error) {
 		return "", "", err
 	}
 	switch {
-	case job:
+	case job, holding:
 		img = box.SharedImage(a.cfg.BaseImage, a.cfg.ImageOverride)
 	case a.loginProvider != "" && a.cfg.ImageOverride == "":
 		img = a.cfg.BaseImage // authentication must not depend on the project's toolchain image

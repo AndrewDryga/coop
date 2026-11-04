@@ -480,9 +480,9 @@ func TestNetworkStatePathStaysOutOfTheRealHome(t *testing.T) {
 	}
 }
 
-// heldAdmission admits the way an editor session connects, on a fixture Docker that has no host setup:
-// admission stops right after publishing the policy it captured, which is what these tests read.
-func heldAdmission(t *testing.T, cfg *config.Config, repo string) error {
+// noSetupDocker is a fixture Docker with no host setup: admission stops right after publishing the
+// policy it captured, which is what these tests read.
+func noSetupDocker(t *testing.T) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
 	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
@@ -494,12 +494,83 @@ func heldAdmission(t *testing.T, cfg *config.Config, repo string) error {
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	capture, err := AdmitNetwork(cfg, runtime.Runtime{Name: script}, RunSpec{Repo: repo, Workdir: repo},
+	return runtime.Runtime{Name: script}
+}
+
+// heldAdmission admits the way an editor session connects.
+func heldAdmission(t *testing.T, cfg *config.Config, repo string) error {
+	t.Helper()
+	capture, err := AdmitNetwork(cfg, noSetupDocker(t), RunSpec{Repo: repo, Workdir: repo},
 		NetworkAdmission{ExistingQualification: true, ProjectBuild: DeferProjectBuild, HoldPending: true})
 	if capture != nil {
 		_ = capture.Close()
 	}
 	return err
+}
+
+// publishedPolicies reads every policy admission published, and fails the test if there is none.
+func publishedPolicies(t *testing.T, root string) []egress.Snapshot {
+	t.Helper()
+	published, err := filepath.Glob(filepath.Join(root, "snapshot-*.json"))
+	if err != nil || len(published) == 0 {
+		t.Fatalf("no policy was captured: %v, %v", published, err)
+	}
+	policies := make([]egress.Snapshot, len(published))
+	for i, path := range published {
+		if err := json.Unmarshal(mustReadFile(t, path), &policies[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return policies
+}
+
+// A session that already runs under its rules needs another set for a child that holds prompts: one a
+// project can do nothing to, so a broken file, a changed service or a sidecar that fails cannot stop
+// the child that says so. It has none of the project's rules, approved or not.
+func TestAdmitHoldingNetworkTakesNothingFromTheProject(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	project := filepath.Join(repo, ".agent", "project.yaml")
+	writeCopyFixture(t, project, projectRuleYAML)
+	approveFixture(t, cfg, repo)
+	writeCopyFixture(t, project, "box: [broken\n")
+	capture, err := AdmitHoldingNetwork(cfg, noSetupDocker(t), RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{})
+	if capture != nil {
+		_ = capture.Close()
+	}
+	if !errors.Is(err, ErrNetworkSetupRequired) {
+		t.Fatalf("it stopped at %v, want it to reach the host's setup and go no further", err)
+	}
+	for _, policy := range publishedPolicies(t, root) {
+		if policy.Mode != egress.Filtered || policy.Domain("example.com", 443).Allowed {
+			t.Fatalf("a holding child's rules: mode %q, reach the project's own site: %v", policy.Mode, policy.Domain("example.com", 443).Allowed)
+		}
+	}
+}
+
+// A withdrawal waits for a person even here. The session ends on it rather than start anything.
+func TestAdmitHoldingNetworkRefusesAWithdrawnProject(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+	approveFixture(t, cfg, repo)
+	review, err := ReviewProjectNetworkForget(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer review.Close()
+	if err := review.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := AdmitHoldingNetwork(cfg, noSetupDocker(t), RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{})
+	if capture != nil {
+		_ = capture.Close()
+	}
+	var pending *networkstate.PendingApproval
+	if !errors.As(err, &pending) || !strings.Contains(err.Error(), "withdrawn") {
+		t.Fatalf("a withdrawn project = %v", err)
+	}
+	if published, _ := filepath.Glob(filepath.Join(root, "snapshot-*.json")); len(published) != 0 {
+		t.Fatalf("a withdrawn project got a policy: %v", published)
+	}
 }
 
 // An editor connects while its project asks for access nobody approved. What it connects under has
@@ -526,21 +597,13 @@ func TestHeldAdmissionLeavesOutAllThatTheProjectAsks(t *testing.T) {
 			if cfg.Egress != string(egress.Filtered) {
 				t.Fatalf("the session resolved to %q", cfg.Egress)
 			}
-			published, err := filepath.Glob(filepath.Join(root, "snapshot-*.json"))
-			if err != nil || len(published) == 0 {
-				t.Fatalf("no policy was captured: %v, %v", published, err)
-			}
-			for _, path := range published {
-				var policy egress.Snapshot
-				if err := json.Unmarshal(mustReadFile(t, path), &policy); err != nil {
-					t.Fatal(err)
-				}
+			for _, policy := range publishedPolicies(t, root) {
 				if policy.Mode != egress.Filtered {
-					t.Errorf("%s has mode %q", filepath.Base(path), policy.Mode)
+					t.Errorf("a holding child's rules have mode %q", policy.Mode)
 				}
 				for _, site := range []string{"example.com", "earlier.example.com"} {
 					if policy.Domain(site, 443).Allowed {
-						t.Errorf("%s lets a holding child reach %s", filepath.Base(path), site)
+						t.Errorf("a holding child's rules reach %s", site)
 					}
 				}
 			}

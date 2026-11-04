@@ -27,8 +27,10 @@ sees the project read-only, passes the mount guard as if anchored (`authorityPro
 the window once validated. A real box in the project still makes a first approval wait, in silence.
 
 While blocked, `spawnBox` starts a child with `COOP_ACP_HANDSHAKE_BOX=1`: `RunSpec.HandshakeOnly` runs
-the locked client image on the same admitted policy, without serve ports or the join-all service
-network, and `Child.HoldPrompts` tells the proxy no prompt may reach it. Everything else does reach it:
+the locked client image and reads no project file, without serve ports, services or a writable project,
+under rules of its own (`box.AdmitHoldingNetwork`, admitted for each such child: the fingerprint differs
+from the session's, so `coop net runs` shows it, and the refresh's `holding` keeps it out of what the
+live box is said to run). `Child.HoldPrompts` tells the proxy no prompt may reach it. Everything else does reach it:
 `initialize`, `session/new`, `session/load` and settings need a real adapter, which is why this is a
 real box and not a fake answer. Prompts go into `restartHeld`, the queue a provider switch uses, so
 cancel, duplicate and size limits are the existing ones. They pass through `FromEditor` only at
@@ -54,11 +56,34 @@ startup skips a blocked session, or the pool stays off for its whole life.
 Fork ACP shares the wait, but its hooks have no start notice, so a thread hears about it only when it
 sends a message. See [[restricted-project-builds-are-explicit]].
 
-Limit: readiness asks about project builds and services with no rules only. Any other refusal (an
-approved service whose definition changed, a serve port the policy grants TLS on) still ends in the
-proxy's rapid-fail cap, and a holding child still starts approved sidecars, so a broken one kills it too.
+Readiness asks about those three things only, on purpose. Any other refusal (an approved service whose
+definition changed, a serve port the policy grants TLS on, a broken project.yaml) shows up as a real
+child ending by itself. The proxy decides that in its run loop, not in `spawnBox`'s wait goroutine,
+because it stops a child as soon as its stdout ends, so "exited before stop was called" races: not a
+switch, a move, a reload or a shutdown, and it never answered initialize or lived under
+`ChildStartWindow`. `RunOpts.ChildFailed` then reaches `acpBoxWait.childFailed` before the next spawn,
+so that spawn holds prompts. Only `poll` starts a retry, when the stamp changes or every 30 s, so a spawn's
+own question cannot make a tight loop; only a real box that answered and outlived the window ends it
+(`confirmStart`), and until then the warm pool stays shut (`waitingNow`) and threads hear nothing new.
+
+With `ChildFailed` set, only children that hold prompts count toward the rapid-fail cap, and one that
+never answered counts however long it took to die, or a slow refusal would respawn forever. Reaching
+the cap is what a stopped Docker looks like: every open thread hears why, and the session ends. Open
+and offline sessions have no wait and keep the old rule. An `initialize` the first child never answered
+gets the replacement's answer (`answerInitialize`, or held in `restartHeld` under the empty name if it
+arrives mid-replacement), since an editor reads an error there as a dead server. `poll` replaces a
+holding child that still owes the editor something after `acpBoxWaitMoveDeadline`, for a hung adapter or
+an unfinished sign-in.
+
+Limits. A refusal a holding child meets too (an unreadable `.coopignore`, a preset that no longer loads,
+`COOP_RUN_ARGS` with a path inside the project) ends at the cap with its reason in the log. A broken
+project.yaml still ends `coop acp` at connect, where no capture exists yet. A real box that hangs instead
+of exiting waits out `replayStartupGrace`, then ends the session.
 
 ## Changelog
+- 2026-11-03 — a box that keeps refusing keeps the session connected, on a child with no project rules,
+  no sidecars and no project file. Verified on real Docker against a serve port on TLS, a broken
+  project.yaml and an approved service edited before the box was killed.
 - 2026-11-03 — rules nobody approved wait too, on a holding capture. A real run on Docker hung `coop
   approve` on the lifetime lock, which the read-only mount and the dropped window fixed.
 - 2026-11-03 — created with the wait.

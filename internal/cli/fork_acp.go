@@ -56,7 +56,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: workspace, PolicyRepo: repo, Workdir: workspace, Agent: target.Provider, Network: a.cfg.Network}, func() {})
 	defer a.acpBoxWait.close()
 	if err := a.acpBoxWait.refresh(context.Background()); err != nil {
-		return 1, err
+		acpproxy.Trace("box wait: could not look: %v", err) // proves nothing: the first child's own proofs decide
 	}
 	factory := func(ctx context.Context) (*acpproxy.Child, error) {
 		if err := a.acpBoxWait.refreshStale(ctx); err != nil {
@@ -71,7 +71,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	a.acpBoxWait.start()
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }})
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }, ChildFailed: a.acpBoxWait.childFailedHook()})
 	a.acpBoxWait.close()
 	cleanupErr := a.reapACPBoxes(superID)
 	if cleanupErr == nil {

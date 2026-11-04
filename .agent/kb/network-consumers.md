@@ -30,7 +30,8 @@ existing host setup only — once every thread is idle, or at once when its fact
 (a respawn, a switch), and replaces its boxes under the new capture instead of changing a running
 one (`cli/acp_refresh.go`; see [[restricted-networking]]). A project whose request nobody approved
 connects on a capture holding none of it, which serves only children that hold prompts until a person
-approves ([[acp-box-wait]]). Each spawned child receives a
+approves, and any such child runs under rules like that, with none of the project's, so its fingerprint
+differs from the session's ([[acp-box-wait]]). Each spawned child receives a
 per-child REFERENCE through `COOP_NETWORK_CAPTURE` (`acpChildCapture` in `cli/acp_cmd.go`) — the same envelope a
 remote session uses — and an inherited one is stripped from the child environment. A filtered ACP
 child gets no `--cidfile` (the gateway engine owns its container ids) and a SIGTERM-cancelable

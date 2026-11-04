@@ -747,6 +747,29 @@ func TestHandshakeBoxRunsTheLockedImage(t *testing.T) {
 	}
 }
 
+// A project file an agent broke stops a real box, and must not stop the box that says so: it gets past
+// the file to the next check, which here is the capture this test leaves out.
+func TestHandshakeBoxReadsNoProjectFile(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered"}
+	rt := runtime.Runtime{Name: "must-not-execute"}
+	spec := RunSpec{Image: "i", Repo: repo, Cmd: []string{"true"}, Batch: true, Quiet: true}
+	if _, err := Run(cfg, rt, spec); err == nil || strings.Contains(err.Error(), "host policy capture") {
+		t.Fatalf("a real box with a broken project file = %v", err)
+	}
+	spec.HandshakeOnly = true
+	if _, err := Run(cfg, rt, spec); err == nil || !strings.Contains(err.Error(), "host policy capture") {
+		t.Fatalf("a handshake box with a broken project file = %v", err)
+	}
+}
+
 // Nothing runs in a handshake box to use a port, join a service network or change the project, and a
 // real box is untouched.
 func TestHandshakeBoxPublishesNothing(t *testing.T) {

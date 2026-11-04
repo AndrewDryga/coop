@@ -171,9 +171,15 @@ const (
 	maxRestartHeldBytes   = readBuf
 )
 
-const (
-	minHealthy    = 2 * time.Second // a child living less than this counts as a rapid failure
-	maxRapidFails = 5               // give up after this many rapid failures in a row
+const maxRapidFails = 5 // give up after this many rapid failures in a row
+
+// Vars, not consts, so tests can shrink them.
+var (
+	minHealthy = 2 * time.Second // a child living less than this counts as a rapid failure
+	// ChildStartWindow is how soon after starting an exit still means a child could not start, even
+	// though it answered initialize. A filtered box answers in about 6 s; one that dies later simply
+	// died, and its replacement may well run.
+	ChildStartWindow = 10 * time.Second
 )
 
 // replayStartupGrace bounds how long the FIRST replayed response may take — a restarted box can be
@@ -218,6 +224,11 @@ type RunOpts struct {
 	Stopping func()
 	// Restarter, when set, is bound to this run so the caller can restart its child between turns.
 	Restarter *Restarter
+	// ChildFailed, when set, is called when a child that runs turns ends by itself before it could
+	// serve (it never answered initialize, or it answered and exited within ChildStartWindow). The caller's
+	// next child should hold prompts, so a box that keeps refusing to start costs the editor nothing:
+	// only children that hold prompts then count toward the rapid-fail cap. Called before the next spawn.
+	ChildFailed func()
 }
 
 // reloadError is returned by RunWith when a reload fires; it carries the snapshot to hand the
@@ -369,7 +380,9 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	for {
 		start := time.Now()
 		p.pumpChild(child, reader) // returns when this child's Out closes
-		p.traceExit(child, time.Since(start), clientGone)
+		lived := time.Since(start)
+		p.traceExit(child, lived, clientGone)
+		answered := p.answeredInitialize(child)
 		p.retireChild(child)
 		child.Stop() // retire pipes, process resources and factory context before a replacement wait
 		p.resetForceState()
@@ -393,17 +406,32 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		// count it toward the rapid-fail cap or back off. Otherwise: a child that dies almost
 		// immediately is broken (no runtime, bad auth, a failing image) — respawning in a tight loop
 		// would be a fork bomb, so back off and eventually give up, letting the editor see the failure.
-		if p.intentional.Swap(false) {
+		// With a caller that can hold prompts, a real box that cannot start is not that: the next child
+		// holds prompts instead. Only a child doing that says the session cannot go on, and one that
+		// never answers has not started however long it took to die, or a slow refusal would never stop.
+		switch {
+		case p.intentional.Swap(false):
 			rapid = 0
-		} else if time.Since(start) < minHealthy {
+		case opts.ChildFailed != nil && !child.HoldPrompts:
+			if !answered || lived < ChildStartWindow {
+				opts.ChildFailed()
+			} else {
+				rapid = 0
+			}
+		case lived < minHealthy || opts.ChildFailed != nil && !answered:
 			rapid++
 			if rapid >= maxRapidFails {
 				child.Stop()
+				if opts.ChildFailed != nil {
+					p.tellOpenThreads(sessionEndedNoBoxText)
+					p.failAllPending()
+					return fmt.Errorf("acpproxy: the box that keeps this session connected could not start %d times in a row; giving up", rapid)
+				}
 				p.failAllPending()
 				return fmt.Errorf("acpproxy: agent exited %d times within %s of starting; giving up", rapid, minHealthy)
 			}
 			time.Sleep(time.Duration(rapid) * 200 * time.Millisecond)
-		} else {
+		default:
 			rapid = 0
 		}
 		// The child died while the editor is still here: replace it transparently.
@@ -712,6 +740,36 @@ func (p *proxy) setChild(c *Child) {
 	p.unavailable = map[string]bool{}
 	p.reactivating = map[string]string{}
 	p.mu.Unlock()
+}
+
+// sessionEndedNoBoxText is what every open thread hears when even a child that only holds prompts
+// cannot start, which is what a stopped Docker looks like.
+const sessionEndedNoBoxText = "⚠ **This session stopped.** Coop could not start any box for this project. The reason is in the agent log. Fix it, then reconnect your editor."
+
+// answeredInitialize reports whether this child, still the live one, gave the editor's initialize a
+// successful answer.
+func (p *proxy) answeredInitialize(c *Child) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.child == c && p.initResult != nil && p.initGeneration == p.generation
+}
+
+// tellOpenThreads writes text into every thread still open.
+func (p *proxy) tellOpenThreads(text string) {
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.mu.Lock()
+	ids := make([]string, 0, len(p.sessions))
+	for eid, s := range p.sessions {
+		if !s.closed {
+			ids = append(ids, eid)
+		}
+	}
+	p.mu.Unlock()
+	sort.Strings(ids)
+	for _, eid := range ids {
+		_, _ = p.out.Write(SessionMessageLine(eid, text))
+	}
 }
 
 func (p *proxy) retireChild(c *Child) {
@@ -1048,6 +1106,13 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			}
 			_, _ = p.out.Write(successResponse(string(h.ID)))
 			p.writeLifecycleCleanup(cleanupChild, cleanupGeneration, cleanup)
+			return
+		}
+		if childMissing && restarting && h.Method == "initialize" && origin == originEditor {
+			// An editor that asks while the first child is being replaced gets the replacement's answer:
+			// an error here reads as a dead server. The empty name holds it apart from every thread.
+			p.restartHeld[""] = clientLine{line: clone(line), origin: origin}
+			p.mu.Unlock()
 			return
 		}
 		if childMissing {
@@ -2445,7 +2510,7 @@ func (p *proxy) releaseRestartHeld(c *Child, epoch uint64) error {
 		// A reopened thread's held session/load has no session yet by definition: it is re-resolved
 		// against its durable binding on the way back through forwardClientControlled.
 		reopen := frame.Method == "session/load" || frame.Method == "session/resume"
-		if s := p.sessions[sid]; sid != "" && (reopen || s != nil && !s.closed && !p.unavailable[sid]) {
+		if s := p.sessions[sid]; frame.Method == "initialize" || sid != "" && (reopen || s != nil && !s.closed && !p.unavailable[sid]) {
 			held = append(held, prompt)
 		} else {
 			rejected = append(rejected, prompt)
@@ -2528,12 +2593,26 @@ func (p *proxy) swapChildAt(
 	ids := make([]string, 0, len(p.pending))
 	retained := map[string]bool{}
 	nextGeneration := p.generation + 1
+	var lateInitialize []string
 	for id := range p.pending {
 		request := p.sessionReqs[id]
+		setup := p.setupReqs[id]
 		// Even a kept prompt is re-admitted below. Its mutation must be replaced with the new
 		// generation's staged request before a response with the reused JSON-RPC id can arrive.
 		delete(p.sessionReqs, id)
 		delete(p.setupReqs, id)
+		// The child the editor asked ended first, and this one has just answered the same question
+		// in replay. An editor treats an error here as a dead server, so it gets this answer, or if
+		// this one died too, it keeps waiting for the next: failAllPending answers it if none comes.
+		if setup.method == "initialize" {
+			if initResult != nil {
+				lateInitialize = append(lateInitialize, id)
+			} else {
+				p.setupReqs[id] = setup
+				retained[id] = true
+			}
+			continue
+		}
 		keepID := keep[id]
 		if eid, scoped := keepSessions[id]; scoped {
 			_, keepID = accepted[eid]
@@ -2615,6 +2694,9 @@ func (p *proxy) swapChildAt(
 	for _, id := range ids {
 		_, _ = p.out.Write(errorResponse(id))
 	}
+	for _, id := range lateInitialize {
+		p.answerInitialize(id, initResult)
+	}
 	if !down {
 		for _, msg := range cleanupWrites {
 			_, _ = c.In.Write(msg)
@@ -2627,6 +2709,29 @@ func (p *proxy) swapChildAt(
 		}
 	}
 	return true, accepted, nil
+}
+
+// answerInitialize answers the editor's initialize with a replacement's result, as the child it asked
+// would have: through the control layer's rewrite, and announced once the editor has it. controlMu is
+// held, as it is for any response.
+func (p *proxy) answerInitialize(id string, result json.RawMessage) {
+	line := []byte(`{"jsonrpc":"2.0","id":` + id + `,"result":` + string(result) + "}\n")
+	if p.hooks != nil && p.hooks.ToEditor != nil {
+		line, _ = p.hooks.ToEditor(line)
+	}
+	if len(line) > 0 {
+		traceLine("box→editor(replay-initialize)", line)
+		_, _ = p.out.Write(line)
+	}
+	p.mu.Lock()
+	announce := !p.announcedInitialized && p.hooks != nil && p.hooks.Initialized != nil
+	if announce {
+		p.announcedInitialized = true
+	}
+	p.mu.Unlock()
+	if announce {
+		go p.hooks.Initialized()
+	}
 }
 
 // readLineCtx reads one newline-terminated line from br, returning errReplayTimeout if d elapses

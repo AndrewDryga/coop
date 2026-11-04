@@ -94,6 +94,37 @@ func (r *Restarter) MoveOffHolding() bool {
 	return movable
 }
 
+// ForceOffHolding replaces a child that only holds prompts even though it still owes the editor an
+// answer: a hung adapter or a sign-in nobody finished would otherwise stop MoveOffHolding for good.
+// What it owed gets the usual error, and a held prompt still goes to the replacement.
+func (r *Restarter) ForceOffHolding() bool {
+	p := r.bound()
+	if p == nil {
+		return false
+	}
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	p.mu.Lock()
+	holding := p.child != nil && p.child.HoldPrompts && p.candidate == nil && !p.restarting && !p.reloading.Load() && !p.shuttingDown
+	p.mu.Unlock()
+	if holding {
+		Trace("moving off the child that holds prompts, past what it still owes")
+		p.triggerRestart()
+	}
+	return holding
+}
+
+// Serving reports whether the live child runs turns and has answered initialize.
+func (r *Restarter) Serving() bool {
+	p := r.bound()
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.child != nil && !p.child.HoldPrompts && p.initResult != nil && p.initGeneration == p.generation && !p.restarting
+}
+
 // TellHeld shows Hooks.PromptHeld's current status again in every thread with a prompt waiting: what
 // they wait for has changed. A thread with none hears it when it sends one.
 func (r *Restarter) TellHeld() {
@@ -106,7 +137,9 @@ func (r *Restarter) TellHeld() {
 	p.mu.Lock()
 	ids := make([]string, 0, len(p.restartHeld))
 	for sid := range p.restartHeld {
-		ids = append(ids, sid)
+		if sid != "" { // an initialize, which belongs to no thread
+			ids = append(ids, sid)
+		}
 	}
 	p.mu.Unlock()
 	sort.Strings(ids)

@@ -1973,7 +1973,8 @@ PROJECT BOX
   cannot start yet. Messages wait, the thread says why, and the session moves
   onto the box once it is ready. Build files you approved with coop build
   rebuild by themselves; new or changed ones wait for you to run it. Network
-  access nobody approved waits for you to run coop approve.
+  access nobody approved waits for you to run coop approve. A box that exits
+  as it starts is tried again every 30 seconds, and the agent log says why.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.

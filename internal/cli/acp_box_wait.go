@@ -27,13 +27,27 @@ const (
 	acpBoxWaitFresh = 2 * time.Second
 	// acpHandshakeEnv tells an inner child to run box.RunSpec.HandshakeOnly.
 	acpHandshakeEnv = "COOP_ACP_HANDSHAKE_BOX"
+	// acpBoxWaitMoveDeadline is how long a session waits for a holding child to finish what the editor
+	// asked of it before replacing it anyway. A handshake takes seconds, so this is a hung adapter or a
+	// sign-in nobody finished; a person finishing one has this long.
+	acpBoxWaitMoveDeadline = 2 * time.Minute
 	// acpBoxReadyNotice is what the editor shows once the session runs on the project's own box.
 	acpBoxReadyNotice = "This project's box is ready, and this session moved onto it."
+	// acpBoxStartFailedText is what a thread hears while real boxes keep exiting as they start, whatever
+	// the reason: Coop's refusal, a broken sidecar, a Dockerfile that no longer fits. The child that
+	// failed already wrote why to the agent log, so this need not, and need not know every reason.
+	acpBoxStartFailedText = "⚠ **Coop could not start this project's box.** The reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."
 )
 
 // errACPBoxWaiting keeps the warm pool empty while the session's boxes cannot start: nothing it parks
 // could serve a switch.
 var errACPBoxWaiting = errors.New("the project's box is not ready")
+
+// acpHoldingChild reports that this process is an editor session's child that only holds prompts. Only
+// a supervisor sets the flag: its children's environment is cleaned of an inherited one.
+func acpHoldingChild() bool {
+	return os.Getenv("COOP_ACP_INNER") != "" && os.Getenv(acpHandshakeEnv) == "1"
+}
 
 // acpBoxWait keeps an editor connected while its filtered project box cannot start. The session runs
 // a child that only answers the handshake (acpproxy.Child.HoldPrompts) and shows why it waits. Files a
@@ -50,7 +64,9 @@ type acpBoxWait struct {
 	rebuild func(context.Context, string) error // box.RebuildApprovedProject
 	stamp   func() string                       // box.EditorBoxStamp: when to ask again
 	holding func() bool                         // the live child only holds prompts
+	serving func() bool                         // the live child runs turns and has answered initialize
 	move    func() bool                         // replace it, once it owes the editor nothing
+	force   func() bool                         // replace it anyway
 	publish func(string)                        // what threads hear now; "" when nothing waits
 	notify  func(string)                        // shown once, with the next session update
 	log     func(error)                         // the agent log
@@ -64,15 +80,20 @@ type acpBoxWait struct {
 
 	checking sync.Mutex // one check at a time; taken before mu
 
-	mu       sync.Mutex
-	blocked  error     // why a real box cannot start now; nil when it can
-	checked  time.Time // when the question was last asked, whatever the answer
-	building bool      // a rebuild is running
-	failed   bool      // the rebuild failed: what it could not do needs a person
-	said     string    // what publish was last told
-	seen     string    // the stamp blocked was answered under
-	onHold   bool      // the last child handed to the proxy holds prompts
-	closed   bool      // no rebuild may start now
+	moveWanted time.Time // when the poll loop first could not move; only the poll loop touches it
+
+	mu          sync.Mutex
+	blocked     error     // why a real box cannot start now; nil when it can
+	checked     time.Time // when the question was last asked, whatever the answer
+	building    bool      // a rebuild is running
+	failed      bool      // the rebuild failed: what it could not do needs a person
+	startFailed bool      // a real box exited as it started, and none has run since
+	retrying    bool      // a real box is being tried again; startFailed clears once it keeps running
+	retriedAt   time.Time // when that started
+	said        string    // what publish was last told
+	seen        string    // the stamp blocked was answered under
+	onHold      bool      // the last child handed to the proxy holds prompts
+	closed      bool      // no rebuild may start now
 
 	closing sync.Once
 }
@@ -98,7 +119,9 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 		},
 		stamp:   func() string { return box.EditorBoxStamp(a.currentACPCapture(), spec) },
 		holding: restarter.Holding,
+		serving: restarter.Serving,
 		move:    restarter.MoveOffHolding,
+		force:   restarter.ForceOffHolding,
 		publish: func(text string) {
 			ctrl.SetBoxWait(text)
 			if text != "" {
@@ -113,14 +136,93 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 	}
 }
 
-// blockedNow is the last answer: a child spawned now holds prompts if real boxes cannot start.
+// blockedNow is the last answer: a child spawned now holds prompts if real boxes cannot start, or the
+// last one exited as it started and it is not time to try another.
 func (w *acpBoxWait) blockedNow() bool {
 	if w == nil {
 		return false
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.blocked != nil
+	return w.blocked != nil || w.startFailed && !w.retrying
+}
+
+// waitingNow says the session has not yet seen a real box keep running. The warm pool stays empty: a
+// box parked now would be one more that cannot serve a switch, and a retry costs one box, not a fan-out.
+func (w *acpBoxWait) waitingNow() bool {
+	if w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.blocked != nil || w.startFailed
+}
+
+// childFailed is the proxy saying a real box exited by itself as it started. Whatever the reason, it
+// is in the agent log, and the next child holds prompts. Only a child that keeps running ends this,
+// so a retry that fails again says nothing new.
+func (w *acpBoxWait) childFailed() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	first := !w.startFailed
+	w.startFailed, w.retrying, w.checked = true, false, w.now()
+	text := w.said
+	if w.blocked == nil {
+		text = acpBoxStartFailedText
+	}
+	repeat := text == w.said
+	w.said = text
+	w.mu.Unlock()
+	if first {
+		w.log(errors.New("this project's box exited as it started, and the reason should be above. This session waits on a box that only holds messages, and tries again every 30 seconds and when the project changes"))
+	}
+	if !repeat {
+		w.publish(text)
+	}
+}
+
+// childFailedHook is childFailed for the proxy, which counts every failure itself with no wait.
+func (w *acpBoxWait) childFailedHook() func() {
+	if w == nil {
+		return nil
+	}
+	return w.childFailed
+}
+
+// retryFailedStart lets the next spawn be a real box again, if nothing else stands in its way.
+func (w *acpBoxWait) retryFailedStart() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.startFailed && !w.retrying && w.blocked == nil {
+		w.retrying, w.retriedAt = true, w.now()
+	}
+}
+
+// confirmStart ends a failed start once the box being tried again has answered and outlived the window
+// in which an exit would still count as failing to start.
+func (w *acpBoxWait) confirmStart() {
+	w.mu.Lock()
+	due := w.retrying && w.now().Sub(w.retriedAt) >= acpproxy.ChildStartWindow
+	w.mu.Unlock()
+	if !due || !w.serving() {
+		return
+	}
+	w.mu.Lock()
+	if !w.retrying { // it failed after all, a moment ago
+		w.mu.Unlock()
+		return
+	}
+	w.startFailed, w.retrying = false, false
+	said := w.said
+	w.said = ""
+	w.mu.Unlock()
+	if said != "" {
+		w.publish("")
+	}
+	w.opened()
+	w.notify(acpBoxReadyNotice)
 }
 
 // refresh asks whether a real box can start now, and acts on the answer. An error is a failure to
@@ -162,7 +264,7 @@ func (w *acpBoxWait) refreshStale(ctx context.Context) error {
 
 func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, stamp string) {
 	w.mu.Lock()
-	cleared := w.blocked != nil && blocked == nil
+	cleared := w.blocked != nil && blocked == nil && !w.startFailed
 	changed := blocked != nil && (w.blocked == nil || w.blocked.Error() != blocked.Error())
 	w.blocked, w.checked, w.seen = blocked, w.now(), stamp
 	if blocked == nil || required == nil || !required.Approved {
@@ -174,6 +276,9 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 		go w.runRebuild(required.Dockerfile)
 	}
 	text := acpBoxWaitText(blocked, required, w.failed)
+	if text == "" && w.startFailed {
+		text = acpBoxStartFailedText
+	}
 	repeat := text == w.said
 	w.said = text
 	w.mu.Unlock()
@@ -246,18 +351,32 @@ func (w *acpBoxWait) kick() {
 }
 
 // poll asks again when a sign says something changed or it has been a while, and moves off a holding
-// child once a real box can start.
+// child once a real box can start. A failed start gets that same question, and its answer only says
+// nothing else stands in the way: the next real box's own proofs are the only way to know.
 func (w *acpBoxWait) poll() {
 	w.mu.Lock()
-	waiting, building, seen, checked := w.blocked != nil, w.building, w.seen, w.checked
+	waiting, building, seen, checked := w.blocked != nil || w.startFailed && !w.retrying, w.building, w.seen, w.checked
 	w.mu.Unlock()
 	if waiting && !building && (w.stamp() != seen || w.now().Sub(checked) >= acpBoxWaitRecheck) {
 		if err := w.refresh(w.ctx); err != nil && w.ctx.Err() == nil {
 			acpproxy.Trace("box wait: could not look: %v", err)
 		}
+		w.retryFailedStart()
 	}
-	if !w.blockedNow() && w.holding() {
-		w.move()
+	w.confirmStart()
+	if w.blockedNow() || !w.holding() {
+		w.moveWanted = time.Time{}
+		return
+	}
+	switch now := w.now(); {
+	case w.move():
+		w.moveWanted = time.Time{}
+	case w.moveWanted.IsZero():
+		w.moveWanted = now
+	case now.Sub(w.moveWanted) >= acpBoxWaitMoveDeadline:
+		w.log(errors.New("the box holding this session's messages did not finish what the editor asked of it, so it was replaced anyway"))
+		w.force()
+		w.moveWanted = time.Time{}
 	}
 }
 
@@ -268,7 +387,7 @@ func (w *acpBoxWait) started(child *acpproxy.Child) {
 		return
 	}
 	w.mu.Lock()
-	moved := w.onHold && !child.HoldPrompts
+	moved := w.onHold && !child.HoldPrompts && !w.startFailed // after a failed start, confirmStart says so
 	w.onHold = child.HoldPrompts
 	w.mu.Unlock()
 	if moved {

@@ -1140,6 +1140,12 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		options := a.network.admission()
 		if !repositoryReadOnly { // this one has a supervisor below, to connect first and report the wait
 			options.ProjectBuild = box.DeferProjectBuild
+			admissionCfg, holdingSpec := a.cfg.Clone(), spec
+			a.acpHoldAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
+				held := holdingSpec
+				held.Ctx = ctx
+				return box.AdmitHoldingNetwork(admissionCfg.Clone(), a.rt, held, options)
+			}
 		}
 		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, options)
 		if err != nil {

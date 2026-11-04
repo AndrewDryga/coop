@@ -287,6 +287,11 @@ func (a *app) cmdACP(args []string) (int, error) {
 			a.acpAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
 				return a.acpReadmit(ctx, admissionCfg, spec, options)
 			}
+			a.acpHoldAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
+				held := spec
+				held.Ctx, held.Peers = ctx, slices.Clone(spec.Peers)
+				return box.AdmitHoldingNetwork(admissionCfg.Clone(), a.rt, held, options)
+			}
 		}
 		defer a.acpCapture.Close()
 		sel := acpctl.Selection{Account: profile, Preset: presetName}
@@ -452,11 +457,15 @@ func stoppedQuietly(ctx context.Context, code int, err error) (int, error) {
 func (a *app) ensureACPImage() error {
 	if a.cfg.Egress == "filtered" {
 		// Never build the unused ordinary project tag on an editor connect. A box that cannot start
-		// yet is not a failure here: the session connects and waits. Failing to look still is one.
+		// yet is not a failure here: the session connects and waits. Nor is failing to look, which
+		// proves nothing: the first child's own proofs decide, and the wait takes over if they refuse.
 		if a.acpBoxWait == nil {
 			return errors.New("a filtered editor session needs the policy its supervisor admitted")
 		}
-		return a.acpBoxWait.refresh(context.Background())
+		if err := a.acpBoxWait.refresh(context.Background()); err != nil {
+			acpproxy.Trace("box wait: could not look: %v", err)
+		}
+		return nil
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -582,7 +591,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// pool's reap does not wait for a box nobody will use.
 	warmFills, cancelWarmFills := context.WithCancel(context.Background())
 	pool := acpctl.NewWarmPool(warm, func(provider string) (*acpproxy.Child, error) {
-		if a.acpBoxWait.blockedNow() {
+		if a.acpBoxWait.waitingNow() {
 			return nil, errACPBoxWaiting
 		}
 		image := currentImage()
@@ -597,7 +606,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// After any spawn — Run's first one included — the pool re-centres on the provider now in use:
 	// warm the others, the one just left included, and drop a spare of the active one.
 	rebalanceNow := func(active string) {
-		if a.acpBoxWait.blockedNow() {
+		if a.acpBoxWait.waitingNow() {
 			return // the fan-out comes when the session's box can start (boxOpened)
 		}
 		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
@@ -747,7 +756,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// The parked boxes — and a replacement still waiting — are independent of the active one, so they
 	// stop while it does; the calls after Run then wait for that same teardown to finish.
 	stopping := func() { go reapPool(); go closeRefresh(); go a.acpBoxWait.close() }
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter})
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, ctrl.Hooks(), acpproxy.RunOpts{Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter, ChildFailed: a.acpBoxWait.childFailedHook()})
 	// Run stopped the active box. Wait here for the parked boxes and a waiting replacement too: no
 	// inner child of this generation may run when its project services go, and a reload's execve
 	// would skip the deferred calls.
@@ -1218,16 +1227,6 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if a.cfg.Explicit("COOP_EGRESS") {
 		env = append(env, "COOP_EGRESS="+egress.Mode(a.cfg.Egress).Word()) // the child parses the person's word
 	}
-	// Read once: this child proves exactly one policy even if a refresh adopts another meanwhile.
-	admitted := a.currentACPCapture()
-	policy := acpPolicy(admitted)
-	capture, err := acpChildCapture(admitted, superID)
-	if err != nil {
-		return nil, err
-	}
-	if capture != "" {
-		env = append(env, box.SessionNetworkCaptureEnv+"="+capture)
-	}
 	if hasTarget {
 		if ctrl != nil { // model probes use a bare provider target and need no reset/preset wait
 			switch acct := t.Account(); {
@@ -1285,12 +1284,30 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		mcpPath = filepath.Join(mcpDir, "servers.json")
 		env = append(env, "COOP_ACP_MCP_ID="+mcpRunID, box.SessionMCPHandoffEnv+"="+mcpPath)
 	}
-	// Read once, as late as possible (a reset wait above can last hours): this child either holds
-	// prompts or runs the project's box, and the proxy and the child must agree which. A capture that
-	// leaves out what its project asks for serves no other kind of child, whatever the wait last heard.
+	// Read once, as late as possible (a reset wait above can last hours): this child proves exactly one
+	// policy even if a refresh adopts another meanwhile, and it either holds prompts or runs the
+	// project's box, and the proxy and the child must agree which. A capture that leaves out what its
+	// project asks for serves no other kind of child, whatever the wait last heard.
+	admitted := a.currentACPCapture()
 	holdPrompts := a.acpBoxWait.blockedNow() || admitted.HoldsOnly()
 	if holdPrompts {
 		env = append(env, acpHandshakeEnv+"=1")
+		if a.acpHoldAdmission != nil && !admitted.HoldsOnly() {
+			held, err := a.acpHoldAdmission(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("prepare the box that keeps this editor session connected: %w", err)
+			}
+			defer held.Close() // the child proves its own reference to these rules
+			admitted = held
+		}
+	}
+	policy := acpPolicy(admitted)
+	capture, err := acpChildCapture(admitted, superID)
+	if err != nil {
+		return nil, err
+	}
+	if capture != "" {
+		env = append(env, box.SessionNetworkCaptureEnv+"="+capture)
 	}
 	var serveBinds map[int]int
 	if !holdPrompts { // a holding child starts no box, so it publishes nothing

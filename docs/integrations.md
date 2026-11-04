@@ -233,10 +233,15 @@ never works without your project's tools.
 - If the project asks for network access nobody approved, the thread says to run `coop approve`.
   Until then the editor talks to a box that sees your project read-only and reaches only your
   agent's provider, and none of the rules the project asks for apply.
+- If the box exits as it starts for any other reason, such as a service that changed since you
+  approved it or a project file that no longer parses, the thread says so and the agent log has the
+  reason. co:op tries again every 30 seconds and whenever the project changes.
 
 The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
 waiting message as usual. The one exception is approving unrestricted access or no network at all,
 which a session started with filtered networking cannot move to: the thread asks you to reconnect.
+If even the waiting box cannot start, which is what a stopped Docker looks like, the session ends and
+the thread says why.
 
 ### Files and terminals on your computer
 

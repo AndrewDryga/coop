@@ -31,8 +31,10 @@ type boxWaitHarness struct {
 	checks   int
 	sign     string
 	holding  bool
+	serving  bool
 	moveOK   bool
 	moves    int
+	forces   int
 	said     []string
 	notices  []string
 	logged   []error
@@ -85,11 +87,22 @@ func newBoxWaitHarness(t *testing.T) *boxWaitHarness {
 			defer h.mu.Unlock()
 			return h.holding
 		},
+		serving: func() bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return h.serving
+		},
 		move: func() bool {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.moves++
 			return h.moveOK
+		},
+		force: func() bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.forces++
+			return true
 		},
 		publish: func(text string) {
 			h.mu.Lock()
@@ -515,6 +528,304 @@ func TestBoxWaitSaysToReconnectForAModeItCannotMoveTo(t *testing.T) {
 	}
 	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "Reconnect your editor") || strings.Contains(said, "coop approve") {
 		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
+	}
+}
+
+// A real box that exits as it starts puts the session on a holding child, whatever the reason was. The
+// thread hears it once, retries are spaced out, and only a box that keeps running ends it.
+func TestBoxWaitHoldsAfterAFailedStartAndRetries(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.w.childFailed()
+	said := h.lastSaid()
+	if !h.w.blockedNow() || !h.w.waitingNow() || !strings.Contains(said, "could not start") || !strings.Contains(said, "agent log") {
+		t.Fatalf("blocked=%v waiting=%v said=%q", h.w.blockedNow(), h.w.waitingNow(), said)
+	}
+	h.set(func() { h.holding = true })
+
+	// Nothing changed and it is too soon: no retry.
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 0 || h.checks != 1 {
+			t.Fatalf("a tight retry: %d moves, %d checks", h.moves, h.checks)
+		}
+	})
+
+	// Every thirty seconds. The warm pool stays shut while one box is being tried.
+	h.set(func() { h.clock = h.clock.Add(acpBoxWaitRecheck) })
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 1 || h.opened != 0 {
+			t.Fatalf("moves=%d opened=%d, want one real box tried and no fan-out", h.moves, h.opened)
+		}
+	})
+	if h.w.blockedNow() || !h.w.waitingNow() || h.lastSaid() != said {
+		t.Fatalf("blocked=%v waiting=%v said=%q: a retry must not read as a recovery", h.w.blockedNow(), h.w.waitingNow(), h.lastSaid())
+	}
+
+	// It failed again. The thread already knows, and the log has the child's own output.
+	h.set(func() { h.holding = false })
+	h.w.childFailed()
+	h.read(func() {
+		if len(h.said) != 1 || len(h.logged) != 1 {
+			t.Fatalf("said=%q logged=%v, want each once however many retries fail", h.said, h.logged)
+		}
+	})
+	if !h.w.blockedNow() {
+		t.Fatal("a child spawned after a failed retry would be a real box")
+	}
+
+	// A change to the project is worth a retry at once.
+	h.set(func() { h.holding, h.sign = true, "two" })
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 2 {
+			t.Fatalf("moves=%d, want the changed project tried", h.moves)
+		}
+	})
+
+	// The box answered, but a moment later it could still count as failing to start.
+	h.set(func() { h.holding, h.serving = false, true })
+	h.w.poll()
+	if !h.w.waitingNow() {
+		t.Fatal("ended the failed start before the window passed")
+	}
+	h.set(func() { h.clock = h.clock.Add(acpproxy.ChildStartWindow) })
+	h.w.poll()
+	if h.w.waitingNow() || h.lastSaid() != "" {
+		t.Fatalf("waiting=%v said=%q after a box kept running", h.w.waitingNow(), h.lastSaid())
+	}
+	h.read(func() {
+		if h.opened != 1 || len(h.notices) != 1 || h.notices[0] != acpBoxReadyNotice {
+			t.Fatalf("opened=%d notices=%q", h.opened, h.notices)
+		}
+	})
+}
+
+// A box that started but never answered is not proof, however long it has been running.
+func TestBoxWaitEndsAFailedStartOnlyOnABoxThatAnswered(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.w.childFailed()
+	h.set(func() { h.holding, h.clock = true, h.clock.Add(acpBoxWaitRecheck) })
+	h.w.poll()
+	h.set(func() { h.holding, h.clock = false, h.clock.Add(10*acpproxy.ChildStartWindow) })
+	h.w.poll()
+	if !h.w.waitingNow() {
+		t.Fatal("a box still starting ended the wait")
+	}
+}
+
+// The first real box to take over after a failed start is not announced at spawn: it may exit too.
+func TestBoxWaitStaysQuietAboutABoxBeingTriedAgain(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.w.started(&acpproxy.Child{HoldPrompts: true})
+	h.w.childFailed()
+	h.w.started(&acpproxy.Child{})
+	h.read(func() {
+		if len(h.notices) != 0 {
+			t.Fatalf("notices=%q", h.notices)
+		}
+	})
+}
+
+// Readiness still has its say. While something a person must settle stands in the way, no real box is
+// tried, and the thread hears that instead. Once it is settled, a real box may be tried again.
+func TestBoxWaitPutsAFailedStartBehindWhatReadinessSays(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.w.childFailed()
+	h.set(func() { h.answer, h.holding, h.clock = errNeedsAPerson, true, h.clock.Add(acpBoxWaitRecheck) })
+	h.w.poll()
+	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "needs a build") {
+		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
+	}
+	h.read(func() {
+		if h.moves != 0 {
+			t.Fatalf("moved %d times past what a person must settle", h.moves)
+		}
+	})
+	h.set(func() { h.answer, h.sign = nil, "built" })
+	h.w.poll()
+	if said := h.lastSaid(); h.w.blockedNow() || !strings.Contains(said, "could not start") {
+		t.Fatalf("blocked=%v said=%q, want a retry and the failed start still reported", h.w.blockedNow(), said)
+	}
+	h.read(func() {
+		if h.moves != 1 || h.opened != 0 {
+			t.Fatalf("moves=%d opened=%d", h.moves, h.opened)
+		}
+	})
+}
+
+// A spawn's own question must not start a retry: a holding child that dies would otherwise be followed
+// by a real box, which is the tight loop this all exists to avoid.
+func TestBoxWaitRetriesOnlyFromThePollLoop(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.w.childFailed()
+	h.set(func() { h.clock = h.clock.Add(time.Hour) })
+	if err := h.w.refreshStale(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !h.w.blockedNow() {
+		t.Fatal("a spawn's question let the next child be a real box")
+	}
+}
+
+// A holding child that never finishes what the editor asked cannot stop the move for good: a person
+// finishing a sign-in has the deadline, and a hung adapter gets replaced. What it says goes to the log.
+func TestBoxWaitForcesTheMoveAtItsDeadline(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.holding, h.moveOK = true, false })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.w.poll()
+	h.set(func() { h.clock = h.clock.Add(acpBoxWaitMoveDeadline - time.Second) })
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 2 || h.forces != 0 {
+			t.Fatalf("moves=%d forces=%d before the deadline", h.moves, h.forces)
+		}
+	})
+	h.set(func() { h.clock = h.clock.Add(time.Second) })
+	h.w.poll()
+	h.read(func() {
+		if h.forces != 1 || len(h.logged) != 1 {
+			t.Fatalf("forces=%d logged=%v at the deadline", h.forces, h.logged)
+		}
+	})
+	h.w.poll()
+	h.read(func() {
+		if h.forces != 1 {
+			t.Fatalf("forces=%d: the clock starts again after a forced move", h.forces)
+		}
+	})
+}
+
+// The deadline is for wanting to move. A session that is blocked is not wanting anything yet, and a
+// move that works leaves nothing to count from.
+func TestBoxWaitCountsTheDeadlineOnlyWhileAMoveIsWanted(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.holding, h.moveOK = true, false })
+	_ = h.w.refresh(t.Context())
+	h.w.poll()
+	h.set(func() { h.answer, h.sign = errNeedsAPerson, "edited" })
+	_ = h.w.refresh(t.Context())
+	h.w.poll()
+	h.set(func() { h.clock = h.clock.Add(2 * acpBoxWaitMoveDeadline) })
+	h.w.poll()
+	h.set(func() { h.answer, h.sign = nil, "fixed" })
+	h.w.poll()
+	h.read(func() {
+		if h.forces != 0 {
+			t.Fatalf("forces=%d: it just became possible to move", h.forces)
+		}
+	})
+}
+
+// A child that holds prompts runs under rules with none of the project's in them, so a broken sidecar
+// or a changed service cannot stop it, and it proves a reference to those, for this start alone.
+func TestSpawnedHoldingChildRunsUnderItsOwnRules(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), Egress: "filtered"}
+	cfg.SetEgress("filtered")
+	cfg.SetActiveProfile("claude", "selected")
+	seedNativeFixture(t, cfg, "claude", "selected")
+	target := agents.Target{Provider: "claude", Accounts: []string{"selected"}}
+	shim := filepath.Join(t.TempDir(), "inner")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s\\n' \"$COOP_NETWORK_CAPTURE\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const real, holding, qualification = "aaaa", "bbbb", "cccc"
+	capture := func(fingerprint string) *box.CapturedEgress {
+		return &box.CapturedEgress{Project: cfg.RepoOverride, Fingerprint: strings.Repeat(fingerprint, 16), QualificationID: strings.Repeat(qualification, 16)}
+	}
+	spawn := func(a *app) (*acpproxy.Child, string, error) {
+		t.Helper()
+		child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, target, "", true, io.Discard)
+		if err != nil {
+			return nil, "", err
+		}
+		out, readErr := io.ReadAll(child.Out)
+		child.Stop()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return child, string(out), nil
+	}
+
+	// The real box proves the real rules, and nothing asks for the others.
+	admits := 0
+	h := newBoxWaitHarness(t)
+	a := &app{cfg: cfg, acpNetworkTargets: []agents.Target{target}, acpCapture: capture(real), acpBoxWait: h.w,
+		acpHoldAdmission: func(context.Context) (*box.CapturedEgress, error) { admits++; return capture(holding), nil }}
+	child, out, err := spawn(a)
+	if err != nil || child.HoldPrompts || !strings.Contains(out, strings.Repeat(real, 16)) || admits != 0 {
+		t.Fatalf("a real box: err=%v holds=%v out=%q admits=%d", err, child.HoldPrompts, out, admits)
+	}
+
+	// A holding child proves its own, and says so for the refresh and the warm pool.
+	h.w.childFailed()
+	child, out, err = spawn(a)
+	if err != nil || !child.HoldPrompts || !strings.Contains(out, strings.Repeat(holding, 16)) || strings.Contains(out, strings.Repeat(real, 16)) || child.Policy != strings.Repeat(holding, 16) || admits != 1 {
+		t.Fatalf("a holding child: err=%v holds=%v policy=%q out=%q admits=%d", err, child.HoldPrompts, child.Policy, out, admits)
+	}
+
+	// With none to run under, nothing starts, and the reason is the session's to end on.
+	a.acpHoldAdmission = func(context.Context) (*box.CapturedEgress, error) { return nil, errCouldNotLook }
+	if _, _, err := spawn(a); !errors.Is(err, errCouldNotLook) {
+		t.Fatalf("no rules for a holding child = %v", err)
+	}
+
+	// A session that connected on a holding capture already has its rules.
+	held := capture(holding)
+	held.Pending = &networkstate.PendingApproval{Reason: "asks"}
+	a.acpCapture = held
+	child, out, err = spawn(a)
+	if err != nil || !child.HoldPrompts || !strings.Contains(out, strings.Repeat(holding, 16)) {
+		t.Fatalf("a held capture: err=%v holds=%v out=%q", err, child.HoldPrompts, out)
+	}
+}
+
+// A connect that cannot look says nothing either way: the first child's own proofs decide, and the
+// wait takes over if they refuse. An editor is not told the server failed for it.
+func TestACPConnectsWhenItCannotLookAtTheBox(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.answer = errCouldNotLook })
+	a := &app{cfg: openNetwork(&config.Config{}), acpBoxWait: h.w}
+	a.cfg.SetEgress("filtered")
+	if err := a.ensureACPImage(); err != nil {
+		t.Fatalf("connect = %v", err)
+	}
+	if h.w.blockedNow() {
+		t.Fatal("a failure to look blocked the first real box")
+	}
+}
+
+// A project file an agent broke stops a real box and must not stop the child that says so: the child
+// holding prompts reads nothing from it, and neither a job nor a holding child needs the project's image.
+func TestAHoldingChildResolvesItsImageWhateverTheProjectFileSays(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo, BaseImage: "base"}, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true}
+	if _, _, err := a.resolveLaunchImage(); err == nil {
+		t.Fatal("a real launch accepted a broken project file")
+	}
+	if _, err := a.dispatch([]string{"acp", "claude"}); err == nil || !strings.Contains(err.Error(), "project.yaml") {
+		t.Fatalf("coop acp with a broken project file = %v", err)
+	}
+	t.Setenv("COOP_ACP_INNER", "1")
+	t.Setenv(acpHandshakeEnv, "1")
+	got, img, err := a.resolveLaunchImage()
+	if err != nil || img != "base" {
+		t.Fatalf("a holding child: repo=%q image=%q err=%v", got, img, err)
+	}
+	if _, err := a.dispatch([]string{"acp", "claude"}); err != nil && strings.Contains(err.Error(), "project.yaml") {
+		t.Fatalf("a holding child stopped at the project file: %v", err)
 	}
 }
 
