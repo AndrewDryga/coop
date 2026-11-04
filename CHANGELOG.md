@@ -5,7 +5,8 @@
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
 - **A closed local port in a filtered box refuses at once.** Connecting to it, or sending UDP to it, now
-  fails right away instead of hanging until the client gives up. A blocked destination also fails at once now.
+  fails right away instead of hanging until the client gives up. A blocked destination also fails at once now,
+  and so does a closed `::1` port.
 
 - **`coop approve` adds the service rules a filtered box is missing.** It lists the project's services and
   their ports and asks once. Yes writes the rules to `.agent/project.yaml`, keeping its comments, and approves

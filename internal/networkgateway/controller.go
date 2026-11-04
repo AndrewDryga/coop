@@ -441,6 +441,14 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
 	// error, and dropping it left a local client hanging where it should be refused. Only those two
 	// answers are accepted without a uid, and only on lo: a packet routed to lo is delivered inside
 	// this namespace, and the same answer routed anywhere else still falls to denied_service.
+	//
+	// The agent's IPv6 is refused by rule, and the kernel's ICMPv6 error for that also comes from no
+	// socket. It is accepted on lo like the IPv4 one, in both the output and input chains (IPv6 is
+	// dropped wholesale before input's lo accept). That is not enough for TCP: the error arrives
+	// while connect() holds the socket, is discarded, and the client waits out a SYN retransmit. So
+	// the agent's TCP to ::1, which nothing can reach, is refused with a reset, which the socket
+	// takes at once; the reset is accepted on lo only. Nothing else IPv6 is accepted, and any other
+	// IPv6 packet, or one routed off lo, still falls to the counted drops.
 	rules := fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
@@ -461,6 +469,7 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
  }
  chain output {
   type filter hook output priority 0; policy drop;
+  meta skuid AGENT_UID ip6 daddr ::1 meta l4proto tcp counter name denied_agent reject with tcp reset
   meta skuid AGENT_UID meta nfproto ipv6 counter name denied_agent reject with icmpx type admin-prohibited
   meta skuid AGENT_UID ct state invalid counter name denied_agent drop
   meta skuid AGENT_UID ip daddr 127.0.0.11 counter name protected_agent reject with icmpx type admin-prohibited
@@ -469,6 +478,8 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   meta skuid 65532 oifname "lo" ct state established accept
   meta nfproto ipv4 oifname "lo" tcp flags & rst == rst accept
   oifname "lo" ip protocol icmp icmp type destination-unreachable accept
+  meta nfproto ipv6 oifname "lo" tcp flags & rst == rst accept
+  meta nfproto ipv6 oifname "lo" icmpv6 type destination-unreachable accept
 %s  meta skuid AGENT_UID ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
 %s  meta skuid AGENT_UID counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop
@@ -481,6 +492,8 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
  }
  chain input {
   type filter hook input priority 0; policy drop;
+  meta nfproto ipv6 iifname "lo" tcp flags & rst == rst accept
+  meta nfproto ipv6 iifname "lo" icmpv6 type destination-unreachable accept
   meta nfproto ipv6 counter name denied_ingress drop
   ct state invalid counter name denied_ingress drop
   iifname "lo" accept

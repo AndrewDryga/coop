@@ -111,6 +111,7 @@ expect REFUSED  "example.com on the captured 853"      "$(handshake example.com 
 expect REFUSED  "a direct dial at the guard listener"  "$(handshake dns.google 15443 127.0.0.1)"
 expect REFUSED  "a closed local TCP port"              "$(closed_local tcp)"
 expect REFUSED  "a closed local UDP port"              "$(closed_local udp)"
+expect REFUSED  "a closed local TCP port on ::1"       "$(closed_local tcp 6)"
 exit $failed
 `
 		record := runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script})
@@ -413,13 +414,14 @@ except Exception:
 closed_local() { python3 -c '
 import socket, sys
 kind = socket.SOCK_STREAM if sys.argv[1] == "tcp" else socket.SOCK_DGRAM
-with socket.socket(socket.AF_INET, kind) as s:
-    s.bind(("127.0.0.1", 0))
+family, host = (socket.AF_INET6, "::1") if sys.argv[2:] == ["6"] else (socket.AF_INET, "127.0.0.1")
+with socket.socket(family, kind) as s:
+    s.bind((host, 0))
     port = s.getsockname()[1]
-s = socket.socket(socket.AF_INET, kind)
+s = socket.socket(family, kind)
 s.settimeout(2)
 try:
-    s.connect(("127.0.0.1", port))
+    s.connect((host, port))
     s.send(b"coop")
     s.recv(1)
     print("ANSWERED")
@@ -427,7 +429,7 @@ except ConnectionRefusedError:
     print("REFUSED")
 except OSError as error:
     print(type(error).__name__)
-' "$1"; }
+' "$@"; }
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 `
 

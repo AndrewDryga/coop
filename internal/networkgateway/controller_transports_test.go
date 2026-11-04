@@ -195,6 +195,8 @@ func TestOnlyAClosedLocalPortsAnswerCrossesLoopbackWithoutAUID(t *testing.T) {
 	answers := []string{
 		`meta nfproto ipv4 oifname "lo" tcp flags & rst == rst accept`,
 		`oifname "lo" ip protocol icmp icmp type destination-unreachable accept`,
+		`meta nfproto ipv6 oifname "lo" tcp flags & rst == rst accept`,
+		`meta nfproto ipv6 oifname "lo" icmpv6 type destination-unreachable accept`,
 	}
 	output := rules[strings.Index(rules, " chain output {"):strings.Index(rules, " chain input {")]
 	var found []string
@@ -212,6 +214,7 @@ func TestOnlyAClosedLocalPortsAnswerCrossesLoopbackWithoutAUID(t *testing.T) {
 	for _, answer := range answers {
 		at := strings.Index(output, answer)
 		for _, earlier := range []string{
+			"meta skuid 1000 ip6 daddr ::1 meta l4proto tcp counter name denied_agent reject with tcp reset",
 			"meta skuid 1000 meta nfproto ipv6 counter name denied_agent reject",
 			"meta skuid 1000 ct state invalid counter name denied_agent drop",
 			"meta skuid 1000 ip daddr 127.0.0.11 counter name protected_agent reject",
@@ -223,6 +226,33 @@ func TestOnlyAClosedLocalPortsAnswerCrossesLoopbackWithoutAUID(t *testing.T) {
 		if next := strings.Index(output, "meta nfproto ipv6 counter name denied_service drop"); next < 0 || at > next {
 			t.Errorf("%q does not precede the service drops", answer)
 		}
+	}
+}
+
+// The agent's IPv6 is refused by rule, and the kernel's answer (an ICMPv6 error, or the reset that
+// refuses TCP to ::1 at once) is sent from no socket and heard through the input chain, which drops
+// IPv6 wholesale. A closed ::1 port hung until these were let through; they are the only IPv6
+// accepts there and apply on lo alone.
+func TestOnlyLoopbackIPv6AnswersAreHeardBeforeIPv6IsDropped(t *testing.T) {
+	rules := transportController(t, transportPolicy(t), nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	input := rules[strings.Index(rules, " chain input {"):strings.Index(rules, " chain forward {")]
+	want := []string{
+		`meta nfproto ipv6 iifname "lo" tcp flags & rst == rst accept`,
+		`meta nfproto ipv6 iifname "lo" icmpv6 type destination-unreachable accept`,
+	}
+	drop := "meta nfproto ipv6 counter name denied_ingress drop"
+	at := strings.Index(input, drop)
+	if at < 0 {
+		t.Fatalf("the input chain lost its IPv6 drop:\n%s", input)
+	}
+	var found []string
+	for _, line := range strings.Split(input[:at], "\n") {
+		if line = strings.TrimSpace(line); strings.HasSuffix(line, "accept") {
+			found = append(found, line)
+		}
+	}
+	if !slices.Equal(found, want) {
+		t.Fatalf("the input chain accepts %q before the IPv6 drop, want only %q", found, want)
 	}
 }
 

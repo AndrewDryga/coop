@@ -116,7 +116,12 @@ Facts the code cannot say twice, all still true:
   port and every rejected destination hung until the client's timeout, and each reject added a
   service drop and SYN retransmits to the counts. Two output rules now accept just those answers,
   and only on `lo`, so blocked traffic fails at once with `No route to host` and counts fewer
-  packets for one attempt. IPv6 stays dropped wholesale, so `::1` still hangs. An unprivileged agent
+  packets for one attempt. IPv6 is still dropped wholesale, and the agent's own IPv6 is rejected by
+  rule, so `::1` needs its own handling: the kernel's ICMPv6 error is accepted on `lo` in both the
+  output and input chains (input drops IPv6 before its `lo` accept), and agent TCP to `::1` is
+  rejected with a reset instead. The ICMPv6 error alone cost a SYN retransmit (about 1 s): it is
+  generated inside `connect()` while the socket is locked and is discarded, whereas a reset is queued
+  and taken at once. UDP needed only the ICMPv6 rule. An unprivileged agent
   cannot forge a source to reflect an answer off `lo` (`IP_FREEBIND` still fails the route lookup;
   `IP_TRANSPARENT` needs NET_ADMIN); when root forces it, the answer leaves by eth0 and
   `denied_service` counts it.
@@ -339,6 +344,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-04 — a closed `::1` port refuses at once too (TCP reset by rule, ICMPv6 error on `lo` for
+  UDP); no other IPv6 is accepted.
 - 2026-11-04 — a closed local port refuses at once and rejected traffic fails at once: the
   kernel's own answers are accepted on `lo` only, and the gateway image digest changed with them.
 - 2026-11-03 — every reason code the gateway records reads as plain words in `coop net inspect`;
