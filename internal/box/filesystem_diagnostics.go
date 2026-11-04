@@ -57,7 +57,14 @@ func filesystemBuildError(cause error, path string) error {
 // output, the compiler's or package manager's words, and adds the log's last line for the exit
 // status. A failure with no step output, such as a base image that cannot be pulled, or a log in
 // any other shape reads from the end.
-func filesystemBuildDetail(log string) []string {
+func filesystemBuildDetail(log string) []string { return buildDetail(log, false) }
+
+// BuildFailureDetail is what a person needs from any plain BuildKit log that shows a failed step: that
+// step's own words and the log's last line, or nil when the log shows no such step. BuildKit's last
+// line alone only says the step exited 100, not what apt said.
+func BuildFailureDetail(log string) []string { return buildDetail(log, true) }
+
+func buildDetail(log string, onlyFailedStep bool) []string {
 	var lines []string
 	failed := ""
 	for line := range strings.Lines(log) {
@@ -75,6 +82,9 @@ func filesystemBuildDetail(log string) []string {
 		if match := buildKitStepOutput.FindStringSubmatch(line); match != nil && match[1] == failed {
 			output = append(output, match[2])
 		}
+	}
+	if onlyFailedStep && len(output) == 0 {
+		return nil
 	}
 	selected := lines[max(0, len(lines)-filesystemBuildLines):]
 	if len(output) > 0 {

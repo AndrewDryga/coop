@@ -285,6 +285,9 @@ func probeReason(errOut string, runErr error, fallback string) string {
 	if why == "" {
 		return fallback
 	}
+	if detail := box.BuildFailureDetail(why); len(detail) > 0 {
+		return strings.Join(detail, "\n")
+	}
 	return sentence(strings.TrimSpace(why[strings.LastIndex(why, "\n")+1:]))
 }
 

@@ -192,6 +192,10 @@ func TestProbeReason(t *testing.T) {
 		{"  \n  trailing  ", nil, "Trailing."},
 		{"", errors.New("run failed"), "Run failed."}, // fall back to the run error
 		{"stderr wins", errors.New("ignored"), "Stderr wins."},
+		// A failed image build: the step's own words, because the last line only gives its exit code.
+		{"#7 [2/3] RUN apt-get update\n#7 1.2 Get:1 https://snapshot.ubuntu.com jammy\n#7 9.4 E: Failed to fetch jammy 503\n#7 ERROR: process \"apt-get\" did not complete successfully: exit code: 100\n" +
+			"ERROR: failed to build: exit code: 100", nil,
+			"Get:1 https://snapshot.ubuntu.com jammy\nE: Failed to fetch jammy 503\nERROR: failed to build: exit code: 100"},
 	}
 	for _, c := range cases {
 		if got := probeReason(c.errOut, c.err, fallback); got != c.want {
