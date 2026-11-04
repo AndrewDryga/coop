@@ -504,6 +504,11 @@ runtime remains with that session's exact labels. This does not make the workspa
 again. If co:op cannot read capacity, it reports busy. The worker still polls for requests that
 read data or clean up existing work.
 
+After a worker restart, an unused prepared read-only session may retain a warm-process receipt
+whose owner cannot be checked here. co:op quarantines that session before admitting new work,
+preserves its files and receipt, and checks its exact runtime labels separately. Create a fresh
+session for new work; quarantine retirement preserves the old workspace and history.
+
 `/v1/storage` measures the disk blocks allocated to files, rather than the file sizes reported
 by applications. It reads file metadata without opening file contents, so it can count private
 session data that contains credentials without reading those credentials.

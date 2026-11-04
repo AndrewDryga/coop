@@ -3,7 +3,7 @@ name: session-awaiting-validation-runtime-cleanup
 description: every started turn retains its exact runtime receipt through teardown; awaiting-validation owns durable candidate authority but no live provider runtime
 subsystem: sessions
 sources: [internal/session/store.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/forkspace/generation.go, internal/forkspace/reservation.go]
-updated: 2026-10-29
+updated: 2026-11-04
 ---
 
 # Awaiting validation is durable authority, not runtime authority
@@ -69,6 +69,13 @@ turn admission share the session lock. Quarantined history, even record-only ret
 proof that old runtime resources stopped; capacity stays busy until the separate narrow runtime
 proof succeeds. Provider-native private history remains intact, and every restart repeats proof.
 
+A never-used read-only warm session whose exact foreign execution cannot be reaped may be
+quarantined under final-admission synchronization. Its current store reservation, fork generation,
+workspace, warm source and role must agree; any turns, mixed activity or uncertain evidence keeps
+it held. Quarantine denies reuse and ordinary workspace/discard operations. The execution record
+and workspace remain protected: successful exact session-run cleanup releases capacity without
+claiming the foreign supervisor dead. A fresh session replaces the unused prepared one.
+
 Warm idle time starts when the completed or prepared child is parked, not before startup or its
 preceding turn. The projection contains public selectors, not a portable grant. Canonical broker
 renewal continues while parked; short lease expiry and revocation independently stop protected
@@ -101,6 +108,8 @@ workspace, services and history. Replaying a saved successful close reads its im
 before validating the workspace's later identity; a fresh key cannot close a terminal session.
 
 ## Changelog
+
+- 2026-11-04 — preserved unused foreign warm receipts after container restarts while fencing reuse; exact runtime proof releases capacity, and busy/crossed/mixed evidence stays held.
 - 2026-10-29 — separated quarantined close from workspace authority and preserved closed receipt replay after later workspace loss; covered missing/failed proof, stale state, queued turns and racing admission.
 - 2026-10-28 — tied uncertain cancellation settlement to completed runtime/usage cleanup; verified delayed teardown, caller cancellation, natural completion, and retained cleanup failures.
 - 2026-10-28 — isolated the delivered-receipt checkpoint's regression from prompt-log timing;
