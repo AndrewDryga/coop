@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A worker can start before its controller.** The first `coop sessions connect` keeps trying while
+  the controller cannot be reached, as the help always said, and stops at once for a refused token or
+  an untrusted certificate. `coop sessions compact` says what to change when the backup file exists,
+  its folder is missing or there is no session data. The worker API leaves `started_at` and
+  `finished_at` out until they happen, instead of sending year 1.
+
 - **Errors name the real problem first.** A filtered run with nobody signed in tells you to run
   `coop login`, instead of saying the account "is not ready for restricted networking". `coop tasks`
   refuses a mistyped command and answers `decisions` before a project's first task. `coop fork merge`

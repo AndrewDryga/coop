@@ -336,6 +336,21 @@ func newWorkerKey() (*rsa.PrivateKey, string, []byte, error) {
 	return privateKey, string(publicPEM), privatePEM, nil
 }
 
+// ControllerUnreachable reports a request that never got an answer from the controller. A certificate
+// the worker does not trust did get one, and waiting would not change it.
+func ControllerUnreachable(err error) bool {
+	var request *url.Error
+	if !errors.As(err, &request) {
+		return false
+	}
+	var verification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return !errors.As(err, &verification) && !errors.As(err, &unknownAuthority) &&
+		!errors.As(err, &hostname) && !errors.As(err, &invalid)
+}
+
 // CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words
 // a person can act on. The first connection reads it again and consumes it.
 func CheckEnrollmentTokenFile(path string) error {

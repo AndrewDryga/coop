@@ -1495,3 +1495,27 @@ func TestSessionHTTPDiscardRetireQuarantinedBody(t *testing.T) {
 		t.Fatalf("retire mixed with a plan = %d %s; want 400", mixed.Code, mixed.Body.String())
 	}
 }
+
+// A queued turn has not started: its response leaves the times out, not Go's year 1.
+func TestPublicTurnLeavesOutTimesNotReached(t *testing.T) {
+	encoded, err := json.Marshal(publicTurn(session.Turn{ID: "turn", QueuedAt: time.Now()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(encoded); strings.Contains(text, "started_at") || strings.Contains(text, "finished_at") || strings.Contains(text, "0001-01-01") {
+		t.Errorf("queued turn = %s", text)
+	}
+}
+
+// Valid JSON of the wrong shape names the field; only JSON that does not parse is called invalid.
+func TestSessionBodyProblemNamesTheField(t *testing.T) {
+	var value struct {
+		Task struct{ Offer string } `json:"task"`
+	}
+	if got := sessionBodyProblem(json.Unmarshal([]byte(`{"task":"x"}`), &value)); !strings.Contains(got, `"task"`) {
+		t.Errorf("wrong type = %q", got)
+	}
+	if got := sessionBodyProblem(json.Unmarshal([]byte(`{`), &value)); got != "request body is invalid JSON" {
+		t.Errorf("bad JSON = %q", got)
+	}
+}

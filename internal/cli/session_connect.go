@@ -131,7 +131,10 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 	defer owned.stop()
 	// Own the state root before enrollment can publish or replace a worker identity.
 	ui.Note("Connecting to %s…", options.Controller)
-	identity, err := transport.Identity(ctx)
+	identity, err := waitForIdentity(ctx, transport.Identity, ui.Warn, time.After)
+	if errors.Is(err, context.Canceled) {
+		return 0, nil
+	}
 	if err != nil {
 		return 1, err
 	}
@@ -170,6 +173,27 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		return 0, nil
 	}
 	return 1, err
+}
+
+// waitForIdentity keeps a first connection going while the controller cannot be reached, as the
+// connector does afterwards, so a worker can start before its controller. Everything else, such as a
+// refused token or a certificate it does not trust, stops the command: waiting cannot fix those.
+func waitForIdentity(ctx context.Context, identity func(context.Context) (workerconnector.WorkerIdentity, error),
+	warn func(string, ...any), after func(time.Duration) <-chan time.Time) (workerconnector.WorkerIdentity, error) {
+	wait := 2 * time.Second
+	for {
+		id, err := identity(ctx)
+		if err == nil || !workerconnector.ControllerUnreachable(err) || ctx.Err() != nil {
+			return id, err
+		}
+		warn("Could not reach the controller. Trying again in %s.", wait)
+		select {
+		case <-ctx.Done():
+			return id, ctx.Err()
+		case <-after(wait):
+		}
+		wait = min(wait*2, 30*time.Second)
+	}
 }
 
 // ownedSessionService is a local service THIS invocation started, and the only one it may stop.

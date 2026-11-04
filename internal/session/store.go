@@ -3319,8 +3319,11 @@ func (s *Store) ExtendBudget(ctx context.Context, key string, req ExtendBudgetRe
 		}
 		return s.replaySession(op)
 	}
-	if req.SessionID == "" || !validBoundedText(req.SessionID, MaxIDBytes) || req.ExpectedRevision <= 0 || req.AdditionalTurns <= 0 || req.AdditionalTurns > MaxTurnsLimit {
+	if req.SessionID == "" || !validBoundedText(req.SessionID, MaxIDBytes) || req.ExpectedRevision <= 0 || req.AdditionalTurns <= 0 {
 		return Session{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidRequest, Detail: "session, revision, and positive budget addition are required"})
+	}
+	if req.AdditionalTurns > MaxTurnsLimit {
+		return Session{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidRequest, Detail: fmt.Sprintf("budget addition is above the limit of %d turns", MaxTurnsLimit)})
 	}
 	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.SessionID))
 	if errors.Is(err, sql.ErrNoRows) {

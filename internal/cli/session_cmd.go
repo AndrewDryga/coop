@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -355,6 +356,15 @@ func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error 
 	case strings.Contains(detail, "already exists"):
 		return ui.CommandFailed("Could not compact session data", detail,
 			[2]string{"", "Choose a new backup path."})
+	case errors.Is(err, fs.ErrExist):
+		return ui.CommandFailed("Could not compact session data", "The backup file already exists.\n"+detail,
+			[2]string{"", "Choose a new backup path."})
+	case strings.Contains(detail, "inspect backup directory"):
+		return ui.CommandFailed("Could not compact session data", "The backup file's folder does not exist.\n"+detail,
+			[2]string{"", "Create the folder, or choose another backup path."})
+	case strings.Contains(detail, "inspect existing session"):
+		return ui.CommandFailed("Could not compact session data", "There is no session data at this path.\n"+detail,
+			[2]string{"", "Check the --state path."})
 	case result.BackupPath == "":
 		// Nothing was retained: backupSQLiteDatabase deletes its output when it cannot verify it.
 		return ui.CommandFailed("Could not compact session data",

@@ -105,8 +105,8 @@ type TurnDTO struct {
 	ErrorCode                 session.ErrorCode      `json:"error_code,omitempty"`
 	ErrorDetail               string                 `json:"error_detail,omitempty"`
 	QueuedAt                  time.Time              `json:"queued_at"`
-	StartedAt                 time.Time              `json:"started_at,omitempty"`
-	FinishedAt                time.Time              `json:"finished_at,omitempty"`
+	StartedAt                 time.Time              `json:"started_at,omitzero"`
+	FinishedAt                time.Time              `json:"finished_at,omitzero"`
 	OutputArtifacts           []TurnArtifactDTO      `json:"output_artifacts,omitempty"`
 	Usage                     session.Usage          `json:"usage,omitzero"`
 	Candidate                 *session.TurnCandidate `json:"candidate,omitempty"`
@@ -1453,6 +1453,16 @@ func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	return decodeSessionJSONLimit(w, r, value, sessionHTTPMaxBody)
 }
 
+// sessionBodyProblem tells JSON that does not parse from JSON this endpoint cannot use, naming the
+// field. It never repeats a value from the body.
+func sessionBodyProblem(err error) string {
+	var wrongType *json.UnmarshalTypeError
+	if errors.As(err, &wrongType) && wrongType.Field != "" {
+		return fmt.Sprintf("request body field %q has the wrong type", wrongType.Field)
+	}
+	return "request body is invalid JSON"
+}
+
 func decodeSessionJSONLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
 	detail := fmt.Sprintf("request body exceeds %d bytes", limit)
 	if r.ContentLength > limit {
@@ -1468,7 +1478,7 @@ func decodeSessionJSONLimit(w http.ResponseWriter, r *http.Request, value any, l
 		} else if errors.Is(err, io.EOF) {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body must contain one JSON value")
 		} else {
-			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "request body is invalid JSON")
+			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", sessionBodyProblem(err))
 		}
 		return false
 	}
@@ -1867,7 +1877,7 @@ func EnsureAncestors(target string) error {
 			return fmt.Errorf("inspect session state parent: %w", statErr)
 		}
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return errors.New("session state parent is not a real directory")
+			return fmt.Errorf("session state folder %s must be a real folder, not a link; use the real path (see pwd -P)", current)
 		}
 	}
 	return nil

@@ -2,10 +2,16 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/workerconnector"
+	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,5 +260,71 @@ func TestSessionConnectResolvesARaceThroughTheStorageLock(t *testing.T) {
 	}
 	if ready, _ := sessionServiceReady(socket); !ready {
 		t.Fatal("losing connection disturbed the winner")
+	}
+}
+
+// A first connection waits for a controller it cannot reach, and stops on anything waiting cannot fix.
+func TestWaitForIdentityRetriesOnlyAnUnreachableController(t *testing.T) {
+	unreachable := &url.Error{Op: "Post", URL: "https://controller.example", Err: errors.New("connection refused")}
+	calls, warned := 0, 0
+	warn := func(string, ...any) { warned++ }
+	now := func(time.Duration) <-chan time.Time {
+		ready := make(chan time.Time, 1)
+		ready <- time.Now()
+		return ready
+	}
+	id, err := waitForIdentity(context.Background(), func(context.Context) (workerconnector.WorkerIdentity, error) {
+		calls++
+		if calls < 3 {
+			return workerconnector.WorkerIdentity{}, unreachable
+		}
+		return workerconnector.WorkerIdentity{ID: "worker"}, nil
+	}, warn, now)
+	if err != nil || id.ID != "worker" || calls != 3 || warned != 2 {
+		t.Errorf("retry = (%+v, %v), %d calls, %d warnings", id, err, calls, warned)
+	}
+
+	refused := errors.New("the controller refused this token")
+	calls = 0
+	if _, err := waitForIdentity(context.Background(), func(context.Context) (workerconnector.WorkerIdentity, error) {
+		calls++
+		return workerconnector.WorkerIdentity{}, refused
+	}, warn, now); !errors.Is(err, refused) || calls != 1 {
+		t.Errorf("refused token = %v after %d calls, want one try", err, calls)
+	}
+
+	untrusted := &url.Error{Op: "Post", URL: "https://controller.example", Err: x509.UnknownAuthorityError{}}
+	calls = 0
+	if _, err := waitForIdentity(context.Background(), func(context.Context) (workerconnector.WorkerIdentity, error) {
+		calls++
+		return workerconnector.WorkerIdentity{}, untrusted
+	}, warn, now); err == nil || calls != 1 {
+		t.Errorf("untrusted certificate = %v after %d calls, want one try", err, calls)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	never := func(time.Duration) <-chan time.Time { return nil }
+	if _, err := waitForIdentity(ctx, func(context.Context) (workerconnector.WorkerIdentity, error) {
+		return workerconnector.WorkerIdentity{}, unreachable
+	}, warn, never); err == nil {
+		t.Error("a stopped command kept waiting")
+	}
+}
+
+// Each compact failure says what to change, in place of "could not be verified".
+func TestSessionCompactFailureNamesTheProblem(t *testing.T) {
+	for _, tc := range []struct{ err, want string }{
+		{"create new session backup: open /b: file exists", "already exists"},
+		{"inspect backup directory: lstat /nope: no such file or directory", "folder does not exist"},
+		{"inspect existing session database: lstat /s/session.sqlite: no such file or directory", "no session data"},
+	} {
+		var err error = errors.New(tc.err)
+		if strings.Contains(tc.err, "file exists") {
+			err = fmt.Errorf("create new session backup: %w", fs.ErrExist)
+		}
+		if got := sessionCompactFailure(sessionsvc.CompactionResult{}, err).Error(); !strings.Contains(got, tc.want) {
+			t.Errorf("%q said %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
