@@ -309,7 +309,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 		a.acpServe = nil
 		if len(serve) > 0 && a.acpSupervise == nil {
 			a.acpServe = startACPServeRouter(serve)
-			a.acpServe.execBox = a.rt.ExecCommand
+			a.acpServe.runtime = &a.rt
 			defer a.acpServe.Close()
 			serve = a.acpServe.Ports()
 		}

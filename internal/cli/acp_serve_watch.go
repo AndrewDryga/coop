@@ -141,7 +141,7 @@ func (r *acpServeRouter) follow(find func(context.Context) (string, error)) {
 		r.stopWatch()
 		r.stopWatch = nil
 	}
-	if find == nil || r.execBox == nil || r.closed {
+	if find == nil || r.runtime == nil || r.closed {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,7 +179,7 @@ func (r *acpServeRouter) watchBox(ctx context.Context, find func(context.Context
 	for _, port := range r.Ports() {
 		argv = append(argv, strconv.Itoa(port.Box))
 	}
-	cmd := r.execBox(ctx, container, argv...)
+	cmd := r.runtime.ExecCommand(ctx, container, argv...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
+	containerruntime "github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // acpServeBindsEnv tells an inner ACP child which private host port each serve port publishes on.
@@ -30,7 +30,7 @@ var acpServeRetry = 5 * time.Second
 type acpServeRouter struct {
 	report  func(ports []acpctl.ServePort, freed []acpctl.ServePort)
 	notify  func(string)
-	execBox func(ctx context.Context, container string, argv ...string) *exec.Cmd // nil: no server watching
+	runtime *containerruntime.Runtime // nil: no server watching
 	stop    chan struct{}
 	wg      sync.WaitGroup
 
