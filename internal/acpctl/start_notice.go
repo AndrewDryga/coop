@@ -96,7 +96,8 @@ func (c *Control) SetNetwork(limit NetworkLimit) {
 }
 
 // SetBoxWait records why messages wait for the project's box, for every thread that opens and every
-// message sent from now on; "" says they no longer wait. The supervisor writes it, in fixed sentences.
+// message sent from now on; "" says they no longer wait. The supervisor writes it, in fixed sentences
+// and with anything it quotes already escaped.
 func (c *Control) SetBoxWait(text string) {
 	c.mu.Lock()
 	c.boxWait = text

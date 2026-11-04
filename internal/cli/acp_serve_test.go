@@ -113,6 +113,72 @@ func TestEditorServeSwitchEndsConnectionsToTheOldBox(t *testing.T) {
 	}
 }
 
+// A session that connected while its project's file did not load has no ports, and learns them when the
+// file is fixed. From then on they are like any others: open threads hear the links that work, a box
+// starting now publishes behind them, and one something else holds is said to be taken.
+func TestEditorServeRouterTakesThePortsOfAFixedFile(t *testing.T) {
+	router := startACPServeRouter(nil)
+	defer router.Close()
+	if binds, told, err := router.allocate(); err != nil || len(binds) != 0 || told != "" {
+		t.Fatalf("before the fix: binds=%v told=%q err=%v", binds, told, err)
+	}
+	router.add(nil)
+	var reported, freed [][]acpctl.ServePort
+	router.mu.Lock()
+	router.report = func(ports, list []acpctl.ServePort) {
+		reported, freed = append(reported, ports), append(freed, list)
+	}
+	router.mu.Unlock()
+	router.add(nil)
+	if len(reported) != 0 {
+		t.Fatalf("a fixed file with no ports reported %v", reported)
+	}
+	occupant, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupant.Close()
+	stable, held := freeLoopbackPort(t), occupant.Addr().(*net.TCPAddr).Port
+	router.add([]acpctl.ServePort{{Box: 4000, Host: stable}, {Box: 5000, Host: held}})
+	if len(reported) != 1 || len(freed) != 1 || len(freed[0]) != 1 || freed[0][0].Box != 4000 {
+		t.Fatalf("reported=%+v freed=%+v, want both ports listed and the one that works told", reported, freed)
+	}
+	ports := router.Ports()
+	if len(ports) != 2 || ports[0].Taken || !ports[1].Taken {
+		t.Fatalf("ports = %+v", ports)
+	}
+	binds, told, err := router.allocate()
+	if err != nil || binds[4000] == 0 || binds[5000] == 0 || told == "" {
+		t.Fatalf("binds=%v told=%q err=%v", binds, told, err)
+	}
+	router.setLive(map[int]int{4000: fakeBoxPort(t, "the box")})
+	if got := readLink(t, stable); got != "the box" {
+		t.Fatalf("the link answered %q", got)
+	}
+}
+
+// The session reads what the fixed file names for it, and nothing of a file still broken.
+func TestAFixedProjectGivesTheSessionItsPorts(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	cfg.SetEgress("filtered")
+	writeBrokenProjectFile(t, cfg.RepoOverride)
+	a := &app{cfg: cfg, acpServe: startACPServeRouter(nil)}
+	defer a.acpServe.Close()
+	ctrl := acpctl.New(cfg, "claude", "", "", cfg.RepoOverride, acpctl.Selection{}, nil, nil, acpHost())
+	a.acpServe.reportTo(ctrl)
+	a.readFixedProject(ctrl, cfg.RepoOverride, "super")
+	if ports := a.acpServe.Ports(); len(ports) != 0 {
+		t.Fatalf("a file still broken gave the session ports: %+v", ports)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.RepoOverride, ".agent", "project.yaml"), []byte("serve:\n  ports: [4173]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.readFixedProject(ctrl, cfg.RepoOverride, "super")
+	if ports := a.acpServe.Ports(); len(ports) != 1 || ports[0].Box != 4173 {
+		t.Fatalf("ports = %+v", ports)
+	}
+}
+
 // Something else holding the port is told, with no link, and the session takes the port once it is
 // free. The thread then hears the link works.
 func TestEditorServePortHeldByAnotherProgram(t *testing.T) {

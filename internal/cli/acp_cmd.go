@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -223,7 +224,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// toolbar rewrite + preset/plain selectors) and re-execs `coop acp <inner>` (COOP_ACP_INNER
 	// set) to run the box, the current selection carried in the env. The inner falls through to box.Run.
 	if !innerProcess {
-		repo, pj, err := loadProject(a.cfg.RepoOverride)
+		repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 		if err != nil {
 			return -1, err
 		}
@@ -303,11 +304,22 @@ func (a *app) cmdACP(args []string) (int, error) {
 			// The error quotes the preset's folder name, which a box can choose. stderr: stdout carries ACP.
 			ui.Warn("%s — left out of the editor's preset list", ui.SafeInline(s.err.Error()))
 		}
-		// Admission above settled a.cfg.Egress to this session's network mode.
-		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, pj.Serve.Ports)
+		// Admission above settled a.cfg.Egress to this session's network mode, and read the project's file.
+		// One it found broken names nothing until it is fixed (readFixedProject), and the router has to
+		// exist by then, or each of the session's boxes would race for the stable ports itself.
+		connectedBroken := a.acpCapture != nil && a.acpCapture.BrokenFile
+		var ports []int
+		if !connectedBroken {
+			pj, err := project.Load(repo)
+			if err != nil {
+				return -1, err
+			}
+			ports = pj.Serve.Ports
+		}
+		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, ports)
 		// The session holds the stable ports itself, whichever of its boxes is live.
 		a.acpServe = nil
-		if len(serve) > 0 && a.acpSupervise == nil {
+		if (len(serve) > 0 || connectedBroken) && a.acpSupervise == nil {
 			a.acpServe = startACPServeRouter(serve)
 			a.acpServe.runtime = &a.rt
 			defer a.acpServe.Close()
@@ -391,7 +403,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		spec.ForkGeneration = string(forkIdentity.Generation)
 		spec.ForkOwner = forkctl.ForkContainerOwner(activityRepo, forkIdentity.Name, forkIdentity.Generation)
 	}
-	if claimant, ok := sessionTaskClaimant(spec); ok {
+	// A holding child runs no turn to use them, and listing the queues reads the project's file.
+	if claimant, ok := sessionTaskClaimant(spec); ok && !acpHoldingChild() {
 		spec.TaskTools = a.sessionTaskTools(repo, tool, claimant)
 		// The supervisor named this child's channel volume, so it can remove it if it kills us.
 		if name := os.Getenv(acpTaskChannelEnv); spec.TaskTools != nil && box.ValidTaskChannelVolume(name) {
@@ -623,7 +636,13 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 			rebalanceNow(active)
 		}
 	}
-	boxOpened = func() { rebalance(ctrl.LeadProvider()) }
+	var fixedProject sync.Once
+	boxOpened = func() {
+		if a.acpCapture != nil && a.acpCapture.BrokenFile {
+			fixedProject.Do(func() { a.readFixedProject(ctrl, boxRepo, superID) })
+		}
+		rebalance(ctrl.LeadProvider())
+	}
 	// Warm the others so a later provider switch swaps to a hot adapter — but NOT while the editor is
 	// still waiting for its initialize answer.
 	//
@@ -814,6 +833,18 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		return 1, errors.Join(err, cleanupErr)
 	}
 	return 0, cleanupErr
+}
+
+// readFixedProject gives a session that connected while the project's file did not load what that file
+// says for the session as a whole, now that it does and a real box can start: the stable ports its
+// boxes publish, and the project services new threads hear about.
+func (a *app) readFixedProject(ctrl *acpctl.Control, repo, superID string) {
+	pj, err := project.Load(repo)
+	if err != nil {
+		return // broken again: the next box refuses, and the wait says so
+	}
+	a.acpServe.add(editorServePorts(egress.Mode(a.cfg.Egress), repo, pj.Serve.Ports))
+	a.listEditorServices(ctrl, repo, superID)()
 }
 
 // acpReloadAfterCleanup decides what a failed pre-exec box sweep means for a SIGHUP reload: the

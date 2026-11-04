@@ -140,7 +140,7 @@ type acpNetworkRefresh struct {
 	unreadable  bool                  // the generation could not be read last time (traced once)
 	running     string                // the policy the last real box proved; "" before the first
 	holding     bool                  // the live child only holds prompts: the wait moves it, and nothing here replaces it
-	modeChanged bool                  // a person approved a mode this session cannot move to, and it only holds
+	heldBy      error                 // what the last admission said a person has to settle, while the session only holds
 	prepared    *acpproxy.Child       // a started replacement waiting for a quiet moment
 	preparedFor acpSpawn
 	preparedAt  time.Time
@@ -181,7 +181,7 @@ func (a *app) newACPNetworkRefresh(ctrl *acpctl.Control, restarter *acpproxy.Res
 		idle:    func() bool { return restarter.Idle() || restarter.Holding() },
 		restart: restarter.RestartIfIdle,
 		drain:   drain,
-		log:     func(err error) { ui.Warn("kept this session's network rules: %v", err) },
+		log:     func(err error) { ui.Warn("kept this session's network rules: %s", safeErrorText(err)) }, // a project's file can be quoted in it
 		notify:  ctrl.Notify,
 		network: func(capture *box.CapturedEgress) { setEditorNetwork(ctrl, capture) },
 		now:     time.Now,
@@ -299,7 +299,7 @@ func (r *acpNetworkRefresh) adopt() {
 	r.mu.Lock()
 	r.seen = generation
 	r.failed = "" // a new approval may make a replacement that failed before start
-	r.modeChanged = false
+	r.heldBy = nil
 	installed := !r.closed && (capture.Fingerprint != r.capture.Fingerprint || r.capture.HoldsOnly())
 	if installed {
 		r.created = append(r.created, capture)
@@ -314,8 +314,9 @@ func (r *acpNetworkRefresh) adopt() {
 	r.drain()
 }
 
-// readmitHeld is the wait asking again for a session whose capture only holds. It returns why admitting
-// cannot end that wait however long it lasts, or nil: the capture itself says the rest.
+// readmitHeld is the wait asking again for a session whose capture only holds. It returns what the
+// admission said a person has to settle, which can change while the session waits: a fixed file can go
+// on to need `coop approve`. Otherwise nil, and the capture itself says the rest.
 func (r *acpNetworkRefresh) readmitHeld() error {
 	if r == nil || !r.current().HoldsOnly() {
 		return nil
@@ -323,7 +324,21 @@ func (r *acpNetworkRefresh) readmitHeld() error {
 	r.adopt()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.modeChanged {
+	return r.heldBy
+}
+
+// acpHeldAnswer is the part of a refused admission only a person can settle, which the wait tells a
+// session that holds: a file to fix, access to approve, or a mode it cannot move to. Nil for any other
+// refusal.
+func acpHeldAnswer(err error) error {
+	var broken *box.BrokenProjectFile
+	var pending *networkstate.PendingApproval
+	switch {
+	case errors.As(err, &broken):
+		return broken
+	case errors.As(err, &pending):
+		return pending
+	case errors.Is(err, errACPNetworkModeChanged):
 		return errACPNetworkModeChanged
 	}
 	return nil
@@ -332,8 +347,8 @@ func (r *acpNetworkRefresh) readmitHeld() error {
 // refuse keeps the rules the live box runs. A capture adopted earlier but not running yet is dropped
 // with the replacement prepared for it: after a withdrawal, or any later refusal, nothing may move the
 // session onto rules admission no longer grants. With no real box yet that means the rules it started
-// with. A session that only holds hears a request or a mode through the wait; retrying the same refusal
-// says nothing new.
+// with. A session that only holds hears what a person has to settle through the wait; retrying the same
+// refusal says nothing new.
 func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 	r.mu.Lock()
 	moved := generation != r.seen
@@ -350,8 +365,11 @@ func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 	}
 	closed := r.closed
 	held := r.capture.HoldsOnly()
-	r.modeChanged = held && errors.Is(err, errACPNetworkModeChanged)
-	silent := held && (!moved && acpRefreshNotice(err) == r.shown || r.modeChanged)
+	r.heldBy = nil
+	if held {
+		r.heldBy = acpHeldAnswer(err)
+	}
+	silent := held && (!moved && acpRefreshNotice(err) == r.shown || r.heldBy != nil)
 	r.mu.Unlock()
 	if prepared != nil {
 		prepared.Stop()
@@ -360,8 +378,7 @@ func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 		acpproxy.Trace("network refresh: back to policy %s", live.Fingerprint)
 		r.drain()
 	}
-	var pending *networkstate.PendingApproval
-	if !closed && !errors.Is(err, context.Canceled) && !silent && !(held && errors.As(err, &pending)) {
+	if !closed && !errors.Is(err, context.Canceled) && !silent {
 		r.report(err)
 	}
 }

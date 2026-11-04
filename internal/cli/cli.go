@@ -404,7 +404,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// reported as such rather than as a missing runtime.
 	switch sub {
 	case "run", "shell", "acp", "up", "down", "build":
-		if !acpHoldingChild() { // it reads no project file, and is what keeps an editor told about a broken one
+		// An editor session reads the project's file itself. A child that would run the project's box
+		// stops at a broken one (resolveLaunchImage), and its supervisor and a child that holds prompts are
+		// what keep the editor told about it.
+		if sub != "acp" {
 			if _, _, err := loadProject(a.cfg.RepoOverride); err != nil {
 				return -1, err
 			}

@@ -13,6 +13,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -38,6 +39,9 @@ const (
 	acpBoxReadyNotice = "This project's box is ready, and this session moved onto it."
 	// acpBoxNotStarting titles what a thread hears while something has to settle before a box can start.
 	acpBoxNotStarting = "This project's box cannot start yet."
+	// acpBrokenFileReasonLimit is how much of why the project's file does not load a thread shows, in
+	// characters: a yaml error or two, with their line numbers.
+	acpBrokenFileReasonLimit = 600
 )
 
 // errACPBoxWaiting keeps the warm pool empty while the session's boxes cannot start: nothing it parks
@@ -64,13 +68,13 @@ func acpReportLaunch(spec *box.RunSpec) {
 // acpBoxWait keeps an editor connected while its filtered project box cannot start. The session runs
 // a child that only answers the handshake (acpproxy.Child.HoldPrompts) and shows why it waits. Files a
 // person already approved rebuild in the background; anything else waits for that person, and the
-// session notices their `coop build` or `coop approve` by itself. Once the box can start, the holding
-// child is replaced and any held prompt goes out, with no reconnect.
+// session notices their `coop build`, their `coop approve` or their fixed project file by itself. Once
+// the box can start, the holding child is replaced and any held prompt goes out, with no reconnect.
 //
 // Concurrency: the session's factory and its poll loop both call refresh, one at a time; checking is
 // taken before the network refresh's admitting. Fixed sentences only reach the editor, except a
-// services refusal, whose text is Coop's own words and validated names. The whole reason goes to the
-// agent log.
+// services refusal, whose text is Coop's own words and validated names, and why a project's file does
+// not load, escaped and cut short. The whole reason goes to the agent log.
 type acpBoxWait struct {
 	check   func(context.Context) error         // box.EditorBoxReadiness under the session's current capture
 	rebuild func(context.Context, string) error // box.RebuildApprovedProject
@@ -142,7 +146,7 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 			}
 		},
 		notify: ctrl.Notify,
-		log:    func(err error) { ui.Warn("%v", err) },
+		log:    func(err error) { ui.Warn("%s", safeErrorText(err)) }, // a project's file can be quoted in it
 		opened: opened,
 		now:    time.Now,
 		ctx:    ctx, cancel: cancel, kicks: make(chan struct{}, 1),
@@ -281,8 +285,7 @@ func (w *acpBoxWait) refresh(ctx context.Context) error {
 	err := w.check(ctx)
 	var required *box.ProjectBuildRequired
 	var services *box.ServicesNeedRules
-	var pending *networkstate.PendingApproval
-	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) && !errors.As(err, &pending) && !errors.Is(err, errACPNetworkModeChanged) {
+	if err != nil && !errors.As(err, &required) && !errors.As(err, &services) && acpHeldAnswer(err) == nil && !errors.Is(err, box.ErrProjectNotAdmitted) {
 		w.mu.Lock()
 		w.checked, w.seen = w.now(), stamp // not again until something changes: it costs a large project a second
 		w.mu.Unlock()
@@ -362,18 +365,25 @@ func (w *acpBoxWait) runRebuild(dfRel string) {
 // project build; a services refusal carries its own remedy.
 func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bool) string {
 	const waits = "Your messages wait here and go out once it is ready."
+	var broken *box.BrokenProjectFile
 	var pending *networkstate.PendingApproval
 	var services *box.ServicesNeedRules
 	switch {
 	case blocked == nil:
 		return ""
+	case errors.As(blocked, &broken):
+		return acpctl.ProblemText(acpctl.Problem{Title: "This project's " + project.File + " has a problem.",
+			Detail: "Nothing in that file applies, so no agent runs here yet. Fix the file, and this session moves on by itself. " + waits}) +
+			"\n\n" + acpctl.CodeBlock(brokenFileReason(broken))
+	case errors.Is(blocked, box.ErrProjectNotAdmitted):
+		return acpBoxFailedText(acpproxy.ChildExited)
 	case errors.As(blocked, &pending):
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval.",
 			Detail:  "Nobody approved what it asks for as it is now, so no agent runs here yet. " + waits,
 			Command: "coop approve", Purpose: "in this project, on the host"})
 	case errors.Is(blocked, errACPNetworkModeChanged):
 		return acpctl.ProblemText(acpctl.Problem{Title: "Reconnect your editor.",
-			Detail: "You approved network access this session cannot switch to, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."})
+			Detail: "This session cannot switch to the network access this project now uses, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."})
 	case required != nil && failed:
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box.",
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,
@@ -413,6 +423,17 @@ func acpSentence(part string) string {
 		return ""
 	}
 	return strings.ToUpper(part[:1]) + strings.TrimSuffix(part[1:], ".") + "."
+}
+
+// brokenFileReason is what a thread shows of why the project's file does not load. An error can quote
+// the file, which anyone who can edit the project wrote and which can be a megabyte, so it is escaped
+// and cut short here, and goes whole to the agent log.
+func brokenFileReason(err error) string {
+	reason := []rune(safeErrorText(err))
+	if len(reason) > acpBrokenFileReasonLimit {
+		return string(reason[:acpBrokenFileReasonLimit]) + "…"
+	}
+	return string(reason)
 }
 
 func (w *acpBoxWait) kick() {

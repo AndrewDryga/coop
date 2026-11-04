@@ -47,17 +47,45 @@ type acpServeRouter struct {
 // host, or another session in this checkout, may hold one for now.
 func startACPServeRouter(ports []acpctl.ServePort) *acpServeRouter {
 	r := &acpServeRouter{stop: make(chan struct{}), live: map[int]int{}, conns: map[net.Conn]struct{}{}}
+	r.take(ports)
+	return r
+}
+
+// add gives a router started with no ports its first, for a session that connected while its project's
+// file did not load. A thread already open hears the links that work, since its start message could not
+// name them.
+func (r *acpServeRouter) add(ports []acpctl.ServePort) {
+	if r == nil || len(ports) == 0 {
+		return
+	}
+	r.take(ports)
+	r.mu.Lock()
+	report := r.report
+	r.mu.Unlock()
+	if report != nil {
+		current := r.Ports()
+		report(current, slices.DeleteFunc(slices.Clone(current), func(p acpctl.ServePort) bool { return p.Taken }))
+	}
+}
+
+// take listens on the router's first ports, and keeps asking for any it cannot have yet.
+func (r *acpServeRouter) take(ports []acpctl.ServePort) {
+	r.mu.Lock()
 	r.ports = slices.Clone(ports)
-	for i := range r.ports {
+	r.mu.Unlock()
+	taken := false
+	for i := range ports {
 		if !r.listen(i) {
+			r.mu.Lock()
 			r.ports[i].Taken = true
+			r.mu.Unlock()
+			taken = true
 		}
 	}
-	if slices.ContainsFunc(r.ports, func(p acpctl.ServePort) bool { return p.Taken }) {
+	if taken {
 		r.wg.Add(1)
 		go r.retry()
 	}
-	return r
 }
 
 // reportTo keeps the editor told: later threads' start messages show the current state, and a thread
@@ -85,7 +113,9 @@ func (r *acpServeRouter) Ports() []acpctl.ServePort {
 }
 
 func (r *acpServeRouter) listen(index int) bool {
+	r.mu.Lock()
 	port := r.ports[index]
+	r.mu.Unlock()
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port.Host)))
 	if err != nil {
 		return false

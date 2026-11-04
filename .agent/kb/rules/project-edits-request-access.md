@@ -4,7 +4,7 @@ description: project configuration requests access; one host approval grants it,
 scope: security
 sources: [internal/cli/net_approve.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/box/run.go, internal/box/network_approval.go, internal/networkstate/approval_review.go, internal/networkstate/admission.go, internal/box/filtered_services.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/composecheck.go, internal/cli/acp_refresh.go, internal/sessionsvc/review_scan.go, internal/hostsurface/hostsurface.go]
 check: none
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # Approve added access, not ordinary development
@@ -19,9 +19,10 @@ Enforce grants with actual mounts/firewalls throughout agent and service lifetim
 fixed for its lifetime: configuration edits and later approvals never widen a running box. New
 permissions require approval and a new box: a new run, or a running `coop acp` supervisor replacing
 its boxes with ones admitted again under its startup scope. A refused admission keeps the rules the
-live box runs. An editor may connect while a request waits, on a child that runs no turn, sees the
-project read-only and gets none of what the project's file asks for; see [[acp-box-wait]]. A request
-field or process/API carrier cannot become authority; see [[network-authority-is-proven-not-passed]].
+live box runs. An editor may connect while a request waits or the file does not load, on a child that
+runs no turn, sees the project read-only and gets none of what the project's file asks for; see
+[[acp-box-wait]]. A request field or process/API carrier cannot become authority; see
+[[network-authority-is-proven-not-passed]].
 
 **Why:** the user asked how unapproved edits could be kept from taking effect, then approved one
 high-level command and this enforcement boundary. This is not a mandate to approve every risky file.
@@ -47,6 +48,9 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-11-04 — `coop acp` also connects on a file that does not load, reading it as one that asks for
+  nothing: no rule from it applies, however much of it parses. Swept the same callers: still only the
+  editor's connection holds, and admitting the fixed file again is an ordinary admission.
 - 2026-11-03 — `coop acp` connects while a request waits, on the rule that nothing the project's
   file asks for applies until `coop approve`. Swept every `AdmitNetwork` caller: only the editor's
   connection sets `HoldPending`; its re-admission, fork ACP, loops and runs still refuse.

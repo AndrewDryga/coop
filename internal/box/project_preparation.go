@@ -36,6 +36,17 @@ func (e *ProjectBuildRequired) Error() string {
 	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host. Project builds use ordinary networking", e.Dockerfile, e.Reason)
 }
 
+// BrokenProjectFile is a project file that does not load. Nothing in it applies, and only a person can
+// settle it, so to an editor session it is an answer about the box and not a failure to look.
+type BrokenProjectFile struct{ Err error }
+
+func (e *BrokenProjectFile) Error() string { return e.Err.Error() }
+func (e *BrokenProjectFile) Unwrap() error { return e.Err }
+
+// ErrProjectNotAdmitted is a session held on a broken file whose file loads again, while no admission of
+// it has replaced the capture that only holds. A refusal of that admission went to the agent log.
+var ErrProjectNotAdmitted = errors.New("the fixed project file has not been admitted")
+
 func projectDockerfileForRun(spec RunSpec) string {
 	if spec.Login || spec.ControllerJob {
 		return ""
@@ -273,15 +284,25 @@ func (b *PreparedProjectBuild) Build(ctx context.Context, rt runtime.Runtime, cf
 }
 
 // EditorBoxReadiness says whether a filtered editor session's next box can start: nil, or the
-// *ProjectBuildRequired, *ServicesNeedRules or *networkstate.PendingApproval a person or a rebuild has
-// to settle first. Any other error is a failure to look, and proves nothing either way. It runs the
-// checks the launch itself will, and grants nothing: the launch still makes them.
+// *BrokenProjectFile, *ProjectBuildRequired, *ServicesNeedRules, *networkstate.PendingApproval or
+// ErrProjectNotAdmitted a person or a rebuild has to settle first. Any other error is a failure to look,
+// and proves nothing either way. It runs the checks the launch itself will, and grants nothing: the
+// launch still makes them.
 func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runtime, capture *CapturedEgress, spec RunSpec) error {
 	if capture == nil || capture.Store == nil {
 		return errors.New("editor box readiness requires a host capture")
 	}
-	if capture.HoldsOnly() {
+	// First, since every launch refuses a file that does not load, and the checks below would read it as
+	// a file that asks for nothing.
+	p, err := project.Load(projectPolicyRepo(spec))
+	if err != nil {
+		return &BrokenProjectFile{Err: err}
+	}
+	switch {
+	case capture.Pending != nil:
 		return capture.Pending
+	case capture.BrokenFile:
+		return ErrProjectNotAdmitted
 	}
 	q, err := capture.Store.Qualification(capture.QualificationID)
 	if err != nil {
@@ -299,15 +320,11 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if err != nil {
 		return err
 	}
-	return editorServicesReadiness(cfg, spec, policy)
+	return editorServicesReadiness(cfg, spec, p, policy)
 }
 
 // editorServicesReadiness is prepareFilteredExecution's services refusal, asked early.
-func editorServicesReadiness(cfg *config.Config, spec RunSpec, policy egress.Snapshot) error {
-	p, err := project.Load(projectPolicyRepo(spec))
-	if err != nil {
-		return err
-	}
+func editorServicesReadiness(cfg *config.Config, spec RunSpec, p *project.Project, policy egress.Snapshot) error {
 	cfg = applyProjectPolicy(cfg, p, &spec)
 	return checkServicesHaveRules(cfg, spec, ComposeFileAt(spec.Repo, p.ComposeRel()), serviceGrants(policy))
 }
@@ -329,7 +346,11 @@ func ProjectServicesRefusal(ctx context.Context, cfg *config.Config, repo string
 			approved.Grants = append(approved.Grants, egress.Grant{Rule: rule})
 		}
 	}
-	err = editorServicesReadiness(cfg, RunSpec{Repo: repo, Network: cfg.Network}, approved)
+	p, err := project.Load(repo)
+	if err != nil {
+		return nil, err
+	}
+	err = editorServicesReadiness(cfg, RunSpec{Repo: repo, Network: cfg.Network}, p, approved)
 	var refused *ServicesNeedRules
 	if errors.As(err, &refused) {
 		refused.name = "This project's box"

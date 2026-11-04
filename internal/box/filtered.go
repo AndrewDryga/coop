@@ -44,10 +44,15 @@ type CapturedEgress struct {
 	// (NetworkAdmission.HoldPending). This capture has none of what the project's file asks for, and
 	// serves only children that hold prompts. A child proving a reference never carries it.
 	Pending *networkstate.PendingApproval
+	// BrokenFile says an editor session was admitted while its project's file did not load
+	// (NetworkAdmission.HoldPending). This capture has nothing of that file's, and serves only children
+	// that hold prompts, until an admission of the fixed file replaces it. A child proving a reference
+	// never carries it.
+	BrokenFile bool
 }
 
 // HoldsOnly reports that no real box may start under this capture: only a child that holds prompts.
-func (c *CapturedEgress) HoldsOnly() bool { return c != nil && c.Pending != nil }
+func (c *CapturedEgress) HoldsOnly() bool { return c != nil && (c.Pending != nil || c.BrokenFile) }
 
 // Close releases the authority handle a capture holds. A nil capture closes
 // nothing, so a caller can defer it unconditionally after admission.

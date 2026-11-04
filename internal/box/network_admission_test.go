@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/testutil/teststate"
@@ -608,6 +610,258 @@ func TestHeldAdmissionLeavesOutAllThatTheProjectAsks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// brokenProjectFiles are files that do not load, each reading in part as rules a person might have meant.
+var brokenProjectFiles = map[string]string{
+	"not yaml":                      "box: [broken\n",
+	"rules and then a typo":         projectRuleYAML + "nonsense: true\n",
+	"unrestricted and then a typo":  "box:\n  egress: open\n  nonsense: true\n",
+	"rules and a port out of range": projectRuleYAML + "serve:\n  ports: [70000]\n",
+	"a second document":             projectRuleYAML + "---\n" + projectRuleYAML,
+}
+
+// qualifiedDocker is a fixture Docker on a host already set up, so that admission gets as far as a capture.
+func qualifiedDocker(t *testing.T, root string) runtime.Runtime {
+	t.Helper()
+	rt, _, candidate, images := qualificationInventoryFixture(t)
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	writeQualificationFixture(t, store, candidate, egress.ClientACP, time.Now())
+	for _, id := range []string{candidate.ClientImage, candidate.GatewayImage} {
+		writeQualificationImageFixture(t, images, id, id)
+	}
+	return rt
+}
+
+// A file that does not load says nothing: an editor connects on a capture that serves only a child that
+// holds prompts, filtered, with none of what the file seems to ask for and nothing approved earlier.
+// Admitting the fixed file is then an ordinary admission: what it asks for waits for a person, and a real
+// capture only follows from a file with nothing left to settle.
+func TestHeldAdmissionTakesNothingFromABrokenFile(t *testing.T) {
+	const earlier = "box:\n  egress_rules:\n    - to: {domain: earlier.example.com}\n      protocol: tls\n      ports: [443]\n"
+	for name, broken := range brokenProjectFiles {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			path := filepath.Join(repo, ".agent", "project.yaml")
+			writeCopyFixture(t, path, earlier)
+			approveFixture(t, cfg, repo)
+			writeCopyFixture(t, path, broken)
+			rt := qualifiedDocker(t, root)
+			connect := func(t *testing.T, cfg *config.Config, options NetworkAdmission) (*CapturedEgress, error) {
+				t.Helper()
+				options.ProjectBuild = DeferProjectBuild
+				capture, err := AdmitNetwork(cfg, rt, RunSpec{Repo: repo, Workdir: repo}, options)
+				if capture != nil {
+					t.Cleanup(func() { _ = capture.Close() })
+				}
+				return capture, err
+			}
+			startup := cfg.Clone()
+			held, err := connect(t, startup, NetworkAdmission{HoldPending: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !held.BrokenFile || !held.HoldsOnly() || held.Pending != nil || startup.Egress != string(egress.Filtered) {
+				t.Fatalf("broken=%v holds=%v pending=%t egress=%q", held.BrokenFile, held.HoldsOnly(), held.Pending != nil, startup.Egress)
+			}
+			policy, err := held.Policy()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, site := range []string{"example.com", "earlier.example.com"} {
+				if policy.Mode != egress.Filtered || policy.Domain(site, 443).Allowed {
+					t.Fatalf("a holding child's rules: mode %q, reach %s: %v", policy.Mode, site, policy.Domain(site, 443).Allowed)
+				}
+			}
+
+			// Admitting again, as the session does while it waits, refuses until the file is fixed.
+			var refused *BrokenProjectFile
+			if _, err := connect(t, cfg.Clone(), NetworkAdmission{ExistingQualification: true}); !errors.As(err, &refused) {
+				t.Fatalf("admitting the broken file again = %v", err)
+			}
+			writeCopyFixture(t, path, projectRuleYAML)
+			var pending *networkstate.PendingApproval
+			if _, err := connect(t, cfg.Clone(), NetworkAdmission{ExistingQualification: true}); !errors.As(err, &pending) {
+				t.Fatalf("a fixed file that asks for something new = %v, want it to need approval", err)
+			}
+			writeCopyFixture(t, path, earlier)
+			real, err := connect(t, cfg.Clone(), NetworkAdmission{ExistingQualification: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if real.HoldsOnly() {
+				t.Fatal("a fixed file with nothing to settle still only holds")
+			}
+			if policy, err = real.Policy(); err != nil || !policy.Domain("earlier.example.com", 443).Allowed {
+				t.Fatalf("the fixed file's approved rules are gone: %v", err)
+			}
+		})
+	}
+}
+
+// A holding child is filtered whatever was approved earlier, since nothing can tell whether the file
+// still asks for it. Once fixed, an approved open mode is what it was: not a capture.
+func TestHeldAdmissionOfABrokenFileUnderAnApprovedOpenMode(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	path := filepath.Join(repo, ".agent", "project.yaml")
+	writeCopyFixture(t, path, "box:\n  egress: open\n")
+	approveFixture(t, cfg, repo)
+	writeCopyFixture(t, path, "box: [broken\n")
+	rt := qualifiedDocker(t, root)
+	startup := cfg.Clone()
+	held, err := AdmitNetwork(startup, rt, RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{ProjectBuild: DeferProjectBuild, HoldPending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	policy, err := held.Policy()
+	if err != nil || policy.Mode != egress.Filtered || !held.BrokenFile || startup.Egress != string(egress.Filtered) {
+		t.Fatalf("policy mode %q, broken=%v, egress %q, err=%v", policy.Mode, held.BrokenFile, startup.Egress, err)
+	}
+	writeCopyFixture(t, path, "box:\n  egress: open\n")
+	again := cfg.Clone()
+	if capture, err := AdmitNetwork(again, rt, RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{ExistingQualification: true, ProjectBuild: DeferProjectBuild}); capture != nil || err != nil || again.Egress != string(egress.Open) {
+		t.Fatalf("the fixed file = (%v, %v), egress %q, want the approved open mode", capture, err, again.Egress)
+	}
+}
+
+// A file that is not one a project may use at all is refused the same way, and says why as itself.
+func TestHeldAdmissionOfALinkedProjectFile(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	target := filepath.Join(t.TempDir(), "project.yaml")
+	writeCopyFixture(t, target, projectRuleYAML)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(repo, ".agent", "project.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := AdmitNetwork(cfg, qualifiedDocker(t, root), RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{ProjectBuild: DeferProjectBuild, HoldPending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Close()
+	if !capture.BrokenFile {
+		t.Fatal("a linked project file was read as rules")
+	}
+	policy, err := capture.Policy()
+	if err != nil || policy.Domain("example.com", 443).Allowed {
+		t.Fatalf("a holding child's rules reach what a linked file asks for: %v", err)
+	}
+}
+
+// What holding a broken file does not reach. Each refuses as itself, with nothing started: the file is
+// still what the person has to fix first.
+func TestHeldAdmissionOfABrokenFileStillRefuses(t *testing.T) {
+	refused := func(t *testing.T, err error) {
+		t.Helper()
+		var broken *BrokenProjectFile
+		if !errors.As(err, &broken) || !strings.Contains(err.Error(), ".agent/project.yaml") {
+			t.Fatalf("admission = %v, want the broken file", err)
+		}
+	}
+	nothingPublished := func(t *testing.T, root string) {
+		t.Helper()
+		if published, _ := filepath.Glob(filepath.Join(root, "snapshot-*.json")); len(published) != 0 {
+			t.Fatalf("a policy was captured: %v", published)
+		}
+	}
+	broken := func(t *testing.T, repo string) {
+		t.Helper()
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box: [broken\n")
+	}
+	posture := func(t *testing.T, cfg *config.Config, value string) *config.Config {
+		t.Helper()
+		t.Setenv("COOP_EGRESS", value)
+		loaded, err := config.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded.ConfigDir = cfg.ConfigDir
+		return loaded
+	}
+	t.Run("a caller that did not ask", func(t *testing.T) {
+		cfg, repo, root := admissionFixture(t)
+		broken(t, repo)
+		_, err := admitFixture(t, cfg, repo, NetworkAdmission{})
+		refused(t, err)
+		nothingPublished(t, root)
+		// The file comes first for any launch, since whatever else it might be told depends on it.
+		open := egress.Open
+		_, err = admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: &open, Domains: []string{"example.com"}})
+		refused(t, err)
+	})
+	t.Run("an offline posture", func(t *testing.T) {
+		cfg, repo, root := admissionFixture(t)
+		broken(t, repo)
+		refused(t, heldAdmission(t, posture(t, cfg, "offline"), repo))
+		nothingPublished(t, root)
+	})
+	t.Run("a runtime with no gateway", func(t *testing.T) {
+		cfg, repo, root := admissionFixture(t)
+		broken(t, repo)
+		_, err := AdmitNetwork(cfg, runtime.Runtime{Name: "container"}, RunSpec{Repo: repo, Workdir: repo}, NetworkAdmission{ProjectBuild: DeferProjectBuild, HoldPending: true})
+		refused(t, err)
+		nothingPublished(t, root)
+	})
+	t.Run("a withdrawal", func(t *testing.T) {
+		cfg, repo, root := admissionFixture(t)
+		writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), projectRuleYAML)
+		approveFixture(t, cfg, repo)
+		review, err := ReviewProjectNetworkForget(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer review.Close()
+		if err := review.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		broken(t, repo)
+		refused(t, heldAdmission(t, cfg, repo))
+		nothingPublished(t, root)
+	})
+	// A filtered session sets the host up as any filtered launch does. Someone who runs open never asked
+	// for that, so a broken file does not start it for them.
+	settingUp := func(t *testing.T, cfg *config.Config, repo string, want bool) {
+		t.Helper()
+		var transcript strings.Builder
+		_, err := AdmitNetwork(cfg, noSetupDocker(t), RunSpec{Repo: repo, Workdir: repo, Stderr: &transcript}, NetworkAdmission{ProjectBuild: DeferProjectBuild, HoldPending: true})
+		refused(t, err)
+		if (transcript.Len() != 0) != want {
+			t.Fatalf("set the host up: %v, want %v: %q", transcript.Len() != 0, want, transcript.String())
+		}
+	}
+	t.Run("a filtered session on a host with no setup", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		broken(t, repo)
+		settingUp(t, posture(t, cfg, "filtered"), repo, true)
+	})
+	t.Run("an open posture on a host with no setup", func(t *testing.T) {
+		cfg, repo, _ := admissionFixture(t)
+		broken(t, repo)
+		settingUp(t, posture(t, cfg, "open"), repo, false)
+	})
+}
+
+// A refusal of a broken file keeps its parts: the terminal draws a read failure in its own block, and
+// escapes what yaml quotes as written.
+func TestBrokenProjectFileKeepsItsCause(t *testing.T) {
+	cfg, repo, _ := admissionFixture(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "elsewhere"), filepath.Join(repo, ".agent", "project.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := admitFixture(t, cfg, repo, NetworkAdmission{})
+	var file *project.FileError
+	if !errors.As(err, &file) || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("admission = %v, want the read failure", err)
 	}
 }
 

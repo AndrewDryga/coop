@@ -49,11 +49,12 @@ type NetworkAdmission struct {
 	ExistingQualification bool
 	// ProjectBuild is what this launch does when its project image is not ready.
 	ProjectBuild ProjectBuildMiss
-	// HoldPending admits a project that asks for access nobody approved instead of refusing it, for an
-	// editor session that connects first and waits for `coop approve`. The capture leaves out all that
-	// the project's file asks for and says so (CapturedEgress.Pending), so only a child that holds
-	// prompts may run under it. A withdrawal or a replaced project folder still refuses, as does a mode
-	// that resolves offline: filtered would give a holding child a network that launch was denied.
+	// HoldPending admits a project that asks for access nobody approved, or whose file does not load,
+	// instead of refusing it, for an editor session that connects first and waits for a person. The
+	// capture leaves out all that the project's file asks for and says so (CapturedEgress.Pending or
+	// BrokenFile), so only a child that holds prompts may run under it. A withdrawal or a replaced project
+	// folder still refuses, as does a mode that resolves offline: filtered would give a holding child a
+	// network that launch was denied.
 	HoldPending bool
 }
 
@@ -121,9 +122,17 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
+	// refusal is why this project gets at most a child that holds prompts. A file that does not load says
+	// nothing here, however much of it reads as rules, so from now on it is one that asks for nothing.
+	var refusal error
 	p, err := project.Load(policyRepo)
-	if err != nil {
-		return nil, err
+	broken := err != nil
+	if broken {
+		refusal = &BrokenProjectFile{Err: err}
+		if !options.HoldPending {
+			return nil, refusal
+		}
+		p = &project.Project{}
 	}
 	spec.projectEnv = p.Box.Env
 	spec.deferProjectBuild = options.ProjectBuild == DeferProjectBuild
@@ -163,17 +172,21 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	mode := preview.Mode
-	var refusal error
-	if preview.Pending != nil {
+	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
 		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
+	}
+	if refusal != nil {
 		if !options.HoldPending || mode == egress.None {
 			return nil, refusal
 		}
 		// A holding child runs filtered. Where nothing filtered can run, no child can hold the session,
-		// and the review is still what the project asks of the person first.
+		// and what the person has to settle comes first anyway.
 		if checkFilteredRuntime(rt) != nil || checkFilteredSupport(cfg) != nil {
 			return nil, refusal
 		}
+		// Whoever chose open did not ask for this host's filtered setup, which can take minutes, only to
+		// hear about a broken file the refusal names just as well.
+		options.ExistingQualification = options.ExistingQualification || broken && mode != egress.Filtered
 		mode, input = egress.Filtered, holdingAdmission(input)
 	}
 	cfg.SetEgress(string(mode))
@@ -183,12 +196,17 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	capture, err := captureFilteredNetwork(cfg, rt, spec, options, canonical, root, exposed, input, mcpSnapshot)
 	if err != nil {
 		var unsettled *networkstate.PendingApproval
-		if refusal != nil && errors.As(err, &unsettled) {
+		if broken || refusal != nil && errors.As(err, &unsettled) {
 			return nil, refusal // a withdrawal or a replaced folder: nothing starts until a person looks
 		}
 		return nil, err
 	}
-	capture.Default, capture.Pending = preview.Default, preview.Pending
+	capture.Default = preview.Default
+	if broken {
+		capture.BrokenFile = true
+	} else {
+		capture.Pending = preview.Pending
+	}
 	return capture, nil
 }
 

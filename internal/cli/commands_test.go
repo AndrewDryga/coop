@@ -1825,7 +1825,9 @@ func TestRepoCommandsRejectInvalidProjectBeforeRuntimeDetection(t *testing.T) {
 	}
 }
 
-func TestACPOuterRejectsInvalidProjectBeforeSupervisor(t *testing.T) {
+// With no runtime that could run a child to hold it, an editor session on a broken project file ends on
+// that file, before the supervisor starts anything.
+func TestACPOuterRejectsInvalidProjectItCannotHoldBeforeSupervisor(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1842,7 +1844,7 @@ func TestACPOuterRejectsInvalidProjectBeforeSupervisor(t *testing.T) {
 		},
 	}
 	code, err := a.cmdACP([]string{"codex"})
-	if code != -1 || err == nil || !strings.Contains(err.Error(), project.File) {
+	if code != 1 || err == nil || !strings.Contains(err.Error(), project.File) {
 		t.Fatalf("cmdACP = (%d, %v), want policy error", code, err)
 	}
 	if called {

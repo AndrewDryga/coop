@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
@@ -936,7 +937,11 @@ func TestEditorServicesReadiness(t *testing.T) {
 			if test.compose {
 				write(".agent/compose.yml", "services:\n  db:\n    image: postgres\n    ports: [\"5432\"]\n")
 			}
-			err := editorServicesReadiness(&config.Config{}, RunSpec{Repo: repo, Agent: "claude", Network: test.network}, test.policy)
+			p, err := project.Load(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = editorServicesReadiness(&config.Config{}, RunSpec{Repo: repo, Agent: "claude", Network: test.network}, p, test.policy)
 			var refused *ServicesNeedRules
 			if test.refuses != errors.As(err, &refused) || (!test.refuses && err != nil) {
 				t.Fatalf("readiness = %v, want refusal %v", err, test.refuses)
@@ -1118,5 +1123,33 @@ func TestEditorBoxReadinessSaysACaptureOnlyHolds(t *testing.T) {
 	var none *CapturedEgress
 	if none.HoldsOnly() || (&CapturedEgress{}).HoldsOnly() {
 		t.Fatal("an ordinary capture, or none at all, was said to only hold")
+	}
+}
+
+// A file that does not load is the answer under any capture, and before anything else is asked: read
+// as a file that asks for nothing, it would send a person off to build something it does not ask for.
+// Once it loads, a capture admitted without it still says only a child that holds prompts may run.
+func TestEditorBoxReadinessSaysTheProjectFileIsBroken(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	pending := &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	real := &CapturedEgress{Store: x.f.store, Project: x.repo, Fingerprint: "policy"}
+	onBrokenFile := &CapturedEgress{Store: x.f.store, Project: x.repo, Fingerprint: "policy", BrokenFile: true}
+	onPending := &CapturedEgress{Store: x.f.store, Project: x.repo, Fingerprint: "policy", Pending: pending}
+	x.write(".agent/project.yaml", "box: [broken\n")
+	for name, capture := range map[string]*CapturedEgress{"a real capture": real, "one admitted on a broken file": onBrokenFile, "one admitted on a request": onPending} {
+		var broken *BrokenProjectFile
+		if err := EditorBoxReadiness(t.Context(), x.cfg, x.rt, capture, RunSpec{Repo: x.repo}); !errors.As(err, &broken) || !strings.Contains(err.Error(), ".agent/project.yaml") {
+			t.Fatalf("readiness under %s = %v, want the broken file", name, err)
+		}
+	}
+	if !onBrokenFile.HoldsOnly() {
+		t.Fatal("a capture admitted on a broken file lets a real box start")
+	}
+	x.write(".agent/project.yaml", "box:\n  network: false\n")
+	if err := EditorBoxReadiness(t.Context(), x.cfg, x.rt, onBrokenFile, RunSpec{Repo: x.repo}); !errors.Is(err, ErrProjectNotAdmitted) {
+		t.Fatalf("readiness once the file loads = %v, want the capture to go on holding until it is replaced", err)
+	}
+	if err := EditorBoxReadiness(t.Context(), x.cfg, x.rt, onPending, RunSpec{Repo: x.repo}); !errors.Is(err, pending) {
+		t.Fatalf("readiness once the file loads = %v, want the pending request", err)
 	}
 }

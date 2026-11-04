@@ -630,7 +630,8 @@ func TestACPRefreshReplacesACaptureThatOnlyHoldsEvenWithTheSameRules(t *testing.
 func TestACPRefreshAsksAgainOnlyWhileACaptureOnlyHolds(t *testing.T) {
 	h := newHeldRefreshHarness(t)
 	h.admit = func() (*box.CapturedEgress, error) { return nil, reviewNeeded("still asking") }
-	if err := h.r.readmitHeld(); err != nil || h.admits != 1 || !h.r.current().HoldsOnly() {
+	var pending *networkstate.PendingApproval
+	if err := h.r.readmitHeld(); !errors.As(err, &pending) || h.admits != 1 || !h.r.current().HoldsOnly() {
 		t.Fatalf("err=%v admits=%d holds=%v, want one more refusal and the capture kept", err, h.admits, h.r.current().HoldsOnly())
 	}
 	h.admit = func() (*box.CapturedEgress, error) { return &box.CapturedEgress{Fingerprint: "plain-policy"}, nil }
@@ -662,6 +663,87 @@ func TestACPRefreshSaysAHoldingSessionCannotMoveToTheApprovedMode(t *testing.T) 
 	h.approves("filtered-again")
 	if err := h.r.readmitHeld(); err != nil || h.r.current().HoldsOnly() {
 		t.Fatalf("err=%v holds=%v, want the wait over", err, h.r.current().HoldsOnly())
+	}
+}
+
+// newBrokenFileRefreshHarness is a session that connected while its project's file did not load.
+func newBrokenFileRefreshHarness(t *testing.T) *refreshHarness {
+	t.Helper()
+	h := newHeldRefreshHarness(t)
+	held := &box.CapturedEgress{Fingerprint: "holding-policy", BrokenFile: true}
+	h.r.startup, h.r.capture = held, held
+	return h
+}
+
+// What a held session waits for changes under it, and the wait is what tells the thread. A broken file is
+// asked about every time, and a fixed one gets an ordinary admission: what it asks for waits for
+// approval, and only a real capture ends the wait.
+func TestACPRefreshFollowsABrokenFileThroughToItsApproval(t *testing.T) {
+	h := newBrokenFileRefreshHarness(t)
+	reason := &box.BrokenProjectFile{Err: errors.New(".agent/project.yaml: yaml: line 1: did not find expected node content")}
+	h.admit = func() (*box.CapturedEgress, error) { return nil, reason }
+	var broken *box.BrokenProjectFile
+	for range 3 {
+		if err := h.r.readmitHeld(); !errors.As(err, &broken) || !h.r.current().HoldsOnly() {
+			t.Fatalf("err=%v holds=%v, want the broken file and the capture kept", err, h.r.current().HoldsOnly())
+		}
+	}
+	if h.admits != 3 || len(h.notices) != 0 || len(h.reports) != 0 || h.drains != 0 {
+		t.Fatalf("admits=%d notices=%q reports=%v drains=%d, want the file asked about each time and the wait left to say so", h.admits, h.notices, h.reports, h.drains)
+	}
+
+	h.admit = func() (*box.CapturedEgress, error) {
+		return nil, reviewNeeded("this project asks for network access that has not been approved")
+	}
+	var pending *networkstate.PendingApproval
+	if err := h.r.readmitHeld(); !errors.As(err, &pending) || !h.r.current().HoldsOnly() {
+		t.Fatalf("err=%v holds=%v, want the fixed file to need approval", err, h.r.current().HoldsOnly())
+	}
+	if len(h.notices) != 0 || len(h.reports) != 0 {
+		t.Fatalf("notices=%q reports=%v, want the wait left to say so", h.notices, h.reports)
+	}
+
+	h.approves("approved-policy")
+	if err := h.r.readmitHeld(); err != nil || h.r.current().HoldsOnly() || h.r.current().Fingerprint != "approved-policy" || h.drains != 1 {
+		t.Fatalf("err=%v holds=%v policy=%q drains=%d, want the approved capture installed", err, h.r.current().HoldsOnly(), h.r.current().Fingerprint, h.drains)
+	}
+	if err := h.r.readmitHeld(); err != nil {
+		t.Fatalf("readmitHeld after the wait ended = %v", err)
+	}
+}
+
+// A fixed file that admission refuses for another reason is no longer the file's problem, and the wait
+// must not go on saying it is: nothing comes back as an answer, and the refusal is reported once.
+func TestACPRefreshDoesNotBlameTheFileForAnotherRefusal(t *testing.T) {
+	h := newBrokenFileRefreshHarness(t)
+	h.admit = func() (*box.CapturedEgress, error) {
+		return nil, &box.BrokenProjectFile{Err: errors.New("no")}
+	}
+	if err := h.r.readmitHeld(); err == nil {
+		t.Fatal("want the broken file")
+	}
+	h.admit = func() (*box.CapturedEgress, error) { return nil, box.ErrNetworkSetupRequired }
+	for range 2 {
+		if err := h.r.readmitHeld(); err != nil {
+			t.Fatalf("readmitHeld = %v, want nothing a person's edit could settle", err)
+		}
+	}
+	if len(h.reports) != 1 || len(h.notices) != 1 || !strings.Contains(h.notices[0], "coop net setup") {
+		t.Fatalf("reports=%v notices=%q, want one report", h.reports, h.notices)
+	}
+}
+
+// A real box's session keeps its rules when the file breaks under it: nothing of the file's applied to
+// them. Only the next box is the wait's business.
+func TestACPRefreshKeepsALiveBoxWhenTheFileBreaks(t *testing.T) {
+	h := newRefreshHarness(t)
+	h.refuses(&box.BrokenProjectFile{Err: errors.New("no")})
+	h.r.check()
+	if h.r.current().Fingerprint != "old-policy" || h.r.current().HoldsOnly() || len(h.reports) != 1 || h.restarts != 0 {
+		t.Fatalf("policy=%q holds=%v reports=%v restarts=%d", h.r.current().Fingerprint, h.r.current().HoldsOnly(), h.reports, h.restarts)
+	}
+	if err := h.r.readmitHeld(); err != nil {
+		t.Fatalf("readmitHeld = %v", err)
 	}
 }
 

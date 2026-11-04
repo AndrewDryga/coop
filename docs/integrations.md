@@ -233,19 +233,24 @@ never works without your project's tools.
 - If the project asks for network access nobody approved, the thread says to run `coop approve`.
   Until then the editor talks to a box that sees your project read-only and reaches only your
   agent's provider, and none of the rules the project asks for apply.
+- If `.agent/project.yaml` does not load, the thread says what is wrong and where. The editor talks
+  to that same box, and nothing in the file applies. Once you fix it, it is treated like any other
+  change, so anything new it asks for still waits for `coop approve`.
 - If the box exits as it starts for any other reason, such as a service that changed since you
-  approved it or a project file that no longer parses, the thread says so and the agent log has the
-  reason. co:op tries again every 30 seconds and whenever the project changes.
+  approved it, the thread says so and the agent log has the reason. co:op tries again every 30
+  seconds and whenever the project changes.
 - If the box starts but does not answer within a minute, co:op stops it, says so in the thread and
   keeps trying. Time before the box starts does not count, because pulling images, starting services
   and waiting for another box in the project can take a while. That has 5 minutes, then the thread
   says the box took too long and co:op keeps trying.
 
 The session notices, moves onto the box and sends what was waiting, with no reconnect. Cancel a
-waiting message as usual. The one exception is approving unrestricted access or no network at all,
-which a session started with filtered networking cannot move to: the thread asks you to reconnect.
-If even the waiting box cannot start, which is what a stopped Docker looks like, the session ends and
-the thread says why.
+waiting message as usual. The one exception is a project that ends up with unrestricted access or no
+network at all, which a session started with filtered networking cannot move to: the thread asks you
+to reconnect. If even the waiting box cannot start, which is what a stopped Docker looks like, the
+session ends and the thread says why. A session you start with `--egress offline` does not wait on a
+broken `.agent/project.yaml`, since the waiting box would have a network: the editor's log says what
+is wrong.
 
 ### Files and terminals on your computer
 

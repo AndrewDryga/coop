@@ -485,6 +485,28 @@ func TestEditorBoxWaitMovesOffABoxThatNeverAnswers(t *testing.T) {
 	}
 }
 
+// A project file that does not load: the editor connects, the thread says what is wrong and where, a prompt
+// waits, and the fixed file lets it move with nothing else to do. The session then publishes the port the
+// file names, which it could not read when it connected.
+func TestEditorBoxWaitHoldsAPromptUntilTheProjectFileIsFixed(t *testing.T) {
+	requireLiveBoxWait(t)
+	repo := waitRepo(t, map[string]string{".agent/project.yaml": "box: [broken\n"})
+	editor := startWaitEditor(t, repo)
+	session := editor.connect()
+	editor.hear("has a problem", time.Minute)
+	editor.hear("line 1", time.Minute)
+	editor.prompt(session)
+	editor.waitLog("holding editor prompt", time.Minute)
+	if _, answered := editor.answers[10]; answered {
+		t.Fatal("the held prompt was answered while the file did not load")
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("serve:\n  ports: [4173]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	editor.reachedTheBox(session)
+	editor.hear("Port 4173 now reaches this box", time.Minute)
+}
+
 // writeOntoTheAdapter does what any program in the session's box can: write lines straight onto the
 // adapter's stdout, as if the adapter had said them.
 func writeOntoTheAdapter(t *testing.T, repo string, lines ...string) {

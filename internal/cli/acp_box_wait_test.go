@@ -11,14 +11,18 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/threadtext"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -466,20 +470,24 @@ func TestSpawnedChildUnderACaptureThatOnlyHoldsHoldsPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newBoxWaitHarness(t)
-	held := &box.CapturedEgress{Project: cfg.RepoOverride, Fingerprint: strings.Repeat("a", 64), QualificationID: strings.Repeat("b", 64),
-		Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}
-	a := &app{cfg: cfg, acpNetworkTargets: []agents.Target{target}, acpCapture: held, acpBoxWait: h.w}
-	child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, target, "", true, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := io.ReadAll(child.Out)
-	child.Stop()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if h.w.blockedNow() || !child.HoldPrompts || strings.TrimSpace(string(out)) != "1" {
-		t.Fatalf("blocked=%v child.HoldPrompts=%v handshake flag=%q", h.w.blockedNow(), child.HoldPrompts, out)
+	for name, held := range map[string]*box.CapturedEgress{
+		"a request nobody approved": {Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}},
+		"a file that does not load": {BrokenFile: true},
+	} {
+		held.Project, held.Fingerprint, held.QualificationID = cfg.RepoOverride, strings.Repeat("a", 64), strings.Repeat("b", 64)
+		a := &app{cfg: cfg, acpNetworkTargets: []agents.Target{target}, acpCapture: held, acpBoxWait: h.w}
+		child, err := a.spawnBox(t.Context(), shim, nil, "super", nil, target, "", true, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := io.ReadAll(child.Out)
+		child.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.w.blockedNow() || !child.HoldPrompts || strings.TrimSpace(string(out)) != "1" {
+			t.Fatalf("%s: blocked=%v child.HoldPrompts=%v handshake flag=%q", name, h.w.blockedNow(), child.HoldPrompts, out)
+		}
 	}
 }
 
@@ -990,24 +998,29 @@ func TestACPConnectsWhenItCannotLookAtTheBox(t *testing.T) {
 	}
 }
 
-// A project file an agent broke stops a real box and must not stop the child that says so: the child
-// holding prompts reads nothing from it, and neither a job nor a holding child needs the project's image.
-func TestAHoldingChildResolvesItsImageWhateverTheProjectFileSays(t *testing.T) {
-	repo := t.TempDir()
+func writeBrokenProjectFile(t *testing.T, repo string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box: [broken\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// A project file an agent broke stops a real box and must not stop the child that says so: the child
+// holding prompts reads nothing from it, and neither a job nor a holding child needs the project's image.
+func TestAHoldingChildResolvesItsImageWhateverTheProjectFileSays(t *testing.T) {
+	repo := t.TempDir()
+	writeBrokenProjectFile(t, repo)
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo, BaseImage: "base"}, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true}
 	if _, _, err := a.resolveLaunchImage(); err == nil {
 		t.Fatal("a real launch accepted a broken project file")
 	}
-	if _, err := a.dispatch([]string{"acp", "claude"}); err == nil || !strings.Contains(err.Error(), "project.yaml") {
-		t.Fatalf("coop acp with a broken project file = %v", err)
-	}
 	t.Setenv("COOP_ACP_INNER", "1")
+	if _, err := a.dispatch([]string{"acp", "claude"}); err == nil || !strings.Contains(err.Error(), "project.yaml") {
+		t.Fatalf("a child that would run the project's box, on a broken project file = %v", err)
+	}
 	t.Setenv(acpHandshakeEnv, "1")
 	got, img, err := a.resolveLaunchImage()
 	if err != nil || img != "base" {
@@ -1015,6 +1028,178 @@ func TestAHoldingChildResolvesItsImageWhateverTheProjectFileSays(t *testing.T) {
 	}
 	if _, err := a.dispatch([]string{"acp", "claude"}); err != nil && strings.Contains(err.Error(), "project.yaml") {
 		t.Fatalf("a holding child stopped at the project file: %v", err)
+	}
+}
+
+// An editor connects whatever the file says: the supervisor gets as far as admission, which holds the
+// session on a capture that has nothing of the file's, and starts the session. Admitting again refuses
+// until the file is fixed, and any other launch still stops at the file.
+func TestACPConnectsOnABrokenProjectFile(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	writeBrokenProjectFile(t, cfg.RepoOverride)
+	var options []box.NetworkAdmission
+	supervised := false
+	a := &app{cfg: cfg, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true,
+		admitNetwork: func(c *config.Config, _ runtime.Runtime, _ box.RunSpec, opts box.NetworkAdmission) (*box.CapturedEgress, error) {
+			options = append(options, opts)
+			c.SetEgress("filtered")
+			return &box.CapturedEgress{Project: cfg.RepoOverride, Fingerprint: strings.Repeat("a", 64), BrokenFile: true}, nil
+		},
+		acpSupervise: func([]string, *acpctl.Control) (int, error) { supervised = true; return 0, nil },
+	}
+	if code, err := a.dispatch([]string{"acp", "claude"}); code != 0 || err != nil || !supervised {
+		t.Fatalf("coop acp on a broken file = (%d, %v), supervised=%v", code, err, supervised)
+	}
+	if len(options) != 1 || !options[0].HoldPending {
+		t.Fatalf("admission options = %+v, want a connection that may hold", options)
+	}
+	if _, err := a.acpAdmission(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 2 || options[1].HoldPending {
+		t.Fatalf("admission options = %+v, want admitting again to refuse a file still broken", options)
+	}
+	for _, sub := range []string{"run", "shell", "up", "down", "build"} {
+		other := &app{cfg: cfg, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true}
+		if _, err := other.dispatch([]string{sub}); err == nil || !strings.Contains(err.Error(), "project.yaml") {
+			t.Fatalf("coop %s on a broken file = %v", sub, err)
+		}
+	}
+
+	// Where admission cannot hold, the session ends on what it said, before anything starts.
+	supervised = false
+	a.admitNetwork = func(*config.Config, runtime.Runtime, box.RunSpec, box.NetworkAdmission) (*box.CapturedEgress, error) {
+		_, err := project.Load(cfg.RepoOverride)
+		return nil, &box.BrokenProjectFile{Err: err}
+	}
+	if code, err := a.dispatch([]string{"acp", "claude", "--egress", "offline"}); code == 0 || err == nil || !strings.Contains(err.Error(), "project.yaml") || supervised {
+		t.Fatalf("coop acp that cannot hold = (%d, %v), supervised=%v", code, err, supervised)
+	}
+}
+
+// The thread says what is wrong and where, in the shape every thread message has, and says it again when
+// it changes. No build starts, no box moves, and the fixed file ends the wait by itself.
+func TestBoxWaitSaysWhatIsWrongWithTheProjectFile(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() {
+		h.answer = &box.BrokenProjectFile{Err: errors.New(".agent/project.yaml: yaml: line 3: did not find expected key")}
+		h.holding = true
+	})
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatalf("a broken file is an answer, not a failure to look: %v", err)
+	}
+	if !h.w.blockedNow() {
+		t.Fatal("a child spawned now would run a box on a file that does not load")
+	}
+	said := h.lastSaid()
+	threadtext.Check(t, said)
+	for _, want := range []string{"project\\.yaml has a problem", "line 3: did not find expected key", "Fix the file", "no agent runs here", "wait here"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("the thread heard %q, want %q in it", said, want)
+		}
+	}
+	h.w.poll()
+	h.read(func() {
+		if h.moves != 0 || h.rebuilds != 0 || len(h.logged) != 1 {
+			t.Fatalf("moves=%d rebuilds=%d logged=%v", h.moves, h.rebuilds, h.logged)
+		}
+	})
+
+	// Another mistake, seen by itself: the thread hears the new one, once.
+	h.set(func() {
+		h.answer, h.sign = &box.BrokenProjectFile{Err: errors.New(".agent/project.yaml: serve port 70000 out of range (1-65535)")}, "edited"
+	})
+	h.w.poll()
+	h.w.poll()
+	h.read(func() {
+		if len(h.said) != 2 || !strings.Contains(h.said[1], "70000") || len(h.logged) != 2 {
+			t.Fatalf("said=%q logged=%v", h.said, h.logged)
+		}
+	})
+
+	// Fixed. Waiting on an approval instead is the same wait, in other words.
+	pending := &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}
+	h.set(func() { h.answer, h.sign = pending, "fixed" })
+	h.w.poll()
+	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "coop approve") || strings.Contains(said, "project\\.yaml") {
+		t.Fatalf("blocked=%v said=%q, want the approval, and no word of the file", h.w.blockedNow(), said)
+	}
+	h.set(func() { h.answer, h.sign = nil, "approved" })
+	h.w.poll()
+	if h.w.blockedNow() || h.lastSaid() != "" {
+		t.Fatalf("blocked=%v said=%q after the fix", h.w.blockedNow(), h.lastSaid())
+	}
+	h.read(func() {
+		if h.moves != 1 || h.opened != 1 {
+			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		}
+	})
+}
+
+// A fixed file admission still refuses is not called broken: the agent log has the refusal.
+func TestBoxWaitStopsBlamingAFileThatLoads(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	h.set(func() { h.answer = &box.BrokenProjectFile{Err: errors.New("no")} })
+	_ = h.w.refresh(t.Context())
+	h.set(func() { h.answer, h.sign = box.ErrProjectNotAdmitted, "fixed" })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh = %v", err)
+	}
+	if said := h.lastSaid(); !h.w.blockedNow() || !strings.Contains(said, "could not start") || strings.Contains(said, "project\\.yaml") {
+		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
+	}
+}
+
+// Anyone who can edit the project writes this text, and an error can quote it. Whatever it holds stays
+// inside its one code block as text: it cannot close the block, draw a link, act on a terminal or start
+// a line of its own, and a megabyte of it stays out of the thread.
+func TestBrokenFileTextKeepsTheFilesWordsInert(t *testing.T) {
+	_, quoted := project.Parse([]byte("\"evil\\n[x](https://evil.example)\\n```\": 1\n"))
+	if quoted == nil {
+		t.Fatal("fixture: the file loaded")
+	}
+	hostile := "**bold** [link](https://evil.example) <img src=x> \x1b[31m\x1b]0;title\x07 ‮evil ​word coop approve"
+	for name, err := range map[string]error{
+		"what yaml quotes":      quoted,
+		"markdown and controls": errors.New(hostile),
+		"a fence":               errors.New("before\n```\n\n" + hostile + "\n\n````\nafter"),
+		"a megabyte":            errors.New(strings.Repeat("`[x](y) ", 1<<17)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := acpBoxWaitText(&box.BrokenProjectFile{Err: err}, nil, false)
+			lines := strings.Split(text, "\n")
+			opened := slices.IndexFunc(lines, func(line string) bool { return strings.HasPrefix(line, "```") })
+			if opened < 0 || !strings.Contains(strings.Join(lines[:opened], "\n"), "has a problem") {
+				t.Fatalf("no code block after the fixed words:\n%s", text)
+			}
+			fence := lines[opened]
+			if strings.Trim(fence, "`") != "" || lines[len(lines)-1] != fence {
+				t.Fatalf("the code block is not the end of the message:\n%s", text)
+			}
+			for _, line := range lines[opened+1 : len(lines)-1] {
+				if strings.HasPrefix(line, fence) {
+					t.Fatalf("the file's words closed the code block:\n%s", text)
+				}
+			}
+			for _, r := range text {
+				if r < 0x20 && r != '\n' || r == 0x7f || r == 0x202E || r == 0x200B {
+					t.Fatalf("a hidden character %U reached the thread:\n%q", r, text)
+				}
+			}
+			if len([]rune(text)) > 2*acpBrokenFileReasonLimit {
+				t.Fatalf("the thread got %d characters of the file", len([]rune(text)))
+			}
+		})
+	}
+	// A line break yaml quotes as written stays in its line.
+	text := acpBoxWaitText(&box.BrokenProjectFile{Err: quoted}, nil, false)
+	if slices.ContainsFunc(strings.Split(text, "\n"), func(line string) bool { return strings.HasPrefix(line, "[x]") }) {
+		t.Fatalf("what a key quotes started a line of its own:\n%s", text)
+	}
+	if got := brokenFileReason(errors.New(strings.Repeat("é", acpBrokenFileReasonLimit+1))); !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
+		t.Fatalf("cut short = %q", got)
 	}
 }
 

@@ -30,6 +30,10 @@
   thread says what happened, and Coop keeps trying. Pulling images, starting services and waiting for
   another box do not count toward that minute: they get 5 minutes.
 
+- **A broken project file no longer disconnects your editor.** `coop acp` connects even when
+  `.agent/project.yaml` does not load. The thread says what is wrong and where, your messages wait,
+  nothing in the file applies, and the session moves on by itself once you fix it.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 
