@@ -1758,7 +1758,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// agent what this box actually got. The instruction files exist but are not mounted yet; the
 	// sidecars simply start after they are assembled, so their facts are appended here.
 	joined := networkName != "" && rt.Name != "container"
-	spec.servePlan = requestedServePublicationPlan(cfg, spec, hostPortFree)
+	spec.servePlan = launchServePlan(cfg, spec, filtered, hostPortFree)
 	if err := appendInstructionNote(instructionMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
 		return finish(-1, err)
 	}

@@ -97,11 +97,11 @@ func TestFilteredServePortsCannotCollideWithTheCapture(t *testing.T) {
 // and the agent still learns its URL.
 func TestFilteredPublishTargetsTheGatewayAndKeepsTheURL(t *testing.T) {
 	spec := RunSpec{Repo: t.TempDir(), Serve: true, servePorts: []int{3000}}
-	options, published, env := filteredPublish(&config.Config{}, spec, func(int) bool { return true })
+	options, plan, env := filteredPublish(&config.Config{}, spec, func(int) bool { return true })
 	if len(options) != 2 || options[0] != "-p" || !strings.HasSuffix(options[1], ":3000") || !strings.HasPrefix(options[1], "127.0.0.1:") {
 		t.Fatalf("publish options bind the wrong interface or port: %v", options)
 	}
-	if len(published) != 1 || published[0] != 3000 {
+	if published := publishedServePorts(plan); len(published) != 1 || published[0] != 3000 {
 		t.Fatalf("the published port list is wrong: %v", published)
 	}
 	if len(env) != 2 || !strings.HasPrefix(env[1], "COOP_SERVE_URL_3000=http://localhost:") {
@@ -109,17 +109,17 @@ func TestFilteredPublishTargetsTheGatewayAndKeepsTheURL(t *testing.T) {
 	}
 	// A taken host port skips publication without failing the launch, and the
 	// discovery URL still names the workspace's assigned port.
-	options, published, env = filteredPublish(&config.Config{}, spec, func(int) bool { return false })
-	if len(options) != 0 || len(published) != 0 || len(env) != 2 {
-		t.Fatalf("a taken host port changed more than the publication: %v %v %v", options, published, env)
+	options, plan, env = filteredPublish(&config.Config{}, spec, func(int) bool { return false })
+	if len(options) != 0 || len(publishedServePorts(plan)) != 0 || len(env) != 2 {
+		t.Fatalf("a taken host port changed more than the publication: %v %+v %v", options, plan, env)
 	}
-	if options, published, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir()}, func(int) bool { return true }); options != nil || published != nil || env != nil {
+	if options, plan, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir()}, func(int) bool { return true }); options != nil || plan != nil || env != nil {
 		t.Fatal("a run without serve ports published something")
 	}
-	if options, published, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir(), servePorts: []int{3000}}, func(int) bool {
+	if options, plan, env := filteredPublish(&config.Config{}, RunSpec{Repo: t.TempDir(), servePorts: []int{3000}}, func(int) bool {
 		t.Fatal("a run that did not request Serve must not inspect host ports")
 		return true
-	}); options != nil || published != nil || env != nil {
+	}); options != nil || plan != nil || env != nil {
 		t.Fatal("a run without Serve published a configured project port")
 	}
 }

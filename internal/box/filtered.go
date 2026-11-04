@@ -97,9 +97,10 @@ type filteredExecution struct {
 	mainStarted         bool              // the daemon reported the workload running: teardown may then speak of its main process
 	bindSources         map[string]os.FileInfo
 	unsafeRoots         []string
-	publish             []string // -p options the controller carries for serve.ports
-	serveEnv            []string // COOP_SERVE_URL_* the agent container still gets
-	servicesNet         string   // the Compose network the controller joins, if any
+	publish             []string           // -p options the controller carries for serve.ports
+	serveEnv            []string           // COOP_SERVE_URL_* the agent container still gets
+	servePlan           []servePublication // each serve port's outcome behind publish, for the agent's note
+	servicesNet         string             // the Compose network the controller joins, if any
 	services            []networkgateway.ServiceBinding
 	serviceProxyClients []networkgateway.ServiceProxyClient
 	preparedServices    *preparedFilteredServices
@@ -309,7 +310,8 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err := f.selectImage(ctx, rt, cfg, spec, candidate, smoke == nil); err != nil {
 		return f, err
 	}
-	f.publish, servePorts, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)
+	f.publish, f.servePlan, f.serveEnv = filteredPublish(cfg, spec, hostPortFree)
+	servePorts = publishedServePorts(f.servePlan)
 	if len(approvedServices) != 0 {
 		privateRoots := append(ConfigExposureRoots(cfg), project)
 		for _, companion := range spec.CompanionRepositories {

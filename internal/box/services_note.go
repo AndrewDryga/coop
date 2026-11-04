@@ -58,6 +58,27 @@ func requestedServePublicationPlan(cfg *config.Config, spec RunSpec, free func(i
 	return servePublicationPlan(cfg, spec, free)
 }
 
+// launchServePlan is the one publish decision the agent's note reads and the runtime applies. A
+// filtered box made it already, for its gateway controller's arguments (filteredPublish), so
+// asking here would probe the host a second time and could tell the agent something else.
+func launchServePlan(cfg *config.Config, spec RunSpec, filtered *filteredExecution, free func(int) bool) []servePublication {
+	if filtered != nil {
+		return filtered.servePlan
+	}
+	return requestedServePublicationPlan(cfg, spec, free)
+}
+
+// publishedServePorts are the box ports a plan actually bound on the host.
+func publishedServePorts(plan []servePublication) []int {
+	var ports []int
+	for _, s := range plan {
+		if s.Published {
+			ports = append(ports, s.Port)
+		}
+	}
+	return ports
+}
+
 // servicesNote is the few lines an agent reads once so it never burns a turn diagnosing a host
 // condition it cannot see: whether sidecar startup was proved, where each proved service answers
 // from INSIDE the box, which

@@ -2,12 +2,15 @@ package box
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 func TestServiceSecretNoticePathsStayOnOneLine(t *testing.T) {
@@ -118,6 +121,52 @@ func TestServePublicationIsDecidedOnce(t *testing.T) {
 		return true
 	}); got != nil {
 		t.Fatalf("a run without Serve publishes nothing or claims a host URL, got %+v", got)
+	}
+}
+
+// A filtered box publishes on its gateway controller, and the note reads that one decision: its
+// agent hears exactly what an open box's agent hears, and the host is not probed a second time.
+func TestFilteredNoteReportsTheControllersPublishDecision(t *testing.T) {
+	spec := RunSpec{Repo: "/tmp/serve-plan", Serve: true, servePorts: []int{3000, 5173}}
+	firstFree := func() func(int) bool {
+		calls := 0
+		return func(int) bool { calls++; return calls == 1 }
+	}
+	notConfigured := serviceLaunchOutcome{state: servicesNotConfigured}
+	published, skipped := project.HostPort(spec.Repo, 3000), project.HostPort(spec.Repo, 5173)
+
+	options, plan, _ := filteredPublish(&config.Config{Egress: "filtered"}, spec, firstFree())
+	if bound := fmt.Sprintf("127.0.0.1:%d:3000", published); !slices.Equal(options, []string{"-p", bound}) {
+		t.Fatalf("the controller was given %v, want only %s", options, bound)
+	}
+	got := launchServePlan(&config.Config{Egress: "filtered"}, spec, &filteredExecution{servePlan: plan}, func(int) bool {
+		t.Fatal("a filtered launch decided publication already and must not probe the host again")
+		return false
+	})
+	note := servicesNote(notConfigured, nil, false, got)
+	for _, want := range []string{
+		fmt.Sprintf("- your port 3000 is published: a browser on the host reaches it at http://localhost:%d", published),
+		fmt.Sprintf("- your port 5173 is NOT published: host port %d is already in use by another process", skipped),
+	} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the filtered note is missing %q:\n%s", want, note)
+		}
+	}
+	open := launchServePlan(&config.Config{Egress: "open"}, spec, nil, firstFree())
+	if openNote := servicesNote(notConfigured, nil, false, open); note != openNote {
+		t.Errorf("a filtered note differs from an open one:\n%s\nopen:\n%s", note, openNote)
+	}
+
+	// A filtered box that did not ask to publish has nothing to report, and an offline one decides
+	// the way it always did.
+	if got := launchServePlan(&config.Config{Egress: "filtered"}, spec, &filteredExecution{}, func(int) bool {
+		t.Fatal("no publication was decided")
+		return false
+	}); got != nil {
+		t.Fatalf("an unrequested filtered plan = %+v", got)
+	}
+	if got := launchServePlan(&config.Config{Egress: "none"}, spec, nil, func(int) bool { return true }); got != nil {
+		t.Fatalf("an offline plan = %+v", got)
 	}
 }
 

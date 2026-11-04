@@ -546,8 +546,9 @@ func writeFilteredServiceOverride(workspace string, data []byte, exposedRoots ..
 // filteredPublish is the `-p` set for the CONTROLLER container: it owns the
 // network namespace the agent runs in, so a published port has to be published
 // there. Same host-port allocation and same best-effort skip as an open run —
-// a port already taken does not stop the box.
-func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (options []string, published []int, env []string) {
+// a port already taken does not stop the box. The plan is that one decision per
+// port, so the agent's note reports what the controller was actually given.
+func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (options []string, plan []servePublication, env []string) {
 	if !spec.Serve || len(spec.servePorts) == 0 {
 		return nil, nil, nil
 	}
@@ -557,7 +558,9 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 	for _, port := range spec.servePorts {
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
-		if !free(host) {
+		published := free(host)
+		plan = append(plan, servePublication{Port: port, Host: host, Published: published})
+		if !published {
 			// Both ports are named: one is the URL to open, the other is what the dev server
 			// inside the box listens on, and they can differ.
 			ui.Warning(fmt.Sprintf("Could not publish box port %d", port),
@@ -566,7 +569,6 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 			continue
 		}
 		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
-		published = append(published, port)
 		urls = append(urls, fmt.Sprintf("  http://localhost:%d → box port %d", host, port))
 	}
 	if len(urls) > 0 {
@@ -575,7 +577,7 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 			ui.Note("%s", url)
 		}
 	}
-	return options, published, env
+	return options, plan, env
 }
 
 // checkFilteredServePorts refuses a serve port the gateway itself captures,
