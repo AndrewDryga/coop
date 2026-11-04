@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The installer finishes when it runs from your home folder.** `coop build --egress open` now builds
+  the shared image from there, so the install, its retry command and the next step, `coop login`, all
+  work in a new terminal. Agent runs still refuse the home folder.
+
 - **Answering n to a project's first `coop approve` leaves no marker behind.** The next review reads
   the same as the first instead of blaming a checkout marker with no approval.
 - **A busy Docker no longer stops a launch.** Coop waits longer and asks again when Docker is slow to

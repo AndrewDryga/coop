@@ -401,9 +401,10 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// (--self-only is local) — and every pure-local family detect lazily in their box-running paths
 	// (resolveLaunchImage, forkStop, mergeGate, cmdUpdate), so they work with no runtime. loop detects
 	// after its usage and config validation (cmdLoop), so a bad flag, target, or loop.yaml is
-	// reported as such rather than as a missing runtime.
+	// reported as such rather than as a missing runtime. build checks them itself, since whether it
+	// needs a project at all depends on its mode (cmdBuild).
 	switch sub {
-	case "run", "shell", "acp", "up", "down", "build":
+	case "run", "shell", "acp", "up", "down":
 		// An editor session reads the project's file itself. A child that would run the project's box
 		// stops at a broken one (resolveLaunchImage), and its supervisor and a child that holds prompts are
 		// what keep the editor told about it.

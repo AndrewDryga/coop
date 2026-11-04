@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -132,6 +134,53 @@ func TestBuildModeGrammar(t *testing.T) {
 	}
 }
 
+// The installer runs `coop build --egress open` wherever the reader's terminal opened, usually the
+// home folder, and prints the same command as its retry. An ordinary build from there makes the
+// shared image and reads nothing of the folder, a planted Dockerfile included. A home folder that is
+// a Git repository is the same case. Every other refusal stands: a build that would need a project
+// still names the home folder, and tells the reader the command that does work.
+func TestBuildFromTheHomeFolderMakesTheSharedImage(t *testing.T) {
+	for _, kind := range []string{"plain folder", "Git repository"} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			if kind == "Git repository" {
+				home, _ = gitrepo.New(t)
+			}
+			t.Setenv("HOME", home)
+			t.Chdir(home)
+			writeTaskFile(t, filepath.Join(home, ".agent", "Dockerfile"), "FROM scratch\n")
+			newConfig := func() *config.Config {
+				return &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir(), BaseImage: "coop-box"}
+			}
+			for _, mode := range []string{"open", "offline"} {
+				a := &app{cfg: newConfig(), rt: buildShim{daemonUp: true}.build(t), rtSet: true}
+				var code int
+				var err error
+				out := captureTerminal(t, func() { code, err = a.dispatch([]string{"build", "--egress", mode}) })
+				if code != 0 || err != nil {
+					t.Fatalf("build --egress %s from the home folder = %d, %v:\n%s", mode, code, err, out)
+				}
+				if !strings.Contains(out, "Building the Coop box") || !strings.Contains(out, "coop-box") || strings.Contains(out, "Dockerfile") {
+					t.Fatalf("build --egress %s from the home folder must make the shared image:\n%s", mode, out)
+				}
+			}
+			for _, args := range [][]string{nil, {"--egress", "filtered"}} {
+				a := &app{cfg: newConfig(), rt: buildShim{daemonUp: true}.build(t), rtSet: true}
+				var err error
+				out := captureTerminal(t, func() { _, err = a.dispatch(append([]string{"build"}, args...)) })
+				if err == nil || !strings.Contains(err.Error(), "Coop never uses one of those as a project") ||
+					!strings.Contains(err.Error(), "run coop build --egress open") || strings.Contains(out, "[Build output]") {
+					t.Fatalf("build %v from the home folder must refuse and name the command that works: %v\n%s", args, err, out)
+				}
+			}
+			// The refusal stands for whatever runs an agent there.
+			if _, err := box.ResolveRepo(""); !errors.Is(err, box.ErrHomeProject) {
+				t.Fatalf("the home folder must stay refused as a project: %v", err)
+			}
+		})
+	}
+}
+
 func TestExplicitBuildFailureKeepsItsMode(t *testing.T) {
 	for _, mode := range []string{"open", "offline"} { // the retry repeats the word the person typed
 		t.Run(mode, func(t *testing.T) {
@@ -140,7 +189,7 @@ func TestExplicitBuildFailureKeepsItsMode(t *testing.T) {
 			a := &app{cfg: cfg, rt: buildShim{daemonUp: true, buildExit: 1}.build(t), rtSet: true}
 			var code int
 			var err error
-			out := captureTerminal(t, func() { code, err = a.cmdBuild([]string{"--egress", mode}) })
+			out := captureTerminal(t, func() { code, err = a.dispatch([]string{"build", "--egress", mode}) })
 			if code != 1 || err == nil || !strings.Contains(out, "[Build output]") || !strings.Contains(out, "run coop build --egress "+mode+" again") {
 				t.Fatalf("explicit build did not preserve its recovery mode: (%d, %v)\n%s", code, err, out)
 			}

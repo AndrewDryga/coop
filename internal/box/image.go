@@ -563,6 +563,10 @@ func (c ImageChange) Unchanged() bool { return c.Before != "" && c.Before == c.A
 // a malformed one fails loudly here rather than halfway through) and requires the runtime, since
 // whether the shared base already exists is part of the answer.
 func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) (BuildPlan, error) {
+	if repo == "" {
+		// No project: the shared image, whose definition is Coop's own, so no folder is read.
+		return BuildPlan{Image: cfg.BaseImage}, rt.EnsureDaemon()
+	}
 	proj, err := project.Load(repo)
 	if err != nil {
 		return BuildPlan{}, err

@@ -14,6 +14,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -34,7 +35,23 @@ func (a *app) cmdBuild(args []string) (int, error) {
 		retry += " --egress " + mode.Word()
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
-	if err != nil {
+	switch {
+	case errors.Is(err, box.ErrHomeProject) && mode != nil && *mode != egress.Filtered:
+		// A new terminal opens in the home folder, and the installer runs this from there. The ordinary
+		// shared image is built from Coop's own definition and reads nothing of the folder, so it needs
+		// no project. A filtered image belongs to a project, so that build still refuses.
+		repo = ""
+	case errors.Is(err, box.ErrHomeProject):
+		return -1, fmt.Errorf("%w. To build the shared image from here, run coop build --egress open", err)
+	case err != nil:
+		return -1, err
+	}
+	if repo != "" {
+		if _, err := project.Load(repo); err != nil {
+			return -1, err
+		}
+	}
+	if err := a.ensureRuntime(); err != nil {
 		return -1, err
 	}
 	if mode == nil {
