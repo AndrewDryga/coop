@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Editor sessions stay connected.** `coop acp` now connects while a project's network rules wait
+  for `coop approve`, says so in the thread and moves on by itself once you approve. It also stays
+  connected when a box exits as it starts: it says why in the thread and the agent log, and retries
+  every 30 seconds.
+
+- **A linked worktree builds cleanly.** A project built from a linked worktree no longer bakes the
+  worktree's `.git` pointer into its image. It asks for `coop build` once.
+
 - **Editor links stay on the box you are using.** In an editor session, each dev server link keeps
   reaching the box the thread is on, after a provider or account switch and after `coop approve`,
   at the same address. If another program holds the port, the thread says so instead of posting a
