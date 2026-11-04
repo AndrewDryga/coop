@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -388,6 +389,26 @@ func (a *app) servicesLeft(repo string, volumes bool) bool {
 	return err != nil || len(left) > 0
 }
 
+// removeKilledRunServices removes what killed sessions and loops left running in repo. Each runs as a
+// Compose project of its own, so no Compose file can stop it, and a start refused over one of them
+// names this command. A running session's services stay: only a provably gone supervisor selects them.
+func (a *app) removeKilledRunServices(repo string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	removed, err := box.ReapOrphanServices(ctx, a.rt, repo)
+	if removed > 0 {
+		// Their filesystem helpers go under this budget, not the shorter one for stopping this file's.
+		_, recoverErr := box.RecoverFilesystemAdmissions(ctx, a.rt, repo)
+		err = errors.Join(err, recoverErr)
+		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(removed, "project service container"))
+		ui.Note("")
+	}
+	if err != nil {
+		ui.Warn("Could not remove everything stopped Coop runs left behind: %s", sentence(firstLine(err)))
+		ui.Note("")
+	}
+}
+
 func (a *app) cmdDown(args []string) (int, error) {
 	// Validate flags before any runtime/compose work, so a typo fails clearly here instead of
 	// later as an unrelated "no .agent/compose.yml".
@@ -416,6 +437,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 			fmt.Sprintf("%s does not support Compose.", runtimeTitle(a.rt.Name)),
 			"Use Docker for this project's services.")
 	}
+	a.removeKilledRunServices(repo)
 	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {
 		// A project that never added services has no default Compose file, and stopping nothing

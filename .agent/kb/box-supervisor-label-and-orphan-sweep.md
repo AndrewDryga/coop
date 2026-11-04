@@ -3,7 +3,7 @@ name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
 sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -265,6 +265,14 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-04 — `coop acp` and `coop fork <name> acp` now sweep too. They ran no sweep, so a person who
+  only works in an editor kept a killed session's services for as long as the project stayed open: 8
+  hours of Postgres and Keycloak on 2026-11-03, reproduced by SIGKILLing a real supervisor. See
+  `sweepBeforeEditorBoxes`: boxes and services only, finished before the first box, because a dead stack
+  with a writable bind or a fixed host port breaks the next session's services. `coop down` removes
+  them as well, and `ReapOrphanServices` now takes the project's networks too. A session's service
+  label is read as its child starts (`rememberSessionSupervisor`): a child waiting at the service
+  launch lock outlives a killed supervisor, and a label read after that is empty and never swept.
 - 2026-11-03 — the daily pass also retires filesystem custody whose workspace is gone
   (`box.RecoverFilesystemAdmissions` with no workspace; see [[filesystem-enforcement]]).
 - 2026-11-03 — editor tool handoff folders (`coop-acp-mcp-*`) name their owner and join the runfiles

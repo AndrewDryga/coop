@@ -32,11 +32,28 @@ func runServiceLabels(spec RunSpec, owner string) map[string]string {
 // project stays, so a child's label would let a sweep take a live session's services as soon as that
 // child exits.
 func serviceSupervisor(spec RunSpec) string {
+	if spec.sessionSupervisor != "" {
+		return spec.sessionSupervisor
+	}
 	pid := os.Getpid()
 	if spec.SupervisorID != "" {
-		pid = os.Getppid()
+		pid = parentPID()
 	}
 	return supervisorLabelValue(workspaceScope(spec.Repo), pid)
+}
+
+// parentPID is os.Getppid; a variable so a test can have a supervisor die under a waiting child.
+var parentPID = os.Getppid
+
+// rememberSessionSupervisor reads a supervised run's label as it starts. Its child can then wait
+// without limit at the service launch lock, behind a box that is still running. A supervisor killed
+// meanwhile leaves the child an unrelated parent, and services labeled after that name a process
+// that proves nothing: they would run until someone removed them by hand. Read now, the label names
+// the dead supervisor, and the next launch's sweep can prove it gone.
+func rememberSessionSupervisor(spec *RunSpec) {
+	if spec.SupervisorID != "" {
+		spec.sessionSupervisor = serviceSupervisor(*spec)
+	}
 }
 
 // serviceLabelsYAML is one service's labels block in a generated override.

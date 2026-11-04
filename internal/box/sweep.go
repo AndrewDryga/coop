@@ -346,14 +346,14 @@ func runProject(workspace, project string) bool {
 	return ok && len(suffix) == 8 && err == nil && suffix == strings.ToLower(suffix)
 }
 
-// ReapOrphanServices removes the per-run Compose services, and then their volumes, of every loop or
-// session in workspace whose supervisor is provably dead, and reports how many containers it removed:
-// a killed run leaves them behind, since only a clean exit tears them down. The proof is
+// ReapOrphanServices removes the per-run Compose services, and then their networks and volumes, of
+// every loop or session in workspace whose supervisor is provably dead, and reports how many containers
+// it removed: a killed run leaves them behind, since only a clean exit tears them down. The proof is
 // SurveyOrphanBoxes': the supervisor label coop's own override wrote (runServiceLabels), a scope of
 // this workspace, a pid of this host and PID namespace, and the kernel's word that the pid is gone or
 // reused. The project must also be one of this workspace's per-run ones, whose labels coop's override
-// always replaces. A service with no provable label is left alone, and the network goes with
-// ReapOrphanNetworks once nothing is attached.
+// always replaces. A service with no provable label is left alone. A network a box on its way out
+// still holds stays too, for ReapOrphanNetworks: only a loop, fork or build start runs that pass.
 func ReapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	host, _ := thisHost()
 	return reapOrphanServices(ctx, rt, workspace, host)
@@ -383,7 +383,12 @@ func reapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace, host
 		n, err := rt.RemoveByLabels(ctx, map[string]string{LabelKey: LabelService, LabelHost: r.label, composeProjectLabel: r.project})
 		removed += n
 		if err == nil {
-			_, err = rt.RemoveVolumesByLabel(ctx, composeProjectLabel, r.project)
+			// Nothing finds this project once its containers are gone, so the rest goes now, as
+			// StopServicesForOwner does it: a network that stays must not keep the volumes. Nobody can
+			// be starting this project, whose supervisor is dead, so no network here is about to be used.
+			_, networkErr := RemoveProjectNetworks(ctx, rt, r.project)
+			_, volumeErr := rt.RemoveVolumesByLabel(ctx, composeProjectLabel, r.project)
+			err = errors.Join(networkErr, volumeErr)
 		}
 		errs = append(errs, err)
 	}

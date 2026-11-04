@@ -156,11 +156,12 @@ type RunSpec struct {
 	nativeNamespace string             // full inspected open namespace-owner ID
 	SupervisorID    string             // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
-	ShareACPSessions bool   // mount credential-independent ACP transcript dirs across account switches
-	ForkName         string // non-empty for a detached fork loop's box: readable runtime label
-	ForkOwner        string // repo-scoped label used by `coop fork stop`; required with ForkName
-	ForkGeneration   string // immutable host-owned generation; empty only for legacy callers
-	ForkWorker       bool   // this box belongs to the detached worker stopped by `coop fork stop`
+	sessionSupervisor string // a supervised box's service label, read once as the run starts (rememberSessionSupervisor)
+	ShareACPSessions  bool   // mount credential-independent ACP transcript dirs across account switches
+	ForkName          string // non-empty for a detached fork loop's box: readable runtime label
+	ForkOwner         string // repo-scoped label used by `coop fork stop`; required with ForkName
+	ForkGeneration    string // immutable host-owned generation; empty only for legacy callers
+	ForkWorker        bool   // this box belongs to the detached worker stopped by `coop fork stop`
 	// ActivityRepo is the canonical project whose host-owned execution registry receives this
 	// sandbox. ActivityKind empty preserves the ordinary unregistered maintenance-box behavior.
 	ActivityRepo             string
@@ -570,6 +571,7 @@ func runChecked(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, erro
 	if spec.GradeSnapshot && spec.Homes {
 		return -1, fmt.Errorf("a grading box must not carry agent credentials; refusing to mount an unshadowed tree beside them")
 	}
+	rememberSessionSupervisor(&spec)
 	return runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
 }
 

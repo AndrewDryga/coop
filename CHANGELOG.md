@@ -34,6 +34,10 @@
   `.agent/project.yaml` does not load. The thread says what is wrong and where, your messages wait,
   nothing in the file applies, and the session moves on by itself once you fix it.
 
+- **A killed editor session no longer leaves its services running.** The next `coop acp` in that
+  project removes what the killed session left before it starts anything, and `coop down` removes it
+  too. Services of a session that is still running are never touched.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 

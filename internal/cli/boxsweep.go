@@ -20,7 +20,7 @@ const orphanSweepTimeout = 10 * time.Second
 // a coop killed by SIGKILL (or a reboot mid-run) never fires `--rm`, and nothing else watches the
 // box, so an orphan keeps a provider session burning tokens with no host-side observer. Cleanup is
 // pull-only, so it rides the entry points that already reap: loop start, fork start, and `coop
-// build`'s recycle.
+// build`'s recycle. An editor session sweeps less, see sweepBeforeEditorBoxes.
 //
 // Failure is silent by design. This is not the command the user ran: a broken runtime is about to
 // be reported loudly by that command's own box work, and a runtime with no label inspection at all
@@ -28,16 +28,38 @@ const orphanSweepTimeout = 10 * time.Second
 // of the sweep is reported on demand.
 func (a *app) sweepOrphanBoxes(repo string) {
 	result := a.collectOrphanBoxes(repo)
+	noteRemovedOrphans(result)
+	if result.RemovedNetworks > 0 {
+		ui.Note("Removed %s", ui.Count(result.RemovedNetworks, "unused Coop network"))
+	}
+	noteSettledFilteredRuns(result.RecoveredFilteredRuns)
+}
+
+// sweepBeforeEditorBoxes removes what killed runs left in repo, before an editor session starts its
+// first box. A person who works in an editor may run no loop, fork or build in a project for days, and
+// a killed session's services run until something removes them. It finishes before the box starts
+// because a dead stack can break that box's own services: one with a writable bind into the
+// repository gets them refused, and one holding a fixed host port makes them fail to start.
+//
+// So every connect waits for it, and it pays for two listings and nothing else. The first box's launch
+// retires the filesystem helpers and settles a filtered run (runBox), and the session's own sweeps take
+// dead task channels. The pass over every project's unused networks stays with the commands that have
+// time for it; a killed session's own network goes with its services.
+func (a *app) sweepBeforeEditorBoxes(repo string) {
+	if a.ensureRuntime() != nil {
+		return
+	}
+	noteRemovedOrphans(a.reapRepoOrphans(repo))
+}
+
+// noteRemovedOrphans is the lines a command prints for the containers a sweep removed.
+func noteRemovedOrphans(result loop.Preparation) {
 	if result.RemovedBoxes > 0 {
 		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(result.RemovedBoxes, "box", "boxes"))
 	}
 	if result.RemovedServices > 0 {
 		ui.Note("Removed %s whose Coop processes had stopped", ui.Count(result.RemovedServices, "project service container"))
 	}
-	if result.RemovedNetworks > 0 {
-		ui.Note("Removed %s", ui.Count(result.RemovedNetworks, "unused Coop network"))
-	}
-	noteSettledFilteredRuns(result.RecoveredFilteredRuns)
 }
 
 // noteSettledFilteredRuns is the line a launch prints for what settleInterruptedFilteredRuns settled.
@@ -62,28 +84,36 @@ func (a *app) collectOrphanBoxes(repo string) loop.Preparation {
 	// A loop launches its boxes inside its engine, past runBox, so its start carries the daily
 	// temp sweep; fork starts and a build's recycle start it here too.
 	a.startTempReap()
-	// Each step has its own budget, so a pile of leftovers in one cannot starve the next.
-	sweep := func(reap func(context.Context) (int, error)) int {
-		ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
-		defer cancel()
-		n, _ := reap(ctx)
-		return n
-	}
-	result.RemovedBoxes = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanBoxes(ctx, a.rt, repo) })
-	// A killed loop's or session's own Compose services go before the networks they hold.
-	result.RemovedServices = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanServices(ctx, a.rt, repo) })
+	result = a.reapRepoOrphans(repo)
 	// A dead run's task channel is an empty volume: housekeeping nobody needs to hear about.
-	sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanTaskChannels(ctx, a.rt, repo) })
-	sweep(func(ctx context.Context) (int, error) { return box.RecoverFilesystemAdmissions(ctx, a.rt, repo) })
+	sweepStep(func(ctx context.Context) (int, error) { return box.ReapOrphanTaskChannels(ctx, a.rt, repo) })
+	sweepStep(func(ctx context.Context) (int, error) { return box.RecoverFilesystemAdmissions(ctx, a.rt, repo) })
 	// Networks are not scoped to a repo — a coop project's leftover network from ANY workspace
 	// eats one of Docker's ~31 subnets — so one pass per process covers them all.
 	if a.sweptNetworks {
 		return result
 	}
 	a.sweptNetworks = true
-	result.RemovedNetworks = sweep(func(ctx context.Context) (int, error) { return box.ReapOrphanNetworks(ctx, a.rt) })
+	result.RemovedNetworks = sweepStep(func(ctx context.Context) (int, error) { return box.ReapOrphanNetworks(ctx, a.rt) })
 	result.RecoveredFilteredRuns = a.settleInterruptedFilteredRuns()
 	return result
+}
+
+// reapRepoOrphans removes the boxes and services killed runs left in repo, each only on proof that its
+// supervisor is gone. The services go second: a dead box still holds their network.
+func (a *app) reapRepoOrphans(repo string) loop.Preparation {
+	boxes := sweepStep(func(ctx context.Context) (int, error) { return box.ReapOrphanBoxes(ctx, a.rt, repo) })
+	services := sweepStep(func(ctx context.Context) (int, error) { return box.ReapOrphanServices(ctx, a.rt, repo) })
+	return loop.Preparation{RemovedBoxes: boxes, RemovedServices: services}
+}
+
+// sweepStep runs one step of a sweep under its own budget, so a pile of leftovers in one cannot
+// starve the next.
+func sweepStep(reap func(context.Context) (int, error)) int {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
+	defer cancel()
+	n, _ := reap(ctx)
+	return n
 }
 
 // runBox is box.Run for a host launch that may be filtered. A filtered one first settles what earlier

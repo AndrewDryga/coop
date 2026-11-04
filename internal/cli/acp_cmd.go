@@ -577,6 +577,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	if err := a.ensureACPImage(); err != nil {
 		return 1, err
 	}
+	a.sweepBeforeEditorBoxes(boxRepo)
 
 	// Keep a box warm per OTHER signed-in provider so a provider switch swaps to a hot adapter
 	// (proxy replay only) instead of cold-booting one (measured 2026-09-19: ~0.8 s unrestricted, ~5.8 s

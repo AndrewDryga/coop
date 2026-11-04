@@ -8,8 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func addFakeService(t *testing.T, boxes, id, project, host string) {
@@ -53,8 +61,8 @@ func remainingFakeEntries(t *testing.T, dir string) []string {
 }
 
 // Only a per-run project of THIS workspace whose recorded supervisor is provably dead goes, its
-// containers first and then its volumes. A live run, another workspace's run, the development
-// project `coop up` runs and a service with no supervisor label are all left alone.
+// containers first and then its networks and volumes. A live run, another workspace's run, the
+// development project `coop up` runs and a service with no supervisor label are all left alone.
 func TestReapOrphanServicesRemovesOnlyDeadRunsOfThisWorkspace(t *testing.T) {
 	rt, boxes := fakeRuntime(t)
 	workspace, other := t.TempDir(), t.TempDir()
@@ -72,10 +80,17 @@ func TestReapOrphanServicesRemovesOnlyDeadRunsOfThisWorkspace(t *testing.T) {
 	addFakeVolume(t, deadRun+"_pgdata", deadRun)
 	addFakeVolume(t, liveRun+"_pgdata", liveRun)
 	addFakeVolume(t, devProject+"_pgdata", devProject)
+	addFakeNetwork(t, "dead-net", deadRun+"_default", deadRun)
+	addFakeNetwork(t, "live-net", liveRun+"_default", liveRun)
+	addFakeNetwork(t, "other-net", otherRun+"_default", otherRun)
+	addFakeNetwork(t, "dev-net", devProject+"_default", devProject)
 
 	removed, err := ReapOrphanServices(context.Background(), rt, workspace)
 	if err != nil || removed != 2 {
 		t.Fatalf("ReapOrphanServices = %d, %v; want the dead run's two containers", removed, err)
+	}
+	if got, want := remainingFakeNetworks(t), []string{"dev-net", "live-net", "other-net"}; !slices.Equal(got, want) {
+		t.Fatalf("networks left = %v, want %v", got, want)
 	}
 	if got, want := remainingFakeEntries(t, boxes), []string{"dev-db", "live-db", "other-db", "unlabeled-db"}; !slices.Equal(got, want) {
 		t.Fatalf("containers left = %v, want %v", got, want)
@@ -153,6 +168,49 @@ func TestReapOrphanServicesKeepsGoingPastARefusedVolume(t *testing.T) {
 	}
 }
 
+// A killed session's box can still be on its way out when the next session sweeps. The network it
+// holds stays, for a later pass, and the volumes go anyway: nothing finds the project again.
+func TestReapOrphanServicesLeavesANetworkABoxStillHolds(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	workspace := t.TempDir()
+	run := ComposeProjectFor(workspace, "dead-session")
+	addFakeService(t, boxes, "dead-db", run, goneSupervisorLabel(t, workspace))
+	addFakeContainer(t, boxes, "dying-box", LabelBox, map[string]string{"network": "held-net"})
+	addFakeNetwork(t, "held-net", run+"_default", run)
+	addFakeVolume(t, run+"_pgdata", run)
+
+	if removed, err := ReapOrphanServices(context.Background(), rt, workspace); err != nil || removed != 1 {
+		t.Fatalf("ReapOrphanServices = %d, %v; want the service removed and nothing reported", removed, err)
+	}
+	if got := remainingFakeEntries(t, boxes); !slices.Equal(got, []string{"dying-box"}) {
+		t.Fatalf("containers left = %v", got)
+	}
+	if got := remainingFakeNetworks(t); !slices.Equal(got, []string{"held-net"}) {
+		t.Fatalf("networks left = %v", got)
+	}
+	if got := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")); len(got) != 0 {
+		t.Fatalf("volumes left = %v", got)
+	}
+}
+
+// A runtime that cannot list a killed run's networks still loses the run's volumes: once its
+// containers are gone no sweep finds the project again, so a volume left now stays for good.
+func TestReapOrphanServicesRemovesVolumesPastANetworkFailure(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	workspace := t.TempDir()
+	run := ComposeProjectFor(workspace, "dead-session")
+	addFakeService(t, boxes, "dead-db", run, goneSupervisorLabel(t, workspace))
+	addFakeVolume(t, run+"_pgdata", run)
+	t.Setenv("COOP_TEST_FAILURE", "network")
+
+	if removed, err := ReapOrphanServices(context.Background(), rt, workspace); err == nil || removed != 1 {
+		t.Fatalf("ReapOrphanServices = %d, %v; want the service removed and the network failure reported", removed, err)
+	}
+	if got := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")); len(got) != 0 {
+		t.Fatalf("volumes left = %v", got)
+	}
+}
+
 // A loop's or session's project names the process whose exit ends it: the loop's own, or an editor
 // session's supervisor, the parent of the inner child that starts the services, scoped to the
 // workspace that names the project. The development project carries no labels.
@@ -175,6 +233,67 @@ func TestRunServiceLabelsNameTheRunsSupervisor(t *testing.T) {
 		if got[LabelKey] != LabelService || got[LabelHost] != tc.want || len(got) != 2 {
 			t.Errorf("%s: labels = %v, want %s=%s and %s=%q", tc.name, got, LabelKey, LabelService, LabelHost, tc.want)
 		}
+	}
+}
+
+// A child can wait long at the service launch lock. A supervisor killed meanwhile is still the one its
+// services name, so the next launch can prove them over: read after the wait, the label would be empty
+// and no sweep would ever remove them.
+func TestSessionServicesNameTheSupervisorThatDiedDuringTheLaunchWait(t *testing.T) {
+	repo, _ := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [5432]\n")
+	want := liveSupervisorLabel(t, repo)
+	dir := t.TempDir()
+	labels, shim := filepath.Join(dir, "labels"), filepath.Join(dir, "runtime")
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do case \"$arg\" in *coop-compose-override-labels.yml) cp \"$arg\" " + strconv.Quote(labels) + " ;; esac; done\n" +
+		"case \"$*\" in\n" +
+		"  *'config --format json'*) printf '%s\\n' '{\"services\":{\"db\":{\"expose\":[\"5432\"]}}}' ;;\n" +
+		"  *'config --services'*) printf '%s\\n' db ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var supervisorGone atomic.Bool
+	read := make(chan struct{})
+	var readOnce sync.Once
+	parentPID = func() int {
+		readOnce.Do(func() { close(read) })
+		if supervisorGone.Load() {
+			return 1 // what a killed parent leaves
+		}
+		return os.Getpid()
+	}
+	t.Cleanup(func() { parentPID = os.Getppid })
+	unlock, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true}
+		_, err := Run(cfg, runtime.Runtime{Name: shim}, RunSpec{
+			Image: "i", Repo: repo, Cmd: []string{"true"}, Network: true, Batch: true, Quiet: true,
+			SupervisorID: "0123456789abcdef", RunID: "run-one",
+		})
+		done <- err
+	}()
+	// No service starts under this lock, so the supervisor dies during the wait. A run that reads its
+	// parent only after the wait gets here on the timeout, and then fails on the label below.
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+	}
+	supervisorGone.Store(true)
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	data, err := os.ReadFile(labels)
+	if err != nil {
+		t.Fatalf("the services started without the label override: %v", err)
+	}
+	if !strings.Contains(string(data), strconv.Quote(want)) {
+		t.Fatalf("service labels do not name the supervisor %s:\n%s", want, data)
 	}
 }
 

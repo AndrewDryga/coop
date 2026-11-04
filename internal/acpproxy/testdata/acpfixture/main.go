@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -70,9 +71,12 @@ func serveRuntime(args []string) error {
 		return nil
 	}
 	if len(args) >= 1 && args[0] == "ps" {
-		return nil
+		return listContainers(args[1:])
 	}
-	if len(args) >= 1 && (args[0] == "kill" || args[0] == "rm") {
+	if len(args) >= 1 && args[0] == "rm" {
+		return removeContainers(args[1:])
+	}
+	if len(args) >= 1 && args[0] == "kill" {
 		return nil
 	}
 	if len(args) >= 2 && (args[0] == "network" || args[0] == "volume") && args[1] == "ls" {
@@ -139,6 +143,88 @@ func serveRuntime(args []string) error {
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
+}
+
+// labelInFormat finds each label a --format listing names.
+var labelInFormat = regexp.MustCompile(`\.Label "([^"]+)"`)
+
+// listContainers answers ps from the containers a test planted: one JSON file of labels per id in
+// COOP_ACP_FIXTURE_CONTAINERS, none without it. As the runtime does, it applies every label filter and
+// prints ids, or for a --format listing one JSON array per container: the id, then each label named.
+func listContainers(args []string) error {
+	dir := os.Getenv("COOP_ACP_FIXTURE_CONTAINERS")
+	if dir == "" {
+		return nil
+	}
+	var filters []string
+	format := ""
+	for i := 0; i+1 < len(args); i++ {
+		switch args[i] {
+		case "--filter":
+			filters = append(filters, args[i+1])
+		case "--format":
+			format = args[i+1]
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue // removed since the listing began
+		}
+		if err != nil {
+			return err
+		}
+		var labels map[string]string
+		if err := json.Unmarshal(data, &labels); err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(filters, func(filter string) bool { return !matchesFilter(labels, filter) }) {
+			line := entry.Name()
+			if format != "" {
+				row := []string{entry.Name()}
+				for _, name := range labelInFormat.FindAllStringSubmatch(format, -1) {
+					row = append(row, labels[name[1]])
+				}
+				encoded, err := json.Marshal(row)
+				if err != nil {
+					return err
+				}
+				line = string(encoded)
+			}
+			fmt.Println(line)
+		}
+	}
+	return nil
+}
+
+// matchesFilter is one ps filter: label=key, or label=key=value. No planted container matches any
+// other kind.
+func matchesFilter(labels map[string]string, filter string) bool {
+	pair, isLabel := strings.CutPrefix(filter, "label=")
+	key, want, hasValue := strings.Cut(pair, "=")
+	got, present := labels[key]
+	return isLabel && present && (!hasValue || got == want)
+}
+
+// removeContainers removes the planted containers an rm names.
+func removeContainers(args []string) error {
+	dir := os.Getenv("COOP_ACP_FIXTURE_CONTAINERS")
+	if dir == "" {
+		return nil
+	}
+	for _, id := range args {
+		if strings.HasPrefix(id, "-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, filepath.Base(id))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // recordRuntime appends one runtime call, as a JSON array, to the state's runtime.jsonl, so a test

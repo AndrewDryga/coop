@@ -435,9 +435,11 @@ reaches each service only through its approved rule. Connect with a URL such as
 <h3 id="development-and-loop-stacks">Development and loop stacks</h3>
 <p>Your development services keep the same workspace identity and data between runs. A loop gets
 its own Compose project, network, volumes and published ports for the entire run. It reuses them
-across task and provider retries, then removes them when the run ends. Both stacks can run in
-one checkout without sharing service data or ports. They still share the source files, so edits
-are visible through both stacks&#39; mounts.</p>
+across task and provider retries, then removes them when the run ends. A killed loop or editor
+session cannot do that, so the next <code>coop acp</code>, loop or <code>coop down</code> in that checkout does, and
+leaves alone the services of a session that is still running. Both stacks can run in one checkout
+without sharing service data or ports. They still share the source files, so edits are visible
+through both stacks&#39; mounts.</p>
 <h3 id="starting-and-stopping">Starting and stopping</h3>
 <p>Before starting services, <code>coop up</code> reads their names from Compose. When they are ready, it
 prints a message such as <code>✓ Services ready: db, redis</code>, using the actual service names in Compose

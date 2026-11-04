@@ -420,9 +420,11 @@ reaches each service only through its approved rule. Connect with a URL such as
 
 Your development services keep the same workspace identity and data between runs. A loop gets
 its own Compose project, network, volumes and published ports for the entire run. It reuses them
-across task and provider retries, then removes them when the run ends. Both stacks can run in
-one checkout without sharing service data or ports. They still share the source files, so edits
-are visible through both stacks' mounts.
+across task and provider retries, then removes them when the run ends. A killed loop or editor
+session cannot do that, so the next `coop acp`, loop or `coop down` in that checkout does, and
+leaves alone the services of a session that is still running. Both stacks can run in one checkout
+without sharing service data or ports. They still share the source files, so edits are visible
+through both stacks' mounts.
 
 ### Starting and stopping
 
