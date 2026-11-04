@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/config"
 	"os"
 	"slices"
 	"strings"
@@ -358,7 +359,11 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 		return refusalExit(err), err
 	}
 	title := titleName(agent)
-	if name == a.cfg.DefaultProfileOf(agent) {
+	// The default stays while another account could take over, so a run never lands on one that is
+	// gone. The last account has nothing to give way to, and refusing it would make it permanent.
+	wasDefault := name == a.cfg.DefaultProfileOf(agent)
+	profiles, listErr := box.EffectiveProfiles(a.cfg, agent)
+	if wasDefault && (listErr != nil || slices.ContainsFunc(profiles, func(p string) bool { return p != name })) {
 		return 2, &ui.UsageError{
 			Headline: fmt.Sprintf("Cannot remove %s account %q", title, name),
 			Cause:    "It is the default account. Choose another default first.",
@@ -396,6 +401,11 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 	if err := errors.Join(secretErr, profileErr, historyErr); err != nil {
 		// A partial delete is durable: never claim nothing was removed unless that is proved.
 		return -1, fmt.Errorf("could not finish removing %s account %q: %w", title, name, err)
+	}
+	if wasDefault && name != config.DefaultProfile {
+		if err := a.cfg.SetDefaultProfile(agent, config.DefaultProfile); err != nil {
+			return -1, fmt.Errorf("removed %s account %q, but could not clear it as the default: %w", title, name, err)
+		}
 	}
 	ui.OK("Deleted %s account %q", title, name)
 	return 0, nil

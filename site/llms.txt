@@ -336,7 +336,8 @@ OPTIONS
 
   Removes the saved login and its ordinary repository history.
   Account-independent editor conversations are kept.
-  Choose another default before removing the current default account.
+  Choose another default before removing the current default account, unless
+  it is the last one.
 
 EXAMPLES
   coop credentials codex old-work rm

@@ -602,3 +602,27 @@ func firstDefaultLine(out string) string {
 func signInLabel(cfg *config.Config, agent, account string) string {
 	return box.ProfileSignIn(cfg, agent, account, time.Now()).Label()
 }
+
+// The last account has no other default to give way to, so it can be removed, and no account named
+// as a default is left behind.
+func TestRemoveTheLastAccount(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "only"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultProfile("claude", "only"); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	var err error
+	captureStderr(t, func() { code, err = (&app{cfg: cfg}).cmdCredentials([]string{"claude", "only", "rm", "--yes"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("removing the last account = (%d, %v)", code, err)
+	}
+	if pathExists(cfg.AgentProfileDir("claude", "only")) {
+		t.Error("the account is still there")
+	}
+	if got := cfg.DefaultProfileOf("claude"); got != config.DefaultProfile {
+		t.Errorf("default = %q after removing it", got)
+	}
+}

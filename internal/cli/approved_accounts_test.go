@@ -88,6 +88,7 @@ func TestApprovedAccountInputErrors(t *testing.T) {
 		{"08-remove-default-refused", func(t *testing.T) error {
 			cfg := freshConfig(t)
 			writeAccount(t, cfg, "codex", "personal", codexReadyCredential)
+			writeAccount(t, cfg, "codex", "work", codexReadyCredential)
 			setDefault(t, cfg, "codex", "personal")
 			code, err := (&app{cfg: cfg}).cmdCredentials([]string{"codex", "personal", "rm"})
 			return codeErr(t, code, err)

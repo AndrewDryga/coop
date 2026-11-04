@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **You can remove your last account.** `coop credentials <agent> <account> rm` refused an agent's only
+  account because it was the default, and told you to choose another default that did not exist.
+
 - **A stopped sign-in cleans up after itself.** Pressing Ctrl-C during `coop login`, or a sign-in that
   fails, no longer leaves a `.sign-in-*` folder in Coop's settings. It may hold a provider's partial
   files. A failed save still keeps its folder and names it.
