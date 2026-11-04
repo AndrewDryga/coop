@@ -70,7 +70,10 @@ const (
 
 // RunSpec describes a single container run.
 type RunSpec struct {
-	Image string
+	// ServeBinds maps a serve port to the host port this box publishes it on, when an editor session
+	// forwards the stable port to whichever of its boxes is live. Empty publishes on the stable port.
+	ServeBinds map[int]int
+	Image      string
 	// ExpectedImageID binds a host-preflighted workload to its immutable image, even when
 	// filtered preparation resolves the image again from explicit project-build approval.
 	ExpectedImageID string   `json:"-"`
@@ -1789,7 +1792,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		for _, port := range spec.servePlan {
 			if port.Published {
-				ownerOptions = append(ownerOptions, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port.Host, port.Port))
+				ownerOptions = append(ownerOptions, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port.bound(), port.Port))
 			}
 		}
 		owner, startErr := startNativeOpen(nativeCtx, rt, spec.native, ownerNetwork, ownerOptions, ownerLabels(spec), sections.brokerImage)
@@ -3168,11 +3171,11 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 			// The host port and the box port can differ, so both are named: one is the URL to open,
 			// the other is what the dev server inside the box listens on.
 			ui.Warning(fmt.Sprintf("Could not publish box port %d", s.Port),
-				fmt.Sprintf("Host port %d is already in use.", s.Host),
+				fmt.Sprintf("Host port %d is already in use.", s.bound()),
 				"Free that port, then start the box again.")
 			continue
 		}
-		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.Host, s.Port))
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), s.Port))
 		published = append(published, s)
 	}
 	if len(published) > 0 {

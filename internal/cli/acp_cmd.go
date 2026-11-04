@@ -300,7 +300,15 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		// Admission above settled a.cfg.Egress to this session's network mode.
 		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, pj.Serve.Ports)
+		// The session holds the stable ports itself, whichever of its boxes is live.
+		a.acpServe = nil
+		if len(serve) > 0 && a.acpSupervise == nil {
+			a.acpServe = startACPServeRouter(serve)
+			defer a.acpServe.Close()
+			serve = a.acpServe.Ports()
+		}
 		ctrl := acpctl.New(a.cfg, tool, ctrlModel, ctrlEffort, repo, sel, presets, serve, acpHost())
+		a.acpServe.reportTo(ctrl)
 		if a.acpCapture != nil {
 			ctrl.LimitNetworkTargets(scope)
 		}
@@ -345,7 +353,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	var serveBinds map[int]int
+	if innerProcess {
+		if serveBinds, err = decodeServeBinds(os.Getenv(acpServeBindsEnv)); err != nil {
+			return 1, err
+		}
+	}
 	spec := box.RunSpec{
+		ServeBinds: serveBinds,
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true, NetworkClient: egress.ClientACP,
@@ -678,6 +693,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 		acpproxy.Trace("spawn: %s box for %s@%s", kind, child.Provider, child.Account)
 		a.acpRefresh.started(child)
 		a.acpBoxWait.started(child)
+		a.acpServe.setLive(child.ServeBinds)
 		rebalance(child.Provider)
 		return child, nil
 	}
@@ -1087,7 +1103,7 @@ func cleanACPChildEnv(env []string) []string {
 		switch key {
 		// The network capture is minted per child by this supervisor. An inherited
 		// one names a snapshot this session never admitted, so it never rides in.
-		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
+		case "COOP_EGRESS", "COOP_ACP_INNER", "COOP_ACP_SUPERVISOR", acpServeBindsEnv, "COOP_ACP_TARGET", "COOP_ACP_PRESET", "COOP_ACP_CIDFILE", "COOP_ACP_RESUME_STATE", "COOP_ACP_ACTIVITY_ROLE", "COOP_ACP_MCP_ID", acpTaskChannelEnv, acpHandshakeEnv, box.SessionMCPHandoffEnv, acpAccountBindingsEnv,
 			box.SessionNetworkCaptureEnv:
 			continue
 		}
@@ -1273,6 +1289,15 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	if holdPrompts {
 		env = append(env, acpHandshakeEnv+"=1")
 	}
+	var serveBinds map[int]int
+	if !holdPrompts { // a holding child starts no box, so it publishes nothing
+		if serveBinds, err = a.acpServe.allocate(); err != nil {
+			return nil, err
+		}
+		if len(serveBinds) > 0 {
+			env = append(env, acpServeBindsEnv+"="+encodeServeBinds(serveBinds))
+		}
+	}
 	cmd := exec.Command(self, inner...)
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, stderr
@@ -1358,7 +1383,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
-	child := &acpproxy.Child{In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts}
+	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts}
 	if mcpPath != "" {
 		var once sync.Once
 		var servers []map[string]any

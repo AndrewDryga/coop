@@ -14,7 +14,16 @@ import (
 // publish arguments the runtime gets cannot disagree about whether a port reached the host.
 type servePublication struct {
 	Port, Host int
+	Bind       int // the host port this box binds when it is not Host: an editor session forwards Host to it
 	Published  bool
+}
+
+// bound is the host port this box actually publishes on.
+func (s servePublication) bound() int {
+	if s.Bind != 0 {
+		return s.Bind
+	}
+	return s.Host
 }
 
 type serviceLaunchState int
@@ -42,8 +51,9 @@ func servePublicationPlan(cfg *config.Config, spec RunSpec, free func(int) bool)
 	}
 	plan := make([]servePublication, 0, len(spec.servePorts))
 	for _, port := range spec.servePorts {
-		host := project.HostPort(spec.Repo, port)
-		plan = append(plan, servePublication{Port: port, Host: host, Published: free(host)})
+		s := servePublication{Port: port, Host: project.HostPort(spec.Repo, port), Bind: spec.ServeBinds[port]}
+		s.Published = free(s.bound())
+		plan = append(plan, s)
 	}
 	return plan
 }

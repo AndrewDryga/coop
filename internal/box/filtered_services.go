@@ -558,17 +558,18 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 	for _, port := range spec.servePorts {
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
-		published := free(host)
-		plan = append(plan, servePublication{Port: port, Host: host, Published: published})
-		if !published {
+		s := servePublication{Port: port, Host: host, Bind: spec.ServeBinds[port]}
+		s.Published = free(s.bound())
+		plan = append(plan, s)
+		if !s.Published {
 			// Both ports are named: one is the URL to open, the other is what the dev server
 			// inside the box listens on, and they can differ.
 			ui.Warning(fmt.Sprintf("Could not publish box port %d", port),
-				fmt.Sprintf("Host port %d is already in use.", host),
+				fmt.Sprintf("Host port %d is already in use.", s.bound()),
 				"Free that port, then start the box again.")
 			continue
 		}
-		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", host, port))
+		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), port))
 		urls = append(urls, fmt.Sprintf("  http://localhost:%d → box port %d", host, port))
 	}
 	if len(urls) > 0 {

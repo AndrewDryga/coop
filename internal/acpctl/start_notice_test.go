@@ -223,3 +223,15 @@ func TestACPServicesReachLaterThreads(t *testing.T) {
 		t.Fatalf("a later thread must list the services, got %q", second)
 	}
 }
+
+// A port something else holds is said plainly and carries no link, because a link would open that
+// other program. The port beside it keeps its own.
+func TestStartNoticeSaysWhenAPortIsHeldElsewhere(t *testing.T) {
+	text := startNoticeText([]ServePort{{Box: 4000, Host: 43659, Taken: true}, {Box: 9091, Host: 28617}}, nil, nil, nil)
+	if strings.Contains(text, "(http://localhost:43659)") || !strings.Contains(text, "in use by another program") {
+		t.Errorf("a held port must carry no link:\n%s", text)
+	}
+	if !strings.Contains(text, "[localhost:28617](http://localhost:28617)") {
+		t.Errorf("a held port took the other's link with it:\n%s", text)
+	}
+}

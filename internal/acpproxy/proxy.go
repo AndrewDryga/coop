@@ -43,10 +43,12 @@ type Child struct {
 	Out       io.Reader
 	Stop      func()
 	SetActive func(bool) // optional host activity transition for parked warm boxes
-	Provider  string     // native session ids are scoped to this provider
-	Account   string     // successful authentication is scoped to this concrete credential too
-	Image     string     // the box image it started from, when known; a warm box is reused only on it
-	Policy    string     // the network policy fingerprint it proved, if filtered; a warm box is reused only under it
+	// ServeBinds maps a serve port to the private host port this box publishes it on.
+	ServeBinds map[int]int
+	Provider   string // native session ids are scoped to this provider
+	Account    string // successful authentication is scoped to this concrete credential too
+	Image      string // the box image it started from, when known; a warm box is reused only on it
+	Policy     string // the network policy fingerprint it proved, if filtered; a warm box is reused only under it
 	// HoldPrompts marks a child that only answers the editor's handshake, because the box it should
 	// run in is not ready. Everything else reaches it, but no prompt does, so no turn ever runs here:
 	// the proxy holds each one until Restarter.MoveOffHolding replaces the child.

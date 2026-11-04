@@ -13,7 +13,10 @@ import (
 
 // ServePort is one project port the box publishes: Box is what the dev server listens on inside the
 // box, Host the stable localhost port a browser on this machine opens it at.
-type ServePort struct{ Box, Host int }
+type ServePort struct {
+	Box, Host int
+	Taken     bool // something else holds Host, so a link would not reach the box
+}
 
 // ServiceLink is one published port of a project service: the Compose service's name, the scheme its
 // compose file declares (http unless a coop.service.scheme label says otherwise) and the stable
@@ -44,6 +47,13 @@ const maxNamedAllowances = 5
 func (c *Control) SetServices(links []ServiceLink) {
 	c.mu.Lock()
 	c.services = slices.Clone(links)
+	c.mu.Unlock()
+}
+
+// SetServePorts records the stable ports' state for every later thread's start message.
+func (c *Control) SetServePorts(ports []ServePort) {
+	c.mu.Lock()
+	c.serve = slices.Clone(ports)
 	c.mu.Unlock()
 }
 
@@ -135,6 +145,10 @@ func startNoticeText(ports []ServePort, services []ServiceLink, network *Network
 		}
 		lines := []string{"**" + title + "**", ""}
 		for _, p := range ports {
+			if p.Taken {
+				lines = append(lines, fmt.Sprintf("- Port %d: localhost:%d is in use by another program on this computer, so it does not reach this box. Coop takes it once it is free.", p.Box, p.Host))
+				continue
+			}
 			lines = append(lines, fmt.Sprintf("- Port %d → [localhost:%d](http://localhost:%d)", p.Box, p.Host, p.Host))
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))

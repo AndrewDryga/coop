@@ -31,7 +31,13 @@ covered on an OS-assigned `:0` port. A test that binds `project.HostPort(repo, �
 cross-package flake waiting to happen — and its "port busy → skip" guard is worse than the flake,
 because then the check quietly stops running.
 
+An editor session does not race its own boxes for these ports. Its supervisor holds each stable port
+and forwards it to the live box (`internal/cli/acp_serve.go`), and every box publishes on a private
+port the supervisor picks (`RunSpec.ServeBinds`), so a warm box holds nothing a person could reach and
+a switch keeps the same URL. Something else on the port is said in the thread with no link.
+
 ## Changelog
+- 2026-11-03 — an editor session now owns its stable ports and forwards them to its live box.
 - 2026-11-03 — added the filtered box's own decision, now the one its agent's note reads.
 - 2026-10-17 — replaced line-number citations with `hostPortBase`/`hostPortSpan`,
   `servePublicationPlan` and `appendPublish`; corrected the quoted stderr line to the current

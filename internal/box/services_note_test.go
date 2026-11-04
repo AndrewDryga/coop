@@ -202,3 +202,31 @@ func TestAppendInstructionNoteReachesEveryAgent(t *testing.T) {
 		t.Fatal("a missing instruction file must surface, not be skipped")
 	}
 }
+
+// An editor session forwards the stable port to its live box, so the box binds a private port and is
+// only told the stable address. Whether it can publish depends on the private port alone.
+func TestServeBindSeparatesWhatABoxBindsFromItsAddress(t *testing.T) {
+	cfg := &config.Config{Egress: "open"}
+	spec := RunSpec{Repo: "/tmp/serve-plan", Serve: true, servePorts: []int{3000}, ServeBinds: map[int]int{3000: 41234}}
+	var probed []int
+	plan := servePublicationPlan(cfg, spec, func(host int) bool { probed = append(probed, host); return true })
+	if len(plan) != 1 || !plan[0].Published || len(probed) != 1 || probed[0] != 41234 {
+		t.Fatalf("plan = %+v after probing %v, want only the private port probed", plan, probed)
+	}
+	stable := plan[0].Host
+	spec.servePlan = plan
+	joined := strings.Join(appendPublish(nil, cfg, spec, nil), " ")
+	if !strings.Contains(joined, "-p 127.0.0.1:41234:3000") || strings.Contains(joined, fmt.Sprintf("127.0.0.1:%d:", stable)) {
+		t.Fatalf("publish args = %s, want the private port bound and the stable one left alone", joined)
+	}
+	if !strings.Contains(joined, fmt.Sprintf("COOP_SERVE_URL_3000=http://localhost:%d", stable)) {
+		t.Fatalf("publish args = %s, want the stable URL announced", joined)
+	}
+	options, filtered, env := filteredPublish(cfg, spec, func(int) bool { return true })
+	if strings.Join(options, " ") != "-p 127.0.0.1:41234:3000" || filtered[0].Host != stable {
+		t.Fatalf("filtered publish = %v, %+v", options, filtered)
+	}
+	if !strings.Contains(strings.Join(env, " "), fmt.Sprintf("COOP_SERVE_URL_3000=http://localhost:%d", stable)) {
+		t.Fatalf("filtered env = %v", env)
+	}
+}

@@ -64,6 +64,7 @@ type app struct {
 	acpCapture          *box.CapturedEgress                          // an ACP supervisor's startup policy; children get a reference to it or a refresh's (currentACPCapture)
 	acpAdmission        acpAdmit                                     // a filtered `coop acp` supervisor's startup admission, run again by its refresh
 	acpRefresh          *acpNetworkRefresh                           // a filtered `coop acp` session's move onto newly approved policies; set before serving
+	acpServe            *acpServeRouter                              // an editor session's stable serve ports, forwarded to its live box
 	acpBoxWait          *acpBoxWait                                  // a filtered editor session's wait for a project box that cannot start yet; set before serving
 	acpPeers            []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
 	acpNetworkTargets   []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
