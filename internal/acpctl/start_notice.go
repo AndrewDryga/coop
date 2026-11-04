@@ -151,8 +151,11 @@ func (c *Control) startNoticeFor(line []byte) []byte {
 	}
 	text := startNoticeText(c.serve, c.services, c.network, problems)
 	if c.boxWait != "" {
-		// The ports and services above belong to a box that is not running yet, but they will be right
-		// once it is. What the person has to do comes first.
+		// What the person has to do comes first. The rest describes a box that is not running yet, and
+		// it says so: a link posted as live would open nothing.
+		if text != "" {
+			text = "Nothing is published and no project rules apply yet. Once the box is running:\n\n" + text
+		}
 		text = strings.TrimSuffix(c.boxWait+"\n\n"+text, "\n\n")
 	}
 	c.mu.Unlock()
