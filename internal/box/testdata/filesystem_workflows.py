@@ -19,14 +19,24 @@ def denied(call, *args):
 
 for name in [".env", ".ENV", "a-secret-alias", "private/key", "PRIVATE/KEY", "Café", "CAFE\u0301", "hidden-link.pem"]:
     denied(open, name)
-    denied(os.stat, name)
     denied(os.listxattr, name)
+    denied(os.getxattr, name, "user.coop")
     denied(os.unlink, name)
     denied(os.rename, name, "moved-secret")
     denied(os.link, name, "linked-secret")
     denied(os.chmod, name, 0o600)
     denied(os.utime, name)
 denied(os.readlink, "hidden-link.pem")
+
+# Stat of a hidden file succeeds, as tools that stat every listed name need. Bytes stay denied above,
+# following a hidden link stays denied, and a hidden directory keeps itself and its contents.
+for name, size in [(".env", 13), (".ENV", 13), ("a-secret-alias", 13), ("Café", 21), ("CAFE\u0301", 21)]:
+    assert os.stat(name).st_size == size, name
+assert os.lstat("hidden-link.pem").st_size == len("public")
+for name in ["hidden-link.pem", "private", "PRIVATE", "private/key", "PRIVATE/KEY"]:
+    denied(os.stat, name)
+for name in ["private", "private/key"]:
+    denied(os.lstat, name)
 denied(os.rename, "private", "moved-private")
 denied(os.rename, "public", ".env")
 denied(os.link, "public", "private/new")
@@ -70,4 +80,4 @@ assert open("public").read() == "edited"
 assert libc.renameat2(-100, b"public", -100, b"public-link", 2) == 0
 os.mkdir("public-dir")
 os.rename("public-dir", "public-moved")
-print("case, Unicode, metadata, mutation, private mappings and public workflows passed")
+print("case, Unicode, stat, metadata, mutation, private mappings and public workflows passed")

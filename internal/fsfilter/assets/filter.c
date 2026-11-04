@@ -15,7 +15,7 @@ typedef unsigned long long u64;
 #define TYPE(name, val) val *name
 
 struct super_block { unsigned int s_dev; } CORE;
-struct inode { struct super_block *i_sb; unsigned long i_ino; } CORE;
+struct inode { unsigned short i_mode; struct super_block *i_sb; unsigned long i_ino; } CORE;
 struct qstr { const unsigned char *name; } CORE;
 struct dentry { struct inode *d_inode; struct dentry *d_parent; struct qstr d_name; } CORE;
 struct path { struct dentry *dentry; } CORE;
@@ -43,6 +43,7 @@ extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksym
 #define GRANTED 16
 #define WRITE 1
 #define MOVE 2
+#define STAT 4
 #define MAX_DEPTH 128
 /* The Unicode compiler proves every stage expands at most two runes per input
  * byte. Components are at most 255 bytes; keep task storage below 8 KiB. */
@@ -115,7 +116,10 @@ INLINE int denied(struct dentry *d, int operation, int reason) {
     return 0;
 }
 
+/* Stat of a hidden leaf returns metadata, never bytes. Its ancestors still apply,
+ * so a hidden directory keeps everything below it. */
 INLINE int restricted(u32 flags, int operation, int leaf) {
+    if (leaf && operation == STAT) return 0;
     return (flags & SECRET) || (leaf && (((flags & READONLY) && operation) || ((flags & CUSTODY) && (operation & MOVE))));
 }
 
@@ -315,7 +319,7 @@ static long walk_step(u32 i, void *data) {
         if (inode) { object.ino = inode->i_ino; object.dev = inode->i_sb->s_dev; }
         struct label *label = inode ? lookup(c->objects, &object) : 0;
         if (label) {
-            if (i == 0 && (label->flags & GRANTED)) { c->result = c->operation ? -1 : 2; return 1; }
+            if (i == 0 && (label->flags & GRANTED)) { c->result = (c->operation & (WRITE|MOVE)) ? -1 : 2; return 1; }
             if (restricted(label->flags, c->operation, i == 0)) { c->result = -1; return 1; }
             if (label->flags & ROOT) { c->root = label->root; c->depth = i; return 1; }
         }
@@ -407,7 +411,12 @@ HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE, policy); }
 HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE, policy); }
 HOOK(inode_follow_link, 3) { return access((void *)ctx[0], 0, policy); }
 HOOK(inode_readlink, 1) { return access((void *)ctx[0], 0, policy); }
-HOOK(inode_getattr, 1) { struct path *p = (void *)ctx[0]; return access(p->dentry, 0, policy); }
+/* Tools stat every name readdir lists, and readdir already shows the name. A hidden file's size
+ * and times are the price of not breaking them. A directory keeps the read rule. */
+HOOK(inode_getattr, 1) {
+    struct path *p = (void *)ctx[0]; struct inode *inode = p->dentry->d_inode;
+    return access(p->dentry, inode && (inode->i_mode & 0170000) != 0040000 ? STAT : 0, policy);
+}
 HOOK(inode_getxattr, 2) { return access((void *)ctx[0], 0, policy); }
 HOOK(inode_listxattr, 1) { return access((void *)ctx[0], 0, policy); }
 HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE, policy); }

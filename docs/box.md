@@ -27,6 +27,15 @@ letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Publi
 writable, and ordinary public hardlinks work. `.coopignore` stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.
 
+`stat` still works on a hidden file, so `ls -l`, `find` and tools that list a folder keep working.
+It shows what `ls -l` shows: the file's real size, times, mode, owner and link count. The contents,
+extended attributes and a hidden symlink's target stay denied. A hidden directory and everything
+inside it also deny `stat`, so `ls -l` reports an error for that one entry.
+
+A tool that opens the hidden file still fails. `terraform validate` works beside a `prod.tfvars`, but
+Terraform opens `terraform.tfvars` and `*.auto.tfvars` itself, `terraform fmt` opens every `.tfvars`,
+and a hidden directory stops it reading the folder. The mount backend avoids this with its empty files.
+
 Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
 hooks and cgroup configuration. Launches do not test the protection itself. After updating Docker
 or OrbStack, run `coop doctor`: it tries to read test secrets in a real box, including through
@@ -37,8 +46,8 @@ uses cgroup v2 with the `cgroupfs` driver. Other filesystems, unsupported VM ker
 container options keep the existing mount backend. See [filesystem protection](#filesystem-protection-contract)
 for the host-editing contract.
 
-With the mount backend, Coop covers a secret file with a read-only empty file and a secret
-directory with a read-only empty directory. On a case-insensitive disk, it also covers the
+With the mount backend, Coop covers a secret file with a read-only empty file, so `stat` shows
+the cover's size and times instead, and a secret directory with a read-only empty directory. On a case-insensitive disk, it also covers the
 uppercase and lowercase spellings of a hidden filename with up to 11 letters, and every spelling
 of `.coopignore`.
 

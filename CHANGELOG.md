@@ -12,6 +12,9 @@
   them, so the box starts and an open editor session moves by itself. The thread now points there too, instead of
   asking you to paste rules.
 
+- **`ls -l` and `find` work in a folder with a hidden file under eBPF protection.** `stat` on a hidden file now
+  succeeds and shows its real size and times. Its contents stay denied, and hidden directories are unchanged.
+
 - **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
   current links, and its first message shows only what you typed instead of Coop's carried context.
 

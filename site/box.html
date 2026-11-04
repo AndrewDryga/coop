@@ -108,6 +108,13 @@ Secret reads and changes return <code>Operation not permitted</code>, including 
 letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Public files remain
 writable, and ordinary public hardlinks work. <code>.coopignore</code> stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.</p>
+<p><code>stat</code> still works on a hidden file, so <code>ls -l</code>, <code>find</code> and tools that list a folder keep working.
+It shows what <code>ls -l</code> shows: the file&#39;s real size, times, mode, owner and link count. The contents,
+extended attributes and a hidden symlink&#39;s target stay denied. A hidden directory and everything
+inside it also deny <code>stat</code>, so <code>ls -l</code> reports an error for that one entry.</p>
+<p>A tool that opens the hidden file still fails. <code>terraform validate</code> works beside a <code>prod.tfvars</code>, but
+Terraform opens <code>terraform.tfvars</code> and <code>*.auto.tfvars</code> itself, <code>terraform fmt</code> opens every <code>.tfvars</code>,
+and a hidden directory stops it reading the folder. The mount backend avoids this with its empty files.</p>
 <p>Coop selects this backend automatically for APFS projects when the Docker VM supports its BPF
 hooks and cgroup configuration. Launches do not test the protection itself. After updating Docker
 or OrbStack, run <code>coop doctor</code>: it tries to read test secrets in a real box, including through
@@ -117,8 +124,8 @@ packages, filesystem changes or kernel settings are needed. The initial supporte
 uses cgroup v2 with the <code>cgroupfs</code> driver. Other filesystems, unsupported VM kernels and incompatible
 container options keep the existing mount backend. See <a href="#filesystem-protection-contract">filesystem protection</a>
 for the host-editing contract.</p>
-<p>With the mount backend, Coop covers a secret file with a read-only empty file and a secret
-directory with a read-only empty directory. On a case-insensitive disk, it also covers the
+<p>With the mount backend, Coop covers a secret file with a read-only empty file, so <code>stat</code> shows
+the cover&#39;s size and times instead, and a secret directory with a read-only empty directory. On a case-insensitive disk, it also covers the
 uppercase and lowercase spellings of a hidden filename with up to 11 letters, and every spelling
 of <code>.coopignore</code>.</p>
 <p>A longer filename, or a project with too many spellings, can exceed the mount limit. Coop then

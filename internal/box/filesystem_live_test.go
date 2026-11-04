@@ -267,6 +267,7 @@ for p in ['/workspace/.env','/workspace/.ENV']:
  else: raise AssertionError(p+' exposed')
 for p in ['/workspace/tls.key','/workspace/TLS.KEY']:
  assert open(p).read()=='inert granted fixture'
+ assert __import__('os').stat(p).st_size==len('inert granted fixture')
 if sys.argv[1]=='granted':
  assert open('/key').read()=='inert granted fixture'
  try: open('/key','w')

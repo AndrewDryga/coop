@@ -3,7 +3,7 @@ name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
 sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 ## Selection and policy
@@ -95,8 +95,16 @@ requires new admission. See docs/box.md for the user contract.
 ## Enforcement and lifecycle
 
 The packaged loader validates 27 LSM hook signatures before loading. Global attachments apply
-only to the frozen cgroup parent and its descendants. Secret reads, metadata and endpoint
-mutations are denied; .coopignore is readable but cannot be changed, including through aliases.
+only to the frozen cgroup parent and its descendants. Secret reads, xattr/ACL/`fileattr` metadata
+and endpoint mutations are denied; .coopignore is readable but cannot be changed, including through
+aliases. `inode_getattr` alone lets a hidden non-directory leaf through (operation `STAT`), because
+tools stat every listed name and Terraform refuses a module folder otherwise. An LSM hook can only
+allow or deny, so it cannot report the mount backend's empty-file size: stat shows the real size,
+times, mode, owner and link count. Hidden ancestors, hidden directories, a dead owner and a missing
+normalizer still deny stat. `inode_file_getattr` (lsattr) keeps the read rule; stat never calls it.
+Terraform v1.17 shows stat alone is not parity with mount covers: it stats `terraform.tfvars` and
+then opens it, so a denied stat used to fail the folder scan and a denied open now fails the load.
+Named `.tfvars` validate; auto-loaded ones, `fmt` and a hidden directory beside the `.tf` still fail.
 Private writable mappings of read-only policy are allowed because they cannot change host bytes.
 
 The same C source builds the guards and one fresh filename-normalization EXT program per
@@ -215,6 +223,8 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-04 — stat of a hidden file succeeds under eBPF (blitz-infra Terraform refused module folders
+  holding `terraform.tfvars`); reverified the hook list and `access()` against `filter.c`.
 - 2026-11-03 — a failed helper build shows the failed step's output instead of the BuildKit footer
   (fixture: the real November 2 log). Checked the card's build paragraph against `filesystem.go`
   and `fsimage`; other sections were not reverified.
