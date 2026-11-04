@@ -919,3 +919,40 @@ func TestPinnedDefaultHoldsInTheNativeAuthority(t *testing.T) {
 		t.Fatalf("the pin reached the file: %q", got)
 	}
 }
+
+func TestSyncServiceFollowsLinks(t *testing.T) {
+	root := t.TempDir()
+	synced := filepath.Join(root, "Dropbox", "Backup", ".config")
+	if err := os.MkdirAll(synced, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "home-config")
+	if err := os.Symlink(synced, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ path, want string }{
+		{link, "Dropbox"},
+		{filepath.Join(root, "Dropbox", "not-yet-made"), "Dropbox"},
+		{"/Users/a/Library/Mobile Documents/com~apple~CloudDocs/coop", "iCloud Drive"},
+		{"/Users/a/Library/CloudStorage/GoogleDrive-a@b.c/My Drive/coop", "Google Drive"},
+		{"/Users/a/OneDrive - Work/coop", "OneDrive"},
+		{filepath.Join(root, "plain"), ""},
+		{"/Users/a/projects/dropboxer/coop", ""},
+	} {
+		if got := SyncService(tc.path); got != tc.want {
+			t.Errorf("SyncService(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestRootDirHonorsCoopHome(t *testing.T) {
+	home := filepath.Join(os.TempDir(), "coop-home-test")
+	t.Setenv("COOP_HOME", home)
+	if got, err := RootDir(); err != nil || got != home {
+		t.Errorf("RootDir = (%q, %v), want %q", got, err, home)
+	}
+	t.Setenv("COOP_HOME", "relative/path")
+	if _, err := RootDir(); err == nil {
+		t.Error("a relative COOP_HOME was accepted")
+	}
+}

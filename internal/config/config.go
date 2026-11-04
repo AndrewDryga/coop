@@ -791,6 +791,15 @@ func within(dir, path string) bool {
 // XDG_CONFIG_HOME (internal/testutil/teststate does; see CheckTestFolder): the default is the
 // developer's real one, and tests that loaded it read the real settings and wrote run files into it.
 func RootDir() (string, error) {
+	if home := os.Getenv("COOP_HOME"); home != "" {
+		if !filepath.IsAbs(home) {
+			return "", fmt.Errorf("COOP_HOME must be an absolute path, not %q", home)
+		}
+		if err := CheckTestFolder("COOP_HOME", home); err != nil {
+			return "", err
+		}
+		return filepath.Clean(home), nil
+	}
 	if err := CheckTestFolder("XDG_CONFIG_HOME", os.Getenv("XDG_CONFIG_HOME")); err != nil {
 		return "", err
 	}
@@ -1288,4 +1297,28 @@ func (c *Config) Clone() *Config {
 	out.activeEfforts = maps.Clone(c.activeEfforts)
 	out.targetEfforts = maps.Clone(c.targetEfforts)
 	return &out
+}
+
+// SyncService names the file-sync service whose folder holds path, after following links, or "" when
+// none does. Sign-ins under one travel to its cloud and other machines, and its conflicts can move or
+// remove them. Coop never moves that data itself; coop doctor names the problem and the way out.
+func SyncService(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = path
+	}
+	for _, part := range strings.Split(filepath.ToSlash(resolved), "/") {
+		lower := strings.ToLower(part)
+		switch {
+		case lower == "dropbox" || strings.HasPrefix(lower, "dropbox ("):
+			return "Dropbox"
+		case lower == "mobile documents" || lower == "icloud drive" || lower == "icloud~":
+			return "iCloud Drive"
+		case lower == "google drive" || strings.HasPrefix(lower, "googledrive"):
+			return "Google Drive"
+		case lower == "onedrive" || strings.HasPrefix(lower, "onedrive -") || strings.HasPrefix(lower, "onedrive-"):
+			return "OneDrive"
+		}
+	}
+	return ""
 }

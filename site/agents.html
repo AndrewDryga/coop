@@ -184,7 +184,7 @@ repositories separate does not protect those local files from the agent or limit
 spend with the provider.</p>
 <p>The provider folders Coop mounts do not give the agent access to another repository&#39;s provider
 files. Open networking still lets it send traffic to any destination. Use filtered networking
-to restrict destinations, or <code>COOP_EGRESS=offline</code> to turn networking off. Offline runs receive
+to restrict destinations, or <code>--egress offline</code> to turn networking off. Offline runs receive
 no provider credentials.</p>
 <p>Manage shared accounts on the host with <code>coop login</code> and <code>coop credentials … rm</code>. Do not use a
 provider&#39;s own login or logout command inside a coding box. If local authentication files no
@@ -418,8 +418,8 @@ the lead decides what to do.</p>
 lead&#39;s selected account. Other providers use their default account; <code>--peer</code> does not accept
 <code>@account</code> because one box selects one account per provider.</p>
 <p>Asking is optional and off by default. The lead decides whether it needs a second opinion and how
-to use the answer; routine work does not require one. Consultations default to <code>--fresh</code>, so each
-call gets an independent second opinion. Only the peers you name are available. co:op mounts the
+to use the answer; routine work does not require one. Each consultation asks for <code>--fresh</code>, an independent second
+opinion, or <code>--continue</code> to follow up on the last one. Only the peers you name are available. co:op mounts the
 selected providers&#39; repository homes writable, while reusable credentials stay outside the box.
 The run&#39;s broker authenticates their requests.</p>
 <p>Peer consultations need no extra service or protocol. Coop mounts a small helper and gives

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop doctor` warns when your sign-ins sit in a sync folder**, such as Dropbox, iCloud Drive, Google
+  Drive or OneDrive, following links. The new `COOP_HOME` moves Coop's settings folder on its own. Coop
+  never moves your files itself.
+
 - **A run warns when a saved approval outranks `COOP_EGRESS`.** `COOP_EGRESS=offline` in a project with
   approved network rules ran filtered, with no word about it, and could reach those sites. It still
   does, as documented, but it now says so and names `--egress offline`. The docs no longer offer
