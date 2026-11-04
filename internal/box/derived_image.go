@@ -271,6 +271,16 @@ func FilteredImageIdentity(ctx context.Context, rt runtime.Runtime, capture *Cap
 		return "", err
 	}
 	defer docker.Close()
+	if capture.SessionID != "" {
+		policy, err := capture.Policy()
+		if err != nil {
+			return "", err
+		}
+		q.Candidate, _, err = sessionLaunchQualification(ctx, docker, capture, policy, q.Candidate, "")
+		if err != nil {
+			return "", err
+		}
+	}
 	image := q.Candidate.ClientImage
 	if dfRel := filteredProjectDockerfile(capture.Project); dfRel != "" {
 		definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{
