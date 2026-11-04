@@ -3,7 +3,7 @@ name: native-credential-cutover
 description: existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
 subsystem: credentials
 sources: [internal/box/native_cutover.go, internal/box/account_authority.go, internal/box/native_writer_lock_test.go, internal/box/authority_mounts.go, internal/box/native_mount_paths_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go, internal/agent/grok.go, internal/agent/gemini.go]
-updated: 2026-10-20
+updated: 2026-11-04
 ---
 
 `fenceLegacyAccount` holds the account lease, inventories existing credential mounts and locks
@@ -40,6 +40,12 @@ failed commands or cancellation return no partial public inventory. Read-only an
 containers remain visible. `BindMount.Stopped` is true only when every observed user of a
 source is created/exited; any live observation prevents that conclusion across batches.
 
+Docker is shared, so the inventory and the label check around it (`listDockerPatiently`) ask up to
+three times within 45 seconds. A pass can fail on load alone or on a container removed between `ps`
+and `inspect`. A launch runs several of these checks, and a slow listing delays every one of them.
+Only a complete pass counts. If none completes the launch refuses, and a failed listing is never
+read as an empty one. `safeModelProbeCause` finds that refusal by its text, so change them together.
+
 An unrelated stopped container may name a removed temporary directory. Only confirmed
 created/exited sources may resolve missing tails from their nearest existing ancestor.
 `resolveAuthorityPath` refuses existing dangling aliases before ascending; native checks use
@@ -61,6 +67,8 @@ asking which runtime runs: on a host without that view, the mapping can only ref
 running one with such a source still refuses.
 
 ## Changelog
+- 2026-11-04 — a slow or churning Docker no longer refuses a launch after 5 seconds; both refusals
+  say what happened in plain words. 47 containers list in 0.15 seconds on a quiet host.
 - 2026-11-03 — a stopped container's `/mnt/mac/...` or `/host_mnt/...` source is mapped to the
   host path before the overlap check; it used to pass as an unrelated missing path. `/proc` was
   considered and kept refused: its `/proc/<pid>/root` links reach the VM's view of host folders.

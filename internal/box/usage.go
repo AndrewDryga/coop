@@ -210,15 +210,17 @@ func checkCredentialContainers(ctx context.Context, rt runtime.Runtime, provider
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	label := "coop.credential.writer"
 	if exclusive {
 		label = "coop.credential." + provider
 	}
-	containers, err := rt.ContainersByLabel(ctx, label, key)
+	var containers []runtime.Container
+	err := listDockerPatiently(ctx, func(ctx context.Context) (err error) {
+		containers, err = rt.ContainersByLabel(ctx, label, key)
+		return err
+	})
 	if err != nil {
-		return errors.New("credential runtime ownership is unavailable — try again")
+		return err
 	}
 	if len(containers) > 0 {
 		return errors.New("credential is busy — its previous runtime has not exited")

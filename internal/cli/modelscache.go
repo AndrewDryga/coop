@@ -337,7 +337,7 @@ func safeModelProbeCause(target agents.Target, text string) string {
 		return "Docker is unavailable."
 	case strings.Contains(text, "encrypted cache has no recorded storage identity"):
 		return "The selected account needs host recovery; its legacy encrypted cache is preserved."
-	case strings.Contains(text, "legacy writer inventory is unavailable"):
+	case strings.Contains(text, "could not check which containers hold this saved sign-in"):
 		return "Docker could not verify existing credential mounts; retry when Docker is ready."
 	case strings.Contains(text, "credential file must be owner-private"), strings.Contains(text, "credential directory must be owner-private"):
 		return "Credential storage failed a safety check; preserve it for host recovery."

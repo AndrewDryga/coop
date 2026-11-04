@@ -1,18 +1,27 @@
 package box
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func legacyMountRuntime(t *testing.T, source, status string) runtime.Runtime {
+	t.Helper()
+	return legacyMountRuntimeWith(t, source, status, mountListingHooks{})
+}
+
+func legacyMountRuntimeWith(t *testing.T, source, status string, hooks mountListingHooks) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
 	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
@@ -25,8 +34,8 @@ func legacyMountRuntime(t *testing.T, source, status string) runtime.Runtime {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "docker")
-	script := "#!/bin/sh\ncase \"$*\" in\n*\"ps -q\"*) printf '%s\\n' '" + id + "' ;;\n" +
-		"*\"inspect --type container --format\"*) printf '%s\\n' " + strconv.Quote(string(raw)) + " ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n*\"ps -q\"*) echo pass >> \"$0.passes\"\n" + hooks.ps + "\nprintf '%s\\n' '" + id + "' ;;\n" +
+		"*\"inspect --type container --format\"*) " + hooks.inspect + "\nprintf '%s\\n' " + strconv.Quote(string(raw)) + " ;;\nesac\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +220,160 @@ func TestHostlessKernelMountNeedsAHostWithoutSys(t *testing.T) {
 			hostLstat = test.lstat
 			if got := hostlessKernelMount(test.source); got != test.hostlessOK {
 				t.Fatalf("hostlessKernelMount(%q) = %v, want %v", test.source, got, test.hostlessOK)
+			}
+		})
+	}
+}
+
+// mountListingHooks run inside the fixture's docker before it answers `ps` or `inspect`. A hook that
+// hangs execs its sleep, so the client's kill leaves nothing holding the fixture's output open.
+type mountListingHooks struct{ ps, inspect string }
+
+// quickDockerListing shortens the patient listing's limits for a test that expects to exhaust them.
+func quickDockerListing(t *testing.T) {
+	t.Helper()
+	attempt, limit, pause := dockerListingAttemptLimit, dockerListingLimit, dockerListingPause
+	t.Cleanup(func() { dockerListingAttemptLimit, dockerListingLimit, dockerListingPause = attempt, limit, pause })
+	dockerListingAttemptLimit, dockerListingLimit, dockerListingPause = 300*time.Millisecond, 2*time.Second, 10*time.Millisecond
+}
+
+// listingPasses is how many times the fixture's docker was asked to list containers.
+func listingPasses(t *testing.T, rt runtime.Runtime) int {
+	t.Helper()
+	data, err := os.ReadFile(rt.Name + ".passes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(data), "\n")
+}
+
+// The launch of 2026-11-04 stopped on a host with 47 containers and other sessions running tests.
+// The listing takes 0.15 seconds there when the host is quiet, so this is load, not a real problem.
+func TestLegacyMountListingSurvivesASlowDocker(t *testing.T) {
+	home, unrelated := t.TempDir(), t.TempDir()
+	rt := legacyMountRuntimeWith(t, unrelated, "running", mountListingHooks{ps: "sleep 5.5"})
+	start := time.Now()
+	if err := checkLegacyMountPaths(t.Context(), rt, false, home); err != nil {
+		t.Fatalf("slow listing refused: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 5*time.Second {
+		t.Fatalf("listing took %v, so the test did not pass the old limit", elapsed)
+	}
+	if passes := listingPasses(t, rt); passes != 1 {
+		t.Fatalf("a slow listing that finished took %d passes", passes)
+	}
+}
+
+// A container removed between `ps` and `inspect` fails the pass. The next pass decides from scratch,
+// so a sign-in folder it finds mounted is still refused.
+func TestLegacyMountListingAsksAgainWhenContainersChurn(t *testing.T) {
+	quickDockerListing(t)
+	failOnce := `[ -e "$0.churned" ] || { : > "$0.churned"; echo 'No such container' >&2; exit 1; }`
+	home, unrelated := t.TempDir(), t.TempDir()
+	rt := legacyMountRuntimeWith(t, unrelated, "running", mountListingHooks{inspect: failOnce})
+	if err := checkLegacyMountPaths(t.Context(), rt, false, home); err != nil {
+		t.Fatalf("churn refused the launch: %v", err)
+	}
+	if passes := listingPasses(t, rt); passes != 2 {
+		t.Fatalf("passes = %d, want 2", passes)
+	}
+	rt = legacyMountRuntimeWith(t, home, "exited", mountListingHooks{inspect: failOnce})
+	err := checkLegacyMountPaths(t.Context(), rt, false, home)
+	if err == nil || !strings.Contains(err.Error(), "is mounted by a running or restartable container") {
+		t.Fatalf("second pass did not judge the mount: %v", err)
+	}
+}
+
+// The source would pass the check, so a listing taken for empty or partial would let the launch go.
+func TestLegacyMountListingRefusesWhenDockerCannotAnswer(t *testing.T) {
+	const secret = "SECRET-CANARY-daemon-error"
+	for _, test := range []struct {
+		name, ps, headline, advice string
+	}{
+		{"never answers", "exec sleep 300", "Docker did not answer in time", "Try again."},
+		{"fails", "echo " + secret + " >&2; exit 1", "Docker could not list its containers", "Try again when Docker is ready."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			quickDockerListing(t)
+			rt := legacyMountRuntimeWith(t, t.TempDir(), "running", mountListingHooks{ps: test.ps})
+			err := checkLegacyMountPaths(t.Context(), rt, false, t.TempDir())
+			var refusal *ui.UsageError
+			if !errors.As(err, &refusal) {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			want := "Coop could not check which containers hold this saved sign-in.\nNothing was changed. " + test.advice
+			if refusal.Headline != test.headline || refusal.Cause != want || refusal.ExitCode != 1 {
+				t.Fatalf("refusal = %+v", refusal)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("refusal carries Docker's error: %v", err)
+			}
+			if passes := listingPasses(t, rt); passes != dockerListingAttempts {
+				t.Fatalf("passes = %d, want %d", passes, dockerListingAttempts)
+			}
+		})
+	}
+}
+
+func TestDockerListingKeepsItsOverallLimit(t *testing.T) {
+	quickDockerListing(t)
+	dockerListingAttemptLimit, dockerListingLimit = time.Minute, 200*time.Millisecond
+	rt := legacyMountRuntimeWith(t, t.TempDir(), "running", mountListingHooks{ps: "exec sleep 300"})
+	err := checkLegacyMountPaths(t.Context(), rt, false, t.TempDir())
+	var refusal *ui.UsageError
+	if !errors.As(err, &refusal) || refusal.Headline != "Docker did not answer in time" {
+		t.Fatalf("err = %v", err)
+	}
+	if passes := listingPasses(t, rt); passes != 1 {
+		t.Fatalf("passes = %d after the overall limit, want 1", passes)
+	}
+}
+
+func TestDockerListingStopsWhenTheCallerCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	calls := 0
+	err := listDockerPatiently(ctx, func(ctx context.Context) error {
+		calls++
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("err = %v after %d calls", err, calls)
+	}
+}
+
+// The account's own runtime check runs first on the same launch, so it needs the same patience.
+func TestCredentialContainerCheckToleratesASlowDocker(t *testing.T) {
+	const failOnce = `[ -e "$0.churned" ] || { : > "$0.churned"; exit 1; }`
+	for _, test := range []struct {
+		name, ps, headline string
+		busy               bool
+	}{
+		{name: "asks again after a failed pass", ps: failOnce},
+		{name: "a container that holds it is still found", ps: failOnce + "; printf '%s\\n' abc", busy: true},
+		{name: "never answers", ps: "exec sleep 300", headline: "Docker did not answer in time"},
+		{name: "fails", ps: "exit 1", headline: "Docker could not list its containers"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			quickDockerListing(t)
+			path := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\ncase \"$*\" in\n*\"ps -q\"*) " + test.ps + " ;;\n*inspect*) printf '%s\\n' '{\"k\":\"v\"}' ;;\nesac\n"
+			if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			err := checkCredentialContainers(t.Context(), runtime.Runtime{Name: path}, "claude", "key", true)
+			var refusal *ui.UsageError
+			switch {
+			case test.headline != "":
+				if !errors.As(err, &refusal) || refusal.Headline != test.headline {
+					t.Fatalf("err = %v, want %q", err, test.headline)
+				}
+			case test.busy:
+				if err == nil || !strings.Contains(err.Error(), "credential is busy") {
+					t.Fatalf("err = %v, want busy", err)
+				}
+			case err != nil:
+				t.Fatalf("err = %v", err)
 			}
 		})
 	}
