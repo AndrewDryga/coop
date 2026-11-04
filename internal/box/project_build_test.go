@@ -16,6 +16,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
@@ -113,6 +114,13 @@ func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
 		}, false},
 		{"ignored build output", func() { write("build/out.bin", "generated\n") }, false},
 		{"a shadowed secret", func() { write(".env", "SECRET=2\n") }, false},
+		{"the project's settings", func() { write(".agent/project.yaml", "box:\n  egress: filtered\n") }, false},
+		{"the markers an approval leaves", func() {
+			write(networkstate.ProjectApprovalMarker, "marker\n")
+			write(serviceApprovalMarker, "marker\n")
+		}, false},
+		{"a file beside the settings", func() { write(".agent/setup.sh", "true\n") }, true},
+		{"another project's settings in this tree", func() { write("web/.agent/project.yaml", "box:\n") }, true},
 		{"a file's bytes", func() { write("main.go", "package main // edited\n") }, true},
 		{"a file's mode", func() {
 			if err := os.Chmod(filepath.Join(repo, "main.go"), 0o755); err != nil {

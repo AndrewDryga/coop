@@ -476,6 +476,9 @@ func TestOnlyTheApprovedFilesRebuildByThemselves(t *testing.T) {
 			x.write(".agent/Dockerfile", reusableDockerfile+"RUN curl https://example.com\n")
 		}},
 		"a new file in the context": {change: func(x *approvedRebuildFixture) { x.write("planted.sh", "curl https://example.com\n") }},
+		"a new file beside the project's settings": {change: func(x *approvedRebuildFixture) {
+			x.write(".agent/setup.sh", "curl https://example.com\n")
+		}},
 		"a file's mode": {change: func(x *approvedRebuildFixture) {
 			if err := os.Chmod(filepath.Join(x.repo, "main.go"), 0o755); err != nil {
 				x.t.Fatal(err)
@@ -492,7 +495,6 @@ func TestOnlyTheApprovedFilesRebuildByThemselves(t *testing.T) {
 		"which Dockerfile builds": {
 			prepare: func(x *approvedRebuildFixture) {
 				x.write(alternate, reusableDockerfile+"RUN curl https://example.com\n")
-				x.write(".dockerignore", ".agent/project.yaml\n")
 			},
 			change: func(x *approvedRebuildFixture) {
 				before := projectContextDigest(x.t, x.repo)
@@ -528,6 +530,131 @@ func TestOnlyTheApprovedFilesRebuildByThemselves(t *testing.T) {
 				t.Fatalf("the builder ran for files nobody approved: %d builds, want %d", x.builds(), before)
 			}
 		})
+	}
+}
+
+// What a thread asks for: add a network rule, approve it and carry on. With no ignore file, whatever
+// the Dockerfile copies, the person's build stands, and the next box runs the image they reviewed. No
+// snapshot holds the edit, so `COPY . .` could not bake it in either.
+func TestANetworkRuleEditAsksForNoProjectBuild(t *testing.T) {
+	for name, dockerfile := range map[string]string{
+		"copying everything": "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\nCOPY . /opt/app/\n",
+		"copying one file":   reusableDockerfile,
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			x.write(".agent/Dockerfile", dockerfile)
+			x.write(".agent/project.yaml", "box:\n  egress: filtered\n")
+			x.explicitBuild()
+			builds := x.builds()
+
+			x.write(".agent/project.yaml", "box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: \"docs.example.com\"}\n      protocol: tls\n      ports: [443]\n")
+			x.write(networkstate.ProjectApprovalMarker, "what coop approve leaves\n")
+			if err := x.readiness(); err != nil {
+				t.Fatalf("the edit asked for a build: %v", err)
+			}
+			image, _, err := filteredProjectImage(t.Context(), x.rt, x.cfg, x.d, x.f.store, RunSpec{Repo: x.repo, Quiet: true}, x.candidate)
+			if err != nil || image != fixtureBuiltImage {
+				t.Fatalf("the next box runs %q (%v), want the build the person approved, %q", image, err, fixtureBuiltImage)
+			}
+			if x.builds() != builds {
+				t.Fatalf("the edit ran the builder: %d builds, want %d", x.builds(), builds)
+			}
+
+			x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+			if !x.miss().Approved {
+				t.Fatal("the edit took back the approval of the build files")
+			}
+			prepared, err := snapshotProjectBuild(t.Context(), x.f.store.Path(), x.repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Close()
+			for _, left := range []string{".agent/project.yaml", networkstate.ProjectApprovalMarker} {
+				if _, err := os.Lstat(filepath.Join(prepared.Directory(), filepath.FromSlash(left))); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("a build could copy %s: %v", left, err)
+				}
+			}
+			for _, kept := range []string{".agent/Dockerfile", "main.go"} {
+				if _, err := os.Lstat(filepath.Join(prepared.Directory(), filepath.FromSlash(kept))); err != nil {
+					t.Errorf("a build lost %s: %v", kept, err)
+				}
+			}
+		})
+	}
+}
+
+// A Dockerfile that really wants the project's settings hears so before anything runs, on every way
+// to a build. Docker alone would say a file the person can see was not found.
+func TestABuildThatCopiesTheProjectSettingsIsRefused(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	x.write(".agent/project.yaml", "box:\n  egress: filtered\n")
+	x.write(".agent/Dockerfile", reusableDockerfile+"COPY .agent/project.yaml /opt/project.yaml\n")
+	daemon := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, planned := PlanBuild(runtime.Runtime{Name: daemon}, x.cfg, x.repo, false)
+	_, prepared := PrepareFilteredProjectBuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+	for name, err := range map[string]error{
+		"coop build and coop update": planned,
+		"Build and continue":         prepared,
+		"an automatic rebuild":       x.automaticBuild(),
+	} {
+		var stage *StageError
+		if err == nil || !strings.Contains(err.Error(), ".agent/Dockerfile copies .agent/project.yaml") {
+			t.Errorf("%s: %v, want the reason", name, err)
+		}
+		if errors.As(err, &stage) {
+			t.Errorf("%s: the person would be told to fix a path or permissions: %v", name, err)
+		}
+	}
+	if x.builds() != 0 {
+		t.Fatalf("the builder ran %d times", x.builds())
+	}
+}
+
+func TestRefuseCopiedProjectFileReadsWhatDockerReads(t *testing.T) {
+	for _, dockerfile := range []string{
+		"COPY .agent/project.yaml /opt/\n",
+		"copy ./.agent/project.yaml /opt/\n",
+		"ADD /.agent/project.yaml /opt/\n",
+		"COPY --chown=1000:1000 --link .agent/project.yaml /opt/\n",
+		"COPY main.go .agent/project.yaml /opt/\n",
+		"COPY [\".agent/project.yaml\", \"/opt/a b/\"]\n",
+		"COPY --link [\".agent/project.yaml\",\"/opt/\"]\n",
+		"COPY main.go \\\n  # why it is here\n\n  .agent/project.yaml \\\n  /opt/\n",
+		"COPY .agent/project.yaml /opt/\r\n",
+		"COPY .agent/project.yaml /opt/",
+		"COPY .agent/*.yaml /opt/\n",
+		"COPY .agent/project.yaml* /opt/\n",
+		"FROM scratch AS tools\nCOPY .agent/project.yaml /opt/\nFROM tools\n",
+	} {
+		if refuseCopiedProjectFile([]byte(dockerfile), ".agent/Dockerfile") == nil {
+			t.Errorf("not refused: %q", dockerfile)
+		}
+	}
+	for _, dockerfile := range []string{
+		"",
+		"COPY\n",
+		"COPY . /opt/app/\n",
+		"COPY ./ /opt/app/\n",
+		"COPY .agent /opt/\n",
+		"COPY .agent/ /opt/\n",
+		"COPY .agent/compose.yml /opt/\n",
+		"COPY web/.agent/project.yaml /opt/\n",
+		"COPY --from=tools .agent/project.yaml /opt/\n",
+		"COPY --link --from=tools /src/.agent/project.yaml /opt/\n",
+		"# COPY .agent/project.yaml /opt/\n",
+		"COPY main.go .agent/project.yaml\n",
+		"COPY [\"main.go\", \".agent/project.yaml\"]\n",
+		"COPY main.go /home/node/.agent/project.yaml\n",
+		"RUN echo COPY .agent/project.yaml /opt/\n",
+		"ONBUILD COPY .agent/project.yaml /opt/\n",
+	} {
+		if err := refuseCopiedProjectFile([]byte(dockerfile), ".agent/Dockerfile"); err != nil {
+			t.Errorf("refused %q: %v", dockerfile, err)
+		}
 	}
 }
 

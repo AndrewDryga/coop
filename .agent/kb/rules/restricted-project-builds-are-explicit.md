@@ -3,8 +3,8 @@ name: restricted-project-builds-are-explicit
 description: only a person approves new project build files; restricted launches rebuild by themselves only the exact files already approved
 scope: security
 sources: [internal/box/build_context_ignore.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/project_preparation.go, internal/box/image.go, internal/networkstate/project_builds.go, internal/cli/project_build.go, internal/cli/build_cmd.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/fork_cmd.go, internal/loop/loop.go, internal/forkctl/merge.go, internal/cli/acp_box_wait.go, internal/runtime/project_build.go]
-check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs|TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged|TestOnlyTheApprovedFilesRebuildByThemselves|TestAgentEditAfterTheCheckBuildsNothing|TestALaterApprovalReplacesTheEarlierOne|TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed|TestStagingStaysInsideTheSnapshot|TestSameNamedProjectsGetTheirOwnTags|TestAutomaticRebuildGetsAFiniteEnvironment|TestSecondAutomaticBuildReusesTheFirst|TestALaunchWaitingForTheBuildLockHoldsNoSnapshot'"
-updated: 2026-11-03
+check: "go test ./internal/box -run 'TestFilteredProjectImageRequiresExplicitBuild|TestFilteredProjectImageReusesAnUnchangedBuild|TestAutomaticProjectBuildRequiresOpenNetworking|TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot|TestDockerignoredEditsDoNotChangeBuildInputs|TestDockerignoreCannotRestoreSanitizedInputs|TestApprovedProjectFilesRebuildByThemselvesWhenOnlyCoopChanged|TestOnlyTheApprovedFilesRebuildByThemselves|TestAgentEditAfterTheCheckBuildsNothing|TestALaterApprovalReplacesTheEarlierOne|TestAdmissionRebuildsOnlyApprovedFilesAndOnlyWhenAllowed|TestStagingStaysInsideTheSnapshot|TestSameNamedProjectsGetTheirOwnTags|TestAutomaticRebuildGetsAFiniteEnvironment|TestSecondAutomaticBuildReusesTheFirst|TestALaunchWaitingForTheBuildLockHoldsNoSnapshot|TestANetworkRuleEditAsksForNoProjectBuild|TestABuildThatCopiesTheProjectSettingsIsRefused'"
+updated: 2026-11-04
 ---
 
 # Only a person approves new project build files when networking is restricted
@@ -41,6 +41,10 @@ modes, the qualified client base and immutable output image. Keep approval outsi
 apply Dockerfile-specific/root Docker ignore rules to both staging and readiness, so excluded
 source edits do not revoke the build. Always cover the Dockerfile and active ignore control file;
 Docker exceptions cannot restore secrets, Git or generated output omitted by the sanitizer.
+Leave `.agent/project.yaml` and the approval markers out of the context itself, never only out of
+the digest: then a rule edit revokes no build and `COPY . .` cannot bake it in, for every project.
+The review binds `box.dockerfile` through the Dockerfile's path. A Dockerfile that copies that file
+by name hears why before anything runs, and that check explains and guards nothing.
 Legacy automatic-build memos cannot become approval. Missing/changed inputs or missing images must
 refuse with a usable host command. Preserve both image proofs and fail if approval cannot be saved.
 Cover direct, fork, loop and editor callers; do not require an unused ordinary image for filtered
@@ -51,6 +55,11 @@ turns and review gates consume no project image in any mode, and a worker never 
 instructions.
 
 ## Changelog
+- 2026-11-04 — a live session on 2026-11-03 asked for another build right after a network rule edit,
+  and a rule's approval marker did the same in a project with no Git. Chose the shared selection over
+  a `coop init` ignore file, which misses existing projects and can be deleted. Swept the six
+  non-test callers of `buildContextSelection`: all share it, and only `PlanBuild` and
+  `snapshotProjectBuild` reach a builder first, so those two carry the refusal.
 - 2026-11-03 — review found automatic rebuilds staged before taking the lock, so N waiting windows held
   N copies of the checkout. They now take the lock first; both callers (`RebuildApprovedProject`,
   `UpdateApprovedProject`) share `rebuildApprovedLocked`, the only place a build is marked automatic.

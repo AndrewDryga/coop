@@ -10,6 +10,12 @@
   answer can still use the word: `Publish it, the pending review is fine` counts. One that opens with
   it is asked again, so start with what to do.
 
+- **Adding a network rule no longer asks for a project build.** `.agent/project.yaml` and the marker
+  `coop approve` leaves stay out of every project build, with or without an ignore file, so a rule
+  needs only `coop approve` and an open editor session moves to it by itself. `COPY . .` no longer
+  puts them in an image, and a Dockerfile that copies that file by name is refused with the reason.
+  A project whose build included the file asks for `coop build` once.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 

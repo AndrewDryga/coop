@@ -352,7 +352,13 @@ Its rules take precedence over the root `.dockerignore`.
   it copies.
 - The Dockerfile and the active ignore file always belong to the build fingerprint, so changing
   them or an included input requires a rebuild.
-- A Docker exception cannot restore secrets, Git metadata or generated output that co:op omits.
+- A Docker exception cannot restore secrets, Git metadata, generated output or `.agent/project.yaml`,
+  all of which co:op omits.
+
+`.agent/project.yaml` is never a build input, with or without an ignore file. Adding a network rule
+needs `coop approve` and no rebuild, and `COPY . .` cannot put that file in an image. A Dockerfile
+that copies it by name is refused with the reason, so copy another file instead. Pointing
+`box.dockerfile` at another Dockerfile still needs a review and a build.
 
 Before starting the box, co:op checks the built image itself. The Dockerfile's `FROM` line
 alone cannot establish what the image contains. Two checks must pass:
@@ -542,7 +548,7 @@ Add the rule to `.agent/project.yaml` under `box.egress_rules`, then ask a human
 `coop approve` on the host. Editing the repository file requests access; it does not grant it.
 Coop stores approval outside the repository, so editing or deleting the file cannot widen
 access. Nothing inside the box can approve its own request. New runs use the approved rules;
-a box that is already running keeps the rules it started with.
+a box that is already running keeps the rules it started with. A rule needs no new project image.
 
 In a filtered editor session (`coop acp`), each new thread starts with a note naming what the
 agent can reach and how to allow more.

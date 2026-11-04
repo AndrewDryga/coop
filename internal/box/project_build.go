@@ -3,16 +3,19 @@ package box
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 )
 
 // projectBuildInputs binds a project build to its staged context, runtime, locked client set and
@@ -67,6 +70,59 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 		}
 	}
 	return nil
+}
+
+// refuseCopiedProjectFile stops a build whose Dockerfile asks for project.File, which no build context
+// holds (buildContextSelection). Docker alone would only say that a file the person can see was not
+// found, or, when a pattern also matches another file, build an image without it and say nothing.
+// This only explains: the file stays out of the image whatever this reads, so a form it misses still
+// cannot bake it in. A plain search would refuse working builds, since a comment, a RUN, a COPY's
+// destination and another stage's file can all name it without needing it.
+func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
+	var instruction strings.Builder
+	for _, line := range strings.Split(string(dockerfile), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue // Docker drops both, even inside a continued instruction
+		}
+		text, continued := strings.CutSuffix(line, `\`)
+		instruction.WriteString(text + " ")
+		if continued {
+			continue
+		}
+		if copiesProjectFile(instruction.String()) {
+			return fmt.Errorf("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
+		}
+		instruction.Reset()
+	}
+	return nil
+}
+
+// copiesProjectFile reads one instruction: a COPY or ADD from the build context with a source that
+// names project.File or is a pattern matching it. A folder holding the file does not count: `COPY . .`
+// asks for whatever the context has, and gets it.
+func copiesProjectFile(instruction string) bool {
+	words := strings.Fields(instruction)
+	if len(words) == 0 || !strings.EqualFold(words[0], "COPY") && !strings.EqualFold(words[0], "ADD") {
+		return false
+	}
+	args := words[1:]
+	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		if strings.HasPrefix(args[0], "--from=") {
+			return false // another stage's file, which the context has no say in
+		}
+		args = args[1:]
+	}
+	var sources []string
+	if json.Unmarshal([]byte(strings.Join(args, " ")), &sources) != nil {
+		sources = args // as Docker reads it: plain words when the rest is not a JSON list
+	}
+	for i := 0; i < len(sources)-1; i++ { // the last one is the destination
+		if matched, _ := path.Match(path.Clean("/" + sources[i])[1:], project.File); matched {
+			return true
+		}
+	}
+	return false
 }
 
 // readImageID reads the image id a build wrote with --iidfile.

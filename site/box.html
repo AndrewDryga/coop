@@ -298,7 +298,8 @@ and uses a separate image tag.</p>
 Dockerfile and the files it copies, for this project, Docker daemon and build settings. If only
 co:op&#39;s client base changed or the image is missing, the next launch rebuilds those same files by
 itself. If the files changed, they wait for you: an agent can edit them, and a project build runs
-them with ordinary networking.</p>
+them with ordinary networking. <code>.agent/project.yaml</code> is not one of those files: no build reads it,
+so changing a network rule asks only for <code>coop approve</code>, and an image never holds it.</p>
 <p>When a build of changed files is due, an interactive provider launch in a host terminal can offer
 <code>Build and continue?</code>, defaulting to No. The prompt shows a saved snapshot of the build files;
 review it, because only those saved files are approved for that build. Headless commands and

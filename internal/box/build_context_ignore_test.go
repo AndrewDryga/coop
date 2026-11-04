@@ -101,16 +101,17 @@ func TestDockerignoredEditsDoNotChangeBuildInputs(t *testing.T) {
 func TestDockerignoreCannotRestoreSanitizedInputs(t *testing.T) {
 	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
-	write(".dockerignore", "**\n!main.go\n!.env\n!.git/**\n!build/**\n")
+	write(".dockerignore", "**\n!main.go\n!.env\n!.git/**\n!build/**\n!.agent/project.yaml\n")
 	write(".env", "SECRET=hidden\n")
 	write("build/generated", "ignored output\n")
+	write(".agent/project.yaml", "box:\n  egress: filtered\n")
 	entries, err := buildContextSelection(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
 		rel := filepath.ToSlash(entry.rel)
-		if rel == ".env" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, "build/") {
+		if rel == ".env" || rel == ".agent/project.yaml" || strings.HasPrefix(rel, ".git/") || strings.HasPrefix(rel, "build/") {
 			t.Fatalf("Dockerignore restored sanitized input %s", rel)
 		}
 	}

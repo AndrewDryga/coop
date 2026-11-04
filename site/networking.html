@@ -467,8 +467,13 @@ repository mount.</li>
 it copies.</li>
 <li>The Dockerfile and the active ignore file always belong to the build fingerprint, so changing
 them or an included input requires a rebuild.</li>
-<li>A Docker exception cannot restore secrets, Git metadata or generated output that co:op omits.</li>
+<li>A Docker exception cannot restore secrets, Git metadata, generated output or <code>.agent/project.yaml</code>,
+all of which co:op omits.</li>
 </ul>
+<p><code>.agent/project.yaml</code> is never a build input, with or without an ignore file. Adding a network rule
+needs <code>coop approve</code> and no rebuild, and <code>COPY . .</code> cannot put that file in an image. A Dockerfile
+that copies it by name is refused with the reason, so copy another file instead. Pointing
+<code>box.dockerfile</code> at another Dockerfile still needs a review and a build.</p>
 <p>Before starting the box, co:op checks the built image itself. The Dockerfile&#39;s <code>FROM</code> line
 alone cannot establish what the image contains. Two checks must pass:</p>
 <ol>
@@ -697,7 +702,7 @@ of the exported content. It is not a signature and does not make a partial recor
 <code>coop approve</code> on the host. Editing the repository file requests access; it does not grant it.
 Coop stores approval outside the repository, so editing or deleting the file cannot widen
 access. Nothing inside the box can approve its own request. New runs use the approved rules;
-a box that is already running keeps the rules it started with.</p>
+a box that is already running keeps the rules it started with. A rule needs no new project image.</p>
 <p>In a filtered editor session (<code>coop acp</code>), each new thread starts with a note naming what the
 agent can reach and how to allow more.</p>
 <p>A running editor session can pick up a new approval without reconnecting. Once

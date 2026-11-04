@@ -246,7 +246,8 @@ A filtered launch uses an image built from files you approved. Running `coop bui
 Dockerfile and the files it copies, for this project, Docker daemon and build settings. If only
 co:op's client base changed or the image is missing, the next launch rebuilds those same files by
 itself. If the files changed, they wait for you: an agent can edit them, and a project build runs
-them with ordinary networking.
+them with ordinary networking. `.agent/project.yaml` is not one of those files: no build reads it,
+so changing a network rule asks only for `coop approve`, and an image never holds it.
 
 When a build of changed files is due, an interactive provider launch in a host terminal can offer
 `Build and continue?`, defaulting to No. The prompt shows a saved snapshot of the build files;

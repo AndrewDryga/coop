@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -577,6 +578,9 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 	if readErr != nil {
 		return BuildPlan{}, fmt.Errorf("read project Dockerfile %s: %w", dfRel, readErr)
 	}
+	if err := refuseCopiedProjectFile(content, dfRel); err != nil {
+		return BuildPlan{}, err
+	}
 	// A project Dockerfile may inherit coop's trusted base (agent CLIs + ACP adapters, browser
 	// libraries, writable-home + security setup) with `ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`,
 	// adding only its own toolchain. When it does, the base has to be present (built if missing,
@@ -800,12 +804,18 @@ type contextEntry struct {
 }
 
 // buildContextSelection is the one decision about what a project build may read: every path under
-// repo EXCEPT .git, a shadowed path (NewShadowDecider — the same denylist that hides secrets from a
-// run) and gitignored build output, then filtered by Docker's context exclusions. Tracked files
-// remain even when a later Git ignore rule matches them, as do ordinary untracked inputs an agent
-// is still authoring; irregular files are left out. It is
+// repo EXCEPT .git, Coop's own files in the project, a shadowed path (NewShadowDecider — the same
+// denylist that hides secrets from a run) and gitignored build output, then filtered by Docker's
+// context exclusions. Tracked files remain even when a later Git ignore rule matches them, as do
+// ordinary untracked inputs an agent is still authoring; irregular files are left out. It is
 // recomputed for every build: an ignore rule, a .coopignore or the built-in denylist changing what
 // is selected has to change what is built, so the selection itself must never be cached.
+//
+// Coop's own files are the settings a person edits to add a network rule and the markers approving
+// it leaves. A file out of the context can neither change a build's digest nor reach an image,
+// whatever the Dockerfile copies and whether or not the project has an ignore file, so that edit
+// asks for no build and `COPY . .` bakes in nothing unreviewed. The one setting a build depends on,
+// box.dockerfile, is bound by itself (projectBuildReview).
 func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, error) {
 	shadowed := NewShadowDecider(repo)
 	ignored := ignoredBuildPaths(repo)
@@ -842,7 +852,7 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 			entries = append(entries, contextEntry{rel: rel, mode: fs.ModeDir})
 			return nil
 		}
-		if hidden || ignored(slash) {
+		if hidden || ignored(slash) || slash == project.File || slash == networkstate.ProjectApprovalMarker || slash == serviceApprovalMarker {
 			return nil // a COPY fails loudly instead of baking a secret or depending on generated output
 		}
 		info, err := d.Info()

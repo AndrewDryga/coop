@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/box/launch_sections.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 A filtered box — the built-in default, or `coop <agent> --egress filtered` — runs behind a per-run
@@ -257,6 +257,10 @@ Traps:
   an empty specific file. Both staging and readiness omit Docker-excluded source; the Dockerfile,
   active ignore file and required parent directories remain covered. Docker exceptions cannot
   restore sanitized paths. This repo's toolchain image allowlists its three copied tool files.
+  `.agent/project.yaml` and the approval markers are in no context, so a rule edit or its approval
+  revokes no build. Only `.git/info/exclude` hides a marker otherwise, which a project with no Git
+  does not have. `refuseCopiedProjectFile` explains a by-name COPY or ADD before a build; the image
+  stays clean without it.
 - Direct, fork, loop and ACP launch checks defer ordinary-image availability until admission:
   filtered runs need only the prepared filtered image. Offline still requires an existing ordinary
   image, preventing an implicit runtime pull. Filtered ACP warming keys the actual approved image
@@ -370,6 +374,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-04 — Coop's own project files left the build context, so a network rule edit keeps the
+  project build (task 2026-11-03-keep-a-network-rule-edit-from-asking-for-another).
 - 2026-11-03 — a one-off `--egress open` or `offline` sets the project's rules aside instead of
   refusing with `network_policy_conflict` (task
   2026-11-03-let-one-off-network-flags-work-on-projects-with); rule flags on a non-filtered run are

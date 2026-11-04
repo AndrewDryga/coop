@@ -211,6 +211,13 @@ func snapshotProjectBuild(ctx context.Context, parent, repo string) (*PreparedPr
 	if err := validateProjectBuildFiles(dir, entries, dfRel); err != nil {
 		return nil, &StageError{Err: err}
 	}
+	dockerfile, err := readRepositoryRegularFileNoFollow(dir, dfRel, imageInputFileLimit)
+	if err != nil {
+		return nil, &StageError{Err: err}
+	}
+	if err := refuseCopiedProjectFile(dockerfile, dfRel); err != nil {
+		return nil, err
+	}
 	prepared.repo, prepared.dockerfile, prepared.dir = repo, dfRel, dir
 	prepared.digest, prepared.entries, prepared.settings = digest, entries, projectBuildSettings()
 	ready = true
