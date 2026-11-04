@@ -18,7 +18,8 @@ lines meant for the loop.
 ## Hiding secrets
 
 co:op hides files and directories whose names look like secrets, including `.env`, `*.tfvars`,
-`*.pem`, `secrets/` and `.ssh`:
+`*.pem`, `secrets/`, `.ssh`, dotfiles ending in `secrets` such as `.shell-secrets`, and config
+files such as `secrets.env`. Source and docs like `secrets.go` and `secrets.md` stay readable:
 
 On supported Mac Docker runtimes, Coop enforces access in the Linux VM with eBPF.
 Secret reads and changes return `Operation not permitted`, including accesses through another

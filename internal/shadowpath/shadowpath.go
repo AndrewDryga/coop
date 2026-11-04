@@ -29,6 +29,9 @@ var SecretGlobs = []string{
 	"secrets", ".secrets", "credentials", ".aws", ".kube", ".ssh", ".gnupg", ".docker",
 	"credentials.json", "service_account.json", "service-account.json", "*-sa.json", "client_secret*.json",
 	"firebase-adminsdk*.json", "gha-creds-*.json", "auth.json", "secret.json", "secrets.json", "*.secret.json",
+	// Config-style names that say "secrets" (a sourced .shell-secrets, secrets.env), never source or docs.
+	".*secrets", "secrets.env", "secret.env", "*-secrets.env", "*_secrets.env", "secrets.conf", "secrets.cfg",
+	"secrets.ini", "secrets.toml", "secrets.properties", "secrets.txt", "secrets.sh",
 	"kubeconfig", "kubeconfig.yaml", "kubeconfig.yml", "database.yml", "credentials.y*ml", "secrets.y*ml",
 }
 

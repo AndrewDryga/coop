@@ -664,6 +664,18 @@ func TestRulesAboveFollowTheFolderOwner(t *testing.T) {
 	}
 }
 
+func TestSecretsNamedConfigFilesAreHidden(t *testing.T) {
+	for name, want := range map[string]bool{
+		".shell-secrets": true, ".secrets": true, ".app_secrets": true, "secrets.env": true, "prod-secrets.env": true,
+		"secrets.toml": true, "secrets.go": false, "secrets.md": false, "secretscan": false, "internal": false,
+		"secrets_test.go": false, "my-secrets.md": false, "secrets.env.example": false,
+	} {
+		if got := MatchesAny(name, SecretGlobs) && !MatchesAny(name, allowTemplateGlobs); got != want {
+			t.Errorf("%s hidden=%t, want %t", name, got, want)
+		}
+	}
+}
+
 // A globSet skips filepath.Match for names that lack a pattern's literal start or end, so it must
 // never skip one that matches. Every built-in list, plus patterns with escapes, classes, a literal
 // "]" and malformed ones, is asked about names made from the patterns themselves (wildcards filled

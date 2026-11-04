@@ -101,7 +101,8 @@ give each <code>coop run</code> its own input, as in <code>coop run -- make test
 lines meant for the loop.</p>
 </section><section class="doc-section reference-section" id="hiding-secrets"><h2>Hiding secrets</h2>
 <p>co:op hides files and directories whose names look like secrets, including <code>.env</code>, <code>*.tfvars</code>,
-<code>*.pem</code>, <code>secrets/</code> and <code>.ssh</code>:</p>
+<code>*.pem</code>, <code>secrets/</code>, <code>.ssh</code>, dotfiles ending in <code>secrets</code> such as <code>.shell-secrets</code>, and config
+files such as <code>secrets.env</code>. Source and docs like <code>secrets.go</code> and <code>secrets.md</code> stay readable:</p>
 <p>On supported Mac Docker runtimes, Coop enforces access in the Linux VM with eBPF.
 Secret reads and changes return <code>Operation not permitted</code>, including accesses through another
 letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Public files remain
