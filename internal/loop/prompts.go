@@ -70,7 +70,7 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 	}, " ")
 	return loopPeerCapabilities(agent, peers, p) + "\n\n" + fmt.Sprintf(instructions,
 		filepath.Join(repo, "AGENTS.md"),
-		filepath.Dir(filepath.Dir(absQueuePath(repo, assignedRoot))),
+		assignedProjectDir(repo, assignedRoot),
 		filepath.Join(absQueuePath(repo, assignedRoot), tasks.StateInProgress, assignedID),
 		absQueuePath(repo, assignedRoot), assignedID)
 }
@@ -266,6 +266,17 @@ func loopPreflightPrompt(repo string, queues []string, customPrompt string) stri
 // relative to the repo, but a resolved queuedTask.Root is already absolute — and filepath.Join does
 // not detect that, so joining it to the repo again yields "<repo>/<repo>/...". Both callers exist,
 // so normalize here rather than at each site.
+// assignedProjectDir is the folder a task's source work belongs in: the folder holding the task's
+// .agent/tasks queue. A fork's task sits in a projection under .coop/task-executions instead, which
+// is Coop's private state and never project source, so its agent works from the fork's root.
+func assignedProjectDir(repo, queue string) string {
+	abs := absQueuePath(repo, queue)
+	if strings.HasPrefix(abs, filepath.Join(repo, ".coop")+string(filepath.Separator)) {
+		return filepath.Clean(repo)
+	}
+	return filepath.Dir(filepath.Dir(abs))
+}
+
 func absQueuePath(repo, queue string) string {
 	if filepath.IsAbs(queue) {
 		return filepath.Clean(queue)

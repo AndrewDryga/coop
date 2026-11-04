@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A fork's agent works in the project again.** A fork loop told its agent the project folder was
+  inside Coop's private `.coop/task-executions`, so files it created there were committed and merged
+  into your project. It now names the fork's root, and `coop fork merge` blocks a fork that changes
+  anything under `.coop/` unless you use `--force`. If you merged a fork loop before this, check your
+  project for a `.coop/task-executions` folder in Git.
+
 - **A worker can start before its controller.** The first `coop sessions connect` keeps trying while
   the controller cannot be reached, as the help always said, and stops at once for a refused token or
   an untrusted certificate. `coop sessions compact` says what to change when the backup file exists,

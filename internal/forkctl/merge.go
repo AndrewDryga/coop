@@ -97,6 +97,11 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		// Files that change what runs on the HOST the moment a human touches the merged tree — a
 		// hook on their next commit, a settings file their editor session runs, a compose file
 		// their Docker runs — path-based, so a huge/binary blob can't dodge it below.
+		// .coop is Coop's private fork state, hidden from git status by the fork's exclude file. A file
+		// there reached a commit only through a forced add, and it is never project source.
+		if rel := filepath.ToSlash(path); rel == ".coop" || strings.HasPrefix(rel, ".coop/") {
+			warns = append(warns, label+" — this is Coop's private fork folder, not project source")
+		}
 		if reason, automatic := hostsurface.Classify(change.Status, path); automatic {
 			warns = append(warns, label+" — "+reason) // runs by itself: blocks the merge unless forced
 		}

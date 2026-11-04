@@ -2512,3 +2512,23 @@ func TestForkMergeNamesAMissingForkFirst(t *testing.T) {
 		t.Errorf("ForkMerge(nosuch) = (%d, %v), want no such fork", code, err)
 	}
 }
+
+// A file in Coop's private fork folder reached the commit only through a forced add: merging it would
+// put Coop's state in the project, so it waits for a person.
+func TestPolicyScanFlagsCoopsPrivateForkFolder(t *testing.T) {
+	repo := initRepo(t)
+	git(t, repo, "checkout", "-q", "-b", "stray")
+	writeTaskFile(t, filepath.Join(repo, ".coop", "task-executions", "generation", "bye.txt"), "bye\n")
+	writeTaskFile(t, filepath.Join(repo, "docs", ".coop-notes.txt"), "fine\n")
+	git(t, repo, "add", "-f", "-A")
+	git(t, repo, "commit", "-qm", "stray")
+	git(t, repo, "checkout", "-q", "-")
+	warns, err := PolicyScan(repo, "stray")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warns, "\n")
+	if !strings.Contains(joined, "private fork folder") || strings.Contains(joined, ".coop-notes") {
+		t.Errorf("warnings = %q", joined)
+	}
+}

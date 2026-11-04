@@ -261,6 +261,8 @@ func (d *codexStreamDecoder) itemStarted(item codexStreamItem) {
 		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
 	case "collab_tool_call":
 		d.showItem(item, "⇢", codexCollabLabel(item.Tool))
+	case "mcp_tool_call":
+		d.showItem(item, "⚙", codexMCPLabel(item.Tool))
 	case "todo_list":
 	}
 }
@@ -287,6 +289,8 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
 	case "collab_tool_call":
 		d.showItem(item, "⇢", codexCollabLabel(item.Tool))
+	case "mcp_tool_call":
+		d.showItem(item, "⚙", codexMCPLabel(item.Tool))
 	case "todo_list":
 	default:
 		d.emitUnknown(item.Type)
@@ -314,6 +318,13 @@ func (d *codexStreamDecoder) showItem(item codexStreamItem, glyph, label string)
 		return
 	}
 	d.emit(d.streamToolLine(glyph, label, false))
+}
+
+func codexMCPLabel(tool string) string {
+	if tool = strings.TrimSpace(tool); tool != "" {
+		return tool
+	}
+	return "tool call"
 }
 
 func codexWebSearchLabel(query string) string {

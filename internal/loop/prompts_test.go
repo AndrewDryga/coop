@@ -430,3 +430,22 @@ func TestReviewPromptFindsCommitsByTrailer(t *testing.T) {
 		t.Fatalf("review footer does not say how to find a task's commits:\n%s", footer)
 	}
 }
+
+// A fork's task lives in a projection under .coop, but its source work belongs at the fork's root:
+// from 2026-09-14 the prompt named the projection's parent, and agents committed their files there.
+func TestLoopWorkPromptNamesTheProjectNotCoopsPrivateFolder(t *testing.T) {
+	for _, tc := range []struct{ repo, queue, want string }{
+		{"/repo", ".agent/tasks", "/repo"},
+		{"/repo", "portal/.agent/tasks", "/repo/portal"},
+		{"/repo-forks/a", ".coop/task-executions/generation/assignment/tasks", "/repo-forks/a"},
+		{"/repo-forks/a", "/repo-forks/a/.coop/task-executions/generation/assignment/tasks", "/repo-forks/a"},
+	} {
+		if got := assignedProjectDir(tc.repo, tc.queue); got != tc.want {
+			t.Errorf("assignedProjectDir(%q, %q) = %q, want %q", tc.repo, tc.queue, got, tc.want)
+		}
+		prompt := LoopWorkPrompt(tc.repo, tc.queue, "task-42", "codex", nil, nil, false)
+		if !strings.Contains(prompt, "The assigned project directory is "+tc.want+".") {
+			t.Errorf("prompt for %q does not name %q", tc.queue, tc.want)
+		}
+	}
+}

@@ -420,3 +420,19 @@ func TestRawAndRepaintOutputNeverResetsActivity(t *testing.T) {
 		t.Errorf("untrusted output produced activity: %v", rec.events)
 	}
 }
+
+// An MCP call shows its tool once, not the raw item type and not twice for its start and end.
+func TestCodexStreamNamesAnMCPToolOnce(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	for _, line := range []string{
+		`{"type":"item.started","item":{"id":"m1","type":"mcp_tool_call","server":"coop-tasks","tool":"tasks_get"}}`,
+		`{"type":"item.completed","item":{"id":"m1","type":"mcp_tool_call","server":"coop-tasks","tool":"tasks_get"}}`,
+	} {
+		_, _ = d.Write([]byte(line + "\n"))
+	}
+	text := out.String()
+	if strings.Count(text, "tasks_get") != 1 || strings.Contains(text, "mcp_tool_call") {
+		t.Errorf("output = %q", text)
+	}
+}
