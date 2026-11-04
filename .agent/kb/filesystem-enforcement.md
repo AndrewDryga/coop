@@ -106,7 +106,8 @@ Terraform v1.17 stats `terraform.tfvars` and then opens it, and LSM can only all
 2026-11-04 (owner decision) an eBPF launch also binds an empty read-only file over each hidden regular
 file from its snapshot, one mount per real name, capped at 1,000 and at `maxCoverBytes`
 (`withHiddenFileCovers`). The cover is a separate object, on a source the policy does not guard, so it
-opens as empty. eBPF stays the boundary: other spellings, aliases, later files and anything past the cap
+opens as empty. In a repository only Git-ignored files get one, because `git add -A` would commit a
+tracked or new file as empty (seen for real). eBPF stays the boundary: other spellings, aliases, later files and anything past the cap
 are denied. A hidden directory beside the `.tf` still fails. Measured: 1,000 covers add about 0.2 s.
 GNU `ls -l` also asks for xattrs/ACLs of each name, so on a hidden non-directory `inode_getxattr` and
 `inode_get_acl` answer ENODATA and `inode_listxattr` answers EOPNOTSUPP (a list call has no "no such

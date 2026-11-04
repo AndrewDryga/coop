@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -451,5 +452,25 @@ func TestWithHiddenFileCovers(t *testing.T) {
 	capped := (&filesystemAdmission{snapshots: []*filesystemSnapshot{many}}).withHiddenFileCovers([]Mount{repo})
 	if len(capped) != maxHiddenFileCovers+1 {
 		t.Errorf("%d mounts past the cap", len(capped))
+	}
+}
+
+// In a repository only an ignored file gets a cover: git add -A would commit a tracked or new one as
+// empty. eBPF keeps denying those.
+func TestHiddenFileCoversOnlyWhatGitIgnores(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	for name, body := range map[string]string{".gitignore": "ignored.env\n", ".env": "x\n", "new.pem": "x\n", "ignored.env": "x\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".env", ".gitignore")
+	git("commit", "-qm", "tracked secret")
+	objects := map[string]filesystemObject{".env": {}, "new.pem": {}, "ignored.env": {}}
+	entries := []fsfilter.Entry{{Path: ".env", Flags: fsfilter.Secret}, {Path: "ignored.env", Flags: fsfilter.Secret}, {Path: "new.pem", Flags: fsfilter.Secret}}
+	snapshot := &filesystemSnapshot{root: repo, objects: objects, policy: fsfilter.Policy{Entries: entries}}
+	got := (&filesystemAdmission{snapshots: []*filesystemSnapshot{snapshot}}).withHiddenFileCovers([]Mount{{Kind: Bind, Source: repo, Target: "/work"}})
+	if len(got) != 2 || got[1].Target != "/work/ignored.env" {
+		t.Errorf("mounts = %+v, want a cover only on the ignored file", got)
 	}
 }

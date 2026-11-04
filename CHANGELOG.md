@@ -21,6 +21,7 @@
 
 - **Terraform works beside hidden `terraform.tfvars` under eBPF.** Each hidden file already in the
   project gets an empty read-only file over it, up to 1,000, so a tool that opens one reads it as empty.
+  In a repository that means files Git ignores, so `git add -A` can't commit an emptied secret.
   eBPF still denies everything else, including other spellings and hidden files created later. The box
   can't delete or rename a folder that holds a covered file.
 

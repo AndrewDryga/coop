@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"io/fs"
 	"maps"
 	"os"
@@ -301,7 +302,9 @@ const maxHiddenFileCovers = 1000
 // withHiddenFileCovers adds an empty read-only file over each hidden file an admission captured, to the
 // binds it was given. eBPF stays the boundary, so one mount per real name is enough: it already denies
 // other spellings, hidden directories and files created later. Each root is mounted at the bind whose
-// source it is; a root with no bind has nothing to cover.
+// source it is; a root with no bind has nothing to cover. In a repository only a file Git ignores gets
+// one: under a cover a tracked or new file would read as empty, and an agent's git add -A would commit
+// that.
 func (a *filesystemAdmission) withHiddenFileCovers(mounts []Mount) []Mount {
 	targets := map[string]string{}
 	for _, m := range mounts {
@@ -315,6 +318,7 @@ func (a *filesystemAdmission) withHiddenFileCovers(mounts []Mount) []Mount {
 		if !bound {
 			continue
 		}
+		var candidates []string
 		secret := map[string]bool{}
 		for _, entry := range snapshot.policy.Entries { // sorted with parents first
 			if entry.Flags&fsfilter.Secret == 0 {
@@ -327,12 +331,39 @@ func (a *filesystemAdmission) withHiddenFileCovers(mounts []Mount) []Mount {
 			}
 			cover := path.Join(target, entry.Path)
 			bytes += len(cover) + coverOverhead
-			if covers >= maxHiddenFileCovers || bytes > maxCoverBytes {
-				return mounts
+			if covers+len(candidates) >= maxHiddenFileCovers || bytes > maxCoverBytes {
+				break
 			}
-			mounts = append(mounts, Mount{Kind: Decoy, Target: cover, RO: true})
+			candidates = append(candidates, entry.Path)
+		}
+		for _, name := range coverableFiles(snapshot.root, candidates) {
+			mounts = append(mounts, Mount{Kind: Decoy, Target: path.Join(target, name), RO: true})
 			covers++
 		}
 	}
 	return mounts
+}
+
+// coverableFiles is the part of names a cover can sit on: all of them in a folder without Git, and in
+// a repository those Git ignores. A list that cannot be read covers nothing: eBPF denies them anyway.
+func coverableFiles(root string, names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".git")); errors.Is(err, os.ErrNotExist) {
+		return names
+	}
+	args := []string{"ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--"}
+	for _, name := range names {
+		args = append(args, ":(literal)"+name)
+	}
+	out, err := forkspace.GitOutput(root, args...)
+	if err != nil {
+		return nil
+	}
+	ignored := map[string]bool{}
+	for _, name := range strings.Split(out, "\x00") {
+		ignored[name] = true
+	}
+	return slices.DeleteFunc(slices.Clone(names), func(name string) bool { return !ignored[name] })
 }

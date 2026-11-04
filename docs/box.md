@@ -29,7 +29,9 @@ This avoids adding a mount for every spelling of each secret filename.
 
 Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file over
 it. A tool that opens one, such as Terraform with `terraform.tfvars`, reads it as empty and keeps working,
-and the secret stays out of reach. The box can't delete or rename a folder that holds a covered file.
+and the secret stays out of reach. The box can't delete or rename a folder that holds a covered file. In a
+repository, only a file Git ignores gets a cover, because an agent's `git add -A` would commit a tracked
+or new one as empty. Add your secrets to `.gitignore`.
 
 eBPF remains the protection for everything else: other letter cases, hardlinks, files past the limit,
 hidden files created after the box starts, and hidden directories. Opening one of those returns

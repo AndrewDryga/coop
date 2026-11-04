@@ -110,7 +110,9 @@ writable, and ordinary public hardlinks work. <code>.coopignore</code> stays rea
 This avoids adding a mount for every spelling of each secret filename.</p>
 <p>Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file over
 it. A tool that opens one, such as Terraform with <code>terraform.tfvars</code>, reads it as empty and keeps working,
-and the secret stays out of reach. The box can&#39;t delete or rename a folder that holds a covered file.</p>
+and the secret stays out of reach. The box can&#39;t delete or rename a folder that holds a covered file. In a
+repository, only a file Git ignores gets a cover, because an agent&#39;s <code>git add -A</code> would commit a tracked
+or new one as empty. Add your secrets to <code>.gitignore</code>.</p>
 <p>eBPF remains the protection for everything else: other letter cases, hardlinks, files past the limit,
 hidden files created after the box starts, and hidden directories. Opening one of those returns
 <code>Operation not permitted</code>. A restart covers a hidden file created since the last start.</p>
