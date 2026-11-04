@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -324,6 +325,15 @@ func (s *seenWriter) Write(p []byte) (int, error) {
 // already passed. Compose 5 prints every network and volume event twice when its output is not a
 // terminal, sometimes with other events between the two copies, and Coop always reads it through a
 // pipe. A repeat carries nothing the first line did not.
+// hashedContainer is the name Coop gives a service's protected wrapper: nobody can tell which service
+// it is, so its progress lines stay out of coop up. The start and result lines say what happened, and
+// a failure keeps its line.
+var hashedContainer = regexp.MustCompile(`^\s*Container coop-fs-[0-9a-f]+-\w+ `)
+
+func composeHashedProgress(line string) bool {
+	return hashedContainer.MatchString(line) && !strings.Contains(strings.ToLower(line), "error")
+}
+
 type distinctLines struct {
 	w       io.Writer
 	partial []byte
@@ -339,7 +349,7 @@ func (d *distinctLines) Write(p []byte) (int, error) {
 		}
 		line := string(d.partial[:end+1])
 		d.partial = d.partial[end+1:]
-		if d.seen[line] {
+		if d.seen[line] || composeHashedProgress(line) {
 			continue
 		}
 		if d.seen == nil {

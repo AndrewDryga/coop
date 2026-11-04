@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop up` stops showing hashed container names**, and a slow first `coop usage` says it is reading
+  your history.
+
 - **`coop doctor` warns when your sign-ins sit in a sync folder**, such as Dropbox, iCloud Drive, Google
   Drive or OneDrive, following links. The new `COOP_HOME` moves Coop's settings folder on its own. Coop
   never moves your files itself.
