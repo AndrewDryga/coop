@@ -105,8 +105,11 @@ normalizer still deny stat. `inode_file_getattr` (lsattr) keeps the read rule; s
 Terraform v1.17 shows stat alone is not parity with mount covers: it stats `terraform.tfvars` and
 then opens it, so a denied stat used to fail the folder scan and a denied open now fails the load.
 Named `.tfvars` validate; auto-loaded ones, `fmt` and a hidden directory beside the `.tf` still fail.
-GNU `ls -l` beside a hidden file lists it but reads its xattrs, so it prints an error per hidden entry and
-exits 1; `inode_readlink` keeps the read rule, so a hidden symlink shows no target. `find` stays clean.
+GNU `ls -l` also asks for xattrs/ACLs of each name, so on a hidden non-directory `inode_getxattr` and
+`inode_get_acl` answer ENODATA and `inode_listxattr` answers EOPNOTSUPP (a list call has no "no such
+attribute"; gnulib treats ENODATA there as a real error) via `xattr_read` and the QUIET_* verdicts. Hidden
+directories, anything below them and a dead owner keep EPERM, and set/remove stay EPERM. `inode_readlink`
+keeps the read rule, so a hidden symlink shows no target (`ls -l` on one still errors). `find` stays clean.
 Private writable mappings of read-only policy are allowed because they cannot change host bytes.
 
 The same C source builds the guards and one fresh filename-normalization EXT program per
@@ -225,6 +228,7 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-04 — xattr/ACL reads on a hidden non-directory answer ENODATA/EOPNOTSUPP so `ls -l` exits 0; live suite asserts it.
 - 2026-11-04 — ran `ls -l`, `readlink`, `stat`, `find` and `cat` beside a hidden file and symlink in a real box
   on virtiofs and corrected `docs/box.md`: `ls -l` exits 1 there.
 - 2026-11-04 — stat of a hidden file succeeds under eBPF (blitz-infra Terraform refused module folders

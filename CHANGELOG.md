@@ -15,7 +15,8 @@
 
 - **`ls -l` and `find` work in a folder with a hidden file under eBPF protection.** `stat` on a hidden file now
   succeeds and shows its real size and times. Its contents stay denied, and hidden directories are unchanged.
-  `ls -l` still prints an error for each hidden entry and exits 1, and a hidden symlink shows no target.
+  `ls -l` exits 0 beside a hidden file because its extended attributes and ACLs read as empty (no value is ever
+  returned); a hidden symlink shows no target.
 
 - **Small fixes for editor sessions.** A thread that fails to reopen because its box died or Coop reloaded now
   passes its start message and notices to the next thread. A session-service child keeps the default account its

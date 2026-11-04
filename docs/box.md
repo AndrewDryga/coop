@@ -28,13 +28,13 @@ writable, and ordinary public hardlinks work. `.coopignore` stays readable and r
 This avoids adding a mount for every spelling of each secret filename.
 
 `stat` still works on a hidden file, so `find` and tools that list a folder keep working. It shows
-the file's real size, times, mode, owner and link count. The contents, extended attributes and a
-hidden symlink's target stay denied. A hidden directory and everything inside it also deny `stat`.
+the file's real size, times, mode, owner and link count. The contents and a hidden
+symlink's target stay denied, and extended attributes read as empty. A hidden directory and everything inside
+it also deny `stat`.
 
-`ls -l` shows a hidden file with its size and times, but prints an error for each hidden entry, because
-it also reads extended attributes, and exits with status 1. A script that checks `ls` sees that as a
-failure. A hidden symlink shows no target, and `readlink` on it fails. A hidden directory's entry also
-gets an error.
+`ls -l` shows a hidden file with its size and times and exits 0. The file reads as having no extended
+attributes or ACLs, so the box learns nothing more than "none"; it never gets a value. A hidden symlink
+shows no target, and `readlink` on it fails. A hidden directory's entry also gets an error.
 
 A tool that opens the hidden file still fails. `terraform validate` works beside a `prod.tfvars`, but
 Terraform opens `terraform.tfvars` and `*.auto.tfvars` itself, `terraform fmt` opens every `.tfvars`,

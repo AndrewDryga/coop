@@ -44,6 +44,9 @@ extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksym
 #define WRITE 1
 #define MOVE 2
 #define STAT 4
+/* Hook verdicts beyond allow (1) and deny (0): deny with ENODATA or EOPNOTSUPP instead of EPERM. */
+#define QUIET_NODATA 2
+#define QUIET_NOTSUP 3
 #define MAX_DEPTH 128
 /* The Unicode compiler proves every stage expands at most two runes per input
  * byte. Components are at most 255 bytes; keep task storage below 8 KiB. */
@@ -390,7 +393,8 @@ INLINE int file_access(struct file *file, int operation, struct policy *policy) 
         if (!id) return -1; \
         struct policy policy = {lookup(&objects, &id), lookup(&paths, &id), lookup(&devices, &id), lookup(&config, &id), id}; \
         if (!policy.objects || !policy.paths || !policy.devices || !policy.config) return -1; \
-        return check_##name(ctx, &policy) ? 0 : -1; \
+        int verdict = check_##name(ctx, &policy); \
+        return verdict == QUIET_NODATA ? -61 : verdict == QUIET_NOTSUP ? -95 : verdict ? 0 : -1; \
     } \
     static int check_##name(u64 *ctx, struct policy *policy)
 HOOK(file_open, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & (3|512)) ? WRITE : 0, policy); }
@@ -417,11 +421,20 @@ HOOK(inode_getattr, 1) {
     struct path *p = (void *)ctx[0]; struct inode *inode = p->dentry->d_inode;
     return access(p->dentry, inode && (inode->i_mode & 0170000) != 0040000 ? STAT : 0, policy);
 }
-HOOK(inode_getxattr, 2) { return access((void *)ctx[0], 0, policy); }
-HOOK(inode_listxattr, 1) { return access((void *)ctx[0], 0, policy); }
+/* ls -l asks for the ACL and label xattrs of every name it lists, and EPERM on one hidden file
+ * fails the whole listing. A hidden non-directory therefore reads as having no xattrs. Nothing is
+ * ever returned, and the file is no more readable than before. Everything else still gets EPERM. */
+INLINE int xattr_read(struct dentry *d, int quiet, struct policy *policy) {
+    if (access(d, 0, policy)) return 1;
+    struct inode *inode = d->d_inode;
+    return inode && (inode->i_mode & 0170000) != 0040000 && access(d, STAT, policy) ? quiet : 0;
+}
+HOOK(inode_getxattr, 2) { return xattr_read((void *)ctx[0], QUIET_NODATA, policy); }
+/* A list call cannot fail with "no such attribute", so the quiet answer is "not supported". */
+HOOK(inode_listxattr, 1) { return xattr_read((void *)ctx[0], QUIET_NOTSUP, policy); }
 HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE, policy); }
 HOOK(inode_removexattr, 3) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_get_acl, 3) { return access((void *)ctx[1], 0, policy); }
+HOOK(inode_get_acl, 3) { return xattr_read((void *)ctx[1], QUIET_NODATA, policy); }
 HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE, policy); }
 HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE, policy); }
 HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE, policy); }
