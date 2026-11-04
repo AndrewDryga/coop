@@ -329,6 +329,22 @@ type completionOptions struct {
 	refuse func(TaskOwnerRecord) error
 }
 
+// errFinalReviewRunning refuses a forced close while a loop's final review could reopen the task.
+var errFinalReviewRunning = errors.New("a loop's final review is running")
+
+func finalReviewRunning(root string) (bool, error) {
+	index, err := ReadCompletionWindowIndex(root)
+	if err != nil {
+		return false, err
+	}
+	for _, window := range index.Windows {
+		if window.ReviewWindow {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func completeTrustedTask(project, root string, task Item, opts completionOptions) (_ *IncompleteChecklistError, retErr error) {
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
@@ -384,6 +400,17 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	alreadyAccepted := false
 	if current.State == StateDone {
 		_, alreadyAccepted = readLeaseCompletionReceipt(authority, current.Dir)
+	}
+	// A loop's final review running now would enroll this close, and its reviewer reopens a task with
+	// skipped items, silently undoing the person's decision. So the person waits for it to end.
+	if waived != nil && !alreadyAccepted {
+		running, err := finalReviewRunning(root)
+		if err != nil {
+			return nil, fmt.Errorf("inspect active final-review windows: %w", err)
+		}
+		if running {
+			return nil, errFinalReviewRunning
+		}
 	}
 	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {

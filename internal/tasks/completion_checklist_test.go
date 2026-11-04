@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -460,6 +461,37 @@ func TestDoneForceKeepsEveryOtherRefusal(t *testing.T) {
 			t.Fatalf("done --force on a leased task = %d, %v; want the lease refusal with a forced retry", code, err)
 		}
 		refusedInPlace(t, root, "leased", StateInProgress)
+	})
+	t.Run("final review running", func(t *testing.T) {
+		forceAtTerminal(t)
+		repo := initRepo(t)
+		root := filepath.Join(repo, TasksRoot)
+		subject := taskWithCompletedChecklist(t, root, StateDone, "review-subject")
+		if err := CompleteTrustedTask("", root, subject); err != nil {
+			t.Fatal(err)
+		}
+		taskForLease(t, root, StateInProgress, "unfinished")
+		plan := pendingReviewTestPlan(t, repo, root, forkspace.GitOut(repo, "rev-parse", "HEAD"))
+		windows, err := BeginReviewCompletionWindowsWithPending([]string{root}, []string{subject.ID}, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, err := CmdTasksFolder("", root, []string{"done", "unfinished", "--force"})
+		if code == 0 || err == nil || !strings.Contains(err.Error(), "final review is running") ||
+			!strings.Contains(err.Error(), "Try again when that review ends: coop tasks done unfinished --force") {
+			t.Fatalf("done --force during a final review = %d, %v", code, err)
+		}
+		refusedInPlace(t, root, "unfinished", StateInProgress)
+		// Once the review ends the same close goes through, and no review can undo it.
+		if _, err := windows.FinishReview(); err != nil {
+			t.Fatal(err)
+		}
+		if code, err := CmdTasksFolder("", root, []string{"done", "unfinished", "--force"}); code != 0 || err != nil {
+			t.Fatalf("done --force after the review = %d, %v", code, err)
+		}
+		if _, enrolled, err := readPendingReviewRecord(root, "unfinished"); err != nil || enrolled {
+			t.Fatalf("forced close enrolled for review: %t, %v", enrolled, err)
+		}
 	})
 	t.Run("fork owned", func(t *testing.T) {
 		repo, root, _ := proposalAssignment(t, "forced")

@@ -1046,6 +1046,11 @@ func trustedCompletionError(err error, t Item, forceClose bool) error {
 	if forceClose {
 		retry += " --force"
 	}
+	if errors.Is(err, errFinalReviewRunning) {
+		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID),
+			"A loop's final review is running, and it could reopen this task for its open items.",
+			[2]string{"", "Try again when that review ends: " + retry})
+	}
 	var commits *PendingReviewCommitsError
 	if errors.As(err, &commits) {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), commits.Cause(),
