@@ -132,7 +132,7 @@ func TestStartNoticeText(t *testing.T) {
 		{
 			name:     "a problem with its fix",
 			problems: []Problem{grok, {Title: `The "review" preset is missing from the toolbar.`, Detail: "It could not be loaded.", Command: "coop presets", Purpose: "on the host, to see why"}},
-			want:     grokText + "\n\n⚠ **The \"review\" preset is missing from the toolbar.**\n\nIt could not be loaded.\n\nRun this on the host, to see why:\n\n```\ncoop presets\n```",
+			want:     grokText + "\n\n---\n\n⚠ **The \"review\" preset is missing from the toolbar.**\n\nIt could not be loaded.\n\nRun this on the host, to see why:\n\n```\ncoop presets\n```",
 		},
 		{
 			name:     "everything, in order",
