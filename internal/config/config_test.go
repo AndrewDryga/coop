@@ -1011,6 +1011,7 @@ func TestMoveLocalRecords(t *testing.T) {
 		}
 	}
 	write(filepath.Join(home, "image-meta", "a"), "old")
+	write(filepath.Join(home, "acp-trace-7.log"), "trace")
 	write(filepath.Join(home, "image-use", "b"), "old")
 	write(filepath.Join(local, "image-use", "b"), "new")
 	write(filepath.Join(home, "coop.conf"), "x")
@@ -1020,6 +1021,9 @@ func TestMoveLocalRecords(t *testing.T) {
 	c.MoveLocalRecords()
 	if data, _ := os.ReadFile(filepath.Join(local, "image-meta", "a")); string(data) != "old" {
 		t.Error("the record did not move")
+	}
+	if data, _ := os.ReadFile(filepath.Join(local, "acp-trace-7.log")); string(data) != "trace" {
+		t.Error("the trace did not move")
 	}
 	if data, _ := os.ReadFile(filepath.Join(local, "image-use", "b")); string(data) != "new" {
 		t.Error("an existing record was replaced")

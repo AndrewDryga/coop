@@ -326,8 +326,8 @@ func (a *filesystemAdmission) withHiddenFileCovers(mounts []Mount) []Mount {
 			}
 			secret[entry.Path] = true
 			object, known := snapshot.objects[entry.Path]
-			if !known || !object.mode.IsRegular() || secret[path.Dir(entry.Path)] {
-				continue // a hidden directory stays denied, with everything inside it
+			if !known || !object.mode.IsRegular() || secret[path.Dir(entry.Path)] || strings.Contains(entry.Path, ":") {
+				continue // a hidden directory stays denied, with everything inside it; -v cannot name a ":"
 			}
 			cover := path.Join(target, entry.Path)
 			bytes += len(cover) + coverOverhead

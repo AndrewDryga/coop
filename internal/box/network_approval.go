@@ -160,6 +160,9 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 	} else if !errors.Is(openErr, fs.ErrNotExist) {
 		return projectNetworkReviewInputs{}, openErr
 	}
+	if input.HostOffline() { // a review is about what runs without COOP_EGRESS=offline may do
+		input.HostPreference = nil
+	}
 	modeChanged := before != nil && approvalMode(input, before) != before.Posture
 	var pending *networkstate.PendingApproval
 	if !modeChanged {

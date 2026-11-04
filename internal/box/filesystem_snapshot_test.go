@@ -439,6 +439,11 @@ func TestWithHiddenFileCovers(t *testing.T) {
 	if want := []string{"/work/.env", "/work/sub/k.pem"}; !slices.Equal(targets, want) {
 		t.Errorf("covers = %q, want %q", targets, want)
 	}
+	colon := &filesystemSnapshot{root: "/host/repo", objects: map[string]filesystemObject{"localhost:8443.pem": regular},
+		policy: fsfilter.Policy{Entries: []fsfilter.Entry{{Path: "localhost:8443.pem", Flags: fsfilter.Secret}}}}
+	if got := (&filesystemAdmission{snapshots: []*filesystemSnapshot{colon}}).withHiddenFileCovers([]Mount{repo}); len(got) != 1 {
+		t.Errorf("a name -v cannot carry got a cover: %+v", got)
+	}
 	if got := (&filesystemAdmission{snapshots: []*filesystemSnapshot{snapshot}}).withHiddenFileCovers(nil); len(got) != 0 {
 		t.Errorf("a root with no bind got covers: %+v", got)
 	}

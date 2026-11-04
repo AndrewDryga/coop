@@ -23,7 +23,14 @@ func PrivateRunfiles(cfg *Config) (string, error) {
 		return "", err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
+		// A read-only state folder need not stop a launch whose settings folder can hold them.
+		if cfg == nil || cfg.LocalDir == "" || cfg.BoxHome == "" {
+			return "", err
+		}
+		root = filepath.Join(cfg.BoxHome, "runfiles")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return "", err
+		}
 	}
 	return validateRunfiles(root)
 }

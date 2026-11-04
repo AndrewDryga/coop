@@ -1362,7 +1362,7 @@ func (c *Config) EnsureSettingsGitignore() {
 // binary that named none. A Config without one keeps these records in its BoxHome.
 func localDir() string {
 	state, err := StateHome()
-	if err != nil {
+	if err != nil || !filepath.IsAbs(state) {
 		return ""
 	}
 	return filepath.Join(state, "coop")
@@ -1408,6 +1408,14 @@ func (c *Config) MoveLocalRecords() {
 			continue
 		}
 		if EnsurePrivateDir(c.LocalDir) == nil {
+			_ = os.Rename(from, to)
+		}
+	}
+	// Traces can hold prompts and file contents. A running session keeps writing to its open file.
+	traces, _ := filepath.Glob(filepath.Join(c.BoxHome, "acp-trace-*.log*"))
+	for _, from := range traces {
+		to := filepath.Join(c.LocalDir, filepath.Base(from))
+		if _, err := os.Lstat(to); errors.Is(err, os.ErrNotExist) && EnsurePrivateDir(c.LocalDir) == nil {
 			_ = os.Rename(from, to)
 		}
 	}
