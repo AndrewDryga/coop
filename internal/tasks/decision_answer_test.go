@@ -455,3 +455,28 @@ func TestThePendingNoteIsNoAnswerToTheOtherCommands(t *testing.T) {
 		}
 	})
 }
+
+// An agent in a box can write decision.md, and the browser prints it to the terminal of the person
+// answering: nothing in it may act on that terminal or turn the text around.
+func TestDecisionBrowserShowsNoHiddenCharacters(t *testing.T) {
+	pipedStdin(t)
+	hostile := string(rune(27)) + "]0;title" + string(rune(7)) + "pick" + string(rune(0x202e)) + "one"
+	root := t.TempDir()
+	dec := blockedWithResolution(t, root, "Keep "+hostile)
+	body := readFile(t, dec)
+	writeTaskFile(t, dec, strings.Replace(body, "# Decision:", "# Decision: "+hostile, 1)+"\nA line with "+hostile+"\nAnd the next line\n")
+	var browser strings.Builder
+	if code, err := runDecisionBrowser("", brandBrowser(root), strings.NewReader(":q\n"), &browser); code != 0 || err != nil {
+		t.Fatalf("browser = (%d, %v)", code, err)
+	}
+	for _, hidden := range []rune{27, 7, 0x202e} {
+		if strings.ContainsRune(browser.String(), hidden) {
+			t.Errorf("the browser printed %U:\n%q", hidden, browser.String())
+		}
+	}
+	for _, want := range []string{"A line with ]0;titlepickone\n", "And the next line\n", "Answered:"} {
+		if !strings.Contains(browser.String(), want) {
+			t.Errorf("the browser lost %q:\n%s", want, browser.String())
+		}
+	}
+}

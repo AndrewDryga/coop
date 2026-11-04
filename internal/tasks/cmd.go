@@ -3004,13 +3004,13 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		if ref.label != "" {
 			where = ref.label + " · " + t.ID // say which queue this decision lives in
 		}
-		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), where))
+		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), sanitizeCell(where)))
 		body, exists, err := readOptionalTaskMetadataPath(decPath)
 		if err != nil {
 			return -1, err
 		}
 		if !exists || decisionUnwritten(string(body)) {
-			fmt.Fprintf(out, "\n%s\n  %s %s\n", p.Bold(t.Title), p.Dim("Decision not written yet:"), displayPath(decPath))
+			fmt.Fprintf(out, "\n%s\n  %s %s\n", p.Bold(sanitizeCell(t.Title)), p.Dim("Decision not written yet:"), sanitizeCell(displayPath(decPath)))
 		} else {
 			fprintDecisionBody(out, p, string(body))
 		}
@@ -3018,7 +3018,7 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		if answer := decisionResolution(string(body)); answer != "" {
 			// The existing answer is shown, and Enter keeps it — the safe key must never be the
 			// one that silently discards a decision somebody already made.
-			fmt.Fprintf(out, "  %s %s\n", p.Dim("Answered:"), answer)
+			fmt.Fprintf(out, "  %s %s\n", p.Dim("Answered:"), sanitizeCell(answer))
 			prompt = "Your answer (Enter to keep it):"
 		}
 		key := func(k string) string { return p.Cyan(k) }
@@ -3155,8 +3155,9 @@ func pluralTasks(n int) string {
 // header and the answer is what we're collecting), and the rest indented.
 func fprintDecisionBody(out io.Writer, p ui.Palette, content string) {
 	prevBlank := true // the divider's task id ends the header — the question starts its own block
+	// An agent in a box can write this file, and this prints to the terminal of the person answering.
 	for _, raw := range strings.Split(stripHTMLComments(content), "\n") {
-		line := strings.TrimSpace(raw)
+		line := strings.TrimSpace(sanitizeCell(raw))
 		if line == "" {
 			prevBlank = true
 			continue
