@@ -1787,3 +1787,73 @@ func TestLaunchWaitReporterWritesOneByteAndHidesTheDescriptor(t *testing.T) {
 		}
 	}
 }
+
+// Two sessions with services of their own in one project, each on hold with a box of its own parked. Each
+// parked box holds the shared side, so neither session can start its services, and neither box stops by
+// itself. A session on hold stops its own, and both go on: nobody has to close anything.
+func TestTwoSessionsOnHoldDoNotWaitOnEachOthersParkedBoxes(t *testing.T) {
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := func(source string) *boxWaitHarness {
+		spec := box.RunSpec{Repo: repo, SupervisorID: source}
+		parked, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, Role: forkspace.ExecutionRoleWarm, Workspace: repo, SourceID: source})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = forkspace.EndExecution(repo, parked) })
+		unlock, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(unlock)
+		forget := forkspace.NoteServiceLaunchHeld(repo, parked.ID)
+		h := newBoxWaitHarness(t)
+		var once sync.Once
+		h.w.check = func(context.Context) error { return box.EditorServiceLaunchBusy(spec) }
+		h.w.stamp = func() string { return box.EditorBoxStamp(nil, spec) }
+		h.w.yield = func() {
+			once.Do(func() {
+				forget()
+				unlock()
+				_ = forkspace.EndExecution(repo, parked)
+			})
+		}
+		return h
+	}
+	a, b := session("session-a"), session("session-b")
+	for _, h := range []*boxWaitHarness{a, b} {
+		if err := h.w.refresh(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wait.For(t, "both sessions to go on", func() bool {
+		for _, h := range []*boxWaitHarness{a, b} {
+			h.w.poll()
+			if !h.w.blockedNow() {
+				h.w.yield() // the box it starts now says that only its own parked boxes keep it out
+			}
+		}
+		return !a.w.blockedNow() && !b.w.blockedNow()
+	})
+}
+
+// A wait that goes on tells every open thread when it waits for someone else.
+func TestAThreadHearsWhoItWaitsForNow(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	var next error = &box.ServiceLaunchBusy{Boxes: []string{"a loop"}}
+	h.w.check = func(context.Context) error { return next }
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	next = &box.ServiceLaunchBusy{Boxes: []string{"an editor session"}}
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.read(func() {
+		if len(h.told) != 2 || !strings.Contains(h.told[1], "an editor session") {
+			t.Fatalf("threads heard %q", h.told)
+		}
+	})
+}

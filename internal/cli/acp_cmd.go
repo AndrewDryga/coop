@@ -613,7 +613,8 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// Filtered sessions connect before their project box is ready. rebalance is not armed yet, so the
 	// wait reaches it through this name: it fires only once a blocked session clears, long after.
 	restarter := &acpproxy.Restarter{}
-	var boxOpened, boxYield func()
+	var boxOpened func()
+	boxYield := func() {} // a first check can come before the pool exists, with nothing parked yet
 	boxRepo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return 1, err

@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,6 +49,14 @@ func recordBox(t *testing.T, repo string, spec forkspace.ExecutionSpec) forkspac
 	return record
 }
 
+// recordHolder is recordBox for a box that holds the lock, as a running one does.
+func recordHolder(t *testing.T, repo string, spec forkspace.ExecutionSpec) forkspace.ExecutionRecord {
+	t.Helper()
+	record := recordBox(t, repo, spec)
+	t.Cleanup(forkspace.NoteServiceLaunchHeld(repo, record.ID))
+	return record
+}
+
 const waitSaysABox = "Coop goes on by itself once it stops. Close it to go on sooner."
 
 // A box that has to wait says what for and what to do about it, wherever a person is looking, and says
@@ -68,7 +77,7 @@ func TestABoxThatHasToWaitSaysSoAndWhenItEnds(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			noticeLaunchWaitAfter(t, 20*time.Millisecond)
 			repo := t.TempDir()
-			recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+			recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
 			release := holdLaunchLock(t, repo)
 			var told []bool
 			test.spec.OnServiceLaunchWait = func(waiting bool) { told = append(told, waiting) }
@@ -103,7 +112,7 @@ func TestABoxThatHasToWaitSaysSoAndWhenItEnds(t *testing.T) {
 func TestACommandThatWaitsForABoxNamesIt(t *testing.T) {
 	noticeLaunchWaitAfter(t, 20*time.Millisecond)
 	repo := t.TempDir()
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP})
 	time.AfterFunc(100*time.Millisecond, holdLaunchLock(t, repo))
 	got := captureStderr(t, func() {
 		unlock, err := LockServiceLaunch(t.Context(), repo)
@@ -147,7 +156,7 @@ func TestALaunchThatBarelyWaitsSaysNothing(t *testing.T) {
 func TestTheSharedSideWaitsForACommandNotABox(t *testing.T) {
 	noticeLaunchWaitAfter(t, 10*time.Millisecond)
 	repo := t.TempDir()
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
 	exclusive, err := forkspace.LockServiceLaunch(t.Context(), repo, true)
 	if err != nil {
 		t.Fatal(err)
@@ -202,9 +211,9 @@ func TestAWaitNamesOnlyWhatClosingWouldEnd(t *testing.T) {
 	if title != "Waiting for another Coop command in this project" || strings.Contains(strings.Join(details, " "), "Close") {
 		t.Fatalf("with nothing to close it said %q %q", title, details)
 	}
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionInteractive, SourceID: "another"})
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "another session", Role: forkspace.ExecutionRoleActive})
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "a third session", Role: forkspace.ExecutionRoleActive})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionInteractive, SourceID: "another"})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "another session", Role: forkspace.ExecutionRoleActive})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "a third session", Role: forkspace.ExecutionRoleActive})
 	busy, own = serviceLaunchHolders(repo, self.ID, "session")
 	if own || !slices.Equal(busy.Boxes, []string{"a box in a terminal", "an editor session"}) {
 		t.Fatalf("names %v, own %v", busy.Boxes, own)
@@ -259,11 +268,11 @@ func TestEditorServiceLaunchBusyAsksAboutTheLockAndWhoHoldsIt(t *testing.T) {
 	if err := forkspace.EndExecution(repo, holding); err != nil {
 		t.Fatal(err)
 	}
-	warm := recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleWarm})
+	warm := recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleWarm})
 	if err := EditorServiceLaunchBusy(spec); err != nil {
 		t.Fatalf("the session's own parked box read as a wait: %v", err)
 	}
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, SourceID: "a loop run"})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, SourceID: "a loop run"})
 	if err := EditorServiceLaunchBusy(spec); !errors.As(err, &busy) || !slices.Equal(busy.Boxes, []string{"a loop"}) {
 		t.Fatalf("a loop beside the parked box read as %v", err)
 	}
@@ -295,14 +304,14 @@ func TestEditorUnfilteredReadinessAsksOnlyWhenItsBoxStartsServices(t *testing.T)
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer holdLaunchLock(t, test.repo)()
-			err := EditorUnfilteredBoxReadiness(test.cfg, rt, RunSpec{Repo: test.repo})
+			err := EditorUnfilteredBoxReadiness(t.Context(), test.cfg, rt, RunSpec{Repo: test.repo})
 			var busy *ServiceLaunchBusy
 			if errors.As(err, &busy) != test.busy {
 				t.Fatalf("readiness = %v, want busy=%v", err, test.busy)
 			}
 		})
 	}
-	if err := EditorUnfilteredBoxReadiness(open, rt, RunSpec{Repo: repo}); err != nil {
+	if err := EditorUnfilteredBoxReadiness(t.Context(), open, rt, RunSpec{Repo: repo}); err != nil {
 		t.Fatalf("a free lock read as %v", err)
 	}
 }
@@ -324,7 +333,7 @@ func TestEditorBoxStampChangesWhenTheLockComesFree(t *testing.T) {
 func TestRunSaysWhenItsServicesWaitForAnotherBox(t *testing.T) {
 	noticeLaunchWaitAfter(t, 20*time.Millisecond)
 	repo, _ := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [5432]\n")
-	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true}
 	release := holdLaunchLock(t, repo)
@@ -386,7 +395,7 @@ func TestOnlyTheSessionsOwnBoxAsksParkedBoxesToStop(t *testing.T) {
 			defer func(old time.Duration) { serviceLaunchWaitNotice = old }(serviceLaunchWaitNotice)
 			serviceLaunchWaitNotice = time.Millisecond
 			repo := t.TempDir()
-			recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleWarm})
+			recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleWarm})
 			held, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
 			if err != nil {
 				t.Fatal(err)
@@ -406,5 +415,143 @@ func TestOnlyTheSessionsOwnBoxAsksParkedBoxesToStop(t *testing.T) {
 				t.Fatalf("asked %d times, want %d", asked, tc.want)
 			}
 		})
+	}
+}
+
+// Two sessions in one project. A runs with a parked box that holds the lock. B connects, needs the exclusive
+// side, and waits on a child that only holds prompts. That child is published in the records, and so is any
+// box that waits. Neither holds anything, so A's next box asks its parked box to stop instead of waiting on
+// B while B waits on that parked box. Only then can either of them go on.
+func TestTwoSessionsThatNeedTheLockDoNotWaitOnEachOther(t *testing.T) {
+	noticeLaunchWaitAfter(t, 10*time.Millisecond)
+	repo := t.TempDir()
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "A", Role: forkspace.ExecutionRoleWarm})
+	release := holdLaunchLock(t, repo)
+	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "B", Role: forkspace.ExecutionRoleActive})
+
+	if err := EditorServiceLaunchBusy(RunSpec{Repo: repo, SupervisorID: "A"}); err != nil {
+		t.Fatalf("A's spawn is put on hold by a box that holds nothing: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	spec := RunSpec{ActivitySource: "A", ActivityRole: forkspace.ExecutionRoleActive, OnOwnBoxesHoldLaunch: release,
+		OnServiceLaunchWait: func(bool) { t.Error("A's thread was told to close something") }}
+	unlock, err := lockServiceLaunch(ctx, repo, true, spec, nil)
+	if err != nil {
+		t.Fatalf("A's box waited on B, and B on A's parked box: %v", err)
+	}
+	unlock()
+}
+
+// A wait goes on asking who it waits for. A's parked boxes stop and B's box takes the lock first: A's box had
+// nothing to say a moment ago, and now its thread has to hear, or it has no message and no shield from the
+// first-answer limit. When only parked boxes of A's own are left again, they are asked to stop again.
+func TestAWaitAsksAgainWhoHoldsTheLock(t *testing.T) {
+	noticeLaunchWaitAfter(t, 10*time.Millisecond)
+	repo := t.TempDir()
+	parked := recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "A", Role: forkspace.ExecutionRoleWarm})
+	release := holdLaunchLock(t, repo)
+
+	events := make(chan string, 16)
+	spec := RunSpec{ActivitySource: "A", ActivityRole: forkspace.ExecutionRoleActive, Quiet: true, ForceNoTTY: true,
+		OnOwnBoxesHoldLaunch: func() { events <- "parked boxes stop" },
+		OnServiceLaunchWait:  func(waiting bool) { events <- fmt.Sprint("waiting ", waiting) }}
+	expect := func(want string) {
+		t.Helper()
+		select {
+		case got := <-events:
+			if got != want {
+				t.Fatalf("heard %q, want %q", got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("heard nothing, want %q", want)
+		}
+	}
+	entered := make(chan func(), 1)
+	got := captureStderr(t, func() {
+		go func() {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			unlock, err := lockServiceLaunch(ctx, repo, true, spec, newLaunchSections(spec))
+			if err != nil {
+				t.Error(err)
+				events <- "gave up"
+				return
+			}
+			entered <- unlock
+		}()
+		expect("parked boxes stop")
+		// The parked box goes, and in the same moment B's box holds the lock.
+		other := recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, SourceID: "B"})
+		if err := forkspace.EndExecution(repo, parked); err != nil {
+			t.Fatal(err)
+		}
+		expect("waiting true")
+		// B's box goes, and a new parked box of A's is what is left.
+		recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "A", Role: forkspace.ExecutionRoleWarm})
+		if err := forkspace.EndExecution(repo, other); err != nil {
+			t.Fatal(err)
+		}
+		expect("waiting false")
+		expect("parked boxes stop")
+		release()
+		select {
+		case unlock := <-entered:
+			unlock()
+		case <-time.After(10 * time.Second):
+			t.Fatal("the lock came free and the wait did not end")
+		}
+	})
+	if !strings.Contains(got, "Running now: a loop.") {
+		t.Errorf("a person was never told what it waits for now: %q", got)
+	}
+	if !strings.Contains(got, "The wait is over.") {
+		t.Errorf("a person was never told the wait ended: %q", got)
+	}
+}
+
+// A box says it holds the lock for as long as it does, and a box stopped by a crash says nothing.
+func TestABoxSaysItHoldsTheLockOnlyWhileItDoes(t *testing.T) {
+	repo := t.TempDir()
+	record := recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	released := false
+	spec := RunSpec{activityID: record.ID}
+	unlock := spec.noteLaunchHeld(repo, func() { released = true })
+	if !forkspace.ServiceLaunchHeldBy(repo, record.ID) {
+		t.Fatal("a box that holds the lock does not say so")
+	}
+	unlock()
+	if !released || forkspace.ServiceLaunchHeldBy(repo, record.ID) {
+		t.Fatalf("released=%v, and it still says it holds the lock=%v", released, forkspace.ServiceLaunchHeldBy(repo, record.ID))
+	}
+	spec.noteLaunchHeld(repo, func() {}) // it crashed here
+	if err := forkspace.EndExecution(repo, record); err != nil {
+		t.Fatal(err)
+	}
+	if forkspace.ServiceLaunchHeldBy(repo, record.ID) {
+		t.Fatal("the note outlived the record")
+	}
+}
+
+// A waiting session looks again when the lock changes hands, so a thread hears who it waits for now, and when
+// whoever started services has finished, since a box that joins them can go on then.
+func TestEditorBoxStampChangesWhenTheLockChangesHands(t *testing.T) {
+	repo := t.TempDir()
+	spec := RunSpec{Repo: repo, SupervisorID: "session"}
+	exclusive, err := forkspace.LockServiceLaunch(t.Context(), repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starting := EditorBoxStamp(nil, spec)
+	exclusive()
+	release := holdLaunchLock(t, repo)
+	defer release()
+	shared := EditorBoxStamp(nil, spec)
+	if starting == shared {
+		t.Fatalf("whoever started services finished, and the stamp stayed %q", shared)
+	}
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	if named := EditorBoxStamp(nil, spec); named == shared {
+		t.Fatalf("a new holder left the stamp at %q", named)
 	}
 }

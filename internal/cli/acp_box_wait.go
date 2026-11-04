@@ -150,7 +150,7 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 			}
 			capture := a.currentACPCapture()
 			if capture == nil {
-				return box.EditorUnfilteredBoxReadiness(a.cfg, a.rt, spec)
+				return box.EditorUnfilteredBoxReadiness(ctx, a.cfg, a.rt, spec)
 			}
 			return box.EditorBoxReadiness(ctx, a.cfg, a.rt, capture, spec)
 		},
@@ -423,6 +423,11 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 		w.announce(text)
 	default:
 		w.publish(text)
+	}
+	// A session on hold for the lock has no use for its parked boxes, which a spawn would refuse anyway, and
+	// they hold what it waits for. Two sessions that kept theirs would wait on each other for good.
+	if errors.As(blocked, &busy) {
+		go w.yield()
 	}
 	if cleared && w.unblocked != nil {
 		w.unblocked()

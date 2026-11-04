@@ -137,6 +137,15 @@ func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSp
 		return startedServices{}, false
 	}
 	defer unlock()
+	return openSessionServicesRunning(ctx, rt, spec, file, owner, exposedRoots...)
+}
+
+// openSessionServicesRunning is the check joinOpenSessionServices makes, for a caller that holds the shared
+// side of the lock. A session asks it before it starts a box too, so a box that would join does not wait.
+func openSessionServicesRunning(ctx context.Context, rt runtime.Runtime, spec RunSpec, file, owner string, exposedRoots ...string) (startedServices, bool) {
+	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" || spec.Review {
+		return startedServices{}, false
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	bound, err := rt.FreezeCompose(ctx)

@@ -46,6 +46,7 @@ func TestScriptedACPConnectsBesideABoxThatHoldsTheServiceLaunchLock(t *testing.T
 		t.Fatal(err)
 	}
 	t.Cleanup(release)
+	forkspace.NoteServiceLaunchHeld(repo, running.ID)
 
 	moved := matrixGeneration("codex", "real", repo, "unused")[:2]
 	moved[1].Events = []any{map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{

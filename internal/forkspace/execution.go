@@ -412,6 +412,53 @@ func ServiceLaunchLockPath(repo string) (string, error) {
 	return filepath.Join(filepath.Dir(registry), "service-locks", key+serviceLaunchLockName), nil
 }
 
+// launchHolderFolder has one empty file for each execution whose box holds the service launch lock now,
+// named by its record. A record is published before any lock is taken, so being there says nothing. A
+// field in it would not do either: its supervisor rewrites the record from another process to change its
+// role, which would lose the field, and a running older build refuses a record it cannot fully read,
+// which stops work on forks.
+const launchHolderFolder = "launch-holders"
+
+// NoteServiceLaunchHeld says execution id now holds the lock, and returns the call that says it no longer
+// does. It only tells a waiter who to name, so a failure leaves this box unnamed and changes no lock.
+func NoteServiceLaunchHeld(repo, id string) func() {
+	if !validExecutionID(id) {
+		return func() {}
+	}
+	root, err := OpenStateRoot(repo, launchHolderFolder, true)
+	if err != nil {
+		return func() {}
+	}
+	defer root.Close()
+	f, err := root.OpenFile(id, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return func() {}
+	}
+	_ = f.Close()
+	return func() { forgetServiceLaunchHeld(repo, id) }
+}
+
+// ServiceLaunchHeldBy reports what NoteServiceLaunchHeld last said. A crashed box's note means nothing:
+// callers ask only about a running record, and EndExecution removes the note with the record.
+func ServiceLaunchHeldBy(repo, id string) bool {
+	root, err := OpenStateRoot(repo, launchHolderFolder, false)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	_, err = root.Lstat(id)
+	return err == nil
+}
+
+func forgetServiceLaunchHeld(repo, id string) {
+	root, err := OpenStateRoot(repo, launchHolderFolder, false)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = root.Remove(id)
+}
+
 // BeginExecution publishes one execution before its sandbox starts. The caller must EndExecution
 // with the returned exact record; a crash leaves a stale, visibly non-running observation rather
 // than making ongoing project work disappear from the unified view.
@@ -571,6 +618,7 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 		}
 		removeErr := root.Remove(expected.ID + ".json")
 		closeErr := root.Close()
+		forgetServiceLaunchHeld(repo, expected.ID)
 		return errors.Join(removeErr, closeErr)
 	}
 	return nil

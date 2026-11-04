@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,36 +33,50 @@ func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec Ru
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	first, cancel := context.WithTimeout(ctx, serviceLaunchWaitNotice)
-	unlock, err := forkspace.LockServiceLaunch(first, repo, exclusive)
-	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-		return unlock, err
+	var said *ServiceLaunchBusy
+	var told, own bool
+	for {
+		step, cancel := context.WithTimeout(ctx, serviceLaunchWaitNotice)
+		unlock, err := forkspace.LockServiceLaunch(step, repo, exclusive)
+		cancel()
+		switch {
+		case err == nil && said == nil:
+			return unlock, nil
+		case err == nil:
+			if told {
+				spec.OnServiceLaunchWait(false)
+			}
+			sections.serviceLaunchWaitOver()
+			return unlock, nil
+		case !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+			return nil, err
+		}
+		// Only a service launch waits for running boxes. The shared side waits for whoever is starting
+		// services, or for a command such as `coop up`, which keeps no record.
+		busy, ownNow := &ServiceLaunchBusy{}, false
+		if exclusive {
+			busy, ownNow = serviceLaunchHolders(repo, spec.activityID, spec.ActivitySource)
+		}
+		// This wait has no limit and who it waits for can change: parked boxes stop and another session's
+		// box takes the lock first, or the other way around. So it asks again for as long as it lasts.
+		if said == nil || !slices.Equal(said.Boxes, busy.Boxes) {
+			sections.serviceLaunchWait(busy, exclusive)
+		}
+		first := said == nil
+		said = busy
+		if !exclusive || !first && own == ownNow {
+			continue
+		}
+		own = ownNow
+		// The session's own boxes are not something to ask a person to close.
+		if want := !own; spec.OnServiceLaunchWait != nil && told != want {
+			told = want
+			spec.OnServiceLaunchWait(told)
+		}
+		if own && spec.OnOwnBoxesHoldLaunch != nil && spec.ActivityRole != forkspace.ExecutionRoleWarm {
+			spec.OnOwnBoxesHoldLaunch()
+		}
 	}
-	// Only a service launch waits for running boxes. The shared side waits for whoever is starting
-	// services, or for a command such as `coop up`, which keeps no record.
-	busy, own := &ServiceLaunchBusy{}, false
-	if exclusive {
-		busy, own = serviceLaunchHolders(repo, spec.activityID, spec.ActivitySource)
-	}
-	sections.serviceLaunchWait(busy, exclusive)
-	// The session's own boxes are not something to ask a person to close.
-	tell := spec.OnServiceLaunchWait != nil && exclusive && !own
-	if tell {
-		spec.OnServiceLaunchWait(true)
-	}
-	if exclusive && own && spec.OnOwnBoxesHoldLaunch != nil && spec.ActivityRole != forkspace.ExecutionRoleWarm {
-		spec.OnOwnBoxesHoldLaunch()
-	}
-	unlock, err = forkspace.LockServiceLaunch(ctx, repo, exclusive)
-	if err != nil {
-		return nil, err
-	}
-	if tell {
-		spec.OnServiceLaunchWait(false)
-	}
-	sections.serviceLaunchWaitOver()
-	return unlock, nil
 }
 
 // lockServiceStart is lockServiceLaunch for a box about to start its services. A supervisor stops a box
@@ -70,11 +85,24 @@ func lockServiceStart(ctx context.Context, repo string, spec RunSpec, sections *
 	unlock, err := lockServiceLaunch(ctx, repo, true, spec, sections)
 	switch {
 	case err == nil:
-		return unlock, nil
+		return spec.noteLaunchHeld(repo, unlock), nil
 	case errors.Is(err, context.Canceled):
 		return nil, setupCanceled{step: "starting services", cause: err}
 	}
 	return nil, fmt.Errorf("wait for a safe service launch: %w", err)
+}
+
+// noteLaunchHeld says this box holds the lock that unlock releases, until it does, so that a wait can name
+// it. A box with no record has nothing to be named by.
+func (spec RunSpec) noteLaunchHeld(repo string, unlock func()) func() {
+	if spec.activityID == "" {
+		return unlock
+	}
+	forget := forkspace.NoteServiceLaunchHeld(repo, spec.activityID)
+	return func() {
+		forget()
+		unlock()
+	}
 }
 
 // ServiceLaunchBusy is a box that would have to wait for the service launch lock: Boxes are what run
@@ -101,20 +129,24 @@ func (e *ServiceLaunchBusy) Say() (title string, details []string) {
 }
 
 // serviceLaunchHolders says who keeps a launch out of the lock, as far as the host's records can
-// tell: a running box other than except and the boxes of the launch's own session (source). A
-// controller only supervises, so its boxes speak for it, and of a session's own boxes only a parked
-// one can hold the lock: the one that waits does not, nor does one that only holds prompts. own reports
-// that parked boxes of its own session are all there is. An unreadable record names nobody; the wait
-// is still real.
+// tell: a running box other than except and the boxes of the launch's own session (source) that said it
+// holds the lock. A record alone says nothing: a controller only supervises, a box may be waiting for the
+// lock too, and a box may only hold prompts, in this session or any other. Counting those made two
+// sessions wait on each other. Of a session's own boxes only a parked one counts. own reports that parked
+// boxes of its own session are all there is. An unreadable record names nobody; the wait is still real.
 func serviceLaunchHolders(repo, except, source string) (busy *ServiceLaunchBusy, own bool) {
-	live, err := LiveBoxes(repo, except)
+	authority, _, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return &ServiceLaunchBusy{}, false
+	}
+	live, err := LiveBoxes(authority, except)
 	if err != nil {
 		return &ServiceLaunchBusy{}, false
 	}
 	var others []forkspace.ExecutionObservation
 	for _, observation := range live {
 		switch record := observation.Record; {
-		case record.Role == forkspace.ExecutionRoleController || record.Role == forkspace.ExecutionRoleDetachedWorker:
+		case !forkspace.ServiceLaunchHeldBy(authority, record.ID):
 		case source != "" && record.SourceID == source:
 			own = own || record.Role == forkspace.ExecutionRoleWarm
 		default:
@@ -124,10 +156,19 @@ func serviceLaunchHolders(repo, except, source string) (busy *ServiceLaunchBusy,
 	return &ServiceLaunchBusy{Boxes: liveBoxNames(others)}, own && len(others) == 0
 }
 
-// EditorServiceLaunchBusy asks whether a box of this editor session (spec.SupervisorID) would wait for
-// the lock now. It returns *ServiceLaunchBusy, or nil when the lock is free or only the session's parked
-// boxes hold it: those never stop by themselves and nobody can close them, so a thread is not told to.
+// EditorServiceLaunchBusy asks whether a box of this editor session (spec.SupervisorID) that has to start
+// the project's services would wait for the lock now. It returns *ServiceLaunchBusy, or nil when the lock
+// is free or only the session's parked boxes hold it: those never stop by themselves and nobody can close
+// them, so a thread is not told to.
 func EditorServiceLaunchBusy(spec RunSpec) error {
+	return editorServiceLaunchBusy(spec, nil)
+}
+
+// editorServiceLaunchBusy is EditorServiceLaunchBusy for a box that may need only the shared side: joins,
+// when set, runs the check its launch will make, under that side. Whoever holds the exclusive side keeps
+// that launch out as well, so that wait is a real one. This is only a forecast: a box that turns out not to
+// join says it waits (RunSpec.OnServiceLaunchWait).
+func editorServiceLaunchBusy(spec RunSpec, joins func() bool) error {
 	repo, _, err := forkspace.ResolveProjectBinding(projectPolicyRepo(spec))
 	if err != nil {
 		return err
@@ -140,20 +181,58 @@ func EditorServiceLaunchBusy(spec RunSpec) error {
 	if own {
 		return nil
 	}
+	if joins != nil {
+		if unlock, err := tryServiceLaunchShared(repo); err == nil {
+			defer unlock()
+			if joins() {
+				return nil
+			}
+		}
+	}
 	return busy
+}
+
+// tryServiceLaunchShared takes the shared side only if it needs no wait.
+func tryServiceLaunchShared(repo string) (func(), error) {
+	once, cancel := context.WithCancel(context.Background())
+	cancel() // flockWaiting tries once before it looks at its context
+	return forkspace.LockServiceLaunch(once, repo, false)
+}
+
+// serviceLaunchStamp changes when a waiting session should ask again about the lock: it came free, whoever
+// was starting services finished, so a box could join them, or someone else holds it now.
+func serviceLaunchStamp(repo, source string) string {
+	taken, _ := forkspace.ServiceLaunchTaken(repo) // a failure to look reads as free: only a hint
+	if !taken {
+		return "free"
+	}
+	starting := true
+	if unlock, err := tryServiceLaunchShared(repo); err == nil {
+		unlock()
+		starting = false
+	}
+	busy, own := serviceLaunchHolders(repo, "", source)
+	return fmt.Sprint(starting, own, busy.Boxes)
 }
 
 // EditorUnfilteredBoxReadiness is EditorBoxReadiness for an open or offline session: a box of its own
 // has nothing to wait for but the lock, and that only if it starts the project's services.
-func EditorUnfilteredBoxReadiness(cfg *config.Config, rt runtime.Runtime, spec RunSpec) error {
+func EditorUnfilteredBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec) error {
 	p, err := project.Load(projectPolicyRepo(spec))
 	if err != nil {
 		return err
 	}
-	if ComposeFileAt(spec.Repo, p.ComposeRel()) == "" || !EditorStartsServices(cfg, rt, p) {
+	file := ComposeFileAt(spec.Repo, p.ComposeRel())
+	if file == "" || !EditorStartsServices(cfg, rt, p) {
 		return nil
 	}
-	return EditorServiceLaunchBusy(spec)
+	return editorServiceLaunchBusy(spec, func() bool {
+		child := spec
+		child.ActivitySource = spec.SupervisorID
+		roots := compositionArtifactExposureRoots(applyProjectPolicy(cfg, p, &child), child)
+		_, joined := openSessionServicesRunning(ctx, rt, child, file, child.ActivitySource, roots...)
+		return joined
+	})
 }
 
 // serviceLaunchWait opens the wait where the launch's narration is: a section of its own in a

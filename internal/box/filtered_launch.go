@@ -401,7 +401,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		// can replace none. It stays open: that approval may be the very thing this box waits for.
 		unlockMounts()
 	} else {
-		defer unlockMounts()
+		defer spec.noteLaunchHeld(projectRepo, unlockMounts)()
 	}
 	options = append(slices.Clone(options), "--user", f.agentIdentity.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)

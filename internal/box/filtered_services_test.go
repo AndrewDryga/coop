@@ -507,6 +507,28 @@ func TestSessionBoxJoinsTheServicesItsSessionRuns(t *testing.T) {
 		}
 	})
 
+	t.Run("a session asks the same before it starts a box", func(t *testing.T) {
+		recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "another session", Role: forkspace.ExecutionRoleActive})
+		unlock, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		ready := func(docker filteredDocker) error {
+			return editorFilteredLaunchBusy(t.Context(), docker, overrideRecorderRuntime(t, filepath.Join(t.TempDir(), "runtime.log")), RunSpec{Repo: repo, SupervisorID: owner}, compose,
+				&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")))
+		}
+		if err := ready(fixture()); err != nil {
+			t.Fatalf("a box that would join was put on hold: %v", err)
+		}
+		other := fixture()
+		other.serviceDefinition = "another"
+		var busy *ServiceLaunchBusy
+		if err := ready(other); !errors.As(err, &busy) {
+			t.Fatalf("a box that cannot join was told %v", err)
+		}
+	})
+
 	for _, tc := range []struct {
 		name   string
 		spec   RunSpec

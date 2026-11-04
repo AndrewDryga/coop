@@ -529,8 +529,7 @@ type joinedServices struct {
 // enough to keep a launch out while this looks. Anything else returns nil, and the full launch path
 // decides and reports.
 func joinSessionServices(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, projectRepo, composeFile string, approval *networkstate.Approval, grants []egress.Grant, sections *launchSections) *joinedServices {
-	owner := runServiceOwner(spec)
-	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" {
+	if !sessionMayJoinServices(spec) {
 		return nil
 	}
 	unlock, err := lockServiceLaunch(ctx, projectRepo, false, RunSpec{}, sections)
@@ -538,6 +537,20 @@ func joinSessionServices(ctx context.Context, docker filteredDocker, rt runtime.
 		return nil
 	}
 	defer unlock()
+	return sessionServicesRunning(ctx, docker, rt, spec, composeFile, approval, grants)
+}
+
+func sessionMayJoinServices(spec RunSpec) bool {
+	return spec.SupervisorID != "" && runServiceOwner(spec) != "" && spec.IsolatedParent == ""
+}
+
+// sessionServicesRunning is the check joinSessionServices makes, for a caller that holds the shared side of
+// the lock. A session asks it before it starts a box too, so a box that would join does not wait.
+func sessionServicesRunning(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string, approval *networkstate.Approval, grants []egress.Grant) *joinedServices {
+	if !sessionMayJoinServices(spec) {
+		return nil
+	}
+	owner := runServiceOwner(spec)
 	data, err := readValidatedCompose(composeFile, spec.Repo, spec.RepoReadOnly)
 	if err != nil || checkApprovedServicesData(approval, data) != nil || refuseRunningServiceWriters(ctx, rt, spec.Repo) != nil {
 		return nil

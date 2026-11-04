@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go]
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go]
 updated: 2026-11-04
 ---
 
@@ -174,6 +174,28 @@ now `ChildNotReady` and a retry rather than the end of the session. Past the bou
 left: `coop-entry`'s toolchain provisioning is the base image's, and a filtered image has none. So a box waiting
 before that point can be silent for 5 minutes: the editor gets no earlier answer, on purpose.
 
+Trap: who holds the lock. flock cannot say, and a record proves nothing: `BeginExecution` publishes one before
+any lock is taken, so a box that waits and a holding child both have one, in this session or another. Counting
+records let two sessions wait on each other: A runs with a parked box, B needs the exclusive side and goes on hold,
+A switches cold and is told to wait for B's holding child, and A's parked box never yields because `own` is false.
+So a box that holds the lock says so (`noteLaunchHeld`, an empty file in `launch-holders/` beside the records, named
+by the record), and `serviceLaunchHolders` counts only those. It is a file and not a field because the supervisor
+rewrites the record from another process to change its role, and a running older build refuses a record it cannot
+fully read. A box of an older build holds without saying so, so it reads as "another Coop command" until it stops.
+
+Readiness asks what the launch will ask. A cold box that would join needs only the shared side, so
+`editorServiceLaunchBusy` runs the join's own check (`openSessionServicesRunning`, `sessionServicesRunning`) when the
+shared side is free now. It is a forecast: a box that turns out not to join says so on the launch-wait pipe. Only
+a spawn's readiness asks; `heedLaunchWait` already knows its child did not join, so it uses `EditorServiceLaunchBusy`.
+
+Two more rules keep a wait from lasting for good. A session on hold for the lock drains its parked boxes
+(`settle`): a spawn would refuse them anyway, and two sessions that each kept theirs would hold each other out. A
+wait re-reads the holders every `serviceLaunchWaitNotice` for as long as it lasts: parked boxes can stop and another
+session's box get the lock first, and a verdict read once left that waiter with no message, no first-answer shield
+and no second yield. `EditorBoxStamp` carries the holders and whether the exclusive side is held, so a session on
+hold looks again within one poll, a thread hears who it waits for now, and a box that could join goes on once
+whoever was starting services has finished.
+
 Trap: a holding child takes the shared side of `LockServiceLaunch` to validate its mounts, so whoever holds the
 exclusive side keeps it waiting too. A running box holds only the shared side, so it blocks a box with services and
 not the holding child. An exclusive holder is what can delay the holding child's answer past the 5 minutes.
@@ -196,6 +218,11 @@ a file that no longer loads too, since nothing can read that request.
 ## Changelog
 - 2026-11-04 — exit 0 no longer makes any service a finished step: the file has to declare it. A broken file's reason
   is one escaped line of text, since an editor does not wrap a code block.
+- 2026-11-04 — two sessions in one project no longer wait on each other: readiness asks whether a box would join,
+  only boxes that say they hold the lock count, a session on hold drains its parked boxes, and a wait re-reads who
+  holds it. Verified with two real open `coop acp` sessions on fake API keys in a private config folder, no prompt:
+  before, A's cold switch went on hold and neither moved for 120 s; now it runs in 2 s, and in 3 s when the compose
+  file changed (its parked boxes stop and it restarts the services), and B moves on when A closes.
 - 2026-11-04 — open sessions join their own services too, and a warm box a switch takes no longer waits behind its
   neighbours. Verified with a real open `coop acp` on fake API keys in a private config folder, no prompt: a warm
   switch was live in 0.1 s with every service container unchanged, the refill joined, and the same after an edit.

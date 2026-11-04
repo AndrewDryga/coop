@@ -324,10 +324,24 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if err := editorServicesReadiness(cfg, spec, p, policy); err != nil {
 		return err
 	}
-	if len(serviceGrants(policy)) == 0 {
+	grants := serviceGrants(policy)
+	if len(grants) == 0 {
 		return nil // it starts no services, so nothing running keeps it out
 	}
-	return EditorServiceLaunchBusy(spec)
+	approval, err := capture.Store.Approval(capture.Project)
+	if err != nil {
+		return err
+	}
+	return editorFilteredLaunchBusy(ctx, docker, rt, spec, ComposeFileAt(spec.Repo, p.ComposeRel()), approval, grants)
+}
+
+// editorFilteredLaunchBusy asks about the lock for a filtered box, which may only have to join.
+func editorFilteredLaunchBusy(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, file string, approval *networkstate.Approval, grants []egress.Grant) error {
+	return editorServiceLaunchBusy(spec, func() bool {
+		child := spec
+		child.ActivitySource = spec.SupervisorID
+		return sessionServicesRunning(ctx, docker, rt, child, file, approval, grants) != nil
+	})
 }
 
 // editorServicesReadiness is prepareFilteredExecution's services refusal, asked early.
@@ -368,7 +382,7 @@ func ProjectServicesRefusal(ctx context.Context, cfg *config.Config, repo string
 
 // EditorBoxStamp changes when a person may have settled what EditorBoxReadiness reported: a project
 // build or an approval finished, the project's configuration or Dockerfile changed, or the service
-// launch lock came free. Reading the build's files on every poll would cost a large project about a
+// launch lock came free or changed hands. Reading the build's files on every poll would cost a large project about a
 // second; this costs a few stats and one small read. It proves nothing: a waiting session reads it to
 // know when to ask EditorBoxReadiness again. An open or offline session has only the lock to watch.
 func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
@@ -377,9 +391,9 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	if err != nil {
 		authority = repo
 	}
-	taken, _ := forkspace.ServiceLaunchTaken(authority) // a failure to look reads as free: only a hint
+	lock := serviceLaunchStamp(authority, spec.SupervisorID)
 	if capture == nil {
-		return fmt.Sprint(taken)
+		return lock
 	}
 	stamp := func(path string) string {
 		info, err := os.Stat(path)
@@ -390,7 +404,7 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	}
 	generation, _ := capture.Store.ApprovalGeneration() // unreadable reads as zero: only a hint, and the recheck remains
 	return strings.Join([]string{capture.Fingerprint, capture.Store.ProjectBuildReviewStamp(capture.Project), fmt.Sprint(generation),
-		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo))), fmt.Sprint(taken)}, " ")
+		stamp(filepath.Join(repo, project.File)), stamp(filepath.Join(repo, project.DockerfilePath(repo))), lock}, " ")
 }
 
 // RebuildApprovedProject rebuilds files a person already approved, with no prompt. It decides on the

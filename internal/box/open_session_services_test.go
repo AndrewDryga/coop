@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -237,6 +239,58 @@ func TestAnOpenSessionsLaterBoxJoinsWhatItsFirstBoxStarted(t *testing.T) {
 				t.Fatalf("services restarted under a running box:\n%s", calls)
 			}
 		})
+	}
+}
+
+// A cold box that would join goes on, whoever else holds the lock: it needs only the shared side. Anything
+// that would take the whole way still waits, and so does a box while someone holds the exclusive side.
+func TestAColdBoxThatWouldJoinIsNotPutOnHold(t *testing.T) {
+	repo, compose := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [5432]\n  migrate:\n    image: app:1\n")
+	const owner = "supervisor-one"
+	spec := RunSpec{Repo: repo, Workdir: repo, Network: true, SupervisorID: owner}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open", AutoUp: true, Network: true}
+	d := newOpenSessionDaemon(t)
+	data, err := os.ReadFile(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := sessionServiceDefinition(data, []string{"db", "migrate"})
+	if err := os.WriteFile(d.definition, []byte(definition), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	composeProject := ComposeProjectFor(repo, owner)
+	d.write(t, d.inspectDB, "db", compose, composeProject, openSessionContainer{id: strings.Repeat("a", 64), status: "running", health: "healthy", hostPort: projectHostPort(repo, owner)}, definition)
+	d.write(t, d.inspectMigrate, "migrate", compose, composeProject, openSessionContainer{id: strings.Repeat("b", 64), status: "exited"}, definition)
+	readiness := func() error { return EditorUnfilteredBoxReadiness(t.Context(), cfg, d.rt, spec) }
+
+	// Another session's box runs, which a box that has to start services would have to wait for.
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "another session", Role: forkspace.ExecutionRoleActive})
+	exclusive, err := forkspace.LockServiceLaunch(t.Context(), repo, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var busy *ServiceLaunchBusy
+	if err := readiness(); !errors.As(err, &busy) {
+		t.Fatalf("while someone starts services, readiness = %v", err)
+	}
+	exclusive()
+	release := holdLaunchLock(t, repo)
+	defer release()
+	if err := readiness(); err != nil {
+		t.Fatalf("a box that would join was put on hold: %v", err)
+	}
+	if err := EditorServiceLaunchBusy(spec); !errors.As(err, &busy) {
+		t.Fatalf("a box already waiting for the exclusive side was told %v", err)
+	}
+	original := slices.Clone(data)
+	if err := os.WriteFile(compose, append(data, "# edited\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := readiness(); !errors.As(err, &busy) {
+		t.Fatalf("a box that cannot join any more was told %v", err)
+	}
+	if err := os.WriteFile(compose, original, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

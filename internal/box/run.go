@@ -1903,7 +1903,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// for may be this window closing.
 		unlockMounts()
 	} else {
-		defer unlockMounts()
+		defer spec.noteLaunchHeld(activityRepo, unlockMounts)()
 	}
 	if spec.filesystem != nil {
 		if err := recordRunDaemon(artifacts.runDir, spec.filesystem.docker.Info().ID); err != nil {

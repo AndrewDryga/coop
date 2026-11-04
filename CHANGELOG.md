@@ -13,6 +13,10 @@
 
 - **A Dockerfile whose heredoc mentions `.agent/project.yaml` now builds.** Coop still refuses a real `COPY` of it.
 
+- **Two editor sessions in one project no longer wait on each other.** A switch whose new box can share
+  the session's running services goes straight on, and a session only waits for boxes that really hold
+  the project up. If who it waits for changes, its threads hear the new name.
+
 - **An editor session in a project with services no longer hangs after a wait.** Once `coop approve` or
   `coop build` clears, the session's own box starts before its warm boxes, and the warm boxes share the
   services it started instead of restarting them under it. A switch to another provider stays instant.
