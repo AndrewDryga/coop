@@ -126,12 +126,13 @@ type Control struct {
 	serve        []ServePort
 	services     []ServiceLink
 	network      *NetworkLimit
-	boxWait      string          // why messages wait for the project's box; "" when they do not
-	problems     []Problem       // found before the first thread opened; told once, to that thread
-	problemsTold bool            // the first thread's start message went out
-	told         map[string]bool // problem texts already shown or queued, so none repeats
-	reported     map[string]bool // editor sessionId -> its start message went out
-	notices      []string        // queued Notify texts, shown with the next session update
+	boxWait      string                   // why messages wait for the project's box; "" when they do not
+	problems     []Problem                // found before the first thread opened; told once, to that thread
+	problemsTold bool                     // the first thread's start message went out
+	told         map[string]bool          // problem texts already shown or queued, so none repeats
+	reported     map[string]bool          // editor sessionId -> its start message went out
+	replays      map[string]*threadReplay // editor sessionId -> the reopen in flight
+	notices      []string                 // queued Notify texts, shown with the next session update
 
 	// Best-effort conversation carry across a session re-create (a provider switch, or a lost
 	// transcript): coop retains a budgeted plain-text history per session — it already sees both
@@ -215,6 +216,7 @@ func New(cfg *config.Config, lead, model, effort, repo string, sel Selection, pr
 		serve:          serve,
 		told:           map[string]bool{},
 		reported:       map[string]bool{},
+		replays:        map[string]*threadReplay{},
 		carryBytes:     cfg.ACPCarryBytes(),
 		history:        map[string]*sessHistory{},
 		turnText:       map[string][]byte{},
@@ -259,6 +261,7 @@ func (c *Control) clearSessionActive(session string) {
 	delete(c.heldChunk, session)
 	delete(c.waits, session)
 	delete(c.reported, session)
+	delete(c.replays, session)
 	delete(c.turnText, session)
 	delete(c.turnProvider, session)
 	delete(c.turnActive, session)
@@ -561,6 +564,24 @@ func (c *Control) sleepUntilReset(ctx context.Context, until time.Time, label st
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
 // watches for authentication/rate-limit errors and auto-rotates when possible (restart=true).
 func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
+	released, rest, reopened := c.filterReplay(line)
+	if rest != nil {
+		out, restart = c.lineToEditor(rest)
+	}
+	out = append(released, out...)
+	// A thread hears where to open the box, how its network is limited and what needs fixing. A reopened
+	// one hears it after the answer that ends the replay, so it cannot land inside a replayed message,
+	// and under the editor's id: that answer's sessionId, when it has one, can be the native id.
+	switch {
+	case reopened != "":
+		out = append(out, c.startNotice(reopened)...)
+	case rest != nil:
+		out = append(out, c.startNoticeFor(rest)...)
+	}
+	return out, restart
+}
+
+func (c *Control) lineToEditor(line []byte) (out []byte, restart bool) {
 	targetResult := c.commitNativeTarget(line)
 	if targetResult.tracked && targetResult.change.translated {
 		return c.translatedModelResponse(line, targetResult), targetResult.restart
@@ -599,10 +620,6 @@ func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
 	}
 	if notice := c.noticeFor(line); notice != nil {
 		out = append(notice, out...)
-	}
-	// A new thread hears where to open the box, how its network is limited and what needs fixing.
-	if notice := c.startNoticeFor(line); notice != nil {
-		out = append(out, notice...)
 	}
 	return out, false
 }
@@ -910,6 +927,7 @@ func (c *Control) childReset() {
 	c.promptSession = map[string]string{}
 	c.turnActive = map[string]bool{}
 	c.echoPreamble = map[string]string{}
+	c.replays = map[string]*threadReplay{} // a parked reopen arms again when it is forwarded
 	c.mu.Unlock()
 }
 
@@ -1807,7 +1825,7 @@ func (c *Control) preambleLocked(session string, omitCurrentUser bool) string {
 	if len(providers) > 0 {
 		origin = strings.Join(providers, ", then ")
 	}
-	fmt.Fprintf(&b, "[coop] This thread continues a conversation carried over from %s — the session was re-created (provider switch or lost transcript). The context below is best-effort: message text plus one-line tool narration; tool payloads/results are not included, so re-read anything you need to rely on. Continue the conversation naturally.\n\n--- conversation so far ---\n", origin)
+	b.WriteString(carriedBlockStart + origin + carriedBlockIntro)
 	if h.evicted {
 		b.WriteString("(…earlier context omitted — the carried history hit its budget…)\n\n")
 	}
@@ -1817,9 +1835,10 @@ func (c *Control) preambleLocked(session string, omitCurrentUser bool) string {
 			fmt.Fprintf(&b, "[provider] %s\n\n", e.provider)
 			lastProvider = e.provider
 		}
-		fmt.Fprintf(&b, "[%s] %s\n\n", e.role, e.text)
+		// A replay takes the first end marker as the block's end, so a quoted one must not read as it.
+		fmt.Fprintf(&b, "[%s] %s\n\n", e.role, strings.ReplaceAll(e.text, carriedBlockEnd, "--- end of carried text ---"))
 	}
-	b.WriteString("--- end of carried context ---")
+	b.WriteString(carriedBlockEnd)
 	return b.String()
 }
 
@@ -2713,6 +2732,9 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	}
 	if json.Unmarshal(line, &h) != nil {
 		return false, nil, nil, false
+	}
+	if (h.Method == "session/load" || h.Method == "session/resume") && h.Params.SessionID != "" && len(h.ID) > 0 {
+		c.beginReplay(h.ID, h.Params.SessionID)
 	}
 	// The editor's spelling of the repo may differ from the one coop mounted; forward coop's, or the
 	// box (Linux, case-sensitive) rejects a cwd that is right there on a case-insensitive host.

@@ -178,6 +178,20 @@ func throughGuard(t *testing.T, lines ...string) []byte {
 	return editor.Bytes()
 }
 
+// A reopened thread's start message comes straight after a replay, which may have ended on what the
+// guard holds. That goes first, and the message's links stay links.
+func TestStartMessageAfterAReplayPassesTheGuard(t *testing.T) {
+	notice := messageLine(t, "\n\n**Open the box's port in your browser**\n\n- Port 5173 → [localhost:42858](http://localhost:42858)\n\n")
+	out := throughGuard(t, messageLine(t, "the end!"), `{"jsonrpc":"2.0","id":7,"result":{"configOptions":[]}}`, notice)
+	text := string(out)
+	answer := strings.Index(text, `"id":7`)
+	held := strings.LastIndex(text[:max(answer, 0)], `!`)
+	link := strings.Index(text, "[localhost:42858](http://localhost:42858)")
+	if answer < 0 || held < 0 || link < answer {
+		t.Fatalf("held text, then the answer, then the whole link, got:\n%s", out)
+	}
+}
+
 func TestNoLineMakesTheEditorFetchAnImage(t *testing.T) {
 	escapedID := strings.Repeat("i", maxStreamID+1)
 	tool := func(kind string) map[string]any { return map[string]any{"toolCallId": "t", "kind": kind} }

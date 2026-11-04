@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
+  current links, and its first message shows only what you typed instead of Coop's carried context.
+
 - **Marking another default account no longer ends a running editor session.** A filtered session keeps
   using the account it started with, so changing the default in another terminal does not make new boxes refuse.
 - **Files like `.shell-secrets` and `secrets.env` are now hidden in the box.** Dotfiles ending in `secrets` and

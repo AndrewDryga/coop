@@ -125,8 +125,8 @@ func (c *Control) AddStartProblems(problems ...Problem) {
 // startNoticeFor returns a thread's start message when line is the result that established an
 // editor session (it carries a sessionId, as session/new does), or nil. The sessionId alone decides:
 // Gemini and Grok answer session/new with models but no configOptions. Only answers to the editor's
-// own requests reach here (the proxy swallows coop's injected requests and a box restart's replay),
-// and the message is stable, so once per session is enough.
+// own requests reach here (the proxy swallows coop's injected requests and a box restart's replay).
+// A reopened thread hears it from toEditor instead, once per open, since a load answer has no sessionId.
 func (c *Control) startNoticeFor(line []byte) []byte {
 	if !bytes.Contains(line, []byte(`"sessionId"`)) || !bytes.Contains(line, []byte(`"result"`)) {
 		return nil
@@ -141,11 +141,18 @@ func (c *Control) startNoticeFor(line []byte) []byte {
 	}
 	sid := m.Result.SessionID
 	c.mu.Lock()
-	if c.reported[sid] {
-		c.mu.Unlock()
+	seen := c.reported[sid]
+	c.reported[sid] = true
+	c.mu.Unlock()
+	if seen {
 		return nil
 	}
-	c.reported[sid] = true
+	return c.startNotice(sid)
+}
+
+// startNotice builds a thread's start message from what is true now, or nil when it has nothing to say.
+func (c *Control) startNotice(sid string) []byte {
+	c.mu.Lock()
 	var problems []Problem
 	if !c.problemsTold {
 		problems, c.problemsTold = c.problems, true
