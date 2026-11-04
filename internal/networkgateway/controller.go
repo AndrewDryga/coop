@@ -436,6 +436,11 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
 	// 53 is captured to the guard before Docker's own redirect; every other port at that address is
 	// refused before the loopback accepts, as the runtime-owned address it is, or a lookup there
 	// could leave the host even though its reply is dropped.
+	//
+	// The kernel answers a closed port from no socket, so no uid rule can match that reset or ICMP
+	// error, and dropping it left a local client hanging where it should be refused. Only those two
+	// answers are accepted without a uid, and only on lo: a packet routed to lo is delivered inside
+	// this namespace, and the same answer routed anywhere else still falls to denied_service.
 	rules := fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
@@ -462,6 +467,8 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   meta skuid AGENT_UID oifname "lo" accept
   meta skuid AGENT_UID ip daddr 127.0.0.0/8 accept
   meta skuid 65532 oifname "lo" ct state established accept
+  meta nfproto ipv4 oifname "lo" tcp flags & rst == rst accept
+  oifname "lo" ip protocol icmp icmp type destination-unreachable accept
 %s  meta skuid AGENT_UID ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
 %s  meta skuid AGENT_UID counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop

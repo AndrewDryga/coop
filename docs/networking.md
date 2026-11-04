@@ -324,6 +324,7 @@ the captured ports.
 
 You can run a test server on `127.0.0.1:3000` and use `curl` to reach it inside the box.
 This traffic stays inside the box's network namespace and never reaches your host or the gateway.
+A closed local port refuses the connection at once, as it does outside a box.
 Only traffic leaving the box passes through the gateway. The exception is Docker's DNS address,
 `127.0.0.11`, which is blocked so the box uses only co:op's DNS guard.
 

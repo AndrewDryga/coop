@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A closed local port in a filtered box refuses at once.** Connecting to it, or sending UDP to it, now
+  fails right away instead of hanging until the client gives up. A blocked destination also fails at once now.
+
 - **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
   current links, and its first message shows only what you typed instead of Coop's carried context.
 

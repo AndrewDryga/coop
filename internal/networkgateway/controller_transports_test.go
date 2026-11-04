@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +183,45 @@ func TestRenderedRulesEnforceEveryAcceptedTransport(t *testing.T) {
 	for _, line := range []string{`  meta skuid 1000 oifname "lo" accept`, "  meta skuid 1000 ip daddr 127.0.0.0/8 accept"} {
 		if at := strings.Index(rules, line); at < 0 || at > protected {
 			t.Errorf("the run's own loopback is not permitted before the protected drop: %s", line)
+		}
+	}
+}
+
+// The kernel answers a closed local port from no socket, so its reset or ICMP error has to be
+// accepted without naming a uid, or the client hangs instead of being refused. These two lines are
+// the whole exception: nothing else on lo goes without a uid, and neither line applies off lo.
+func TestOnlyAClosedLocalPortsAnswerCrossesLoopbackWithoutAUID(t *testing.T) {
+	rules := transportController(t, transportPolicy(t), nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	answers := []string{
+		`meta nfproto ipv4 oifname "lo" tcp flags & rst == rst accept`,
+		`oifname "lo" ip protocol icmp icmp type destination-unreachable accept`,
+	}
+	output := rules[strings.Index(rules, " chain output {"):strings.Index(rules, " chain input {")]
+	var found []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, "accept") && !strings.Contains(line, "meta skuid") {
+			found = append(found, line)
+		}
+	}
+	if !slices.Equal(found, answers) {
+		t.Fatalf("the output chain accepts without a uid %q, want only %q", found, answers)
+	}
+	// A loopback address is protected, so an answer has to pass before the service drops, and it
+	// must not pre-empt any refusal of the agent's own traffic.
+	for _, answer := range answers {
+		at := strings.Index(output, answer)
+		for _, earlier := range []string{
+			"meta skuid 1000 meta nfproto ipv6 counter name denied_agent reject",
+			"meta skuid 1000 ct state invalid counter name denied_agent drop",
+			"meta skuid 1000 ip daddr 127.0.0.11 counter name protected_agent reject",
+		} {
+			if was := strings.Index(output, earlier); was < 0 || was > at {
+				t.Errorf("%q does not precede %q", earlier, answer)
+			}
+		}
+		if next := strings.Index(output, "meta nfproto ipv6 counter name denied_service drop"); next < 0 || at > next {
+			t.Errorf("%q does not precede the service drops", answer)
 		}
 	}
 }

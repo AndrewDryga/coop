@@ -109,6 +109,8 @@ expect REFUSED  "the same name on 443"                 "$(handshake dns.google 4
 expect ALLOWED  "example.com on its granted 443"       "$(tls example.com)"
 expect REFUSED  "example.com on the captured 853"      "$(handshake example.com 853)"
 expect REFUSED  "a direct dial at the guard listener"  "$(handshake dns.google 15443 127.0.0.1)"
+expect REFUSED  "a closed local TCP port"              "$(closed_local tcp)"
+expect REFUSED  "a closed local UDP port"              "$(closed_local udp)"
 exit $failed
 `
 		record := runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script})
@@ -407,6 +409,25 @@ try:
 except Exception:
     print("REFUSED")
 ' "$@"; }
+# Only the kernel's refusal counts here: a client that hangs until its timeout is the failure.
+closed_local() { python3 -c '
+import socket, sys
+kind = socket.SOCK_STREAM if sys.argv[1] == "tcp" else socket.SOCK_DGRAM
+with socket.socket(socket.AF_INET, kind) as s:
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+s = socket.socket(socket.AF_INET, kind)
+s.settimeout(2)
+try:
+    s.connect(("127.0.0.1", port))
+    s.send(b"coop")
+    s.recv(1)
+    print("ANSWERED")
+except ConnectionRefusedError:
+    print("REFUSED")
+except OSError as error:
+    print(type(error).__name__)
+' "$1"; }
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 `
 

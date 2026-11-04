@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -109,6 +109,17 @@ any upstream dial; the key is injected on the route's fixed upstream through the
 lease/Envoy path.
 
 Facts the code cannot say twice, all still true:
+
+- A packet the kernel answers on its own carries no socket owner, so `meta skuid` cannot match it.
+  That covers a closed port's reset or ICMP error and the ICMP error that a `reject` rule itself
+  sends. Until 2026-11-04 the closing `denied_service` drop discarded them all, so a closed local
+  port and every rejected destination hung until the client's timeout, and each reject added a
+  service drop and SYN retransmits to the counts. Two output rules now accept just those answers,
+  and only on `lo`, so blocked traffic fails at once with `No route to host` and counts fewer
+  packets for one attempt. IPv6 stays dropped wholesale, so `::1` still hangs. An unprivileged agent
+  cannot forge a source to reflect an answer off `lo` (`IP_FREEBIND` still fails the route lookup;
+  `IP_TRANSPARENT` needs NET_ADMIN); when root forces it, the answer leaves by eth0 and
+  `denied_service` counts it.
 
 - The upstream PORT is the kernel's, never the client's. `policy.Domain(name, port)` runs in the
   guard (`Inspect`, given the original destination's port by `Guard.forward`), again in the
@@ -328,6 +339,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-04 — a closed local port refuses at once and rejected traffic fails at once: the
+  kernel's own answers are accepted on `lo` only, and the gateway image digest changed with them.
 - 2026-11-03 — every reason code the gateway records reads as plain words in `coop net inspect`;
   `TestEveryRecordedReasonHasPlainText` reads the gateway source, so a new code needs a sentence.
 - 2026-11-03 — creates now get a minute instead of the generic 15 seconds, and

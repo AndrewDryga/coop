@@ -443,6 +443,7 @@ destination port. Port 53 is reserved for the gateway, and a <code>serve</code> 
 the captured ports.</p>
 <p>You can run a test server on <code>127.0.0.1:3000</code> and use <code>curl</code> to reach it inside the box.
 This traffic stays inside the box&#39;s network namespace and never reaches your host or the gateway.
+A closed local port refuses the connection at once, as it does outside a box.
 Only traffic leaving the box passes through the gateway. The exception is Docker&#39;s DNS address,
 <code>127.0.0.11</code>, which is blocked so the box uses only co:op&#39;s DNS guard.</p>
 </section><section class="doc-section reference-section" id="your-projects-image"><h2>Your project&#39;s image</h2>
