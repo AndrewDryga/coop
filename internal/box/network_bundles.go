@@ -311,3 +311,23 @@ func networkMCPSnapshot(cfg *config.Config, spec RunSpec) ([]byte, error) {
 	snapshot, _, err := mcp.ReadValidatedSnapshot(source)
 	return snapshot, err
 }
+
+// BrokeredMCPServers names the MCP servers a filtered run of spec reaches through the credential
+// broker, sorted: the ones whose secret stays outside the box. The policy holds no grant for them,
+// so a caller listing what the box may reach adds them (NetworkAllowedBy). It reads the same
+// snapshot and scope as the run's route plan (planMCPRoutes), and never a token.
+func BrokeredMCPServers(cfg *config.Config, spec RunSpec) ([]string, error) {
+	if len(credentialScope(cfg, spec)) == 0 {
+		return nil, nil
+	}
+	snapshot, err := networkMCPSnapshot(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	servers, _, err := mcp.SecretServers(snapshot)
+	var names []string
+	for _, server := range servers {
+		names = append(names, server.Name)
+	}
+	return names, err
+}

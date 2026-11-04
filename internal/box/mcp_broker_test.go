@@ -636,3 +636,41 @@ func TestBrokerServePortsIncludesEveryRouteKind(t *testing.T) {
 		}
 	}
 }
+
+// The editor names the MCP servers a filtered box reaches through the broker, and they must be the
+// ones the run's route plan brokers: a server with a secret is named, a literal one (which the
+// policy grants itself) and a run that loads no MCP are not, and no token is read to find out.
+func TestBrokeredMCPServersAreTheRoutePlansServers(t *testing.T) {
+	cfg, spec := brokerFixture(t, "EMISAR_TOKEN=emisar-secret\nDOCS_TOKEN=docs-secret\n")
+	cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")
+	body := `{"mcpServers":{"emisar":{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"EMISAR_TOKEN"},` +
+		`"docs":{"type":"http","url":"https://docs.example/mcp","bearer_token_env_var":"DOCS_TOKEN"},` +
+		`"open":{"type":"http","url":"https://open.example/mcp"}}}`
+	if err := os.WriteFile(cfg.MCPFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := BrokeredMCPServers(cfg, spec)
+	if err != nil || !slices.Equal(got, []string{"docs", "emisar"}) {
+		t.Fatalf("brokered = %q, %v", got, err)
+	}
+	snapshot, err := networkMCPSnapshot(cfg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planMCPRoutes(cfg, spec, snapshot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned := plan.mcpServerNames(); !slices.Equal(got, planned) {
+		t.Fatalf("named %q, route plan brokers %q", got, planned)
+	}
+	spec.Agent = "" // a raw run loads no MCP
+	if got, err := BrokeredMCPServers(cfg, spec); err != nil || len(got) != 0 {
+		t.Fatalf("a raw run brokered %q, %v", got, err)
+	}
+	cfg.MCPFile = ""
+	spec.Agent = "claude"
+	if got, err := BrokeredMCPServers(cfg, spec); err != nil || len(got) != 0 {
+		t.Fatalf("no MCP file brokered %q, %v", got, err)
+	}
+}

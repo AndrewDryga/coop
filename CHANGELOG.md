@@ -9,6 +9,9 @@
 - **Files like `.shell-secrets` and `secrets.env` are now hidden in the box.** Dotfiles ending in `secrets` and
   config files named `secrets.env`, `secrets.toml` and the like are hidden by default; `secrets.go` and `secrets.md` stay readable.
 
+- **A filtered editor thread names the MCP servers it can reach.** Its "Internet is filtered" note now lists the
+  servers Coop keeps tokens for, as the launch line counts them, instead of only "the agent's provider".
+
 - **A new box in an editor session no longer reports a stopped service as running.** A service that shut down
   cleanly now starts again. A step counts as finished only if another service waits for it with
   `service_completed_successfully` or it sets `restart: "no"`.

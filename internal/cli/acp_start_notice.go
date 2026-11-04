@@ -41,18 +41,18 @@ const editorServicesWait = 5 * time.Second
 // session's limits and the problems found now. Both read local state only (a sign-in record waits
 // at most a second on its lock), so they are set before the editor gets its first answer.
 func (a *app) startEditorNotice(ctrl *acpctl.Control, skipped []presetSkip) {
-	setEditorNetwork(ctrl, a.acpCapture)
+	setEditorNetwork(ctrl, a.acpCapture, a.acpBrokeredMCP)
 	ctrl.AddStartProblems(editorStartProblems(a.cfg, skipped, time.Now())...)
 }
 
 // setEditorNetwork puts what capture's boxes may reach into every later thread's start message; a
 // session's network refresh calls it again once a box under newly approved rules is live. Open and
 // offline sessions pass no capture and say nothing about the network.
-func setEditorNetwork(ctrl *acpctl.Control, capture *box.CapturedEgress) {
+func setEditorNetwork(ctrl *acpctl.Control, capture *box.CapturedEgress, brokeredMCP []string) {
 	if capture == nil {
 		return
 	}
-	if limit, err := editorNetworkLimit(capture); err == nil {
+	if limit, err := editorNetworkLimit(capture, brokeredMCP); err == nil {
 		ctrl.SetNetwork(limit)
 	}
 }
@@ -90,21 +90,26 @@ func (a *app) listEditorServices(ctrl *acpctl.Control, repo, superID string) (wa
 
 // editorNetworkLimit is what a filtered session's boxes may reach, read from the rules its capture
 // froze, which every box of the session enforces; a site two rules reach is named once. MCP servers
-// the credential broker reaches for a box hold no grant there, so they are not named; their tools
-// work regardless.
-func editorNetworkLimit(capture *box.CapturedEgress) (acpctl.NetworkLimit, error) {
+// the credential broker reaches for a box hold no grant there, so brokeredMCP names them, as the
+// launch line does.
+func editorNetworkLimit(capture *box.CapturedEgress, brokeredMCP []string) (acpctl.NetworkLimit, error) {
 	policy, err := capture.Policy()
 	if err != nil {
 		return acpctl.NetworkLimit{}, err
 	}
-	allowed := box.NetworkAllowedBy(policy)
+	return networkLimitOf(policy, brokeredMCP), nil
+}
+
+// networkLimitOf groups policy's grants, with the brokered MCP servers beside them.
+func networkLimitOf(policy egress.Snapshot, brokeredMCP []string) acpctl.NetworkLimit {
+	allowed := box.NetworkAllowedBy(policy, brokeredMCP...)
 	var sites []string
 	for _, site := range allowed.Approved {
 		if !slices.Contains(sites, site) {
 			sites = append(sites, site)
 		}
 	}
-	return acpctl.NetworkLimit{Sites: sites, Servers: allowed.Servers, Other: allowed.Other}, nil
+	return acpctl.NetworkLimit{Sites: sites, Servers: allowed.Servers, Other: allowed.Other}
 }
 
 // editorStartProblems lists what an editor session finds wrong before its first thread opens:

@@ -285,6 +285,8 @@ func (a *app) cmdACP(args []string) (int, error) {
 		}
 		if a.acpCapture != nil {
 			a.acpNetworkTargets = slices.Clone(scope)
+			// Admission passed, so a snapshot that fails to read here only leaves the names out.
+			a.acpBrokeredMCP, _ = box.BrokeredMCPServers(admissionCfg, spec)
 			a.acpAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
 				return a.acpReadmit(ctx, admissionCfg, spec, options)
 			}

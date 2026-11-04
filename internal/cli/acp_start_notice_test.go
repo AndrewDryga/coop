@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/testutil/threadtext"
 	"github.com/yuin/goldmark"
@@ -177,5 +179,18 @@ func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 `
 	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, "", "shared"), nil, false)); got != noRules {
 		t.Errorf("the thread renders\n%s\nwant\n%s", got, noRules)
+	}
+}
+
+// The editor's network limit names the MCP servers the credential broker reaches, which hold no
+// grant in the policy, beside those the policy grants; with none, nothing is added.
+func TestNetworkLimitNamesBrokeredMCPServers(t *testing.T) {
+	policy := egress.Snapshot{Grants: []egress.Grant{{ID: "g1", Rule: egress.Rule{To: egress.Destination{Domain: "docs.example"}},
+		Origins: []egress.Origin{{Kind: "mcp", Name: "docs"}}}}}
+	if got := networkLimitOf(policy, []string{"emisar"}); !slices.Equal(got.Servers, []string{"docs", "emisar"}) {
+		t.Errorf("servers = %q, want docs and emisar", got.Servers)
+	}
+	if got := networkLimitOf(policy, nil); !slices.Equal(got.Servers, []string{"docs"}) {
+		t.Errorf("without brokered servers = %q, want docs alone", got.Servers)
 	}
 }

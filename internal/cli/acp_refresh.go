@@ -183,7 +183,7 @@ func (a *app) newACPNetworkRefresh(ctrl *acpctl.Control, restarter *acpproxy.Res
 		drain:   drain,
 		log:     func(err error) { ui.Warn("kept this session's network rules: %s", safeErrorText(err)) }, // a project's file can be quoted in it
 		notify:  ctrl.Notify,
-		network: func(capture *box.CapturedEgress) { setEditorNetwork(ctrl, capture) },
+		network: func(capture *box.CapturedEgress) { setEditorNetwork(ctrl, capture, a.acpBrokeredMCP) },
 		now:     time.Now,
 		stop:    stop,
 		stopped: ctx.Done(),

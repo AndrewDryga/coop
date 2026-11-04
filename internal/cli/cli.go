@@ -68,6 +68,7 @@ type app struct {
 	acpServe            *acpServeRouter                              // an editor session's stable serve ports, forwarded to its live box
 	acpBoxWait          *acpBoxWait                                  // an editor session's wait for a project box that cannot start yet; set before serving
 	acpPeers            []agents.Target                              // exact ad-hoc peers whose accounts a filtered ACP supervisor freezes for its children
+	acpBrokeredMCP      []string                                     // MCP servers the session's boxes reach through the credential broker, named in each thread's network notice
 	acpNetworkTargets   []agents.Target                              // exact provider/accounts admitted at startup, including optional warm/probe choices; never re-derived
 	acpAccountBindings  map[string]acpAccountBinding                 // filtered child-only account/default handoff, checked against its reloaded preset before mounts
 	acpResume           *acpctl.ResumeState                          // consumed once before admission; restored by the supervisor afterward
