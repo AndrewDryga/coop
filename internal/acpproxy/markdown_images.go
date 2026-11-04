@@ -160,6 +160,10 @@ scan:
 			continue
 		default:
 			e.midLine = true
+			if c != '\\' && c != '!' && c != ']' { // the first thing on a line, and it begins nothing
+				i++
+				continue
+			}
 		}
 		if i == len(s)-1 { // only the next byte can say what this one is
 			switch {

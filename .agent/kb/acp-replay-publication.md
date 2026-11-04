@@ -3,7 +3,7 @@ name: acp-replay-publication
 description: ACP replacement sessions become authoritative as one generation before held editor work is released
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpproxy/proxy_test.go, internal/acpproxy/cancel.go, internal/acpproxy/cancel_test.go, internal/acpproxy/factory.go, internal/acpproxy/factory_test.go, internal/acpctl/cancel.go, internal/acpctl/cancel_test.go]
-updated: 2026-10-28
+updated: 2026-11-04
 ---
 
 Across SIGHUP, the proxy serializes exactly one initialize request plus explicit editor, adapter,
@@ -52,7 +52,15 @@ alive until its retirement; cancelling it immediately on factory return would ki
 Natural EOF retires those resources before entering the replacement factory, not after its possible
 quota wait. The launcher checks cancellation after quota waits and before launching a replacement process.
 
+Every answer that can end a session/load or session/resume goes through `writeControllerResponse`,
+including those the proxy makes itself (`failAllPending`, `swapChildAt`, `beginReload`, held and
+lifecycle failures, reload refusals). The controller only learns a reopen failed from its answer, and
+it then gives back the problems and notices the opening message took. These need controlMu, and a
+request can hold controlMu while blocked writing to a child, so `beginReload` stops the children before
+it answers, and `snapshot` waits for those answers so none is lost to the re-exec.
+
 ## Changelog
+- 2026-11-04 - proxy-owned failures reach the controller; reload stops children first and the snapshot waits
 - 2026-10-28 - cleared restored remaps on failed initial resume; the timeout recovery regression now
   reuses the old native ID and verifies its new response/update identity under the race detector.
 - 2026-10-10 - reverified child retirement and binding publication; documented transient setup refusal, with failed-before/after regression and actual same-session selector recovery.

@@ -27,10 +27,14 @@ letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Publi
 writable, and ordinary public hardlinks work. `.coopignore` stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.
 
-`stat` still works on a hidden file, so `ls -l`, `find` and tools that list a folder keep working.
-It shows what `ls -l` shows: the file's real size, times, mode, owner and link count. The contents,
-extended attributes and a hidden symlink's target stay denied. A hidden directory and everything
-inside it also deny `stat`, so `ls -l` reports an error for that one entry.
+`stat` still works on a hidden file, so `find` and tools that list a folder keep working. It shows
+the file's real size, times, mode, owner and link count. The contents, extended attributes and a
+hidden symlink's target stay denied. A hidden directory and everything inside it also deny `stat`.
+
+`ls -l` shows a hidden file with its size and times, but prints an error for each hidden entry, because
+it also reads extended attributes, and exits with status 1. A script that checks `ls` sees that as a
+failure. A hidden symlink shows no target, and `readlink` on it fails. A hidden directory's entry also
+gets an error.
 
 A tool that opens the hidden file still fails. `terraform validate` works beside a `prod.tfvars`, but
 Terraform opens `terraform.tfvars` and `*.auto.tfvars` itself, `terraform fmt` opens every `.tfvars`,

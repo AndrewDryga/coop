@@ -884,3 +884,38 @@ func TestSetEgressMarksThePostureExplicit(t *testing.T) {
 		t.Fatalf("SetEgress left Egress=%q explicit=%v", c.Egress, c.Explicit("COOP_EGRESS"))
 	}
 }
+
+// A session-service child reads the account authority's defaults file. A pin must hold there too, or
+// a default marked since the session started decides what its credentials may do.
+func TestPinnedDefaultHoldsInTheNativeAuthority(t *testing.T) {
+	authority := t.TempDir()
+	if err := (&Config{ConfigDir: authority}).SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Config{ConfigDir: authority}).SetDefaultProfile("codex", "marked"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := (&Config{ConfigDir: t.TempDir()}).WithNativeAuthorityRoot(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.NativeAuthorityConfig().DefaultProfileOf("claude"); got != "personal" {
+		t.Fatalf("unpinned authority default = %q, want the file's personal", got)
+	}
+	c.PinDefaultProfile("claude", "admitted")
+	for name, cfg := range map[string]*Config{"direct": c.NativeAuthorityConfig(), "cloned": c.Clone().NativeAuthorityConfig()} {
+		if got := cfg.DefaultProfileOf("claude"); got != "admitted" {
+			t.Errorf("%s: pinned default = %q, want admitted", name, got)
+		}
+		if got := cfg.DefaultProfileOf("codex"); got != "marked" {
+			t.Errorf("%s: another provider's default = %q, want the file's marked", name, got)
+		}
+	}
+	c.Clone().PinDefaultProfile("codex", "only-the-clone")
+	if got := c.NativeAuthorityConfig().DefaultProfileOf("codex"); got != "marked" {
+		t.Errorf("a clone's pin reached the original: %q", got)
+	}
+	if got := loadDefaultsFile((&Config{ConfigDir: authority}).DefaultsFile())["claude"]; got != "personal" {
+		t.Fatalf("the pin reached the file: %q", got)
+	}
+}

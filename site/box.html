@@ -108,10 +108,13 @@ Secret reads and changes return <code>Operation not permitted</code>, including 
 letter case, equivalent Unicode spelling, symlinks and existing hardlinks. Public files remain
 writable, and ordinary public hardlinks work. <code>.coopignore</code> stays readable and read-only.
 This avoids adding a mount for every spelling of each secret filename.</p>
-<p><code>stat</code> still works on a hidden file, so <code>ls -l</code>, <code>find</code> and tools that list a folder keep working.
-It shows what <code>ls -l</code> shows: the file&#39;s real size, times, mode, owner and link count. The contents,
-extended attributes and a hidden symlink&#39;s target stay denied. A hidden directory and everything
-inside it also deny <code>stat</code>, so <code>ls -l</code> reports an error for that one entry.</p>
+<p><code>stat</code> still works on a hidden file, so <code>find</code> and tools that list a folder keep working. It shows
+the file&#39;s real size, times, mode, owner and link count. The contents, extended attributes and a
+hidden symlink&#39;s target stay denied. A hidden directory and everything inside it also deny <code>stat</code>.</p>
+<p><code>ls -l</code> shows a hidden file with its size and times, but prints an error for each hidden entry, because
+it also reads extended attributes, and exits with status 1. A script that checks <code>ls</code> sees that as a
+failure. A hidden symlink shows no target, and <code>readlink</code> on it fails. A hidden directory&#39;s entry also
+gets an error.</p>
 <p>A tool that opens the hidden file still fails. <code>terraform validate</code> works beside a <code>prod.tfvars</code>, but
 Terraform opens <code>terraform.tfvars</code> and <code>*.auto.tfvars</code> itself, <code>terraform fmt</code> opens every <code>.tfvars</code>,
 and a hidden directory stops it reading the folder. The mount backend avoids this with its empty files.</p>

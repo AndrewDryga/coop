@@ -1,10 +1,18 @@
 package acpctl
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/AndrewDryga/coop/internal/acpproxy"
 )
 
 func userChunk(session, text string) []byte {
@@ -380,5 +388,118 @@ func TestNewThreadReopenedHearsItAgain(t *testing.T) {
 	}
 	if opening, _ := reopenHearing(t, c, 2, "session/load", "S"); len(wireTexts(t, opening)) != 1 {
 		t.Fatalf("reopen says = %s", opening)
+	}
+}
+
+// A reopen the proxy fails by itself takes the same way back as one an adapter fails: an editor drops
+// that thread, so the next one hears what it was told. Each case runs the real proxy around this control.
+func TestAReopenTheProxyFailsGivesItsMessageBack(t *testing.T) {
+	for name, tc := range map[string]struct {
+		replacement bool // a new child comes up after the first dies, which fails the load in its swap
+		reload      bool
+	}{
+		"give up": {},
+		"swap":    {replacement: true},
+		"reload":  {reload: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestControl(t)
+			c.AddStartProblems(Problem{Title: "A preset does not load."})
+			c.Notify("Port 1 now reaches this box.")
+
+			// A child answers initialize, and the first one dies, or reloads, once it holds the load.
+			loaded := make(chan struct{})
+			spawned := 0
+			factory := func(context.Context) (*acpproxy.Child, error) {
+				spawned++
+				if spawned > 1 && !tc.replacement {
+					return nil, errors.New("no box")
+				}
+				inR, inW := io.Pipe()
+				outR, outW := io.Pipe()
+				first := spawned == 1
+				go func() {
+					lines := bufio.NewScanner(inR)
+					for lines.Scan() {
+						var request struct {
+							ID     json.RawMessage `json:"id"`
+							Method string          `json:"method"`
+						}
+						_ = json.Unmarshal(lines.Bytes(), &request)
+						switch {
+						case request.Method == "initialize":
+							fmt.Fprintf(outW, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1}}`+"\n", request.ID)
+						case request.Method == "session/load" && first:
+							close(loaded)
+							if !tc.reload {
+								outW.Close()
+							}
+						}
+					}
+				}()
+				return &acpproxy.Child{In: inW, Out: outR, Provider: "claude", Stop: func() { outW.Close(); inR.Close() }}, nil
+			}
+			editorR, editorW := io.Pipe()
+			clientR, clientW := io.Pipe()
+			reload := make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				done <- acpproxy.RunWith(context.Background(), editorR, clientW, factory, c.Hooks(), acpproxy.RunOpts{Reload: reload})
+				clientW.Close()
+			}()
+			finished := make(chan struct{})
+			var initialized sync.Once
+			ready := make(chan struct{})
+			failed := make(chan struct{})
+			go func() {
+				lines := bufio.NewScanner(clientR)
+				lines.Buffer(nil, 1<<20)
+				for lines.Scan() {
+					var answer struct {
+						ID    json.RawMessage `json:"id"`
+						Error json.RawMessage `json:"error"`
+					}
+					_ = json.Unmarshal(lines.Bytes(), &answer)
+					switch string(answer.ID) {
+					case "1":
+						initialized.Do(func() { close(ready) })
+					case "7":
+						if len(answer.Error) > 0 {
+							close(failed)
+						}
+					}
+				}
+				close(finished)
+			}()
+			waitFor := func(what string, ch <-chan struct{}) {
+				t.Helper()
+				select {
+				case <-ch:
+				case <-time.After(30 * time.Second):
+					t.Fatalf("timed out waiting for %s", what)
+				}
+			}
+			fmt.Fprintln(editorW, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`)
+			waitFor("initialize", ready)
+			fmt.Fprintln(editorW, `{"jsonrpc":"2.0","id":7,"method":"session/load","params":{"sessionId":"S","cwd":"/w","mcpServers":[]}}`)
+			waitFor("the load to reach the child", loaded)
+			if tc.reload {
+				close(reload)
+			}
+			waitFor("the proxy to fail the load", failed)
+			editorW.Close()
+			waitFor("the proxy to end", finished)
+
+			c.mu.Lock()
+			replay := c.replays["S"]
+			c.mu.Unlock()
+			if replay != nil {
+				t.Fatalf("the failed load's replay stayed: %+v", replay)
+			}
+			retry, _ := reopenHearing(t, c, 8, "session/load", "S")
+			if !strings.Contains(string(retry), "preset does not load") || !strings.Contains(string(retry), "now reaches") {
+				t.Fatalf("the next thread heard: %s", retry)
+			}
+		})
 	}
 }

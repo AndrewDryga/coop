@@ -84,6 +84,8 @@ Proof: `host_access_test.go`, `image_guard_test.go`, `markdown_images_test.go`, 
 cannot be driven from an agent session, so it is read from source at v1.26.2.
 
 ## Changelog
+- 2026-11-04 — a last byte is guarded only when it can begin something (`\`, `!`, `]`), so a one-letter last
+  line, or a letter before a pause, stays byte for byte.
 - 2026-11-03 — created with the guard. Verified on real Docker: with the guard off the live test fails with
   the forged methods in the editor's list.
 - 2026-11-04 — remote images closed. Checked against pulldown-cmark 0.13 with Zed's options on 700,000 random and

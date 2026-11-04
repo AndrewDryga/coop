@@ -3402,3 +3402,109 @@ func (p *proxy) swapChild(c *Child, keep map[string]bool, forces map[string][][]
 	defer p.controlMu.Unlock()
 	_, _, _ = p.swapChildAt(c, keep, nil, forces, bindings, nil, nil, p.currentRestartEpoch(), false)
 }
+
+// An answer the proxy makes itself still ends the request for the controller, which is holding
+// what a reopen's opening message took. Each of these once wrote straight to the editor.
+func TestProxyOwnAnswersReachTheController(t *testing.T) {
+	held := []clientLine{{line: []byte(`{"jsonrpc":"2.0","id":7,"method":"session/load","params":{"sessionId":"S"}}` + "\n")}}
+	for name, fail := range map[string]func(p *proxy){
+		"give up":        func(p *proxy) { p.failAllPending() },
+		"reload":         func(p *proxy) { p.beginReload() },
+		"held":           func(p *proxy) { p.failHeldPrompts(held) },
+		"closed":         func(p *proxy) { p.failHeldPromptsForLifecycle(held, "closed") },
+		"refused reload": func(p *proxy) { p.pending = map[string]bool{}; p.beginReload(); p.fromClient(held[0].line) },
+		// The controller has already taken the opening message when the reload begins.
+		"reload after the controller": func(p *proxy) {
+			p.pending = map[string]bool{}
+			p.hooks.FromEditor = func([]byte) (bool, []byte, []byte, bool) {
+				p.reloading.Store(true)
+				return false, nil, nil, false
+			}
+			p.fromClient(held[0].line)
+		},
+		"reload after the controller translated": func(p *proxy) {
+			p.pending = map[string]bool{}
+			p.hooks.FromEditor = func(line []byte) (bool, []byte, []byte, bool) {
+				p.reloading.Store(true)
+				return true, nil, line, false
+			}
+			p.fromClient(held[0].line)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			p := &proxy{
+				out: &out, pending: map[string]bool{"7": true}, sessions: map[string]*sess{}, byAdapter: map[string]string{},
+				sessionReqs: map[string]sessionRequest{}, setupReqs: map[string]setupRequest{},
+				hooks: &Hooks{ToEditor: func(line []byte) ([]byte, bool) {
+					if h := parse(line); string(h.ID) != "7" || len(h.Error) == 0 {
+						t.Errorf("the controller saw %s", line)
+					}
+					return []byte("from the controller\n"), false
+				}},
+			}
+			fail(p)
+			if out.String() != "from the controller\n" {
+				t.Fatalf("the editor got %q", out.String())
+			}
+		})
+	}
+}
+
+// A request can hold controlMu while it writes to a child that stopped reading, and only stopping that
+// child frees it. Reload answers under controlMu, so it has to stop the child first, and the snapshot
+// that leads to the re-exec has to wait for those answers.
+func TestReloadAnswersEvenWhenARequestIsStuckOnTheChild(t *testing.T) {
+	writer := &blockingWriteCloser{entered: make(chan struct{}), release: make(chan struct{})}
+	var out bytes.Buffer
+	p := &proxy{
+		out: &out, pending: map[string]bool{"7": true}, sessions: map[string]*sess{}, byAdapter: map[string]string{},
+		sessionReqs: map[string]sessionRequest{}, setupReqs: map[string]setupRequest{},
+		child: &Child{In: writer, Stop: func() { close(writer.release) }},
+	}
+	go p.fromClient([]byte(`{"jsonrpc":"2.0","id":8,"method":"ping"}` + "\n"))
+	<-writer.entered
+	snapshotted := make(chan string, 1)
+	go p.beginReload()
+	go func() {
+		for !p.reloading.Load() {
+			time.Sleep(time.Millisecond)
+		}
+		p.snapshot()
+		p.controlMu.Lock()
+		defer p.controlMu.Unlock()
+		snapshotted <- out.String()
+	}()
+	select {
+	case got := <-snapshotted:
+		if !strings.Contains(got, `"id":7`) {
+			t.Fatalf("the snapshot overtook the answer: %q", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("reload waited for a request that only stopping the child could free")
+	}
+}
+
+// The re-exec follows the snapshot, so an answer still being written would be lost with this process.
+func TestReloadSnapshotWaitsForTheAnswers(t *testing.T) {
+	writer := &blockingWriteCloser{entered: make(chan struct{}), release: make(chan struct{})}
+	p := &proxy{out: writer, pending: map[string]bool{"7": true}, sessionReqs: map[string]sessionRequest{}, setupReqs: map[string]setupRequest{}}
+	go p.beginReload()
+	<-writer.entered
+	snapshotted := make(chan struct{})
+	go func() {
+		p.snapshot()
+		close(snapshotted)
+	}()
+	select {
+	case <-snapshotted:
+		t.Fatal("the snapshot overtook an answer still being written")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(writer.release)
+	select {
+	case <-snapshotted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the snapshot never followed the answers")
+	}
+}

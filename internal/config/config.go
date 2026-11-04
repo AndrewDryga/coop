@@ -86,6 +86,7 @@ type Config struct {
 
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
 	defaultProfiles map[string]string // per-agent default profile (from DefaultsFile), used when none is selected
+	pinnedDefaults  map[string]string // PinDefaultProfile's, which outlive a reload of DefaultsFile
 	nativeHomes     map[string]string // explicit runtime settings/history selection, separate from account authority
 
 	activeModels map[string]string // per-run explicit one-off model — the top tier
@@ -386,6 +387,9 @@ func (c *Config) NativeAuthorityConfig() *Config {
 	out.nativeAuthorityDir = ""
 	out.nativeHomes = nil
 	out.defaultProfiles = loadDefaultsFile(out.DefaultsFile())
+	for agent, name := range c.pinnedDefaults {
+		out.defaultProfiles[agent] = name
+	}
 	return out
 }
 
@@ -478,12 +482,16 @@ func (c *Config) SetDefaultProfile(agent, name string) error {
 
 // PinDefaultProfile sets agent's default for this process only, leaving DefaultsFile alone. A child
 // of a long-lived session uses it to keep the default its supervisor admitted, though the person
-// has since marked another one.
+// has since marked another one. It holds in NativeAuthorityConfig too, which rereads the file.
 func (c *Config) PinDefaultProfile(agent, name string) {
 	if c.defaultProfiles == nil {
 		c.defaultProfiles = map[string]string{}
 	}
+	if c.pinnedDefaults == nil {
+		c.pinnedDefaults = map[string]string{}
+	}
 	c.defaultProfiles[agent] = name
+	c.pinnedDefaults[agent] = name
 }
 
 // WithLock runs fn while holding an exclusive advisory lock (flock) on a sibling <path>.lock, so a
@@ -1273,6 +1281,7 @@ func (c *Config) Clone() *Config {
 	out.explicit = maps.Clone(c.explicit)
 	out.activeProfiles = maps.Clone(c.activeProfiles)
 	out.defaultProfiles = maps.Clone(c.defaultProfiles)
+	out.pinnedDefaults = maps.Clone(c.pinnedDefaults)
 	out.nativeHomes = maps.Clone(c.nativeHomes)
 	out.activeModels = maps.Clone(c.activeModels)
 	out.targetModels = maps.Clone(c.targetModels)

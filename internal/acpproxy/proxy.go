@@ -607,7 +607,8 @@ type proxy struct {
 	stopping     func()    // RunOpts.Stopping
 	stoppingOnce sync.Once // it runs once, whichever shutdown path gets there first
 
-	controlMu      sync.Mutex // serializes controller hooks with restart decisions and resume admission
+	controlMu      sync.Mutex     // serializes controller hooks with restart decisions and resume admission
+	reloadAnswers  sync.WaitGroup // beginReload's answers to what it failed, which the snapshot must not overtake
 	mu             sync.Mutex
 	child          *Child
 	candidate      *Child             // replacement being replayed before it becomes authoritative
@@ -702,6 +703,7 @@ func (snap Snapshot) Validate() error {
 
 // snapshot copies the proxy's initialize request + sessions into a serializable Snapshot, under the lock.
 func (p *proxy) snapshot() Snapshot {
+	p.reloadAnswers.Wait()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	snap := Snapshot{Initialize: clone(p.initialize)}
@@ -839,8 +841,12 @@ func (p *proxy) shutdownChild() {
 }
 
 // beginReload closes request admission and fails every already-admitted request under the same
-// lock, then stops the child. Nothing can cross the snapshot/exec boundary without a response.
+// lock, and stops the child. Nothing can cross the snapshot/exec boundary without a response:
+// snapshot waits for these answers. The child stops first because an editor request holding controlMu
+// may be blocked writing to it, and the answers need controlMu.
 func (p *proxy) beginReload() {
+	p.reloadAnswers.Add(1)
+	defer p.reloadAnswers.Done()
 	p.mu.Lock()
 	p.reloading.Store(true)
 	ids := make([]string, 0, len(p.pending)+len(p.restartHeld))
@@ -869,14 +875,16 @@ func (p *proxy) beginReload() {
 	if cancel != nil {
 		cancel()
 	}
-	for _, id := range ids {
-		_, _ = p.out.Write(errorResponse(id))
-	}
 	if c != nil {
 		c.Stop()
 	}
 	if candidate != nil && candidate != c {
 		candidate.Stop()
+	}
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
+	for _, id := range ids {
+		p.writeControllerResponse(errorResponse(id))
 	}
 }
 
@@ -922,7 +930,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		line = withoutEditorHostAccess(line)
 	}
 	if p.reloading.Load() && original.isRequest() {
-		_, _ = p.out.Write(errorResponse(string(original.ID)))
+		p.writeControllerResponse(errorResponse(string(original.ID)))
 		return
 	}
 	if origin == originEditor && original.Method == "session/cancel" && len(original.ID) == 0 {
@@ -1007,7 +1015,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 				p.mu.Lock()
 				if p.reloading.Load() {
 					p.mu.Unlock()
-					_, _ = p.out.Write(errorResponse(string(original.ID)))
+					p.writeControllerResponse(errorResponse(string(original.ID)))
 					return
 				}
 				c := p.child
@@ -1063,7 +1071,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	p.mu.Lock()
 	if p.reloading.Load() && h.isRequest() {
 		p.mu.Unlock()
-		_, _ = p.out.Write(errorResponse(string(h.ID)))
+		p.writeControllerResponse(errorResponse(string(h.ID)))
 		return
 	}
 	if isSessionSetup(h.Method) && p.child != projectionChild {
@@ -1617,15 +1625,17 @@ func (p *proxy) dropRestartHeldLocked(sid string) []clientLine {
 	return []clientLine{prompt}
 }
 
+// failHeldPrompts and failHeldPromptsForLifecycle run with controlMu held. A reopen parked for a box is
+// held like a prompt, and the controller must see its answer to give back what its opening message took.
 func (p *proxy) failHeldPrompts(held []clientLine) {
 	for _, prompt := range held {
-		_, _ = p.out.Write(errorResponse(string(parse(prompt.line).ID)))
+		p.writeControllerResponse(errorResponse(string(parse(prompt.line).ID)))
 	}
 }
 
 func (p *proxy) failHeldPromptsForLifecycle(held []clientLine, action string) {
 	for _, prompt := range held {
-		_, _ = p.out.Write(lifecyclePromptResponse(string(parse(prompt.line).ID), action))
+		p.writeControllerResponse(lifecyclePromptResponse(string(parse(prompt.line).ID), action))
 	}
 }
 
@@ -2750,7 +2760,7 @@ func (p *proxy) swapChildAt(
 		c.Stop()
 	}
 	for _, id := range ids {
-		_, _ = p.out.Write(errorResponse(id))
+		p.writeControllerResponse(errorResponse(id))
 	}
 	for _, id := range lateInitialize {
 		p.answerInitialize(id, initResult)
@@ -2839,8 +2849,10 @@ func (p *proxy) failAllPending() {
 	}
 	p.restarting = false
 	p.mu.Unlock()
+	p.controlMu.Lock()
+	defer p.controlMu.Unlock()
 	for _, id := range ids {
-		_, _ = p.out.Write(errorResponse(id))
+		p.writeControllerResponse(errorResponse(id))
 	}
 }
 

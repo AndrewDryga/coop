@@ -1002,6 +1002,24 @@ func TestFilteredACPChildKeepsTheAdmittedDefaultWhenTheDefaultChanges(t *testing
 	}
 }
 
+// A session-service child reads defaults from the account authority, not its private config.
+func TestSessionServiceACPChildKeepsTheAdmittedDefaultWhenTheDefaultChanges(t *testing.T) {
+	authority := t.TempDir()
+	if err := (&config.Config{ConfigDir: authority}).SetDefaultProfile("claude", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	child, err := (&config.Config{ConfigDir: t.TempDir()}).WithNativeAuthorityRoot(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyACPAccountBindings(child, `{"claude":{"account":"default","default":"default"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := child.NativeAuthorityConfig().DefaultProfileOf("claude"); got != "default" {
+		t.Fatalf("the child's authority treats %q as the default, want the admitted default", got)
+	}
+}
+
 // TestExtractPeer: --peer is REPEATABLE, one peer target per flag. A valueless occurrence errors
 // (points at the repeatable form); each value is collected in order; after `--` an agent's own
 // --peer passes through verbatim. The retired --consult spelling is now an ordinary passthrough arg.

@@ -511,3 +511,27 @@ func TestRandomDocumentsLeaveNoImage(t *testing.T) {
 		}
 	}
 }
+
+// Nothing a person sees changes for a last byte that begins nothing. A letter once counted as what the
+// next text might finish: alone on a last line, or at a pause on a new line.
+func TestALastByteThatBeginsNothingStaysAsItIs(t *testing.T) {
+	for _, document := range []string{"[x](y)\na", "[x](y)\n(", "[x](y)\n:", "a", "[x](y)\né"} {
+		if got := escapeWhole(document, sealText); got != document {
+			t.Errorf("sealed %q became %q", document, got)
+		}
+	}
+	for _, next := range []string{"(b)", ": b", "[b]", "b"} {
+		var escaper imageEscaper
+		got := append(escaper.write([]byte("a")), escaper.finish(pauseText)...)
+		got = append(append(got, escaper.write([]byte(next))...), escaper.finish(pauseText)...)
+		if string(got) != "a"+next {
+			t.Errorf("a pause before %q became %q", next, got)
+		}
+	}
+	// What can begin something is still guarded.
+	for document, want := range map[string]string{"[x](y)\n!": `[x](y)` + "\n" + `\!`, "[x](y)\n]": `[x](y)` + "\n" + `\]`, "[x](y)\n\\": `[x](y)` + "\n" + `\\`} {
+		if got := escapeWhole(document, sealText); got != want {
+			t.Errorf("sealed %q became %q, want %q", document, got, want)
+		}
+	}
+}

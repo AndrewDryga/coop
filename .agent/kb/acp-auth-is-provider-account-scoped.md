@@ -48,13 +48,15 @@ kind — that of the account the session names (editor target, peer, preset), el
 qualified account (`acpNetworkScope`); explicit targets that mix kinds fail admission. Changing
 settings or deleting a role credential after capture refuses the next child rather than
 reusing one account's grant for a sibling or silently dropping the role. A changed default does not
-refuse: the child pins the default its supervisor admitted (`PinDefaultProfile`, in memory) so a
+refuse: the child pins the default its supervisor admitted (`PinDefaultProfile`, in memory, and it holds
+through `NativeAuthorityConfig`, which rereads the authority's defaults file for a session-service child) so a
 `coop credentials ... default` in another terminal cannot end or widen a running session. The supervisor does not
 make an editor-named account active, so classification reads the admitted scope's accounts, never
 the provider's active one.
 
 ## Changelog
 
+- 2026-11-04 - the pin now holds in a session-service child's account authority, which rereads the defaults file
 - 2026-11-04 - a changed default account no longer refuses filtered children; they pin the admitted default
 - 2026-09-19 - API-key accounts are ACP-eligible again, through the broker; the scope offers one
   credential kind per provider

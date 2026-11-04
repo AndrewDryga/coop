@@ -15,6 +15,11 @@
 
 - **`ls -l` and `find` work in a folder with a hidden file under eBPF protection.** `stat` on a hidden file now
   succeeds and shows its real size and times. Its contents stay denied, and hidden directories are unchanged.
+  `ls -l` still prints an error for each hidden entry and exits 1, and a hidden symlink shows no target.
+
+- **Small fixes for editor sessions.** A thread that fails to reopen because its box died or Coop reloaded now
+  passes its start message and notices to the next thread. A session-service child keeps the default account its
+  session started with. A short last line such as `a` no longer shows a stray backslash.
 
 - **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
   current links, and its first message shows only what you typed instead of Coop's carried context.
