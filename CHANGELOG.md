@@ -7,6 +7,11 @@
 - **A closed local port in a filtered box refuses at once.** Connecting to it, or sending UDP to it, now
   fails right away instead of hanging until the client gives up. A blocked destination also fails at once now.
 
+- **`coop approve` adds the service rules a filtered box is missing.** It lists the project's services and
+  their ports and asks once. Yes writes the rules to `.agent/project.yaml`, keeping its comments, and approves
+  them, so the box starts and an open editor session moves by itself. The thread now points there too, instead of
+  asking you to paste rules.
+
 - **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
   current links, and its first message shows only what you typed instead of Coop's carried context.
 

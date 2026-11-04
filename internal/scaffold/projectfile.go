@@ -265,11 +265,11 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 	return missing, nil
 }
 
-// ServiceRule is the network rule a filtered box needs to reach one catalog service: TCP to the
-// Compose service by name, on the port it listens on.
+// ServiceRule is the network rule a filtered box needs to reach one service: TCP to the Compose
+// service by name, on the ports it listens on.
 type ServiceRule struct {
 	Service string // the Compose service name, "db"
-	Port    int    // the port the service listens on, 5432
+	Ports   []int  // the ports the service listens on, [5432]
 }
 
 // ServiceRules is what AddServiceRules did to project.yaml's network requests.
@@ -284,15 +284,39 @@ type ServiceRules struct {
 // until somebody writes the rule by hand. The rules stay requests until `coop approve`.
 //
 // Like RegisterSubprojects, the edit is surgical text: project.yaml is a commented template, and a
-// YAML round trip would strip every comment. The rules join an existing box.egress_rules list, or
-// replace the template's untouched commented example. Any other layout is the person's, and the
-// result must read back with exactly the new rules added; otherwise nothing is written and the
-// rules come back as Unplaced for the caller to show.
+// YAML round trip would strip every comment. The rules join an existing box.egress_rules list,
+// replace the template's untouched commented example, or start a list in a file with neither. Any
+// other layout is the person's, and the result must read back with exactly the new rules added;
+// otherwise nothing is written and the rules come back as Unplaced for the caller to show.
 func AddServiceRules(repo string, services []string) (ServiceRules, error) {
 	return addServiceRules(repo, services, writeAndSync)
 }
 
 func addServiceRules(repo string, services []string, write scaffoldFileWrite) (ServiceRules, error) {
+	return editServiceRules(repo, write, func(pj *project.Project) []ServiceRule {
+		// An open box joins the services' network and an offline one reaches nothing, and project.yaml
+		// refuses rules outside filtered mode, so only a filtered project asks for them.
+		if pj.Box.Egress != "filtered" {
+			return nil
+		}
+		return catalogRules(services)
+	})
+}
+
+// AddApprovedServiceRules adds rules a person just said yes to, for services of any name, in a
+// project filtered by default as well as one that says so. Mode is not checked here: only a filtered
+// box is refused for lacking rules, and project.yaml refuses them where the file says otherwise, so
+// those come back Unplaced. A project with no file gets the template a fresh init writes.
+func AddApprovedServiceRules(repo string, rules []ServiceRule) (ServiceRules, error) {
+	if _, err := WriteProject(repo, nil); err != nil {
+		return ServiceRules{}, err
+	}
+	return editServiceRules(repo, writeAndSync, func(*project.Project) []ServiceRule { return rules })
+}
+
+// editServiceRules is the one edit behind both: the rules wanted join the file, less the services
+// it already asks for.
+func editServiceRules(repo string, write scaffoldFileWrite, wanted func(*project.Project) []ServiceRule) (ServiceRules, error) {
 	var out ServiceRules
 	root, err := os.OpenRoot(repo)
 	if err != nil {
@@ -308,13 +332,8 @@ func addServiceRules(repo string, services []string, write scaffoldFileWrite) (S
 	if err != nil {
 		return out, err
 	}
-	// An open box joins the services' network and an offline one reaches nothing, and project.yaml
-	// refuses rules outside filtered mode, so only a filtered project asks for them.
-	if pj.Box.Egress != "filtered" {
-		return out, nil
-	}
 	var missing []ServiceRule
-	for _, rule := range catalogRules(services) {
+	for _, rule := range wanted(pj) {
 		if !requestsService(pj, rule.Service) { // a rule the person already wrote is theirs, port and all
 			missing = append(missing, rule)
 		}
@@ -358,7 +377,10 @@ func requestsService(pj *project.Project, service string) bool {
 }
 
 // spliceServiceRules adds the rules to a real `  egress_rules:` list, after its last item and in
-// that list's own indentation, or turns the template's untouched commented example into a list.
+// that list's own indentation, or turns the template's untouched commented example into a list. A
+// file that mentions no list starts one under its `box:`, or in a new `box:` at the end when it has
+// none. An edited example is the person's draft, and the caller's read-back catches what else this
+// cannot place, such as a flow-style box.
 func spliceServiceRules(lines []string, rules []ServiceRule) ([]string, bool) {
 	if at := indexOfLine(lines, "  egress_rules:"); at >= 0 {
 		end, indent, seen := at+1, "    ", false
@@ -378,11 +400,17 @@ func spliceServiceRules(lines []string, rules []ServiceRule) ([]string, bool) {
 		}
 		return slices.Concat(lines[:end], serviceRuleLines(indent, rules), lines[end:]), true
 	}
+	list := append([]string{"  egress_rules:"}, serviceRuleLines("    ", rules)...)
 	at := indexOfLine(lines, "  # egress_rules:")
-	if at < 0 || at+len(egressRulesExample) >= len(lines) || !slices.Equal(lines[at+1:at+1+len(egressRulesExample)], egressRulesExample) {
+	if at < 0 {
+		if box := indexOfLine(lines, "box:"); box >= 0 {
+			return slices.Concat(lines[:box+1], list, lines[box+1:]), true
+		}
+		return slices.Concat(lines, []string{"", "box:"}, list), true
+	}
+	if at+len(egressRulesExample) >= len(lines) || !slices.Equal(lines[at+1:at+1+len(egressRulesExample)], egressRulesExample) {
 		return nil, false
 	}
-	list := append([]string{"  egress_rules:"}, serviceRuleLines("    ", rules)...)
 	return slices.Concat(lines[:at], list, lines[at+1+len(egressRulesExample):]), true
 }
 
@@ -400,7 +428,7 @@ func catalogRules(services []string) []ServiceRule {
 	for _, name := range ComposeServices {
 		if slices.Contains(services, name) {
 			unit := composeCatalog[name]
-			rules = append(rules, ServiceRule{Service: unit.service, Port: unit.port})
+			rules = append(rules, ServiceRule{Service: unit.service, Ports: []int{unit.port}})
 		}
 	}
 	return rules
@@ -410,10 +438,14 @@ func catalogRules(services []string) []ServiceRule {
 func serviceRuleLines(indent string, rules []ServiceRule) []string {
 	var lines []string
 	for _, rule := range rules {
+		ports := make([]string, 0, len(rule.Ports))
+		for _, port := range rule.Ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
 		lines = append(lines,
 			fmt.Sprintf("%s- to: {service: %q}", indent, rule.Service),
 			indent+"  protocol: tcp",
-			fmt.Sprintf("%s  ports: [%d]", indent, rule.Port))
+			fmt.Sprintf("%s  ports: [%s]", indent, strings.Join(ports, ", ")))
 	}
 	return lines
 }

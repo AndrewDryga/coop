@@ -7,12 +7,15 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -36,7 +39,7 @@ func (a *app) cmdApprove(args []string) (int, error) {
 		caseExposure = true
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, netTerminalOnly("coop approve")
+		return 1, a.approveWithoutTerminal(caseExposure)
 	}
 	repo, err := netProject(a.cfg.RepoOverride)
 	if err != nil {
@@ -67,18 +70,17 @@ func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool
 	if review.Unchanged() && (caseReview == nil || len(caseReview.Pending) == 0) {
 		// No security question has an answer that could change anything, so
 		// none is asked and nothing is written — not even a fresher timestamp.
-		// That line alone reads as if nothing is wrong, so it also says when a
-		// box is stuck on service rules nobody has asked for yet.
+		// A box stuck on service rules nobody has asked for yet is the exception,
+		// and that line alone would read as if nothing is wrong.
 		services, err := box.ProjectServicesRefusal(ctx, a.cfg, repo)
 		if err != nil {
 			return 1, err
 		}
-		ui.Note("%s", netApproveUnchanged)
-		if services != nil {
-			ui.Note("")
-			ui.Warning(services.Headline(), "", services.TerminalRemedy())
+		if services == nil {
+			ui.Note("%s", netApproveUnchanged)
+			return 0, nil
 		}
-		return 0, nil
+		return a.offerServiceRules(ctx, repo, services, confirm)
 	}
 	prompt, done := netApprovePrompt, netApproveApproved
 	if review.Unchanged() {
@@ -87,7 +89,108 @@ func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool
 	err = confirmProjectApproval(ctx, review, caseReview, os.Stderr, func() bool {
 		return confirm(prompt)
 	})
-	return reportNetChange(errors.Join(err, review.Close()), done)
+	code, err := reportNetChange(errors.Join(err, review.Close()), done)
+	if err != nil {
+		return code, err
+	}
+	// What was approved may still leave the box stuck, and this is the moment to settle that too.
+	services, err := box.ProjectServicesRefusal(ctx, a.cfg, repo)
+	if err != nil || services == nil {
+		return code, err
+	}
+	ui.Note("")
+	return a.offerServiceRules(ctx, repo, services, confirm)
+}
+
+// approveWithoutTerminal is `coop approve` with nobody there to answer. It asks nothing and writes
+// nothing, and it fails either way, since nothing got settled. When only service rules hold the box up
+// it says what they are: reading them needs no decision, and the person can act on them later.
+func (a *app) approveWithoutTerminal(caseExposure bool) error {
+	refused := netTerminalOnly("coop approve")
+	if caseExposure {
+		return refused
+	}
+	repo, err := netProject(a.cfg.RepoOverride)
+	if err != nil {
+		return refused
+	}
+	ctx := context.Background()
+	access, err := box.ProjectNetworkAccess(ctx, a.cfg, repo)
+	if err != nil || access.Pending != nil {
+		return refused
+	}
+	services, err := box.ProjectServicesRefusal(ctx, a.cfg, repo)
+	if err != nil || services == nil {
+		return refused
+	}
+	return services
+}
+
+// offerServiceRules settles a box stuck on missing service rules in one question. Coop knows the names
+// and ports, so typing them decides nothing: the decision is this review, and yes both writes the rules
+// and approves them. Only the terminal path reaches this, like every other approval. A service with no
+// stated port never gets a guessed one, so its rule stays the person's.
+func (a *app) offerServiceRules(ctx context.Context, repo string, services *box.ServicesNeedRules, confirm func(string) bool) (int, error) {
+	offer := services.Offer()
+	if len(offer) == 0 {
+		ui.Warning(services.Headline(), "", services.TerminalRemedy())
+		return 0, nil
+	}
+	ui.Warning(services.Headline(), "", serviceRulesOfferText(offer, services.NoPort()))
+	ui.Note("")
+	confirmed := confirm(serviceRulesPrompt)
+	if err := ctx.Err(); err != nil {
+		return 1, err
+	}
+	if !confirmed {
+		ui.Note("Nothing changed. This project's box stays blocked until its services have approved rules.")
+		ui.Note("%s", services.TurnOff)
+		return 0, nil
+	}
+	rules := make([]scaffold.ServiceRule, 0, len(offer))
+	for _, draft := range offer {
+		rules = append(rules, scaffold.ServiceRule{Service: draft.Name, Ports: draft.Ports})
+	}
+	added, err := scaffold.AddApprovedServiceRules(repo, rules)
+	if err != nil {
+		return 1, fmt.Errorf("could not add the rules to %s, so nothing was approved: %w", project.File, err)
+	}
+	if len(added.Unplaced) != 0 {
+		return 1, fmt.Errorf("%s has a layout Coop could not update safely, so nothing changed\n\n  %s", project.File, services.PasteRemedy())
+	}
+	review, err := box.ReviewProjectNetworkContext(ctx, a.cfg, repo)
+	if err != nil {
+		return 1, fmt.Errorf("the rules are in %s, but they were not approved: %w\n\n  Review them: coop approve", project.File, err)
+	}
+	if !review.AddsOnly(services) {
+		// The answer covers what the question showed, so a yes never carries a later edit along.
+		err := review.Discard(context.WithoutCancel(ctx))
+		return 1, errors.Join(errors.New("this project's files changed after that question, so nothing was approved\n\n  Review them: coop approve"), err, review.Close())
+	}
+	return reportNetChange(errors.Join(review.Commit(ctx), review.Close()), serviceRulesApproved)
+}
+
+// serviceRulesOfferText names what a yes adds, and what it leaves for the person.
+func serviceRulesOfferText(offer, noPort []box.ServiceDraft) string {
+	width := 0
+	for _, draft := range offer {
+		width = max(width, len(draft.Name))
+	}
+	lines := []string{"Coop can add rules for these services to " + project.File + " and approve them:"}
+	for _, draft := range offer {
+		ports := make([]string, 0, len(draft.Ports))
+		for _, port := range draft.Ports {
+			ports = append(ports, strconv.Itoa(port))
+		}
+		lines = append(lines, fmt.Sprintf("    %-*s  TCP %s", width, draft.Name, strings.Join(ports, ", ")))
+	}
+	if len(noPort) != 0 {
+		lines = append(lines, "", "  Coop cannot tell these services' ports. To use one, add its rule with the port it listens on, then run coop approve:")
+		for _, draft := range noPort {
+			lines = append(lines, draft.RuleText())
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // reportNetChange finishes a confirmed approval change. One that was saved but could not reach
@@ -128,6 +231,9 @@ const (
 	netApproveApproved  = "Approved for new runs and running editor sessions"
 	netApproveUnchanged = "No approval needed: this project's requested access has not changed."
 	netSessionsNotTold  = "Running editor sessions keep their current network rules until you reconnect them."
+
+	serviceRulesPrompt   = "Add these rules and approve them for new runs and running editor sessions?"
+	serviceRulesApproved = "Rules added and approved for new runs and running editor sessions"
 )
 
 func approveMovedError() error {

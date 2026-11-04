@@ -3,7 +3,7 @@ name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # Stack validation precedes scaffold writes
@@ -127,6 +127,10 @@ yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` �
 put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-11-04 — `coop approve` adds rules through the same edit (`AddApprovedServiceRules`), for a service of any
+  name and ports, and a file with no list and no commented example now gets a new `egress_rules:` under its `box:`,
+  or a new `box:` at the end. An edited example, a flow-style box or list, and any result that does not read back
+  still return Unplaced (task 2026-11-04-let-coop-approve-add-the-service-rules-a-project).
 - 2026-11-03 — outside Git and without a terminal, init refuses before writing (it used to create
   the project and report success), and a bare `--services` there is refused instead of read as
   "none"; at a terminal the fresh-project chooser now opens. Pinned by

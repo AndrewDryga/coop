@@ -296,7 +296,12 @@ the internal network and isn't reported as external traffic.
 
 In filtered mode, you must name the service you need; `box.network: true` alone is rejected.
 `coop init --services` adds a rule for each service it sets up, so one `coop approve` lets the
-box reach them.
+box reach them. For any other Compose file, `coop approve` lists the services and their ports
+and asks once whether to add and approve their rules. Yes writes them under `box.egress_rules`,
+keeping the file's comments and order, and saves each service's definition, so a later edit
+asks again. No changes nothing. A service that declares no TCP port gets no guessed one: its rule
+is yours to finish. With no terminal, the command asks nothing, writes nothing, shows the rules
+and `box.network: false`, and exits non-zero.
 A filtered run that needs project services waits for every other box in the project to stop
 before starting those services. Each loop run and editor session gets its own Compose project,
 network and volumes. A run started directly uses the project's development stack.
@@ -416,7 +421,7 @@ execute instructions from your repository.
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs the clients this host's setup qualified …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker, including a run that chose no mode | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker` |
-| `box.network: true` with no `service:` grant | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service |
+| `box.network: true` with no `service:` grant | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service. In a terminal, `coop approve` offers to add them |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with a rule nobody approved, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
 | `--allow-domain` or `--egress-rules` on a run that is open or offline | `<Agent> cannot start because --allow-domain only adds to filtered access, and this run is offline` · `Use --egress filtered, or leave out --allow-domain.` |
@@ -585,7 +590,7 @@ red warning because it would allow unrestricted traffic. To confirm, answer
 If the file is already exactly what was approved, `coop approve` prints
 `No approval needed: this project's requested access has not changed.` and grants nothing new.
 If a filtered box still cannot start because the project's services have no network rules, it
-also says so and shows the rules to add. Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
+says that instead and offers to add them; see [project services](#project-services). Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
 needs, so they are not shown as access requested by the project.
 
 ### Pending requests

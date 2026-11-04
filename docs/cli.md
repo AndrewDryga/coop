@@ -1554,6 +1554,9 @@ Usage: coop approve [--case-exposure]
   Confirm the changes to allow new runs to use them.
   If nothing changed, there is nothing to approve.
 
+  If a filtered box is stuck because the project's services have no rules, it
+  lists the services and their ports and offers to add and approve the rules.
+
 OPTIONS
   --case-exposure  additionally review file exposure with mount protection
 

@@ -377,39 +377,22 @@ func TestApproveDoesNotInspectMountPolicy(t *testing.T) {
 	})
 }
 
-// With nothing to approve, coop approve still says when the project's box is stuck on service rules
-// nobody has asked for, and shows them. Every other project hears its one line. Neither asks anything,
-// exits with an error or writes anything.
-func TestApproveWithNothingToApproveNamesMissingServiceRules(t *testing.T) {
-	const (
-		compose     = "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n"
-		serviceRule = "box:\n  egress_rules:\n    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n"
-		otherRule   = "box:\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"
-		refusal     = "\n⚠ This project's box cannot start because filtered boxes reach project services only through approved network rules\n\n" +
-			"  Ask for each service it uses under box.egress_rules in .agent/project.yaml:\n" +
-			"    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n" +
-			"  Then review it: coop approve\n" +
-			"  To start without project services, set box.network: false.\n"
-		noRules = "\n⚠ This project's box cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n" +
-			"  Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml\n"
-	)
+// With nothing to approve and no box stuck on service rules, coop approve says its one line. Asking for
+// nothing, it writes nothing and succeeds.
+func TestApproveWithNothingToApproveSaysSo(t *testing.T) {
 	for name, test := range map[string]struct {
 		project, compose string
 		approved         bool // a person approved the file first
 		configure        func(*config.Config)
-		want             string
 	}{
-		"services and no rules":      {compose: compose, want: refusal},
-		"only another rule approved": {project: otherRule, compose: compose, approved: true, want: refusal},
-		"a network and no services":  {configure: func(c *config.Config) { c.ServicesNet = "shared" }, want: noRules},
-		"no services":                {project: "box:\n  egress: filtered\n"},
-		"service rules approved":     {project: serviceRule, compose: compose, approved: true},
-		"box.network: false":         {project: "box:\n  network: false\n", compose: compose},
-		"COOP_NETWORK off":           {compose: compose, configure: func(c *config.Config) { c.Network = false }},
-		"open":                       {project: "box:\n  egress: open\n", compose: compose, approved: true},
-		"offline":                    {project: "box:\n  egress: offline\n", compose: compose},
-		"open on this host":          {compose: compose, configure: func(c *config.Config) { c.SetEgress("open") }},
-		"offline on this host":       {compose: compose, configure: func(c *config.Config) { c.SetEgress(string(egress.None)) }},
+		"no services":            {project: "box:\n  egress: filtered\n"},
+		"service rules approved": {project: approveServiceRule, compose: approveCompose, approved: true},
+		"box.network: false":     {project: "box:\n  network: false\n", compose: approveCompose},
+		"COOP_NETWORK off":       {compose: approveCompose, configure: func(c *config.Config) { c.Network = false }},
+		"open":                   {project: "box:\n  egress: open\n", compose: approveCompose, approved: true},
+		"offline":                {project: "box:\n  egress: offline\n", compose: approveCompose},
+		"open on this host":      {compose: approveCompose, configure: func(c *config.Config) { c.SetEgress("open") }},
+		"offline on this host":   {compose: approveCompose, configure: func(c *config.Config) { c.SetEgress(string(egress.None)) }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, repo := servicesProject(t, test.project, test.compose)
@@ -438,7 +421,7 @@ func TestApproveWithNothingToApproveNamesMissingServiceRules(t *testing.T) {
 			if code != 0 || err != nil {
 				t.Fatalf("code=%d err=%v, want it to exit 0", code, err)
 			}
-			if want := netApproveUnchanged + "\n" + test.want; out != want {
+			if want := netApproveUnchanged + "\n"; out != want {
 				t.Errorf("printed\n%s\nwant\n%s", out, want)
 			}
 			if after := directoryListing(t, root, repo); after != before {
@@ -446,23 +429,280 @@ func TestApproveWithNothingToApproveNamesMissingServiceRules(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// Rules the file asks for are a real question, and answering it is what the box waits for.
-	t.Run("service rules not approved yet", func(t *testing.T) {
-		a, repo := servicesProject(t, serviceRule, compose)
-		asked := 0
-		var code int
-		var err error
-		out := captureStderr(t, func() {
-			code, err = a.approveProject(t.Context(), repo, false, func(string) bool {
-				asked++
-				return false
-			})
+const (
+	approveCompose     = "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n"
+	approveServiceRule = "box:\n  egress_rules:\n    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n"
+	approveOtherRule   = "box:\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"
+	approveWithHistory = "# Why this project looks like this.\nbox:\n  # Reach the docs.\n  egress_rules:\n    - to: {domain: docs.example.com} # for the guide\n      protocol: tls\n      ports: [443]\n\n  # Limits.\n  memory: 4g\n"
+)
+
+// runApprove answers every question it hears, returning those questions and what was printed.
+func runApprove(t *testing.T, a *app, repo string, answer func(string) bool) (code int, err error, asked []string, out string) {
+	t.Helper()
+	out = captureStderr(t, func() {
+		code, err = a.approveProject(t.Context(), repo, false, func(prompt string) bool {
+			asked = append(asked, prompt)
+			return answer(prompt)
 		})
-		if asked != 1 || code != 1 || err == nil || strings.Contains(out, netApproveUnchanged) || strings.Contains(out, "cannot start") {
-			t.Fatalf("asked=%d code=%d err=%v out=%s", asked, code, err, out)
-		}
 	})
+	return code, err, asked, out
+}
+
+// A box stuck on missing service rules: one yes shows them, writes them where the file's own layout
+// keeps them, keeps the file's comments and order, and approves them so the box can start. Each
+// service's definition is saved with them, so a later edit asks again.
+func TestApproveAddsTheServiceRulesItShowed(t *testing.T) {
+	a, repo := servicesProject(t, "", "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n  api:\n    image: example/api:1\n    expose: [\"3000\", \"9229\"]\n")
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 1 || asked[0] != serviceRulesPrompt {
+		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	const want = "⚠ This project's box cannot start because filtered boxes reach project services only through approved network rules\n\n" +
+		"  Coop can add rules for these services to .agent/project.yaml and approve them:\n" +
+		"    api  TCP 3000, 9229\n" +
+		"    db   TCP 5432\n\n" +
+		"✓ " + serviceRulesApproved + "\n"
+	if out != want {
+		t.Errorf("printed\n%s\nwant\n%s", out, want)
+	}
+	if refusal, err := box.ProjectServicesRefusal(t.Context(), a.cfg, repo); err != nil || refusal != nil {
+		t.Fatalf("the box is still refused: %v, %v", refusal, err)
+	}
+	access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+	if err != nil || access.Pending != nil || access.Approval == nil || len(access.Approval.Services) != 2 {
+		t.Fatalf("approval = %+v, %v; want it saved with both digests", access.Approval, err)
+	}
+	// Nothing left to say.
+	if code, err, asked, out = runApprove(t, a, repo, func(string) bool { return false }); code != 0 || err != nil || len(asked) != 0 || out != netApproveUnchanged+"\n" {
+		t.Fatalf("again: code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	// Approval saved the definition, so changing it asks again.
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  db:\n    image: postgres:19\n    expose: [\"5432\"]\n  api:\n    image: example/api:1\n    expose: [\"3000\", \"9229\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if access, err = box.ProjectNetworkAccess(t.Context(), a.cfg, repo); err != nil || access.Pending == nil {
+		t.Fatalf("an edited service did not ask again: %+v, %v", access.Pending, err)
+	}
+}
+
+// Comments and order survive, and rules already approved stay approved beside the new ones.
+func TestApproveKeepsTheFileItAddsRulesTo(t *testing.T) {
+	a, repo := servicesProject(t, approveWithHistory, approveCompose)
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 2 || asked[0] != netApprovePrompt || asked[1] != serviceRulesPrompt {
+		t.Fatalf("a pending rule and missing service rules are two questions: code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	const want = "# Why this project looks like this.\nbox:\n  # Reach the docs.\n  egress_rules:\n    - to: {domain: docs.example.com} # for the guide\n      protocol: tls\n      ports: [443]\n" +
+		"    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n\n  # Limits.\n  memory: 4g\n"
+	if got, _ := os.ReadFile(filepath.Join(repo, ".agent", "project.yaml")); string(got) != want {
+		t.Errorf("project.yaml =\n%s\nwant\n%s", got, want)
+	}
+	access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+	if err != nil || access.Pending != nil || access.Approval == nil || len(access.Approval.Envelope) != 2 {
+		t.Fatalf("approval = %+v, %v", access.Approval, err)
+	}
+}
+
+// No changes nothing, exits 0, and says what stays blocked. The default answer is no.
+func TestApproveDecliningServiceRulesChangesNothing(t *testing.T) {
+	a, repo := servicesProject(t, approveOtherRule, approveCompose)
+	code, err, _, _ := runApprove(t, a, repo, func(prompt string) bool { return prompt == netApprovePrompt })
+	if code != 0 || err != nil {
+		t.Fatalf("declining the rules after approving the domain: %d, %v", code, err)
+	}
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := directoryListing(t, root, repo)
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return false })
+	if code != 0 || err != nil || len(asked) != 1 {
+		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
+	}
+	for _, line := range []string{"cannot start because", "db", "Nothing changed. This project's box stays blocked", "box.network: false"} {
+		if !strings.Contains(out, line) {
+			t.Errorf("no %q in\n%s", line, out)
+		}
+	}
+	if strings.Contains(out, netApproveUnchanged) || !strings.HasPrefix(out, "⚠ This project's box cannot start") {
+		t.Errorf("it does not lead with the problem:\n%s", out)
+	}
+	if after := directoryListing(t, root, repo); after != before {
+		t.Errorf("a no wrote something:\n%s\nwas\n%s", after, before)
+	}
+}
+
+// Rules the file already asks for are the real question, so declining them ends it: nothing more is
+// offered on top of an answer of no.
+func TestApproveDecliningThePendingRulesOffersNothing(t *testing.T) {
+	a, repo := servicesProject(t, approveServiceRule, approveCompose)
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return false })
+	if code != 1 || err == nil || len(asked) != 1 || asked[0] != netApprovePrompt || strings.Contains(out, "cannot start") {
+		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, ".agent", "project.yaml")); string(got) != approveServiceRule {
+		t.Errorf("project.yaml changed:\n%s", got)
+	}
+}
+
+// A network no filtered box joins has no rules to offer, so it says what to change and asks nothing.
+func TestApproveWithOnlyAServicesNetworkOffersNothing(t *testing.T) {
+	a, repo := servicesProject(t, "", "")
+	a.cfg.ServicesNet = "shared"
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 0 {
+		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
+	}
+	const want = "⚠ This project's box cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n" +
+		"  Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml\n"
+	if out != want {
+		t.Errorf("printed\n%s\nwant\n%s", out, want)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".agent", "project.yaml")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("it wrote a project file: %v", err)
+	}
+}
+
+// A service's required dependency is pinned with it, and a yes still approves. Its definition is part of
+// what was reviewed, so editing only the dependency during the question stops the approval.
+func TestApproveCoversAServiceDependency(t *testing.T) {
+	const compose = "services:\n  api:\n    image: example/api:1\n    expose: [\"3000\"]\n    depends_on: [db]\n  db:\n    image: postgres:18\n"
+	a, repo := servicesProject(t, "", compose)
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 1 {
+		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+	if err != nil || access.Pending != nil || access.Approval == nil || len(access.Approval.Services) != 2 {
+		t.Fatalf("approval = %+v, %v; want the dependency's digest saved too", access.Approval, err)
+	}
+
+	a, repo = servicesProject(t, "", compose)
+	code, err, _, _ = runApprove(t, a, repo, func(string) bool {
+		edited := strings.Replace(compose, "postgres:18", "example/other:1", 1)
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(edited), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "nothing was approved") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+// A port Coop cannot tell is never guessed: that service stays the person's, shown as a rule to finish.
+func TestApproveNeverGuessesAPort(t *testing.T) {
+	a, repo := servicesProject(t, "", servicesCompose)
+	code, err, asked, out := runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 1 {
+		t.Fatalf("code=%d err=%v asked=%q out=%s", code, err, asked, out)
+	}
+	if !strings.Contains(out, "Coop cannot tell these services' ports") || !strings.Contains(out, "{service: \"web\"}") || !strings.Contains(out, "<port>") {
+		t.Errorf("web's rule is not left to the person:\n%s", out)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, ".agent", "project.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "{service: \"web\"}") || !strings.Contains(string(got), "{service: \"db\"}") {
+		t.Errorf("project.yaml =\n%s\nwant only db", got)
+	}
+
+	// With no port it can tell, there is nothing to offer, so it asks nothing and writes nothing.
+	a, repo = servicesProject(t, "", "services:\n  web:\n    image: nginx:1\n")
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := directoryListing(t, root, repo)
+	code, err, asked, out = runApprove(t, a, repo, func(string) bool { return true })
+	if code != 0 || err != nil || len(asked) != 0 {
+		t.Fatalf("code=%d err=%v asked=%q", code, err, asked)
+	}
+	if !strings.Contains(out, "<port>") || !strings.Contains(out, "box.network: false") || strings.Contains(out, "offers to add") || strings.Contains(out, netApproveUnchanged) {
+		t.Errorf("printed\n%s", out)
+	}
+	if after := directoryListing(t, root, repo); after != before {
+		t.Errorf("it wrote something:\n%s\nwas\n%s", after, before)
+	}
+}
+
+// The file a yes writes to is one a box can edit while the question waits. The person saw only the
+// rules on screen and the services as they were, so anything else stops the approval.
+func TestApproveDoesNotCarryALaterEditAlong(t *testing.T) {
+	for name, edit := range map[string]func(t *testing.T, repo string){
+		"another rule": func(t *testing.T, repo string) {
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(approveOtherRule), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"another definition": func(t *testing.T, repo string) {
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services:\n  db:\n    image: example/other:1\n    expose: [\"5432\"]\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"another port": func(t *testing.T, repo string) {
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte("box:\n  egress_rules:\n    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [22]\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, repo := servicesProject(t, "", approveCompose)
+			code, err, _, _ := runApprove(t, a, repo, func(string) bool {
+				edit(t, repo)
+				return true
+			})
+			if code != 1 || err == nil || !strings.Contains(err.Error(), "nothing was approved") {
+				t.Fatalf("code=%d err=%v", code, err)
+			}
+			access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo)
+			if err != nil || access.Approval != nil || access.Pending == nil {
+				t.Fatalf("approval=%+v pending=%v err=%v, want nothing approved", access.Approval, access.Pending, err)
+			}
+		})
+	}
+}
+
+// With no terminal it decides nothing. It shows the rules and the box.network: false choice only when
+// they are the whole problem, and fails, since nothing got settled.
+func TestApproveWithoutATerminal(t *testing.T) {
+	a, repo := servicesProject(t, "", approveCompose)
+	root, err := box.NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := directoryListing(t, root, repo)
+	code, err := a.cmdApprove(nil)
+	if code != 1 || err == nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	for _, line := range []string{"{service: \"db\"}", "ports: [5432]", "box.network: false", "coop approve"} {
+		if !strings.Contains(err.Error(), line) {
+			t.Errorf("no %q in\n%v", line, err)
+		}
+	}
+	if after := directoryListing(t, root, repo); after != before {
+		t.Errorf("it wrote something:\n%s\nwas\n%s", after, before)
+	}
+	const onlyTerminal = "needs your confirmation in a terminal"
+	if _, err := a.cmdApprove([]string{"--case-exposure"}); err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
+		t.Errorf("--case-exposure: %v", err)
+	}
+	// A real question stays a refusal, with nothing to act on until a person sees the review.
+	a, repo = servicesProject(t, approveOtherRule, approveCompose)
+	if code, err := a.cmdApprove(nil); code != 1 || err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
+		t.Errorf("pending: code=%d err=%v", code, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, ".agent", "project.yaml")); string(got) != approveOtherRule {
+		t.Errorf("project.yaml changed:\n%s", got)
+	}
+	a, _ = servicesProject(t, "box:\n  egress: filtered\n", "")
+	if _, err := a.cmdApprove(nil); err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
+		t.Errorf("no services: %v", err)
+	}
 }
 
 // A project file that does not parse is a failure to look, never a project with nothing wrong.

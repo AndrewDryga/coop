@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -88,8 +88,8 @@ func TestAddServiceRulesFillsTheTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ServiceRule{{"db", 5432}, {"redis", 6379}}
-	if !slices.Equal(got.Added, want) || len(got.Unplaced) != 0 {
+	want := []ServiceRule{{"db", []int{5432}}, {"redis", []int{6379}}}
+	if !reflect.DeepEqual(got.Added, want) || len(got.Unplaced) != 0 {
 		t.Fatalf("AddServiceRules = %+v, want %v added", got, want)
 	}
 	after, _ := os.ReadFile(path)
@@ -122,16 +122,16 @@ func TestAddServiceRulesJoinsAnExistingList(t *testing.T) {
 		{"indented list with a trailing comment",
 			"box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: \"docs.example.com\"}\n      protocol: tls\n      ports: [443]\n\n  # Resource limits.\n  memory: 4g\n",
 			"box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: \"docs.example.com\"}\n      protocol: tls\n      ports: [443]\n    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n\n  # Resource limits.\n  memory: 4g\n",
-			[]string{"postgres"}, []ServiceRule{{"db", 5432}}},
+			[]string{"postgres"}, []ServiceRule{{"db", []int{5432}}}},
 		{"compact list",
 			"box:\n  egress: filtered\n  egress_rules:\n  - to: {domain: \"docs.example.com\"}\n    protocol: tls\n    ports: [443]\n",
 			"box:\n  egress: filtered\n  egress_rules:\n  - to: {domain: \"docs.example.com\"}\n    protocol: tls\n    ports: [443]\n  - to: {service: \"db\"}\n    protocol: tcp\n    ports: [5432]\n",
-			[]string{"postgres"}, []ServiceRule{{"db", 5432}}},
+			[]string{"postgres"}, []ServiceRule{{"db", []int{5432}}}},
 		// The person's own db rule stands, port and all: only redis is missing.
 		{"a service the project already asks for",
 			"box:\n  egress: filtered\n  egress_rules:\n    - to: {service: db}\n      protocol: tcp\n      ports: [6432]\n",
 			"box:\n  egress: filtered\n  egress_rules:\n    - to: {service: db}\n      protocol: tcp\n      ports: [6432]\n    - to: {service: \"redis\"}\n      protocol: tcp\n      ports: [6379]\n",
-			[]string{"postgres", "redis"}, []ServiceRule{{"redis", 6379}}},
+			[]string{"postgres", "redis"}, []ServiceRule{{"redis", []int{6379}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := writeProjectFixture(t, tc.file)
@@ -139,7 +139,7 @@ func TestAddServiceRulesJoinsAnExistingList(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(got.Added, tc.added) || len(got.Unplaced) != 0 {
+			if !reflect.DeepEqual(got.Added, tc.added) || len(got.Unplaced) != 0 {
 				t.Fatalf("AddServiceRules = %+v, want %v added", got, tc.added)
 			}
 			if after, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File))); string(after) != tc.want {
@@ -149,6 +149,61 @@ func TestAddServiceRulesJoinsAnExistingList(t *testing.T) {
 				t.Errorf("the edited project.yaml does not load: %v", err)
 			}
 		})
+	}
+}
+
+// The rules a person said yes to go wherever the file can take them, and everything else stays as
+// written, comments and order included. A layout it cannot edit safely stays too.
+func TestAddApprovedServiceRulesKeepsTheFile(t *testing.T) {
+	const rules = "    - to: {service: \"api\"}\n      protocol: tcp\n      ports: [3000, 9229]\n"
+	for _, tc := range []struct{ name, file, want string }{
+		{"a list with comments",
+			"# Mine.\nbox:\n  # Reach the docs.\n  egress_rules:\n    - to: {domain: docs.example.com} # why\n      protocol: tls\n      ports: [443]\n\n  # Limits.\n  memory: 4g\n",
+			"# Mine.\nbox:\n  # Reach the docs.\n  egress_rules:\n    - to: {domain: docs.example.com} # why\n      protocol: tls\n      ports: [443]\n" + rules + "\n  # Limits.\n  memory: 4g\n"},
+		{"a box with no list",
+			"# Mine.\nbox:\n  # Limits.\n  memory: 4g\n",
+			"# Mine.\nbox:\n  egress_rules:\n" + rules + "  # Limits.\n  memory: 4g\n"},
+		{"no box",
+			"# Mine.\nsubprojects: [api]\n",
+			"# Mine.\nsubprojects: [api]\n\nbox:\n  egress_rules:\n" + rules},
+		{"a flow-style list", "box:\n  egress_rules: []\n", ""},
+		{"a flow-style box", "box: {memory: 4g}\n", ""},
+		{"an edited example", "box:\n  # egress_rules:\n  #   - to: {domain: \"api.example.com\"}\n", ""},
+		{"open, which refuses rules", "box:\n  egress: open\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := writeProjectFixture(t, tc.file)
+			rule := ServiceRule{"api", []int{3000, 9229}}
+			got, err := AddApprovedServiceRules(repo, []ServiceRule{rule})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want
+			if want == "" {
+				want = tc.file
+				if len(got.Added) != 0 || !reflect.DeepEqual(got.Unplaced, []ServiceRule{rule}) {
+					t.Errorf("got %+v, want it unplaced", got)
+				}
+			} else if !reflect.DeepEqual(got.Added, []ServiceRule{rule}) || len(got.Unplaced) != 0 {
+				t.Errorf("got %+v, want it added", got)
+			}
+			if after, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File))); string(after) != want {
+				t.Errorf("project.yaml =\n%s\nwant:\n%s", after, want)
+			}
+		})
+	}
+	// A project with services and no file gets the file init writes, with the rule in its list.
+	repo := t.TempDir()
+	if got, err := AddApprovedServiceRules(repo, []ServiceRule{{"db", []int{5432}}}); err != nil || len(got.Added) != 1 {
+		t.Fatalf("with no file: %+v, %v", got, err)
+	}
+	fresh := t.TempDir()
+	if _, err := WriteProject(fresh, nil, "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File)))
+	if written, _ := os.ReadFile(filepath.Join(fresh, filepath.FromSlash(project.File))); string(after) != string(written) {
+		t.Errorf("project.yaml =\n%s\nwant:\n%s", after, written)
 	}
 }
 
@@ -175,7 +230,7 @@ func TestAddServiceRulesLeavesOtherFilesAlone(t *testing.T) {
 			if len(got.Added) != 0 || (len(got.Unplaced) != 0) != tc.unplaced {
 				t.Errorf("AddServiceRules = %+v, want unplaced=%v and nothing added", got, tc.unplaced)
 			}
-			if tc.unplaced && !slices.Equal(got.Unplaced, []ServiceRule{{"db", 5432}}) {
+			if tc.unplaced && !reflect.DeepEqual(got.Unplaced, []ServiceRule{{"db", []int{5432}}}) {
 				t.Errorf("unplaced rules = %v, want db:5432", got.Unplaced)
 			}
 			if after, _ := os.ReadFile(filepath.Join(repo, filepath.FromSlash(project.File))); string(after) != tc.file {

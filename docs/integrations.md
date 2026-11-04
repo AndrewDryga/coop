@@ -228,8 +228,9 @@ never works without your project's tools.
   itself. This covers a co:op update that changed its client image, and an image that went missing.
 - If they are new or changed, they wait for you: an agent can edit them, and a build runs them with
   ordinary networking. Review them, then run `coop build --egress filtered` in the project.
-- If the project has services and no network rules for them, the thread shows the rules to add. Add
-  them and run `coop approve`, or set `box.network: false` to start without services.
+- If the project has services and no network rules for them, the thread says to run `coop approve`,
+  which lists the services and offers to add their rules. Or set `box.network: false` to start
+  without services.
 - If the project asks for network access nobody approved, the thread says to run `coop approve`.
   Until then the editor talks to a box that sees your project read-only and reaches only your
   agent's provider, and none of the rules the project asks for apply.

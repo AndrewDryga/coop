@@ -588,7 +588,7 @@ func servicesNeedATerminal() error {
 
 // serviceEgressRule is the rule coop init asked for, in the form coop net and coop approve show.
 func serviceEgressRule(rule scaffold.ServiceRule) egress.Rule {
-	return egress.Rule{To: egress.Destination{Service: rule.Service}, Protocol: "tcp", Ports: []int{rule.Port}}
+	return egress.Rule{To: egress.Destination{Service: rule.Service}, Protocol: "tcp", Ports: rule.Ports}
 }
 
 // reportDockerSetup points at the project's own Docker configuration when coop's box is not set

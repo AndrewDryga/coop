@@ -132,9 +132,13 @@ it waits for, wait, say it ended. Every caller goes through it, and `forkspace.L
 for code nobody is waiting on.
 
 A services refusal comes in parts (`box.ServicesNeedRules`), since a thread cannot show the terminal's text
-whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason and the remedy as text and only the
-rules and `coop approve` as blocks, and the terminal and the agent log keep `Error()`. `coop approve` has nothing
-to approve in that state, so it asks the same check (`box.ProjectServicesRefusal`) and shows the refusal too.
+whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason as text and only `coop approve` as a
+block, and the terminal and the agent log keep `Error()`. `coop approve` has nothing to approve in that state, so
+it asks the same check (`box.ProjectServicesRefusal`) and offers the rules (`offerServiceRules`). Yes writes first
+and reviews after, so `ProjectNetworkApproval.AddsOnly` checks the review against the rules shown and the
+definitions pinned before the question: a box can edit either while the question waits. A service with no stated
+port is left out of `Offer()`; with none to offer it asks nothing and prints the paste text. Any one approved
+service rule ends the refusal, so a service left out does not keep the box blocked.
 
 Readiness asks about those five things only, on purpose, and about the file first: read as a file that
 asks for nothing, it would send a person off to build what it does not ask for. Any other refusal (an
@@ -216,6 +220,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-04 — `coop approve` offers the missing service rules, and the thread sends the person there instead of
+  showing rules to paste. Verified with a real session moving on after the approval.
 - 2026-11-04 — exit 0 no longer makes any service a finished step: the file has to declare it. A broken file's reason
   is one escaped line of text, since an editor does not wrap a code block.
 - 2026-11-04 — two sessions in one project no longer wait on each other: readiness asks whether a box would join,

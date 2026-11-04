@@ -856,6 +856,7 @@ func TestFilteredServicesRefusalDraftsCompleteRules(t *testing.T) {
       ports: [<port>]
   Replace <port> with the port the service listens on.
   Then review it: coop approve
+  Or run coop approve in a terminal, which offers to add them for you.
   To start without project services, set box.network: false.`
 	if err == nil || err.Error() != want {
 		t.Fatalf("refusal =\n%v\nwant:\n%s", err, want)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -292,6 +293,26 @@ func (a *ProjectNetworkApproval) Discard(ctx context.Context) error {
 		return nil
 	}
 	return a.store.DiscardUnapprovedReview(ctx, a.project)
+}
+
+// AddsOnly reports whether this review would grant what offer showed a person and nothing else, over the
+// same service definitions. The rules are written after the person answers, and a box can edit the
+// project's files while the question waits, so a yes covers only this and never a later edit.
+func (a *ProjectNetworkApproval) AddsOnly(offer *ServicesNeedRules) bool {
+	if a == nil || a.store == nil || offer == nil || a.mode != egress.Filtered || !maps.Equal(a.services, offer.digests) {
+		return false
+	}
+	add, remove := NetworkRuleDiff(approvedEnvelope(a.review.Before), a.requests)
+	if len(remove) != 0 {
+		return false
+	}
+	offered := offer.Offer()
+	want := make([]egress.Rule, 0, len(offered))
+	for _, draft := range offered {
+		want = append(want, egress.Rule{To: egress.Destination{Service: draft.Name}, Protocol: "tcp", Ports: draft.Ports})
+	}
+	extra, missing := NetworkRuleDiff(want, add)
+	return len(extra) == 0 && len(missing) == 0
 }
 
 func (a *ProjectNetworkApproval) Close() error {

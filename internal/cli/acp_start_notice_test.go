@@ -145,21 +145,12 @@ func threadHTML(t *testing.T, text string) string {
 	return html.String()
 }
 
-// A services refusal reads whole at any panel width. An editor does not wrap a code block, so only the
-// rules to paste and the command to run are blocks, and all the rest is text that wraps.
+// A services refusal reads whole at any panel width, and sends the person to coop approve instead of
+// their file. An editor does not wrap a code block, so only the command to run is one.
 func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	const want = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
 <p>Filtered boxes reach project services only through approved network rules. Your messages wait here and go out once it is ready.</p>
-<p>Ask for each service it uses under box.egress_rules in .agent/project.yaml:</p>
-<pre><code>    - to: {service: &quot;db&quot;}
-      protocol: tcp
-      ports: [5432]
-    - to: {service: &quot;web&quot;}
-      protocol: tcp
-      ports: [&lt;port&gt;]
-</code></pre>
-<p>Replace &lt;port&gt; with the port the service listens on.</p>
-<p>Then run this in this project, on the host:</p>
+<p>Run this in this project, on the host. It lists the services and offers to add their rules:</p>
 <pre><code>coop approve
 </code></pre>
 <p>To start without project services, set box.network: false.</p>
@@ -167,10 +158,19 @@ func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, servicesCompose, ""), nil, false)); got != want {
 		t.Errorf("the thread renders\n%s\nwant\n%s", got, want)
 	}
-	// Every service has its port: nothing to replace, so the thread does not ask.
-	portsOnly := acpBoxWaitText(servicesRefusal(t, "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n", ""), nil, false)
-	if strings.Contains(portsOnly, "Replace") || strings.Contains(portsOnly, "port\\>") {
-		t.Errorf("the thread asks to replace a port it already has:\n%s", portsOnly)
+	if got := acpBoxWaitText(servicesRefusal(t, servicesCompose, ""), nil, false); strings.Contains(got, "egress_rules") || strings.Contains(got, "service: ") {
+		t.Errorf("the thread still asks for rules to be pasted:\n%s", got)
+	}
+	// No port it can tell means nothing to offer, so the thread does not promise one.
+	const noPorts = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
+<p>Filtered boxes reach project services only through approved network rules. Your messages wait here and go out once it is ready.</p>
+<p>Run this in this project, on the host, to see the rules to add:</p>
+<pre><code>coop approve
+</code></pre>
+<p>To start without project services, set box.network: false.</p>
+`
+	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, "services:\n  db:\n    image: postgres:18\n", ""), nil, false)); got != noPorts {
+		t.Errorf("the thread renders\n%s\nwant\n%s", got, noPorts)
 	}
 	// No approval settles a network no filtered box joins, so nothing here says to run one.
 	const noRules = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>

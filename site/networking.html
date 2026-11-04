@@ -421,7 +421,12 @@ views, with the name of the Compose service they came from. Direct traffic betwe
 the internal network and isn&#39;t reported as external traffic.</p>
 <p>In filtered mode, you must name the service you need; <code>box.network: true</code> alone is rejected.
 <code>coop init --services</code> adds a rule for each service it sets up, so one <code>coop approve</code> lets the
-box reach them.
+box reach them. For any other Compose file, <code>coop approve</code> lists the services and their ports
+and asks once whether to add and approve their rules. Yes writes them under <code>box.egress_rules</code>,
+keeping the file&#39;s comments and order, and saves each service&#39;s definition, so a later edit
+asks again. No changes nothing. A service that declares no TCP port gets no guessed one: its rule
+is yours to finish. With no terminal, the command asks nothing, writes nothing, shows the rules
+and <code>box.network: false</code>, and exits non-zero.
 A filtered run that needs project services waits for every other box in the project to stop
 before starting those services. Each loop run and editor session gets its own Compose project,
 network and volumes. A run started directly uses the project&#39;s development stack.</p>
@@ -567,7 +572,7 @@ execute instructions from your repository.</p>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> grant</td>
-<td><code>&lt;Agent&gt; cannot start because filtered boxes reach project services only through approved network rules</code>, then a complete rule to paste for each Compose service</td>
+<td><code>&lt;Agent&gt; cannot start because filtered boxes reach project services only through approved network rules</code>, then a complete rule to paste for each Compose service. In a terminal, <code>coop approve</code> offers to add them</td>
 </tr>
 <tr>
 <td><code>-v /var/run:/x</code> (or any mount of <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code>, or the Docker socket&#39;s directory)</td>
@@ -731,7 +736,7 @@ red warning because it would allow unrestricted traffic. To confirm, answer
 <p>If the file is already exactly what was approved, <code>coop approve</code> prints
 <code>No approval needed: this project&#39;s requested access has not changed.</code> and grants nothing new.
 If a filtered box still cannot start because the project&#39;s services have no network rules, it
-also says so and shows the rules to add. Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
+says that instead and offers to add them; see <a href="#project-services">project services</a>. Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
 needs, so they are not shown as access requested by the project.</p>
 <h3 id="pending-requests">Pending requests</h3>
 <p>If the project&#39;s request differs from your saved approval, co:op treats it as pending:</p>

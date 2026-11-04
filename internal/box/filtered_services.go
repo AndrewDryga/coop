@@ -40,20 +40,17 @@ func servicesNeedRules(spec RunSpec, composeFile string) error {
 	refusal.Reason = "filtered boxes reach project services only through approved network rules"
 	refusal.Ask = "Ask for each service it uses under box.egress_rules in " + project.File + ":"
 	refusal.TurnOff = "To start without project services, set box.network: false."
-	drafts := serviceRuleDrafts(composeFile, spec.Repo, spec.RepoReadOnly)
+	refusal.Services, refusal.digests = serviceRuleDrafts(composeFile, spec.Repo, spec.RepoReadOnly)
+	drafts := refusal.Services
 	if len(drafts) == 0 { // a Compose file coop cannot read still gets the rule's whole shape
-		drafts = []serviceDraft{{name: "<service>"}}
+		drafts = []ServiceDraft{{Name: "<service>"}}
 	}
 	rules := make([]string, 0, len(drafts))
 	for _, draft := range drafts {
-		ports := make([]string, 0, len(draft.ports))
-		for _, port := range draft.ports {
-			ports = append(ports, strconv.Itoa(port))
+		if len(draft.Ports) == 0 {
+			refusal.Fill = "Replace <port> with the port the service listens on."
 		}
-		if len(ports) == 0 {
-			ports, refusal.Fill = []string{"<port>"}, "Replace <port> with the port the service listens on."
-		}
-		rules = append(rules, fmt.Sprintf("    - to: {service: %q}\n      protocol: tcp\n      ports: [%s]", draft.name, strings.Join(ports, ", ")))
+		rules = append(rules, draft.RuleText())
 	}
 	refusal.Rules = strings.Join(rules, "\n")
 	return refusal
@@ -78,16 +75,17 @@ func checkServicesHaveRules(cfg *config.Config, spec RunSpec, composeFile string
 
 // ServicesNeedRules is a filtered box that cannot start until a person gives the project's services
 // network rules or turns them off. An editor session waits for that instead of exiting. The refusal
-// comes in parts because a thread cannot show it whole: an editor does not wrap a code block, so only
-// the rules can go in one. Every part names only Coop's words and validated service names and ports
-// (serviceRuleDrafts).
+// comes in parts because a thread and `coop approve` each show it their own way. Every part names only
+// Coop's words and validated service names and ports (serviceRuleDrafts).
 type ServicesNeedRules struct {
-	name    string // who cannot start
-	Reason  string // why, as a clause that reads after "cannot start because"
-	Ask     string // where the rules go; "" when there are none
-	Rules   string // the drafted rules, indented to paste under box.egress_rules; "" with no Compose file
-	Fill    string // what to replace in Rules before the file accepts them; "" when nothing
-	TurnOff string // how to start without the services instead
+	name     string            // who cannot start
+	Reason   string            // why, as a clause that reads after "cannot start because"
+	Ask      string            // where the rules go; "" when there are none
+	Rules    string            // the drafted rules, indented to paste under box.egress_rules; "" with no Compose file
+	Fill     string            // what to replace in Rules before the file accepts them; "" when nothing
+	TurnOff  string            // how to start without the services instead
+	Services []ServiceDraft    // the services Rules drafts, without the placeholder an unreadable file gets
+	digests  map[string]string // the definitions behind the ports shown; nil when they could not be pinned
 }
 
 func (e *ServicesNeedRules) Error() string { return e.Headline() + "\n\n  " + e.TerminalRemedy() }
@@ -101,40 +99,89 @@ func (e *ServicesNeedRules) TerminalRemedy() string {
 	if e.Rules == "" {
 		return e.TurnOff
 	}
+	remedy := e.pasteRules() + "  Then review it: coop approve\n"
+	if len(e.Offer()) > 0 {
+		remedy += "  Or run coop approve in a terminal, which offers to add them for you.\n"
+	}
+	return remedy + "  " + e.TurnOff
+}
+
+// PasteRemedy is TerminalRemedy for a place that has already failed to add the rules itself.
+func (e *ServicesNeedRules) PasteRemedy() string {
+	return e.pasteRules() + "  Then review it: coop approve\n  " + e.TurnOff
+}
+
+func (e *ServicesNeedRules) pasteRules() string {
 	remedy := e.Ask + "\n" + e.Rules + "\n"
 	if e.Fill != "" {
 		remedy += "  " + e.Fill + "\n"
 	}
-	return remedy + "  Then review it: coop approve\n  " + e.TurnOff
+	return remedy
 }
 
-// serviceDraft is one Compose service a filtered box could ask for, with the
-// TCP ports its definition declares (none when it declares none).
-type serviceDraft struct {
-	name  string
-	ports []int
+// Offer is what `coop approve` may offer to add: the services whose ports the Compose file states,
+// with their definitions pinned so that what gets approved is what was shown. A service with no
+// stated port is never given a guessed one, so it stays the person's (NoPort).
+func (e *ServicesNeedRules) Offer() []ServiceDraft {
+	if e.digests == nil {
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(e.Services), func(draft ServiceDraft) bool { return len(draft.Ports) == 0 })
 }
 
-// serviceRuleDrafts lists the services of a Compose file in name order. A name
-// no rule can carry, which is anything but one lowercase DNS label, is left
-// out, and a file coop cannot read or validate drafts nothing.
-func serviceRuleDrafts(composeFile, repo string, repoReadOnly bool) []serviceDraft {
+// NoPort is the services Offer leaves out, whose rules only a person can finish.
+func (e *ServicesNeedRules) NoPort() []ServiceDraft {
+	return slices.DeleteFunc(slices.Clone(e.Services), func(draft ServiceDraft) bool { return len(draft.Ports) != 0 })
+}
+
+// ServiceDraft is one Compose service a filtered box could ask for, with the TCP ports its definition
+// declares (none when it declares none).
+type ServiceDraft struct {
+	Name  string
+	Ports []int
+}
+
+// RuleText is the draft as a rule to paste, with a placeholder for a port nobody stated.
+func (d ServiceDraft) RuleText() string {
+	ports := make([]string, 0, len(d.Ports))
+	for _, port := range d.Ports {
+		ports = append(ports, strconv.Itoa(port))
+	}
+	if len(ports) == 0 {
+		ports = []string{"<port>"}
+	}
+	return fmt.Sprintf("    - to: {service: %q}\n      protocol: tcp\n      ports: [%s]", d.Name, strings.Join(ports, ", "))
+}
+
+// serviceRuleDrafts lists the services of a Compose file in name order, and pins from those same bytes
+// the definitions of the ones with stated ports. A name no rule can carry, which is anything but one
+// lowercase DNS label, is left out, and a file coop cannot read or validate drafts nothing.
+func serviceRuleDrafts(composeFile, repo string, repoReadOnly bool) ([]ServiceDraft, map[string]string) {
 	data, err := readValidatedCompose(composeFile, repo, repoReadOnly)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var doc composeDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil
+		return nil, nil
 	}
-	var drafts []serviceDraft
+	var drafts []ServiceDraft
+	var known []string
 	for name, service := range doc.Services {
 		if label, err := egress.NormalizeLabel(name); err == nil && label == name {
-			drafts = append(drafts, serviceDraft{name: name, ports: declaredPorts(service)})
+			ports := declaredPorts(service)
+			drafts = append(drafts, ServiceDraft{Name: name, Ports: ports})
+			if len(ports) != 0 {
+				known = append(known, name)
+			}
 		}
 	}
-	slices.SortFunc(drafts, func(a, b serviceDraft) int { return strings.Compare(a.name, b.name) })
-	return drafts
+	slices.SortFunc(drafts, func(a, b ServiceDraft) int { return strings.Compare(a.Name, b.Name) })
+	digests, err := composeServiceDigestsData(data, known)
+	if err != nil {
+		return drafts, nil
+	}
+	return drafts, digests
 }
 
 // declaredPorts are the TCP container ports a Compose service declares: its

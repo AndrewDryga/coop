@@ -48,6 +48,11 @@ denial from agent-controlled services. A command rename or UI warning is not enf
 
 ## Changelog
 
+- 2026-11-04 — the owner agreed `coop approve` may write the service rules a project is missing, since typing
+  them decided nothing. It is still one reviewed host decision: terminal only, default no, and it refuses to approve
+  anything but the rules and definitions it showed. Swept the other approval writers (`coop approve` itself,
+  `--case-exposure`, `coop net forget`); none writes the project's files.
+
 - 2026-11-04 — `coop acp` also connects on a file that does not load, reading it as one that asks for
   nothing: no rule from it applies, however much of it parses. Swept the same callers: still only the
   editor's connection holds, and admitting the fixed file again is an ordinary admission.

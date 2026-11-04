@@ -496,16 +496,16 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 }
 
 // acpServicesWaitText shows a services refusal so that it reads whole at any panel width. An editor does
-// not wrap a code block, so a sentence in one runs off the panel's edge: only the rules to paste and the
-// command to run are blocks, and everything else is text.
+// not wrap a code block, so a sentence in one runs off the panel's edge. Coop knows the rules and the
+// real decision is the review, so a thread sends the person to `coop approve` rather than to their file.
 func acpServicesWaitText(services *box.ServicesNeedRules, waits string) string {
 	blocks := []string{acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: acpSentence(services.Reason) + " " + waits})}
 	if services.Rules != "" {
-		blocks = append(blocks, acpctl.MarkdownText(services.Ask), acpctl.CodeBlock(services.Rules))
-		if services.Fill != "" {
-			blocks = append(blocks, acpctl.MarkdownText(services.Fill))
+		intro := "Run this in this project, on the host, to see the rules to add:"
+		if len(services.Offer()) > 0 {
+			intro = "Run this in this project, on the host. It lists the services and offers to add their rules:"
 		}
-		blocks = append(blocks, "Then run this in this project, on the host:", acpctl.CodeBlock("coop approve"))
+		blocks = append(blocks, intro, acpctl.CodeBlock("coop approve"))
 	}
 	return strings.Join(append(blocks, acpctl.MarkdownText(acpSentence(services.TurnOff))), "\n\n")
 }
