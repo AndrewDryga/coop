@@ -23,7 +23,9 @@ There are two other modes. `open` allows all network traffic, and `offline` turn
 Choose one for a single run with `--egress open` or `--egress offline`. The project's network
 rules do not apply to that run, approved or not, and its network section says
 `This project's network rules do not apply to this run.` Set `COOP_EGRESS` to
-change the mode for all your runs, or `box.egress` to change it for one project. The command
+change the mode for your runs, or `box.egress` to change it for one project. A project's saved
+approval outranks `COOP_EGRESS`, and the run warns when it does, so use `--egress` when one run must
+be offline. The command
 line, `COOP_EGRESS` and the project file use the same three words. A project's request for
 `open` needs your approval on the host. Running `coop init` again leaves an existing project
 file unchanged.
@@ -112,7 +114,7 @@ Each agent gets access to the provider endpoints its client needs:
 | Agent | Hosts a filtered run reaches |
 | --- | --- |
 | `coop claude` | `api.anthropic.com`, `platform.claude.com` (the OAuth refresh) and `mcp-proxy.anthropic.com` (the claude.ai connectors a login has on by default) |
-| `coop codex` | `chatgpt.com` and `auth.openai.com` |
+| `coop codex` | `chatgpt.com` and `auth.openai.com`; `api.openai.com` for an API-key account |
 | `coop gemini` | adapter-declared Google model and Code Assist routes for the selected credential family |
 | `coop grok` | `cli-chat-proxy.grok.com`, `code.grok.com` and `auth.x.ai` (the OAuth refresh) |
 

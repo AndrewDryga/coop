@@ -44,8 +44,8 @@ curl -fsSL https://coop.dryga.com/install.sh | sh
 ```
 
 The script downloads the `coop` binary for your system into `~/.local/bin`. It needs `curl`, `tar`,
-and `sha256sum` or `shasum`. If a container runtime is available, it also builds the box image and
-runs `coop doctor`. If not, install one and then run:
+and `sha256sum` or `shasum`. If Docker is available, it also builds the box image and
+runs `coop doctor`. If not, install it and then run:
 
 ```bash
 coop build --egress open && coop doctor

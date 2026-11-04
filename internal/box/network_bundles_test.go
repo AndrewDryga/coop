@@ -327,3 +327,16 @@ func TestNetworkTargetBundleNamesTheMissingSignIn(t *testing.T) {
 		}
 	}
 }
+
+// A COOP_EGRESS that a saved approval outranked is named, so nobody believes a filtered run is offline.
+func TestIgnoredHostEgressIsNamed(t *testing.T) {
+	offline, filtered := egress.None, egress.Filtered
+	if got := ignoredHostEgress(networkstate.Admission{HostPreference: &offline}, filtered); !strings.Contains(got, "COOP_EGRESS=offline does not apply") || !strings.Contains(got, "--egress offline") {
+		t.Errorf("notice = %q", got)
+	}
+	for _, input := range []networkstate.Admission{{}, {HostPreference: &filtered}, {HostPreference: &offline, InvocationMode: &filtered}} {
+		if got := ignoredHostEgress(input, filtered); got != "" {
+			t.Errorf("%+v said %q", input, got)
+		}
+	}
+}

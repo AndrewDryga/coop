@@ -58,7 +58,7 @@ spend with the provider.
 
 The provider folders Coop mounts do not give the agent access to another repository's provider
 files. Open networking still lets it send traffic to any destination. Use filtered networking
-to restrict destinations, or `COOP_EGRESS=offline` to turn networking off. Offline runs receive
+to restrict destinations, or `--egress offline` to turn networking off. Offline runs receive
 no provider credentials.
 
 Manage shared accounts on the host with `coop login` and `coop credentials … rm`. Do not use a
@@ -312,8 +312,8 @@ lead's selected account. Other providers use their default account; `--peer` doe
 `@account` because one box selects one account per provider.
 
 Asking is optional and off by default. The lead decides whether it needs a second opinion and how
-to use the answer; routine work does not require one. Consultations default to `--fresh`, so each
-call gets an independent second opinion. Only the peers you name are available. co:op mounts the
+to use the answer; routine work does not require one. Each consultation asks for `--fresh`, an independent second
+opinion, or `--continue` to follow up on the last one. Only the peers you name are available. co:op mounts the
 selected providers' repository homes writable, while reusable credentials stay outside the box.
 The run's broker authenticates their requests.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/ui"
 	"io"
 	"os"
 	"path/filepath"
@@ -172,6 +173,9 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	mode := preview.Mode
+	if notice := ignoredHostEgress(input, mode); notice != "" {
+		ui.Warn("%s", notice)
+	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
 		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
 	}
@@ -354,6 +358,22 @@ func canonicalProjectDir(repo string) (string, error) {
 		return "", errors.New("restricted networking needs a project directory that exists on this host")
 	}
 	return canonical, nil
+}
+
+// ignoredHostEgress names a COOP_EGRESS a saved approval outranked. Someone who set offline must not
+// believe a run is offline while it reaches its approved sites.
+func ignoredHostEgress(input networkstate.Admission, mode egress.Mode) string {
+	if input.HostPreference == nil || input.InvocationMode != nil || *input.HostPreference == mode {
+		return ""
+	}
+	name := func(m egress.Mode) string {
+		if m == egress.None {
+			return "offline"
+		}
+		return string(m)
+	}
+	return fmt.Sprintf("COOP_EGRESS=%s does not apply: this project's approval keeps it %s. For one run, use --egress %s.",
+		name(*input.HostPreference), name(mode), name(*input.HostPreference))
 }
 
 // networkAdmissionInput separates presence from default and authority from

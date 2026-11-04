@@ -136,7 +136,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		if v, n, ok, e := flagValue(args, i, "--stack"); ok {
 			if e != nil {
-				return 2, ui.MissingOptionValue("--stack", "coop init", "coop init --stack node")
+				return 2, ui.MissingOptionValue("--stack", "coop init", "coop init --stack asdf")
 			}
 			stack = v
 			i += n - 1

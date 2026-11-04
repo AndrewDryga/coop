@@ -126,7 +126,8 @@ read it, the error names the path. If a setting is malformed, duplicated, retire
 the error names the path and line. An environment override does not let a broken file pass.
 
 `COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM`, `COOP_ACP_TRACE` and `COOP_SPINNER` are
-process-environment controls, so you can't set them inside `coop.conf`.
+process-environment controls, so you can't set them inside `coop.conf`. `COOP_NO_ASDF` and
+`COOP_CONSULT_STREAM_LIMIT` are read in the box, so they belong in `agents/env`.
 
 Optional [provider usage reports](usage-reports.md) use a separate host-only
 `~/.config/coop/usage-reports.json`. Their API spend is never added to local usage estimates.
