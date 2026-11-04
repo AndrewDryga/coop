@@ -18,6 +18,7 @@ func TestCorrectedCommandKeepsWhatWasTyped(t *testing.T) {
 		{args: []string{"--forse", "--forse"}, want: []string{"coop --force --forse"}, typed: true},
 		// Nothing a person could paste, or nothing worth repeating: the caller points at help.
 		{args: []string{"tasks", "add", "two\nlines", "--forse"}, want: []string{""}, typed: true},
+		{args: []string{"tasks", "add", "two\nlines", "--forse=1"}, want: []string{""}, typed: true},
 		{args: []string{"tasks", "add", string(long), "--forse"}, want: []string{""}, typed: true},
 		// Not on the line at all, as when a test calls a parser directly.
 		{args: []string{"-test.v"}, want: []string{""}, typed: false},

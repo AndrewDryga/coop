@@ -73,6 +73,7 @@ type RunSpec struct {
 	// ServeBinds maps a serve port to the host port this box publishes it on, when an editor session
 	// forwards the stable port to whichever of its boxes is live. Empty publishes on the stable port.
 	ServeBinds map[int]int
+	ServeTaken map[int]bool // the serve ports whose stable port something else holds, for the agent's note
 	Image      string
 	// ExpectedImageID binds a host-preflighted workload to its immutable image, even when
 	// filtered preparation resolves the image again from explicit project-build approval.

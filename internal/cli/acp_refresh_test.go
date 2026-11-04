@@ -864,3 +864,18 @@ func TestACPRefreshWorkerUsesTurnEndAndPollingAndJoins(t *testing.T) {
 		})
 	}
 }
+
+// A real box's capture wins over the holding one with the same rules, or a refusal would put a live
+// session back on a capture that only holds.
+func TestRefreshPrefersARealCaptureOverAHoldingOneWithTheSameRules(t *testing.T) {
+	holding := &box.CapturedEgress{Fingerprint: "same", Pending: &networkstate.PendingApproval{}}
+	real := &box.CapturedEgress{Fingerprint: "same"}
+	r := &acpNetworkRefresh{startup: holding, created: []*box.CapturedEgress{real}}
+	if got := r.captureLocked("same"); got != real {
+		t.Fatalf("captureLocked = %+v, want the real capture", got)
+	}
+	r.created = nil
+	if got := r.captureLocked("same"); got != holding {
+		t.Fatalf("with nothing admitted since, captureLocked = %+v, want the startup capture", got)
+	}
+}

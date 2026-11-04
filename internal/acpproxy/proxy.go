@@ -457,6 +457,9 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 					p.clearSupersededIntent(epoch)
 					continue
 				}
+				if opts.ChildFailed != nil {
+					p.tellOpenThreads(sessionEndedNoBoxText)
+				}
 				p.failAllPending()
 				return err
 			}

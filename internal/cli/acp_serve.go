@@ -230,9 +230,11 @@ func (r *acpServeRouter) setLive(binds map[int]int) {
 
 // allocate picks a private host port for each serve port of a box about to start. Docker binds it a
 // moment later; a port lost in that moment is the same skipped-port warning any publish can meet.
-func (r *acpServeRouter) allocate() (map[int]int, error) {
+// The second result is what the box's inner process is told, which also says which stable ports
+// something else holds.
+func (r *acpServeRouter) allocate() (map[int]int, string, error) {
 	if r == nil {
-		return nil, nil
+		return nil, "", nil
 	}
 	ports := r.Ports()
 	binds := make(map[int]int, len(ports))
@@ -240,12 +242,12 @@ func (r *acpServeRouter) allocate() (map[int]int, error) {
 	for _, port := range ports {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			return nil, fmt.Errorf("pick a private host port: %w", err)
+			return nil, "", fmt.Errorf("pick a private host port: %w", err)
 		}
 		defer listener.Close()
 		binds[port.Box] = listener.Addr().(*net.TCPAddr).Port
 	}
-	return binds, nil
+	return binds, encodeServeBinds(binds, ports), nil
 }
 
 // Close stops forwarding and gives the stable ports back.
@@ -273,29 +275,38 @@ func (r *acpServeRouter) Close() {
 	r.wg.Wait()
 }
 
-// encodeServeBinds and decodeServeBinds carry a box's private ports to its inner process.
-func encodeServeBinds(binds map[int]int) string {
+// encodeServeBinds and decodeServeBinds carry a box's private ports to its inner process, each with
+// whether something else holds its stable port: 4000=52341,9091=52342!
+func encodeServeBinds(binds map[int]int, ports []acpctl.ServePort) string {
 	entries := make([]string, 0, len(binds))
 	for box, private := range binds {
-		entries = append(entries, fmt.Sprintf("%d=%d", box, private))
+		entry := fmt.Sprintf("%d=%d", box, private)
+		if slices.ContainsFunc(ports, func(p acpctl.ServePort) bool { return p.Box == box && p.Taken }) {
+			entry += "!"
+		}
+		entries = append(entries, entry)
 	}
 	slices.Sort(entries)
 	return strings.Join(entries, ",")
 }
 
-func decodeServeBinds(value string) (map[int]int, error) {
+func decodeServeBinds(value string) (map[int]int, map[int]bool, error) {
 	if value == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	binds := map[int]int{}
+	binds, taken := map[int]int{}, map[int]bool{}
 	for _, entry := range strings.Split(value, ",") {
 		box, private, ok := strings.Cut(entry, "=")
+		private, held := strings.CutSuffix(private, "!")
 		boxPort, boxErr := strconv.Atoi(box)
 		privatePort, privateErr := strconv.Atoi(private)
 		if !ok || boxErr != nil || privateErr != nil || boxPort < 1 || boxPort > 65535 || privatePort < 1 || privatePort > 65535 {
-			return nil, fmt.Errorf("%s is malformed", acpServeBindsEnv)
+			return nil, nil, fmt.Errorf("%s is malformed", acpServeBindsEnv)
 		}
 		binds[boxPort] = privatePort
+		if held {
+			taken[boxPort] = true
+		}
 	}
-	return binds, nil
+	return binds, taken, nil
 }

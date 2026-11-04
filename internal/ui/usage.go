@@ -179,18 +179,20 @@ func UnknownOptionNear(option, command, guess string) *UsageError {
 // a value given as --opt=value. typed reports whether the option was on the line at all.
 func correctedCommand(args []string, option, guess string) (command string, typed bool) {
 	const longest = 200 // past this, a suggestion is a wall of the person's own text
+	typed = slices.ContainsFunc(args, func(arg string) bool { return arg == option || strings.HasPrefix(arg, option+"=") })
 	parts := []string{"coop"}
+	replaced := false
 	for _, arg := range args {
 		switch {
-		case typed:
+		case replaced:
 		case arg == option:
-			arg, typed = guess, true
+			arg, replaced = guess, true
 		case strings.HasPrefix(arg, option+"="):
-			arg, typed = guess+strings.TrimPrefix(arg, option), true
+			arg, replaced = guess+strings.TrimPrefix(arg, option), true
 		}
 		quoted, ok := shellWord(arg)
 		if !ok {
-			return "", typed || slices.Contains(args, option)
+			return "", typed
 		}
 		parts = append(parts, quoted)
 	}

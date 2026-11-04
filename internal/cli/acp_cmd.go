@@ -360,13 +360,14 @@ func (a *app) cmdACP(args []string) (int, error) {
 		return 1, err
 	}
 	var serveBinds map[int]int
+	var serveTaken map[int]bool
 	if innerProcess {
-		if serveBinds, err = decodeServeBinds(os.Getenv(acpServeBindsEnv)); err != nil {
+		if serveBinds, serveTaken, err = decodeServeBinds(os.Getenv(acpServeBindsEnv)); err != nil {
 			return 1, err
 		}
 	}
 	spec := box.RunSpec{
-		ServeBinds: serveBinds,
+		ServeBinds: serveBinds, ServeTaken: serveTaken,
 		// A supervisor (which reconnects the box) passes COOP_ACP_SUPERVISOR; that tags
 		// the box so build/update can restart it and the supervisor can kill exactly it.
 		Image: img, Repo: repo, Workdir: repo, Cmd: cmd, ForceNoTTY: true, Agent: tool, Serve: true, NetworkClient: egress.ClientACP,
@@ -1311,11 +1312,12 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	}
 	var serveBinds map[int]int
 	if !holdPrompts { // a holding child starts no box, so it publishes nothing
-		if serveBinds, err = a.acpServe.allocate(); err != nil {
-			return nil, err
-		}
-		if len(serveBinds) > 0 {
-			env = append(env, acpServeBindsEnv+"="+encodeServeBinds(serveBinds))
+		// A dev server link is not worth ending a session over: this box just publishes nothing.
+		var told string
+		if serveBinds, told, err = a.acpServe.allocate(); err != nil {
+			acpproxy.Trace("serve ports: %v", err)
+		} else if told != "" {
+			env = append(env, acpServeBindsEnv+"="+told)
 		}
 	}
 	cmd := exec.Command(self, inner...)

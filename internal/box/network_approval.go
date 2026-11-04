@@ -221,8 +221,8 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 		return nil, openErr
 	}
 
-	// A box still starting holds this for as long as that takes, so say so rather than seem stuck.
-	waiting := time.AfterFunc(approvalWaitNotice, func() { ui.Note("Waiting for a box in this project to finish starting.") })
+	// A running box holds this until it stops, which can be hours, so say so rather than seem stuck.
+	waiting := time.AfterFunc(approvalWaitNotice, func() { ui.Note("Waiting for the boxes running in this project to stop. Close them to go on.") })
 	unlockTransition, err := forkspace.LockServiceLaunch(ctx, inputs.canonical, true)
 	waiting.Stop()
 	if err != nil {

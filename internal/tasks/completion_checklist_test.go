@@ -493,6 +493,30 @@ func TestDoneForceKeepsEveryOtherRefusal(t *testing.T) {
 			t.Fatalf("forced close enrolled for review: %t, %v", enrolled, err)
 		}
 	})
+	t.Run("final review of a killed loop", func(t *testing.T) {
+		forceAtTerminal(t)
+		repo := initRepo(t)
+		root := filepath.Join(repo, TasksRoot)
+		subject := taskWithCompletedChecklist(t, root, StateDone, "review-subject")
+		if err := CompleteTrustedTask("", root, subject); err != nil {
+			t.Fatal(err)
+		}
+		taskForLease(t, root, StateInProgress, "unfinished")
+		plan := pendingReviewTestPlan(t, repo, root, forkspace.GitOut(repo, "rev-parse", "HEAD"))
+		windows, err := BeginReviewCompletionWindowsWithPending([]string{root}, []string{subject.ID}, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.Abandon(); err != nil { // what a killed process leaves
+			t.Fatal(err)
+		}
+		if code, err := CmdTasksFolder("", root, []string{"done", "unfinished", "--force"}); code != 0 || err != nil {
+			t.Fatalf("done --force after a killed loop = %d, %v", code, err)
+		}
+		if _, enrolled, err := readPendingReviewRecord(root, "unfinished"); err != nil || enrolled {
+			t.Fatalf("forced close enrolled in a dead review: %t, %v", enrolled, err)
+		}
+	})
 	t.Run("fork owned", func(t *testing.T) {
 		repo, root, _ := proposalAssignment(t, "forced")
 		assigned, _ := mustCurrentTask(t, root, "assigned")

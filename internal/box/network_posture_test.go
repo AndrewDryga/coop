@@ -102,7 +102,7 @@ func TestApprovalSaysWhenItWaitsForABox(t *testing.T) {
 	previous := approvalWaitNotice
 	approvalWaitNotice = 20 * time.Millisecond
 	t.Cleanup(func() { approvalWaitNotice = previous })
-	const said = "Waiting for a box in this project to finish starting."
+	const said = "Waiting for the boxes running in this project to stop."
 	cfg, repo, _ := postureFixture(t, requestFixtureYAML)
 	shared, err := forkspace.LockServiceLaunch(context.Background(), repo, false)
 	if err != nil {

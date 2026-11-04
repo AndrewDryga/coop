@@ -16,6 +16,18 @@ type servePublication struct {
 	Port, Host int
 	Bind       int // the host port this box binds when it is not Host: an editor session forwards Host to it
 	Published  bool
+	HostTaken  bool // an editor session could not take Host, so a browser does not reach this box there yet
+}
+
+// servePublicationFor decides one port. In an editor session (ServeBinds set) only the supervisor
+// holds the stable port, so a port it gave this box no private one for, because it was added after the
+// session started, stays unpublished rather than racing the session's other boxes.
+func (spec RunSpec) servePublicationFor(port int, free func(int) bool) servePublication {
+	s := servePublication{Port: port, Host: project.HostPort(spec.Repo, port), Bind: spec.ServeBinds[port], HostTaken: spec.ServeTaken[port]}
+	if spec.ServeBinds == nil || s.Bind != 0 {
+		s.Published = free(s.bound())
+	}
+	return s
 }
 
 // bound is the host port this box actually publishes on.
@@ -51,9 +63,7 @@ func servePublicationPlan(cfg *config.Config, spec RunSpec, free func(int) bool)
 	}
 	plan := make([]servePublication, 0, len(spec.servePorts))
 	for _, port := range spec.servePorts {
-		s := servePublication{Port: port, Host: project.HostPort(spec.Repo, port), Bind: spec.ServeBinds[port]}
-		s.Published = free(s.bound())
-		plan = append(plan, s)
+		plan = append(plan, spec.servePublicationFor(port, free))
 	}
 	return plan
 }
@@ -139,6 +149,10 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 	}
 	for _, s := range serve {
 		if s.Published {
+			if s.HostTaken {
+				lines = append(lines, fmt.Sprintf("- your port %d is published, but a browser on the host does not reach it yet: host port %d is in use by another program", s.Port, s.Host))
+				continue
+			}
 			lines = append(lines, fmt.Sprintf("- your port %d is published: a browser on the host reaches it at http://localhost:%d", s.Port, s.Host))
 		} else {
 			lines = append(lines, fmt.Sprintf("- your port %d is NOT published: host port %d is already in use by another process", s.Port, s.Host))

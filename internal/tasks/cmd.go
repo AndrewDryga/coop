@@ -877,6 +877,13 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
+		if opts.forceClose {
+			// A loop killed during its final review leaves its window behind, and a close would be
+			// enrolled in that dead review. Settle it the way a loop's start does; a live one is skipped.
+			if _, err := ReconcileCompletionWindowsWithActivity([]string{root}); err != nil {
+				return -1, err
+			}
+		}
 		if forced, err = completeTrustedTask(opts.project, root, t, completion); err != nil {
 			return -1, trustedCompletionError(err, t, opts.forceClose)
 		}

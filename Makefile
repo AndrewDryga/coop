@@ -207,7 +207,7 @@ GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-proces
 GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 
 check: export GOCACHE := $(GATE_GOCACHE)
-check: export GOFLAGS := $(strip $(GOFLAGS) -trimpath)
+check: export GOFLAGS := $(strip $(shell go env GOFLAGS) -trimpath)
 check: trim-gate-cache check-static ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
 	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
 	@$(MAKE) --no-print-directory -j4 $(addprefix gate-,$(GATE_TEST_OWNERS))
@@ -229,11 +229,12 @@ FORCE:
 # checkout keeps its own. Only the 00..ff folders hold entries; README, trim.txt and testexpire.txt
 # stay. Never go clean -cache here. The result is checked by looking again: BSD find exits 0 when it
 # cannot delete a file, and any find fails when a gate trimming at the same moment got there first.
-GATE_CACHE_OLD = find "$(GATE_GOCACHE)" -mindepth 2 -maxdepth 2 -type f -path '*/[0-9a-f][0-9a-f]/*' -mmin +180
+# The second look allows ten more minutes, so an entry that crosses the floor during the delete is no failure.
+GATE_CACHE_ENTRIES = find "$(GATE_GOCACHE)" -mindepth 2 -maxdepth 2 -type f -path '*/[0-9a-f][0-9a-f]/*'
 trim-gate-cache:
 	@if [ -d "$(GATE_GOCACHE)" ]; then \
-	  $(GATE_CACHE_OLD) -delete 2>/dev/null; \
-	  left="$$($(GATE_CACHE_OLD) | wc -l | tr -d ' ')"; \
+	  $(GATE_CACHE_ENTRIES) -mmin +180 -delete 2>/dev/null; \
+	  left="$$($(GATE_CACHE_ENTRIES) -mmin +190 | wc -l | tr -d ' ')"; \
 	  [ "$$left" = 0 ] || { echo "Could not remove $$left old entries from $(GATE_GOCACHE): check its permissions"; exit 1; }; \
 	fi
 
@@ -385,7 +386,7 @@ task-channel-e2e: ## The in-box task channel: a real box completes its own task 
 # Docker. Its fixture container has a fixed name, so two runs on one daemon break each other.
 # Records go to a fresh owner-only folder or the one COOP_NETWORK_TRIAL_STATE names, never Coop's
 # own store.
-network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair)
+network-runtime-e2e: ## Filtered-network enforcement, transports and killed-run recovery (needs Docker; builds the image pair; the editor box wait also uses a signed-in Claude when there is one)
 	@state="$${COOP_NETWORK_TRIAL_STATE:-$$(mktemp -d)}" || exit 1; echo "network trial records: $$state"; \
 	COOP_NETWORK_TRIAL_STATE="$$state" go test -tags networkruntimee2e -run '^Test(RestrictedNetwork|KilledFilteredRun|EditorBoxWait)' -count=1 -timeout 45m -v ./internal/box/
 

@@ -365,13 +365,15 @@ func (r *acpNetworkRefresh) refuse(generation uint64, err error) {
 // captureLocked is the capture a policy was admitted under: the startup one or one this refresh
 // admitted. Called with mu held.
 func (r *acpNetworkRefresh) captureLocked(policy string) *box.CapturedEgress {
-	if r.startup.Fingerprint == policy {
-		return r.startup
-	}
+	// One this refresh admitted first: a holding startup capture can share its rules, and a real box
+	// put back on that would hold prompts for no reason.
 	for _, capture := range r.created {
 		if capture.Fingerprint == policy {
 			return capture
 		}
+	}
+	if r.startup.Fingerprint == policy {
+		return r.startup
 	}
 	return nil
 }

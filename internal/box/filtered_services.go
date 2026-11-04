@@ -558,8 +558,7 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 	for _, port := range spec.servePorts {
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
-		s := servePublication{Port: port, Host: host, Bind: spec.ServeBinds[port]}
-		s.Published = free(s.bound())
+		s := spec.servePublicationFor(port, free)
 		plan = append(plan, s)
 		if !s.Published {
 			// Both ports are named: one is the URL to open, the other is what the dev server

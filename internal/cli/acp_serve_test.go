@@ -164,26 +164,26 @@ func TestEditorServeRouterGivesItsPortsBack(t *testing.T) {
 	var none *acpServeRouter
 	none.setLive(map[int]int{1: 2}) // a session with no serve ports has no router
 	none.Close()
-	if binds, err := none.allocate(); binds != nil || err != nil {
-		t.Fatalf("allocate with no router = %v, %v", binds, err)
+	if binds, told, err := none.allocate(); binds != nil || told != "" || err != nil {
+		t.Fatalf("allocate with no router = %v, %q, %v", binds, told, err)
 	}
 }
 
 func TestServeBindsRoundTripAndRefuseNonsense(t *testing.T) {
 	binds := map[int]int{4000: 52341, 9091: 52342}
-	encoded := encodeServeBinds(binds)
-	if encoded != "4000=52341,9091=52342" {
+	encoded := encodeServeBinds(binds, []acpctl.ServePort{{Box: 4000}, {Box: 9091, Taken: true}})
+	if encoded != "4000=52341,9091=52342!" {
 		t.Fatalf("encoded = %q", encoded)
 	}
-	got, err := decodeServeBinds(encoded)
-	if err != nil || len(got) != 2 || got[4000] != 52341 || got[9091] != 52342 {
-		t.Fatalf("decoded = %v, %v", got, err)
+	got, taken, err := decodeServeBinds(encoded)
+	if err != nil || len(got) != 2 || got[4000] != 52341 || got[9091] != 52342 || taken[4000] || !taken[9091] {
+		t.Fatalf("decoded = %v, %v, %v", got, taken, err)
 	}
-	if got, err := decodeServeBinds(""); got != nil || err != nil {
-		t.Fatalf("empty = %v, %v", got, err)
+	if got, taken, err := decodeServeBinds(""); got != nil || taken != nil || err != nil {
+		t.Fatalf("empty = %v, %v, %v", got, taken, err)
 	}
-	for _, bad := range []string{"4000", "4000=", "=1", "a=b", "0=1", "1=70000", "4000=1,x"} {
-		if _, err := decodeServeBinds(bad); err == nil {
+	for _, bad := range []string{"4000", "4000=", "=1", "a=b", "0=1", "1=70000", "4000=1,x", "4000=!"} {
+		if _, _, err := decodeServeBinds(bad); err == nil {
 			t.Errorf("decodeServeBinds(%q) accepted nonsense", bad)
 		}
 	}
@@ -212,7 +212,7 @@ func TestSpawnedBoxesPublishOnPrivatePorts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		decoded, err := decodeServeBinds(string(out))
+		decoded, _, err := decodeServeBinds(string(out))
 		if err != nil || len(decoded) != 2 {
 			t.Fatalf("child env = %q, %v", out, err)
 		}

@@ -230,3 +230,21 @@ func TestServeBindSeparatesWhatABoxBindsFromItsAddress(t *testing.T) {
 		t.Fatalf("filtered env = %v", env)
 	}
 }
+
+// The agent hears what is true of its port when the session could not take the stable one, and a port
+// added after the session started stays unpublished rather than racing its other boxes.
+func TestEditorServePortStates(t *testing.T) {
+	spec := RunSpec{Repo: "/tmp/serve-plan", Serve: true, servePorts: []int{3000, 5173}, ServeBinds: map[int]int{3000: 41234}, ServeTaken: map[int]bool{3000: true}}
+	plan := servePublicationPlan(&config.Config{Egress: "open"}, spec, func(int) bool { return true })
+	if !plan[0].Published || !plan[0].HostTaken || plan[1].Published {
+		t.Fatalf("plan = %+v", plan)
+	}
+	options, _, _ := filteredPublish(&config.Config{}, spec, func(int) bool { return true })
+	if strings.Join(options, " ") != "-p 127.0.0.1:41234:3000" {
+		t.Fatalf("filtered options = %v, want the added port left out", options)
+	}
+	note := servicesNote(serviceLaunchOutcome{state: servicesNotConfigured}, nil, false, plan)
+	if !strings.Contains(note, "does not reach it yet") || strings.Contains(note, "a browser on the host reaches it at") {
+		t.Fatalf("note = %s", note)
+	}
+}

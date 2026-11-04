@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -158,7 +157,7 @@ func (r *acpServeRouter) follow(find func(context.Context) (string, error)) {
 
 func (r *acpServeRouter) watchBox(ctx context.Context, find func(context.Context) (string, error)) error {
 	container := ""
-	for deadline := time.Now().Add(3 * time.Minute); container == ""; {
+	for deadline := time.Now().Add(15 * time.Minute); container == ""; { // a first start can build for minutes
 		id, err := find(ctx)
 		if err == nil {
 			container = id
@@ -207,9 +206,5 @@ func (r *acpServeRouter) watchBox(ctx context.Context, find func(context.Context
 			announcer.handle(event)
 		}
 	}
-	var exit *exec.ExitError
-	if err := cmd.Wait(); err != nil && !errors.As(err, &exit) {
-		return err
-	}
-	return nil
+	return cmd.Wait()
 }

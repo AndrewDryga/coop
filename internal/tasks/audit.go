@@ -337,9 +337,22 @@ func finalReviewRunning(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, window := range index.Windows {
-		if window.ReviewWindow {
+	for id, window := range index.Windows {
+		if !window.ReviewWindow {
+			continue
+		}
+		// The window's lock is what says its owner is alive: a killed loop's record stays behind.
+		live, err := lockLeaseAuthority(root, completionWindowLockPrefix+id, false, syscall.LOCK_SH|syscall.LOCK_NB)
+		switch {
+		case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
 			return true, nil
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return false, err
+		default:
+			if err := unlockLeaseFile(live); err != nil {
+				return false, err
+			}
 		}
 	}
 	return false, nil

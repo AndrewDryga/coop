@@ -344,6 +344,11 @@ func requireLiveBoxWait(t *testing.T) {
 	if os.Getenv("COOP_NETWORK_TRIAL_STATE") == "" {
 		t.Skip("requires make network-runtime-e2e: a local Docker daemon, this host's network setup and a signed-in Claude")
 	}
+	cmd := exec.Command(liveCoop(t), "credentials")
+	cmd.Env = liveCoopEnv()
+	if out, err := cmd.Output(); err != nil || !strings.Contains(string(out), "Claude\n") {
+		t.Skip("this suite's editor box wait needs a signed-in Claude on this host")
+	}
 }
 
 // New build files: the thread says what to run, a prompt waits with no answer, coop build lets it move.
