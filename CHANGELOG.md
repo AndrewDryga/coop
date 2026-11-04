@@ -8,6 +8,9 @@
   the shared image from there, so the install, its retry command and the next step, `coop login`, all
   work in a new terminal. Agent runs still refuse the home folder.
 
+- **`coop update` finishes from your home folder.** It prepares the shared image there, where it used
+  to stop with "Coop updated, but the box image was not prepared".
+
 - **Answering n to a project's first `coop approve` leaves no marker behind.** The next review reads
   the same as the first instead of blaming a checkout marker with no approval.
 - **A busy Docker no longer stops a launch.** Coop waits longer and asks again when Docker is slow to

@@ -351,18 +351,31 @@ func (a *app) cmdUpdate(args []string) (int, error) {
 
 	// The box rebuild needs the runtime; --self-only returned above, so detect only here (not eagerly
 	// in dispatch), keeping `coop update --self-only` usable on a box with no container runtime.
-	repo, _, err := loadProject(a.cfg.RepoOverride)
-	if err != nil {
+	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	home := errors.Is(err, box.ErrHomeProject)
+	switch {
+	case home:
+		// A new terminal opens in the home folder, and the installer's own update step runs from there.
+		// The shared image reads nothing of the folder, so it needs no project (as in cmdBuild).
+		repo = ""
+	case err != nil:
 		return -1, err
+	default:
+		if _, err := project.Load(repo); err != nil {
+			return -1, err
+		}
 	}
 	if err := a.ensureRuntime(); err != nil {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
 	}
-	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
-	if err != nil {
-		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
+	filtered := false
+	if !home {
+		access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
+		if err != nil {
+			return 1, updateBoxFailure(err, a.rt.Name, selfFailed)
+		}
+		filtered = access.Mode == egress.Filtered
 	}
-	filtered := access.Mode == egress.Filtered
 	plan, err := box.PlanBuild(a.rt, a.cfg, repo, !filtered)
 	if err != nil {
 		return 1, updateBoxFailure(err, a.rt.Name, selfFailed)

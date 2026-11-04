@@ -2085,7 +2085,8 @@ Usage:
   approved with coop build; new or changed build files wait for coop build.
   Open and offline images refresh base-image components. Agent CLIs and
   editor adapters remain pinned. Downloaded releases are checked before
-  replacing the binary. Project builds use ordinary networking.
+  replacing the binary. Project builds use ordinary networking. From your
+  home folder, which is never a project, it prepares the shared image.
 
 OPTIONS
   --self-only  update only the Coop binary; no container runtime needed

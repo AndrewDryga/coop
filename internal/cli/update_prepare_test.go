@@ -202,3 +202,43 @@ func TestUpdateActuallyExecutesTheInstalledRelease(t *testing.T) {
 		t.Fatalf("installed executable/cwd changed: %q / %v", data, err)
 	}
 }
+
+// A new terminal opens in the home folder, and the installer's update step runs from there: first
+// the update, then the --box-only run it hands off to. Both prepare the shared image and read
+// nothing of the folder, a planted Dockerfile included.
+func TestUpdateFromTheHomeFolderPreparesTheSharedImage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Chdir(home)
+	writeTaskFile(t, filepath.Join(home, ".agent", "Dockerfile"), "FROM scratch\n")
+	newApp := func() *app {
+		return &app{cfg: &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir(), BaseImage: "coop-box"}, rt: buildShim{daemonUp: true}.build(t), rtSet: true}
+	}
+	check := func(what, out string, code int, err error) {
+		t.Helper()
+		if code != 0 || err != nil || !strings.Contains(out, "Updating the Coop box") || !strings.Contains(out, "Box image updated") || strings.Contains(out, "Dockerfile") {
+			t.Fatalf("%s from the home folder did not prepare the shared image: %d / %v\n%s", what, code, err, out)
+		}
+	}
+
+	var code int
+	var err error
+	out := captureTerminal(t, func() { code, err = newApp().dispatch([]string{"update", "--box-only"}) })
+	check("update --box-only", out, code, err)
+
+	// The full update installs a release, then runs the installed binary's --box-only from the same folder.
+	updateReleaseFixture(t, "new executable")
+	t.Cleanup(stub(&updateExec, func(_ string, args []string, _ []string) error {
+		c, e := newApp().dispatch(args[1:])
+		if c != 0 || e != nil {
+			return fmt.Errorf("handoff exited %d: %v", c, e)
+		}
+		return nil
+	}))
+	out = captureTerminal(t, func() { code, err = newApp().dispatch([]string{"update"}) })
+	check("update", out, code, err)
+	if strings.Contains(out, "was not prepared") {
+		t.Fatalf("update reported an unprepared image:\n%s", out)
+	}
+}
