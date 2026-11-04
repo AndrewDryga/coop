@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/AndrewDryga/coop/internal/config"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1517,5 +1519,20 @@ func TestSessionBodyProblemNamesTheField(t *testing.T) {
 	}
 	if got := sessionBodyProblem(json.Unmarshal([]byte(`{`), &value)); got != "request body is invalid JSON" {
 		t.Errorf("bad JSON = %q", got)
+	}
+}
+
+// A session's child keeps the settings folder its worker uses; only COOP_HOME crosses of the worker's
+// own COOP_ settings.
+func TestSessionChildKeepsCoopHome(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "coop")
+	t.Setenv("COOP_HOME", home)
+	t.Setenv("COOP_EGRESS", "open")
+	env := sessionACPChildEnvironment(t.TempDir(), nil, false, t.TempDir(), "run", &config.Config{}, "")
+	if !slices.Contains(env, "COOP_HOME="+home) {
+		t.Errorf("COOP_HOME did not reach the child: %q", env)
+	}
+	if slices.Contains(env, "COOP_EGRESS=open") {
+		t.Errorf("the worker's own setting reached the child: %q", env)
 	}
 }

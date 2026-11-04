@@ -88,6 +88,9 @@ func Isolate(tests func() int) int {
 		}
 	}
 	developerHomes[homeEnv] = os.Getenv(homeEnv)
+	if !live {
+		_ = os.Unsetenv("COOP_HOME") // a developer's own settings folder must not reach a test
+	}
 	// HOME bounds the .coopignore files a project takes from the folders above it: Coop reads them
 	// up to the home folder. A test's project lives in the temporary folder, outside the developer's
 	// home, so the walk climbed to / and a stray .coopignore anywhere above the temporary folder, as

@@ -265,7 +265,7 @@ func TestSessionConnectResolvesARaceThroughTheStorageLock(t *testing.T) {
 
 // A first connection waits for a controller it cannot reach, and stops on anything waiting cannot fix.
 func TestWaitForIdentityRetriesOnlyAnUnreachableController(t *testing.T) {
-	unreachable := &url.Error{Op: "Post", URL: "https://controller.example", Err: errors.New("connection refused")}
+	unreachable := &url.Error{Op: "Post", URL: "https://controller.example", Err: &net.OpError{Op: "dial", Err: errors.New("connection refused")}}
 	calls, warned := 0, 0
 	warn := func(string, ...any) { warned++ }
 	now := func(time.Duration) <-chan time.Time {

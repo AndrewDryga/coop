@@ -2519,6 +2519,7 @@ func TestPolicyScanFlagsCoopsPrivateForkFolder(t *testing.T) {
 	repo := initRepo(t)
 	git(t, repo, "checkout", "-q", "-b", "stray")
 	writeTaskFile(t, filepath.Join(repo, ".coop", "task-executions", "generation", "bye.txt"), "bye\n")
+	writeTaskFile(t, filepath.Join(repo, ".COOP", "other.txt"), "other\n") // a Mac checks this out as .coop
 	writeTaskFile(t, filepath.Join(repo, "docs", ".coop-notes.txt"), "fine\n")
 	git(t, repo, "add", "-f", "-A")
 	git(t, repo, "commit", "-qm", "stray")
@@ -2528,7 +2529,7 @@ func TestPolicyScanFlagsCoopsPrivateForkFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(warns, "\n")
-	if !strings.Contains(joined, "private fork folder") || strings.Contains(joined, ".coop-notes") {
+	if strings.Count(joined, "private fork folder") != 2 || strings.Contains(joined, ".coop-notes") {
 		t.Errorf("warnings = %q", joined)
 	}
 }

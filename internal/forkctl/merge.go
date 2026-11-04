@@ -99,7 +99,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		// their Docker runs — path-based, so a huge/binary blob can't dodge it below.
 		// .coop is Coop's private fork state, hidden from git status by the fork's exclude file. A file
 		// there reached a commit only through a forced add, and it is never project source.
-		if rel := filepath.ToSlash(path); rel == ".coop" || strings.HasPrefix(rel, ".coop/") {
+		if rel := hostsurface.Key(filepath.ToSlash(path)); rel == ".coop" || strings.HasPrefix(rel, ".coop/") {
 			warns = append(warns, label+" — this is Coop's private fork folder, not project source")
 		}
 		if reason, automatic := hostsurface.Classify(change.Status, path); automatic {

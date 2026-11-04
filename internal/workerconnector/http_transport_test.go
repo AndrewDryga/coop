@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -246,5 +249,29 @@ func TestCheckEnrollmentTokenFile(t *testing.T) {
 	}
 	if err := CheckEnrollmentTokenFile(private); err != nil {
 		t.Errorf("private file = %v", err)
+	}
+}
+
+func TestControllerUnreachableOnlyForLostRequests(t *testing.T) {
+	post := func(cause error) error {
+		return fmt.Errorf("request worker identity: %w", &url.Error{Op: "Post", URL: "https://c.example", Err: cause})
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"refused", post(&net.OpError{Op: "dial", Err: errors.New("connection refused")}), true},
+		{"no such host", post(&net.DNSError{Err: "no such host", Name: "c.example"}), true},
+		{"closed early", post(io.EOF), true},
+		{"TLS alert", post(&net.OpError{Op: "remote error", Err: errors.New("tls: protocol version")}), false},
+		{"not TLS", post(tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}), false},
+		{"plain HTTP", post(http.ErrSchemeMismatch), false},
+		{"untrusted", post(x509.UnknownAuthorityError{}), false},
+		{"refused token", errors.New("worker enrollment was rejected"), false},
+	} {
+		if got := ControllerUnreachable(tc.err); got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

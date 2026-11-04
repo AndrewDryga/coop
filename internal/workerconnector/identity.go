@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -336,8 +337,9 @@ func newWorkerKey() (*rsa.PrivateKey, string, []byte, error) {
 	return privateKey, string(publicPEM), privatePEM, nil
 }
 
-// ControllerUnreachable reports a request that never got an answer from the controller. A certificate
-// the worker does not trust did get one, and waiting would not change it.
+// ControllerUnreachable reports a request lost on the network: refused, reset, timed out or not
+// resolved. A controller that answers in a way the worker cannot use, such as a TLS alert, plain HTTP
+// or a certificate it does not trust, stays that way however long the worker waits.
 func ControllerUnreachable(err error) bool {
 	var request *url.Error
 	if !errors.As(err, &request) {
@@ -347,8 +349,15 @@ func ControllerUnreachable(err error) bool {
 	var unknownAuthority x509.UnknownAuthorityError
 	var hostname x509.HostnameError
 	var invalid x509.CertificateInvalidError
-	return !errors.As(err, &verification) && !errors.As(err, &unknownAuthority) &&
-		!errors.As(err, &hostname) && !errors.As(err, &invalid)
+	if errors.As(err, &verification) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalid) {
+		return false
+	}
+	var operation *net.OpError
+	if errors.As(err, &operation) {
+		return operation.Op != "remote error" // the peer's TLS alert
+	}
+	var lookup *net.DNSError
+	return errors.As(err, &lookup) || request.Timeout() || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words

@@ -2383,6 +2383,9 @@ func sessionACPChildEnvironment(
 		"COOP_HOMES=1",
 		"COOP_SESSION_RUN_ID="+runID,
 	)
+	if home := os.Getenv("COOP_HOME"); home != "" { // the child keeps the same settings folder
+		env = append(env, "COOP_HOME="+home)
+	}
 	if repositoryReadOnly {
 		env = append(env, "COOP_SESSION_REPOSITORY_READ_ONLY=1")
 	}

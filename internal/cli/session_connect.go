@@ -101,15 +101,17 @@ func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 }
 
 func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, error) {
-	if options.TokenFile != "" {
+	state, socket, err := sessionSocketPath(options.State, "")
+	if err != nil {
+		return 1, err
+	}
+	// A worker with a saved identity never reads the token, which enrolling removed, so a service
+	// restarting with the same flag is fine.
+	if _, statErr := os.Lstat(filepath.Join(state, "identity.json")); options.TokenFile != "" && errors.Is(statErr, os.ErrNotExist) {
 		if err := workerconnector.CheckEnrollmentTokenFile(options.TokenFile); err != nil {
 			return 1, ui.CommandFailed("Could not use the enrollment token file", "Coop found: "+err.Error()+".",
 				[2]string{"Help:", ui.HelpCommand("coop sessions connect")})
 		}
-	}
-	state, socket, err := sessionSocketPath(options.State, "")
-	if err != nil {
-		return 1, err
 	}
 	transport, err := workerconnector.NewHTTPTransport(workerconnector.HTTPTransportConfig{
 		BaseURL: options.Controller, CAFile: options.CAFile, EnrollmentTokenFile: options.TokenFile,
@@ -186,7 +188,7 @@ func waitForIdentity(ctx context.Context, identity func(context.Context) (worker
 		if err == nil || !workerconnector.ControllerUnreachable(err) || ctx.Err() != nil {
 			return id, err
 		}
-		warn("Could not reach the controller. Trying again in %s.", wait)
+		warn("Could not reach the controller (%s). Trying again in %s.", ui.SafeInline(err.Error()), wait)
 		select {
 		case <-ctx.Done():
 			return id, ctx.Err()
