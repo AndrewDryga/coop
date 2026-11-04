@@ -190,7 +190,7 @@ func startNoticeText(ports []ServePort, services []ServiceLink, network *Network
 	if len(services) > 0 {
 		lines := []string{"**Project services**", ""}
 		for _, s := range services {
-			lines = append(lines, "- "+markdownText(s.Name)+" → "+serviceAddress(s))
+			lines = append(lines, "- "+MarkdownText(s.Name)+" → "+serviceAddress(s))
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
@@ -238,7 +238,7 @@ func networkText(n NetworkLimit) string {
 		allowed = append(allowed, count(n.Other, "other destination"))
 	}
 	for i := range allowed {
-		allowed[i] = markdownText(allowed[i])
+		allowed[i] = MarkdownText(allowed[i])
 	}
 	text := "**Internet is filtered.**\n\nAllowed: " + allowed[0] + "."
 	if len(allowed) > 1 {
@@ -254,12 +254,12 @@ func networkText(n NetworkLimit) string {
 // ProblemText renders a problem the way a thread's start message does: the title alone on its line, the
 // detail, then what to run.
 func ProblemText(p Problem) string {
-	text := "⚠ **" + markdownText(p.Title) + "**"
+	text := "⚠ **" + MarkdownText(p.Title) + "**"
 	if p.Detail != "" {
-		text += "\n\n" + markdownText(p.Detail)
+		text += "\n\n" + MarkdownText(p.Detail)
 	}
 	if p.Command != "" {
-		text += "\n\nRun this " + markdownText(p.Purpose) + ":\n\n" + CodeBlock(acpproxy.Visible(p.Command))
+		text += "\n\nRun this " + MarkdownText(p.Purpose) + ":\n\n" + CodeBlock(acpproxy.Visible(p.Command))
 	}
 	return text
 }
@@ -271,11 +271,12 @@ func count(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// markdownText makes text Coop did not write itself (an account, preset, service or MCP server
-// name, an approved domain) literal in Markdown. Hidden characters are shown escaped (acpproxy.Visible). Every character Markdown could read as a link, an image,
+// MarkdownText makes text literal in Markdown: anything Coop did not write itself (an account, preset,
+// service or MCP server name, an approved domain), or a sentence of its own that names a file or a setting.
+// Hidden characters are shown escaped (acpproxy.Visible). Every character Markdown could read as a link, an image,
 // emphasis, code, HTML or an entity is backslash-escaped, and so are the ones GFM autolinking keys
 // on: a dot inside a word (www.example.com), a colon before a slash (https://) and an at sign.
-func markdownText(s string) string {
+func MarkdownText(s string) string {
 	runes := []rune(acpproxy.Visible(s))
 	var b strings.Builder
 	for i, r := range runes {
@@ -292,7 +293,7 @@ func markdownText(s string) string {
 }
 
 // codeSpan shows s as inline code: fenced by one more backtick than its longest run, so a backtick
-// inside cannot end the span, with hidden characters shown escaped as in markdownText.
+// inside cannot end the span, with hidden characters shown escaped as in MarkdownText.
 func codeSpan(s string) string {
 	s = acpproxy.Visible(s)
 	longest := longestBackticks(s)
@@ -305,7 +306,7 @@ func codeSpan(s string) string {
 
 // CodeBlock shows text as a code block of its own, which an editor offers to copy whole: every command
 // a thread asks the person to run goes in one. A backtick inside cannot end it, and hidden characters are
-// shown escaped as in markdownText, line by line.
+// shown escaped as in MarkdownText, line by line.
 func CodeBlock(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {

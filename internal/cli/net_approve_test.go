@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,6 +370,160 @@ func TestApproveDoesNotInspectMountPolicy(t *testing.T) {
 			t.Fatalf("explicit review accepted invalid mount policy: %d, %v", code, err)
 		}
 	})
+}
+
+// With nothing to approve, coop approve still says when the project's box is stuck on service rules
+// nobody has asked for, and shows them. Every other project hears its one line. Neither asks anything,
+// exits with an error or writes anything.
+func TestApproveWithNothingToApproveNamesMissingServiceRules(t *testing.T) {
+	const (
+		compose     = "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n"
+		serviceRule = "box:\n  egress_rules:\n    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n"
+		otherRule   = "box:\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"
+		refusal     = "\n⚠ This project's box cannot start because filtered boxes reach project services only through approved network rules\n\n" +
+			"  Ask for each service it uses under box.egress_rules in .agent/project.yaml:\n" +
+			"    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n" +
+			"  Then review it: coop approve\n" +
+			"  To start without project services, set box.network: false.\n"
+		noRules = "\n⚠ This project's box cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n" +
+			"  Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml\n"
+	)
+	for name, test := range map[string]struct {
+		project, compose string
+		approved         bool // a person approved the file first
+		configure        func(*config.Config)
+		want             string
+	}{
+		"services and no rules":      {compose: compose, want: refusal},
+		"only another rule approved": {project: otherRule, compose: compose, approved: true, want: refusal},
+		"a network and no services":  {configure: func(c *config.Config) { c.ServicesNet = "shared" }, want: noRules},
+		"no services":                {project: "box:\n  egress: filtered\n"},
+		"service rules approved":     {project: serviceRule, compose: compose, approved: true},
+		"box.network: false":         {project: "box:\n  network: false\n", compose: compose},
+		"COOP_NETWORK off":           {compose: compose, configure: func(c *config.Config) { c.Network = false }},
+		"open":                       {project: "box:\n  egress: open\n", compose: compose, approved: true},
+		"offline":                    {project: "box:\n  egress: offline\n", compose: compose},
+		"open on this host":          {compose: compose, configure: func(c *config.Config) { c.SetEgress("open") }},
+		"offline on this host":       {compose: compose, configure: func(c *config.Config) { c.SetEgress(string(egress.None)) }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, repo := servicesProject(t, test.project, test.compose)
+			if test.configure != nil {
+				test.configure(a.cfg)
+			}
+			if test.approved {
+				captureStderr(t, func() {
+					if code, err := a.approveProject(t.Context(), repo, false, func(string) bool { return true }); code != 0 || err != nil {
+						t.Fatalf("first approval: %d, %v", code, err)
+					}
+				})
+			}
+			root, err := box.NetworkStatePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := directoryListing(t, root, repo)
+			var code int
+			out := captureStderr(t, func() {
+				code, err = a.approveProject(t.Context(), repo, false, func(string) bool {
+					t.Error("nothing to approve, but it asked")
+					return false
+				})
+			})
+			if code != 0 || err != nil {
+				t.Fatalf("code=%d err=%v, want it to exit 0", code, err)
+			}
+			if want := netApproveUnchanged + "\n" + test.want; out != want {
+				t.Errorf("printed\n%s\nwant\n%s", out, want)
+			}
+			if after := directoryListing(t, root, repo); after != before {
+				t.Errorf("a no-op wrote something:\n%s\nwas\n%s", after, before)
+			}
+		})
+	}
+
+	// Rules the file asks for are a real question, and answering it is what the box waits for.
+	t.Run("service rules not approved yet", func(t *testing.T) {
+		a, repo := servicesProject(t, serviceRule, compose)
+		asked := 0
+		var code int
+		var err error
+		out := captureStderr(t, func() {
+			code, err = a.approveProject(t.Context(), repo, false, func(string) bool {
+				asked++
+				return false
+			})
+		})
+		if asked != 1 || code != 1 || err == nil || strings.Contains(out, netApproveUnchanged) || strings.Contains(out, "cannot start") {
+			t.Fatalf("asked=%d code=%d err=%v out=%s", asked, code, err, out)
+		}
+	})
+}
+
+// A project file that does not parse is a failure to look, never a project with nothing wrong.
+func TestApproveReportsAProjectItCannotRead(t *testing.T) {
+	a, repo := servicesProject(t, "box: [\n", "services:\n  db:\n    image: postgres:18\n")
+	if refusal, err := box.ProjectServicesRefusal(t.Context(), a.cfg, repo); err == nil || refusal != nil {
+		t.Fatalf("refused=%t err=%v, want a failure to look", refusal != nil, err)
+	}
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = a.approveProject(t.Context(), repo, false, func(string) bool {
+			t.Error("it asked about a file it could not read")
+			return false
+		})
+	})
+	if code != 1 || err == nil || strings.Contains(out, netApproveUnchanged) {
+		t.Fatalf("code=%d err=%v out=%s", code, err, out)
+	}
+}
+
+// servicesProject is a project with these .agent files, on a host with no network state yet, and the app
+// that serves it, with services on as they are by default.
+func servicesProject(t *testing.T, projectFile, compose string) (*app, string) {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := netFixtureProject(t)
+	if err := os.Mkdir(filepath.Join(repo, ".agent"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for file, body := range map[string]string{"project.yaml": projectFile, "compose.yml": compose} {
+		if body == "" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(repo, ".agent", file), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: repo, Network: true}}, repo
+}
+
+// directoryListing names everything under these folders, with each file's size and time, so that a test
+// can see a command wrote nothing. A folder that does not exist lists as empty.
+func directoryListing(t *testing.T, roots ...string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "%s %d %s\n", path, info.Size(), info.ModTime())
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return b.String()
 }
 
 func TestRetiredNetApprovePointsAtApprove(t *testing.T) {

@@ -30,35 +30,32 @@ import (
 // for and approves. The refusal drafts those rules from the Compose file, whole,
 // so they can be pasted as they are wherever the file declares a service's port.
 func servicesNeedRules(spec RunSpec, composeFile string) error {
-	name := networkLaunchName(spec)
+	refusal := &ServicesNeedRules{name: networkLaunchName(spec)}
 	if composeFile == "" {
-		return &ServicesNeedRules{text: fmt.Sprintf("%s cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n"+
-			"  Unset COOP_SERVICES_NET, or set box.network: false in %s", name, project.File)}
+		refusal.Reason = "a filtered box does not join the network COOP_SERVICES_NET names"
+		refusal.TurnOff = "Unset COOP_SERVICES_NET, or set box.network: false in " + project.File
+		return refusal
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s cannot start because filtered boxes reach project services only through approved network rules\n\n", name)
-	fmt.Fprintf(&b, "  Ask for each service it uses under box.egress_rules in %s:\n", project.File)
+	refusal.Reason = "filtered boxes reach project services only through approved network rules"
+	refusal.Ask = "Ask for each service it uses under box.egress_rules in " + project.File + ":"
+	refusal.TurnOff = "To start without project services, set box.network: false."
 	drafts := serviceRuleDrafts(composeFile, spec.Repo, spec.RepoReadOnly)
 	if len(drafts) == 0 { // a Compose file coop cannot read still gets the rule's whole shape
 		drafts = []serviceDraft{{name: "<service>"}}
 	}
-	placeholder := false
+	rules := make([]string, 0, len(drafts))
 	for _, draft := range drafts {
 		ports := make([]string, 0, len(draft.ports))
 		for _, port := range draft.ports {
 			ports = append(ports, strconv.Itoa(port))
 		}
 		if len(ports) == 0 {
-			ports, placeholder = []string{"<port>"}, true
+			ports, refusal.Fill = []string{"<port>"}, "Replace <port> with the port the service listens on."
 		}
-		fmt.Fprintf(&b, "    - to: {service: %q}\n      protocol: tcp\n      ports: [%s]\n", draft.name, strings.Join(ports, ", "))
+		rules = append(rules, fmt.Sprintf("    - to: {service: %q}\n      protocol: tcp\n      ports: [%s]", draft.name, strings.Join(ports, ", ")))
 	}
-	if placeholder {
-		b.WriteString("  Replace <port> with the port the service listens on.\n")
-	}
-	b.WriteString("  Then review it: coop approve\n")
-	b.WriteString("  To start without project services, set box.network: false.")
-	return &ServicesNeedRules{text: b.String()}
+	refusal.Rules = strings.Join(rules, "\n")
+	return refusal
 }
 
 // forHandshake applies HandshakeOnly: nothing runs in that box to use a port or join a service network,
@@ -79,11 +76,36 @@ func checkServicesHaveRules(cfg *config.Config, spec RunSpec, composeFile string
 }
 
 // ServicesNeedRules is a filtered box that cannot start until a person gives the project's services
-// network rules or turns them off. An editor session waits for that instead of exiting. The text
-// names only Coop's words and validated service names and ports (serviceRuleDrafts).
-type ServicesNeedRules struct{ text string }
+// network rules or turns them off. An editor session waits for that instead of exiting. The refusal
+// comes in parts because a thread cannot show it whole: an editor does not wrap a code block, so only
+// the rules can go in one. Every part names only Coop's words and validated service names and ports
+// (serviceRuleDrafts).
+type ServicesNeedRules struct {
+	name    string // who cannot start
+	Reason  string // why, as a clause that reads after "cannot start because"
+	Ask     string // where the rules go; "" when there are none
+	Rules   string // the drafted rules, indented to paste under box.egress_rules; "" with no Compose file
+	Fill    string // what to replace in Rules before the file accepts them; "" when nothing
+	TurnOff string // how to start without the services instead
+}
 
-func (e *ServicesNeedRules) Error() string { return e.text }
+func (e *ServicesNeedRules) Error() string { return e.Headline() + "\n\n  " + e.TerminalRemedy() }
+
+// Headline says who cannot start and why, as a terminal's first line.
+func (e *ServicesNeedRules) Headline() string { return e.name + " cannot start because " + e.Reason }
+
+// TerminalRemedy is everything a person can do about it, as a terminal shows it below Headline: the
+// lines carry their own indent, except the first, which is the caller's.
+func (e *ServicesNeedRules) TerminalRemedy() string {
+	if e.Rules == "" {
+		return e.TurnOff
+	}
+	remedy := e.Ask + "\n" + e.Rules + "\n"
+	if e.Fill != "" {
+		remedy += "  " + e.Fill + "\n"
+	}
+	return remedy + "  Then review it: coop approve\n  " + e.TurnOff
+}
 
 // serviceDraft is one Compose service a filtered box could ask for, with the
 // TCP ports its definition declares (none when it declares none).

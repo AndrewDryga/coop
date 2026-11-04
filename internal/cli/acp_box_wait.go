@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,8 @@ const (
 	// the reason: Coop's refusal, a broken sidecar, a Dockerfile that no longer fits. The child that
 	// failed already wrote why to the agent log, so this need not, and need not know every reason.
 	acpBoxStartFailedText = "⚠ **Coop could not start this project's box.**\n\nThe reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."
+	// acpBoxNotStarting titles what a thread hears while something has to settle before a box can start.
+	acpBoxNotStarting = "This project's box cannot start yet."
 )
 
 // errACPBoxWaiting keeps the warm pool empty while the session's boxes cannot start: nothing it parks
@@ -319,6 +322,7 @@ func (w *acpBoxWait) runRebuild(dfRel string) {
 func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bool) string {
 	const waits = "Your messages wait here and go out once it is ready."
 	var pending *networkstate.PendingApproval
+	var services *box.ServicesNeedRules
 	switch {
 	case blocked == nil:
 		return ""
@@ -339,9 +343,35 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
 			Detail:  "You have not approved its build files as they are now, and a build runs them with open networking, so Coop waits for you. " + waits + " Review the Dockerfile and the files it copies.",
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
-	default:
-		return "⚠ **This project's box cannot start yet.**\n\n" + waits + "\n\n" + acpctl.CodeBlock(blocked.Error())
+	case errors.As(blocked, &services):
+		return acpServicesWaitText(services, waits)
+	default: // refresh lets nothing else through, and only Coop's own words may reach a thread
+		return acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: "The reason is in the agent log. " + waits})
 	}
+}
+
+// acpServicesWaitText shows a services refusal so that it reads whole at any panel width. An editor does
+// not wrap a code block, so a sentence in one runs off the panel's edge: only the rules to paste and the
+// command to run are blocks, and everything else is text.
+func acpServicesWaitText(services *box.ServicesNeedRules, waits string) string {
+	blocks := []string{acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: acpSentence(services.Reason) + " " + waits})}
+	if services.Rules != "" {
+		blocks = append(blocks, acpctl.MarkdownText(services.Ask), acpctl.CodeBlock(services.Rules))
+		if services.Fill != "" {
+			blocks = append(blocks, acpctl.MarkdownText(services.Fill))
+		}
+		blocks = append(blocks, "Then run this in this project, on the host:", acpctl.CodeBlock("coop approve"))
+	}
+	return strings.Join(append(blocks, acpctl.MarkdownText(acpSentence(services.TurnOff))), "\n\n")
+}
+
+// acpSentence makes a part of a refusal stand on its own: a thread has no "cannot start because" for it
+// to follow.
+func acpSentence(part string) string {
+	if part == "" {
+		return ""
+	}
+	return strings.ToUpper(part[:1]) + strings.TrimSuffix(part[1:], ".") + "."
 }
 
 func (w *acpBoxWait) kick() {

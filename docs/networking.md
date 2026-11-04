@@ -583,7 +583,8 @@ red warning because it would allow unrestricted traffic. To confirm, answer
 
 If the file is already exactly what was approved, `coop approve` prints
 `No approval needed: this project's requested access has not changed.` and grants nothing new.
-Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
+If a filtered box still cannot start because the project's services have no network rules, it
+also says so and shows the rules to add. Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
 needs, so they are not shown as access requested by the project.
 
 ### Pending requests

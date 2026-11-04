@@ -3,7 +3,7 @@ name: acp-box-wait
 description: how a filtered editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
 sources: [internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -56,6 +56,11 @@ startup skips a blocked session, or the pool stays off for its whole life.
 Fork ACP shares the wait, but its hooks have no start notice, so a thread hears about it only when it
 sends a message. See [[restricted-project-builds-are-explicit]].
 
+A services refusal comes in parts (`box.ServicesNeedRules`), since a thread cannot show the terminal's text
+whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason and the remedy as text and only the
+rules and `coop approve` as blocks, and the terminal and the agent log keep `Error()`. `coop approve` has nothing
+to approve in that state, so it asks the same check (`box.ProjectServicesRefusal`) and shows the refusal too.
+
 Readiness asks about those three things only, on purpose. Any other refusal (an approved service whose
 definition changed, a serve port the policy grants TLS on, a broken project.yaml) shows up as a real
 child ending by itself. The proxy decides that in its run loop, not in `spawnBox`'s wait goroutine,
@@ -85,6 +90,8 @@ the hook ran, the project was read-only, and it could reach only the provider. T
 to keep this rather than start the adapter with hooks off.
 
 ## Changelog
+- 2026-11-04 — a services refusal reads whole in a thread, and `coop approve` shows it when it has nothing to
+  approve. Verified with a real `coop acp`, pasting the rule out of the thread's own block.
 - 2026-11-03 — recorded that a project's hooks run in a holding child, by the owner's choice.
 - 2026-11-03 — a box that keeps refusing keeps the session connected, on a child with no project rules,
   no sidecars and no project file. Verified on real Docker against a serve port on TLS, a broken

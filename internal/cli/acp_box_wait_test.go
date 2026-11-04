@@ -519,6 +519,35 @@ func TestBoxWaitLeavesPendingRulesToAPerson(t *testing.T) {
 	})
 }
 
+// Services with no rules wait for that person too. The thread hears the remedy in parts it can show
+// whole, the log hears it as a terminal would, and settling it ends the wait with no reconnect.
+func TestBoxWaitLeavesServiceRulesToAPerson(t *testing.T) {
+	h := newBoxWaitHarness(t)
+	refusal := servicesRefusal(t, "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n", "")
+	h.set(func() { h.answer = refusal; h.holding = true })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatalf("services with no rules are an answer, not a failure to look: %v", err)
+	}
+	if said := h.lastSaid(); !h.w.blockedNow() || said != acpBoxWaitText(refusal, nil, false) {
+		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
+	}
+	h.read(func() {
+		if len(h.logged) != 1 || !strings.Contains(h.logged[0].Error(), "Then review it: coop approve") || h.rebuilds != 0 {
+			t.Fatalf("logged=%v rebuilds=%d", h.logged, h.rebuilds)
+		}
+	})
+	h.set(func() { h.answer = nil; h.sign = "settled" })
+	h.w.poll()
+	if h.w.blockedNow() || h.lastSaid() != "" {
+		t.Fatalf("blocked=%v said=%q once it was settled", h.w.blockedNow(), h.lastSaid())
+	}
+	h.read(func() {
+		if h.moves != 1 || h.opened != 1 {
+			t.Fatalf("moves=%d opened=%d, want the session moved by itself", h.moves, h.opened)
+		}
+	})
+}
+
 // An approved mode the session cannot move to has one remedy, and it is not another approval.
 func TestBoxWaitSaysToReconnectForAModeItCannotMoveTo(t *testing.T) {
 	h := newBoxWaitHarness(t)

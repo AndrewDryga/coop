@@ -19,6 +19,11 @@
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 
+- **The fix for services with no network rules reads in full.** An editor thread no longer cuts it off
+  at the panel's edge: the reason and the remedy are text that wraps, and only the rules and
+  `coop approve` are code blocks. `coop approve` with nothing to approve also says when those rules
+  are what the box is waiting for, and shows them.
+
 - **Grok works on a project's first run.** A project with no Grok history no longer says "Not signed
   in" when your account is fine.
 

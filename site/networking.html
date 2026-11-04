@@ -729,7 +729,8 @@ red warning because it would allow unrestricted traffic. To confirm, answer
 <code>Approve this access for new runs and running editor sessions? [y/N]</code>.</p>
 <p>If the file is already exactly what was approved, <code>coop approve</code> prints
 <code>No approval needed: this project&#39;s requested access has not changed.</code> and grants nothing new.
-Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
+If a filtered box still cannot start because the project&#39;s services have no network rules, it
+also says so and shows the rules to add. Provider endpoints are separate from this comparison. co:op allows the endpoints each agent
 needs, so they are not shown as access requested by the project.</p>
 <h3 id="pending-requests">Pending requests</h3>
 <p>If the project&#39;s request differs from your saved approval, co:op treats it as pending:</p>

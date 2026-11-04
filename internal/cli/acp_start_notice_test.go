@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/testutil/threadtext"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
 
 // A saved sign-in that can no longer work is named in the editor with the login that fixes it: the
@@ -76,7 +80,9 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 		"wait: build fails": acpBoxWaitText(errors.New("no"), required, true),
 		"wait: rebuilding":  acpBoxWaitText(errors.New("no"), approved, false),
 		"wait: build":       acpBoxWaitText(errors.New("no"), required, false),
-		"wait: services":    acpBoxWaitText(errors.New("Some services could not start:\n\n  db failed its healthcheck"), nil, false),
+		"wait: services":    acpBoxWaitText(servicesRefusal(t, servicesCompose, ""), nil, false),
+		"wait: network":     acpBoxWaitText(servicesRefusal(t, "", "shared"), nil, false),
+		"wait: other":       acpBoxWaitText(errors.New("Some services could not start:\n\n  db failed its healthcheck"), nil, false),
 		"kept: changed":     acpRefreshNotice(errACPNetworkModeChanged),
 		"kept: withdrawn":   acpRefreshNotice(errACPApprovalWithdrawn),
 		"kept: review":      acpRefreshNotice(pending),
@@ -99,5 +105,69 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 	}
 	for _, problem := range problems {
 		threadtext.Check(t, acpctl.ProblemText(problem))
+	}
+}
+
+// servicesCompose has a service with a port, one without, and one whose name no rule can carry.
+const servicesCompose = "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n  web:\n    image: nginx:1\n" +
+	"  \"evil](http://example.test)\":\n    image: example/other:1\n"
+
+// servicesRefusal is the refusal a filtered box of a project with no rules really gets, from this Compose
+// file or, with none, from COOP_SERVICES_NET.
+func servicesRefusal(t *testing.T, compose, servicesNet string) *box.ServicesNeedRules {
+	t.Helper()
+	a, repo := servicesProject(t, "", compose)
+	a.cfg.ServicesNet = servicesNet
+	refusal, err := box.ProjectServicesRefusal(t.Context(), a.cfg, repo)
+	if err != nil || refusal == nil {
+		t.Fatalf("refused=%t err=%v, want a refusal", refusal != nil, err)
+	}
+	return refusal
+}
+
+// threadHTML renders a thread's text the way an editor does.
+func threadHTML(t *testing.T, text string) string {
+	t.Helper()
+	var html bytes.Buffer
+	if err := goldmark.New(goldmark.WithExtensions(extension.GFM)).Convert([]byte(text), &html); err != nil {
+		t.Fatal(err)
+	}
+	return html.String()
+}
+
+// A services refusal reads whole at any panel width. An editor does not wrap a code block, so only the
+// rules to paste and the command to run are blocks, and all the rest is text that wraps.
+func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
+	const want = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
+<p>Filtered boxes reach project services only through approved network rules. Your messages wait here and go out once it is ready.</p>
+<p>Ask for each service it uses under box.egress_rules in .agent/project.yaml:</p>
+<pre><code>    - to: {service: &quot;db&quot;}
+      protocol: tcp
+      ports: [5432]
+    - to: {service: &quot;web&quot;}
+      protocol: tcp
+      ports: [&lt;port&gt;]
+</code></pre>
+<p>Replace &lt;port&gt; with the port the service listens on.</p>
+<p>Then run this in this project, on the host:</p>
+<pre><code>coop approve
+</code></pre>
+<p>To start without project services, set box.network: false.</p>
+`
+	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, servicesCompose, ""), nil, false)); got != want {
+		t.Errorf("the thread renders\n%s\nwant\n%s", got, want)
+	}
+	// Every service has its port: nothing to replace, so the thread does not ask.
+	portsOnly := acpBoxWaitText(servicesRefusal(t, "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n", ""), nil, false)
+	if strings.Contains(portsOnly, "Replace") || strings.Contains(portsOnly, "port\\>") {
+		t.Errorf("the thread asks to replace a port it already has:\n%s", portsOnly)
+	}
+	// No approval settles a network no filtered box joins, so nothing here says to run one.
+	const noRules = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
+<p>A filtered box does not join the network COOP_SERVICES_NET names. Your messages wait here and go out once it is ready.</p>
+<p>Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml.</p>
+`
+	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, "", "shared"), nil, false)); got != noRules {
+		t.Errorf("the thread renders\n%s\nwant\n%s", got, noRules)
 	}
 }

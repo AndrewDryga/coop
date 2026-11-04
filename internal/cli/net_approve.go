@@ -67,7 +67,17 @@ func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool
 	if review.Unchanged() && (caseReview == nil || len(caseReview.Pending) == 0) {
 		// No security question has an answer that could change anything, so
 		// none is asked and nothing is written — not even a fresher timestamp.
+		// That line alone reads as if nothing is wrong, so it also says when a
+		// box is stuck on service rules nobody has asked for yet.
+		services, err := box.ProjectServicesRefusal(ctx, a.cfg, repo)
+		if err != nil {
+			return 1, err
+		}
 		ui.Note("%s", netApproveUnchanged)
+		if services != nil {
+			ui.Note("")
+			ui.Warning(services.Headline(), "", services.TerminalRemedy())
+		}
 		return 0, nil
 	}
 	prompt, done := netApprovePrompt, netApproveApproved

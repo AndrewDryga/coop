@@ -658,6 +658,21 @@ func TestComposeFailureNamesComposesOwnReason(t *testing.T) {
 	}
 }
 
+// With no Compose file there is nothing to draft: the network COOP_SERVICES_NET names is the whole
+// problem, so the refusal has no rules, and no approval could settle it.
+func TestServicesNetRefusalHasNoRulesToDraft(t *testing.T) {
+	err := checkServicesHaveRules(&config.Config{ServicesNet: "shared"}, RunSpec{Network: true}, "", nil)
+	const want = "This box cannot start because a filtered box does not join the network COOP_SERVICES_NET names\n\n" +
+		"  Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml"
+	var refused *ServicesNeedRules
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal is a %T: %v", err, err)
+	}
+	if err.Error() != want || refused.Rules != "" || refused.Ask != "" {
+		t.Fatalf("refusal =\n%v\nwant:\n%s\nrules=%q ask=%q", err, want, refused.Rules, refused.Ask)
+	}
+}
+
 // A filtered box never joins the shared services network, so a project with services and no
 // approved service grant is refused before the runtime is touched, and the refusal carries the
 // rules to ask for: whole, drafted from the Compose file, with the port wherever the file says it.
@@ -726,6 +741,14 @@ func TestFilteredServicesRefusalDraftsCompleteRules(t *testing.T) {
 	draft := want[strings.Index(want, "    - to:"):strings.Index(want, "  Replace")]
 	if _, err := project.Parse([]byte("box:\n  egress: filtered\n  egress_rules:\n" + strings.ReplaceAll(draft, "<port>", "5432"))); err != nil {
 		t.Errorf("the drafted rules do not parse: %v\n%s", err, draft)
+	}
+	// A thread shows the parts apart, so the rules are the rules and nothing else.
+	var refused *ServicesNeedRules
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal is a %T", err)
+	}
+	if refused.Rules+"\n" != draft {
+		t.Errorf("the refusal's rules =\n%s\nwant only\n%s", refused.Rules, draft)
 	}
 	// box.network: false starts without the services, and so without this refusal.
 	_, err = prepareFilteredExecution(t.Context(), cfg, recorderRuntime(t, recorder),

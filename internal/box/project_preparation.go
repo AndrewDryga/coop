@@ -312,6 +312,32 @@ func editorServicesReadiness(cfg *config.Config, spec RunSpec, policy egress.Sna
 	return checkServicesHaveRules(cfg, spec, ComposeFileAt(spec.Repo, p.ComposeRel()), serviceGrants(policy))
 }
 
+// ProjectServicesRefusal asks editorServicesReadiness for a person with no session: the refusal a filtered
+// box of this project would get under what is approved now, or nil when it would get none. It only reads,
+// and the mode is the one a launch would resolve, so `coop approve` can ask it when it has nothing to approve.
+func ProjectServicesRefusal(ctx context.Context, cfg *config.Config, repo string) (*ServicesNeedRules, error) {
+	access, err := ProjectNetworkAccess(ctx, cfg, repo)
+	if err != nil {
+		return nil, err
+	}
+	if access.Mode != egress.Filtered {
+		return nil, nil
+	}
+	var approved egress.Snapshot
+	if access.Approval != nil {
+		for _, rule := range access.Approval.Envelope {
+			approved.Grants = append(approved.Grants, egress.Grant{Rule: rule})
+		}
+	}
+	err = editorServicesReadiness(cfg, RunSpec{Repo: repo, Network: cfg.Network}, approved)
+	var refused *ServicesNeedRules
+	if errors.As(err, &refused) {
+		refused.name = "This project's box"
+		return refused, nil
+	}
+	return nil, err
+}
+
 // EditorBoxStamp changes when a person may have settled what EditorBoxReadiness reported: a project
 // build or an approval finished, or the project's configuration or Dockerfile changed. Reading the
 // build's files on every poll would cost a large project about a second; this costs a few stats and one
