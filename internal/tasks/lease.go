@@ -648,6 +648,13 @@ func inspectTaskCompletionReceipt(root string, task Item) (leaseCompletionReceip
 	return receipt, ok, false
 }
 
+// HasCompletionReceipt reports whether a task carries the receipt a trusted completion leaves, which
+// means it was accepted whatever its checklist shows now. It only reads: it closes nothing.
+func HasCompletionReceipt(root string, task Item) bool {
+	_, ok, _ := inspectTaskCompletionReceipt(root, task)
+	return ok
+}
+
 func clearTaskCompletionReceipt(root, id string) error {
 	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	if errors.Is(err, os.ErrNotExist) {

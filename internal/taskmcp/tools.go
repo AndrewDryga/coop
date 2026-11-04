@@ -700,8 +700,12 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		return r
 	}
 	if loc.item.State == tasks.StateDone {
-		if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
-			return refusal(err.Error())
+		// A receipt means it was accepted, even with open items: a person can force-close a task. A
+		// done folder without one is an unowned move, which still has to show a finished checklist.
+		if !tasks.HasCompletionReceipt(loc.root, loc.item) {
+			if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
+				return refusal(err.Error())
+			}
 		}
 		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + s.bulkNote(loc.item.Dir))
 	}

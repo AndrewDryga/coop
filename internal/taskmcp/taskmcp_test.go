@@ -420,6 +420,38 @@ func TestSubtasksSectionIsAppendedWhenAbsentAndKeepsTrailingSections(t *testing.
 	}
 }
 
+// A done task's receipt says it was accepted, even with open items, because a person can force-close
+// it. A done folder without a receipt is an unowned move, and still has to show a finished checklist.
+func TestCompleteOnADoneTaskGoesByItsReceipt(t *testing.T) {
+	const open = "# t1\n\n## Subtasks\n- [ ] still open\n"
+	t.Run("accepted with open items", func(t *testing.T) {
+		root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+		finishChecklist(t, root, "t1")
+		item, ok, err := tasks.CurrentTask(root, "t1")
+		if err != nil || !ok {
+			t.Fatalf("current task: %t, %v", ok, err)
+		}
+		if err := tasks.CompleteTrustedTask("", root, item); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, tasks.StateDone, "t1", "task.md"), []byte(open), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if text := newSession(t, newServer(t, root, "t1")).mustCall("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "already done") {
+			t.Fatalf("complete on an accepted task = %s", text)
+		}
+	})
+	t.Run("unowned move", func(t *testing.T) {
+		root := queue(t, map[string]string{"t1": tasks.StateDone})
+		if err := os.WriteFile(filepath.Join(root, tasks.StateDone, "t1", "task.md"), []byte(open), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if text := newSession(t, newServer(t, root, "t1")).mustRefuse("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "still open") {
+			t.Fatalf("complete on an unowned move = %s", text)
+		}
+	})
+}
+
 func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 	finishChecklist(t, root, "t1")
