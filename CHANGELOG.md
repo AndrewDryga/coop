@@ -17,6 +17,8 @@
 
 - **A reopened editor thread reads like a live one.** It now gets the same start message as a new thread, with
   current links, and its first message shows only what you typed instead of Coop's carried context.
+- **A reopened thread's start message and box wait come first.** They sit above the old conversation now, and a
+  message from Coop that follows an agent's reply starts with a rule, so it no longer reads as part of that reply.
 
 - **Marking another default account no longer ends a running editor session.** A filtered session keeps
   using the account it started with, so changing the default in another terminal does not make new boxes refuse.

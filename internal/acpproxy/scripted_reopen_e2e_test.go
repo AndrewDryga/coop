@@ -13,7 +13,7 @@ import (
 // TestScriptedACPReopenedThreadReadsLikeALiveOne is a thread carried from claude to codex, reopened by
 // a fresh coop acp that never saw the text it injected. Codex replays that text as the person's first
 // message, split across chunks. The thread shows only what they typed, the agent did get the context,
-// and each open hears the start message once, after the replay.
+// and each open hears the start message once, before the replay.
 func TestScriptedACPReopenedThreadReadsLikeALiveOne(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -153,7 +153,7 @@ func TestScriptedACPReopenedThreadReadsLikeALiveOne(t *testing.T) {
 			}
 		}
 		got := strings.Join(thread, " | ")
-		if want := "user_message_chunk: hi | agent_message_chunk: the answer | answer | start message"; got != want {
+		if want := "start message | user_message_chunk: hi | agent_message_chunk: the answer | answer"; got != want {
 			t.Fatalf("open %d: the thread read\n%s\nwant\n%s", open, got, want)
 		}
 	}

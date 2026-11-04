@@ -2,7 +2,7 @@
 name: acp-thread-messages-are-structured
 description: A thread message has its title alone on a line, short paragraphs, and each command to run as a fenced code block
 scope: cli-output
-sources: [internal/acpctl/start_notice.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/cli/acp_box_wait.go, internal/cli/acp_refresh.go, internal/cli/acp_start_notice.go, internal/testutil/threadtext/threadtext.go]
+sources: [internal/acpctl/start_notice.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/thread_tail.go, internal/cli/acp_box_wait.go, internal/cli/acp_refresh.go, internal/cli/acp_start_notice.go, internal/testutil/threadtext/threadtext.go]
 check: make thread-messages-check
 updated: 2026-11-04
 ---
@@ -25,6 +25,9 @@ An editor renders what Coop writes into a thread as Markdown. Write for that:
 - Set a message apart with `acpproxy.ThreadText`, which the message builders already do. An editor appends the
   chunks of a running message with nothing between them, and a closing fence with the agent's next words on its
   line does not close, so the rest of the message becomes code.
+- Build a message with `acpproxy.SessionMessageLine`. The writer to the editor (`threadTail`) knows what the thread
+  last showed, and opens a message that follows agent text with a `---` rule. Do not write that rule yourself: an
+  empty thread must not start with one.
 
 Wrong: `**Internet is filtered.** Allowed: the agent's provider.`
 Right: `**Internet is filtered.**`, a blank line, `Allowed: the agent's provider.`
@@ -34,6 +37,8 @@ code block. Only `LoadError::Other` (a `session/new` failure that is not auth) i
 literally and still reads.
 
 ## Changelog
+- 2026-11-04 — the owner saw a notice right under the last reply with nothing between: a message after agent text
+  now opens with a rule. Sweep: Coop's two line builders are one now, so every notice goes through it.
 - 2026-11-04 — the owner saw a title closer to the list above it than to its own text: sections now take a `---` rule.
 - 2026-11-03 — created after the owner asked for this. Sweep: every text in `internal/acpctl`, the session texts in
   `internal/cli/acp_box_wait.go`, `acp_refresh.go` and `acp_start_notice.go`, and `internal/acpproxy/proxy.go`.

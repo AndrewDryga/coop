@@ -126,7 +126,7 @@ func (c *Control) AddStartProblems(problems ...Problem) {
 // editor session (it carries a sessionId, as session/new does), or nil. The sessionId alone decides:
 // Gemini and Grok answer session/new with models but no configOptions. Only answers to the editor's
 // own requests reach here (the proxy swallows coop's injected requests and a box restart's replay).
-// A reopened thread hears it from toEditor instead, once per open, since a load answer has no sessionId.
+// A reopened thread hears it from beginReplay instead, once per open, before its replay.
 func (c *Control) startNoticeFor(line []byte) []byte {
 	if !bytes.Contains(line, []byte(`"sessionId"`)) || !bytes.Contains(line, []byte(`"result"`)) {
 		return nil

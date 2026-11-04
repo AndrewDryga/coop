@@ -77,7 +77,11 @@ func (g *imageGuard) flush() {
 
 // sendHeldText is imageGuard.flush for a session that has one.
 func (p *proxy) sendHeldText() {
-	if guard, filtered := p.out.(*imageGuard); filtered {
+	out := p.out
+	if tail, ok := out.(*threadTail); ok {
+		out = tail.out
+	}
+	if guard, filtered := out.(*imageGuard); filtered {
 		guard.flush()
 	}
 }

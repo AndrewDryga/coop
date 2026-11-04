@@ -53,13 +53,45 @@ type threadReplay struct {
 	position  replayPosition
 	held      []byte // chunks that may still turn out to be a carried block, as the adapter sent them
 	text      string // their text
+
+	toldProblems bool     // its opening message took the session's start problems
+	toldNotices  []string // and these queued notices
 }
 
-// beginReplay arms the filter for the editor's request to reopen a thread.
-func (c *Control) beginReplay(id json.RawMessage, session string) {
+// restart forgets what a retired child sent. The request is still open.
+func (r *threadReplay) restart() {
+	r.position, r.held, r.text = replayAtStart, nil, ""
+}
+
+// beginReplay arms the filter for the editor's request to reopen a thread and returns what the thread
+// hears before anything else: its start message, then anything queued. An editor's thread exists by the
+// time it asks (Zed registers it before it sends the request), so this comes first however long a box
+// takes to answer. A request parked for a box comes through here a second time, and says nothing new.
+func (c *Control) beginReplay(id json.RawMessage, session string) []byte {
 	c.mu.Lock()
-	c.replays[session] = &threadReplay{requestID: string(id)}
+	if replay := c.replays[session]; replay != nil && replay.requestID == string(id) {
+		c.mu.Unlock()
+		return nil
+	}
+	replay := &threadReplay{requestID: string(id), toldProblems: !c.problemsTold, toldNotices: c.notices}
+	c.replays[session] = replay
+	c.notices = nil
 	c.mu.Unlock()
+	opening := c.startNotice(session)
+	if len(replay.toldNotices) > 0 {
+		opening = append(opening, c.statusMessage(session, strings.Join(replay.toldNotices, "\n\n"))...)
+	}
+	return opening
+}
+
+// reopenFailed gives back what a failed request's opening message took: an editor drops a thread whose
+// load fails, so the next thread must hear it. What was said stays true either way, since it describes
+// the session and never claims the thread came back. c.mu is held.
+func (c *Control) reopenFailed(replay *threadReplay) {
+	if replay.toldProblems {
+		c.problemsTold = false
+	}
+	c.notices = append(replay.toldNotices, c.notices...)
 }
 
 // filterReplay hides a carried block from a replayed user message. The block went to the agent as part
@@ -67,13 +99,13 @@ func (c *Control) beginReplay(id json.RawMessage, session string) {
 // Only a block in the exact format, at the start of a message, is removed, and chunks may split it
 // anywhere: they wait until the end marker arrives or something shows they are not a block.
 //
-// It returns the chunks that have stopped waiting, then the line to handle, nil when there is none. On
-// the answer that completes a reopen, it also returns that thread, whose start message goes out after.
-func (c *Control) filterReplay(line []byte) (released, rest []byte, reopened string) {
+// It returns the chunks that have stopped waiting, then the line to handle, nil when there is none, and
+// whether that line is the answer to a reopen.
+func (c *Control) filterReplay(line []byte) (released, rest []byte, reopenAnswer bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.replays) == 0 {
-		return nil, line, ""
+		return nil, line, false
 	}
 	var m struct {
 		ID     json.RawMessage `json:"id"`
@@ -91,41 +123,41 @@ func (c *Control) filterReplay(line []byte) (released, rest []byte, reopened str
 		} `json:"params"`
 	}
 	if json.Unmarshal(line, &m) != nil {
-		return nil, line, ""
+		return nil, line, false
 	}
 	if m.Method == "" {
 		for session, replay := range c.replays {
 			if replay.requestID == string(m.ID) {
 				delete(c.replays, session)
-				if len(m.Error) == 0 || string(m.Error) == "null" {
-					reopened = session
+				if len(m.Error) != 0 && string(m.Error) != "null" {
+					c.reopenFailed(replay)
 				}
-				return replay.held, line, reopened
+				return replay.held, line, true
 			}
 		}
-		return nil, line, ""
+		return nil, line, false
 	}
 	replay := c.replays[m.Params.SessionID]
 	if replay == nil || m.Method != "session/update" {
-		return nil, line, ""
+		return nil, line, false
 	}
 	switch m.Params.Update.Kind {
 	case "user_message_chunk":
 	case "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan":
 		// The conversation moved on, so a message that never reached its end marker was the person's.
-		return replay.release(replayAtStart), line, ""
+		return replay.release(replayAtStart), line, false
 	default:
-		return nil, line, "" // settings and metadata say nothing about the message
+		return nil, line, false // settings and metadata say nothing about the message
 	}
 	text := m.Params.Update.Content.Text
 	if m.Params.Update.Content.Type != "text" {
-		return replay.release(replayInMessage), line, ""
+		return replay.release(replayInMessage), line, false
 	}
 	switch replay.position {
 	case replayInMessage:
-		return nil, line, ""
+		return nil, line, false
 	case replayAfterBlock:
-		return nil, replay.afterBlock(line, text), ""
+		return nil, replay.afterBlock(line, text), false
 	}
 	replay.text += text
 	length, undecided := carriedBlock(replay.text)
@@ -133,12 +165,12 @@ func (c *Control) filterReplay(line []byte) (released, rest []byte, reopened str
 	case length > 0:
 		after := replay.text[length:]
 		replay.held, replay.text = nil, ""
-		return nil, replay.afterBlock(line, after), ""
+		return nil, replay.afterBlock(line, after), false
 	case undecided && len(replay.text) <= 2*c.carryBytes+64<<10:
 		replay.held = append(replay.held, line...)
-		return nil, nil, ""
+		return nil, nil, false
 	}
-	return replay.release(replayInMessage), line, ""
+	return replay.release(replayInMessage), line, false
 }
 
 // release returns the held chunks, which were not a block after all.

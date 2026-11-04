@@ -564,18 +564,15 @@ func (c *Control) sleepUntilReset(ctx context.Context, until time.Time, label st
 // dropdowns and the modes mirror, defaults the model to coop's, and prepends coop's selector. It also
 // watches for authentication/rate-limit errors and auto-rotates when possible (restart=true).
 func (c *Control) toEditor(line []byte) (out []byte, restart bool) {
-	released, rest, reopened := c.filterReplay(line)
+	released, rest, reopenAnswer := c.filterReplay(line)
 	if rest != nil {
 		out, restart = c.lineToEditor(rest)
 	}
 	out = append(released, out...)
-	// A thread hears where to open the box, how its network is limited and what needs fixing. A reopened
-	// one hears it after the answer that ends the replay, so it cannot land inside a replayed message,
-	// and under the editor's id: that answer's sessionId, when it has one, can be the native id.
-	switch {
-	case reopened != "":
-		out = append(out, c.startNotice(reopened)...)
-	case rest != nil:
+	// A new thread hears where to open the box, how its network is limited and what needs fixing. A
+	// reopened one heard it before its request went out, and that answer's sessionId, when it has one,
+	// can be the native id.
+	if rest != nil && !reopenAnswer {
 		out = append(out, c.startNoticeFor(rest)...)
 	}
 	return out, restart
@@ -927,7 +924,9 @@ func (c *Control) childReset() {
 	c.promptSession = map[string]string{}
 	c.turnActive = map[string]bool{}
 	c.echoPreamble = map[string]string{}
-	c.replays = map[string]*threadReplay{} // a parked reopen arms again when it is forwarded
+	for _, replay := range c.replays {
+		replay.restart() // a parked reopen is forwarded again, and its answer is still to come
+	}
 	c.mu.Unlock()
 }
 
@@ -1250,24 +1249,7 @@ func (c *Control) selectedCooldown() (provider, account string, at time.Time) {
 }
 
 func (c *Control) statusMessage(session, text string) []byte {
-	c.mu.Lock()
-	c.nextID++
-	n := c.nextID
-	c.mu.Unlock()
-	upd := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "session/update",
-		"params": map[string]any{
-			"sessionId": session,
-			"update": map[string]any{
-				"sessionUpdate": "agent_message_chunk",
-				"content":       map[string]any{"type": "text", "text": acpproxy.ThreadText(text)},
-				"messageId":     fmt.Sprintf("coop-notice-%d", n),
-			},
-		},
-	}
-	b, _ := json.Marshal(upd)
-	return append(b, '\n')
+	return acpproxy.SessionMessageLine(session, text)
 }
 
 // formatWait renders a wait as MM:SS, or Hh MMm once it's an hour or more.
@@ -2733,15 +2715,19 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	if json.Unmarshal(line, &h) != nil {
 		return false, nil, nil, false
 	}
+	var opening []byte
 	if (h.Method == "session/load" || h.Method == "session/resume") && h.Params.SessionID != "" && len(h.ID) > 0 {
-		c.beginReplay(h.ID, h.Params.SessionID)
+		opening = c.beginReplay(h.ID, h.Params.SessionID)
 	}
 	// The editor's spelling of the repo may differ from the one coop mounted; forward coop's, or the
 	// box (Linux, case-sensitive) rejects a cwd that is right there on a case-insensitive host.
 	if sessionCwdMethods[h.Method] {
 		if out := canonicalCwd(line, c.repo); !bytes.Equal(out, line) {
-			return false, nil, out, false
+			return false, opening, out, false
 		}
+	}
+	if opening != nil {
+		return false, opening, nil, false
 	}
 	if h.Method == "authenticate" || h.Method == "logout" {
 		provider, account := c.authenticationTarget()
@@ -3111,6 +3097,10 @@ func (c *Control) noticeFor(line []byte) []byte {
 		return nil
 	}
 	c.mu.Lock()
+	if c.replays[m.Params.SessionID] != nil { // it would land inside a replayed message
+		c.mu.Unlock()
+		return nil
+	}
 	text := strings.Join(c.notices, "\n\n")
 	c.notices = nil
 	c.mu.Unlock()

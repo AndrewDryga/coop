@@ -21,12 +21,19 @@ func sessionChunk(session, kind, text string) []byte {
 
 func reopen(t *testing.T, c *Control, id int, method, session string) []byte {
 	t.Helper()
-	answer := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"configOptions":[]}}`+"\n", id)
+	_, answer := reopenHearing(t, c, id, method, session)
+	return answer
+}
+
+// reopenHearing also returns what the thread hears before the request goes out.
+func reopenHearing(t *testing.T, c *Control, id int, method, session string) (opening, answer []byte) {
+	t.Helper()
 	request := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":%q,"params":{"sessionId":%q,"cwd":"/w","mcpServers":[]}}`+"\n", id, method, session)
-	if handled, _, _, _ := c.fromEditor([]byte(request)); handled {
+	handled, opening, _, _ := c.fromEditor([]byte(request))
+	if handled {
 		t.Fatalf("%s was handled by the control layer", method)
 	}
-	return []byte(answer)
+	return opening, []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"configOptions":[]}}`+"\n", id))
 }
 
 // wireTexts decodes a toEditor result into one "kind: text" per frame, an answer as "answer".
@@ -233,47 +240,134 @@ func TestCarriedBlockEndsOnlyAtItsOwnMarker(t *testing.T) {
 
 // Every open hears the start message, after the replay, under the editor's id even when the answer
 // names a native one, with what is true now.
-func TestReopenedThreadHearsTheStartMessage(t *testing.T) {
+func TestReopenedThreadHearsTheStartMessageFirst(t *testing.T) {
 	c := newTestControl(t)
 	c.SetServePorts([]ServePort{{Box: 5173, Host: 41000}})
 
 	for name, method := range map[string]string{"load": "session/load", "resume": "session/resume"} {
 		t.Run(name, func(t *testing.T) {
-			answer := reopen(t, c, 9, method, "S")
+			opening, answer := reopenHearing(t, c, 9, method, "S")
+			if got := wireTexts(t, opening); len(got) != 1 || !strings.Contains(got[0], "[localhost:41000](http://localhost:41000)") {
+				t.Fatalf("before the request = %q", got)
+			}
+			if !strings.Contains(string(opening), `"sessionId":"S"`) {
+				t.Fatalf("not addressed to the editor's id: %s", opening)
+			}
 			if out := toEd(c, sessionChunk("S", "agent_message_chunk", "replayed")); strings.Contains(string(out), "localhost") {
 				t.Fatalf("start message inside the replay: %s", out)
 			}
-			got := wireTexts(t, toEd(c, answer))
-			if len(got) != 2 || got[0] != "answer" || !strings.Contains(got[1], "[localhost:41000](http://localhost:41000)") {
-				t.Fatalf("frames = %q", got)
+			if got := wireTexts(t, toEd(c, answer)); len(got) != 1 || got[0] != "answer" {
+				t.Fatalf("after the answer = %q", got)
 			}
 		})
 	}
 
 	// A native id in the answer must not start a second message, nor a first in the wrong session.
-	answer := reopen(t, c, 10, "session/load", "S")
+	_, answer := reopenHearing(t, c, 10, "session/load", "S")
 	out := toEd(c, []byte(strings.Replace(string(answer), `{"configOptions":[]}`, `{"sessionId":"native","configOptions":[]}`, 1)))
-	if strings.Count(string(out), "localhost:41000](") != 1 || strings.Contains(string(out), `"sessionId":"native","update"`) ||
-		!strings.Contains(string(out), `"sessionId":"S"`) {
-		t.Fatalf("one message for the editor's id: %s", out)
+	if strings.Contains(string(out), "localhost") {
+		t.Fatalf("a second message after the answer: %s", out)
 	}
 
 	// Its links are the current ones.
 	c.SetServePorts([]ServePort{{Box: 5173, Host: 42000}})
-	got := wireTexts(t, toEd(c, reopen(t, c, 11, "session/load", "S")))
-	if len(got) != 2 || !strings.Contains(got[1], "localhost:42000") || strings.Contains(got[1], "41000") {
+	opening, _ := reopenHearing(t, c, 11, "session/load", "S")
+	if got := wireTexts(t, opening); len(got) != 1 || !strings.Contains(got[0], "localhost:42000") || strings.Contains(got[0], "41000") {
 		t.Fatalf("frames = %q", got)
 	}
 
-	// A thread that did not open hears nothing, and neither does one with nothing to say.
-	reopen(t, c, 12, "session/load", "S")
-	failed := []byte(`{"jsonrpc":"2.0","id":12,"error":{"code":-32002,"message":"Resource not found"}}` + "\n")
+	// A thread with nothing to say hears nothing.
+	quiet := newTestControl(t)
+	if opening, _ := reopenHearing(t, quiet, 1, "session/load", "S"); opening != nil {
+		t.Fatalf("nothing to say: %s", opening)
+	}
+}
+
+// What the person has to do comes first in a reopened thread too, while the load itself may be parked.
+func TestReopenedThreadHearsTheBoxWaitFirst(t *testing.T) {
+	c := newTestControl(t)
+	c.SetBoxWait("**Waiting for the box.**")
+	c.SetServePorts([]ServePort{{Box: 5173, Host: 41000}})
+	opening, _ := reopenHearing(t, c, 2, "session/load", "S")
+	got := wireTexts(t, opening)
+	if len(got) != 1 || !strings.Contains(got[0], "Waiting for the box") || strings.Index(got[0], "Waiting") > strings.Index(got[0], "localhost") {
+		t.Fatalf("opening = %q", got)
+	}
+}
+
+// A load parked for a box comes through the hook again when it is forwarded. That is one open, so one
+// message, and the filter works on the second pass.
+func TestParkedReopenSpeaksOnce(t *testing.T) {
+	c := newTestControl(t)
+	c.SetServePorts([]ServePort{{Box: 5173, Host: 41000}})
+	opening, answer := reopenHearing(t, c, 3, "session/load", "S")
+	if len(opening) == 0 {
+		t.Fatal("the first pass says nothing")
+	}
+	c.childReset()
+	if again, _ := reopenHearing(t, c, 3, "session/load", "S"); again != nil {
+		t.Fatalf("the second pass spoke again: %s", again)
+	}
+	if out := toEd(c, userChunk("S", carriedBlockStart)); len(out) != 0 {
+		t.Fatalf("the filter is not armed on the second pass: %s", out)
+	}
+	if got := wireTexts(t, toEd(c, answer)); len(got) != 2 || got[1] != "answer" {
+		t.Fatalf("the answer = %q", got)
+	}
+	if again, _ := reopenHearing(t, c, 4, "session/load", "S"); len(again) == 0 {
+		t.Fatal("the next open says nothing")
+	}
+}
+
+// A request whose path Coop corrects still speaks first.
+func TestReopenWithARewrittenPathHearsItsMessage(t *testing.T) {
+	c := newTestControl(t)
+	c.repo = t.TempDir()
+	c.SetServePorts([]ServePort{{Box: 5173, Host: 41000}})
+	request := fmt.Sprintf(`{"jsonrpc":"2.0","id":5,"method":"session/load","params":{"sessionId":"S","cwd":%q,"mcpServers":[]}}`+"\n", c.repo+"/.")
+	handled, resp, toAdapter, _ := c.fromEditor([]byte(request))
+	if handled || !strings.Contains(string(resp), "localhost:41000") {
+		t.Fatalf("handled=%v resp=%s", handled, resp)
+	}
+	if !strings.Contains(string(toAdapter), fmt.Sprintf(`"cwd":%q`, c.repo)) {
+		t.Fatalf("toAdapter=%s", toAdapter)
+	}
+}
+
+// A failed load's thread is gone in the editor, so what its message took goes to the next thread.
+func TestFailedReopenGivesItsMessageBack(t *testing.T) {
+	c := newTestControl(t)
+	c.AddStartProblems(Problem{Title: "A preset does not load."})
+	c.Notify("Port 1 now reaches this box.")
+	opening, _ := reopenHearing(t, c, 6, "session/load", "S")
+	if !strings.Contains(string(opening), "preset does not load") || !strings.Contains(string(opening), "now reaches") {
+		t.Fatalf("opening = %s", opening)
+	}
+	failed := []byte(`{"jsonrpc":"2.0","id":6,"error":{"code":-32002,"message":"Resource not found"}}` + "\n")
 	if got := wireTexts(t, toEd(c, failed)); len(got) != 1 || got[0] != "answer" {
 		t.Fatalf("a failed load: %q", got)
 	}
-	quiet := newTestControl(t)
-	if got := wireTexts(t, toEd(quiet, reopen(t, quiet, 1, "session/load", "S"))); len(got) != 1 {
-		t.Fatalf("nothing to say: %q", got)
+	retry, answer := reopenHearing(t, c, 7, "session/load", "S")
+	if !strings.Contains(string(retry), "preset does not load") || !strings.Contains(string(retry), "now reaches") {
+		t.Fatalf("the retry = %s", retry)
+	}
+	toEd(c, answer)
+	if again, _ := reopenHearing(t, c, 8, "session/load", "S"); strings.Contains(string(again), "preset does not load") || strings.Contains(string(again), "now reaches") {
+		t.Fatalf("an open after a good one repeats them: %s", again)
+	}
+}
+
+// A notice that turns up during a replay waits for it to end, or it would split a replayed message.
+func TestNoticeDoesNotLandInsideAReplay(t *testing.T) {
+	c := newTestControl(t)
+	answer := reopen(t, c, 9, "session/load", "S")
+	c.Notify("Port 1 now reaches this box.")
+	if got := wireTexts(t, toEd(c, userChunk("S", "hi"))); len(got) != 1 {
+		t.Fatalf("during the replay = %q", got)
+	}
+	toEd(c, answer)
+	if got := wireTexts(t, toEd(c, sessionChunk("S", "agent_message_chunk", "later"))); len(got) != 2 || !strings.Contains(got[0], "now reaches") {
+		t.Fatalf("after the replay = %q", got)
 	}
 }
 
@@ -284,7 +378,7 @@ func TestNewThreadReopenedHearsItAgain(t *testing.T) {
 	if got := wireTexts(t, toEd(c, sessionResult("S"))); len(got) != 2 {
 		t.Fatalf("session/new frames = %q", got)
 	}
-	if got := wireTexts(t, toEd(c, reopen(t, c, 2, "session/load", "S"))); len(got) != 2 {
-		t.Fatalf("reopen frames = %q", got)
+	if opening, _ := reopenHearing(t, c, 2, "session/load", "S"); len(wireTexts(t, opening)) != 1 {
+		t.Fatalf("reopen says = %s", opening)
 	}
 }

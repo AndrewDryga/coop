@@ -115,7 +115,8 @@ type Hooks struct {
 	// handled=false with a non-nil toAdapter is a REWRITE: the proxy forwards toAdapter through the
 	// normal path — same bookkeeping, pending tracking, and response routing as the original line —
 	// so it must keep the editor's request id (e.g. a history preamble prepended to a prompt, or a
-	// synthesized model set translated to session/set_model).
+	// synthesized model set translated to session/set_model). handled=false with a non-nil resp writes
+	// resp to the editor before the line goes anywhere, so it is the first the editor hears of that request.
 	FromEditor func(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool)
 	// PromptForwarded observes a session/prompt only after it has cleared target-setting gating and
 	// reload admission and entered pending bookkeeping. synthetic distinguishes a replay resume from
@@ -291,6 +292,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 	if opts.NoEditorHostAccess {
 		p.out = newImageGuard(clientOut)
 	}
+	p.out = newThreadTail(p.out)
 	if opts.Restarter != nil {
 		opts.Restarter.bind(p)
 		defer opts.Restarter.bind(nil)
@@ -911,6 +913,10 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		traceLine("coop→box(resume)", line)
 	}
 	original := parse(line)
+	if tail, ok := p.out.(*threadTail); ok && origin == originEditor && original.isRequest() &&
+		(original.Method == "session/prompt" || original.Method == "session/load" || original.Method == "session/resume") {
+		tail.reset(sessionID(original.Params))
+	}
 	if p.noHostAccess && original.Method == "initialize" {
 		// Kept this way for every child's replay too.
 		line = withoutEditorHostAccess(line)
@@ -1021,6 +1027,10 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			}
 			return
 		}
+		if len(resp) > 0 {
+			traceLine("box→editor(coop)", resp)
+			_, _ = p.out.Write(resp)
+		}
 		if len(toAdapter) > 0 {
 			// A rewrite (same request, new body — e.g. a history preamble prepended to a prompt):
 			// forward it through the normal path below, so bookkeeping, pending tracking, and the
@@ -1047,7 +1057,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	p.mu.Unlock()
 	projected, err := projectSessionMCP(projectionChild, line)
 	if err != nil {
-		_, _ = p.out.Write(sessionMCPErrorResponse(h.ID, err))
+		p.writeControllerResponse(sessionMCPErrorResponse(h.ID, err))
 		return
 	}
 	p.mu.Lock()
@@ -1058,7 +1068,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	if isSessionSetup(h.Method) && p.child != projectionChild {
 		p.mu.Unlock()
-		_, _ = p.out.Write(errorResponse(string(h.ID)))
+		p.writeControllerResponse(errorResponse(string(h.ID)))
 		return
 	}
 	if p.sessionReqs == nil {
@@ -3060,8 +3070,8 @@ func (p *proxy) sessionLifecycleRequestLocked(method string, epoch uint64, sid s
 	return append(encoded, '\n')
 }
 
-// SessionMessageLine is a synthetic agent_message_chunk to the editor — how a replay failure
-// becomes VISIBLE in the thread, instead of dying in stderr while the toolbar silently keeps
+// SessionMessageLine is a synthetic agent_message_chunk to the editor — how Coop says anything in a
+// thread, like a replay failure, which would otherwise die in stderr while the toolbar silently keeps
 // stale options and every next prompt errors against a session that no longer exists.
 func SessionMessageLine(sid, text string) []byte {
 	upd := map[string]any{
@@ -3072,6 +3082,7 @@ func SessionMessageLine(sid, text string) []byte {
 			"update": map[string]any{
 				"sessionUpdate": "agent_message_chunk",
 				"content":       map[string]any{"type": "text", "text": ThreadText(text)},
+				"messageId":     fmt.Sprintf("%s%d", noticeIDPrefix, noticeIDs.Add(1)),
 			},
 		},
 	}
