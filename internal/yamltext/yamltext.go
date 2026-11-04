@@ -1,4 +1,5 @@
-package project
+// Package yamltext rewords YAML parser errors for the person editing the file.
+package yamltext
 
 import (
 	"errors"
@@ -13,9 +14,9 @@ var (
 	yamlWrongType    = regexp.MustCompile("cannot unmarshal !!\\w+ `(.*)` into (\\S+)$")
 )
 
-// PlainYAMLError rewords yaml's type problems for the person editing the file: it names the setting
+// Plain rewords yaml's type problems for the person editing the file: it names the setting
 // and what it should be, not the Go type behind it. Other errors come back as they are.
-func PlainYAMLError(err error) error {
+func Plain(err error) error {
 	var problems *yaml.TypeError
 	if !errors.As(err, &problems) {
 		return err

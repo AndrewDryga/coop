@@ -32,6 +32,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/yamltext"
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/sys/unix"
 )
@@ -282,7 +283,7 @@ func Parse(data []byte) (*Project, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo doing nothing — fail loudly instead
 	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
-		return nil, fmt.Errorf("%s: %w", File, PlainYAMLError(err))
+		return nil, fmt.Errorf("%s: %w", File, yamltext.Plain(err))
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {

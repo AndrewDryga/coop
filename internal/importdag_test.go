@@ -60,7 +60,7 @@ var allowedEdges = map[string][]string{
 	"consult":               {"agent"},
 	"ladder":                {"agent"},
 	"loop":                  {"agent", "box", "config", "contextc", "forkspace", "ladder", "loopcfg", "preset", "project", "randid", "runtime", "taskmcp", "tasks", "ui"},
-	"loopcfg":               {"agent", "safefile"},
+	"loopcfg":               {"agent", "safefile", "yamltext"},
 	"mcp":                   nil,
 	"networkgateway":        {"egress", "networkview", "randid", "safefile"},
 	"networkreport":         {"egress", "networkstate", "networkview", "ui"},
@@ -68,7 +68,7 @@ var allowedEdges = map[string][]string{
 	"networkview":           {"egress"},
 	"preset":                {"agent", "safefile", "shadowpath"},
 	"processidentity":       nil,
-	"project":               {"egress"},
+	"project":               {"egress", "yamltext"},
 	"randid":                nil,
 	"runtime":               {"config"},
 	"safefile":              nil,
@@ -96,6 +96,7 @@ var allowedEdges = map[string][]string{
 	"ui":                    {"safetext"},
 	"workerconnector":       {"config", "forkspace", "safefile", "secretscan", "workerproto"},
 	"workerproto":           {"session"},
+	"yamltext":              nil,
 }
 
 // uiPresentationOwners are the only packages allowed to import internal/ui. Terminal rendering
