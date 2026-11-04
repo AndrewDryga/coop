@@ -825,8 +825,11 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 			return nil
 		}
 		slash := filepath.ToSlash(rel)
-		if d.IsDir() && d.Name() == ".git" {
-			return fs.SkipDir
+		if d.Name() == ".git" {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil // a linked worktree's pointer names a host path, and a digest of it proves nothing
 		}
 		hidden, err := shadowed(slash)
 		if err != nil {

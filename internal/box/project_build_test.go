@@ -188,6 +188,65 @@ func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
 	}
 }
 
+// A linked worktree's .git is a file naming a host path, and a submodule's is too. A file named .git
+// is source control like the directory: it stays out of the staged context and the digest, which
+// would otherwise cover the pointer and not the gitdir it names. Other dotfiles stay in.
+func TestAGitFileStaysOutOfTheBuildContext(t *testing.T) {
+	pinHome(t)
+	repo, write := gitProject(t, reusableDockerfile)
+	write(".gitattributes", "* text=auto\n")
+	gitIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	gitIn(repo, "add", ".")
+	gitIn(repo, "commit", "-qm", "fixture")
+	linked := filepath.Join(t.TempDir(), "linked")
+	gitIn(repo, "worktree", "add", "-q", "--detach", linked)
+	pointer, err := os.Lstat(filepath.Join(linked, ".git"))
+	if err != nil || !pointer.Mode().IsRegular() {
+		t.Fatalf("a linked worktree's .git should be a file: %v, %v", pointer, err)
+	}
+	if err := os.Mkdir(filepath.Join(linked, "vendored"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, "vendored", ".git"), []byte("gitdir: /host/modules/vendored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := buildContextSelection(t.Context(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, digest, cleanup, err := stageContextEntries(t.Context(), linked, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, omit := range []string{".git", "vendored/.git"} {
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(omit))); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("the staged context holds %s: %v", omit, err)
+		}
+	}
+	for _, keep := range []string{".gitignore", ".gitattributes", ".agent/Dockerfile", "main.go", "vendored"} {
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(keep))); err != nil {
+			t.Errorf("the staged context lost %s: %v", keep, err)
+		}
+	}
+
+	// The same worktree elsewhere has a different pointer and the same files, so the same digest.
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: /another/host/path\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if moved := projectContextDigest(t, linked); moved != digest {
+		t.Errorf("the digest follows the .git pointer: %s, then %s", digest, moved)
+	}
+}
+
 // A file deleted between the selection and its read is left out, as a walk a moment later would
 // have left it: an editor or an agent saving while a box starts must not fail the launch.
 func TestContextLeavesOutAFileDeletedSinceSelection(t *testing.T) {
