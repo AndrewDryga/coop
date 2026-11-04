@@ -2342,3 +2342,20 @@ func nullStdin(t *testing.T) *os.File {
 	t.Cleanup(func() { f.Close() })
 	return f
 }
+
+// --review-task takes a whole ID; a part of one is answered with the ID it fits.
+func TestLoopReviewTaskNamesTheWholeID(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	dir := filepath.Join(cfg.RepoOverride, ".agent/tasks", tasks.StateDone, "2026-11-01-shipped")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# shipped\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&app{cfg: cfg}).cmdLoop([]string{"claude", "--review-task", "shipped"})
+	if err == nil || !strings.Contains(err.Error(), "--review-task 2026-11-01-shipped") {
+		t.Errorf("a part of an ID = %v, want its whole ID named", err)
+	}
+}

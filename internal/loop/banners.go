@@ -142,7 +142,11 @@ func printNoActionableTasks(cf tasks.TaskCounts) {
 		ui.Note("No tasks ready to work on.")
 		return
 	}
-	ui.Note("No tasks ready to work on. %s need your decision.", ui.Count(cf.Blocked, "task"))
+	verb := "need"
+	if cf.Blocked == 1 {
+		verb = "needs"
+	}
+	ui.Note("No tasks ready to work on. %s %s your decision.", ui.Count(cf.Blocked, "task"), verb)
 	ui.Note("")
 	ui.Note("  %s coop tasks decisions -i", decisionsLabel(cf.Blocked))
 }

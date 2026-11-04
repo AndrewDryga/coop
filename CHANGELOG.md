@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A run warns when a saved approval outranks `COOP_EGRESS`.** `COOP_EGRESS=offline` in a project with
+  approved network rules ran filtered, with no word about it, and could reach those sites. It still
+  does, as documented, but it now says so and names `--egress offline`. The docs no longer offer
+  `COOP_EGRESS=offline` as the way to turn networking off.
+
+- **`coop loop --review-task` names the whole ID** when you give part of a completed task's ID, instead
+  of saying no completed task matches.
+
 - **You can remove your last account.** `coop credentials <agent> <account> rm` refused an agent's only
   account because it was the default, and told you to choose another default that did not exist.
 

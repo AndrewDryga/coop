@@ -234,10 +234,18 @@ func resolveReviewTasks(repo string, queues, ids, taskFlags []string) (int, erro
 			for _, queue := range taskFlags {
 				listing += " --tasks " + shellWord(queue)
 			}
-			return 2, &ui.UsageError{
-				Headline: fmt.Sprintf("No completed task matches %q", id),
-				Rows:     [][2]string{{"See completed tasks:", listing}, {"Help:", ui.HelpCommand(loopCommand)}},
+			rows := [][2]string{{"See completed tasks:", listing}, {"Help:", ui.HelpCommand(loopCommand)}}
+			// --review-task takes a whole ID, unlike coop tasks, so name the one a part of it fits.
+			var fits []string
+			for full, items := range found {
+				if strings.Contains(full, id) && items[0].State == tasks.StateDone {
+					fits = append(fits, full)
+				}
 			}
+			if len(fits) == 1 {
+				rows = append([][2]string{{"Use its whole ID:", "--review-task " + fits[0]}}, rows...)
+			}
+			return 2, &ui.UsageError{Headline: fmt.Sprintf("No completed task matches %q", id), Rows: rows}
 		}
 	}
 	return 0, nil

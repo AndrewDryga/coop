@@ -399,3 +399,10 @@ func TestProgressLineWidthUsesAvailableTerminalWidth(t *testing.T) {
 		t.Errorf("narrow progress line width = %d, want at most %d: %q", got, narrowWidth, narrow)
 	}
 }
+
+func TestNoActionableTasksAgreesWithOneTask(t *testing.T) {
+	got := captureStderr(t, func() { printNoActionableTasks(tasks.TaskCounts{Blocked: 1}) })
+	if !strings.Contains(got, "1 task needs your decision.") {
+		t.Errorf("banner = %q", got)
+	}
+}
