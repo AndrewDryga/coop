@@ -65,6 +65,7 @@
 <li class="reference-subsection"><a href="#forks-and-loop">Forks and loop</a></li>
 <li class="reference-subsection"><a href="#command-valued-settings">Command-valued settings</a></li>
 <li><a href="#coopconf">coop.conf</a></li>
+<li class="reference-subsection"><a href="#what-can-sync">What can sync</a></li>
 <li><a href="#project-settings-agentprojectyaml">Project settings: .agent/project.yaml</a></li>
 <li class="reference-subsection"><a href="#review-checks">Review checks</a></li>
 <li><a href="#path-routed-context">Path-routed context</a></li>
@@ -392,6 +393,14 @@ the error names the path and line. An environment override does not let a broken
 <p><code>COOP_HOME</code>, <code>COOP_CONF</code>, <code>NO_COLOR</code>, <code>COOP_ACP_WARM</code>, <code>COOP_ACP_TRACE</code> and <code>COOP_SPINNER</code> are
 process-environment controls, so you can&#39;t set them inside <code>coop.conf</code>. <code>COOP_NO_ASDF</code> and
 <code>COOP_CONSULT_STREAM_LIMIT</code> are read in the box, so they belong in <code>agents/env</code>.</p>
+<h3 id="what-can-sync">What can sync</h3>
+<p><code>~/.config/coop</code> holds your settings and accounts, so you can sync it across machines with Dropbox or a
+similar service. Two machines refreshing the same single-use sign-in can sign one of them out; run
+<code>coop login</code> there if that happens. What belongs to one machine, such as run files, image records, usage
+caches and ACP traces, lives in <code>$XDG_STATE_HOME/coop</code>, or <code>~/.local/state/coop</code>, and never needs syncing.
+Coop moves earlier versions&#39; records there by itself.</p>
+<p>Coop also writes a <code>.gitignore</code> in that folder if there is none, so a dotfiles repository keeps only shared
+settings. Accounts and <code>agents/env</code> stay out of Git.</p>
 <p>Optional <a href="usage-reports.html">provider usage reports</a> use a separate host-only
 <code>~/.config/coop/usage-reports.json</code>. Their API spend is never added to local usage estimates.
 Reporting keys belong in host environment variables, not <code>coop.conf</code>, project files or <code>agents/env</code>.</p>

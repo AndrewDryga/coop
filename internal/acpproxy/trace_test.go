@@ -34,6 +34,7 @@ func resetTrace(t *testing.T) {
 func TestTraceWritesWhenEnabled(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir) // traces land under <dir>/coop, not the real config
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	resetTrace(t)
 
@@ -55,6 +56,7 @@ func TestTraceWritesWhenEnabled(t *testing.T) {
 func TestTraceTightensSensitiveLogPermissions(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	resetTrace(t)
 	cdir := filepath.Join(dir, "coop")
@@ -98,6 +100,7 @@ func TestTraceTightensSensitiveLogPermissions(t *testing.T) {
 func TestTraceEnabledBySentinel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "") // env OFF; only the sentinel enables it
 	if err := os.MkdirAll(filepath.Join(dir, "coop"), 0o755); err != nil {
 		t.Fatal(err)
@@ -118,6 +121,7 @@ func TestTraceEnabledBySentinel(t *testing.T) {
 func TestTraceOffByDefault(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir) // fresh config dir, no sentinel
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "")
 	resetTrace(t)
 
@@ -134,6 +138,7 @@ func TestTraceOffByDefault(t *testing.T) {
 func TestTraceRotatesAtCap(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	resetTrace(t)
 	old := traceMaxBytes
@@ -161,6 +166,7 @@ func TestTraceRotatesAtCap(t *testing.T) {
 func TestTracePrunesOldFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	cdir := filepath.Join(dir, "coop")
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
@@ -244,6 +250,7 @@ func TestTracePrunesOldFiles(t *testing.T) {
 func TestTraceRecordsChildExit(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	resetTrace(t)
 
@@ -288,6 +295,7 @@ func TestAdapterIdentityNamesTheClient(t *testing.T) {
 func TestTraceKeepsBoxTextOnItsLine(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv("COOP_ACP_TRACE", "1")
 	resetTrace(t)
 

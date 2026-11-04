@@ -44,19 +44,22 @@ func ExistingRunfiles(cfg *Config) (string, bool, error) {
 	return root, err == nil, err
 }
 
-// runfilesPath is below cfg's BoxHome, which Load sets to RootDir; a test's Config without one uses
-// its ConfigDir. Code with no Config, such as the container runtime making a Docker client folder,
-// passes nil and gets RootDir's: the folder the daily sweep visits.
+// runfilesPath is below cfg's LocalHome, which Load sets to this machine's state folder; a test's
+// Config without one uses its ConfigDir. Code with no Config, such as the container runtime making a
+// Docker client folder, passes nil and gets the same state folder: the one the daily sweep visits.
 func runfilesPath(cfg *Config) (string, error) {
-	if cfg != nil && cfg.BoxHome != "" {
-		return filepath.Join(cfg.BoxHome, "runfiles"), nil
+	if cfg != nil && cfg.LocalHome() != "" {
+		return filepath.Join(cfg.LocalHome(), "runfiles"), nil
 	}
 	if cfg != nil && cfg.ConfigDir != "" {
 		return filepath.Join(cfg.ConfigDir, "runfiles"), nil
 	}
-	home, err := RootDir()
+	home, err := RootDir() // a test binary that named no config home stops here
 	if err != nil {
 		return "", err
+	}
+	if dir := localDir(); dir != "" {
+		return filepath.Join(dir, "runfiles"), nil
 	}
 	return filepath.Join(home, "runfiles"), nil
 }

@@ -1929,7 +1929,7 @@ func assertLoopReviewRepoMount(t *testing.T, layout procharness.Layout, mounts [
 		t.Fatalf("review repo mount = %#v, want exactly one read-only=%v mount", matches, readOnly)
 	}
 	if !readOnly && (len(protected) != 1 || !protected[0].ReadOnly ||
-		!strings.HasPrefix(protected[0].Source, "<root>/xdg/config/coop/runfiles/coop-run-") ||
+		!strings.HasPrefix(protected[0].Source, "<root>/xdg/state/coop/runfiles/coop-run-") ||
 		!strings.Contains(protected[0].Source, "/coop-readonly-") || !strings.HasSuffix(protected[0].Source, "/tree")) {
 		t.Fatalf("repository-writable review task mounts = %#v, want one read-only queue snapshot", protected)
 	}

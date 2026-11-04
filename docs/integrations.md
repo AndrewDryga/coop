@@ -164,7 +164,7 @@ reaching the box the thread is using after a switch. It also tells you when a se
 
 To record a session's ACP traffic, run `touch ~/.config/coop/acp-debug` or set
 `COOP_ACP_TRACE=1` in the agent server's environment. Each `coop acp` server then appends traffic
-between the editor and box to `~/.config/coop/acp-trace-<pid>.log`.
+between the editor and box to `~/.local/state/coop/acp-trace-<pid>.log`.
 
 Creating the file also turns tracing on for servers that are already running, so you can use
 it after a problem appears. The trace contains prompts and file contents; treat it as sensitive.

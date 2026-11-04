@@ -29,7 +29,7 @@ const (
 )
 
 func updateCheckPath(cfg *config.Config) string {
-	return filepath.Join(cfg.BoxHome, "update-check")
+	return filepath.Join(cfg.LocalHome(), "update-check")
 }
 
 // updateCheckDue reports whether the daily check should run: no gate file yet, or the

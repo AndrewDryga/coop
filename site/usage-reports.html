@@ -115,7 +115,7 @@ what you paid. Use <code>coop usage codex@personal</code> (or another provider/a
 and prices the estimate includes.</p>
 <p>Incomplete coverage is marked <code>partial</code>. Missing or unpriced history is never counted as zero.
 Saved Coop turn summaries carry no prices, so the native-history totals leave them out.</p>
-<p>Coop caches the token records it parses under <code>usage-cache</code> in its host configuration folder.
+<p>Coop caches the token records it parses under <code>usage-cache</code> in <code>~/.local/state/coop</code>.
 The cache holds no conversation text. The first check reads the whole history; later checks read
 only the files that changed. A finished check of every provider removes the records of deleted
 files.</p>

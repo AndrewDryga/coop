@@ -75,8 +75,8 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	defer cancel()
 	state, _ := defaultSessionStateRoot()
 	cacheDir := ""
-	if a.cfg.BoxHome != "" {
-		cacheDir = filepath.Join(a.cfg.BoxHome, "usage-cache")
+	if a.cfg.LocalHome() != "" {
+		cacheDir = filepath.Join(a.cfg.LocalHome(), "usage-cache")
 	}
 	cache := agents.NewUsageCache(cacheDir)
 	now := time.Now()

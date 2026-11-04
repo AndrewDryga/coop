@@ -131,6 +131,17 @@ the error names the path and line. An environment override does not let a broken
 process-environment controls, so you can't set them inside `coop.conf`. `COOP_NO_ASDF` and
 `COOP_CONSULT_STREAM_LIMIT` are read in the box, so they belong in `agents/env`.
 
+### What can sync
+
+`~/.config/coop` holds your settings and accounts, so you can sync it across machines with Dropbox or a
+similar service. Two machines refreshing the same single-use sign-in can sign one of them out; run
+`coop login` there if that happens. What belongs to one machine, such as run files, image records, usage
+caches and ACP traces, lives in `$XDG_STATE_HOME/coop`, or `~/.local/state/coop`, and never needs syncing.
+Coop moves earlier versions' records there by itself.
+
+Coop also writes a `.gitignore` in that folder if there is none, so a dotfiles repository keeps only shared
+settings. Accounts and `agents/env` stay out of Git.
+
 Optional [provider usage reports](usage-reports.md) use a separate host-only
 `~/.config/coop/usage-reports.json`. Their API spend is never added to local usage estimates.
 Reporting keys belong in host environment variables, not `coop.conf`, project files or `agents/env`.

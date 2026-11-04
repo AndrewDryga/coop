@@ -116,7 +116,7 @@ first prunes proof containers older than an hour (`runtime.Docker.PruneContainer
 `container prune` with label and `until` filters, which never touches a running container); a prune
 that fails is ignored, and the next proof asks again.
 
-A use record is per *user* (`~/.config/coop/image-use/`, `Config.BoxHome`), while the images are
+A use record is per *user* (`~/.local/state/coop/image-use/`, `Config.LocalHome`), while the images are
 per *daemon*. On the
 usual one-user host that is the same thing; where two users share one Docker, each sees only its own
 records, so A's build can reclaim an image B still runs weekly (B's next launch rebuilds the managed

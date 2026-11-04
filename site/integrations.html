@@ -235,7 +235,7 @@ reaching the box the thread is using after a switch. It also tells you when a se
 <h3 id="tracing-a-session">Tracing a session</h3>
 <p>To record a session&#39;s ACP traffic, run <code>touch ~/.config/coop/acp-debug</code> or set
 <code>COOP_ACP_TRACE=1</code> in the agent server&#39;s environment. Each <code>coop acp</code> server then appends traffic
-between the editor and box to <code>~/.config/coop/acp-trace-&lt;pid&gt;.log</code>.</p>
+between the editor and box to <code>~/.local/state/coop/acp-trace-&lt;pid&gt;.log</code>.</p>
 <p>Creating the file also turns tracing on for servers that are already running, so you can use
 it after a problem appears. The trace contains prompts and file contents; treat it as sensitive.
 See <a href="https://coop.dryga.com/docs.html#troubleshooting">Troubleshooting</a>.</p>

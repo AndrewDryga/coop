@@ -124,6 +124,7 @@ func Main(argv []string) int {
 	}
 	box.ResolveBaseImage(cfg)
 	cfg.EnsureSettingsGitignore()
+	cfg.MoveLocalRecords()
 	if !detachedWorkerReexec(argv) {
 		// Once a day, check for a newer coop in the background and mention it as the command's
 		// parting line (deferred, so it runs on every return path). See startUpdateCheck.

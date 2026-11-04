@@ -29,7 +29,7 @@ and prices the estimate includes.
 Incomplete coverage is marked `partial`. Missing or unpriced history is never counted as zero.
 Saved Coop turn summaries carry no prices, so the native-history totals leave them out.
 
-Coop caches the token records it parses under `usage-cache` in its host configuration folder.
+Coop caches the token records it parses under `usage-cache` in `~/.local/state/coop`.
 The cache holds no conversation text. The first check reads the whole history; later checks read
 only the files that changed. A finished check of every provider removes the records of deleted
 files.

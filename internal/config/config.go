@@ -80,6 +80,9 @@ type Config struct {
 
 	// BoxHome is ~/.config/coop: the home for conf, mcp.json, and agents/.
 	BoxHome string
+	// LocalDir is ~/.local/state/coop: what belongs to this machine and never syncs, such as run files,
+	// image records, caches and traces. Read it through LocalHome.
+	LocalDir string
 
 	conf     map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
 	explicit map[string]bool   // keys the user explicitly set (env or conf) — vs built-in defaults
@@ -297,6 +300,7 @@ func Load() (*Config, error) {
 		ReviewCmd: get("COOP_REVIEW_CMD", ""),
 
 		BoxHome:  boxHome,
+		LocalDir: localDir(),
 		conf:     conf,
 		explicit: explicit,
 	}
@@ -1351,5 +1355,60 @@ func (c *Config) EnsureSettingsGitignore() {
 	}
 	if info, err := os.Stat(c.BoxHome); err == nil && info.IsDir() {
 		_ = WriteFileAtomic(path, []byte(settingsGitignore))
+	}
+}
+
+// localDir is this machine's own Coop folder, or "" when no state folder can be named, as in a test
+// binary that named none. A Config without one keeps these records in its BoxHome.
+func localDir() string {
+	state, err := StateHome()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(state, "coop")
+}
+
+// RunfilesHome is the run files folder in LocalDir, protected like BoxHome: no box mounts it whole. The
+// rest of LocalDir holds the network records, which have their own check. "" without a LocalDir.
+func (c *Config) RunfilesHome() string {
+	if c.LocalDir == "" {
+		return ""
+	}
+	return filepath.Join(c.LocalDir, "runfiles")
+}
+
+// LocalRoot is localDir for code with no Config, or "" when no state folder can be named.
+func LocalRoot() string { return localDir() }
+
+// LocalHome holds what belongs to this machine: records that a sync service would only spread and
+// conflict over. Settings and accounts stay in BoxHome, which people may sync across machines.
+func (c *Config) LocalHome() string {
+	if c.LocalDir != "" {
+		return c.LocalDir
+	}
+	return c.BoxHome
+}
+
+// localRecords are the per-machine records earlier versions kept in BoxHome. run files are not here:
+// a running box may be using them, so the sweep retires that folder instead.
+var localRecords = []string{"image-inputs", "image-meta", "image-use", "usage-cache", "update-check", "temp-reap"}
+
+// MoveLocalRecords brings earlier versions' records to LocalHome once, by rename. They are only
+// records and caches, so a name already there or a move that fails just leaves the old copy unused.
+func (c *Config) MoveLocalRecords() {
+	if c.LocalDir == "" || c.BoxHome == "" || c.LocalDir == c.BoxHome {
+		return
+	}
+	for _, name := range localRecords {
+		from, to := filepath.Join(c.BoxHome, name), filepath.Join(c.LocalDir, name)
+		if _, err := os.Lstat(from); err != nil {
+			continue
+		}
+		if _, err := os.Lstat(to); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if EnsurePrivateDir(c.LocalDir) == nil {
+			_ = os.Rename(from, to)
+		}
 	}
 }

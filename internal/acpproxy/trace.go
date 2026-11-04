@@ -155,7 +155,7 @@ func rotateLocked() io.Writer {
 // pruneOldTraces bounds the directory: keep our own new log plus the newest traceKeepFiles-1 others,
 // deleting older ones (and their .1). A log whose pid is still running is never deleted.
 func pruneOldTraces(keep string) {
-	dir := traceConfigDir()
+	dir := traceLogDir()
 	if dir == "" {
 		return
 	}
@@ -225,7 +225,11 @@ func pidAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM) // EPERM: exists but not ours to signal
 }
 
-// traceConfigDir is coop's config root, so traces land beside the config. Empty when it cannot be
+// traceLogDir is this machine's Coop folder. A trace can hold prompts and file contents, and a settings
+// folder may sync. Empty when it cannot be resolved.
+func traceLogDir() string { return config.LocalRoot() }
+
+// traceConfigDir is coop's config root, where the acp-debug switch lives. Empty when it cannot be
 // resolved, which includes a test binary that named no config home of its own.
 func traceConfigDir() string {
 	dir, err := config.RootDir()
@@ -247,7 +251,7 @@ func traceSentinelExists() bool {
 // tracePath is <config>/acp-trace-<pid>.log — per-pid so concurrent `coop acp` servers (a claude, a
 // codex, …) don't interleave into one file. Falls back to the temp dir if config can't be resolved.
 func tracePath() string {
-	dir := traceConfigDir()
+	dir := traceLogDir()
 	if dir == "" {
 		dir = os.TempDir()
 	}

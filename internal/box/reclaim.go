@@ -65,14 +65,14 @@ func derivedImageProject(img string) string {
 }
 
 func imageUsePath(cfg *config.Config, img string) string {
-	return filepath.Join(cfg.BoxHome, imageUseDirName, safeImageFileName(img))
+	return filepath.Join(cfg.LocalHome(), imageUseDirName, safeImageFileName(img))
 }
 
 // markImageUsed records that this launch used img, so a later build keeps it. Only an image Coop
 // itself builds is recorded: an operator's own image is not Coop's to reclaim, so its use is not
 // Coop's to track. Best-effort — a run must never fail over bookkeeping.
 func markImageUsed(cfg *config.Config, img string) {
-	if cfg == nil || cfg.BoxHome == "" || !reclaimable(img) {
+	if cfg == nil || cfg.LocalHome() == "" || !reclaimable(img) {
 		return
 	}
 	path := imageUsePath(cfg, img)
@@ -125,7 +125,7 @@ func reclaimCandidates(ctx context.Context, rt runtime.Runtime, keep string) ([]
 // recently. A runtime that cannot be asked what exists or what is running removes nothing: not
 // knowing is never permission to delete.
 func reclaimSupersededImages(ctx context.Context, rt runtime.Runtime, cfg *config.Config, keep string) ([]string, error) {
-	if cfg == nil || cfg.BoxHome == "" || !reclaimable(keep) {
+	if cfg == nil || cfg.LocalHome() == "" || !reclaimable(keep) {
 		return nil, nil
 	}
 	markImageUsed(cfg, keep)

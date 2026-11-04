@@ -881,7 +881,7 @@ func validateGeneratedReadOnlyMount(root string, run runCommand, m mount, provid
 // Ordinary runs keep generated mounts in an owner-private runfiles directory; older fixture
 // paths under TMPDIR are still used by tests that exercise the parser directly.
 func generatedFixtureArtifactName(root, source string) (string, error) {
-	if rel, err := filepath.Rel(filepath.Join(root, "xdg", "config", "coop", "runfiles"), source); err == nil && filepath.IsLocal(rel) && rel != "." {
+	if rel, err := filepath.Rel(filepath.Join(root, "xdg", "state", "coop", "runfiles"), source); err == nil && filepath.IsLocal(rel) && rel != "." {
 		parts := strings.Split(rel, string(filepath.Separator))
 		if len(parts) == 2 && strings.HasPrefix(parts[0], "coop-run-") && parts[1] != "" {
 			return parts[1], nil

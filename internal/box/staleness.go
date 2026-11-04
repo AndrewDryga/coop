@@ -49,7 +49,7 @@ func inputsHash(repo string) (hash string, ok bool) {
 
 func inputsHashPath(cfg *config.Config, img string) string {
 	safe := strings.NewReplacer("/", "_", ":", "_").Replace(img)
-	return filepath.Join(cfg.BoxHome, "image-inputs", safe)
+	return filepath.Join(cfg.LocalHome(), "image-inputs", safe)
 }
 
 // StampImageInputs records the inputs hash for a freshly built per-project image, so a
@@ -113,7 +113,7 @@ var baseDefHash = sync.OnceValue(func() string {
 })
 
 func imageMetaPath(cfg *config.Config, img string) string {
-	return filepath.Join(cfg.BoxHome, "image-meta", safeImageFileName(img))
+	return filepath.Join(cfg.LocalHome(), "image-meta", safeImageFileName(img))
 }
 
 // safeImageFileName is one image reference as a file name, for the records Coop keeps per image.

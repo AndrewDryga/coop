@@ -451,7 +451,7 @@ func recordedGeneratedMountPath(path string) bool {
 	if strings.HasPrefix(path, "<root>/tmp/coop-") {
 		return true
 	}
-	rel := strings.TrimPrefix(path, "<root>/xdg/config/coop/runfiles/")
+	rel := strings.TrimPrefix(path, "<root>/xdg/state/coop/runfiles/")
 	if rel == path {
 		return false
 	}

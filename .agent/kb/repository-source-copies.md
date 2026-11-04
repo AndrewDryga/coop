@@ -22,7 +22,7 @@ copy budgets bound untrusted trees.
 
 Temporary copies use canonical paths outside the repository, credential configuration, exact ACP
 transcript roots and companion mounts. Where they are made depends on the run: an ordinary run uses
-the stable protected BoxHome runfiles parent, and a filtered run uses its execution's artifact directory,
+the stable protected LocalHome runfiles parent, and a filtered run uses its execution's artifact directory,
 because a filtered launch accepts only mounts that are canonical descendants of that directory and
 exact-owned cleanup removes it. Either way the copy goes through `composedCopyDir` into
 `compositionArtifactOps.parent`, every copy gets the exposed-roots check, and an empty parent is

@@ -32,6 +32,7 @@ func ConfigExposureRoots(cfg *config.Config) []string {
 	add(cfg.ConfigDir)
 	add(cfg.NativeAuthorityConfig().ConfigDir)
 	add(cfg.BoxHome)
+	add(cfg.RunfilesHome())
 	if cfg.ConfigDir == "" {
 		return roots
 	}

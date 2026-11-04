@@ -15,6 +15,10 @@
   `COOP_HOME` moves the folder on its own. A new `.gitignore` there keeps a dotfiles repository to shared
   settings, so accounts and `agents/env` never reach Git.
 
+- **`~/.config/coop` holds settings and accounts, and per-machine records moved out.** Run files, image
+  records, usage caches and ACP traces now live in `~/.local/state/coop`, so they no longer sync or cause
+  conflict copies. Coop moves earlier records by itself. Accounts and history stay where they were.
+
 - **Terraform works beside hidden `terraform.tfvars` under eBPF.** Each hidden file already in the
   project gets an empty read-only file over it, up to 1,000, so a tool that opens one reads it as empty.
   eBPF still denies everything else, including other spellings and hidden files created later. The box

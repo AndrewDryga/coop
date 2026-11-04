@@ -997,3 +997,39 @@ func TestSettingsGitignoreKeepsOnlySharedSettings(t *testing.T) {
 		t.Error("it created a settings folder")
 	}
 }
+
+// Earlier records move once, an existing one is kept, and settings and accounts stay put.
+func TestMoveLocalRecords(t *testing.T) {
+	home, local := t.TempDir(), filepath.Join(t.TempDir(), "coop")
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(home, "image-meta", "a"), "old")
+	write(filepath.Join(home, "image-use", "b"), "old")
+	write(filepath.Join(local, "image-use", "b"), "new")
+	write(filepath.Join(home, "coop.conf"), "x")
+	write(filepath.Join(home, "agents", "claude", "credentials", "k"), "x")
+	write(filepath.Join(home, "runfiles", "coop-run-1", "f"), "x")
+	c := &Config{BoxHome: home, LocalDir: local}
+	c.MoveLocalRecords()
+	if data, _ := os.ReadFile(filepath.Join(local, "image-meta", "a")); string(data) != "old" {
+		t.Error("the record did not move")
+	}
+	if data, _ := os.ReadFile(filepath.Join(local, "image-use", "b")); string(data) != "new" {
+		t.Error("an existing record was replaced")
+	}
+	for _, kept := range []string{"coop.conf", "agents/claude/credentials/k", "runfiles/coop-run-1/f", "image-use/b"} {
+		if _, err := os.Stat(filepath.Join(home, kept)); err != nil {
+			t.Errorf("%s moved: %v", kept, err)
+		}
+	}
+	if c.LocalHome() != local || (&Config{BoxHome: home}).LocalHome() != home {
+		t.Error("LocalHome chose the wrong folder")
+	}
+}

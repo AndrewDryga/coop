@@ -306,7 +306,7 @@ func TestScriptedACPProviderSwitchIsServedWarm(t *testing.T) {
 	}
 	proc := startScriptedACPEnv(t, coopBin, fixtureBin, repo, tmp, planPath, "claude",
 		map[string]string{"COOP_ACP_WARM": "1", "COOP_ACP_TRACE": "1"}, "claude", "codex")
-	trace := filepath.Join(tmp, "xdg", "coop", fmt.Sprintf("acp-trace-%d.log", proc.cmd.Process.Pid))
+	trace := filepath.Join(tmp, "xdg-state", "coop", fmt.Sprintf("acp-trace-%d.log", proc.cmd.Process.Pid))
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
@@ -837,6 +837,7 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 	values := map[string]string{
 		"HOME":                   filepath.Join(tmp, "home"),
 		"XDG_CONFIG_HOME":        filepath.Join(tmp, "xdg"),
+		"XDG_STATE_HOME":         filepath.Join(tmp, "xdg-state"),
 		"COOP_CONF":              conf,
 		"COOP_CONFIG_DIR":        configDir,
 		"COOP_REPO":              repo,
@@ -859,7 +860,7 @@ func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan str
 	// Stamp the daily temp sweep done, as procharness.NewLayout does. The child would otherwise
 	// sweep this host's real TMPDIR beside its box, with a fixture runtime that reports nothing
 	// mounted.
-	reapMarker := filepath.Join(values["XDG_CONFIG_HOME"], "coop", "temp-reap")
+	reapMarker := filepath.Join(values["XDG_STATE_HOME"], "coop", "temp-reap")
 	if err := os.MkdirAll(filepath.Dir(reapMarker), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -483,7 +483,7 @@ func compositionArtifactExposureRoots(cfg *config.Config, spec RunSpec) []string
 		return roots
 	}
 	for _, root := range ConfigExposureRoots(cfg) {
-		if root != cfg.ConfigDir && root != cfg.BoxHome {
+		if root != cfg.ConfigDir && root != cfg.BoxHome && root != cfg.RunfilesHome() {
 			roots = append(roots, root)
 		}
 	}

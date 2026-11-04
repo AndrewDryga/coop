@@ -93,7 +93,7 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 func TestNativeHomeMountKeepsRepositoryIdentityBehindReviewDecoy(t *testing.T) {
 	root := canonicalTemp(t)
 	repo, other := filepath.Join(root, "repo"), filepath.Join(root, "other")
-	decoy := filepath.Join(root, "xdg", "config", "coop", "runfiles", "coop-run-1", "coop-decoy-dir-1")
+	decoy := filepath.Join(root, "xdg", "state", "coop", "runfiles", "coop-run-1", "coop-decoy-dir-1")
 	for _, dir := range []string{repo, other, decoy} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
@@ -436,7 +436,7 @@ func TestParseRuntimeScopesGeneratedConfigsToScenarioProviderHomes(t *testing.T)
 
 func TestGeneratedFixtureArtifactNameAcceptsOwnedRunfilesOnly(t *testing.T) {
 	root := canonicalTemp(t)
-	runfiles := filepath.Join(root, "xdg", "config", "coop", "runfiles")
+	runfiles := filepath.Join(root, "xdg", "state", "coop", "runfiles")
 	for _, tc := range []struct {
 		path string
 		want string

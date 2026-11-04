@@ -280,7 +280,7 @@ func runSetupSmoke(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 	if home == "" {
 		home = "/home/node"
 	}
-	smokeCfg := &config.Config{ConfigDir: cfg.ConfigDir, BoxHome: cfg.BoxHome, HomeInBox: home, Egress: string(egress.Filtered),
+	smokeCfg := &config.Config{ConfigDir: cfg.ConfigDir, BoxHome: cfg.BoxHome, LocalDir: cfg.LocalDir, HomeInBox: home, Egress: string(egress.Filtered),
 		Memory: cfg.Memory, CPUs: cfg.CPUs, Pids: cfg.Pids, NoNewPrivileges: cfg.NoNewPrivileges}
 	run, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()

@@ -33,7 +33,7 @@ const tempReapTimeout = 30 * time.Second
 var recoverFilesystemAdmissions = box.RecoverFilesystemAdmissions
 
 func tempReapPath(cfg *config.Config) string {
-	return filepath.Join(cfg.BoxHome, "temp-reap")
+	return filepath.Join(cfg.LocalHome(), "temp-reap")
 }
 
 func tempReapDue(path string, now time.Time) bool {
@@ -103,6 +103,16 @@ func reapTemp(rt runtime.Runtime, cfg *config.Config, stamp string) {
 	}
 	if _, err := box.ReapOrphanRunfiles(ctx, rt, cfg, time.Now()); errors.Is(err, box.ErrMountsUnknown) {
 		return
+	}
+	// Earlier versions kept run files beside the settings. A box they started may still use its own, so
+	// the sweep retires them as they end, and the folder goes once it is empty.
+	if cfg.LocalDir != "" && cfg.BoxHome != "" && cfg.LocalDir != cfg.BoxHome {
+		earlier := cfg.Clone()
+		earlier.LocalDir = ""
+		if _, err := box.ReapOrphanRunfiles(ctx, rt, earlier, time.Now()); errors.Is(err, box.ErrMountsUnknown) {
+			return
+		}
+		_ = os.Remove(filepath.Join(cfg.BoxHome, "runfiles"))
 	}
 	// Views of repositories that are gone; the sweep keeps one it cannot judge or that holds an
 	// unfinished rebase or merge.
