@@ -277,6 +277,9 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		forceFailed:    map[string]string{},
 		restartHeld:    map[string]clientLine{},
 	}
+	if opts.NoEditorHostAccess {
+		p.out = newImageGuard(clientOut)
+	}
 	if opts.Restarter != nil {
 		opts.Restarter.bind(p)
 		defer opts.Restarter.bind(nil)
@@ -1510,6 +1513,7 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		}
 		return nil
 	})
+	p.sendHeldText()
 }
 
 // controlMu is held through gate installation and release.

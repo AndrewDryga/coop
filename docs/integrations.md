@@ -255,9 +255,11 @@ a link the box chose. The agent can still ask you a question in the editor. It w
 inside the box as usual, so it sees what is saved on disk, not your unsaved edits. In a test with this
 closed, Claude, Codex, Gemini and Grok all edited project files inside the box.
 
-This does not stop your editor from showing what an agent writes. Zed loads a remote image in an
-agent's message by itself, so a message can still send data to an address outside the rules. co:op
-does not close this yet.
+Zed loads a remote image in an agent's message by itself, which would send data to an address outside
+the rules. A filtered session closes this too: co:op turns any such image in what the box writes into
+a plain link, which you have to click. Code such as `vec![1, 2]` stays as written, though a remote
+image spelled out inside a code block shows a backslash. An image of a file on your computer still
+loads.
 
 An open or offline session still forwards these requests to Zed without filtering them. In a test,
 Gemini's adapter wrote project files this way when the editor offered it, while Claude's and Codex's

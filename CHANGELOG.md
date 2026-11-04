@@ -22,6 +22,9 @@
   puts them in an image, and a Dockerfile that copies that file by name is refused with the reason.
   A project whose build included the file asks for `coop build` once.
 
+- **A filtered box cannot make Zed load a remote image.** An image pointing at an outside address now
+  reaches the thread as a plain link you have to click, even when written one byte at a time.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 

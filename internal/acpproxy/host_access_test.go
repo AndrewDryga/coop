@@ -229,6 +229,11 @@ func TestOpenSessionKeepsItsEditorChannel(t *testing.T) {
 	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != request {
 		t.Fatalf("the editor got %s, want %s", got, request)
 	}
+	image := messageLine(t, "Done! "+evilImage+"!")
+	writeLine(t, h.children[0].outW, image)
+	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != image {
+		t.Fatalf("the editor got %s, want %s", got, image)
+	}
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":7,"result":{"terminalId":"t"}}`)
 	if reply := parse(readLine(t, h.childIn[0])); string(reply.ID) != `7` || reply.Error != nil {
 		t.Fatalf("the box got %+v, want the editor's answer", reply)
