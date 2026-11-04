@@ -59,7 +59,7 @@ func (s *Service) reclaimClosedCompanions(ctx context.Context, sessions []sessio
 		if ctx.Err() != nil {
 			return
 		}
-		if sess.State == session.SessionClosed && sess.ActiveTurnID == "" && sess.QueuedTurnCount == 0 {
+		if s.companionReclaimable(sess) {
 			for _, companion := range sess.Companions {
 				if _, err := os.Lstat(companion.Workspace); !errors.Is(err, os.ErrNotExist) {
 					candidates = append(candidates, candidate{sess.ID, companion})
@@ -93,14 +93,20 @@ func (s *Service) reclaimClosedCompanions(ctx context.Context, sessions []sessio
 	}
 }
 
+// Eligibility bounds candidate work, never deletion authority: the caller below
+// still reloads and checks it under the session runtime lock before reclaiming.
+func (s *Service) companionReclaimable(sess session.Session) bool {
+	return sess.State == session.SessionClosed && sess.Activity == session.ActivityParked &&
+		sess.ActiveTurnID == "" && sess.QueuedTurnCount == 0 &&
+		!s.sessionQuarantined(sess.ID) && !s.runtimeCleanupPending(sess.ID)
+}
+
 func (s *Service) reclaimClosedCompanion(ctx context.Context, id string, binding session.CompanionRepository) error {
 	current, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return err
 	}
-	if current.State != session.SessionClosed || current.Activity != session.ActivityParked ||
-		current.ActiveTurnID != "" || current.QueuedTurnCount != 0 ||
-		s.sessionQuarantined(id) || s.runtimeCleanupPending(id) {
+	if !s.companionReclaimable(current) {
 		return errors.New("session is not proven closed and idle")
 	}
 	if err := s.validateSessionForkAuthority(ctx, current); err != nil {

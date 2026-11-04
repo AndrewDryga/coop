@@ -129,6 +129,92 @@ func TestCompanionGCKeepsActiveUnprovenAndModifiedStorage(t *testing.T) {
 	}
 }
 
+// A protected historical session generated over a thousand reclamation refusals
+// in six hours on 2026-11-04. Protection must exclude it from the work budget.
+func TestCompanionGCDoesNotRepeatedlySelectProtectedSessions(t *testing.T) {
+	for _, protection := range []string{"not_parked", "quarantine", "runtime_cleanup_pending"} {
+		t.Run(protection, func(t *testing.T) {
+			ctx := context.Background()
+			service, owner := companionGCFixture(t, 1, true)
+			stored := owner
+			binding := owner.Companions[0]
+			keep := filepath.Join(owner.Workspace, "unpublished.txt")
+			if err := os.WriteFile(keep, []byte("preserve this work"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			switch protection {
+			case "not_parked":
+				owner.Activity = session.ActivityRunning
+			case "quarantine":
+				service.mu.Lock()
+				service.quarantined[owner.ID] = struct{}{}
+				service.mu.Unlock()
+			case "runtime_cleanup_pending":
+				service.runtimeCleanupFailed(owner.ID)
+			}
+			for pass := 0; pass < 2; pass++ {
+				var result StorageReclaim
+				service.reclaimClosedCompanions(ctx, []session.Session{owner}, &result)
+				if len(result.Problems) != 0 || result.CompanionsReclaimed != 0 {
+					t.Fatalf("pass %d attempted protected companion reclamation: %+v", pass, result)
+				}
+				if !pathExists(binding.Workspace) {
+					t.Fatal("protected companion was removed")
+				}
+			}
+			if protection != "not_parked" {
+				unlock := service.lockSessionRuntime(owner.ID)
+				err := service.reclaimClosedCompanion(ctx, owner.ID, binding)
+				unlock()
+				if err == nil {
+					t.Fatal("authoritative cleanup guard admitted a protected session")
+				}
+			}
+			body, err := os.ReadFile(keep)
+			if err != nil || string(body) != "preserve this work" {
+				t.Fatalf("protected primary work changed: %q, %v", body, err)
+			}
+			saved, err := service.Store().GetSession(ctx, stored.ID)
+			if err != nil || saved.State != stored.State || saved.Revision != stored.Revision {
+				t.Fatalf("GC changed retained session history: %+v, %v", saved, err)
+			}
+		})
+	}
+}
+
+func TestProtectedCompanionsDoNotSpendTheOnlyReclamationSlot(t *testing.T) {
+	ctx := context.Background()
+	service, first := companionGCFixture(t, 1, true)
+	second, err := service.CreateRemoteSession(ctx, "eligible-create", CreateRemoteSessionRequest{
+		Job: first.JobDocument, ExpectedJobDigest: first.JobDigest, Task: "eligible",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = service.Close(ctx, "eligible-close", session.CloseSessionRequest{SessionID: second.ID, ExpectedRevision: second.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, eligible := first, second
+	if protected.ID > eligible.ID {
+		protected, eligible = eligible, protected
+	}
+	service.mu.Lock()
+	service.quarantined[protected.ID] = struct{}{}
+	service.mu.Unlock()
+	limits := storageTestLimits(t)
+	limits.MaxReclaimPerPass = 1
+	mustSetStorageLimits(t, service, limits)
+	var result StorageReclaim
+	service.reclaimClosedCompanions(ctx, []session.Session{first, second}, &result)
+	if result.CompanionsReclaimed != 1 || len(result.Problems) != 0 {
+		t.Fatalf("protected session spent the only slot: %+v", result)
+	}
+	if !pathExists(protected.Companions[0].Workspace) || pathExists(eligible.Companions[0].Workspace) {
+		t.Fatal("eligible storage was starved or protected storage was removed")
+	}
+}
+
 func TestCompanionGCFinishesInterruptedDeletionAndPreservesReplacement(t *testing.T) {
 	ctx := context.Background()
 	service, owner := companionGCFixture(t, 1, true)

@@ -2,8 +2,8 @@
 name: worker-storage-accounting
 description: the worker measures allocated blocks and charges a hardlinked baseline once, stages a discard by renaming before deleting, and closes allocation on used-byte watermarks with a free-byte reserve underneath
 subsystem: worker
-sources: [internal/forkspace/usage.go, internal/forkspace/quota_linux.go, internal/forkspace/state_root.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
-updated: 2026-11-03
+sources: [internal/forkspace/usage.go, internal/forkspace/quota_linux.go, internal/forkspace/state_root.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/discard_stage.go, internal/sessionsvc/storage.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/companion_gc.go, internal/workerconnector/job_source_reuse.go, internal/sessionsvc/checkpoint_storage.go, internal/sessionsvc/workspace.go, internal/workerproto/storage.go, internal/workerconnector/storage.go, docs/session-api.md]
+updated: 2026-11-04
 ---
 
 A worker accounts for its own disk so a control plane can bound workspace growth. Several details are not obvious from the code.
@@ -67,7 +67,9 @@ authorized discard; it does not infer ownership from absence in this store.
 or unmerged primary no longer pins every reproducible companion history. Maintenance examines a
 bounded, rotating number of companions under the session runtime lock, requiring the exact closed
 owner, pinned job binding, original directory identity, independent Git metadata and clean pinned
-contents. Open, running, queued, quarantined and incompletely cleaned runtimes keep their copies.
+contents. Open, running, queued, quarantined and incompletely cleaned runtimes keep their copies. They are excluded before
+spending the companion budget, with eligibility checked again under the runtime lock: a
+protected historical session must not starve eligible copies or generate a refusal every pass.
 It writes a versioned store-bound receipt, atomically renames into private `companion-discards`,
 and durably marks that rename before removal. Recovery pins that staging directory and inode;
 it never readopts the original path after deletion began. Unknown or replaced stages stay protected
