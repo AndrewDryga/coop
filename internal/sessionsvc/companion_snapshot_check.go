@@ -13,11 +13,13 @@ import (
 // CompanionSnapshotCheck is a read-only inventory for the stopped-worker
 // upgrade check. Cache ownership receipts are versioned from their first write.
 type CompanionSnapshotCheck struct {
-	Version int
-	Current int
-	Newer   int
-	Older   int
-	Damaged []string
+	Version     int
+	Current     int
+	Rebuildable int
+	Held        int
+	Newer       int
+	Older       int
+	Damaged     []string
 }
 
 func CheckCompanionSnapshots(stateRoot string) (CompanionSnapshotCheck, error) {
@@ -38,12 +40,21 @@ func CheckCompanionSnapshots(stateRoot string) (CompanionSnapshotCheck, error) {
 		return result, err
 	}
 	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), heldSnapshotPrefix) {
+			result.Held++
+			continue
+		}
 		if !entry.IsDir() || (!validSessionDigest(entry.Name()) && !strings.HasPrefix(entry.Name(), ".snapshot-")) {
 			continue
 		}
 		path := filepath.Join(parent, entry.Name())
-		if _, err := readCompanionSnapshotReceipt(path); err == nil {
+		receipt, receiptErr := readCompanionSnapshotReceipt(path)
+		if receiptErr == nil {
 			result.Current++
+			continue
+		}
+		if errors.Is(receiptErr, errSnapshotOwnershipChanged) && receipt.Complete && receipt.Key == entry.Name() {
+			result.Rebuildable++
 			continue
 		}
 		pinned, err := safefile.OpenRoot(path)

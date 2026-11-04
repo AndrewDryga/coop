@@ -85,7 +85,9 @@ func CheckPrimarySnapshots(stateRoot string) (CompanionSnapshotCheck, error) {
 			case receipt.Version < primarySnapshotVersion:
 				result.Older++
 			default:
-				if _, present, err := forkspace.ReadImmutablePrimarySnapshot(workspace); err != nil || !present {
+				if _, present, err := forkspace.ReadImmutablePrimarySnapshot(workspace); errors.Is(err, forkspace.ErrImmutablePrimaryDirectoryChanged) {
+					result.Held++
+				} else if err != nil || !present {
 					result.Damaged = append(result.Damaged, name+": primary ownership changed")
 				} else {
 					result.Current++

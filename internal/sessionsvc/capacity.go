@@ -14,10 +14,10 @@ const sessionRuntimeSlots = 4
 // RuntimeCapacity measures the same permits admission uses. The three advertised
 // dimensions share this pool; they are not three independent allocations.
 func (s *Service) RuntimeCapacity() workerproto.Capacity {
+	s.runtimeMu.Lock()
 	s.historicalMu.Lock()
 	unknown := len(s.historicalPending) != 0
 	s.historicalMu.Unlock()
-	s.runtimeMu.Lock()
 	free := sessionRuntimeSlots - len(s.runtimeSlots)
 	s.runtimeMu.Unlock()
 	if unknown || free < 0 {
@@ -37,11 +37,16 @@ func (s *Service) RuntimeCapacity() workerproto.Capacity {
 // A permit stays with a session across active/warm reuse. The bool records an
 // uncertain teardown: only a later exact cleanup proof may release that permit.
 func (s *Service) reserveRuntimeSlot(id string) (bool, <-chan struct{}) {
+	if s.testBeforeRuntimeReservation != nil {
+		s.testBeforeRuntimeReservation()
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	// Quarantine may discover pending custody after startup. Read it inside
+	// the same admission lock that publishes that new hold.
 	s.historicalMu.Lock()
 	unknown := len(s.historicalPending) != 0
 	s.historicalMu.Unlock()
-	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
 	if s.runtimeChanged == nil {
 		s.runtimeChanged = make(chan struct{})
 	}
