@@ -3,7 +3,7 @@ name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-09-19
+updated: 2026-11-04
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -46,12 +46,16 @@ beside a Coop-held key; a key only that file holds is refused. One policy cannot
 API to a sign-in and withhold it for a key, so the scope offers each provider's accounts of one
 kind — that of the account the session names (editor target, peer, preset), else of its first
 qualified account (`acpNetworkScope`); explicit targets that mix kinds fail admission. Changing
-settings, defaults, or deleting a role credential after capture refuses the next child rather than
-reusing one account's grant for a sibling or silently dropping the role. The supervisor does not
+settings or deleting a role credential after capture refuses the next child rather than
+reusing one account's grant for a sibling or silently dropping the role. A changed default does not
+refuse: the child pins the default its supervisor admitted (`PinDefaultProfile`, in memory) so a
+`coop credentials ... default` in another terminal cannot end or widen a running session. The supervisor does not
 make an editor-named account active, so classification reads the admitted scope's accounts, never
 the provider's active one.
 
 ## Changelog
+
+- 2026-11-04 - a changed default account no longer refuses filtered children; they pin the admitted default
 - 2026-09-19 - API-key accounts are ACP-eligible again, through the broker; the scope offers one
   credential kind per provider
 - 2026-09-15 - removed reusable API-key accounts from filtered ACP eligibility; their direct

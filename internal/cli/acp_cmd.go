@@ -1065,9 +1065,11 @@ func applyACPAccountBindings(cfg *config.Config, raw string) (map[string]acpAcco
 		if err != nil || target.Provider != provider || target.Account() != binding.Account || binding.Default == "" {
 			return nil, errors.New("filtered ACP account bindings are malformed")
 		}
-		if current := cfg.DefaultProfileOf(provider); current != binding.Default {
-			return nil, fmt.Errorf("%s default account changed from %q to %q after this filtered ACP session started", provider, binding.Default, current)
-		}
+		// The default decides whether provider-wide env authority applies, and the supervisor
+		// admitted the session's network under the default it started with. A default marked
+		// since then (another terminal, `coop credentials ... default`) must not end the session
+		// or widen it, so the child keeps the admitted one.
+		cfg.PinDefaultProfile(provider, binding.Default)
 		cfg.SetActiveProfile(provider, binding.Account)
 	}
 	return bindings, nil

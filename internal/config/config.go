@@ -476,6 +476,16 @@ func (c *Config) SetDefaultProfile(agent, name string) error {
 	return nil
 }
 
+// PinDefaultProfile sets agent's default for this process only, leaving DefaultsFile alone. A child
+// of a long-lived session uses it to keep the default its supervisor admitted, though the person
+// has since marked another one.
+func (c *Config) PinDefaultProfile(agent, name string) {
+	if c.defaultProfiles == nil {
+		c.defaultProfiles = map[string]string{}
+	}
+	c.defaultProfiles[agent] = name
+}
+
 // WithLock runs fn while holding an exclusive advisory lock (flock) on a sibling <path>.lock, so a
 // load→modify→write of path can't lose a concurrent process's update. Fails CLOSED: when the lock
 // file can't be opened or flocked, fn does NOT run and the caller gets an error naming the lock —

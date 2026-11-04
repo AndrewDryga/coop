@@ -957,12 +957,48 @@ func TestFilteredACPAccountBindingsPinTheSupervisorsProfiles(t *testing.T) {
 	if err := validateACPAccountBindings(cfg, box.RunSpec{Agent: "codex", Homes: true, Preset: p}, bindings); err == nil {
 		t.Fatal("a role added after supervisor validation had no exact account binding")
 	}
-	drift := &config.Config{ConfigDir: t.TempDir()}
-	if err := drift.SetDefaultProfile("gemini", "portable"); err != nil {
+}
+
+// TestFilteredACPChildKeepsTheAdmittedDefaultWhenTheDefaultChanges: marking another default while a
+// session runs (a hold, or a move to another account) must not refuse the next child, and the child
+// must not reinterpret provider-wide env authority under the new default.
+func TestFilteredACPChildKeepsTheAdmittedDefaultWhenTheDefaultChanges(t *testing.T) {
+	dir := t.TempDir()
+	supervisor := &config.Config{ConfigDir: dir, RepoOverride: t.TempDir()}
+	signInCred(t, supervisor, "claude", "default")
+	signInCred(t, supervisor, "claude", "personal")
+	a := &app{cfg: supervisor}
+	hold := agents.Target{Provider: "claude", Accounts: []string{"default"}}
+	move := agents.Target{Provider: "claude", Accounts: []string{"personal"}}
+
+	// Another terminal runs `coop credentials claude personal default`; the child loads it from disk.
+	other := &config.Config{ConfigDir: dir}
+	if err := other.SetDefaultProfile("claude", "personal"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyACPAccountBindings(drift, `{"gemini":{"account":"portable","default":"default"}}`); err == nil {
-		t.Fatal("a changed default was allowed to reinterpret provider-wide env authority")
+	for name, lead := range map[string]agents.Target{"hold": hold, "move": move} {
+		_, bindings, err := a.acpFilteredSpawnScope(lead, "")
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		raw, err := json.Marshal(bindings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := other.Clone()
+		got, err := applyACPAccountBindings(child, string(raw))
+		if err != nil {
+			t.Fatalf("%s: child refused after the default changed: %v", name, err)
+		}
+		if child.ActiveProfile("claude") != lead.Account() || child.DefaultProfileOf("claude") != "default" {
+			t.Fatalf("%s: child account %q, default %q", name, child.ActiveProfile("claude"), child.DefaultProfileOf("claude"))
+		}
+		if err := validateACPAccountBindings(child, box.RunSpec{Agent: "claude", Homes: true}, got); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if other.DefaultProfileOf("claude") != "personal" {
+		t.Fatal("the child's pin leaked into the person's default")
 	}
 }
 

@@ -205,9 +205,6 @@ func TestModelProbeFilteredChildCarriesOnlySelectedAccount(t *testing.T) {
 	if !strings.HasPrefix(text, "filtered\nclaude@selected\n") || !strings.Contains(text, `"claude":{"account":"selected","default":"default"}`) || !strings.Contains(text, `"session_id":"acp-catalog-scope"`) || strings.Contains(text, "gemini") {
 		t.Fatalf("child scope = %s", out)
 	}
-	if _, err := applyACPAccountBindings(cfg.Clone(), `{"claude":{"account":"selected","default":"changed"}}`); err == nil {
-		t.Fatal("child accepted default-account drift")
-	}
 	other := agents.Target{Provider: "claude", Accounts: []string{"sibling"}}
 	if child, err := probe.spawnBox(t.Context(), shim, nil, "catalog-other", nil, other, "", true, io.Discard); err == nil {
 		child.Stop()

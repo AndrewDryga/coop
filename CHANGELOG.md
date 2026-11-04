@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Marking another default account no longer ends a running editor session.** A filtered session keeps
+  using the account it started with, so changing the default in another terminal does not make new boxes refuse.
 - **A new box in an editor session no longer reports a stopped service as running.** A service that shut down
   cleanly now starts again. A step counts as finished only if another service waits for it with
   `service_completed_successfully` or it sets `restart: "no"`.
