@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Grok works on a project's first run.** A project with no Grok history no longer says "Not signed
+  in" when your account is fine.
+
 - **A filtered editor session stays in its box.** An agent in a filtered `coop acp` session can no
   longer reach your computer through your editor. Coop does not tell it the editor can read files or
   run terminals, refuses those requests if anything in the box sends one, and hides login buttons

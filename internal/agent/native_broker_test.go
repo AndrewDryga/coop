@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestCodexBrokerDeclaresOnlyAccountDiscoveryProjection(t *testing.T) {
@@ -103,5 +104,36 @@ func TestNativeBrokerPublicSeedsAndDivergence(t *testing.T) {
 				t.Fatal("divergence check discarded local credentials")
 			}
 		})
+	}
+}
+
+// Grok reads this record instead of asking the helper, so a new home cannot start without it. Measured
+// on grok 1.0.44: a record with no user_id reads as not signed in, and an expired one is renewed through
+// the helper on its first use.
+func TestGrokSeedLetsANewHomeStart(t *testing.T) {
+	seed, err := seedGrokBroker(grokNativeScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]string
+	if err := json.Unmarshal(seed.Files["auth.json"], &doc); err != nil {
+		t.Fatal(err)
+	}
+	record := doc[grokNativeScope]
+	for _, field := range []string{"user_id", "email", "create_time", "expires_at"} {
+		if record[field] == "" {
+			t.Errorf("the record has no %s: %s", field, seed.Files["auth.json"])
+		}
+	}
+	if record["key"] != seed.Marker || record["auth_mode"] != "external" || record["oidc_issuer"] != grokIssuer {
+		t.Errorf("the record does not name the broker's helper: %s", seed.Files["auth.json"])
+	}
+	if expires, err := time.Parse(time.RFC3339, record["expires_at"]); err != nil || expires.After(time.Now()) {
+		t.Errorf("the record must have expired, so its first use asks the helper: %q, %v", record["expires_at"], err)
+	}
+	for _, grant := range []string{"refresh_token", "id_token"} {
+		if _, held := record[grant]; held {
+			t.Errorf("the public record holds %s: %s", grant, seed.Files["auth.json"])
+		}
 	}
 }

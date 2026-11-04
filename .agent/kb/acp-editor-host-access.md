@@ -34,9 +34,9 @@ Traps:
   file, so tests build it at runtime.
 - **The trace prints `box→editor` before the guard.** A `refused` line right after it means it never left.
 
-Measured with this closed, one real prompt each: Claude, Codex and Gemini asked the editor for nothing and
-wrote the file inside the box. Before it, Gemini read and wrote through the editor at host paths when
-offered; Claude and Codex never asked. Grok could not be measured: it reported itself not signed in.
+Measured with this closed, one real prompt each: Claude, Codex, Gemini and Grok asked the editor for nothing
+and wrote the file inside the box. Before it, Gemini read and wrote through the editor at host paths when
+offered; Claude and Codex never asked.
 Dropped today with no effect in Zed: `_auth/status_update` (Claude) and `_x.ai/*` (Grok).
 
 Not closed: **Zed loads a remote image in an agent's message by itself** (`resolve_agent_image` in its

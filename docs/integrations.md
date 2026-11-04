@@ -253,7 +253,7 @@ A filtered session closes this way out. co:op does not tell the agent the editor
 such a request if anything in the box sends one, and hides the login buttons. It also refuses to open
 a link the box chose. The agent can still ask you a question in the editor. It works on the project
 inside the box as usual, so it sees what is saved on disk, not your unsaved edits. In a test with this
-closed, Claude, Codex and Gemini all edited project files inside the box.
+closed, Claude, Codex, Gemini and Grok all edited project files inside the box.
 
 This does not stop your editor from showing what an agent writes. Zed loads a remote image in an
 agent's message by itself, so a message can still send data to an address outside the rules. co:op

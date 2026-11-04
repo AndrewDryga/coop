@@ -66,8 +66,18 @@ func seedGrokBroker(selection string) (NativeBrokerSeed, error) {
 		return out, errors.New("unsupported Grok broker selection")
 	}
 	helper, err := nativeJSON(map[string]any{"access_token": out.Marker, "expires_in": 3600, "issuer": grokIssuer})
+	if err != nil {
+		return out, err
+	}
 	out.Helper = helper
 	out.Env["GROK_AUTH_PROVIDER_LABEL"] = "Coop broker - account selected in Coop"
+	// Grok asks the helper only to sign in or to renew a record it already holds, and a headless run
+	// never signs in, so a new home needs this record to start at all. It holds no grant, and it has
+	// expired so that the first request renews it through the helper. Grok refuses one with no user_id.
+	out.Files["auth.json"], err = nativeJSON(map[string]any{grokNativeScope: map[string]any{
+		"key": out.Marker, "auth_mode": "external", "oidc_issuer": grokIssuer, "user_id": nativeBrokerUser, "email": nativeBrokerEmail,
+		"create_time": "2026-01-01T00:00:00Z", "expires_at": "2026-01-01T01:00:00Z",
+	}})
 	return out, err
 }
 
