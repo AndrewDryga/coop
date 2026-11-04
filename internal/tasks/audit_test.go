@@ -5640,8 +5640,9 @@ func TestProtectedGateFiles(t *testing.T) {
 
 // TestUnblockResolved: the host-side preflight returns a blocked task to todo only when its
 // decision.md carries a filled-in Resolution by the SAME bar `coop tasks unblock` applies
-// (decisionResolved) — the untouched stub, a missing decision.md, and a free-form file with no
-// **Resolution:** marker all stay parked (parse-or-park: never act on a format we can't read).
+// (decisionResolved) — the untouched stub, a note that the answer is still to come, a missing
+// decision.md, and a free-form file with no **Resolution:** marker all stay parked (parse-or-park:
+// never act on a format we can't read).
 func TestUnblockResolved(t *testing.T) {
 	root := t.TempDir()
 	mk := func(id, decision string) {
@@ -5660,6 +5661,7 @@ func TestUnblockResolved(t *testing.T) {
 	}
 	mk("answered", "# Decision\n\n**Resolution:** ship it as designed.\n")
 	mk("stub", "# Decision\n\n**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock stub -->\n")
+	mk("pending-note", "# Decision\n\n**Resolution:** pending owner direction.\n")
 	mk("no-decision", "")
 	mk("freeform", "we talked and agreed to do X\n") // no **Resolution:** marker
 
@@ -5674,7 +5676,7 @@ func TestUnblockResolved(t *testing.T) {
 	if data, _ := os.ReadFile(filepath.Join(root, StateTodo, "answered", "log.md")); !strings.Contains(string(data), "unblocked") {
 		t.Errorf("unblock note missing from log.md: %q", data)
 	}
-	for _, id := range []string{"stub", "no-decision", "freeform"} {
+	for _, id := range []string{"stub", "pending-note", "no-decision", "freeform"} {
 		if !pathExists(filepath.Join(root, StateBlocked, id)) {
 			t.Errorf("%s should have stayed blocked", id)
 		}

@@ -10,6 +10,7 @@ import (
 	"os"
 	osuser "os/user"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1153,7 +1154,17 @@ func parseTaskUnblockArgs(args []string) (id, answer string, err error) {
 			return "", "", unknownOptionErr(arg, "coop tasks unblock", nil)
 		}
 	}
-	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
+	answer = strings.TrimSpace(strings.Join(args[1:], " "))
+	// Recording a note that the answer is still to come would put the task in todo with its question
+	// open, the state lint rejects, under a line saying the answer was saved.
+	if answer != "" && !resolutionIsAnswer(answer) {
+		return "", "", &ui.UsageError{
+			Headline: fmt.Sprintf("%q reads as no answer yet", answer),
+			Cause:    waitingAnswerNote,
+			Rows:     [][2]string{{"Example:", fmt.Sprintf("coop tasks unblock %s \"<answer>\"", args[0])}, {"Help:", "coop help tasks unblock"}},
+		}
+	}
+	return args[0], answer, nil
 }
 
 func parseTaskParkArgs(args []string) (id, reason string, err error) {
@@ -1298,7 +1309,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	if answer == "" && t.HasDecision && !resolved {
 		return 2, &ui.UsageError{
 			Headline: fmt.Sprintf("Task %q has no resolution yet", t.ID),
-			Cause:    "Write the **Resolution:** in its decision.md, or give the answer here.",
+			Cause:    "Write the **Resolution:** in its decision.md, or give the answer here.\n" + waitingAnswerNote,
 			Rows:     [][2]string{{"Example:", fmt.Sprintf("coop tasks unblock %s \"<answer>\"", args[0])}, {"Help:", "coop help tasks unblock"}},
 		}
 	}
@@ -1347,44 +1358,61 @@ func recordResolution(decPath, answer string) error {
 	return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(out))
 }
 
-// decisionResolved reports whether a decision.md has a filled-in Resolution (a human's answer),
-// as opposed to the empty/placeholder line `coop tasks block` seeds. lint uses it: a resolved
-// decision rides along on an unblocked (todo) task as its audit trail, but an unresolved one on a
-// non-blocked task is the inconsistency to flag.
+// decisionResolved reports whether a decision.md holds a human's answer (decisionResolution). lint
+// uses it: a resolved decision rides along on an unblocked (todo) task as its audit trail, but an
+// unresolved one on a non-blocked task is the inconsistency to flag.
 func decisionResolved(decPath string) (bool, error) {
-	taskRoot, err := OpenTaskMetadataRoot(filepath.Dir(decPath))
-	if err != nil {
-		return false, err
-	}
-	defer taskRoot.Close()
-	body, exists, err := readOptionalTaskMetadataFile(taskRoot, filepath.Base(decPath))
-	if err != nil || !exists {
-		return false, err
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		if r, ok := strings.CutPrefix(line, decisionResolutionPrefix); ok {
-			r = strings.TrimSpace(r)
-			return r != "" && !strings.HasPrefix(r, "<!--"), nil
-		}
-	}
-	return false, nil
+	answer, err := recordedAnswer(decPath)
+	return answer != "", err
 }
 
-// decisionResolution returns the human's answer from a decision.md body, or "" when it carries only
-// the placeholder. Shared with decisionResolved's predicate so "is it answered" and "what was the
-// answer" can never disagree.
+// decisionResolution returns the human's answer from a decision.md body, or "" when its Resolution
+// line holds none. Every reader comes through here, so "is it answered" and "what was the answer"
+// can never disagree.
 func decisionResolution(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		if r, ok := strings.CutPrefix(line, decisionResolutionPrefix); ok {
-			r = strings.TrimSpace(r)
-			if r == "" || strings.HasPrefix(r, "<!--") {
-				return ""
+			if r = strings.TrimSpace(r); resolutionIsAnswer(r) {
+				return r
 			}
-			return r
+			return ""
 		}
 	}
 	return ""
 }
+
+// resolutionIsAnswer reports whether text on the Resolution line is an answer: not empty, not a
+// comment or <…> placeholder, not punctuation alone, and not a note that the answer is still to come.
+func resolutionIsAnswer(r string) bool {
+	if strings.HasPrefix(r, "<!--") || isPlaceholder(r) {
+		return false
+	}
+	words := strings.FieldsFunc(strings.ToLower(r), func(c rune) bool { return !unicode.IsLetter(c) && !unicode.IsNumber(c) })
+	return len(words) > 0 && !waitingResolution.MatchString(strings.Join(words, " "))
+}
+
+// waitingResolution matches a Resolution, reduced to its lowercase words, that opens by saying the
+// answer has not come yet. Agents have filled the line with notes such as "pending owner direction",
+// and the owner took them for answers. Only the opening is read, because a note can run on ("Pending
+// the user's answer. The work so far is committed.") while an answer leads with the decision
+// ("Publish it, the pending review is fine"). That asks "Pending review is fine, publish it" again:
+// nothing here can tell it from a note, and asking is the safe way to be wrong.
+//
+// Words that decide nothing may come first ("owner decision pending"). The last group counts only
+// alone, since each of them also starts a real answer ("None of them", "Not yet, after the launch").
+// An apostrophe splits a word in two, hence the "s" of "owner's" and "hasn t".
+var waitingResolution = regexp.MustCompile(
+	`^(((the|your|this) )?(([0-9]+|blocked|still|currently|remains|open|is|has|owner|user|human|s|` +
+		`question|answer|decision|resolution|response|input|direction|approval|review) )+)?` +
+		`((pending|await(ing|ed|s)|wait(ing|s) (for|on|to)|tbd|tbc|undecided|unanswered|unresolved|open question|` +
+		`to be (decided|determined|answered|confirmed|resolved|filled)|` +
+		`(not|hasn t) (yet )?(answered|decided|resolved|responded)|` +
+		`(no (answer|decision|resolution|response)|none|nothing) yet|` +
+		`needs? ((your|an?|the|owner|user|human|s) )*(answer|decision|input|direction|response))( |$)|` +
+		`(waiting|todo|to do|open|none|not yet|no (answer|decision|resolution|response))$)`)
+
+// waitingAnswerNote is what a person is told wherever an answer is refused for reading as a note.
+const waitingAnswerNote = "Start the answer with what to do: text that opens with a word like pending, awaiting or TBD reads as still to come."
 
 type unblockStageError struct {
 	stage, artifact, state string
@@ -2232,7 +2260,7 @@ func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer
 	return "", WriteDecision(taskDir, id, title, d)
 }
 
-// recordedAnswer is the human's answer in a decision.md, or "" when it carries only the placeholder.
+// recordedAnswer is the human's answer in a decision.md (decisionResolution), or "" when it holds none.
 func recordedAnswer(decPath string) (string, error) {
 	body, _, err := readOptionalTaskMetadataPath(decPath)
 	if err != nil {
@@ -2986,17 +3014,11 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		} else {
 			fprintDecisionBody(out, p, string(body))
 		}
-		resolved, err := decisionResolved(decPath)
-		if err != nil {
-			return -1, err
-		}
 		prompt := "Your answer (Enter to skip):"
-		if resolved {
+		if answer := decisionResolution(string(body)); answer != "" {
 			// The existing answer is shown, and Enter keeps it — the safe key must never be the
 			// one that silently discards a decision somebody already made.
-			if answer := decisionResolution(string(body)); answer != "" {
-				fmt.Fprintf(out, "  %s %s\n", p.Dim("Answered:"), answer)
-			}
+			fmt.Fprintf(out, "  %s %s\n", p.Dim("Answered:"), answer)
 			prompt = "Your answer (Enter to keep it):"
 		}
 		key := func(k string) string { return p.Cyan(k) }
@@ -3074,6 +3096,10 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		case ":n", "":
 			i++
 		default:
+			if !resolutionIsAnswer(line) {
+				fmt.Fprintf(out, "  %s\n", waitingAnswerNote)
+				continue // nothing saved: ask this question again
+			}
 			if t.State == StateBlocked {
 				if err := resolveAndUnblock(project, ref.root, t, line); err != nil {
 					return -1, unblockRetryError(t.ID, true, err)

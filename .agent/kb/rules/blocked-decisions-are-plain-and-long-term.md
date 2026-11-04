@@ -4,7 +4,7 @@ description: a decision.md says in plain English why the task is blocked and wha
 scope: agent-workflow
 sources: [.agent/tasks/README.md, internal/tasks/channel.go, internal/tasks/cmd.go, AGENTS.md]
 check: none
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 # Write each blocked decision in plain English and recommend the long-term pick
@@ -32,13 +32,22 @@ a CI run): a question the repo has already answered is closed with that evidence
 asked that every blocked task say why it is blocked, what decision is needed from them, and which
 option is best for the product long term. A sweep that day found decisions dense with internal
 names, two asking for a push that had already happened, and one recommending against the owner's
-recorded wish for short release notes.
+recorded wish for short release notes. On 2026-11-03 agents had written notes such as
+`pending owner direction` on two Resolution lines, and the owner took one of those questions for
+finished.
 
 **How to apply:** keep the `**Blocks:**`, single-line `**Recommendation:**` and `**Resolution:**`
-lines that `coop tasks decisions` reads. Details an agent needs to resume go in log.md and
-state.md, not decision.md. Related: [[cli-text-is-plain-english]].
+lines that `coop tasks decisions` reads. The `**Resolution:**` line belongs to the person answering:
+leave its placeholder alone, even to say the task is still waiting. Coop asks again when the line
+opens with a word like pending, awaiting or TBD, but anything else there reads as the human's answer,
+and the loop's preflight can send the task back to work on it. Details an agent needs to resume go in
+log.md and state.md, not decision.md. Related: [[cli-text-is-plain-english]].
 
 ## Changelog
+- 2026-11-04 — the Resolution line belongs to the person answering, and Coop now reads a pending
+  note on it as no answer, in every command. Swept the 108 decision.md files in this queue: 96 hold
+  text on the line, and only one reads as a note (a done task's `Pending the user's answer.`), so no
+  real answer changes meaning. The two blocked tasks that started this had been reset by hand.
 - 2026-10-17 — both writers now ask for it: `coop tasks block --why` and the in-box `tasks_block`
   tool's `why` write `**Why it is blocked:**` after `**Blocks:**` and put the one-line question in
   the heading; the editable scaffold carries a placeholder for it, and both task READMEs show it.

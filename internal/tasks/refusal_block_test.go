@@ -189,6 +189,7 @@ func TestTaskActionParsersRefuseInTheSharedBlock(t *testing.T) {
 		{[]string{"block", "x", "--why", "w"}, 2, `Missing --question, --option, --recommendation for "coop tasks block"`},
 		{[]string{"decisions", "--bogus"}, 2, `Unknown option "--bogus" for "coop tasks decisions"`},
 		{[]string{"decisions", "extra"}, 2, `Unexpected argument "extra" for "coop tasks decisions"`},
+		{[]string{"unblock", "x", "pending", "owner", "direction"}, 2, `"pending owner direction" reads as no answer yet`},
 	} {
 		code, err := CmdTasks(Host{}, cfg, tc.args)
 		if got := refusal(t, err).Headline; code != tc.code || got != tc.headline {

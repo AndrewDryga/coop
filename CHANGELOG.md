@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A pending note is no longer taken for your answer.** A blocked task whose `**Resolution:**` line
+  only says the answer is still to come, such as `pending owner direction` or `TBD`, now shows
+  `Needs your answer`, `coop tasks decisions -i` asks it, and `coop loop` leaves it blocked. A real
+  answer can still use the word: `Publish it, the pending review is fine` counts. One that opens with
+  it is asked again, so start with what to do.
+
 - **Editor messages are easier to read.** What Coop writes into an editor thread now has a title on
   its own line and short paragraphs, and every command to run is a code block you can copy.
 

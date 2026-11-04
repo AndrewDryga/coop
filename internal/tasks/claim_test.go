@@ -315,6 +315,7 @@ func TestClaimRefusesBlockedAndDoneTasks(t *testing.T) {
 		want, notWant   string
 	}{
 		"blocked with an open decision": {StateBlocked, renderDecisionScaffold(id, "Pick storage"), `coop tasks unblock ` + id + ` "<answer>"`, ""},
+		"blocked with a pending note":   {StateBlocked, "# Decision: Which store?\n\n**Resolution:** pending owner direction\n", `coop tasks unblock ` + id + ` "<answer>"`, ""},
 		"blocked with an answer":        {StateBlocked, "# Decision: Which store?\n\n**Resolution:** Postgres.\n", "coop tasks unblock " + id, "<answer>"},
 		"blocked without a decision":    {StateBlocked, "", "coop tasks unblock " + id, "<answer>"},
 		"done":                          {StateDone, "", "Completed work stays in the archive", "unblock"},
