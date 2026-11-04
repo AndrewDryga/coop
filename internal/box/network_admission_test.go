@@ -110,7 +110,9 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 		"repo widening is pending":   {remembered: true, projectYAML: "box:\n  egress: open\n", want: "pending"},
 		"unapproved open is pending": {projectYAML: "box:\n  egress: open\n", want: "pending"},
 		// COOP_EGRESS yields to a remembered approval, so the rules are a real request to review.
-		"host preference keeps rules pending": {explicitEnv: "offline", projectYAML: projectRuleYAML, want: "pending"},
+		"offline sets rules aside": {explicitEnv: "offline", projectYAML: projectRuleYAML, want: "none"},
+		"offline over an approval": {remembered: true, explicitEnv: "offline", want: "none"},
+		"open keeps rules pending": {explicitEnv: "open", projectYAML: projectRuleYAML, want: "pending"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, repo, root := admissionFixture(t)
@@ -865,9 +867,9 @@ func TestBrokenProjectFileKeepsItsCause(t *testing.T) {
 	}
 }
 
-// What HoldPending does not reach. Another caller still refuses a pending request. A withdrawal waits
-// for a person with nothing started. Offline stays offline: a filtered holding child would give the
-// session a network its posture denies. Each names the review as ever.
+// What HoldPending does not reach. Another caller still refuses a pending request, and a withdrawal
+// waits for a person with nothing started. COOP_EGRESS=offline never holds: a filtered holding child
+// would give the session a network it denies, so it starts offline and asks for nothing.
 func TestHeldAdmissionStillRefuses(t *testing.T) {
 	refused := func(t *testing.T, err error) {
 		t.Helper()
@@ -890,7 +892,13 @@ func TestHeldAdmissionStillRefuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		loaded.ConfigDir = cfg.ConfigDir
-		refused(t, heldAdmission(t, loaded, repo))
+		// Nothing to review and nothing to hold: it starts, offline, with no filtered child.
+		if err := heldAdmission(t, loaded, repo); err != nil {
+			t.Fatalf("offline admission = %v, want it to start offline", err)
+		}
+		if loaded.Egress != string(egress.None) {
+			t.Fatalf("mode = %q, want offline", loaded.Egress)
+		}
 	})
 	// A holding child runs filtered, so where filtered cannot run nothing can hold the session. The
 	// review still comes first: the person acts on it before the runtime matters.

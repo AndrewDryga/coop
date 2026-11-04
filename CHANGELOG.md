@@ -14,10 +14,9 @@
   Drive or OneDrive, following links. The new `COOP_HOME` moves Coop's settings folder on its own. Coop
   never moves your files itself.
 
-- **A run warns when a saved approval outranks `COOP_EGRESS`.** `COOP_EGRESS=offline` in a project with
-  approved network rules ran filtered, with no word about it, and could reach those sites. It still
-  does, as documented, but it now says so and names `--egress offline`. The docs no longer offer
-  `COOP_EGRESS=offline` as the way to turn networking off.
+- **`COOP_EGRESS=offline` is always offline.** In a project with approved network rules it ran filtered
+  and could reach those sites. Now only an `--egress` flag outranks it. A saved approval still outranks
+  `COOP_EGRESS=filtered` and `open`, and the run warns.
 
 - **`coop loop --review-task` names the whole ID** when you give part of a completed task's ID, instead
   of saying no completed task matches.

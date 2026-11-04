@@ -23,9 +23,9 @@ There are two other modes. `open` allows all network traffic, and `offline` turn
 Choose one for a single run with `--egress open` or `--egress offline`. The project's network
 rules do not apply to that run, approved or not, and its network section says
 `This project's network rules do not apply to this run.` Set `COOP_EGRESS` to
-change the mode for your runs, or `box.egress` to change it for one project. A project's saved
-approval outranks `COOP_EGRESS`, and the run warns when it does, so use `--egress` when one run must
-be offline. The command
+change the mode for your runs, or `box.egress` to change it for one project. `COOP_EGRESS=offline` always keeps a run offline
+unless you pass `--egress`. For `filtered` and `open`, a project's saved approval outranks
+`COOP_EGRESS`, and the run warns. The command
 line, `COOP_EGRESS` and the project file use the same three words. A project's request for
 `open` needs your approval on the host. Running `coop init` again leaves an existing project
 file unchanged.

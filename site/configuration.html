@@ -202,8 +202,9 @@ or outside a co:op project. It needs Docker.</li>
 or credentials over the network. Installs and model API calls stop working too, so you must
 choose this setting explicitly.</li>
 </ul>
-<p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>. A project&#39;s saved <code>coop approve</code> decision also
-overrides it. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in <code>.agent/project.yaml</code>. When none of
+<p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>. <code>COOP_EGRESS=offline</code> always keeps a run offline unless
+you pass that flag. For <code>filtered</code> and <code>open</code>, a project&#39;s saved <code>coop approve</code> decision overrides
+<code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in <code>.agent/project.yaml</code>. When none of
 these chooses a mode, the box is filtered.</p>
 <p>The resource and privilege limits (<code>COOP_PIDS</code>, <code>COOP_MEMORY</code>, <code>COOP_CPUS</code> and
 <code>COOP_NO_NEW_PRIVILEGES</code>) apply on Docker. co:op currently skips them with Apple&#39;s <code>container</code>

@@ -44,8 +44,9 @@ Choose one of these values for `COOP_EGRESS`:
   or credentials over the network. Installs and model API calls stop working too, so you must
   choose this setting explicitly.
 
-An `--egress` flag overrides `COOP_EGRESS`. A project's saved `coop approve` decision also
-overrides it. `COOP_EGRESS` itself overrides `box.egress` in `.agent/project.yaml`. When none of
+An `--egress` flag overrides `COOP_EGRESS`. `COOP_EGRESS=offline` always keeps a run offline unless
+you pass that flag. For `filtered` and `open`, a project's saved `coop approve` decision overrides
+`COOP_EGRESS`, and the run warns. `COOP_EGRESS` itself overrides `box.egress` in `.agent/project.yaml`. When none of
 these chooses a mode, the box is filtered.
 
 The resource and privilege limits (`COOP_PIDS`, `COOP_MEMORY`, `COOP_CPUS` and

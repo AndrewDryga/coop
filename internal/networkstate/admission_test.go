@@ -150,6 +150,9 @@ func TestAdmissionDirectPresenceMatrix(t *testing.T) {
 							want = *value
 						}
 					}
+					if invocation == nil && preference != nil && *preference == egress.None {
+						want = egress.None // COOP_EGRESS=offline outranks a saved approval
+					}
 					input := Admission{InvocationMode: invocation, HostPreference: preference, ProjectMode: project}
 					got, err := input.resolveMode(approval)
 					if err != nil || got != want {
@@ -249,6 +252,9 @@ func TestAdmissionRejectsInvalidShadowedModesAndRuleConflicts(t *testing.T) {
 				// Only a one-off open or offline run sets the project's rules aside; every other
 				// source leaves them a request that still needs a human, as an unapproved open is.
 				want := source != "invocation" && (!operator || source == "project" && mode == egress.Open)
+				if source == "preference" && mode == egress.None {
+					want = false // COOP_EGRESS=offline uses no rules, so it asks for nothing
+				}
 				if (pending != nil) != want {
 					t.Fatalf("%s %s: pending = %q, want pending %v", source, mode, pending.Sentence(), want)
 				}
@@ -307,7 +313,6 @@ func TestAdmitKeepsPostureWithoutRewritingOrRecapturing(t *testing.T) {
 	for _, input := range []Admission{
 		{}, // deleting every repo request does not reset posture
 		{HostPreference: admissionMode(egress.Open), ProjectMode: admissionMode(egress.Open)},
-		{HostPreference: admissionMode(egress.None)},
 	} {
 		got, err := s.Admit(project, input)
 		if err != nil || got.Mode != egress.Filtered || len(got.Grants) != 0 {

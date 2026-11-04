@@ -58,7 +58,7 @@ spend with the provider.
 
 The provider folders Coop mounts do not give the agent access to another repository's provider
 files. Open networking still lets it send traffic to any destination. Use filtered networking
-to restrict destinations, or `--egress offline` to turn networking off. Offline runs receive
+to restrict destinations, or `--egress offline` or `COOP_EGRESS=offline` to turn networking off. Offline runs receive
 no provider credentials.
 
 Manage shared accounts on the host with `coop login` and `coop credentials … rm`. Do not use a

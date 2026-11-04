@@ -108,9 +108,9 @@ started outside a co:op project, and one in a project whose <code>.agent/project
 Choose one for a single run with <code>--egress open</code> or <code>--egress offline</code>. The project&#39;s network
 rules do not apply to that run, approved or not, and its network section says
 <code>This project&#39;s network rules do not apply to this run.</code> Set <code>COOP_EGRESS</code> to
-change the mode for your runs, or <code>box.egress</code> to change it for one project. A project&#39;s saved
-approval outranks <code>COOP_EGRESS</code>, and the run warns when it does, so use <code>--egress</code> when one run must
-be offline. The command
+change the mode for your runs, or <code>box.egress</code> to change it for one project. <code>COOP_EGRESS=offline</code> always keeps a run offline
+unless you pass <code>--egress</code>. For <code>filtered</code> and <code>open</code>, a project&#39;s saved approval outranks
+<code>COOP_EGRESS</code>, and the run warns. The command
 line, <code>COOP_EGRESS</code> and the project file use the same three words. A project&#39;s request for
 <code>open</code> needs your approval on the host. Running <code>coop init</code> again leaves an existing project
 file unchanged.</p>

@@ -174,6 +174,7 @@ func TestPostureSourceNamesTheDecidingInput(t *testing.T) {
 	}{
 		{"nothing", networkstate.Admission{}, nil, AccessFromDefault},
 		{"approval wins", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, approval, AccessFromApproval},
+		{"offline beats an approval", networkstate.Admission{HostPreference: ptrMode(egress.None)}, approval, AccessFromHost},
 		{"host preference", networkstate.Admission{HostPreference: &open, ProjectMode: &filtered}, nil, AccessFromHost},
 		{"project mode", networkstate.Admission{ProjectMode: &filtered}, nil, AccessFromProject},
 		{"project rules", networkstate.Admission{Requests: []egress.Rule{rule}}, nil, AccessFromProject},
@@ -208,3 +209,5 @@ func TestApprovalModeAsksAboutTheRepositorysOwnRequest(t *testing.T) {
 		t.Errorf("nothing at all = %q, want filtered", got)
 	}
 }
+
+func ptrMode(mode egress.Mode) *egress.Mode { return &mode }

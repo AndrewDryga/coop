@@ -95,6 +95,8 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 // repo precisely so deleting YAML cannot change what a human approved.
 func postureSource(input networkstate.Admission, approval *networkstate.Approval) string {
 	switch {
+	case input.HostOffline():
+		return AccessFromHost
 	case approval != nil:
 		return AccessFromApproval
 	case input.HostPreference != nil:

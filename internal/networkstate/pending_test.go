@@ -34,6 +34,7 @@ func TestPendingApprovalIsTheExactRequest(t *testing.T) {
 		"fresh open under --egress":     {input: Admission{ProjectMode: open, InvocationMode: filtered}},
 		"fresh open under COOP_EGRESS":  {input: Admission{ProjectMode: open, HostPreference: none}},
 		"fresh rules":                   {input: Admission{Requests: []egress.Rule{a}}, want: "has not been approved"},
+		"changed rules under offline":   {input: Admission{Requests: []egress.Rule{b}, HostPreference: none}, approval: approvedFiltered},
 		"fresh rules under --egress":    {input: Admission{Requests: []egress.Rule{a}, InvocationMode: filtered}, want: "has not been approved"},
 		"approved, same":                {input: Admission{Requests: []egress.Rule{a}}, approval: approvedFiltered},
 		"approved, same with mode":      {input: Admission{ProjectMode: filtered, Requests: []egress.Rule{a}}, approval: approvedFiltered},
@@ -55,7 +56,7 @@ func TestPendingApprovalIsTheExactRequest(t *testing.T) {
 		"approved, rule added, --egress offline": {input: Admission{Requests: []egress.Rule{a, b}, InvocationMode: none}, approval: approvedFiltered},
 		"service rewritten under --egress open":  {input: Admission{Requests: []egress.Rule{service}, Services: map[string]string{"db": strings.Repeat("2", 64)}, InvocationMode: open}, approval: approvedService},
 		// COOP_EGRESS yields to a remembered approval, so approving the rules is still a real choice.
-		"fresh rules under COOP_EGRESS offline": {input: Admission{Requests: []egress.Rule{a}, HostPreference: none}, want: "has not been approved"},
+		"fresh rules under COOP_EGRESS offline": {input: Admission{Requests: []egress.Rule{a}, HostPreference: none}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pending, err := tc.input.pendingApproval(tc.approval)

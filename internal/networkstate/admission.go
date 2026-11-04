@@ -91,14 +91,15 @@ func (p *PendingApproval) Sentence() string {
 // file's "open" is moot and refusing the run over it would protect nothing.
 // The same holds for the whole request under a one-off --egress open or
 // offline: rules only add to filtered access, so that run does not use them.
-// COOP_EGRESS is not a one-off: a remembered approval outranks it, so
-// approving the request still changes what later runs get.
+// COOP_EGRESS open or filtered is not a one-off: a remembered approval outranks
+// it, so approving the request still changes what later runs get. COOP_EGRESS
+// offline uses no rules and outranks every approval, so it asks for nothing.
 func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error) {
 	rules, err := egress.NormalizeRules(a.Requests)
 	if err != nil {
 		return nil, err
 	}
-	if a.InvocationMode != nil && *a.InvocationMode != egress.Filtered {
+	if a.InvocationMode != nil && *a.InvocationMode != egress.Filtered || a.HostOffline() {
 		return nil, nil
 	}
 	const asks = "this project asks for network access that has not been approved"
@@ -313,6 +314,11 @@ func (s *Store) authorized(project string, input Admission) (string, egress.Mode
 	return id, mode, operator, nil
 }
 
+// HostOffline reports a COOP_EGRESS=offline that decides this run: only a flag can outrank it.
+func (a Admission) HostOffline() bool {
+	return a.InvocationMode == nil && a.HostPreference != nil && *a.HostPreference == egress.None
+}
+
 func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	for _, field := range []struct {
 		name  string
@@ -337,6 +343,12 @@ func (a Admission) resolveMode(approval *Approval) (egress.Mode, error) {
 	// set aside (a one-off --egress) or a request still waiting for a human (pendingApproval), and
 	// the launcher refuses its own rule flags by name; Compile refuses rules outside filtered too.
 	mode := egress.Filtered
+	// COOP_EGRESS=offline is a promise that nothing leaves the box, so no saved approval can widen it.
+	// A remembered approval still outranks the other COOP_EGRESS values, and only a flag typed for this
+	// run outranks offline.
+	if a.HostOffline() {
+		return egress.None, nil
+	}
 	for _, value := range []*egress.Mode{a.InvocationMode, remembered, a.HostPreference, a.ProjectMode} {
 		if value != nil {
 			mode = *value
