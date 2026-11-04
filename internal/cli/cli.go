@@ -547,9 +547,6 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		return 0, nil
 	}
 	cmd := path[0]
-	if len(path) > 1 && cmd == "net" && path[1] == "approve" {
-		return 2, approveMovedError()
-	}
 	// A subcommand is checked against its family's OWN verb list first: a typo'd leaf is an error,
 	// never a silent fallback to the family page it isn't part of. A verb with its own page — the
 	// `net` family's leaves — is keyed by the full path, so `coop help net blocked` and

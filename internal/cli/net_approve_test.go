@@ -771,18 +771,6 @@ func directoryListing(t *testing.T, roots ...string) string {
 	return b.String()
 }
 
-func TestRetiredNetApprovePointsAtApprove(t *testing.T) {
-	code, err := (&app{}).cmdNet([]string{"approve"})
-	if code != 2 || err == nil || !strings.Contains(err.Error(), `"coop net approve" has moved`) || !strings.Contains(err.Error(), "coop approve") {
-		t.Fatalf("coop net approve = (%d, %v)", code, err)
-	}
-
-	code, err = helpForPath([]string{"net", "approve"}, nil, true)
-	if code != 2 || err == nil || !strings.Contains(err.Error(), `"coop net approve" has moved`) || !strings.Contains(err.Error(), "coop approve") {
-		t.Fatalf("coop help net approve = (%d, %v)", code, err)
-	}
-}
-
 // A change that was saved but could not reach running editor sessions is still the success a person
 // confirmed: it gets its ✓ and one caution, exits 0, and only a real failure exits 1.
 func TestNetChangeSavedButUntoldIsASuccessWithACaution(t *testing.T) {

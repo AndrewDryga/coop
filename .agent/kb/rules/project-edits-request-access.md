@@ -10,7 +10,7 @@ updated: 2026-11-04
 # Approve added access, not ordinary development
 
 Project files request permissions; they never grant them. The approved public interface is one
-host-side `coop approve`, replacing `coop net approve`, for network permissions, service startup
+host-side `coop approve`, for network permissions, service startup
 and access to existing outside data. Store grants outside everything exposed to agents/services.
 Check the effective permissions before starting affected code or mounting protected data. Use the
 same captured configuration for checking and execution; save only what the operator reviewed.

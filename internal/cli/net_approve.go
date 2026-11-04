@@ -236,10 +236,6 @@ const (
 	serviceRulesApproved = "Rules added and approved for new runs and running editor sessions"
 )
 
-func approveMovedError() error {
-	return &ui.UsageError{Headline: `"coop net approve" has moved`, Rows: [][2]string{{"Use:", "coop approve"}}}
-}
-
 // netTerminalOnly refuses a decision a pipe cannot make. An approval and a
 // withdrawal are both a human's: an unattended run answering "y" is not one.
 func netTerminalOnly(command string) error {

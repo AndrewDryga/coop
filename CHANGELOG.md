@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop net approve` is gone.** It has only pointed at `coop approve` since 10.1.2, and now gets
+  the usual unknown-command error.
+
 - **Controller jobs can use their project's tools and test services.** An explicit frozen runtime
   grant selects the project Dockerfile and Compose stack. Each job gets its own database network
   and named data; required setup failures stop execution, and final cleanup removes owned services

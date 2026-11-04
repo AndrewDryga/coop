@@ -95,7 +95,7 @@ did), REPAIR (what coop normally does itself). Its verbs differ in what they rea
 | verb | reads |
 | --- | --- |
 | bare `coop net` | this project's mode and its cause, the approved project rules, and — only when the file and the approval differ — the same access change `approve` would show; creates no owner key. Setup health and history cost no line: a launch sets the host up itself |
-| `approve` (top-level `coop approve` since 2026-09-13; `coop net approve` only points there) | TTY only; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed: …`, nothing written, exit 0, and when a filtered box would still refuse on services with no rules (`box.ProjectServicesRefusal`, the check the editor's wait asks) that refusal as a caution, since the line alone reads as if nothing is wrong. Only explicit `--case-exposure` also reviews mount-fallback file access; ordinary network approval never computes or saves that permission. |
+| top-level `coop approve` | TTY only; the exact snapshot of `.agent/project.yaml` (mode, rules, service digests) diffed against the remembered approval, digest-fenced. Nothing pending → `No approval needed: …`, nothing written, exit 0, and when a filtered box would still refuse on services with no rules (`box.ProjectServicesRefusal`, the check the editor's wait asks) that refusal as a caution, since the line alone reads as if nothing is wrong. Only explicit `--case-exposure` also reviews mount-fallback file access; ordinary network approval never computes or saves that permission. |
 | `check <url-or-host>` | with no `--run`, the approved project rules plus each agent's provider bundle (`cli/net_diagnostic.go`, `netCurrentCheck`); with `--run`, that run's captured policy evaluated hypothetically. Never sends a packet. The exit status is the answer (`netCheckExit`): 0 allowed, 3 blocked or pending, kept apart from 1 (could not check) and 2 (input), with `--json` and `--run` alike |
 | `forget` | one of three mutating verbs: writes a withdrawal marker, THEN removes one project's approval (`networkstate/approval_withdrawal.go`). While the marker stands every ordinary launch of that project but an offline one is pending — the built-in default cannot reopen it — and only `approve` clears it |
 | `runs` · `inspect` · `watch` · `export` | the keyless `Evidence` handle over retained execution records — no runtime, no DNS, no key. Any unique prefix of a run id resolves (`netResolveRun`); an ambiguous one is refused with the prefixes that settle it |
@@ -190,6 +190,7 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-04 — `coop net approve` no longer exists, so the `approve` row names only the top-level command.
 - 2026-11-04 — `coop approve` with nothing to approve also shows a services refusal a box would still get.
 - 2026-11-03 — an editor session connects on a holding capture while its project's request waits.
 - 2026-11-03 — `coop net blocked` drafts TLS/443 as the labelled likely fix for a lookup-only

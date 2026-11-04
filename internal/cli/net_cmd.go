@@ -75,8 +75,6 @@ func (a *app) cmdNet(args []string) (int, error) {
 		return a.cmdNetExport(rest)
 	case "check", "blocked":
 		return a.netDiagnostic(verb, rest)
-	case "approve":
-		return 2, approveMovedError()
 	case "forget":
 		return a.cmdNetForget(rest)
 	case "recover":

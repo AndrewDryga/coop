@@ -4,7 +4,7 @@ description: a filtered child proves its network authority against the owner-pri
 scope: security
 sources: [internal/box/run.go, internal/box/network_session.go, internal/box/authority_mounts.go, internal/networkstate/authority.go, internal/networkstate/job.go, internal/networkstate/approval_review.go, internal/sessionsvc/network.go, internal/sessionsvc/review.go, internal/forkctl/merge.go, internal/cli/net_approve.go, internal/networkstate/approval_generation.go]
 check: "go test ./internal/box -run 'TestFilteredPublicLaunchRequiresCaptureAndRejectsExtraArgs|TestProjectFilteredLaunchRequiresCaptureBeforeRuntime|TestCapturedEgressFromEnvironmentAuthenticatesAgainstTheOwnerStore|TestControllerJobChildReprovesItsOwnSnapshot'"
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 # Network authority is proven against the owner store, never accepted from its carrier
@@ -39,8 +39,7 @@ proves it.
 - Keep the capture off every wire shape. `RunSpec.CapturedEgress` is `json:"-"`; a DTO, a worker
   command or a session request that could carry one is the bug.
 - Local approvals have ONE host writer. `Store.Approve` is reached through `coop approve`
-  (`internal/cli/net_approve.go`), which requires a terminal. `coop net approve` only points to
-  that command; it is not a second local approval path. See [[project-edits-request-access]].
+  (`internal/cli/net_approve.go`), which requires a terminal. See [[project-edits-request-access]].
   `CaptureJob` is a separate authenticated-controller admission path: it never consumes a local
   approval or repository request, and cannot be called by a child.
 - The approval generation (`networkstate/approval_generation.go`) is a cue, not a carrier: it names no
@@ -56,6 +55,7 @@ Background: [[restricted-networking]] (where authority lives), [[network-consume
 reference).
 
 ## Changelog
+- 2026-11-04 — removed the sentence about `coop net approve`, which no longer exists.
 - 2026-10-17 — named `runWithCompositionArtifacts`, `networkChildEnvironment` and
   `CapturedEgressFromEnvironment` instead of line numbers, and added the second host-side setter of
   `COOP_NETWORK_CAPTURE`, a `coop acp` supervisor's `acpChildCapture` (verified in

@@ -104,9 +104,6 @@ func TestCompletionCandidates(t *testing.T) {
 	if hasCand(a.completionCandidates([]string{"loop"}), "pool") {
 		t.Error("`coop loop` must not complete the retired `pool` (it's tombstoned)")
 	}
-	if hasCand(a.completionCandidates([]string{"net"}), "approve") {
-		t.Error("retired `coop net approve` must not be completed")
-	}
 	if !hasCand(a.completionCandidates([]string{"approve"}), "--case-exposure") {
 		t.Error("approve completion must offer explicit mount exposure review")
 	}
