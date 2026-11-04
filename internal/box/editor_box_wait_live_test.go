@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/randid"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/teststate"
 )
 
@@ -279,7 +280,8 @@ func (e *waitEditor) reachedTheBox(session string) {
 // waitRepo is a new project at a new path with the given files, committed.
 func waitRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
-	repo, err := filepath.EvalSymlinks(t.TempDir())
+	repo, git := gitrepo.New(t)
+	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,9 +294,8 @@ func waitRepo(t *testing.T, files map[string]string) string {
 			t.Fatal(err)
 		}
 	}
-	waitRun(t, repo, "git", "init", "-q", ".")
-	waitRun(t, repo, "git", "add", "-A")
-	waitRun(t, repo, "git", "-c", "user.email=box-wait@example.invalid", "-c", "user.name=box wait", "commit", "-q", "-m", "fixture")
+	git("add", "-A")
+	git("commit", "-q", "-m", "fixture")
 	return repo
 }
 
