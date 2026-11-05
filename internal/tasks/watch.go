@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -24,12 +23,11 @@ type watchSource struct {
 // it), or "" when it lives in the local queue. Sources are deduped by task id.
 type mergedTask struct {
 	Item
-	fork       string
-	queue      string
-	phase      ForkAssignmentPhase
-	owner      string
-	executions []forkspace.ExecutionObservation
-	lease      TaskLeaseObservation
+	fork  string
+	queue string
+	phase ForkAssignmentPhase
+	owner string
+	lease TaskLeaseObservation
 }
 
 // TasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
@@ -55,7 +53,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		merged := make([]mergedTask, 0, len(snapshot.Tasks))
 		showQueues := len(snapshot.Queues) > 1
 		for _, task := range snapshot.Tasks {
-			m := mergedTask{Item: task.Item, phase: task.Phase, executions: task.Executions}
+			m := mergedTask{Item: task.Item, phase: task.Phase}
 			if task.Item.State != StateTodo && task.ownerRecord != nil {
 				m.owner = taskOwnerLabel(*task.ownerRecord, false)
 			}

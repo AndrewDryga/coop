@@ -487,7 +487,7 @@ func TestCmdTasksFolderReleaseDispatch(t *testing.T) {
 		t.Errorf("release with a stray extra arg = code %d err %v, want a usage error", code, err)
 	}
 	if !slices.Contains(TasksVerbs, "release") {
-		t.Error("release must be a recognized tasks verb (drives completion + unknownErr suggestions)")
+		t.Error("release must be a recognized tasks verb (drives completion and the unknown-command suggestions)")
 	}
 }
 
@@ -1157,10 +1157,6 @@ func TestCmdTasksFolderDispatch(t *testing.T) {
 	if code, _ := CmdTasksFolder(root, root, []string{"bogus"}); code != 2 {
 		t.Errorf("unknown sub should return code 2, got %d", code)
 	}
-	if code, err := CmdTasksFolder(root, root, []string{"split", "2"}); code != 2 || err == nil ||
-		!strings.Contains(err.Error(), `Unknown command "coop tasks split"`) {
-		t.Fatalf("retired split command = (%d, %v), want unknown command", code, err)
-	}
 }
 
 // The tasks unknown-subcommand suggester and isTasksSubcommand share one source (TasksVerbs), so the
@@ -1177,12 +1173,6 @@ func TestTasksVerbsIncludeWatch(t *testing.T) {
 	}
 	if isTasksSubcommand("bogus") {
 		t.Error("isTasksSubcommand(bogus) = true, want false")
-	}
-	// Retired aliases and copied-queue slicing stay outside the canonical grammar.
-	for _, s := range []string{"start", "list", "remove", "split"} {
-		if isTasksSubcommand(s) {
-			t.Errorf("isTasksSubcommand(%q) = true, want false (retired in v3)", s)
-		}
 	}
 }
 
@@ -1738,7 +1728,7 @@ func TestTasksFolderUnblockRejectsUnknownFlagBeforeMutation(t *testing.T) {
 		name, flag string
 		args       []string
 	}{
-		{name: "retired long flag", flag: "--adopt-audit-head", args: []string{"--adopt-audit-head", strings.Repeat("a", 40), "answer"}},
+		{name: "long flag", flag: "--made-up", args: []string{"--made-up", strings.Repeat("a", 40), "answer"}},
 		{name: "short flag", flag: "-x", args: []string{"-x", "answer"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

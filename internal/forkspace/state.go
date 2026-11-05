@@ -272,11 +272,9 @@ func TryLockState(repo, name string) (func(), bool) {
 type ProcessIdentity = processidentity.State
 
 const (
-	ProcessGone             = processidentity.Gone
-	ProcessIdentityMatch    = processidentity.Match
-	ProcessIdentityMismatch = processidentity.Mismatch
-	ProcessIdentityUnknown  = processidentity.Unknown
-	ProcessIdentityForeign  = processidentity.Foreign // another operating system wrote the token
+	ProcessIdentityMatch   = processidentity.Match
+	ProcessIdentityUnknown = processidentity.Unknown
+	ProcessIdentityForeign = processidentity.Foreign // another operating system wrote the token
 )
 
 // ProcessIdentityOf is processidentity.Inspect through this package's SignalPID and

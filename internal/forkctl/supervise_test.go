@@ -84,7 +84,7 @@ func TestDetachStartFailureLeavesNoRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
-	if code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil, nil); code != -1 || err == nil {
+	if code, err := a.DetachForkLoop(repo, name, "codex", "", "", "", "", "", nil, nil, detachIdentity(name)); code != -1 || err == nil {
 		t.Fatalf("detach with unwritable log target = (%d, %v), want startup failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
@@ -97,7 +97,7 @@ func TestDetachStartFailureLeavesNoRecord(t *testing.T) {
 // remove it, write no record, and leave the file the link points at as it was.
 func TestForkStartAndStopRefuseALinkAtTheLockOrLog(t *testing.T) {
 	start := func(repo string) (int, error) {
-		return (&Control{cfg: &config.Config{}}).DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+		return (&Control{cfg: &config.Config{}}).DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, detachIdentity("perf"))
 	}
 	stop := func(repo string) (int, error) {
 		return (&Control{cfg: &config.Config{RepoOverride: repo}}).ForkStop([]string{"perf"})
@@ -755,7 +755,7 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf") + "\nrm -f box-perf\n"
+	want := "ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf", "") + "\nrm -f box-perf\n"
 	if got := string(data); got != want {
 		t.Errorf("crash cleanup calls = %q, want %q", got, want)
 	}
@@ -1202,7 +1202,7 @@ while :; do sleep 10 & wait $!; done
 			}
 			got := string(data)
 			termAt := strings.Index(got, "worker:term\n")
-			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf") + "\n"
+			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf", "") + "\n"
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)
@@ -1294,6 +1294,31 @@ func detachFixture(t *testing.T) string {
 	return repo
 }
 
+// detachIdentity is a valid identity for a detached start that stops before its worker would use it.
+func detachIdentity(name string) forkspace.Identity {
+	return forkspace.Identity{Name: name, Generation: forkspace.NewGeneration()}
+}
+
+// A worker serves one exact generation, so a start without a valid one for this fork is refused
+// before anything is written or started.
+func TestDetachForkLoopRefusesAnInvalidGeneration(t *testing.T) {
+	for _, identity := range []forkspace.Identity{
+		{},
+		{Name: "perf"},
+		{Name: "perf", Generation: "not-a-generation"},
+		{Name: "other", Generation: forkspace.NewGeneration()},
+	} {
+		repo := detachFixture(t)
+		code, err := (&Control{cfg: &config.Config{}}).DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, identity)
+		if code != -1 || err == nil || !strings.Contains(err.Error(), "invalid generation identity") {
+			t.Errorf("start with %+v = (%d, %v), want the refusal", identity, code, err)
+		}
+		if pathExists(forkspace.PidPath(repo, "perf")) {
+			t.Errorf("start with %+v left a lifecycle record", identity)
+		}
+	}
+}
+
 // A detached start refuses while the fork has any lifecycle record and leaves that record exactly
 // as it was: overwriting a live worker's is the orphan bug, and a dead worker's record is the handle
 // `coop fork stop` needs to reap the box that worker may have left.
@@ -1335,7 +1360,7 @@ func TestDetachForkLoopRefusesAnExistingRecord(t *testing.T) {
 				t.Fatal(err)
 			}
 			a := &Control{cfg: &config.Config{}}
-			code, err := a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+			code, err := a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, detachIdentity("perf"))
 			if code != 1 || err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("DetachForkLoop over a %s = (%d, %v), want (1, %q)", tc.name, code, err, tc.want)
 			}
@@ -1358,7 +1383,7 @@ func TestDetachForkLoopRefusesStateThatIsNotARecord(t *testing.T) {
 			var code int
 			var err error
 			finishesWithin(t, "a detached start", func() {
-				code, err = a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+				code, err = a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, detachIdentity("perf"))
 			})
 			if code != 1 || !errors.Is(err, forkspace.ErrNotAStateFile) || !strings.Contains(err.Error(), path+" is "+tc.found) ||
 				!strings.Contains(err.Error(), "then run: coop fork stop perf") {
@@ -1375,7 +1400,7 @@ func TestDetachForkLoopChecksUnderTheLifecycleLock(t *testing.T) {
 	repo := detachFixture(t)
 	a := &Control{cfg: &config.Config{}}
 	got := runForkCommandAcrossLockedMutation(t, repo, "perf", func() (int, error) {
-		return a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil)
+		return a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, detachIdentity("perf"))
 	}, func() {
 		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
 			t.Fatal(err)

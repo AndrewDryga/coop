@@ -223,7 +223,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("inspect fork worktree: %w", err)
 	}
-	if err := c.forkBrief(reviewRepo, ws, name, ref, outcome, gateConfigured); err != nil {
+	if err := c.forkBrief(reviewRepo, name, ref, outcome, gateConfigured); err != nil {
 		return -1, err
 	}
 	if uncommitted != "" {
@@ -343,7 +343,7 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // facts; the notes are the fork's own voice and are labeled as such, so a fork can't steer its
 // review through its narrative. It shares stdout with the diff that follows, so a redirected
 // review keeps the dossier attached to the patch it describes.
-func (c *Control) forkBrief(repo, _ /* legacy workspace argument */, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
+func (c *Control) forkBrief(repo, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
 	return c.forkBriefAt(repo, repo, gitBranch(repo), name, ref, gateOutcome, gateConfigured)
 }
 

@@ -85,9 +85,8 @@ func TestUsageScanChargesASharedInodeToOneTreeOnly(t *testing.T) {
 	if two.SharedBytes != 0 {
 		t.Fatalf("second tree charged %d shared bytes the scan had already counted", two.SharedBytes)
 	}
-	total := one.Add(two)
-	if total.AllocatedBytes > 448<<10 {
-		t.Fatalf("root total = %d, want the baseline counted once plus two checkouts", total.AllocatedBytes)
+	if total := one.AllocatedBytes + two.AllocatedBytes; total > 448<<10 {
+		t.Fatalf("root total = %d, want the baseline counted once plus two checkouts", total)
 	}
 	if one.ExclusiveBytes() < 64<<10 || two.ExclusiveBytes() < 64<<10 {
 		t.Fatalf("exclusive bytes = %d and %d, want each checkout charged to its own tree",

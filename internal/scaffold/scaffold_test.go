@@ -319,8 +319,7 @@ func TestInitRestoresEmptySkillDir(t *testing.T) {
 	}
 }
 
-// A member gets only its own task queue — never the full scaffold, root project.yaml, or retired
-// single-file backlog.
+// A member gets only its own task queue — never the full scaffold or root project.yaml.
 func TestInitSubproject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "member")
@@ -336,9 +335,9 @@ func TestInitSubproject(t *testing.T) {
 			t.Errorf("member missing %s: %v", rel, err)
 		}
 	}
-	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/kb/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml", ".agent/BACKLOG.md"} {
+	for _, rel := range []string{"AGENTS.md", ".claude", ".agent/kb/rules", ".agent/skills", "CLAUDE.md", ".agent/project.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
-			t.Errorf("member should NOT have %s (top-level only / retired)", rel)
+			t.Errorf("member should NOT have %s (top-level only)", rel)
 		}
 	}
 }
@@ -446,12 +445,6 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// BACKLOG.md is RETIRED — the backlog is now the xx_backlog task-folder drawer (coop backlog).
-	// init must not scaffold the old file (nor an empty xx_backlog dir, which is created on demand).
-	if _, err := os.Stat(filepath.Join(repo, ".agent/BACKLOG.md")); err == nil {
-		t.Error(".agent/BACKLOG.md should no longer be scaffolded (retired for `coop backlog`)")
-	}
-
 	// Subagents are the repo's own business: a preset generates its coop-<role> in the box, and a
 	// repo with its own roles doesn't want a competing starter set committed alongside them.
 	if _, err := os.Stat(filepath.Join(repo, ".claude/agents")); err == nil {
@@ -473,15 +466,10 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-	// Hooks are executable; the old project-global Stop guard is not scaffolded.
+	// Hooks are executable.
 	for _, rel := range []string{".githooks/pre-commit", ".claude/hooks/commit-gate.sh"} {
 		if fi, _ := os.Stat(filepath.Join(repo, rel)); fi == nil || fi.Mode()&0o100 == 0 {
 			t.Errorf("%s is missing or not executable", rel)
-		}
-	}
-	for _, rel := range []string{".agent/claude/hooks/stop-guard.sh", ".claude/hooks/stop-guard.sh"} {
-		if _, err := os.Stat(filepath.Join(repo, rel)); !os.IsNotExist(err) {
-			t.Errorf("retired global hook %s should not be scaffolded", rel)
 		}
 	}
 	projectSettings, err := os.ReadFile(filepath.Join(repo, ".claude/settings.json"))
@@ -534,11 +522,6 @@ func TestInit(t *testing.T) {
 	for _, want := range []string{"Knowledge (`kb/`, including", "`kb/rules/`"} {
 		if !strings.Contains(string(agents), want) {
 			t.Errorf("AGENTS.md missing current knowledge-tree guidance %q:\n%s", want, agents)
-		}
-	}
-	for _, retired := range []string{"Knowledge (`rules/`", "\n- `rules/`"} {
-		if strings.Contains(string(agents), retired) {
-			t.Errorf("AGENTS.md still advertises retired sibling rules path %q:\n%s", retired, agents)
 		}
 	}
 	// Host-side commands stay out (an agent in the box can't run them). The in-box
@@ -1694,7 +1677,4 @@ func TestInitAgentDirsGating(t *testing.T) {
 		}
 	}
 	assertClaudeHookFallbacks(t, sharedSettings)
-	if exists(filepath.Join(repo2, ".agent/claude/hooks/stop-guard.sh")) {
-		t.Error("shared Claude fallback should not scaffold the retired global Stop guard")
-	}
 }

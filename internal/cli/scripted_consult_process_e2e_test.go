@@ -534,7 +534,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 				}
 			}
 			if tc.wantUsage {
-				if len(usage) != 1 || usage[0].Run != runID || usage[0].Role != "advisor" ||
+				if len(usage) != 1 || usage[0].Role != "advisor" ||
 					usage[0].Provider != "codex" || usage[0].Model != codexTarget.Model ||
 					usage[0].In != 7 || usage[0].Out != 3 || usage[0].ReportedOutTok == nil || *usage[0].ReportedOutTok != 3 {
 					t.Fatalf("peer usage rows = %#v", usage)
@@ -547,7 +547,7 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			}
 			for i, want := range tc.wantHealth {
 				got := health[i]
-				if got.Run != runID || got.Kind != "role_health" || got.Mode != "consult" || got.Role != want.Role ||
+				if got.Kind != "role_health" || got.Role != want.Role ||
 					got.Provider != want.Provider || got.Model != want.Model || got.Outcome != want.Outcome ||
 					got.Attempts != want.Attempts || got.Target == "" {
 					t.Errorf("peer role-health row %d = %#v, want core fields %#v", i, got, want)
@@ -561,10 +561,21 @@ func TestProviderScriptedConsultLoopTelemetry(t *testing.T) {
 			if len(lines) != len(rows) {
 				t.Fatalf("peer telemetry has %d JSONL lines for %d decoded rows", len(lines), len(rows))
 			}
+			// The wrapper's shell finds a run's rows by this key in the file; PeerRecord does not carry it.
 			for _, line := range lines {
-				var decoded loop.PeerRecord
+				var decoded struct {
+					Kind string `json:"kind"`
+					Run  string `json:"run"`
+					Mode string `json:"mode"`
+				}
 				if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 					t.Fatalf("peer telemetry is not valid JSON: %v", err)
+				}
+				if decoded.Run != runID {
+					t.Errorf("peer telemetry row names run %q, want %q: %s", decoded.Run, runID, line)
+				}
+				if decoded.Kind == "role_health" && decoded.Mode != "consult" {
+					t.Errorf("peer role-health row mode = %q, want consult: %s", decoded.Mode, line)
 				}
 			}
 			restoreConsultLoopTask(t, suite.layout.Repo, taskID)

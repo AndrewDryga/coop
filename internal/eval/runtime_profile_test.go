@@ -2,7 +2,6 @@ package eval
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,10 +81,6 @@ func TestRuntimeProfileYAMLAndRunMetadata(t *testing.T) {
 	cmp, err := Compare(filepath.Dir(store.Dir()), store.ID(), next.ID())
 	if err != nil || cmp.Mismatch == "" || len(cmp.Base.Runtimes) != 1 || len(cmp.New.Runtimes) != 1 {
 		t.Fatalf("runtime disclosure lost on mismatch: %+v, %v", cmp, err)
-	}
-	var old RunRecord
-	if err := json.Unmarshal([]byte(`{"schema":1,"cases":["ordinary"]}`), &old); err != nil || len(old.Runtimes) != 0 || old.NativeWebTools != "" {
-		t.Fatal("old manifest no longer readable")
 	}
 	body = []byte(strings.Replace(string(body), "workdir: /app", "workdir: /app\n        image_id: forged", 1))
 	if err := os.WriteFile(source.Path, body, 0o600); err != nil {

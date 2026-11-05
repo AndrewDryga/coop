@@ -117,7 +117,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 			windows, err = tasks.BeginWorkCompletionWindows(hosts, reviewSubjects[0])
 		}
 	} else {
-		windows, err = tasks.BeginCompletionWindows(hosts)
+		err = fmt.Errorf("unknown completion window mode %d", windowMode)
 	}
 	if err != nil {
 		err = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowSetup, err)

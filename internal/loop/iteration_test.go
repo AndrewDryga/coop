@@ -40,13 +40,33 @@ func TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure(t *testing.
 	c := &Control{}
 	code, output, usage, classification, windows, err := c.runIteration(
 		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
-		false, false, []string{root}, completionWindowStrict, nil, nil, true, io.Discard, nil, "setup failure", "", nil,
+		false, false, []string{root}, completionWindowWork, []string{"assigned"}, nil, true, io.Discard, nil, "setup failure", "", nil,
 	)
 	if code != 1 || !errors.Is(err, tasks.ErrCompletionWindowSetup) || windows != nil || output != "" || usage != nil {
 		t.Fatalf("setup-failed iteration = code %d output %q usage %#v windows %#v err %v", code, output, usage, windows, err)
 	}
+	if !strings.Contains(err.Error(), "read completion window index") {
+		t.Fatalf("setup failed for another reason: %v", err)
+	}
 	if classification.outcome != "process_failure" {
 		t.Fatalf("setup-failed iteration outcome = %q, want process_failure", classification.outcome)
+	}
+}
+
+// Every production caller names a mode. An iteration with none stops at setup, before a window opens
+// or a box launches, instead of running under another mode's rules.
+func TestRunIterationRefusesAnIterationWithNoCompletionWindowMode(t *testing.T) {
+	launched := false
+	c := &Control{
+		cfg: &config.Config{}, net: newNetworkLog(),
+		boxRun: func(box.RunSpec) (int, error) { launched = true; return 0, nil },
+	}
+	code, _, _, _, windows, err := c.runIteration(
+		context.Background(), t.TempDir(), "must-not-launch", "codex", "", []string{"must-not-launch"},
+		false, false, []string{t.TempDir()}, 0, []string{"assigned"}, nil, true, io.Discard, nil, "no mode", "", nil,
+	)
+	if code != 1 || !errors.Is(err, tasks.ErrCompletionWindowSetup) || windows != nil || launched {
+		t.Fatalf("iteration with no mode = code %d windows %#v launched %t err %v", code, windows, launched, err)
 	}
 }
 
@@ -59,7 +79,7 @@ func TestLoopIterationOptsIntoNarrationButNotProjectPortPublication(t *testing.T
 	}
 	_, _, _, _, windows, err := c.runIteration(
 		context.Background(), t.TempDir(), "image", "codex", "", []string{"true"},
-		false, false, []string{root}, completionWindowStrict, nil, nil, true, io.Discard, nil, "test", "", nil,
+		false, false, []string{root}, completionWindowWork, []string{"assigned"}, nil, true, io.Discard, nil, "test", "", nil,
 	)
 	if windows != nil {
 		_ = windows.Close()
@@ -86,7 +106,7 @@ func TestLoopIdentityIsCapturedButRawTraceStaysRaw(t *testing.T) {
 	}
 	_, _, _, _, windows, err := c.runIteration(
 		context.Background(), repo, "image", "claude", "", []string{"claude"},
-		true, true, []string{root}, completionWindowStrict, nil, nil, true, &forkLog, nil, "test", "", nil,
+		true, true, []string{root}, completionWindowWork, []string{"assigned"}, nil, true, &forkLog, nil, "test", "", nil,
 	)
 	if windows != nil {
 		_ = windows.Close()

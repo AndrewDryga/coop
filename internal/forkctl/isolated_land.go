@@ -38,8 +38,8 @@ type isolatedSourceRecord struct {
 	Fork            forkspace.Identity `json:"fork"`
 	Head            string             `json:"head"`
 	Tree            string             `json:"tree"`
-	PublicationHead string             `json:"publication_head,omitempty"`
-	PublicationTree string             `json:"publication_tree,omitempty"`
+	PublicationHead string             `json:"publication_head"`
+	PublicationTree string             `json:"publication_tree"`
 }
 
 func isolatedSourcePath(repo string, identity forkspace.Identity) string {
@@ -65,18 +65,14 @@ func isolatedSourceBoundary(repo string, identity forkspace.Identity, parentHead
 	if err := validateIsolatedSource(record, identity); err != nil {
 		return "", errors.New("invalid isolated published source boundary")
 	}
-	publication := record.Head
-	if record.Version == 2 {
-		publication = record.PublicationHead
-		tree, err := observed(repo, "rev-parse", "--verify", publication+"^{tree}")
-		if err != nil || tree != record.PublicationTree {
-			return "", errors.Join(errors.New("isolated source cutoff has no matching publication tree; preserve the fork and reconcile explicitly"), err)
-		}
+	tree, err := observed(repo, "rev-parse", "--verify", record.PublicationHead+"^{tree}")
+	if err != nil || tree != record.PublicationTree {
+		return "", errors.Join(errors.New("isolated source cutoff has no matching publication tree; preserve the fork and reconcile explicitly"), err)
 	}
-	if _, err := observed(repo, "merge-base", "--is-ancestor", publication, parentHead); err != nil {
+	if _, err := observed(repo, "merge-base", "--is-ancestor", record.PublicationHead, parentHead); err != nil {
 		return "", fmt.Errorf("isolated source cutoff is no longer published in the captured parent; preserve the fork and reconcile explicitly: %w", err)
 	}
-	tree, err := observed(forkspace.Workspace(repo, identity.Name), "rev-parse", "--verify", record.Head+"^{tree}")
+	tree, err = observed(forkspace.Workspace(repo, identity.Name), "rev-parse", "--verify", record.Head+"^{tree}")
 	if err != nil || tree != record.Tree {
 		return "", errors.Join(errors.New("isolated source cutoff tree changed"), err)
 	}
@@ -84,10 +80,9 @@ func isolatedSourceBoundary(repo string, identity forkspace.Identity, parentHead
 }
 
 func validateIsolatedSource(record isolatedSourceRecord, identity forkspace.Identity) error {
-	if (record.Version != 1 && record.Version != 2) || record.Fork != identity ||
+	if record.Version != 2 || record.Fork != identity ||
 		!forkspace.ValidObjectID(record.Head) || !forkspace.ValidObjectID(record.Tree) ||
-		record.Version == 1 && (record.PublicationHead != "" || record.PublicationTree != "") ||
-		record.Version == 2 && (!forkspace.ValidObjectID(record.PublicationHead) || !forkspace.ValidObjectID(record.PublicationTree)) {
+		!forkspace.ValidObjectID(record.PublicationHead) || !forkspace.ValidObjectID(record.PublicationTree) {
 		return errors.New("invalid isolated source publication receipt")
 	}
 	return nil
@@ -111,7 +106,7 @@ func isolatedSourcePublished(repo, workspace string, identity forkspace.Identity
 	}
 	var record isolatedSourceRecord
 	if ok, err := readIsolatedRecord(isolatedSourcePath(repo, identity), &record); err != nil || !ok ||
-		validateIsolatedSource(record, identity) != nil || record.Version != 2 {
+		validateIsolatedSource(record, identity) != nil {
 		return false
 	}
 	if head != record.Head {

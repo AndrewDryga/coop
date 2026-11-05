@@ -275,18 +275,16 @@ func readRunRecords[T any](repo, name string) []T {
 
 // PeerRecord is one in-turn consult/delegate call's usage, appended by the wrapper (best-effort) to
 // .agent/runs/<run>.peers.jsonl. Cost is optional and always provider-reported, never estimated
-// from tokens. Older token-only rows remain readable.
+// from tokens. Older token-only rows remain readable. Go only reads these rows: the wrapper's shell
+// also reads their run and permanent keys from the file, so never write a decoded row back.
 type PeerRecord struct {
 	Kind           string   `json:"kind,omitempty"`
-	Run            string   `json:"run"`
 	Role           string   `json:"role"`
-	Mode           string   `json:"mode,omitempty"`
 	Provider       string   `json:"provider"`
 	Model          string   `json:"model"`
 	Target         string   `json:"target,omitempty"`
 	Outcome        string   `json:"outcome,omitempty"`
 	Attempts       int      `json:"attempts,omitempty"`
-	Permanent      bool     `json:"permanent,omitempty"`
 	Cause          string   `json:"cause,omitempty"`
 	In             int      `json:"in"`
 	Out            int      `json:"out"`

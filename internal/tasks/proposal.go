@@ -52,10 +52,8 @@ type ForkTaskProposal struct {
 }
 
 type ImportedForkProposal struct {
-	ProposalID string
-	TaskID     string
-	Root       string
-	Kind       ForkProposalKind
+	TaskID string
+	Kind   ForkProposalKind
 }
 
 func ForkProposalOutbox(owner ForkTaskOwner) string {
@@ -601,8 +599,8 @@ func reconcileForkProposalRecord(authorityRepo string, owner ForkTaskOwner, reco
 		return ImportedForkProposal{}, false, err
 	}
 	return ImportedForkProposal{
-		ProposalID: record.ProposalID, TaskID: record.Task.Ref.ID,
-		Root: record.CanonicalRoot, Kind: func() ForkProposalKind {
+		TaskID: record.Task.Ref.ID,
+		Kind: func() ForkProposalKind {
 			if record.Proposal != nil {
 				return record.Proposal.Kind
 			}

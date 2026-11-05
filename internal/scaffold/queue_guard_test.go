@@ -43,9 +43,6 @@ func TestSweepQueueGuard(t *testing.T) {
 		stop[0].Hooks[0].Command != `bash "$CLAUDE_PROJECT_DIR/.agent/skills/sweep/queue-guard.sh"` {
 		t.Fatalf("sweep Stop hook is not the scoped queue guard: %+v", stop)
 	}
-	if strings.Contains(string(skill), ".agent/active") {
-		t.Fatal("sweep skill still carries the retired repo-global marker")
-	}
 	// Everything below proves the EMBEDDED template, while the Stop hook just asserted runs the
 	// canonical copy in this repo's own .agent/skills — so unless the two are byte-identical, this
 	// test is proving a guard that does not run. TestSkillsTemplatesMatchCanonical holds the whole

@@ -2189,15 +2189,15 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 	if landed, err := mergeOneForTest(t, c, repo, "gate-img", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
 		t.Fatalf("red-gate merge = (%v, %v)", landed, err)
 	}
-	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, forkspace.GitOut(ws, "rev-parse", "HEAD")); retired || err != nil {
-		t.Fatalf("retire at the candidate's own HEAD = (%v, %v); want nothing to retire", retired, err)
+	if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, forkspace.GitOut(ws, "rev-parse", "HEAD")); transition.Started || err != nil {
+		t.Fatalf("retire at the candidate's own HEAD = (%+v, %v); want nothing to retire", transition, err)
 	}
 
 	// History rewritten under the candidate: not a descendant, so the candidate stays.
 	git(t, ws, "commit", "-q", "--amend", "-m", "rewritten candidate\n\nCoop-Task: canonical-task")
 	rewritten := forkspace.GitOut(ws, "rev-parse", "HEAD")
-	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, rewritten); retired || err == nil || !strings.Contains(err.Error(), "no longer descends") {
-		t.Fatalf("retire on rewritten history = (%v, %v); want a fail-closed refusal", retired, err)
+	if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, rewritten); transition.Started || err == nil || !strings.Contains(err.Error(), "no longer descends") {
+		t.Fatalf("retire on rewritten history = (%+v, %v); want a fail-closed refusal", transition, err)
 	}
 	if _, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil || !ok {
 		t.Fatalf("candidate lost on a refused retirement: ok=%v err=%v", ok, err)
@@ -2211,8 +2211,8 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 	git(t, ws, "add", "fix.txt")
 	git(t, ws, "commit", "-qm", "fix the gate\n\nCoop-Task: canonical-task")
 	fixedHead, fixedTree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
-	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, fixedHead); !retired || err != nil {
-		t.Fatalf("retire after the fix = (%v, %v); want the stale candidate retired", retired, err)
+	if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, fixedHead); !transition.Started || err != nil {
+		t.Fatalf("retire after the fix = (%+v, %v); want the stale candidate retired", transition, err)
 	}
 	if _, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil || ok {
 		t.Fatalf("stale candidate survives: ok=%v err=%v", ok, err)
@@ -2222,8 +2222,8 @@ func TestTaskCandidateCanBeFixedAndRemergedAfterARedGate(t *testing.T) {
 		t.Fatalf("owner after retirement = %+v, owned=%v err=%v; want reviewing with no candidate", record.Fork, owned, err)
 	}
 	// Retiring again is a no-op: nothing is published, nothing changes.
-	if retired, err := tasks.RetireStaleForkCandidate(repo, identity, fixedHead); retired || err != nil {
-		t.Fatalf("second retirement = (%v, %v)", retired, err)
+	if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, fixedHead); transition.Started || err != nil {
+		t.Fatalf("second retirement = (%+v, %v)", transition, err)
 	}
 
 	// The next exact candidate-wide signoff authorizes round two, and a green gate lands it.

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
@@ -652,8 +653,8 @@ func TestProcessIdentityOfAsksThroughTheForkSeams(t *testing.T) {
 		asked   bool
 	}{
 		{name: "the recorded process", pid: pid, token: token, current: token, want: ProcessIdentityMatch, asked: true},
-		{name: "a reused pid", pid: pid, token: token, current: token + "0", want: ProcessIdentityMismatch, asked: true},
-		{name: "a missing pid", pid: pid, token: token, answer: syscall.ESRCH, want: ProcessGone, asked: true},
+		{name: "a reused pid", pid: pid, token: token, current: token + "0", want: processidentity.Mismatch, asked: true},
+		{name: "a missing pid", pid: pid, token: token, answer: syscall.ESRCH, want: processidentity.Gone, asked: true},
 		{name: "a live pid whose start token cannot be read", pid: pid, token: token, want: ProcessIdentityUnknown, asked: true},
 		{name: "pid 1", pid: 1, token: token, answer: syscall.ESRCH, want: ProcessIdentityUnknown},
 		{name: "pid -1", pid: -1, token: token, answer: syscall.ESRCH, want: ProcessIdentityUnknown},
@@ -674,7 +675,7 @@ func TestProcessIdentityOfAsksThroughTheForkSeams(t *testing.T) {
 			if got != tc.want || asked != tc.asked {
 				t.Fatalf("ProcessIdentityOf(%d, %q) = %v, asked the kernel: %v; want %v, %v", tc.pid, tc.token, got, asked, tc.want, tc.asked)
 			}
-			if dead := tc.want == ProcessGone || tc.want == ProcessIdentityMismatch; OwnerProvablyDead(got) != dead {
+			if dead := tc.want == processidentity.Gone || tc.want == processidentity.Mismatch; OwnerProvablyDead(got) != dead {
 				t.Fatalf("OwnerProvablyDead(%v) = %v, want %v", got, !dead, dead)
 			}
 		})

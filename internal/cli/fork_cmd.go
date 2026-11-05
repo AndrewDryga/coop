@@ -1359,9 +1359,9 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		} else if exists {
 			// After a red merge gate the fix lands as new commits on top of the reviewed candidate;
 			// retire that candidate so the work below can be reviewed and republished at the new HEAD.
-			if retired, err := tasks.RetireStaleForkCandidate(repo, identity, head); err != nil {
+			if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, head); err != nil {
 				return 1, err
-			} else if retired {
+			} else if transition.Started {
 				ui.Note("Changes in %s need another review.", name)
 				ui.Note("The previous reviewed version has been kept in history.")
 				continue

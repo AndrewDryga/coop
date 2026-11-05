@@ -355,6 +355,9 @@ func TestIsolatedUnmergedRequiresCurrentPublicationEvidence(t *testing.T) {
 		if !ForkUnmerged(repo, ws) {
 			t.Fatalf("invalid/old receipt granted removal authority: %+v", bad)
 		}
+		if _, err := isolatedSourceBoundary(repo, identity, parent); err == nil {
+			t.Fatalf("invalid/old receipt gave a source boundary: %+v", bad)
+		}
 	}
 	if err := writeIsolatedRecord(repo, isolatedSourcePath(repo, identity), record); err != nil {
 		t.Fatal(err)

@@ -51,7 +51,7 @@ type muxFrame struct {
 // reports its socket bound. It returns when from ends (the helper exited), on a protocol
 // violation, or when ctx is done; every open session is closed on the way out.
 func ServeMux(ctx context.Context, from io.Reader, to io.Writer, ready func(), handle SessionHandler) error {
-	m := &mux{handle: handle, to: to, sessions: map[int]*muxSession{}, ready: ready}
+	m := &mux{handle: handle, to: to, sessions: map[int]*io.PipeWriter{}, ready: ready}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer m.closeAll()
@@ -102,17 +102,11 @@ type mux struct {
 	readyOnce sync.Once
 	writeMu   sync.Mutex
 	mu        sync.Mutex
-	sessions  map[int]*muxSession
-	closing   bool
-	wg        sync.WaitGroup
-}
-
-// muxSession is one client connection: the server reads what the helper relays through in, and
-// writes replies back as frames tagged with the connection id.
-type muxSession struct {
-	id  int
-	in  *io.PipeWriter
-	out *io.PipeReader
+	// sessions holds each client connection's input, by connection id: the server reads what the
+	// helper relays through it, and writes replies back as frames tagged with the id.
+	sessions map[int]*io.PipeWriter
+	closing  bool
+	wg       sync.WaitGroup
 }
 
 func (m *mux) send(frame muxFrame) error {
@@ -144,7 +138,7 @@ func (m *mux) dispatch(ctx context.Context, frame muxFrame) {
 			// A slow session applies backpressure to the whole helper stream by design: the
 			// pipe is unbuffered, and a client that never reads replies should not make the host
 			// buffer its requests without bound.
-			_, _ = io.WriteString(session.in, *frame.Data+"\n")
+			_, _ = io.WriteString(session, *frame.Data+"\n")
 		}
 	}
 }
@@ -156,8 +150,7 @@ func (m *mux) open(ctx context.Context, id int) {
 		return
 	}
 	out, in := io.Pipe()
-	session := &muxSession{id: id, in: in, out: out}
-	m.sessions[id] = session
+	m.sessions[id] = in
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -185,7 +178,7 @@ func (m *mux) close(id int) {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	if session != nil {
-		_ = session.in.Close()
+		_ = session.Close()
 	}
 }
 

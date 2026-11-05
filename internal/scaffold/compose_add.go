@@ -21,7 +21,6 @@ import (
 
 // ComposeAddition reports what an additive service edit did, so the caller can say it exactly.
 type ComposeAddition struct {
-	Rel      string   // the repo-relative Compose path the edit targeted
 	Created  bool     // the file did not exist and was written whole
 	Added    []string // catalog names added, in catalog order
 	Existing []string // catalog names already configured, in catalog order
@@ -64,7 +63,7 @@ func AddComposeServices(repo, rel string, services []string) (ComposeAddition, e
 }
 
 func addComposeServices(repo, rel string, services []string, write scaffoldFileWrite) (ComposeAddition, error) {
-	out := ComposeAddition{Rel: rel}
+	var out ComposeAddition
 	dest := filepath.Join(repo, filepath.FromSlash(rel))
 	if !filepath.IsLocal(rel) {
 		return out, fmt.Errorf("compose path %s must be inside the repository", rel)
@@ -121,7 +120,7 @@ func addComposeServices(repo, rel string, services []string, write scaffoldFileW
 			out.Existing = append(out.Existing, name)
 			continue
 		case taken:
-			return ComposeAddition{Rel: rel}, &ComposeCollision{Catalog: name, Name: unit.service}
+			return ComposeAddition{}, &ComposeCollision{Catalog: name, Name: unit.service}
 		}
 		text = spliceService(text, unit)
 		out.Added = append(out.Added, name)
@@ -132,10 +131,10 @@ func addComposeServices(repo, rel string, services []string, write scaffoldFileW
 	// Re-read what the edit produced before it reaches disk: an unparseable Compose file would
 	// break `coop up` for a project that was working a moment ago.
 	if _, err := composeServiceImages([]byte(text)); err != nil {
-		return ComposeAddition{Rel: rel}, err
+		return ComposeAddition{}, err
 	}
 	if err := replaceProjectFile(before, rel, []byte(text), write); err != nil {
-		return ComposeAddition{Rel: rel}, err
+		return ComposeAddition{}, err
 	}
 	return out, nil
 }

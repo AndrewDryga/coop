@@ -146,6 +146,36 @@ func TestUnreadableQueueStopsAssignmentAndDeletion(t *testing.T) {
 	}
 }
 
+// A drained fork goes on to review and publish its candidate, so any queue it cannot read stops it,
+// even when the candidate already closes the generation to new work.
+func TestUnreadableQueueStopsAssignmentOfAClosedGeneration(t *testing.T) {
+	f := newCandidateRoundFixture(t, "alpha")
+	head, tree := f.headTree()
+	if _, exists, err := BeginForkCandidateReview(f.repo, f.identity, head, tree); err != nil || !exists {
+		t.Fatalf("begin review: exists=%v err=%v", exists, err)
+	}
+	unreadable := filepath.Join(t.TempDir(), "tasks")
+	if err := ScaffoldStateDirs(unreadable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(unreadable, StateTodo)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unreadable, StateTodo), []byte("hidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := ForkAssignmentRequest{
+		AuthorityRepo: f.repo, Fork: f.identity, WorkspaceRoot: f.workspace,
+		BaselineHead: head, LeaseOwner: testLeaseOwner(),
+	}
+	if assignment, err := AssignForkTask([]string{f.root}, request); err != nil || assignment.Outcome != ForkAssignmentExecutorDrained {
+		t.Fatalf("closed generation with readable queues = %+v, %v; want drained", assignment, err)
+	}
+	if assignment, err := AssignForkTask([]string{f.root, unreadable}, request); err == nil {
+		t.Fatalf("closed generation with an unreadable queue = %+v; want an error", assignment)
+	}
+}
+
 func TestPublishForkCandidateStopsWhenCanonicalTaskBecomesUnreadable(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	item := taskWithCompletedChecklist(t, root, StateTodo, "candidate")

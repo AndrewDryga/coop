@@ -83,11 +83,12 @@ var (
 	errReviewVerdictMalformed = errors.New("review verdict malformed")
 )
 
+// completionWindowMode starts at one so the zero value names no mode: an iteration never given one
+// stops at setup instead of running under another mode's rules.
 type completionWindowMode uint8
 
 const (
-	completionWindowStrict completionWindowMode = iota
-	completionWindowReview
+	completionWindowReview completionWindowMode = iota + 1
 	completionWindowWork
 )
 

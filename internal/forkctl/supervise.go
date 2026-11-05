@@ -27,10 +27,10 @@ import (
 // and a timeout here fails the stop with "fix the container runtime", which a slow daemon isn't.
 const forkStopReapTimeout = 30 * time.Second
 
-// ForkContainerOwner scopes runtime cleanup to one parent repo, fork name, and—on every new
-// launch—the immutable workspace generation. The variadic form keeps the pre-generation value
-// readable for stopping legacy workers; callers that can mutate a current fork always pass one.
-func ForkContainerOwner(repo, name string, generation ...forkspace.Generation) string {
+// ForkContainerOwner scopes runtime cleanup to one parent repo, fork name, and the immutable
+// workspace generation. An empty generation gives the label of a worker recorded without one, so
+// that worker can still be stopped; callers that can mutate a current fork always pass one.
+func ForkContainerOwner(repo, name string, generation forkspace.Generation) string {
 	canonical := repo
 	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
 		canonical = resolved
@@ -38,9 +38,9 @@ func ForkContainerOwner(repo, name string, generation ...forkspace.Generation) s
 		canonical = absolute
 	}
 	version, material := "v1", canonical+"\x00"+name
-	if len(generation) > 0 && generation[0] != "" {
+	if generation != "" {
 		version = "v2"
-		material += "\x00" + string(generation[0])
+		material += "\x00" + string(generation)
 	}
 	sum := sha256.Sum256([]byte(material))
 	return fmt.Sprintf("%s-%x", version, sum[:12])
@@ -169,13 +169,9 @@ func recordStartedFork(repo, name string, cmd *exec.Cmd, generation forkspace.Ge
 // who-runs slot (a preset name or the composed target) and the --peer set are forwarded too,
 // so the worker re-loads the same recipe and scope. network carries the launch's
 // egress flags verbatim, because the worker admits its own policy at loop start.
-func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers, network []string, identities ...forkspace.Identity) (int, error) {
-	var generation forkspace.Generation
-	if len(identities) > 0 {
-		if identities[0].Name != name || !forkspace.ValidGeneration(identities[0].Generation) {
-			return -1, errors.New("detached fork received an invalid generation identity")
-		}
-		generation = identities[0].Generation
+func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers, network []string, identity forkspace.Identity) (int, error) {
+	if identity.Name != name || !forkspace.ValidGeneration(identity.Generation) {
+		return -1, errors.New("detached fork received an invalid generation identity")
 	}
 	// Hold the per-fork lock that stop uses from this check until the child's record exists. The
 	// child's first act is to take the same lock and confirm the record names it, so a start that
@@ -228,7 +224,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
-	if err := recordStartedFork(repo, name, cmd, generation); err != nil {
+	if err := recordStartedFork(repo, name, cmd, identity.Generation); err != nil {
 		return -1, fmt.Errorf("record fork %s worker state: %w — the worker was stopped; fix %s, then retry the original coop fork command", name, err, forkspace.StateDir(repo))
 	}
 	// The worker launched. That is all this confirms — the task work itself has not started yet,

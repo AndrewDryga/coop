@@ -28,12 +28,10 @@ type ForkAssignmentRequest struct {
 
 type ForkAssignment struct {
 	AuthorityRepo string
-	Counts        TaskCounts
 	Task          QueuedTask
 	Owner         ForkTaskOwner
 	Lease         *TaskLease
 	Outcome       ForkAssignmentOutcome
-	Busy          TaskLeaseSummary
 }
 
 func projectionPath(workspace string, fork forkspace.Identity, assignmentID string) string {
@@ -54,22 +52,6 @@ func validateForkAssignmentRequest(request ForkAssignmentRequest) error {
 		return errors.New("fork assignment requires an exact baseline HEAD")
 	}
 	return nil
-}
-
-func assignmentCounts(hosts []string) (TaskCounts, error) {
-	var counts TaskCounts
-	for _, root := range hosts {
-		items, err := ReadTaskTree(root)
-		if err != nil {
-			return TaskCounts{}, err
-		}
-		current, _ := TaskTreeCounts(items)
-		counts.Todo += current.Todo
-		counts.Doing += current.Doing
-		counts.Blocked += current.Blocked
-		counts.Done += current.Done
-	}
-	return counts, nil
 }
 
 func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, foreign bool, err error) {
@@ -148,9 +130,12 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	if err := recoverForkBlockingAssignmentsLocked(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, err
 	}
-	counts, err := assignmentCounts(hosts)
-	if err != nil {
-		return ForkAssignment{}, err
+	// A queue that cannot be read stops the fork even when the check below closes this generation:
+	// a drained fork goes on to review and publish its candidate.
+	for _, root := range hosts {
+		if _, err := ReadTaskTree(root); err != nil {
+			return ForkAssignment{}, err
+		}
 	}
 	// Any candidate lifecycle record freezes the generation's assignment set. Transitional
 	// reviewing/publication state is deliberately non-landable, but it is still live authority and
@@ -159,7 +144,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	if _, exists, err := ReadForkCandidateRoundStatus(request.AuthorityRepo, request.Fork); err != nil {
 		return ForkAssignment{}, err
 	} else if exists {
-		return ForkAssignment{Counts: counts, Outcome: ForkAssignmentExecutorDrained}, nil
+		return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
 	}
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
 		owned, unowned, foreign, err := forkAssignmentCandidates(hosts)
@@ -237,8 +222,6 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 					}
 					current.State = StateInProgress
 					current.Dir = filepath.Join(candidate.Root, StateInProgress, current.ID)
-					counts.Todo--
-					counts.Doing++
 				}
 				index := ForkAssignmentIndex{
 					Version: forkAssignmentIndexVersion, Fork: owner.Fork, AssignmentID: owner.AssignmentID,
@@ -252,7 +235,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				if err := lock.Close(); err != nil {
 					return ForkAssignment{}, errors.Join(err, lease.Release())
 				}
-				selected := ForkAssignment{AuthorityRepo: request.AuthorityRepo, Counts: counts, Task: QueuedTask{Root: candidate.Root, Item: current},
+				selected := ForkAssignment{AuthorityRepo: request.AuthorityRepo, Task: QueuedTask{Root: candidate.Root, Item: current},
 					Owner: owner, Lease: lease, Outcome: ForkAssignmentSelected}
 				if err := MaterializeForkProjection(selected); err != nil {
 					return ForkAssignment{}, errors.Join(err, lease.Release())
@@ -299,13 +282,11 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				}
 				current.State = StateInProgress
 				current.Dir = filepath.Join(candidate.Root, StateInProgress, current.ID)
-				counts.Todo--
-				counts.Doing++
 			}
 			if err := lock.Close(); err != nil {
 				return ForkAssignment{}, errors.Join(err, lease.Release())
 			}
-			selected := ForkAssignment{AuthorityRepo: request.AuthorityRepo, Counts: counts, Task: QueuedTask{Root: candidate.Root, Item: current},
+			selected := ForkAssignment{AuthorityRepo: request.AuthorityRepo, Task: QueuedTask{Root: candidate.Root, Item: current},
 				Owner: owner, Lease: lease, Outcome: ForkAssignmentSelected}
 			if err := MaterializeForkProjection(selected); err != nil {
 				return ForkAssignment{}, errors.Join(err, lease.Release())
@@ -313,13 +294,13 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 			return selected, nil
 		}
 		if busy.Busy+busy.Stalled > 0 {
-			return ForkAssignment{Counts: counts, Outcome: ForkAssignmentUnavailable, Busy: busy}, nil
+			return ForkAssignment{Outcome: ForkAssignmentUnavailable}, nil
 		}
 		if len(unowned) == 0 || foreign {
-			return ForkAssignment{Counts: counts, Outcome: ForkAssignmentExecutorDrained}, nil
+			return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
 		}
 	}
-	return ForkAssignment{Counts: counts, Outcome: ForkAssignmentUnavailable}, nil
+	return ForkAssignment{Outcome: ForkAssignmentUnavailable}, nil
 }
 
 // recoverForkBlockingAssignmentsLocked finishes both sides of the blocked transition. The owner

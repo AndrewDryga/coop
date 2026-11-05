@@ -47,17 +47,6 @@ type Usage struct {
 // ExclusiveBytes is what removing this tree would actually return to the volume.
 func (u Usage) ExclusiveBytes() int64 { return u.AllocatedBytes - u.SharedBytes }
 
-// Add folds one subtree's measurement into another, preserving the unknown flag: a total built
-// from an incomplete part is itself incomplete.
-func (u Usage) Add(other Usage) Usage {
-	return Usage{
-		AllocatedBytes: u.AllocatedBytes + other.AllocatedBytes,
-		SharedBytes:    u.SharedBytes + other.SharedBytes,
-		Entries:        u.Entries + other.Entries,
-		Unknown:        u.Unknown || other.Unknown,
-	}
-}
-
 // Filesystem is the volume a path lives on. FreeBytes is what an unprivileged writer may still
 // use, not the kernel's reserved remainder, because that is the space a new fork can actually take.
 type Filesystem struct {

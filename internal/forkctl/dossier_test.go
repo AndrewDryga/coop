@@ -127,7 +127,7 @@ func TestForkBriefDossier(t *testing.T) {
 	git(t, repo, "checkout", "-q", "main")
 
 	c := &Control{cfg: &config.Config{}}
-	out := captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "risky", "risky", forkReviewGateUnchecked, false) })
+	out := captureStdout(t, func() { c.forkBrief(repo, "risky", "risky", forkReviewGateUnchecked, false) })
 
 	for _, want := range []string{
 		"Changes in fork risky", "Into: main", "Commits",
@@ -166,7 +166,7 @@ func TestForkBriefDossier(t *testing.T) {
 	git(t, repo, "commit", "-qm", "docs")
 	git(t, repo, "checkout", "-q", "main")
 
-	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked, false) })
+	out = captureStdout(t, func() { c.forkBrief(repo, "benign", "benign", forkReviewGateUnchecked, false) })
 	// A healthy scan says nothing: every line on screen means something needs attention.
 	if strings.Contains(out, "needs your review") {
 		t.Errorf("a clean fork must not raise a review alert:\n%s", out)
@@ -180,13 +180,13 @@ func TestForkBriefDossier(t *testing.T) {
 
 	// Gate configured → the evidence line flips.
 	c.cfg.Gate = []string{"make", "check"}
-	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "benign", "benign", forkReviewGateUnchecked, true) })
+	out = captureStdout(t, func() { c.forkBrief(repo, "benign", "benign", forkReviewGateUnchecked, true) })
 	if !strings.Contains(out, "Project checks will run when you merge.") {
 		t.Errorf("configured gate line missing:\n%s", out)
 	}
 
 	// Empty diff → no diff-derived sections (no policy/files/gate), header + why + diff only.
-	out = captureStdout(t, func() { c.forkBrief(repo, t.TempDir(), "empty", "main", forkReviewGateUnchecked, true) })
+	out = captureStdout(t, func() { c.forkBrief(repo, "empty", "main", forkReviewGateUnchecked, true) })
 	for _, absent := range []string{"needs your review", "Files", dossierCode + ":"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("empty diff should omit %q:\n%s", absent, out)

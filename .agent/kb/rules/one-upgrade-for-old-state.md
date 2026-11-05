@@ -4,7 +4,7 @@ description: an old on-disk format is read for one upgrade step, then refused wi
 scope: architecture
 sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -103,6 +103,8 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-11-04 — the isolated-fork source receipt no longer reads version 1: no commit wrote one, so a
+  stray one is refused as invalid. It stays out of the table, having only one format.
 - 2026-11-03 — added the version 1 immutable primary receipt and stopped-worker inventory of
   current workspaces and staged discards. Current-format checks use the runtime reader; unknown
   versions remain protected. Swept version constants through TestOneUpgradeWaypoints.

@@ -120,19 +120,6 @@ type PendingReviewContent struct {
 	Digest  string `json:"digest"`
 }
 
-// pendingReviewRecordV1 reads a version 1 record. Its bindings named commit IDs that a signing pass
-// replaces, so reading drops them: the subject's commit is found by trailer like a version 2 one.
-type pendingReviewRecordV1 struct {
-	PendingReviewRecord
-	Binding  json.RawMessage          `json:"binding"`
-	Previous *pendingReviewPreviousV1 `json:"previous,omitempty"`
-}
-
-type pendingReviewPreviousV1 struct {
-	PendingReviewPrevious
-	Binding json.RawMessage `json:"binding"`
-}
-
 func canonicalPendingReviewWorkspace(repo string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -539,29 +526,16 @@ func backToSignoff(record *PendingReviewRecord) {
 	record.Reviewed = nil
 }
 
-// decodePendingReviewRecord reads a record, converting a version 1 one (legacy) to version 2.
+// decodePendingReviewRecord reads a record, converting a version 1 one (legacy) to version 2. Its
+// bindings named commit IDs that a signing pass replaces, so reading drops them: the subject's commit
+// is found by trailer like a version 2 one.
 func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy bool, err error) {
-	var header struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &header); err != nil {
-		return PendingReviewRecord{}, false, err
-	}
-	if header.Version == pendingReviewLegacyVersion {
-		var old pendingReviewRecordV1
-		if err := json.Unmarshal(data, &old); err != nil {
-			return PendingReviewRecord{}, false, err
-		}
-		record = old.PendingReviewRecord
-		record.Version = pendingReviewVersion
-		if old.Previous != nil {
-			previous := old.Previous.PendingReviewPrevious
-			record.Previous = &previous
-		}
-		return record, true, nil
-	}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return PendingReviewRecord{}, false, err
+	}
+	if record.Version == pendingReviewLegacyVersion {
+		record.Version = pendingReviewVersion
+		return record, true, nil
 	}
 	return record, false, nil
 }

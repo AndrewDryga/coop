@@ -216,6 +216,7 @@ func TestReadStageRecordsMissing(t *testing.T) {
 }
 
 func TestRunTelemetryReaderRecovery(t *testing.T) {
+	// Each reader names a row by a field its record decodes; the rows below carry both.
 	readers := []struct {
 		name, suffix string
 		read         func(string, string) []string
@@ -238,7 +239,7 @@ func TestRunTelemetryReaderRecovery(t *testing.T) {
 			}
 			ids := make([]string, 0, len(records))
 			for _, record := range records {
-				ids = append(ids, record.Run)
+				ids = append(ids, record.Role)
 			}
 			return ids
 		}},
@@ -256,9 +257,9 @@ func TestRunTelemetryReaderRecovery(t *testing.T) {
 		}{
 			{name: "missing", missing: true},
 			{name: "no records", body: " \nnot-json\n"},
-			{name: "skips malformed and blank rows", body: "{\"run\":\"first\",\"future_field\":1}\n \nnot-json\n{\"run\":\"second\"}\n", want: []string{"first", "second"}},
-			{name: "keeps prefix before oversized line", body: "{\"run\":\"first\"}\n" + strings.Repeat("x", 1<<20) + "\n{\"run\":\"later\"}\n", want: []string{"first"}},
-			{name: "caps accepted records", body: strings.Repeat("bad\n{\"run\":\"kept\"}\n", rowLimit) + "{\"run\":\"later\"}\n", want: capped},
+			{name: "skips malformed and blank rows", body: "{\"run\":\"first\",\"role\":\"first\",\"future_field\":1}\n \nnot-json\n{\"run\":\"second\",\"role\":\"second\"}\n", want: []string{"first", "second"}},
+			{name: "keeps prefix before oversized line", body: "{\"run\":\"first\",\"role\":\"first\"}\n" + strings.Repeat("x", 1<<20) + "\n{\"run\":\"later\",\"role\":\"later\"}\n", want: []string{"first"}},
+			{name: "caps accepted records", body: strings.Repeat("bad\n{\"run\":\"kept\",\"role\":\"kept\"}\n", rowLimit) + "{\"run\":\"later\",\"role\":\"later\"}\n", want: capped},
 		} {
 			t.Run(reader.name+"/"+tc.name, func(t *testing.T) {
 				repo := t.TempDir()
@@ -352,7 +353,7 @@ func TestCostForRepo(t *testing.T) {
 	if err := appendStageRecord(repo, "run2", StageRecord{Stage: "work", Provider: "claude", Model: "fable-5", CostUSD: 2.0, InTok: 50, OutTok: 5, Finished: []string{"t2"}}); err != nil {
 		t.Fatal(err)
 	}
-	peerLine, _ := json.Marshal(PeerRecord{Run: "run2", Provider: "codex", Model: "gpt-5.6-terra", In: 1000, Out: 20})
+	peerLine, _ := json.Marshal(PeerRecord{Provider: "codex", Model: "gpt-5.6-terra", In: 1000, Out: 20})
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "runs", "run2.peers.jsonl"), append(peerLine, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ func TestCostPipelineE2E(t *testing.T) {
 
 	// 3. An in-turn consult peer (a grok critic) — tokens only, no cost, exactly as the wrapper
 	//    appends it to <run>.peers.jsonl during a work turn.
-	peerLine, _ := json.Marshal(PeerRecord{Run: run, Role: "critic", Provider: "grok", Model: "grok-4.5", In: 50000, Out: 800,
+	peerLine, _ := json.Marshal(PeerRecord{Role: "critic", Provider: "grok", Model: "grok-4.5", In: 50000, Out: 800,
 		FreshInTok: intPtr(10000), CacheReadTok: intPtr(40000), ReportedOutTok: intPtr(800)})
 	if err := os.WriteFile(filepath.Join(repo, ".agent", "runs", run+".peers.jsonl"), append(peerLine, '\n'), 0o644); err != nil {
 		t.Fatal(err)

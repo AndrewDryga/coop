@@ -580,13 +580,6 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 	return transition, nil
 }
 
-// RetireStaleForkCandidate is kept as the compatibility surface for callers that only need to know
-// whether this invocation began the supersession.
-func RetireStaleForkCandidate(repo string, identity forkspace.Identity, head string) (bool, error) {
-	transition, err := SupersedeStaleForkCandidate(repo, identity, head)
-	return transition.Started, err
-}
-
 func adoptLegacyForkCandidateLocked(repo string, identity forkspace.Identity, candidate ForkCandidate, phase string) (forkCandidateManifest, error) {
 	if candidate.Fork != identity {
 		return forkCandidateManifest{}, errors.New("legacy fork candidate belongs to another generation")
