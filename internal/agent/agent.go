@@ -408,7 +408,7 @@ type StoredAPIKeyDetector interface {
 // LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
 // Portability inspects only the isolated projected profile, never the source credential.
 type LiveCredentialSpec struct {
-	Artifacts []CredentialArtifact
+	Artifacts   []CredentialArtifact
 	Portability func(profileDir string, deadline time.Time) CredentialPortability
 	AuthSignals []string
 }
