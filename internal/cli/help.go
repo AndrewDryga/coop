@@ -191,7 +191,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop help completion", "enable tab completion in Bash or Zsh")
 
 	// The closing actions belong to no section, so they start at column zero.
-	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nFull reference:    coop help --all\nDocumentation:     https://coop.dryga.com\n")
+	fmt.Fprint(&b, "\nHelp and examples: coop help <command>\nFull reference:    coop help --all\nDocumentation:     https://coop.dryga.com/docs.html\n")
 	return b.String()
 }
 

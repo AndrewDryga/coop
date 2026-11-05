@@ -81,7 +81,7 @@ INTEGRATIONS: use Coop with other tools and your shell
 
 Help and examples: coop help <command>
 Full reference:    coop help --all
-Documentation:     https://coop.dryga.com
+Documentation:     https://coop.dryga.com/docs.html
 
 ==============================================================================
 
