@@ -163,9 +163,11 @@ func (k Kernel) Inspect(pid int, token string) State {
 			return Foreign
 		}
 	}
+	// EPERM still says the pid exists, now owned by another user: its start token decides, so a
+	// pid a system process reused proves the recorded process gone.
 	if err := k.Signal(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return Gone
-	} else if err != nil {
+	} else if err != nil && !errors.Is(err, syscall.EPERM) {
 		return Unknown
 	}
 	current := k.StartToken(pid)
