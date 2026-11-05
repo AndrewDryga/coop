@@ -1198,10 +1198,13 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		if childMissing {
 			p.mu.Unlock()
 			if origin == originEditor {
-				if restarting {
+				switch {
+				case restarting:
 					p.writeControllerResponse(switchPendingResponse(string(h.ID)))
-				} else {
-					p.writeControllerResponse(sessionUnavailableResponse(string(h.ID), sid, provider))
+				case sid == "" || sessionProvider == "":
+					p.writeControllerResponse(noBoxResponse(string(h.ID)))
+				default: // no child to name: the session's own provider is the one it needs
+					p.writeControllerResponse(sessionUnavailableResponse(string(h.ID), sid, sessionProvider))
 				}
 			}
 			return
@@ -3268,6 +3271,12 @@ func sessionUnavailableResponse(id, sessionID, provider string) []byte {
 		"Session %s is not available on provider %s. Switch back, or start a new thread.", sessionID, provider,
 	))
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32002,"message":` + string(message) + `}}` + "\n")
+}
+
+// noBoxResponse answers a request no box is running to take, as when every start failed: there is no
+// session or provider to name, only where the reason is.
+func noBoxResponse(id string) []byte {
+	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32000,"message":"Coop could not start this project's box, so this request has nowhere to go. The reason is in the agent log."}}` + "\n")
 }
 
 func sessionIDCollisionResponse(id, sessionID string) []byte {

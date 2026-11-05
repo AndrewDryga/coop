@@ -111,7 +111,12 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 			return "", fmt.Errorf("open published native home: %w", err)
 		}
 		defer child.Close()
-		// The box mounts this home and can widen its mode; refuse to serve it then.
+		// The box mounts this home and can widen its mode, and a sync service restores it with the
+		// account's default (Dropbox writes 0755). Read bits alone come back off; anything wider,
+		// or another owner, is refused.
+		if _, err := config.TightenReadable(child); err != nil {
+			return "", err
+		}
 		if err := privateAccountDirectory(child); err != nil {
 			return "", err
 		}

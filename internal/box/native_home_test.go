@@ -167,3 +167,34 @@ func TestNativeHomeRefusesAnotherOwnersHome(t *testing.T) {
 		t.Fatal("another owner's home was replaced or admitted")
 	}
 }
+
+// A sync service restores a published home with the account's default mode (Dropbox writes 0755):
+// read bits alone come back off and the home is served. A home anyone else can write is refused.
+func TestPublishedNativeHomeRestoredReadableIsTightened(t *testing.T) {
+	for mode, served := range map[os.FileMode]bool{0o755: true, 0o750: true, 0o775: false, 0o757: false} {
+		t.Run(mode.String(), func(t *testing.T) {
+			cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
+			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(home, mode); err != nil {
+				t.Fatal(err)
+			}
+			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil)
+			info, statErr := os.Stat(home)
+			if statErr != nil {
+				t.Fatal(statErr)
+			}
+			if served {
+				if err != nil || again != home || info.Mode().Perm() != 0o700 {
+					t.Fatalf("restored %o home = %q, %v, mode %o; want it served at 700", mode, again, err, info.Mode().Perm())
+				}
+				return
+			}
+			if err == nil || info.Mode().Perm() != mode {
+				t.Fatalf("writable %o home = %v, mode %o; want it refused and left as it was", mode, err, info.Mode().Perm())
+			}
+		})
+	}
+}

@@ -962,7 +962,7 @@ func TestProxySessionSetupDuringSwitchReportsTemporaryWait(t *testing.T) {
 	if err := json.Unmarshal(parse(output.Bytes()).Error, &rpcError); err != nil {
 		t.Fatal(err)
 	}
-	if rpcError.Code != -32002 || !strings.Contains(rpcError.Message, "new thread") {
+	if rpcError.Code != -32002 || !strings.Contains(rpcError.Message, "new thread") || !strings.Contains(rpcError.Message, "provider claude.") {
 		t.Fatalf("non-switching unavailable response changed: %s", output.Bytes())
 	}
 }
@@ -3506,5 +3506,22 @@ func TestReloadSnapshotWaitsForTheAnswers(t *testing.T) {
 	case <-snapshotted:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the snapshot never followed the answers")
+	}
+}
+
+// With no box running (every start failed), a new thread has no session or provider to name: the
+// editor hears where the reason is, never a sentence with blanks in it.
+func TestProxyNewThreadWithNoBoxSaysWhereTheReasonIs(t *testing.T) {
+	var out bytes.Buffer
+	p := &proxy{
+		out: &out, sessions: map[string]*sess{}, byAdapter: map[string]string{}, sessionReqs: map[string]sessionRequest{},
+		pending: map[string]bool{}, retired: map[string]bool{}, unavailable: map[string]bool{}, reactivating: map[string]string{},
+		injected: map[string][]byte{}, forceByID: map[string]*forceChain{}, forceBySess: map[string]*forceChain{}, forceFailed: map[string]string{},
+		restartHeld: map[string]clientLine{},
+	}
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/repo","mcpServers":[]}}` + "\n"))
+	got := out.String()
+	if !strings.Contains(got, `"id":2`) || !strings.Contains(got, "could not start this project's box") || strings.Contains(got, "Session  ") {
+		t.Fatalf("new thread with no box got %s", got)
 	}
 }
