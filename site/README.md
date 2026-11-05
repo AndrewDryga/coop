@@ -29,7 +29,8 @@ site/
     js/orchestrator.js   the Orchestrator page's story: the night replayed on the board, the sandbox building itself
     js/analytics.js      Mixpanel: autocapture, page views, session replay and successful copy intent
     fonts/               Inter (SIL Open Font License)
-    img/                 favicon + app icons + the two social cards (see "SEO assets"), and zed-coop.png
+    img/                 favicon, app icons, the two social cards (see "SEO assets"), the Coop mark and
+                         wordmark, zed-coop.png, and the Emisar and Ryker logos
 ```
 
 ## Preview locally

@@ -80,7 +80,7 @@ isolated workspace. Keep it minimal: no chickens, eggs, ramps, fences, locks or 
 - Preserve the roof separation, circular opening, narrow cyan rim and rounded corners.
   No bevel, wood texture, gradient, glow, extra symbols or simulated lighting.
 - Production artwork uses the flat vectors.
-- Default navigation: a 36×32px mark, 12px gap and 77.2×22.5px wordmark. The footer and
+- Default navigation: a 28.8×25.6px mark, 12px gap and 77.2×22.5px wordmark. The footer and
   narrow screens use the smaller sizes in `site.css`. The smallest phones show the mark alone.
 - Around standalone artwork, leave clear space of at least one quarter of its width.
   The navigation's explicit gap is the compact exception.
@@ -296,8 +296,8 @@ reconstructions of real CLI output. Never label them as live or recorded custome
 
 ## 9. Implementation handoff and acceptance
 
-Keep the existing hand-written HTML/CSS/JS site. This direction needs no new framework,
-animation library, font CDN or build pipeline. Keep this guide as the design reference.
+Keep the existing plain HTML/CSS/JS site. `make docs` writes most pages from templates and the
+Markdown docs; it needs no new framework, animation library or font CDN. Keep this guide as the design reference.
 
 The favicon and app-icon exports are committed images drawn from `assets/coop-flat.svg`, and the
 OG 1200×630 cards are screenshots of each landing page's first screen. The "SEO assets" section of
