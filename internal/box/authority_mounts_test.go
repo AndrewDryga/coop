@@ -861,4 +861,3 @@ func TestAuthorityPathMissingTailDoesNotHideDanglingAlias(t *testing.T) {
 		}
 	}
 }
-
