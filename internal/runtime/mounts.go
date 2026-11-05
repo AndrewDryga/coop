@@ -117,6 +117,8 @@ func (r Runtime) RunningWritableBindSourcesByLabels(ctx context.Context, labels 
 type BindMount struct {
 	Source  string
 	Stopped bool
+	// Container is one container that binds Source, by its short ID, so a refusal can name it.
+	Container string
 }
 
 // BindMountsByLabels retains lifecycle evidence from the same complete mount observation.
@@ -163,11 +165,12 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		return nil, fmt.Errorf("list running Compose containers: %w", err)
 	}
 	seen := map[string]bool{}
+	holders := map[string]string{}
 	if docker != nil {
 		if err := docker.Verify(ctx); err != nil {
 			return nil, err
 		}
-		if err := docker.collectBindSources(ctx, ids, writable, seen); err != nil {
+		if err := docker.collectBindSources(ctx, ids, writable, seen, holders); err != nil {
 			return nil, err
 		}
 		ids = nil
@@ -189,6 +192,9 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		for _, mount := range mounts {
 			if mount.Type == "bind" && (!writable || mount.RW) && mount.Source != "" {
 				seen[mount.Source] = false
+				if holders[mount.Source] == "" {
+					holders[mount.Source] = id
+				}
 			}
 		}
 	}
@@ -199,14 +205,14 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 	sort.Strings(keys)
 	out := make([]BindMount, 0, len(keys))
 	for _, source := range keys {
-		out = append(out, BindMount{Source: source, Stopped: seen[source]})
+		out = append(out, BindMount{Source: source, Stopped: seen[source], Container: shortContainerID(holders[source])})
 	}
 	return out, nil
 }
 
 // Batch process startup, not custody checks: every full ID must yield exactly one mount record.
 // Streaming keeps the existing per-container limit without imposing it on the whole inventory.
-func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable bool, sources map[string]bool) error {
+func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable bool, sources map[string]bool, holders map[string]string) error {
 	const batchSize = 32
 	const mountsLimit = 1 << 20
 	listed := make(map[string]bool, len(ids))
@@ -270,6 +276,9 @@ func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable 
 							stopped = stopped && previous
 						}
 						sources[mount.Source] = stopped
+						if holders[mount.Source] == "" {
+							holders[mount.Source] = record.ID
+						}
 					}
 				}
 			}
@@ -289,4 +298,12 @@ func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable 
 		}
 	}
 	return d.Verify(ctx)
+}
+
+// shortContainerID is the 12-character form Docker prints, or the whole value when shorter.
+func shortContainerID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }

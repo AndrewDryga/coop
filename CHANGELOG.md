@@ -8,6 +8,10 @@
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
 
+- **A launch blocked by a leftover container names it.** When a container mounts a folder that no longer
+  exists, Coop refuses to touch a saved sign-in it might hold. It now names the container and the
+  `docker rm -f` command that removes it.
+
 - **Editor sessions start after Coop's folder is restored from Dropbox.** A sync service restores files
   group- and world-readable, and `coop acp` stopped with "unsafe thread binding lock". Coop now makes such
   a lock or saved API key owner-only again. A file another user could write is still refused.

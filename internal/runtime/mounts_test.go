@@ -144,7 +144,7 @@ func TestDockerBindInventoryBatchesCompleteIDsAndFiltersMounts(t *testing.T) {
 	labels := map[string]string{"z": "two", "a": ""}
 	for _, writable := range []bool{false, true} {
 		mounts, err := rt.BindMountsByLabels(t.Context(), labels, true, writable)
-		want := []BindMount{{Source: "/a", Stopped: true}, {Source: "/z", Stopped: true}}
+		want := []BindMount{{Source: "/a", Stopped: true, Container: "000000000000"}, {Source: "/z", Stopped: true, Container: "000000000000"}}
 		if writable {
 			want = want[1:]
 		}

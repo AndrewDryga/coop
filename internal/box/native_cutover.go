@@ -335,11 +335,11 @@ func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable boo
 				}
 			}
 			if err != nil {
-				return unresolvedMountError(source.Source)
+				return unresolvedMountError(source)
 			}
 			overlap, err := authorityPathsOverlap(canonical, resolved)
 			if err != nil {
-				return unresolvedMountError(source.Source)
+				return unresolvedMountError(source)
 			}
 			if overlap {
 				return errors.New("legacy credential home is mounted by a running or restartable container; finish that session before retrying")
@@ -398,8 +398,11 @@ func hostShareSource(source string) string {
 
 // unresolvedMountError names the mount, so the person can find the container that holds it. The
 // path is quoted: a container's bind source can contain line breaks.
-func unresolvedMountError(source string) error {
-	return fmt.Errorf("a container mounts %q, which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in; stop or remove the container that mounts it, then try again", source)
+func unresolvedMountError(source runtime.BindMount) error {
+	if source.Container == "" {
+		return fmt.Errorf("a container mounts %q, which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in; stop or remove the container that mounts it, then try again", source.Source)
+	}
+	return fmt.Errorf("container %s mounts %q, which cannot be resolved on this computer, so Coop cannot rule out that it holds this saved sign-in; remove it with docker rm -f %s, then try again", source.Container, source.Source, source.Container)
 }
 
 // Cutover is not fresh sign-in. Tombstones and uncertain canonical authority
