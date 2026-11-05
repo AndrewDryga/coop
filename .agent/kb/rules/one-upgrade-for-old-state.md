@@ -3,6 +3,7 @@ name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
 sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/box/native_account.go, internal/box/native_home.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
 updated: 2026-11-04
 ---
@@ -50,16 +51,18 @@ schemas, so the worker had no way back.
      `**Session data older than schema 25 is no longer converted.** Run coop sessions check
      with this release before you upgrade a worker. If it names an older schema, open the data
      once with a coop build that uses schema 25 (v10.1.2 to v11.3.0) first.`
-- The pre-v11 provider history import is retired by date, not by version: coop stops importing
-  it after 2026-12-31.
+- The pre-v11 provider logins and history were retired on 2026-11-04, by the owner's decision and
+  not by a version: the last two rows below. They have no state version; the refusal names the
+  newest build that still converts them (v12.1.0).
 
 ## Waypoints
 
 Formats Ryker's controller keeps, such as workspace checkpoint bundles, need its inventory rather
 than a worker's `coop sessions check`, which never sees them.
 
-Nothing has been retired under this rule yet, so every oldest version is still the first one.
-"Converting build" is the build that brings older data to the current version.
+Only the pre-v11 provider login and history (the last two rows) have been retired under this rule;
+every other oldest version is still the first one. "Converting build" is the build that brings
+older data to the current version.
 
 | State | Where | Current | Oldest read | Older versions today | Converting build |
 |---|---|---|---|---|---|
@@ -85,6 +88,8 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | decoded so restore can refuse it by name; only a checkpoint file in the worker's own state is still served | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
+| Pre-v11 provider login | `~/.config/coop/<provider>/profiles/<account>/` and `host-credentials/<account>/` | `credentials/<account>/authority.json` | refused | refused by name for an account with no `credentials/<account>/` folder: run `coop login <provider>@<account>`; the old folders are never read or deleted | v12.1.0 and earlier |
+| Pre-v11 provider history | `~/.config/coop/<provider>/profiles/<account>/`, `acp-sessions/` and flat `acp-threads/*.json` | per-repository `native-homes/` and `acp-homes/` | not imported | an import an older build started and never finished is refused by name at launch; history and thread bindings never imported stay in the old folders unread | v12.1.0 and earlier |
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
 job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. Fork records are in
@@ -110,6 +115,10 @@ label then reads as unknown: reported, never removed.
   withdrawal still bars its project; `coop net forget --project` removes the approval and withdrawal
   files and files the current barrier first. Setup-check snapshots written without a marker are no
   longer marked for removal and stay on disk.
+- 2026-11-04 — retired the pre-v11 provider login cutover and history import (owner decision; the
+  2026-12-31 date was dropped): rows for both. A login only the old folders hold, and an unfinished
+  import, are refused by name; the old folders stay untouched. Listed in `waypointConstants` with
+  empty pins, since neither has a version.
 - 2026-11-04 — the isolated-fork source receipt no longer reads version 1: no commit wrote one, so a
   stray one is refused as invalid. It stays out of the table, having only one format.
 - 2026-11-04 — corrected three "Older versions today" cells against the code: event streams and create

@@ -2,7 +2,7 @@
 name: acp-thread-bindings
 description: an editor thread's native session moves with every provider/account switch; the binding is persisted per thread so a fresh coop acp reopens the transcript the conversation actually continued on
 subsystem: acp
-sources: [internal/acpproxy/bindings.go, internal/acpproxy/proxy.go, internal/acpctl/bindings.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/box/native_history.go]
+sources: [internal/acpproxy/bindings.go, internal/acpproxy/proxy.go, internal/acpctl/bindings.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/box/history.go]
 updated: 2026-11-04
 ---
 
@@ -33,10 +33,9 @@ under `<ConfigDir>/acp-threads/<repository key>/bindings/` — inside the privat
 mounts — named by a SHA-256 of the editor id (the adapter mints that id inside the box; it is never a
 host path), written with `config.WriteFileAtomic`, validated on read (single-line tokens, size cap,
 editor id must match), pruned after 90 days at open (past every adapter's own transcript retention).
-Wired once in `cmdACPSupervise` (`internal/cli/acp_cmd.go`). Pre-v11 bindings stay flat in
-`<ConfigDir>/acp-threads/`; each start migrates the ones this repository owns, through
-`box.MigrateACPThreadBindings`, which skips the four-provider ownership scan while the retained
-stores match the last finished migration ([[provider-session-history]]).
+Wired once in `cmdACPSupervise` (`internal/cli/acp_cmd.go`). `box.ACPThreadBindingsDir` creates the folder. Pre-v11 bindings stay flat in
+`<ConfigDir>/acp-threads/`, unread: nothing imports them, so a thread from before v11 reopens by
+editor id only.
 
 The load answer can name the native id (real Claude does), so nothing keyed by editor id may read a session id
 from it: a reopened thread's start message once came twice this way ([[acp-carry-echo]]).
@@ -45,6 +44,9 @@ Not covered: stitching the earlier transcripts into the reopened thread. Coop on
 NEWEST native session comes back; the older fragments stay on disk under their own ids.
 
 ## Changelog
+- 2026-11-04 — removed the pre-v11 binding import (`Migrate`, `LegacyThreadBindings`,
+  `MigrateACPThreadBindings`) and the `.forgotten` tombstones that only guarded it; Forget now just
+  removes the file.
 - 2026-11-04 — a real reopen answered with a sessionId, which started a second start message.
 - 2026-10-15 — corrected the store path to the v11 per-repository folder and recorded the stamped
   pre-v11 migration; checked against bindings.go, acp_cmd.go and box/native_history.go.

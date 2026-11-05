@@ -11,7 +11,6 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
@@ -31,11 +30,6 @@ func nativeAccountSpec(ag agents.Agent) accountAuthoritySpec {
 		},
 		Complete: native.Complete}
 }
-
-// errAccountInterrupted is an account whose first setup or removal stopped before anything was
-// published, while its older logins are still in place: a sign-in (which cuts those logins over and
-// retires them first) or a repeated removal settles it.
-var errAccountInterrupted = errors.New("this account's sign-in or removal was interrupted")
 
 // NativeSignInStage has no existing credentials, repository or user history.
 // The caller removes it when the sign-in stops or fails, keeps it and names it when saving fails, and
@@ -74,21 +68,10 @@ func readNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent,
 	defer lock.Close()
 	if record == nil {
 		// An interrupted first setup leaves only its lock and the temporary files of a publication
-		// that never landed: no account yet, so the next sign-in starts it afresh. Older logins still
-		// in place are the exception, since an interrupted removal leaves the same folder, and
-		// taking them would bring back an account its owner removed.
+		// that never landed: no account yet, so the next sign-in starts it afresh.
 		unpublished, err := root.holdsOnlyUnpublished()
 		if err != nil || !unpublished {
 			return nil, true, errors.Join(fmt.Errorf("canonical account initialization is incomplete; preserve %s and restore a verified account backup before retrying", path), err)
-		}
-		sources, err := legacyAccountSources(cfg, ag, account)
-		if err != nil {
-			return nil, true, err
-		}
-		for _, source := range sources {
-			if source.Retire {
-				return nil, true, fmt.Errorf("%w: run coop login, or remove %s account %q again", errAccountInterrupted, ag.Name(), account)
-			}
 		}
 		return nil, false, nil
 	}
@@ -141,10 +124,7 @@ func accountBusy(err error) bool {
 
 // ImportNativeSignIn publishes only declared credential artifacts from a
 // completed trusted sign-in staging home. It never merges projects/settings.
-func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, account, source string, runtimes ...runtime.Runtime) error {
-	if len(runtimes) > 1 {
-		return errors.New("sign-in requires one runtime inventory")
-	}
+func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, account, source string) error {
 	ag, ok := agents.Get(provider)
 	if !ok {
 		return errors.New("unknown account provider")
@@ -172,22 +152,6 @@ func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, accou
 	record, err := normalizeNativeAccount(ag, files)
 	if err != nil {
 		return err
-	}
-	var rt runtime.Runtime
-	if len(runtimes) == 1 {
-		rt = runtimes[0]
-	}
-	// A fresh login must not leave an older serving refresh authority behind.
-	// Fence and retain it through the same recoverable cutover before replacing
-	// the canonical epoch. Unsafe legacy inputs leave this sign-in stage intact.
-	_, _, err = ensureNativeAccount(ctx, cfg, rt, ag, account)
-	if errors.Is(err, errAccountInterrupted) {
-		// A sign-in settles an interrupted setup or removal: the older login is cut over as a first
-		// sign-in's would be, so its grant is retired before the new login replaces it.
-		_, _, err = cutOverLegacyAccount(ctx, cfg.NativeAuthorityConfig(), rt, ag, account)
-	}
-	if err != nil && !errors.Is(err, errAccountRenewalUncertain) {
-		return fmt.Errorf("retire previous account authority before sign-in: %w", err)
 	}
 	// Explicit fresh sign-in may supersede a renewal whose kept answer cannot be used. The
 	// replacement path revalidates canonical custody and archives that answer; ordinary readers and
@@ -366,14 +330,14 @@ func renewNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent
 	return record, err
 }
 
-// PrepareNativeAccount performs host-only readiness/cutover before a remote
-// child is started. Environment-only keys remain in their original host config.
-func PrepareNativeAccount(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account string, deadline time.Time) (bool, error) {
+// PrepareNativeAccount performs host-only readiness before a remote child is started.
+// Environment-only keys remain in their original host config.
+func PrepareNativeAccount(ctx context.Context, cfg *config.Config, provider, account string, deadline time.Time) (bool, error) {
 	ag, ok := agents.Get(provider)
 	if !ok {
 		return false, errors.New("unknown native provider")
 	}
-	_, exists, err := ensureNativeAccount(ctx, cfg.NativeAuthorityConfig(), rt, ag, account)
+	_, exists, err := ensureNativeAccount(ctx, cfg.NativeAuthorityConfig(), ag, account)
 	if err != nil {
 		return exists, err
 	}
@@ -383,4 +347,52 @@ func PrepareNativeAccount(ctx context.Context, cfg *config.Config, rt runtime.Ru
 	}
 	_, err = renewNativeAccount(ctx, cfg.NativeAuthorityConfig(), ag, account, deadline, deadline)
 	return true, err
+}
+
+// ensureNativeAccount returns the account's canonical record, or refuses a login that builds before
+// v11 saved in the account's older folders and nothing converted.
+func ensureNativeAccount(ctx context.Context, cfg *config.Config, ag agents.Agent, account string) (*accountAuthority, bool, error) {
+	cfg = cfg.NativeAuthorityConfig()
+	record, exists, err := readNativeAccount(ctx, cfg, ag, account)
+	if exists || err != nil {
+		return record, exists, err
+	}
+	return nil, false, refuseLegacyLogin(cfg, ag, account)
+}
+
+// legacyLoginPresent reports a login that builds before v11 saved: the adapter's marker or Gemini's
+// OAuth grant in profiles/<account>, or a Coop-held API key in host-credentials/<account>.
+func legacyLoginPresent(cfg *config.Config, ag agents.Agent, account string) (bool, error) {
+	marker, _ := ag.AuthMarker()
+	home := cfg.AgentProfileDir(ag.Name(), account)
+	paths := []string{filepath.Join(home, marker), filepath.Join(home, "oauth_creds.json")}
+	if host := ag.HostCredential(); host.Declared() {
+		dir, err := hostCredentialDir(cfg, ag.Name(), account)
+		if err != nil {
+			return false, err
+		}
+		paths = append(paths, filepath.Join(dir, host.File))
+	}
+	for _, path := range paths {
+		if _, err := os.Lstat(path); err == nil {
+			return true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// refuseLegacyLogin refuses an account whose only login is one that builds before v11 saved in
+// profiles/<account> or host-credentials/<account>. Nothing reads those folders any more and
+// nothing deletes them. A nil result means the account has no such login.
+func refuseLegacyLogin(cfg *config.Config, ag agents.Agent, account string) error {
+	present, err := legacyLoginPresent(cfg, ag, account)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	return fmt.Errorf("%s account %q is still signed in the way Coop before v11 saved it, and this Coop no longer converts it; run coop login %s@%s (the old folder stays untouched), or open it once with Coop v12.1.0 or earlier", ag.DisplayName(), account, ag.Name(), account)
 }

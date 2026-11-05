@@ -43,8 +43,8 @@ func TestEditorSignInProblemsNameWhatToFix(t *testing.T) {
 	if got := signInProblems(cfg, "claude", time.Now()); !same(got, []acpctl.Problem{dead}) {
 		t.Errorf("only account dead:\n got %+v\nwant %+v", got, dead)
 	}
-	// One that can renew still works, so the dead account is named.
-	write("renew", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,"scopes":["user:inference"]}}`)
+	// A saved sign-in that works, so the dead account is named.
+	seedNativeFixture(t, cfg, "claude", "renew")
 	named := dead
 	named.Title = `Claude Code account "dead" isn't available.`
 	if got := signInProblems(cfg, "claude", time.Now()); !same(got, []acpctl.Problem{named}) {

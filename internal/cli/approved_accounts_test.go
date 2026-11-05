@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -279,10 +280,10 @@ func TestApprovedAccountRemoval(t *testing.T) {
 			t.Fatalf("the preview and the result should be separate paragraphs: %q", out)
 		}
 		assertApprovedOutput(t, "08-remove-confirmed", preview+"\n\nContinue? [y/N] y\n\n"+result)
-		if pathExists(cfg.AgentProfileDir("codex", "old-work")) {
-			t.Error("the account folder survived a confirmed removal")
+		if !box.NativeAccountRemoved(cfg, "codex", "old-work") {
+			t.Error("the account survived a confirmed removal")
 		}
-		if !pathExists(cfg.AgentProfileDir("codex", "personal")) {
+		if !pathExists(filepath.Join(cfg.ConfigDir, "codex", "credentials", "personal")) {
 			t.Error("removing one account touched another")
 		}
 	})
@@ -299,7 +300,7 @@ func TestApprovedAccountRemoval(t *testing.T) {
 		preview = strings.TrimSuffix(preview, "\n\n")
 		declined := captureStderr(t, removalCancelled)
 		assertApprovedOutput(t, "08-remove-declined", preview+"\n\nContinue? [y/N] n\n"+declined)
-		if !pathExists(cfg.AgentProfileDir("codex", "old-work")) {
+		if box.NativeAccountRemoved(cfg, "codex", "old-work") {
 			t.Error("a declined removal still deleted the account")
 		}
 	})
@@ -319,7 +320,7 @@ func TestRemovalWithoutATerminalRefuses(t *testing.T) {
 	if !errors.As(err, &usage) || usage.Headline != "Confirmation required" {
 		t.Errorf("refusal = %v, want the shared Confirmation required block", err)
 	}
-	if !pathExists(cfg.AgentProfileDir("codex", "old-work")) {
+	if box.NativeAccountRemoved(cfg, "codex", "old-work") {
 		t.Error("a refused removal deleted the account")
 	}
 }
@@ -510,18 +511,22 @@ func TestApprovedModelMenus(t *testing.T) {
 
 // ---- fixtures ---------------------------------------------------------------------------------
 
-// A codex marker with a refresh token reads as a usable login; claude's wants an access token plus
-// its own refresh token, and one that expired with no refresh token needs a new sign-in. All are
-// inert test values, not credentials.
+// Stand-ins for a usable login (a saved sign-in) and for the marker files of logins from before v11,
+// which need a new sign-in whatever they hold. All are inert test values, not credentials.
 const (
 	codexReadyCredential    = `{"tokens":{"refresh_token":"r"}}`
 	claudeReadyCredential   = `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":4102444800000,"scopes":["user:inference"]}}`
 	claudeExpiredCredential = `{"claudeAiOauth":{"accessToken":"a","expiresAt":1,"scopes":["user:inference"]}}`
 )
 
-// writeAccount gives agent a stored account whose marker file holds body.
+// writeAccount gives agent a stored account. The ready credentials above become a saved sign-in;
+// any other body is written as the marker file of a login from before v11, which needs a new one.
 func writeAccount(t *testing.T, cfg *config.Config, agent, account, body string) {
 	t.Helper()
+	if body == codexReadyCredential || body == claudeReadyCredential {
+		seedNativeFixture(t, cfg, agent, account)
+		return
+	}
 	dir := cfg.AgentProfileDir(agent, account)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

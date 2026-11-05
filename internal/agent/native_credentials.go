@@ -37,15 +37,11 @@ type NativeCredentialState struct {
 }
 
 type NativeCredentialSpec struct {
-	Environment  func(selection, key, value string) (NativeCredentialState, error)
-	Defaults     func(string) (map[string][]byte, error)
-	LegacyCheck  func(string) error
-	LegacyGrants []string
-	LegacyLocks  []string
-	Artifacts    []NativeCredentialArtifact
-	Select       func(map[string][]byte) (map[string][]byte, error)
-	Inspect      func(map[string][]byte, time.Time) (NativeCredentialState, error)
-	Renew        func(context.Context, map[string][]byte, time.Time, func([]byte) error) (map[string][]byte, error)
+	Environment func(selection, key, value string) (NativeCredentialState, error)
+	Artifacts   []NativeCredentialArtifact
+	Select      func(map[string][]byte) (map[string][]byte, error)
+	Inspect     func(map[string][]byte, time.Time) (NativeCredentialState, error)
+	Renew       func(context.Context, map[string][]byte, time.Time, func([]byte) error) (map[string][]byte, error)
 	// Complete is Renew's second half: it turns the provider's 200 answer, received at the given
 	// time, into the next credential files without contacting the provider. Coop runs it again on
 	// the answer it kept when a renewal was interrupted before the grant was published.

@@ -39,7 +39,7 @@ func TestGeminiLoginBypassesRetiredGoogleFlow(t *testing.T) {
 	}
 }
 
-func TestGeminiHostLoginStoresWithoutEchoOrNativeCredentialMutation(t *testing.T) {
+func TestGeminiHostLoginStoresWithoutEchoAndLeavesAnOldNativeStoreAlone(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	profile := "personal"
 	profileDir := cfg.AgentProfileDir("gemini", profile)
@@ -61,19 +61,19 @@ func TestGeminiHostLoginStoresWithoutEchoOrNativeCredentialMutation(t *testing.T
 	defer func() { readLoginSecret = old }()
 
 	out := captureStderr(t, func() {
-		if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != -1 || err == nil || !strings.Contains(err.Error(), "encrypted cache") {
-			t.Fatalf("host login did not preserve/refuse unknown encrypted authority = (%d, %v)", code, err)
+		if code, err := (&app{cfg: cfg}).loginWithHostCredential(gemini, profile); code != 0 || err != nil {
+			t.Fatalf("host login over an old native store = (%d, %v)", code, err)
 		}
 	})
-	if strings.Contains(out, "not-printed-secret") || !strings.Contains(out, "aistudio.google.com/apikey") || strings.Contains(out, "Signed in to Gemini as personal") {
+	if strings.Contains(out, "not-printed-secret") || !strings.Contains(out, "aistudio.google.com/apikey") {
 		t.Fatalf("Gemini login output leaked or omitted guidance:\n%s", out)
 	}
 	if data, _ := os.ReadFile(native); string(data) != "existing-corrupt-native-store" {
 		t.Fatalf("native credential changed: %q", data)
 	}
 	key, value, found, err := box.LoadHostCredential(cfg, gemini, profile)
-	if found || value != "" {
-		t.Fatalf("refused key became serving authority = (%q, %q, %v, %v)", key, value, found, err)
+	if err != nil || !found || value != "not-printed-secret" {
+		t.Fatalf("saved key = (%q, %q, %v, %v)", key, value, found, err)
 	}
 }
 

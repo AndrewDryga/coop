@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/randid"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
@@ -28,13 +27,16 @@ type nativeHomeOwner struct {
 }
 
 // PrepareNativeHome selects the complete native state domain before both host
-// resume lookup and launch. Legacy sources are read-only migration inputs, never
-// a fallback mounted home or a source of credentials for the native client.
-func PrepareNativeHome(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, acp bool) (string, error) {
-	source := cfg.AgentProfileDir(provider, account)
-	if acp {
-		source = acpSharedDir(cfg, provider)
-	} else {
+// resume lookup and launch, creating it on first use.
+func PrepareNativeHome(ctx context.Context, cfg *config.Config, provider, account, repo string, acp bool) (string, error) {
+	ag, ok := agents.Get(provider)
+	if !ok {
+		return "", errors.New("unknown native home provider")
+	}
+	if _, err := NativeHomePath(cfg, provider, account, repo, acp); err != nil {
+		return "", err
+	}
+	if !acp {
 		// The lock sits beside the account's folder, so a name that leaves it would write the lock
 		// wherever it points. Refuse it first.
 		if name := account; name != "" && !accountNameValid(name) {
@@ -46,153 +48,13 @@ func PrepareNativeHome(ctx context.Context, cfg *config.Config, rt runtime.Runti
 		}
 		defer release()
 	}
-	_, project, err := HistoryKey(repo)
-	if err != nil {
-		return "", err
-	}
-	// The home itself is bound to this project, so its stamps need no further scope; which forks
-	// belong to the project does, so their records join the fingerprint.
-	return prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, acp, source, "", func(cwd string) bool {
-		_, candidate, err := HistoryKey(cwd)
-		return err == nil && candidate == project
-	}, forkRecordsStore(project))
-}
-
-// PreparePrivateACPHome upgrades daemon-owned ACP profiles across all credential
-// accounts. The caller names the owned working folders only after validating the
-// private session root, fork generation/reservation, and persisted native workdir marker.
-func PreparePrivateACPHome(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, cwds ...string) (string, error) {
-	if _, ok := agents.Get(provider); !ok || len(cwds) == 0 {
-		return "", errors.New("invalid private ACP history selection")
-	}
-	owned := slices.Clone(cwds)
-	slices.Sort(owned)
-	owned = slices.Compact(owned)
-	ownsCWD := func(cwd string) bool { return slices.Contains(owned, cwd) }
-	// The session's child prepares this same home under repository ownership; the scope keeps
-	// the two rules' stamps apart.
-	scope := strings.Join(owned, "\x00")
-	sources := []string{acpSharedDir(cfg, provider)}
-	profiles := filepath.Join(cfg.ConfigDir, provider, "profiles")
-	root, err := safefile.OpenRoot(profiles)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	if root != nil {
-		defer root.Close()
-		entries, err := root.ReadDir(-1)
-		if err != nil {
-			return "", err
-		}
-		for _, entry := range entries {
-			if !accountNameValid(entry.Name()) {
-				return "", errors.New("invalid retained private ACP account")
-			}
-			child, err := safefile.OpenDir(root, entry.Name())
-			if err != nil {
-				return "", err
-			}
-			err = privateAccountDirectory(child)
-			_ = child.Close()
-			if err != nil {
-				return "", err
-			}
-			sources = append(sources, filepath.Join(profiles, entry.Name()))
-		}
-	}
-	var home string
-	for _, source := range sources {
-		home, err = prepareNativeHomeFromSource(ctx, cfg, rt, provider, account, repo, true, source, scope, ownsCWD)
-		if err != nil {
-			return "", err
-		}
-	}
-	return home, nil
-}
-
-func prepareNativeHomeFromSource(ctx context.Context, cfg *config.Config, rt runtime.Runtime, provider, account, repo string, acp bool, source, scope string, ownsCWD func(string) bool, ownership ...historyStore) (string, error) {
-	ag, ok := agents.Get(provider)
-	if !ok {
-		return "", errors.New("unknown native home provider")
-	}
-	seed := func(home string) error {
-		if defaults := ag.NativeCredentials().Defaults; defaults != nil {
-			files, err := defaults(cfg.NativeAuthorityConfig().AgentProfileDir(provider, account))
-			if err != nil {
-				return err
-			}
-			for name, data := range files {
-				if !accountNameValid(name) {
-					return errors.New("invalid native defaults filename")
-				}
-				if err := config.WriteFileAtomicMode(filepath.Join(home, name), data, 0600); err != nil {
-					return err
-				}
-			}
-		}
+	return prepareNativeHome(ctx, cfg, provider, account, repo, acp, func(home string) error {
 		return ag.EnsureDefaults(cfg.WithNativeHomes(map[string]string{provider: home}), Workdir(cfg, repo))
-	}
-	selected, err := NativeHomePath(cfg, provider, account, repo, acp)
-	if err != nil {
-		return "", err
-	}
-	// Fingerprint before planning, so a change the plan misses also misses the stamp.
-	fingerprint, fingerprintErr := nativeHistoryFingerprint(append([]historyStore{{path: source}}, ownership...)...)
-	if fingerprintErr == nil && nativeHistoryStamped(selected, source, scope, fingerprint) {
-		return prepareNativeHome(ctx, cfg, provider, account, repo, acp, seed)
-	}
-	inspect := func() (agents.NativeHistoryPlan, error) {
-		return ag.NativeHistory(source, ownsCWD)
-	}
-	plan, err := inspect()
-	if err != nil {
-		return "", fmt.Errorf("inspect retained %s history: %w", provider, err)
-	}
-	complete, err := nativeHistoryImported(selected, source, plan)
-	if err != nil {
-		return "", err
-	}
-	if !complete {
-		lease, err := credentialUseLease(ctx, cfg, source, true)
-		if err != nil {
-			return "", err
-		}
-		defer lease.close()
-		if err := checkLegacyMountPaths(ctx, rt, true, source); err != nil {
-			return "", err
-		}
-		// A stable hash is not proof that a paused writer has exited. Rescan
-		// only after both the launch lease and runtime inventory are fenced.
-		plan, err = inspect()
-		if err != nil {
-			return "", err
-		}
-	}
-	home, err := prepareNativeHome(ctx, cfg, provider, account, repo, acp, seed)
-	if err != nil {
-		return "", err
-	}
-	if !complete {
-		homeLease, err := credentialUseLease(ctx, cfg, home, true)
-		if err != nil {
-			return "", err
-		}
-		defer homeLease.close()
-		if err := checkLegacyMountPaths(ctx, rt, true, home); err != nil {
-			return "", err
-		}
-		if err := importNativeHistory(ctx, home, source, plan); err != nil {
-			return "", err
-		}
-	}
-	if fingerprintErr == nil {
-		stampNativeHistory(ctx, home, source, scope, fingerprint)
-	}
-	return home, nil
+	})
 }
 
 // setAsideUnpublishedHome moves a home whose setup never published to a unique name beside it. A
-// home that anything used (its auth custody or history imports exist) is refused instead.
+// home that anything used (its auth custody or the history imports of older builds exist) is refused instead.
 func setAsideUnpublishedHome(root *accountAuthorityRoot) error {
 	for _, used := range []string{"auth", "imports"} {
 		if _, err := os.Lstat(filepath.Join(root.path, used)); !errors.Is(err, os.ErrNotExist) {
@@ -289,4 +151,45 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 		return "", fmt.Errorf("native home publication needs recovery: %w", err)
 	}
 	return home, nil
+}
+
+// checkNativeHistorySettled refuses a home whose history import by an older build never finished:
+// this build cannot finish it, and launching would use a half-imported home. Checked under the
+// run's shared home lease.
+func checkNativeHistorySettled(home string) error {
+	root, err := safefile.OpenRoot(filepath.Join(filepath.Dir(home), "imports"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for {
+		entries, readErr := root.ReadDir(128)
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			file, err := safefile.OpenRegular(root, entry.Name())
+			if err != nil {
+				return err
+			}
+			var receipt struct {
+				Version int
+				Done    bool
+			}
+			decodeErr := json.NewDecoder(file).Decode(&receipt)
+			closeErr := file.Close()
+			if decodeErr != nil || closeErr != nil || receipt.Version != 1 || !receipt.Done {
+				return fmt.Errorf("the history import of %s was started by an older Coop and never finished; open this project once with a Coop build from before the pre-v11 history import was removed (see MIGRATING.md), then try again", filepath.Dir(home))
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 }

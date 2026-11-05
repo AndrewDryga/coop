@@ -13,7 +13,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
-	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"golang.org/x/sys/unix"
 )
 
@@ -297,10 +296,9 @@ func TestNativeRenewalKeepsAnAccessItCannotRenewUntilTheDeadline(t *testing.T) {
 }
 
 // An interrupted first setup leaves only the account folder's lock and the temporary file of a
-// publication that never landed. With no older login in place that is no account yet: a launch
-// reads it as missing and a sign-in starts it afresh. With an older login still in place it may be
-// an interrupted removal, so it refuses rather than bring that login back, and a sign-in still
-// settles it. Anything else in the folder keeps refusing.
+// publication that never landed. That is no account yet: a launch reads it as missing and a sign-in
+// starts it afresh. A login only builds before v11 saved is refused by name and never touched, and a
+// sign-in replaces it. Anything else in the folder keeps refusing.
 func TestNativeAccountInterruptedFirstSetup(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -321,30 +319,28 @@ func TestNativeAccountInterruptedFirstSetup(t *testing.T) {
 					}
 				}
 			}
+			oldGrant := filepath.Join(cfg.AgentProfileDir(ag.Name(), "work"), "auth.json")
 			if tc.legacy {
-				legacy := cfg.AgentProfileDir(ag.Name(), "work")
-				if err := os.MkdirAll(legacy, 0o700); err != nil {
+				if err := os.MkdirAll(filepath.Dir(oldGrant), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(legacy, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-old-key"}`), 0o600); err != nil {
+				if err := os.WriteFile(oldGrant, []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-old-key"}`), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			record, exists, err := readNativeAccount(t.Context(), cfg, ag, "work")
-			switch {
-			case tc.extra != "":
-				if err == nil || !exists || errors.Is(err, errAccountInterrupted) {
+			if tc.extra != "" {
+				if err == nil || !exists {
 					t.Fatalf("a folder holding %s read as %v, exists %v", tc.extra, err, exists)
 				}
 				return
-			case tc.legacy:
-				if !errors.Is(err, errAccountInterrupted) || !exists || record != nil {
-					t.Fatalf("interrupted setup beside an older login = %v, exists %v", err, exists)
-				}
-			default:
-				if err != nil || exists || record != nil {
-					t.Fatalf("interrupted first setup = %+v, exists %v, %v; want no account yet", record, exists, err)
-				}
+			}
+			if err != nil || exists || record != nil {
+				t.Fatalf("interrupted first setup = %+v, exists %v, %v; want no account yet", record, exists, err)
+			}
+			_, _, err = ensureNativeAccount(t.Context(), cfg, ag, "work")
+			if tc.legacy != (err != nil) || tc.legacy && !strings.Contains(err.Error(), "coop login codex@work") {
+				t.Fatalf("ensure = %v, want a refusal naming coop login codex@work only for an older login", err)
 			}
 			stage := t.TempDir()
 			if err := os.Chmod(stage, 0o700); err != nil {
@@ -353,8 +349,7 @@ func TestNativeAccountInterruptedFirstSetup(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-fresh-key"}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// The sign-in fences the older login against containers; this runtime has none.
-			if err := ImportNativeSignIn(t.Context(), cfg, ag.Name(), "work", stage, emptyContainerRuntime(t)); err != nil {
+			if err := ImportNativeSignIn(t.Context(), cfg, ag.Name(), "work", stage); err != nil {
 				t.Fatalf("sign-in after an interrupted setup: %v", err)
 			}
 			record, exists, err = readNativeAccount(t.Context(), cfg, ag, "work")
@@ -364,8 +359,8 @@ func TestNativeAccountInterruptedFirstSetup(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(root, ".authority-"+strings.Repeat("a", 32))); err != nil {
 				t.Fatal("the unpublished temporary file was deleted")
 			}
-			if _, err := os.Stat(filepath.Join(cfg.AgentProfileDir(ag.Name(), "work"), "auth.json")); tc.legacy && !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("sign-in left the older login's grant in place")
+			if _, err := os.Stat(oldGrant); tc.legacy && err != nil {
+				t.Fatal("sign-in removed the older login's file")
 			}
 		})
 	}
@@ -398,18 +393,4 @@ func TestNativeAccountCompletesAKeptAnswerThroughTheAdapter(t *testing.T) {
 	if err != nil || state.AccessToken != "inert-kept-access" || !state.ExpiresAt.Equal(arrived.Add(time.Hour)) {
 		t.Fatalf("completed grant = %+v, %v", state, err)
 	}
-}
-
-// emptyContainerRuntime is a container runtime that lists no containers at all.
-func emptyContainerRuntime(t *testing.T) runtime.Runtime {
-	t.Helper()
-	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
-		return dockersock.Info{ID: "empty-fixture", OSType: "linux", Architecture: "amd64", ServerVersion: "29", KernelVersion: "fixture", SecurityOptions: []string{}}, nil
-	}))
-	path := filepath.Join(t.TempDir(), "docker")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return runtime.Runtime{Name: path}
 }

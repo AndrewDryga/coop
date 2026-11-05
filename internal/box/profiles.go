@@ -59,10 +59,8 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 	)
 }
 
-// ProfileCredentialReady refines credential presence only where a caller needs a runnable account.
-// Inspectable native markers that cannot recover without another login are excluded; opaque stores
-// and env-backed credentials preserve the presence-based behavior because the adapter cannot prove
-// them invalid locally.
+// ProfileCredentialReady reports whether an account can run: a canonical record that is ready, or
+// the default account's env-file credential. A login only builds before v11 saved is not ready.
 func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.Time) bool {
 	ag, ok := agents.Get(agent)
 	if !ok {
@@ -72,34 +70,14 @@ func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.
 		return ready
 	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
-	markerPresent := profileMarkerPresent(ag, profileDir)
-	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
-	if profile == cfg.DefaultProfileOf(agent) && anyCredentialEnvPresent(activeEnvKeys, envFileKeys(cfg.EnvFile())) {
-		return true
-	}
-	if hostCredentialSelected(ag, profileDir, markerPresent) {
-		_, _, hostFound, hostErr := LoadHostCredential(cfg, ag, profile)
-		if hostErr != nil {
-			return false
-		}
-		if hostFound {
-			return true
-		}
-	}
-	if !ProfileAuthed(cfg, agent, profile) {
-		return false
-	}
-	if !ProfileMarkerPresent(cfg, agent, profile) {
-		return true
-	}
-	return ag.StoredCredentialStatus(cfg.AgentProfileDir(agent, profile), now) != agents.StoredCredentialReauthRequired
+	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, profileMarkerPresent(ag, profileDir))
+	return profile == cfg.DefaultProfileOf(agent) && anyCredentialEnvPresent(activeEnvKeys, envFileKeys(cfg.EnvFile()))
 }
 
 // ProfileSignIn is what an account needs before it can run, judged from local state alone, so it
 // is the one answer coop credentials, the model menu, coop usage and a launch all give. A saved
 // sign-in that cannot run needs a new one: a native record that is damaged, can no longer renew,
-// or whose grant the provider refused at its last renewal, and a marker its adapter says needs
-// another login. An account with nothing saved needs its first. One whose lock another process
+// or whose grant the provider refused at its last renewal, and a login only builds before v11 saved. An account with nothing saved needs its first. One whose lock another process
 // holds, as a renewal does while its provider answers, reads as signed in (nativeAccountReady).
 func ProfileSignIn(cfg *config.Config, agent, profile string, now time.Time) agents.SignIn {
 	if ProfileCredentialReady(cfg, agent, profile, now) {
@@ -109,9 +87,11 @@ func ProfileSignIn(cfg *config.Config, agent, profile string, now time.Time) age
 	if !ok {
 		return agents.NotSignedIn
 	}
-	profileDir := cfg.AgentProfileDir(agent, profile)
-	if _, native := nativeAccountReady(cfg, ag, profile, now); native || ProfileAuthed(cfg, agent, profile) ||
-		profileMarkerPresent(ag, profileDir) && ag.StoredCredentialStatus(profileDir, now) == agents.StoredCredentialReauthRequired {
+	if _, native := nativeAccountReady(cfg, ag, profile, now); native || ProfileAuthed(cfg, agent, profile) {
+		return agents.SignInAgain
+	}
+	// A login only builds before v11 saved: coop login replaces it.
+	if present, _ := legacyLoginPresent(cfg, ag, profile); present {
 		return agents.SignInAgain
 	}
 	return agents.NotSignedIn
@@ -151,39 +131,28 @@ func ProfileHostCredentialPresent(cfg *config.Config, agent, profile string) boo
 	if ready, exists := nativeAccountReady(cfg, ag, profile, time.Now()); exists {
 		return ready
 	}
-	profileDir := cfg.AgentProfileDir(agent, profile)
-	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
-		return false
-	}
-	_, _, found, err := LoadHostCredential(cfg, ag, profile)
-	return err == nil && found
+	return false
 }
 
-// profileCredentialPresent is the canonical presence heuristic for one adapter profile. Adapters
-// declare the active token keys for this account and may additionally declare that their native
-// marker can satisfy the selected mode. Callers may share a parsed env key set when scanning
-// providers, but they never reconstruct provider-specific precedence. A provider-wide env token
-// represents one effective default account, never every named profile.
+// profileCredentialPresent is the presence heuristic for one adapter profile: a canonical record, or
+// for the default account a provider-wide env token that the adapter declares active. Callers may
+// share a parsed env key set when scanning providers, but they never reconstruct provider-specific
+// precedence. A provider-wide env token represents one effective default account, never every
+// named profile.
 func profileCredentialPresent(cfg *config.Config, ag agents.Agent, agent, profile string, envKeys map[string]bool, allowEnv bool) bool {
 	if ready, exists := nativeAccountReady(cfg, ag, profile, time.Now()); exists {
 		return ready
 	}
+	if !allowEnv {
+		return false
+	}
 	profileDir := cfg.AgentProfileDir(agent, profile)
-	markerPresent := profileMarkerPresent(ag, profileDir)
-	activeEnvKeys := ag.ActiveCredentialEnvKeys(profileDir, markerPresent)
-	if hostCredentialSelected(ag, profileDir, markerPresent) {
-		if _, _, found, err := LoadHostCredential(cfg, ag, profile); err == nil && found {
+	for _, key := range ag.ActiveCredentialEnvKeys(profileDir, profileMarkerPresent(ag, profileDir)) {
+		if envKeys[key] {
 			return true
 		}
 	}
-	if allowEnv {
-		for _, key := range activeEnvKeys {
-			if envKeys[key] {
-				return true
-			}
-		}
-	}
-	return markerPresent && agents.MarkerProvidesActiveCredential(ag, profileDir, activeEnvKeys)
+	return false
 }
 
 func profileMarkerPresent(ag agents.Agent, profileDir string) bool {
@@ -192,11 +161,10 @@ func profileMarkerPresent(ag agents.Agent, profileDir string) bool {
 }
 
 // ProfileTokenMtime returns when agent's named-account token material last changed on disk — the
-// mtime of its canonical authority.json or, for an account not yet cut over, of its host credential
-// or AuthMarker file (claude's .credentials.json, codex/grok's auth.json). ANY rewrite bumps it: a
+// mtime of its canonical authority.json. ANY rewrite bumps it: a
 // fresh login OR an OAuth refresh, both of which mint new material and retire the old copy — so this
 // answers "how stale is the token a leak could still use", the signal behind rotating a credential
-// to contain a blast radius. It stats ONLY those files, so provider state beside them doesn't
+// to contain a blast radius. It stats ONLY that file, so provider state beside it doesn't
 // masquerade as a rotation. ok=false when the login is an env-key one (no file) or the file is
 // missing/unreadable — the caller renders that as a graceful "—", never an error.
 func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bool) {
@@ -218,18 +186,7 @@ func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bo
 		}
 		return info.ModTime(), true
 	}
-	profileDir := cfg.AgentProfileDir(agent, profile)
-	if hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
-		if info, ok := hostCredentialMtime(cfg, ag, profile); ok {
-			return info.ModTime(), true
-		}
-	}
-	file, _ := ag.AuthMarker()
-	fi, err := os.Stat(filepath.Join(profileDir, file))
-	if err != nil {
-		return time.Time{}, false
-	}
-	return fi.ModTime(), true
+	return time.Time{}, false
 }
 
 // EnsureProfilesDir creates or tightens the host-owned credential ancestors before a profile is

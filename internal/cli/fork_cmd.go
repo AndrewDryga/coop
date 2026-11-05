@@ -939,7 +939,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 // the one its box mounts. It is prepared now so the first lookup finds retained history imported
 // into it.
 func (a *app) sessionHome(provider, ws string) (string, error) {
-	return box.PrepareNativeHome(context.Background(), a.cfg, a.rt, provider, a.cfg.ActiveProfile(provider), ws, false)
+	return box.PrepareNativeHome(context.Background(), a.cfg, provider, a.cfg.ActiveProfile(provider), ws, false)
 }
 
 func (a *app) rememberNewDiscoveredForkSession(ws, provider string, discoverer agents.SessionDiscoverer, before []string) error {

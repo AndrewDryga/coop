@@ -70,13 +70,7 @@ func usageBlock(t *testing.T, err error) string {
 func signedInConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := freshConfig(t)
-	dir := cfg.AgentProfileDir("claude", "default")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedNativeFixture(t, cfg, "claude", "default")
 	if !anyAgentSignedIn(cfg) {
 		t.Fatal("fixture config should report a signed-in agent")
 	}

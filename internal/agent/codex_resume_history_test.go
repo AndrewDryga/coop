@@ -2,8 +2,21 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func writeNativeHistoryFixture(t *testing.T, root, path, content string) {
+	t.Helper()
+	path = filepath.Join(root, path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCodexExactResumeIncludesArchivedAndExecWithoutDiscovery(t *testing.T) {
 	home := t.TempDir()

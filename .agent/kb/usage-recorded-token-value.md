@@ -2,7 +2,7 @@
 name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
-sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/native_selection.go, internal/box/native_home.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
+sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/native_selection.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
 updated: 2026-10-15
 ---
 
@@ -50,20 +50,8 @@ never dollars added to overlapping native requests. Custom service roots are not
 
 Canonical quota reads use the host account authority's Current callback and renewal path for all
 four providers; no quota helper receives a copied refresh grant. Gemini issues native Code Assist
-load/quota requests directly from the host. The legacy plain-OAuth helper remains only for
-pre-cutover inspection; it leases its original home, never creates a second authority.
-Mounting that original profile is deliberate: until cutover it holds the one serving grant,
-per-repository native homes hold none, and a cut-over account never reaches the helper
-(`TestUsageGeminiHelperServesOnlyPreCutoverProfiles`). gemini-cli has no library entry point, so
-`geminiQuotaModule` names the content-hashed core export hub that the launcher `bundle/gemini.js`
-imports (`dist-6S53KFXU.js` in 0.62.0). The tarball also carries leftover builds nothing loads:
-six modules export both `getOauthClient` and `CodeAssistServer`, among them the formerly pinned
-`core-BXNHRQQE.js` (another 0.62.0 build) and a 0.62.0-preview.0 copy. A `dist-*.js` glob would find
-today's module, but a miss at run time would only show as "quota lookup unavailable"; the pinned name
-and the tarball-integrity test fail when the client is bumped instead. To re-pin: grep
-`bundle/gemini.js` for `import("./dist-`, check that module exports both names, confirm an offline
-`node --input-type=module` import of it in the new image (`docker run --network none`), then move
-the pin.
+load/quota requests directly from the host. An account with no canonical record has no quota to read
+(the adapters answer `ErrUsageSignIn`), and the caller names `coop login`.
 Encrypted-only legacy caches remain unavailable. API keys have no subscription quota but can have
 valued history. Discovery includes ordinary repository homes and both local and private remote ACP
 homes; account-independent editor history remains unassigned.
@@ -86,6 +74,9 @@ discards ordinary quota. Only positive remaining grants contribute reported `end
 This is inspection only: no organization reset route, grant IDs, event properties or redemption.
 
 ## Changelog
+- 2026-11-04 — removed the Gemini quota container helper (`ReadUsageQuotaNative`, the pinned bundle
+  module and its tarball tripwire) and the Claude, Codex and Grok profile-folder quota renewals:
+  they served only accounts never cut over, which are refused by name now.
 - 2026-10-15 — moved the cache facts to [[usage-history-cache]], which also covers the new
   per-folder pruning; this card keeps a pointer.
 - 2026-10-15 — audit said the Gemini helper still mounts the pre-v11 profile; verified that only

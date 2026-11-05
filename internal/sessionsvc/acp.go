@@ -1562,16 +1562,6 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if err := ensurePrivateDirectory(privateProfile); err != nil {
 		return projection, acpFailure(sessionACPCredentialError, "private credential account is unsafe")
 	}
-	// These are old daemon-owned, access-only projections, not native homes.
-	// Retire crash leftovers before starting the new authority-free child.
-	for _, artifact := range agent.LiveCredentials().Artifacts {
-		if !validArtifactName(artifact.Name) {
-			return projection, acpFailure(sessionACPCredentialError, "invalid legacy projection artifact")
-		}
-		if err := removeProjectedSessionFile(filepath.Join(privateProfile, artifact.Name)); err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "legacy credential projection is unsafe")
-		}
-	}
 	instructionFile := agent.InstructionFile()
 	if !validArtifactName(instructionFile) {
 		return projection, acpFailure(sessionACPCredentialError, "provider instruction filename is invalid")
@@ -1585,7 +1575,7 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	projection.files = append(projection.files, privateInstruction)
 	startupDeadline := boxCredentialDeadline(bound, deadline)
 	prepareCtx, cancel := context.WithDeadline(context.Background(), startupDeadline)
-	canonical, err := box.PrepareNativeAccount(prepareCtx, r.sourceCfg, r.rt, target.Provider, account, startupDeadline)
+	canonical, err := box.PrepareNativeAccount(prepareCtx, r.sourceCfg, target.Provider, account, startupDeadline)
 	cancel()
 	if err != nil {
 		return projection, acpFailure(sessionACPCredentialError, "selected canonical account is unavailable")
@@ -1895,14 +1885,6 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 		}
 	}
 	var paths []string
-	seen := make(map[string]bool)
-	for _, artifact := range agent.LiveCredentials().Artifacts {
-		if !validArtifactName(artifact.Name) || seen[artifact.Name] {
-			return acpFailure(sessionACPCleanupError, "provider credential projection is invalid")
-		}
-		seen[artifact.Name] = true
-		paths = append(paths, filepath.Join(profile, artifact.Name))
-	}
 	if instructionFile := agent.InstructionFile(); validArtifactName(instructionFile) {
 		paths = append(paths, filepath.Join(profile, instructionFile))
 	}
@@ -2213,7 +2195,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, configErr
 	}
 	privateCfg.ConfigDir = privateRoot
-	nativeHome, err := box.PreparePrivateACPHome(ctx, privateCfg, r.rt, target.Provider, target.Account(), bound.Repository, bound.Workspace, workdir)
+	nativeHome, err := box.PrepareNativeHome(ctx, privateCfg, target.Provider, target.Account(), bound.Repository, true)
 	if err != nil {
 		return nil, acpFailure(sessionACPProcessError, "session native home identity is invalid")
 	}

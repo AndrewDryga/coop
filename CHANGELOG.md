@@ -14,6 +14,14 @@
   Coop v12.1.0 to convert them, or run `coop net forget --project <path>`. Setup-check snapshots
   from before admitted markers are no longer marked for removal and stay on disk.
 
+- **Logins and history saved by Coop before v11 are no longer converted or imported.** An account
+  whose only login sits in `profiles/<account>` or `host-credentials/<account>` is refused by name:
+  run `coop login <agent>@<account>`, or open it once with Coop v12.1.0 or earlier to convert it.
+  History and editor thread bindings that were never imported stay in the old folders, unread, and a
+  history import an older build started and never finished stops the launch with a message saying
+  so. Coop never deletes the old folders. `coop usage` no longer reads a Gemini login through a
+  container.
+
 - **Workers refuse session companions and workdirs only old builds made.** A companion that is a
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.

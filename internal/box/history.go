@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -83,37 +82,19 @@ func ACPHistoryStores(cfg *config.Config, provider string) ([]string, error) {
 	return nativeHistoryHomes(filepath.Join(cfg.ConfigDir, provider, "acp-homes"))
 }
 
-// ACPRepositorySessions inventories both retained and already-scoped transcripts
-// without seeding dormant providers. Only recorded repository ownership counts.
-func ACPRepositorySessions(cfg *config.Config, provider, repo string) (map[string]bool, error) {
-	ag, ok := agents.Get(provider)
-	if !ok {
-		return nil, fmt.Errorf("unknown history provider")
-	}
-	home, err := NativeHomePath(cfg, provider, "", repo, true)
+// ACPThreadBindingsDir creates, if needed, and returns the folder holding the editor thread
+// bindings of one repository. It sits in coop's private config tree, which no box mounts.
+func ACPThreadBindingsDir(cfg *config.Config, repo string) (string, error) {
+	key, _, err := HistoryKey(repo)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	_, project, err := HistoryKey(repo)
+	root, err := openPrivateAccountTree(cfg.ConfigDir, "acp-threads", key, "bindings")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	ids := map[string]bool{}
-	for _, source := range []string{acpSharedDir(cfg, provider), home} {
-		plan, err := ag.NativeHistory(source, func(cwd string) bool {
-			_, candidate, err := HistoryKey(cwd)
-			return err == nil && candidate == project
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, file := range plan.Files {
-			if file.SessionID != "" {
-				ids[file.SessionID] = true
-			}
-		}
-	}
-	return ids, nil
+	root.close()
+	return filepath.Join(cfg.ConfigDir, "acp-threads", key, "bindings"), nil
 }
 
 // nativeHistoryHomes lists the complete homes under path. A missing path or home is no home, and

@@ -788,35 +788,11 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// This session's boxes start its project services as superID's own Compose project.
 	waitServices := a.listEditorServices(ctrl, repo, superID)
 	defer waitServices()
-	bindingsDir, err := box.ImportACPThreadBindings(ctx, a.cfg, repo, agents.NativeHistoryPlan{})
+	bindingsDir, err := box.ACPThreadBindingsDir(a.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
 	bindings := acpctl.OpenThreadBindings(bindingsDir)
-	// Finding which retained bindings belong here reads every provider's transcripts, so it runs
-	// only while the retained stores differ from the last finished migration.
-	if err := box.MigrateACPThreadBindings(ctx, a.cfg, repo, func() error {
-		ownedSessions := map[string]map[string]bool{}
-		for _, provider := range agents.Names() {
-			// Ownership lookup must not seed an unused provider or make its local
-			// preferences a prerequisite for starting the selected provider.
-			owned, err := box.ACPRepositorySessions(a.cfg, provider, repo)
-			if err != nil {
-				return err
-			}
-			ownedSessions[provider] = owned
-		}
-		legacy, err := acpctl.LegacyThreadBindings(acpctl.ThreadBindingsDir(a.cfg), func(binding acpproxy.SessionBinding) bool { return ownedSessions[binding.Provider][binding.AdapterID] })
-		if err != nil {
-			return err
-		}
-		return bindings.Migrate(ctx, legacy, func(plan agents.NativeHistoryPlan) error {
-			_, err := box.ImportACPThreadBindings(ctx, a.cfg, repo, plan)
-			return err
-		})
-	}); err != nil {
-		return 1, err
-	}
 	closeRefresh := a.acpRefresh.start(ctrl)
 	defer closeRefresh()
 	a.acpBoxWait.start()

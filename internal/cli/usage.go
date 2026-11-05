@@ -132,8 +132,6 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		timer := time.AfterFunc(time.Second, func() { ui.Note("Reading usage history on this computer…") })
 		slowNote = func() { timer.Stop() }
 	}
-	// Host reads do not initialize a runtime. The one native helper does so only when requested.
-	var runtimeMu sync.Mutex
 	var wg sync.WaitGroup
 	workers := make(chan struct{}, 4)
 	for i := range rows {
@@ -169,16 +167,6 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			if err != nil {
 				row.quotaErr = errors.New("this credential's sign-in could not be checked")
 				return
-			}
-			input.Native = func(nativeCtx context.Context, command []string) ([]byte, error) {
-				runtimeMu.Lock()
-				err := a.ensureRuntimeContext(nativeCtx)
-				rt := a.rt
-				runtimeMu.Unlock()
-				if err != nil {
-					return nil, errors.New("native quota helper runtime unavailable")
-				}
-				return box.ReadUsageQuotaNative(nativeCtx, a.cfg, rt, ag, row.account, command)
 			}
 			row.quota, row.quotaErr = ag.Usage().Quota(quotaCtx, input)
 			// The lookup's renewal may have just recorded that the provider refused this sign-in, so

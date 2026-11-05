@@ -763,7 +763,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				if homeCtx == nil {
 					homeCtx = context.Background()
 				}
-				home, err = PrepareNativeHome(homeCtx, cfg, rt, name, cfg.ActiveProfile(name), spec.Repo,
+				home, err = PrepareNativeHome(homeCtx, cfg, name, cfg.ActiveProfile(name), spec.Repo,
 					spec.ShareACPSessions && name == runPrimary(spec))
 				if err != nil {
 					return -1, err
@@ -3357,13 +3357,6 @@ func checkEfforts(cfg *config.Config, spec RunSpec) error {
 		}
 	}
 	return nil
-}
-
-// acpSharedDir is where ACP boxes kept an agent's transcripts, across credentials, before each
-// repository got its own ACP home. No box mounts it now; the host reads what it still holds as an
-// import source and for a repository's session inventory.
-func acpSharedDir(cfg *config.Config, agent string) string {
-	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
 // assembleArgs builds the full container-runtime argument list. It is pure given

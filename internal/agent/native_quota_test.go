@@ -68,7 +68,7 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 			})
 			t.Cleanup(func() { http.DefaultTransport = original })
 			currentCalls := 0
-			input := UsageQuotaInput{ProfileDir: t.TempDir(), Current: func(ctx context.Context, deadline time.Time) (NativeCredentialState, map[string][]byte, error) {
+			input := UsageQuotaInput{Current: func(ctx context.Context, deadline time.Time) (NativeCredentialState, map[string][]byte, error) {
 				currentCalls++
 				if ctx.Err() != nil || !deadline.After(time.Now()) {
 					t.Fatal("quota renewal lost its deadline")

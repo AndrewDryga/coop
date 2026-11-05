@@ -53,13 +53,7 @@ func settledProject(t *testing.T) (*app, func(string) string, string) {
 	hermeticGit(t)
 	repo, _ := gitrepo.New(t)
 	a, normalize := initApp(t, repo)
-	dir := a.cfg.AgentProfileDir("codex", a.cfg.DefaultProfileOf("codex"))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedNativeFixture(t, a.cfg, "codex", a.cfg.DefaultProfileOf("codex"))
 	return a, normalize, repo
 }
 
@@ -80,13 +74,7 @@ func hermeticGit(t *testing.T) {
 // an outstanding job.
 func signIn(t *testing.T, a *app, agent string) {
 	t.Helper()
-	dir := a.cfg.AgentProfileDir(agent, a.cfg.DefaultProfileOf(agent))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedNativeFixture(t, a.cfg, agent, a.cfg.DefaultProfileOf(agent))
 }
 
 // The complete first-run transcripts: coop's questions, the answers a person types, and the one

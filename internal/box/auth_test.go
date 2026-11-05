@@ -16,11 +16,9 @@ func TestAuthedAgents(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
 
-	// codex authed via its credential file; gemini via an env-file API key; claude
-	// has neither → not authed. A commented or empty key must not count. Creds live in
-	// profiles/default.
-	os.MkdirAll(filepath.Join(dir, "codex", "profiles", "default"), 0o755)
-	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
+	// codex authed via its saved sign-in; gemini via an env-file API key; claude
+	// has neither → not authed. A commented or empty key must not count.
+	seedCanonicalFixture(t, cfg, "codex", "default")
 	os.WriteFile(filepath.Join(dir, "env"), []byte("# OPENAI_API_KEY=ignored\nGEMINI_API_KEY=real\nEMPTY=\n"), 0o644)
 
 	if got := AuthedAgents(cfg); !slices.Equal(got, []string{"codex", "gemini"}) {
@@ -31,19 +29,12 @@ func TestAuthedAgents(t *testing.T) {
 func TestAuthedAgentsCredentialMatrix(t *testing.T) {
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
-		marker, _ := ag.AuthMarker()
 		sources := append([]string{"file"}, ag.CredentialEnvKeys()...)
 		for _, source := range sources {
 			t.Run(name+"/"+source, func(t *testing.T) {
 				cfg := &config.Config{ConfigDir: t.TempDir()}
 				if source == "file" {
-					dir := cfg.AgentProfileDir(name, "default")
-					if err := os.MkdirAll(dir, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					seedCanonicalFixture(t, cfg, name, "default")
 				} else if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -57,13 +48,7 @@ func TestAuthedAgentsCredentialMatrix(t *testing.T) {
 
 func TestAuthedAgentsUsesConcreteActiveProfile(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	def := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(def, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(def, "auth.json"), []byte("token"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "codex", "default")
 	cfg.SetActiveProfile("codex", "unsigned-work")
 	if got := AuthedAgents(cfg); slices.Contains(got, "codex") {
 		t.Errorf("default marker authenticated an unsigned active account: %v", got)
@@ -74,13 +59,7 @@ func TestAuthedAgentsUsesConcreteActiveProfile(t *testing.T) {
 	if got := AuthedAgents(cfg); slices.Contains(got, "codex") {
 		t.Errorf("default env token authenticated an unsigned active account: %v", got)
 	}
-	work := cfg.AgentProfileDir("codex", "unsigned-work")
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, "auth.json"), []byte("token"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalFixture(t, cfg, "codex", "unsigned-work")
 	if got := AuthedAgents(cfg); !slices.Contains(got, "codex") {
 		t.Errorf("active profile marker was not discovered: %v", got)
 	}
@@ -173,19 +152,12 @@ func TestCredentialScope(t *testing.T) {
 func TestCredentialScopeRoleCredentialMatrix(t *testing.T) {
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
-		marker, _ := ag.AuthMarker()
 		sources := append([]string{"file"}, ag.CredentialEnvKeys()...)
 		for _, source := range sources {
 			t.Run(name+"/"+source, func(t *testing.T) {
 				cfg := &config.Config{ConfigDir: t.TempDir()}
 				if source == "file" {
-					dir := cfg.AgentProfileDir(name, "default")
-					if err := os.MkdirAll(dir, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					seedCanonicalFixture(t, cfg, name, "default")
 				} else if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}

@@ -17,7 +17,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
-	boxruntime "github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
@@ -58,7 +57,7 @@ func TestDoctorCredentialFixturePreparesPrivateNativeHome(t *testing.T) {
 				t.Fatal(err)
 			}
 			ag, _ := agents.Get(agents.Default())
-			ready, err := box.PrepareNativeAccount(t.Context(), cfg, boxruntime.Runtime{}, ag.Name(), account, time.Now().Add(24*time.Hour))
+			ready, err := box.PrepareNativeAccount(t.Context(), cfg, ag.Name(), account, time.Now().Add(24*time.Hour))
 			if err != nil || !ready {
 				t.Fatalf("doctor fixture is not inert usable authority: ready=%t, %v", ready, err)
 			}
@@ -74,7 +73,7 @@ func TestDoctorCredentialFixturePreparesPrivateNativeHome(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := box.PrepareNativeHome(t.Context(), cfg, boxruntime.Runtime{}, ag.Name(), account, t.TempDir(), false); err != nil {
+			if _, err := box.PrepareNativeHome(t.Context(), cfg, ag.Name(), account, t.TempDir(), false); err != nil {
 				t.Fatalf("real native-home custody rejects doctor fixture: %v", err)
 			}
 		})

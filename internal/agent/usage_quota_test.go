@@ -1,18 +1,12 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -176,16 +170,13 @@ func TestUsageQuotaHTTPFailureBoundary(t *testing.T) {
 	}
 }
 
-func TestUsageAPIKeyAndNativeHelper(t *testing.T) {
+func TestUsageAPIKeyNeedsNoRefresh(t *testing.T) {
 	for _, name := range Names() {
 		ag, _ := Get(name)
 		t.Run(ag.Name(), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			quota, err := ag.Usage().Quota(ctx, UsageQuotaInput{ProfileDir: t.TempDir(), APIKey: true, Native: func(context.Context, []string) ([]byte, error) {
-				t.Fatal("API-key quota launched a helper")
-				return nil, nil
-			}})
+			quota, err := ag.Usage().Quota(ctx, UsageQuotaInput{APIKey: true})
 			if err != nil || quota.Auth != "API key" || quota.Note != "" || len(quota.Buckets) != 0 {
 				t.Fatalf("quota=%+v error=%v", quota, err)
 			}
@@ -193,123 +184,14 @@ func TestUsageAPIKeyAndNativeHelper(t *testing.T) {
 	}
 }
 
-func TestUsageGeminiUnavailableReason(t *testing.T) {
-	for _, tc := range []struct {
-		auth, mode string
-		apiKey     bool
-	}{
-		{"", "API key", true},
-		{"gemini-api-key", "API key", false},
-		{"vertex-ai", "Vertex", true},
-	} {
-		t.Run(tc.mode+tc.auth, func(t *testing.T) {
-			profile := t.TempDir()
-			if tc.auth != "" {
-				data := []byte(`{"security":{"auth":{"selectedType":"` + tc.auth + `"}}}`)
-				if err := os.WriteFile(filepath.Join(profile, "settings.json"), data, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			quota, err := geminiUsageQuota(context.Background(), UsageQuotaInput{ProfileDir: profile, APIKey: tc.apiKey,
-				Native: func(context.Context, []string) ([]byte, error) {
-					t.Fatal("unavailable quota launched a native helper")
-					return nil, nil
-				}})
-			if err != nil || len(quota.Buckets) != 0 || quota.Auth != tc.mode || quota.Note != "" {
-				t.Fatalf("quota=%+v error=%v", quota, err)
-			}
-		})
-	}
-}
-
-// The 0.59.0 -> 0.62.0 bump already renamed the content-hashed module once. Pin the exact tarball
-// it was checked in, so a client bump fails here instead of shipping a helper that cannot load
-// and reports every pre-cutover OAuth quota as unavailable.
-func TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient(t *testing.T) {
-	type tarball struct{ Version, Integrity string }
-	verified := tarball{"0.62.0", "sha512-A1rw0Tf2sHLpGncfYdaq5WaJIufKAP8il4BmHD5Yw4ewmB/Wo0vRQb2bEvx7OqyaPFPZCh0hVhcMKsICZyIBww=="}
-	data, err := lockedClientFiles.ReadFile("locked-clients/package-lock.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lock struct{ Packages map[string]tarball }
-	if err := json.Unmarshal(data, &lock); err != nil {
-		t.Fatal(err)
-	}
-	if locked := lock.Packages["node_modules/@google/gemini-cli"]; locked != verified {
-		t.Fatalf("locked gemini-cli is %+v but geminiQuotaModule was checked in %+v: point it at the module "+
-			"bundle/gemini.js imports that exports getOauthClient and CodeAssistServer, check the import offline "+
-			"(.agent/kb/usage-recorded-token-value.md), then move this pin", locked, verified)
-	}
-	if first, _, _ := strings.Cut(geminiQuotaHelper, "\n"); first != `import {getOauthClient,CodeAssistServer} from "`+geminiQuotaModule+`";` {
-		t.Fatalf("quota helper does not import the pinned module: %s", first)
-	}
-}
-
-func TestUsageGeminiHelperDrainsCredentialPersistence(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is unavailable")
-	}
-	// Replace only the native exports with a network-free fixture. Execute the actual helper
-	// body, including process lifetime: returning quota must not interrupt a pending refresh.
-	const native = `import {writeFileSync} from "node:fs";
-const events=[];
-process.on("exit",()=>writeFileSync(process.env.USAGE_EVENTS,JSON.stringify(events)));
-export async function getOauthClient(mode,config) {
-  if(mode!=="oauth-personal"||config.getProxy()!==undefined||!config.isBrowserLaunchSuppressed()||config.isInteractive()) throw new Error("unsafe configuration");
-  events.push("auth");
-  setTimeout(()=>{events.push("persist");if(process.env.USAGE_CASE==="persistence-fails") Promise.reject(new Error("private native detail"));},20);
-  return {fixture:true};
-}
-export class CodeAssistServer {
-  constructor(client,project,options) {if(!client.fixture||project!==undefined||Object.keys(options).length) throw new Error("unsafe server configuration");}
-  async loadCodeAssist(request) {
-    events.push("load");
-    if(request.metadata.pluginType!=="GEMINI") throw new Error("wrong request");
-    return {currentTier:process.env.USAGE_CASE==="missing-tier"?undefined:{name:"free"},paidTier:{name:"Pro"},cloudaicompanionProject:process.env.USAGE_CASE==="missing-project"?undefined:"existing-project"};
-  }
-  async retrieveUserQuota(request) {
-    events.push("quota");
-    if(request.project!=="existing-project"||process.env.USAGE_CASE==="quota-fails") throw new Error("private native detail");
-    return {buckets:[{modelId:"native-model",remainingFraction:.25,remainingAmount:"12",resetTime:"2026-10-05T00:00:00Z",privateField:"private native detail"}]};
-  }
-}`
-	first, rest, ok := strings.Cut(geminiQuotaHelper, "\n")
-	if !ok || !strings.HasPrefix(first, "import {getOauthClient,CodeAssistServer}") {
-		t.Fatal("helper no longer has the reviewed native import")
-	}
-	helper := "import {getOauthClient,CodeAssistServer} from " + strconv.Quote("data:text/javascript;base64,"+base64.StdEncoding.EncodeToString([]byte(native))) + ";\n" + rest
-	for _, scenario := range []string{"success", "missing-tier", "missing-project", "quota-fails", "persistence-fails"} {
-		t.Run(scenario, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			eventsFile := filepath.Join(t.TempDir(), "events.json")
-			cmd := exec.CommandContext(ctx, node, "--input-type=module", "-e", helper)
-			cmd.Env = []string{"USAGE_CASE=" + scenario, "USAGE_EVENTS=" + eventsFile}
-			var output bytes.Buffer
-			cmd.Stdout = &output
-			err := cmd.Run()
-			if ctx.Err() != nil || (err == nil) != (scenario == "success") {
-				t.Fatalf("helper exit: %v, context: %v", err, ctx.Err())
-			}
-			var quota geminiQuotaResponse
-			if json.Unmarshal(output.Bytes(), &quota) != nil || strings.Contains(output.String(), "private native detail") {
-				t.Fatalf("unsafe or malformed helper output: %q", output.String())
-			}
-			if scenario == "success" && (quota.Tier != "Pro" || len(quota.Buckets) != 1) {
-				t.Fatalf("quota = %+v", quota)
-			}
-			if scenario != "success" && scenario != "persistence-fails" && quota.Error != "quota lookup unavailable" {
-				t.Fatalf("native failure was not sanitized: %+v", quota)
-			}
-			data, err := os.ReadFile(eventsFile)
-			if err != nil || !strings.Contains(string(data), `"persist"`) {
-				t.Fatalf("helper exited before native persistence: %q, %v", data, err)
-			}
-			if (scenario == "missing-tier" || scenario == "missing-project") && strings.Contains(string(data), `"quota"`) {
-				t.Fatal("helper queried quota without existing Code Assist authority")
-			}
-		})
+// An account with no canonical record has no quota to read, whatever else sits in its older folders.
+func TestUsageQuotaWithoutCanonicalAccountNeedsSignIn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, name := range Names() {
+		ag, _ := Get(name)
+		if _, err := ag.Usage().Quota(ctx, UsageQuotaInput{}); !errors.Is(err, ErrUsageSignIn) {
+			t.Errorf("%s: err = %v, want a sign-in verdict", name, err)
+		}
 	}
 }

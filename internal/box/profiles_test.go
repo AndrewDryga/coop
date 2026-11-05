@@ -83,16 +83,28 @@ func TestProfileAuthed(t *testing.T) {
 	if ProfileAuthed(cfg, "claude", "work") {
 		t.Error("missing credential should be unauthed")
 	}
-	// A credential marker file in the profile dir → authed.
-	work := cfg.AgentProfileDir("claude", "work")
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte("tok"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// A saved sign-in → authed.
+	seedCanonicalFixture(t, cfg, "claude", "work")
 	if !ProfileAuthed(cfg, "claude", "work") {
 		t.Error("credential present should be authed")
+	}
+	// A login only builds before v11 saved is not read: it needs a new sign-in and is left alone.
+	old := cfg.AgentProfileDir("claude", "old")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldMarker := filepath.Join(old, ".credentials.json")
+	if err := os.WriteFile(oldMarker, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ProfileAuthed(cfg, "claude", "old") || ProfileCredentialReady(cfg, "claude", "old", time.Now()) {
+		t.Error("a pre-v11 login was read as a sign-in")
+	}
+	if got := ProfileSignIn(cfg, "claude", "old", time.Now()); got != agents.SignInAgain {
+		t.Errorf("pre-v11 login needs = %v, want a new sign-in", got)
+	}
+	if data, err := os.ReadFile(oldMarker); err != nil || string(data) != "tok" {
+		t.Errorf("the pre-v11 login was changed: %q, %v", data, err)
 	}
 	// An API key in the env file occupies only the default profile slot.
 	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=sk-x\n"), 0o600); err != nil {
@@ -109,20 +121,13 @@ func TestProfileAuthed(t *testing.T) {
 func TestProfileAuthedCredentialMatrix(t *testing.T) {
 	for _, name := range agents.Names() {
 		ag, _ := agents.Get(name)
-		marker, _ := ag.AuthMarker()
 		sources := append([]string{"file"}, ag.CredentialEnvKeys()...)
 		for _, source := range sources {
 			t.Run(name+"/"+source, func(t *testing.T) {
 				cfg := &config.Config{ConfigDir: t.TempDir()}
 				profile := "work"
 				if source == "file" {
-					dir := cfg.AgentProfileDir(name, profile)
-					if err := os.MkdirAll(dir, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(filepath.Join(dir, marker), []byte("token"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					seedCanonicalFixture(t, cfg, name, profile)
 				} else {
 					if err := os.WriteFile(cfg.EnvFile(), []byte(source+"=token\n"), 0o600); err != nil {
 						t.Fatal(err)
@@ -177,36 +182,31 @@ func TestEffectiveProfilesReportListingErrors(t *testing.T) {
 func TestProfileCredentialReady(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	now := time.Now()
-	write := func(agent, profile, marker, body string) {
-		t.Helper()
-		dir := cfg.AgentProfileDir(agent, profile)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, marker), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	if ProfileCredentialReady(cfg, "claude", "missing", now) {
 		t.Fatal("missing credential was runnable")
 	}
-	write("claude", "dead", ".credentials.json", `{"claudeAiOauth":{"scopes":["user:inference"]}}`)
-	if !ProfileAuthed(cfg, "claude", "dead") || ProfileCredentialReady(cfg, "claude", "dead", now) {
-		t.Fatal("present nonrenewable Claude credential was runnable")
-	}
-	write("claude", "ready", ".credentials.json", `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`)
+	seedCanonicalFixture(t, cfg, "claude", "ready")
 	if !ProfileCredentialReady(cfg, "claude", "ready", now) {
-		t.Fatal("refreshable Claude credential was not runnable")
+		t.Fatal("saved Claude sign-in was not runnable")
 	}
-	write("gemini", "opaque", "gemini-credentials.json", `{"encrypted":"opaque"}`)
-	if ProfileCredentialReady(cfg, "gemini", "opaque", now) {
-		t.Fatal("host-bound Gemini marker was treated as runnable")
+	// Markers of builds before v11 are never read, whatever they hold.
+	for _, old := range []struct{ agent, profile, marker, body string }{
+		{"claude", "dead", ".credentials.json", `{"claudeAiOauth":{"scopes":["user:inference"]}}`},
+		{"claude", "refreshable", ".credentials.json", `{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`},
+		{"gemini", "opaque", "gemini-credentials.json", `{"encrypted":"opaque"}`},
+	} {
+		dir := cfg.AgentProfileDir(old.agent, old.profile)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, old.marker), []byte(old.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if ProfileCredentialReady(cfg, old.agent, old.profile, now) {
+			t.Fatalf("%s@%s: a pre-v11 marker was runnable", old.agent, old.profile)
+		}
 	}
 	gemini, _ := agents.Get("gemini")
-	if err := SaveHostCredential(cfg, gemini, "opaque", []byte("portable-key")); err == nil {
-		t.Fatal("host-bound opaque cache was silently retired")
-	}
 	if err := SaveHostCredential(cfg, gemini, "portable", []byte("portable-key")); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
 		{name: "Gemini key selected without marker or key", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n"},
 		{name: "Vertex key selected and present", profile: "default", selected: "vertex-ai", env: "GOOGLE_API_KEY=token\n", want: true},
 		{name: "Vertex key selected but only Gemini key present", profile: "default", selected: "vertex-ai", env: "GEMINI_API_KEY=token\n", withMarker: true},
-		{name: "OAuth marker selected and present", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n", withMarker: true, want: true},
+		{name: "OAuth marker of a pre-v11 login is not read", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n", withMarker: true},
 		{name: "OAuth selected without marker", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n"},
 		{name: "named account rejects host-bound native Gemini key", profile: "work", selected: "gemini-api-key", withMarker: true},
 		{name: "named account cannot use provider env", profile: "work", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n"},
@@ -270,7 +270,7 @@ func TestProfileTokenMtime(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
 
-	// Missing marker → not knowable (rendered as "—" by the caller), never an error.
+	// Missing account → not knowable (rendered as "—" by the caller), never an error.
 	if _, ok := ProfileTokenMtime(cfg, "claude", "ghost"); ok {
 		t.Error("a missing credential file should report ok=false")
 	}
@@ -278,33 +278,33 @@ func TestProfileTokenMtime(t *testing.T) {
 	if _, ok := ProfileTokenMtime(cfg, "nope", "default"); ok {
 		t.Error("an unknown agent should report ok=false")
 	}
-	// A marker file present → its mtime is the rotation clock. Set it to a known past instant.
+	// A pre-v11 marker is not read, so it has no rotation clock.
 	work := cfg.AgentProfileDir("claude", "work")
 	if err := os.MkdirAll(work, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(work, ".credentials.json")
-	if err := os.WriteFile(marker, []byte("tok"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte("tok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := ProfileTokenMtime(cfg, "claude", "work"); ok {
+		t.Error("a pre-v11 marker supplied a rotation time")
+	}
+	// A saved sign-in is dated by its authority file, not by anything beside it.
+	seedCanonicalFixture(t, cfg, "claude", "saved")
+	authority := filepath.Join(cfg.ConfigDir, "claude", "credentials", "saved", "authority.json")
 	old := time.Now().Add(-72 * time.Hour)
-	if err := os.Chtimes(marker, old, old); err != nil {
+	if err := os.Chtimes(authority, old, old); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := ProfileTokenMtime(cfg, "claude", "work")
-	if !ok {
-		t.Fatal("a present marker should report ok=true")
+	got, ok := ProfileTokenMtime(cfg, "claude", "saved")
+	if !ok || got.Unix() != old.Unix() {
+		t.Fatalf("mtime = %v, %v; want %v", got, ok, old)
 	}
-	if got.Unix() != old.Unix() {
-		t.Errorf("mtime = %v, want %v", got, old)
-	}
-	// It stats the AuthMarker specifically, NOT the newest file in the dir — a later session
-	// write must not masquerade as a rotation.
-	if err := os.WriteFile(filepath.Join(work, "session.jsonl"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfg.ConfigDir, "claude", "credentials", "saved", "unrelated.jsonl"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := ProfileTokenMtime(cfg, "claude", "work"); got.Unix() != old.Unix() {
-		t.Errorf("mtime moved to %v after an unrelated write; must track only the marker", got)
+	if got, _ := ProfileTokenMtime(cfg, "claude", "saved"); got.Unix() != old.Unix() {
+		t.Errorf("mtime moved to %v after an unrelated write", got)
 	}
 }
 

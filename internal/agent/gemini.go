@@ -70,25 +70,12 @@ func (geminiAgent) NativeCredentials() NativeCredentialSpec {
 			return NativeCredentialState{}, fmt.Errorf("native Gemini vertex-ai authentication is not supported by the native broker")
 		}
 		return nativeAPIEnvironment("gemini-api-key", "GEMINI_API_KEY")(selection, key, value)
-	}, Defaults: func(source string) (map[string][]byte, error) {
-		return nativeDefaultSettings(source, "settings.json", "GEMINI.md", map[string]string{"theme": "string", "ui.theme": "string", "security.folderTrust.enabled": "bool"})
-	}, LegacyGrants: []string{"oauth_creds.json", "api-key"}, Artifacts: []NativeCredentialArtifact{
+	}, Artifacts: []NativeCredentialArtifact{
 		{Name: "settings.json", Limit: 1 << 20, Required: true, Import: importGeminiSelector, AccessOnly: importGeminiSelector},
 		{Name: "oauth_creds.json", Limit: 1 << 20, Import: importGeminiOAuth, AccessOnly: projectGeminiOAuth},
 		{Name: "google_accounts.json", Limit: 1 << 20, Import: importGeminiIdentity, AccessOnly: importGeminiIdentity},
 		{Name: "api-key", Limit: 4 << 10, Import: importGeminiKey, AccessOnly: importGeminiKey},
-	}, LegacyCheck: checkGeminiLegacyCutover, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Complete: completeGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
-}
-
-func checkGeminiLegacyCutover(home string) error {
-	_, err := os.Lstat(filepath.Join(home, "gemini-credentials.json"))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return fmt.Errorf("legacy Gemini encrypted cache has no recorded storage identity; account and cache retained unchanged for explicit host recovery")
+	}, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Complete: completeGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
 }
 
 func seedGeminiBroker(selection string) (NativeBrokerSeed, error) {
@@ -403,71 +390,6 @@ func geminiNativeWith(files map[string][]byte, credential []byte, before NativeC
 	return next, nil
 }
 
-func (geminiAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
-	s, err := openNativeHistory(source, ownsCWD)
-	if err != nil {
-		return NativeHistoryPlan{}, err
-	}
-	defer s.close()
-	for _, base := range []string{"tmp", "history"} {
-		s.walk(base, func(path string) {
-			if filepath.Base(path) != ".project_root" || filepath.Dir(filepath.Dir(path)) != base {
-				return
-			}
-			data, ok := s.small(path, geminiProjectRootLimit)
-			cwd := strings.TrimSpace(string(data))
-			if !ok || !s.owns(cwd) {
-				return
-			}
-			bucket := filepath.Dir(path)
-			s.add(path, cwd, "")
-			s.walk(bucket, func(child string) {
-				if child == path {
-					return
-				}
-				rel, _ := filepath.Rel(bucket, child)
-				if strings.HasPrefix(rel, "chats"+string(filepath.Separator)) {
-					if !strings.HasSuffix(child, ".jsonl") && !strings.HasSuffix(child, ".json") {
-						return
-					}
-					var id, project string
-					ok := s.inspect(child, func(reader io.Reader) error {
-						if err := nativeHistoryObjects(reader, []string{"sessionId", "projectHash"}, strings.HasSuffix(child, ".json"), func(fields map[string]string, _, _ int64) error {
-							for _, pair := range []struct {
-								value       string
-								destination *string
-							}{{fields["sessionId"], &id}, {fields["projectHash"], &project}} {
-								if pair.value == "" {
-									continue
-								}
-								if *pair.destination != "" && *pair.destination != pair.value {
-									return fmt.Errorf("native Gemini chat has conflicting ownership")
-								}
-								*pair.destination = pair.value
-							}
-							return nil
-						}); err != nil {
-							return err
-						}
-						if !ValidSessionID(id) || project != fmt.Sprintf("%x", sha256.Sum256([]byte(cwd))) {
-							return fmt.Errorf("native Gemini chat ownership does not match its project marker")
-						}
-						return nil
-					})
-					if ok {
-						s.add(child, cwd, id)
-						s.depend(child, path)
-					}
-					return
-				}
-				s.add(child, cwd, "")
-				s.depend(child, path)
-			})
-		})
-	}
-	return s.finish(), nil
-}
-
 func (geminiAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: geminiUsageQuota, HistoryDirs: []string{"tmp"},
 		Reports:   usageReportSpec{format: reportBillingExport, label: "Gemini API", endpoint: "https://bigquery.googleapis.com/bigquery/v2/projects/", scope: func(s UsageReportSource) string { return "Project " + s.Project + "; selected Gemini/Vertex SKU IDs" }},
@@ -475,23 +397,7 @@ func (geminiAgent) Usage() UsageSpec {
 		HistoryFile: func(path string) bool {
 			return strings.Contains(path, "/chats/") && (strings.HasSuffix(path, ".jsonl") || strings.HasSuffix(path, ".json"))
 		}, HistoryCacheID: "gemini", ParseHistory: geminiUsageHistory, Price: geminiUsagePrice,
-		NativeCredentialLease: true, NativeCredentialCheck: geminiUsageCredentialCheck,
-		NativeEnv: []string{"NO_BROWSER=true", "GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=false"}}
-}
-
-func geminiUsageCredentialCheck(profile string) error {
-	data, err := ReadCredentialArtifact(filepath.Join(profile, "oauth_creds.json"), 1<<20)
-	if os.IsNotExist(err) {
-		return ErrUsageSignIn
 	}
-	var credential struct {
-		Access  string `json:"access_token"`
-		Refresh string `json:"refresh_token"`
-	}
-	if err != nil || json.Unmarshal(data, &credential) != nil || credential.Access == "" && credential.Refresh == "" {
-		return fmt.Errorf("limits require the original plain-file OAuth store; encrypted/keychain storage is not portable")
-	}
-	return nil
 }
 
 // Standard text-token rates, https://ai.google.dev/gemini-api/docs/pricing — 2026-10-01.
@@ -587,7 +493,7 @@ func geminiUsageHistory(reader io.Reader) (UsageHistory, error) {
 }
 
 func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, error) {
-	if input.APIKey && input.ProfileDir == "" {
+	if input.APIKey {
 		return UsageQuota{Auth: "API key"}, nil
 	}
 	if input.Current != nil {
@@ -601,35 +507,11 @@ func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 		}
 		return geminiCanonicalQuota(ctx, state.AccessToken)
 	}
-	auth, _, err := geminiSelectedAuthType(input.ProfileDir)
-	if err != nil {
-		return UsageQuota{}, fmt.Errorf("cannot read selected authentication mode")
-	}
-	if input.APIKey || auth == "gemini-api-key" || auth == "vertex-ai" {
-		if auth == "vertex-ai" {
-			return UsageQuota{Auth: "Vertex"}, nil
-		}
-		return UsageQuota{Auth: "API key"}, nil
-	}
-	if auth != "oauth-personal" {
-		return UsageQuota{}, ErrUsageSignIn
-	}
-	if input.Native == nil {
-		return UsageQuota{}, fmt.Errorf("native quota helper unavailable")
-	}
-	data, err := input.Native(ctx, []string{"/usr/local/bin/node", "--input-type=module", "-e", geminiQuotaHelper})
-	if err != nil {
-		return UsageQuota{}, err
-	}
-	var raw geminiQuotaResponse
-	if len(data) > 1<<20 || json.Unmarshal(data, &raw) != nil || raw.Error != "" {
-		return UsageQuota{}, fmt.Errorf("native quota lookup unavailable")
-	}
-	return raw.quota(), nil
+	// An account without a canonical record has no quota to read: the caller names the sign-in.
+	return UsageQuota{}, ErrUsageSignIn
 }
 
-// The pinned native helper uses these two read-only Code Assist calls. Canonical
-// renewal stays on the host; no helper mounts a second refresh-token authority.
+// These two read-only Code Assist calls answer the quota. Renewal stays on the host.
 func geminiCanonicalQuota(ctx context.Context, access string) (UsageQuota, error) {
 	header := http.Header{"Authorization": {"Bearer " + access}, "Content-Type": {"application/json"}}
 	var info struct {
@@ -663,26 +545,6 @@ func geminiCanonicalQuota(ctx context.Context, access string) (UsageQuota, error
 	}
 	return raw.quota(), nil
 }
-
-// The package has no library entry point, so the helper imports the core export hub that the
-// launcher bundle/gemini.js itself loads. Its name is content-hashed and holds only for the tarball
-// it was checked in: TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient fails on any other one.
-const geminiQuotaModule = lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/dist-6S53KFXU.js"
-
-// Import only the native auth/server exports: CLI/model initialization can load hooks, MCP
-// servers or perform onboarding. Let the process drain asynchronous native token persistence.
-const geminiQuotaHelper = `import {getOauthClient,CodeAssistServer} from "` + geminiQuotaModule + `";
-process.on("unhandledRejection",()=>{process.exitCode=1});
-try {
-  const config={getProxy:()=>undefined,isBrowserLaunchSuppressed:()=>true,isInteractive:()=>false};
-  const client=await getOauthClient("oauth-personal",config);
-  const server=new CodeAssistServer(client,undefined,{});
-  const info=await server.loadCodeAssist({metadata:{ideType:"IDE_UNSPECIFIED",platform:"PLATFORM_UNSPECIFIED",pluginType:"GEMINI"}});
-  const project=info.cloudaicompanionProject;
-  if(!info.currentTier||typeof project!=="string"||!project) throw new Error();
-  const quota=await server.retrieveUserQuota({project});
-  console.log(JSON.stringify({tier:info.paidTier?.name??info.currentTier.name,buckets:quota.buckets?.map(b=>({modelId:b.modelId,tokenType:b.tokenType,remainingAmount:b.remainingAmount,remainingFraction:b.remainingFraction,resetTime:b.resetTime}))}));
-} catch {process.exitCode=1;console.log(JSON.stringify({error:"quota lookup unavailable"}));}`
 
 type geminiQuotaResponse struct {
 	Tier    string `json:"tier"`

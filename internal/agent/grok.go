@@ -53,9 +53,7 @@ const grokNativeClientID = "b1a00492-073a-47ea-816f-4c329264a828"
 const grokNativeScope = grokIssuer + "::" + grokNativeClientID
 
 func (grokAgent) NativeCredentials() NativeCredentialSpec {
-	return NativeCredentialSpec{Defaults: func(source string) (map[string][]byte, error) {
-		return nativeDefaultSettings(source, "config.toml", "GROK.md", map[string]string{"model": "string"})
-	}, LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.lock"}, Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: grokCredentialLimit, Required: true, Import: importGrokNative, AccessOnly: projectGrokCredential}},
+	return NativeCredentialSpec{Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: grokCredentialLimit, Required: true, Import: importGrokNative, AccessOnly: projectGrokCredential}},
 		Inspect: inspectGrokNative, Renew: renewGrokNative, Complete: completeGrokNative, Broker: NativeBrokerSpec{Seed: seedGrokBroker, Routes: grokBrokerRoutes, Check: checkGrokBroker}}
 }
 
@@ -202,57 +200,6 @@ func completeGrokNative(files map[string][]byte, raw []byte, at time.Time) (map[
 	return next, nil
 }
 
-func (grokAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
-	s, err := openNativeHistory(source, ownsCWD)
-	if err != nil {
-		return NativeHistoryPlan{}, err
-	}
-	defer s.close()
-	buckets := map[string]bool{}
-	s.walk("sessions", func(path string) {
-		rel, _ := filepath.Rel("sessions", path)
-		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) >= 2 {
-			buckets[parts[0]] = true
-		}
-	})
-	for bucket := range buckets {
-		root := filepath.Join("sessions", bucket)
-		cwd, decodeErr := url.PathUnescape(bucket)
-		var marker string
-		if decodeErr != nil || !filepath.IsAbs(cwd) {
-			marker = filepath.Join(root, ".cwd")
-			data, ok := s.small(filepath.Join(root, ".cwd"), 4<<10)
-			if !ok {
-				continue
-			}
-			cwd = strings.TrimSpace(string(data))
-		}
-		if !s.owns(cwd) {
-			continue
-		}
-		s.walk(root, func(path string) {
-			rel, _ := filepath.Rel(root, path)
-			part := strings.Split(rel, string(filepath.Separator))[0]
-			id := nativeHistorySessionName(part)
-			var proofs []string
-			if marker != "" {
-				proofs = append(proofs, marker)
-			}
-			if id != "" {
-				summary := filepath.Join(root, part, "summary.json")
-				if !s.inspect(summary, nil) {
-					return
-				}
-				proofs = append(proofs, summary)
-			}
-			s.add(path, cwd, id)
-			s.depend(path, proofs...)
-		})
-	}
-	return s.finish(), nil
-}
-
 func (grokAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: grokUsageQuota, HistoryDirs: []string{"sessions"},
 		Reports:       usageReportSpec{format: reportTeamUSD, label: "xAI API", endpoint: "https://management-api.x.ai/v1/billing/teams/", scope: func(s UsageReportSource) string { return "API team " + s.Team }},
@@ -362,29 +309,18 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
 	scope := grokIssuer + "::b1a00492-073a-47ea-816f-4c329264a828"
-	var state NativeCredentialState
-	if input.Current != nil {
-		var err error
-		state, _, err = input.Current(ctx, deadline)
-		if err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-	} else {
-		if err := renewGrokCredentialScope(input.ProfileDir, deadline, scope); err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-		credentials, valid := readGrokCredentials(input.ProfileDir)
-		credential, found := credentials[scope]
-		if !valid || !found || credential.OIDCIssuer != grokIssuer || credential.OIDCClientID != grokNativeClientID {
-			return UsageQuota{}, ErrUsageSignIn
-		}
-		state = NativeCredentialState{Selection: scope, AccessToken: credential.Key, AccountID: credential.UserID}
+	if input.Current == nil {
+		return UsageQuota{}, ErrUsageSignIn
+	}
+	state, _, err := input.Current(ctx, deadline)
+	if err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
 	}
 	if state.Selection != scope || state.AccessToken == "" || state.AccountID == "" {
 		return UsageQuota{}, ErrUsageSignIn
 	}
 	var raw grokQuotaResponse
-	err := readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
+	err = readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
 		"Authorization": {"Bearer " + state.AccessToken}, "X-Xai-Token-Auth": {"xai-grok-cli"},
 		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.44"}, "X-Grok-Client-Mode": {"headless"},
 	}, nil, &raw)

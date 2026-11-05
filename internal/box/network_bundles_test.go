@@ -125,8 +125,8 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.WriteFile(filepath.Join(oauthDir, "gemini-credentials.json"), []byte(`{"encrypted":"host-bound"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
-		t.Fatal("host-bound Gemini OAuth was admitted", err)
+	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "coop login gemini@oauth") {
+		t.Fatal("a pre-v11 Gemini OAuth login was admitted", err)
 	}
 
 	if err := os.WriteFile(cfg.EnvFile(), []byte("GEMINI_API_KEY=default-only\nGOOGLE_API_KEY=unqualified-vertex\n"), 0o600); err != nil {

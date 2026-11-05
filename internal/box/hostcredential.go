@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +12,6 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 const (
@@ -24,7 +22,7 @@ const (
 // SaveHostCredential persists an adapter-declared API key outside the provider profile mounted
 // into boxes. The selector is staged privately and only credential artifacts are
 // published. Any old serving authority must complete its recoverable cutover.
-func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, secret []byte, runtimes ...runtime.Runtime) error {
+func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, secret []byte) error {
 	spec := ag.HostCredential()
 	if err := validateHostCredentialSpec(ag, spec); err != nil {
 		return err
@@ -47,7 +45,7 @@ func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, sec
 	if err := config.WriteFileAtomic(filepath.Join(home, spec.File), secret); err != nil {
 		return err
 	}
-	if err := ImportNativeSignIn(context.Background(), cfg, ag.Name(), profile, home, runtimes...); err != nil {
+	if err := ImportNativeSignIn(context.Background(), cfg, ag.Name(), profile, home); err != nil {
 		return fmt.Errorf("credential publication failed; sign-in output retained at %s: %w", root, err)
 	}
 	return os.RemoveAll(root)
@@ -80,62 +78,8 @@ func LoadHostCredential(cfg *config.Config, ag agents.Agent, profile string) (en
 		}
 		return "", "", false, nil
 	}
-	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
-	if err != nil {
-		return "", "", false, err
-	}
-	config.TightenReadablePath(dir)
-	config.TightenReadablePath(filepath.Join(dir, spec.File))
-	before, err := os.Lstat(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", "", false, nil
-	}
-	if err != nil {
-		return "", "", false, fmt.Errorf("inspect %s credential storage: %w", ag.DisplayName(), err)
-	}
-	if !before.IsDir() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm()&0o077 != 0 {
-		return "", "", false, fmt.Errorf("%s credential storage must be a private real directory", ag.DisplayName())
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return "", "", false, fmt.Errorf("open %s credential storage: %w", ag.DisplayName(), err)
-	}
-	defer root.Close()
-	after, err := root.Stat(".")
-	if err != nil || !os.SameFile(before, after) {
-		return "", "", false, fmt.Errorf("%s credential storage changed while opening", ag.DisplayName())
-	}
-	info, err := root.Lstat(spec.File)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", "", false, nil
-	}
-	if err != nil {
-		return "", "", false, fmt.Errorf("inspect %s API key: %w", ag.DisplayName(), err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return "", "", false, fmt.Errorf("%s API key must be an owner-only regular file", ag.DisplayName())
-	}
-	if info.Size() <= 0 || info.Size() > hostCredentialSizeLimit {
-		return "", "", false, fmt.Errorf("%s API key has an invalid size", ag.DisplayName())
-	}
-	f, err := root.Open(spec.File)
-	if err != nil {
-		return "", "", false, fmt.Errorf("open %s API key: %w", ag.DisplayName(), err)
-	}
-	opened, statErr := f.Stat()
-	if statErr != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
-		_ = f.Close()
-		return "", "", false, fmt.Errorf("%s API key changed while opening", ag.DisplayName())
-	}
-	data, readErr := io.ReadAll(io.LimitReader(f, hostCredentialSizeLimit+1))
-	closeErr := f.Close()
-	if readErr != nil || closeErr != nil {
-		return "", "", false, fmt.Errorf("read %s API key", ag.DisplayName())
-	}
-	if err := validateHostCredentialSecret(data); err != nil {
-		return "", "", false, fmt.Errorf("stored %s API key is invalid", ag.DisplayName())
-	}
-	return spec.EnvKey, string(data), true, nil
+	// A key that builds before v11 kept in host-credentials/<account> is refused, never read.
+	return "", "", false, refuseLegacyLogin(cfg, ag, profile)
 }
 
 // RemoveHostCredential removes only the exact adapter-owned secret for an explicitly confirmed
@@ -175,9 +119,8 @@ func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile str
 }
 
 // SelectedHostCredentialPath identifies the selected account's credential input without
-// modifying it. The path of an account not yet cut over may be absent: isolated callers must also
-// detect a key appearing.
-// Unselected credential families return no path, even when a stale vault key remains on disk.
+// modifying it. An account with no canonical record has none; one that only builds before v11
+// signed in is refused.
 func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile string) (string, error) {
 	spec := ag.HostCredential()
 	if !spec.Declared() {
@@ -199,29 +142,7 @@ func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile str
 		}
 		return filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, ag.Name(), "credentials", profile, "authority.json"), nil
 	}
-	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
-	if err != nil {
-		return "", err
-	}
-	profileDir := cfg.AgentProfileDir(ag.Name(), profile)
-	if !hostCredentialSelected(ag, profileDir, profileMarkerPresent(ag, profileDir)) {
-		return "", nil
-	}
-	return filepath.Join(dir, spec.File), nil
-}
-
-func hostCredentialMtime(cfg *config.Config, ag agents.Agent, profile string) (os.FileInfo, bool) {
-	spec := ag.HostCredential()
-	if !spec.Declared() {
-		return nil, false
-	}
-	dir, err := hostCredentialDir(cfg, ag.Name(), profile)
-	if err != nil {
-		return nil, false
-	}
-	config.TightenReadablePath(filepath.Join(dir, spec.File))
-	info, err := os.Lstat(filepath.Join(dir, spec.File))
-	return info, err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o077 == 0
+	return "", refuseLegacyLogin(cfg, ag, profile)
 }
 
 func hostCredentialSelected(ag agents.Agent, profileDir string, markerPresent bool) bool {

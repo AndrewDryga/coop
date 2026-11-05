@@ -503,7 +503,7 @@ func TestCredentialBrokerFreezesWritableProfileAuthMode(t *testing.T) {
 	cfg, spec := brokerFixture(t, "ANTHROPIC_API_KEY=raw-provider-secret\n")
 	seedCanonicalFixture(t, cfg, "claude", "default")
 	repo := t.TempDir()
-	home, err := PrepareNativeHome(t.Context(), cfg, runtime.Runtime{}, "claude", "default", repo, false)
+	home, err := PrepareNativeHome(t.Context(), cfg, "claude", "default", repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}

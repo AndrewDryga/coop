@@ -460,8 +460,6 @@ type Agent interface {
 	ModelCatalog() ModelCatalogSpec
 	// Usage declares read-only quota inspection and retained native token accounting.
 	Usage() UsageSpec
-	// NativeHistory inventories native records by recorded repository ownership, never bucket names alone.
-	NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error)
 	Scaffold() ScaffoldSpec
 	// DisplayName is the human product name for UX surfaces (the ACP toolbar dropdowns):
 	// "Claude Code", "Codex", … Name() stays the grammar token everywhere a value is parsed.

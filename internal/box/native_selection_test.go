@@ -53,7 +53,7 @@ func TestNativeCanonicalSelectionIgnoresRetiredProfilesAndHonorsDefaultKey(t *te
 			t.Fatal("environment replaced canonical authority", err)
 		}
 		input, err := UsageQuotaAuthority(cfg, "codex", account)
-		if err != nil || !input.APIKey || input.ProfileDir != "" || input.Current == nil {
+		if err != nil || !input.APIKey || input.Current == nil {
 			t.Fatal("quota selected obsolete profile", err)
 		}
 		state, _, err := input.Current(ctx, time.Now().Add(time.Minute))
@@ -111,10 +111,9 @@ func TestNativeEnvironmentOnlyRunsKeepKeysOutOfPublicSeeds(t *testing.T) {
 
 func TestNativePreviewAcceptsCommittedRenewalReceipt(t *testing.T) {
 	ctx := context.Background()
-	cfg, ag, _, _ := cutoverFixture(t)
-	if _, _, err := migrateNativeAccount(ctx, cfg, ag, "work", func() error { return nil }); err != nil {
-		t.Fatal(err)
-	}
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	ag, _ := agents.Get("codex")
+	importCanonicalFixture(t, cfg, "codex", "work", map[string][]byte{"auth.json": []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-original-access"}`)})
 	renewed, effect, err := renewAccountAuthority(ctx, cfg, nativeAccountSpec(ag), "work", func(*accountAuthority, time.Time) (bool, error) { return true, nil }, func(current *accountAuthority, retain func([]byte) error) (*accountAuthority, error) {
 		if err := retain([]byte(`{"access_token":"inert-rotated"}`)); err != nil {
 			return nil, err

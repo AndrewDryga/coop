@@ -9,7 +9,6 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestHistoryKeyFollowsTheCanonicalRepository(t *testing.T) {
@@ -118,7 +117,7 @@ func TestRunSelectsCompleteNativeHomesWithoutAccountMounts(t *testing.T) {
 			t.Run(name+map[bool]string{false: "-ordinary", true: "-acp"}[acp], func(t *testing.T) {
 				cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
 				repo := t.TempDir()
-				home, err := PrepareNativeHome(context.Background(), cfg, runtime.Runtime{}, name, cfg.ActiveProfile(name), repo, acp)
+				home, err := PrepareNativeHome(context.Background(), cfg, name, cfg.ActiveProfile(name), repo, acp)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -172,13 +172,13 @@ func TestACPNetworkScopePreservesPresetRoleAccountIdentity(t *testing.T) {
 	}
 	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Peers: scope, Preset: p, NetworkClient: egress.ClientACP,
-	}); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
+	}); err == nil || !strings.Contains(err.Error(), "coop login gemini@default") {
 		t.Fatal("portable Gemini sibling qualified the preset's OAuth role account", err)
 	}
 	// The inner child revalidates this actual scope without the admission-only peers too.
 	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Preset: p, NetworkClient: egress.ClientACP,
-	}); err == nil || !strings.Contains(err.Error(), "encrypted cache") {
+	}); err == nil || !strings.Contains(err.Error(), "coop login gemini@default") {
 		t.Fatal("filtered inner launch accepted the preset's OAuth role account", err)
 	}
 }

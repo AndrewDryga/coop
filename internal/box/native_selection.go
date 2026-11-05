@@ -36,8 +36,8 @@ func validateNativeOverrides(cfg *config.Config, spec RunSpec, ag agents.Agent) 
 	return nil
 }
 
-// Selection reads authority but never starts a migration or publishes an env key.
-// Existing canonical failure always wins over stale legacy or environment input.
+// Selection reads authority but never publishes an env key. Existing canonical failure always
+// wins over stale environment input, and a login only older builds saved is refused.
 func previewNativeAuthority(ctx context.Context, cfg *config.Config, ag agents.Agent, account string) (nativeSelection, bool, error) {
 	cfg = cfg.NativeAuthorityConfig()
 	record, canonical, err := readNativeAccount(ctx, cfg, ag, account)
@@ -49,25 +49,8 @@ func previewNativeAuthority(ctx context.Context, cfg *config.Config, ag agents.A
 		return selected, true, errors.New("native account is removed or needs host recovery")
 	}
 	if !canonical {
-		if check := ag.NativeCredentials().LegacyCheck; check != nil {
-			if err := check(cfg.AgentProfileDir(ag.Name(), account)); err != nil {
-				return selected, false, err
-			}
-		}
-		sources, err := legacyAccountSources(cfg, ag, account)
-		if err != nil {
+		if err := refuseLegacyLogin(cfg, ag, account); err != nil {
 			return selected, false, err
-		}
-		serving := false
-		for _, source := range sources {
-			serving = serving || source.Retire
-		}
-		if serving {
-			record, err = normalizeNativeAccount(ag, cutoverFiles(sources))
-			if err != nil {
-				return selected, true, err
-			}
-			selected.record = record
 		}
 	}
 	if record != nil {

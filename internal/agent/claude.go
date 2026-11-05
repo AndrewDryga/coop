@@ -69,9 +69,7 @@ type claudeNativeIdentity struct {
 }
 
 func (claudeAgent) NativeCredentials() NativeCredentialSpec {
-	return NativeCredentialSpec{Environment: nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY"), Defaults: func(source string) (map[string][]byte, error) {
-		return nativeDefaultSettings(source, "settings.json", "CLAUDE.md", map[string]string{"theme": "string", "skipDangerousModePermissionPrompt": "bool", "sandbox.enabled": "bool", "sandbox.failIfUnavailable": "bool"})
-	}, LegacyGrants: []string{".credentials.json"}, LegacyLocks: []string{".credentials.json.refresh.lock"}, Artifacts: []NativeCredentialArtifact{
+	return NativeCredentialSpec{Environment: nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY"), Artifacts: []NativeCredentialArtifact{
 		{Name: ".credentials.json", Limit: claudeCredentialLimit, Required: true, Import: importClaudeNative, AccessOnly: projectClaudeCredential},
 		{Name: ".claude.json", Limit: 1 << 20, Required: true, Import: importClaudeIdentity, AccessOnly: importClaudeIdentity},
 	}, Inspect: inspectClaudeNative, Renew: renewClaudeNative, Complete: completeClaudeNative, Broker: NativeBrokerSpec{MergeJSON: []string{"settings.json", ".claude.json"}, Seed: seedClaudeBroker, Routes: claudeBrokerRoutes, Check: checkClaudeBroker}}
@@ -235,78 +233,6 @@ func completeClaudeNative(files map[string][]byte, raw []byte, at time.Time) (ma
 	return next, nil
 }
 
-func (claudeAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
-	s, err := openNativeHistory(source, ownsCWD)
-	if err != nil {
-		return NativeHistoryPlan{}, err
-	}
-	defer s.close()
-	type transcript struct{ path, id, cwd string }
-	var owned []transcript
-	origins := map[string]string{}
-	s.walk("projects", func(path string) {
-		if !strings.HasSuffix(path, ".jsonl") {
-			return
-		}
-		var cwd, id string
-		ok := s.inspect(path, func(reader io.Reader) error {
-			if err := nativeHistoryRows(reader, []string{"cwd", "sessionId"}, func(fields map[string]string, _, _ int64) error {
-				row := struct{ CWD, ID string }{fields["cwd"], fields["sessionId"]}
-				if row.CWD != "" {
-					if cwd != "" && cwd != row.CWD {
-						return fmt.Errorf("native Claude transcript has conflicting working folders")
-					}
-					cwd = row.CWD
-				}
-				if row.ID != "" {
-					if id != "" && id != row.ID {
-						return fmt.Errorf("native Claude transcript has conflicting session IDs")
-					}
-					id = row.ID
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-			if cwd == "" || !ValidSessionID(id) {
-				return fmt.Errorf("native Claude transcript has no explicit native ownership")
-			}
-			if !s.owns(cwd) {
-				return errNativeHistoryForeign
-			}
-			return nil
-		})
-		if ValidSessionID(id) && cwd != "" {
-			if previous, exists := origins[id]; exists && previous != cwd {
-				origins[id] = ""
-			} else if !exists {
-				origins[id] = cwd
-			}
-		}
-		if ok {
-			owned = append(owned, transcript{path, id, cwd})
-		}
-	})
-	sessions := map[string]string{}
-	for _, item := range owned {
-		if origins[item.id] != item.cwd {
-			s.skip(item.path, errors.New("native session ID has conflicting working folders"))
-			continue
-		}
-		s.add(item.path, item.cwd, item.id)
-		s.proofs[item.id] = append(s.proofs[item.id], item.path)
-		sessions[item.id] = item.cwd
-	}
-	s.filter("history.jsonl", []string{"project", "sessionId"}, "", func(fields map[string]string) bool {
-		cwd, known := origins[fields["sessionId"]]
-		return ValidSessionID(fields["sessionId"]) && s.owns(fields["project"]) &&
-			(!known || cwd == fields["project"])
-	})
-	s.companions([]string{"session-env", "file-history", "todos", "debug", "shell-snapshots", "sessions"}, sessions)
-	// Process registrations and unattributed global plans/caches stay unmounted.
-	return s.finish(), nil
-}
-
 func (claudeAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: claudeUsageQuota, HistoryDirs: []string{"projects"},
 		Reports: usageReportSpec{format: reportDailyCents, label: "Claude API", endpoint: "https://api.anthropic.com/v1/organizations/cost_report", scope: func(UsageReportSource) string {
@@ -414,25 +340,17 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	var data []byte
-	var err error
-	if input.Current != nil {
-		var files map[string][]byte
-		// A renewal that failed is not proof of a dead sign-in: a refused grant is recorded with the
-		// account, and the caller reads that record instead of this error.
-		if _, files, err = input.Current(ctx, deadline); err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-		data = files[".credentials.json"]
-	} else {
-		if err := renewClaudeCredential(input.ProfileDir, deadline); err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-		data, err = readClaudeCredential(filepath.Join(input.ProfileDir, ".credentials.json"))
-	}
-	if err != nil {
+	// Only an account with a canonical record has a sign-in to read.
+	if input.Current == nil {
 		return UsageQuota{}, ErrUsageSignIn
 	}
+	// A renewal that failed is not proof of a dead sign-in: a refused grant is recorded with the
+	// account, and the caller reads that record instead of this error.
+	_, files, err := input.Current(ctx, deadline)
+	if err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+	}
+	data := files[".credentials.json"]
 	source, err := parseClaudeSourceCredential(data)
 	if err != nil || source.AccessToken == "" {
 		return UsageQuota{}, ErrUsageSignIn

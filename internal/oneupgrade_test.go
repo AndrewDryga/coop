@@ -20,8 +20,9 @@ const waypointCard = ".agent/kb/rules/one-upgrade-for-old-state.md"
 // constant names it yet; the task that retires that reader adds one (it needs it for the refusal).
 // An empty current means the versions are not integer constants: the box supervisor label's are the
 // string prefixes "v2" and "v1" (box/sweep.go), and the fork records folder's are its two places
-// (forkspace.MoveLegacyForkRecords), and the execution fallback registry's are "not written" and
-// "read", so their rows are listed but pin nothing.
+// (forkspace.MoveLegacyForkRecords), the execution fallback registry's are "not written" and
+// "read", and the pre-v11 provider login and history have no version at all, so their rows are
+// listed but pin nothing.
 var waypointConstants = map[string]struct{ current, oldest string }{
 	"Primary snapshot receipt":    {"forkspace/immutable_primary.go:ImmutablePrimaryVersion", "forkspace/immutable_primary.go:ImmutablePrimaryVersion"},
 	"Companion snapshot receipt":  {"sessionsvc/companion_snapshot.go:companionSnapshotVersion", "sessionsvc/companion_snapshot.go:companionSnapshotVersion"},
@@ -45,6 +46,8 @@ var waypointConstants = map[string]struct{ current, oldest string }{
 	"Box supervisor label":        {"", ""},
 	"Fork records folder":         {"", ""},
 	"Execution fallback registry": {"", ""},
+	"Pre-v11 provider login":      {"", ""},
+	"Pre-v11 provider history":    {"", ""},
 }
 
 // TestOneUpgradeWaypoints is the check for waypointCard: its waypoint table must state the versions

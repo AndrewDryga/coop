@@ -2,11 +2,8 @@ package agent
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"hash"
 	"io"
 )
 
@@ -15,24 +12,15 @@ import (
 var errNativeHistoryJSON = errors.New("invalid native JSONL ownership record")
 
 type nativeHistoryJSON struct {
-	reader       *bufio.Reader
-	offset       int64
-	multiline    bool
-	digest       hash.Hash
-	digestBuffer []byte
+	reader    *bufio.Reader
+	offset    int64
+	multiline bool
 }
 
 func (p *nativeHistoryJSON) read() (byte, error) {
 	b, err := p.reader.ReadByte()
 	if err == nil {
 		p.offset++
-		if p.digest != nil {
-			p.digestBuffer = append(p.digestBuffer, b)
-			if len(p.digestBuffer) == cap(p.digestBuffer) {
-				_, _ = p.digest.Write(p.digestBuffer)
-				p.digestBuffer = p.digestBuffer[:0]
-			}
-		}
 	}
 	return b, err
 }
@@ -290,53 +278,18 @@ func (p *nativeHistoryJSON) value(depth int) error {
 	}
 }
 
-func nativeHistoryRows(reader io.Reader, keys []string, visit func(map[string]string, int64, int64) error) error {
-	return nativeHistoryObjects(reader, keys, false, visit)
-}
-
 func nativeHistoryObjects(reader io.Reader, keys []string, multiline bool, visit func(map[string]string, int64, int64) error) error {
-	return nativeHistoryParse(reader, keys, multiline, false, func(fields map[string]string, offset, size int64, _ string) error { return visit(fields, offset, size) })
+	return nativeHistoryParse(reader, keys, multiline, visit)
 }
 
-// NativeHistoryIndexRows streams index payloads without imposing a transcript
-// size limit. The stable key allows the host to preserve native deletions.
-func NativeHistoryIndexRows(reader io.Reader, key string, visit func(string, int64, int64) error) error {
-	var keys []string
-	if key != "" {
-		keys = []string{key}
-	}
-	return nativeHistoryKeyedRows(reader, keys, key, func(_ map[string]string, offset, size int64, id string) error { return visit(id, offset, size) })
-}
-
-func nativeHistoryKeyedRows(reader io.Reader, keys []string, indexKey string, visit func(map[string]string, int64, int64, string) error) error {
-	return nativeHistoryParse(reader, keys, false, true, func(fields map[string]string, offset, size int64, key string) error {
-		if indexKey != "" {
-			if fields[indexKey] == "" {
-				return errors.New("native index entry has no session identity")
-			}
-			sum := sha256.Sum256([]byte(fields[indexKey]))
-			key = hex.EncodeToString(sum[:])
-		}
-		return visit(fields, offset, size, key)
-	})
-}
-
-func nativeHistoryParse(reader io.Reader, keys []string, multiline, keyed bool, visit func(map[string]string, int64, int64, string) error) error {
+func nativeHistoryParse(reader io.Reader, keys []string, multiline bool, visit func(map[string]string, int64, int64) error) error {
 	wanted := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		wanted[key] = true
 	}
 	p := nativeHistoryJSON{reader: bufio.NewReaderSize(reader, 64<<10), multiline: multiline}
-	if keyed {
-		p.digest = sha256.New()
-		p.digestBuffer = make([]byte, 0, 64<<10)
-	}
 	for {
 		start := p.offset
-		if keyed {
-			p.digest.Reset()
-			p.digestBuffer = p.digestBuffer[:0]
-		}
 		if err := p.space(); err != nil {
 			return err
 		}
@@ -437,15 +390,10 @@ func nativeHistoryParse(reader io.Reader, keys []string, multiline, keyed bool, 
 		if err == nil && (multiline || b != '\n') {
 			return errNativeHistoryJSON
 		}
-		key := ""
-		if keyed {
-			_, _ = p.digest.Write(p.digestBuffer)
-			key = hex.EncodeToString(p.digest.Sum(nil))
-		}
 		if err == nil {
 			_, _ = p.read()
 		}
-		if err := visit(fields, start, p.offset-start, key); err != nil {
+		if err := visit(fields, start, p.offset-start); err != nil {
 			return err
 		}
 		if errors.Is(err, io.EOF) {

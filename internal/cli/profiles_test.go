@@ -18,15 +18,8 @@ import (
 func TestCmdProfiles(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}
-	// claude: a signed-in "work" profile (cred file present) + an unsigned "personal".
-	work := cfg.AgentProfileDir("claude", "work")
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	credential := `{"claudeAiOauth":{"accessToken":"access","expiresAt":4102444800000,"scopes":["user:inference"]}}`
-	if err := os.WriteFile(filepath.Join(work, ".credentials.json"), []byte(credential), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// claude: a signed-in "work" profile + an unsigned "personal".
+	seedNativeFixture(t, cfg, "claude", "work")
 	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "personal"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -80,13 +73,17 @@ func TestCredentialsListingSaysWhenAccountsCannotBeListed(t *testing.T) {
 	cfg := freshConfig(t)
 	// Claude lists work, but its default, solo, is in a credentials folder that can be searched and
 	// not listed. Codex's only account is in such a profiles folder.
-	writeAccount(t, cfg, "claude", "work", claudeReadyCredential)
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	claudeCredentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
 	if err := os.MkdirAll(filepath.Join(claudeCredentials, "solo"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	setDefault(t, cfg, "claude", "solo")
-	writeAccount(t, cfg, "codex", "work", codexReadyCredential)
+	if err := os.MkdirAll(cfg.AgentProfileDir("codex", "work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	codexProfiles := filepath.Dir(cfg.AgentProfileDir("codex", "work"))
 	for _, dir := range []string{claudeCredentials, codexProfiles} {
 		if err := os.Chmod(dir, 0o100); err != nil {
@@ -103,7 +100,7 @@ func TestCredentialsListingSaysWhenAccountsCannotBeListed(t *testing.T) {
 	claude, rest, _ := strings.Cut(rest, "\nCodex\n")
 	codex, rest, _ := strings.Cut(rest, "\nGemini\n")
 	gemini, _, _ := strings.Cut(rest, "\nGrok\n")
-	if want := "  work   refreshed just now\n\n  ⚠ Could not list every Claude account\n    open " + claudeCredentials + ": permission denied\n"; claude != want {
+	if want := "  work   ⚠ Not signed in\n           coop login claude@work\n\n  ⚠ Could not list every Claude account\n    open " + claudeCredentials + ": permission denied\n"; claude != want {
 		t.Errorf("Claude block = %q, want %q", claude, want)
 	}
 	if want := "  ⚠ Could not list every Codex account\n    open " + codexProfiles + ": permission denied\n"; codex != want {
@@ -127,7 +124,9 @@ func TestAccountRefusalsNameAFailedListing(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(cfg.RepoOverride, ".git"), 0o755); err != nil { // eval resolves the repository
 		t.Fatal(err)
 	}
-	writeAccount(t, cfg, "claude", "work", claudeReadyCredential)
+	if err := os.MkdirAll(cfg.AgentProfileDir("claude", "work"), 0o700); err != nil { // listed from profiles/
+		t.Fatal(err)
+	}
 	credentials := filepath.Join(cfg.ConfigDir, "claude", "credentials")
 	if err := os.MkdirAll(filepath.Join(credentials, "solo"), 0o700); err != nil {
 		t.Fatal(err)
@@ -357,8 +356,8 @@ func TestProfileStateRenewable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Expired access token (expiresAt in the past) but a refresh token present → signed in.
-	write("renew", `{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,"scopes":["user:inference"]}}`)
+	// A saved sign-in is signed in whatever its access token's age, since it renews on use.
+	seedNativeFixture(t, a.cfg, "claude", "renew")
 	if issue := signInLabel(a.cfg, "claude", "renew"); issue != "" {
 		t.Errorf("expired-but-renewable = %q, want no issue", issue)
 	}
@@ -438,11 +437,9 @@ func TestProfileStateExpiredGrok(t *testing.T) {
 	if issue := signInLabel(cfg, "grok", "default"); issue != "Sign in again" {
 		t.Errorf("expired Grok = %q, want \"Sign in again\"", issue)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(grokProfileCredential("2020-01-01T00:00:00Z", "refresh")), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if issue := signInLabel(cfg, "grok", "default"); issue != "" {
-		t.Errorf("refreshable Grok = %q, want no issue", issue)
+	seedNativeFixture(t, cfg, "grok", "work")
+	if issue := signInLabel(cfg, "grok", "work"); issue != "" {
+		t.Errorf("saved Grok sign-in = %q, want no issue", issue)
 	}
 }
 

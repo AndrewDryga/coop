@@ -27,9 +27,9 @@ Under `~/.config/coop/agents/<agent>/`, co:op keeps these separate folders:
 | `credentials/<name>/` | the account's credentials and sign-in records, kept only on the host |
 | `native-homes/<name>/<repository-key>/home/` | the provider's history, settings and other files for this repository and account |
 | `acp-homes/<repository-key>/home/` | one repository's editor-session files, kept when you switch accounts |
-| `profiles/<name>/` | older history and host defaults kept for reuse. Coding boxes never mount this folder |
+| `profiles/<name>/` | what Coop before v11 kept here. Nothing reads or mounts it, and Coop never deletes it |
 
-co:op copies reviewed host defaults into a new provider folder once. Later changes stay with that
+co:op sets its own defaults in a new provider folder once. Later changes stay with that
 repository, and changing the defaults doesn't overwrite an existing folder. A fork co:op created
 shares its parent's history storage, and unrelated repositories keep separate history.
 

@@ -72,7 +72,7 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 			return nil, err
 		}
 		account := cfg.ActiveProfile(provider)
-		record, exists, err := ensureNativeAccount(ctx, cfg, rt, ag, account)
+		record, exists, err := ensureNativeAccount(ctx, cfg, ag, account)
 		if err != nil {
 			return nil, err
 		}

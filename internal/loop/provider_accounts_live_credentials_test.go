@@ -53,9 +53,9 @@ func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Select
 		if err != nil {
 			return nil, false, errors.New("cannot inspect configured account family")
 		}
-		kinds[i], err = accountLiveLegacyAPIKey(cfg, selection)
+		kinds[i], err = accountLiveEnvAPIKey(cfg, selection)
 		if err != nil {
-			return nil, false, errors.New("cannot inspect legacy account family")
+			return nil, false, errors.New("cannot inspect environment account family")
 		}
 	}
 	for i := range selections {
@@ -70,36 +70,18 @@ func accountLivePair(cfg *config.Config, provider string) ([]liveprovider.Select
 
 const accountLiveInvalidKey = "coop-live-deliberately-invalid-credential"
 
-func accountLiveLegacyAPIKey(cfg *config.Config, selection liveprovider.Selection) (bool, error) {
+// accountLiveEnvAPIKey judges an account with no canonical record: only the default account's
+// env-file key can run it.
+func accountLiveEnvAPIKey(cfg *config.Config, selection liveprovider.Selection) (bool, error) {
+	if !selection.SourceDefault {
+		return false, nil
+	}
 	ag, _ := agents.Get(selection.Provider)
-	profile := cfg.AgentProfileDir(selection.Provider, selection.Account)
-	if detector, ok := ag.(agents.StoredAPIKeyDetector); ok {
-		key, err := detector.StoredAPIKey(profile)
-		if key || err != nil && !errors.Is(err, os.ErrNotExist) {
-			return key, err
-		}
-	}
-	path, err := box.SelectedHostCredentialPath(cfg, ag, selection.Account)
-	if err != nil {
-		return false, err
-	}
-	if path != "" {
-		if _, _, found, err := box.LoadHostCredential(cfg, ag, selection.Account); found || err != nil {
-			return found, err
-		}
-	}
-	if selection.SourceDefault {
-		marker, _ := ag.AuthMarker()
-		_, err := os.Lstat(filepath.Join(profile, marker))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, err
-		}
-		values := box.EnvFileValues(cfg.EnvFile())
-		for _, key := range ag.ActiveCredentialEnvKeys(profile, err == nil) {
-			if value := values[key]; value != "" {
-				state, err := ag.NativeCredentials().Environment("", key, value)
-				return state.APIKey, err
-			}
+	values := box.EnvFileValues(cfg.EnvFile())
+	for _, key := range ag.ActiveCredentialEnvKeys(cfg.AgentProfileDir(selection.Provider, selection.Account), false) {
+		if value := values[key]; value != "" {
+			state, err := ag.NativeCredentials().Environment("", key, value)
+			return state.APIKey, err
 		}
 	}
 	return false, nil
@@ -117,9 +99,9 @@ func faultAccountLiveCopy(cfg *config.Config, selection liveprovider.Selection, 
 	}
 	apiKey := brokered
 	if !canonical {
-		apiKey, err = accountLiveLegacyAPIKey(cfg, selection)
+		apiKey, err = accountLiveEnvAPIKey(cfg, selection)
 		if err != nil {
-			return errors.New("inspect isolated legacy credential family")
+			return errors.New("inspect isolated environment credential family")
 		}
 	}
 	if canonical {
@@ -321,7 +303,14 @@ func TestProviderAccountsLiveContractAvailability(t *testing.T) {
 	if err != nil || len(pair) != 2 {
 		t.Fatal("two empty configured accounts must reach failing preflight, not not_configured")
 	}
-	if err := os.WriteFile(filepath.Join(cfg.AgentProfileDir("codex", "first"), "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"key"}`), 0o600); err != nil {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.ImportNativeSignIn(t.Context(), cfg, "codex", "first", home); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := accountLivePair(cfg, "codex"); err == nil {
@@ -329,19 +318,13 @@ func TestProviderAccountsLiveContractAvailability(t *testing.T) {
 	}
 }
 
-func TestProviderAccountsLiveContractMixedLayouts(t *testing.T) {
+func TestProviderAccountsLiveContractMixedFamilies(t *testing.T) {
 	for _, apiKey := range []bool{false, true} {
-		t.Run(map[bool]string{false: "canonical-and-legacy-oauth", true: "legacy-mixed-families"}[apiKey], func(t *testing.T) {
+		t.Run(map[bool]string{false: "same-family", true: "mixed-families"}[apiKey], func(t *testing.T) {
 			cfg := &config.Config{ConfigDir: t.TempDir()}
 			for _, account := range []string{"first", "second"} {
-				home := cfg.AgentProfileDir("codex", account)
-				if !apiKey && account == "first" {
-					home = t.TempDir()
-					if err := os.Chmod(home, 0700); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if err := os.MkdirAll(home, 0700); err != nil {
+				home := t.TempDir()
+				if err := os.Chmod(home, 0700); err != nil {
 					t.Fatal(err)
 				}
 				data := nativeauth.Files(t, "codex", account)["auth.json"]
@@ -351,19 +334,17 @@ func TestProviderAccountsLiveContractMixedLayouts(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(home, "auth.json"), data, 0600); err != nil {
 					t.Fatal(err)
 				}
-				if !apiKey && account == "first" {
-					if err := box.ImportNativeSignIn(t.Context(), cfg, "codex", account, home); err != nil {
-						t.Fatal(err)
-					}
+				if err := box.ImportNativeSignIn(t.Context(), cfg, "codex", account, home); err != nil {
+					t.Fatal(err)
 				}
 			}
 			pair, brokered, err := accountLivePair(cfg, "codex")
 			if apiKey {
 				if err == nil {
-					t.Fatal("legacy mixed families passed like-for-like live selection")
+					t.Fatal("mixed families passed like-for-like live selection")
 				}
 			} else if err != nil || len(pair) != 2 || !brokered {
-				t.Fatal("same-family mixed layouts were refused", err)
+				t.Fatal("same-family accounts were refused", err)
 			}
 		})
 	}

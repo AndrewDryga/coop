@@ -853,8 +853,6 @@ func seedDoctorCredentials(credCfg *config.Config) error {
 			return err
 		}
 	}
-	// Fresh canonical sign-in avoids surveying unrelated legacy mounts on the
-	// operator's daemon. The fixture has never had a legacy writer to migrate.
 	if err := box.ImportNativeSignIn(context.Background(), credCfg, agents.Default(), credCfg.ActiveProfile(agents.Default()), stage); err != nil {
 		return err
 	}

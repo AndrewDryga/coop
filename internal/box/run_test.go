@@ -2590,30 +2590,6 @@ func TestInstructionPlan(t *testing.T) {
 	}
 }
 
-func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
-	repo := t.TempDir()
-	configDir := t.TempDir()
-	profiles := filepath.Join(configDir, "codex", "profiles")
-	if err := os.MkdirAll(profiles, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(t.TempDir(), filepath.Join(profiles, "default")); err != nil {
-		t.Fatal(err)
-	}
-	recorder := filepath.Join(t.TempDir(), "runtime-args")
-	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", Egress: "none"}
-	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
-		Image: "i", Repo: repo, Workdir: "/workspace", Cmd: []string{"true"},
-		Homes: true, Agent: "codex", Batch: true, Quiet: true,
-	})
-	if code != -1 || err == nil || !strings.Contains(err.Error(), "not a real directory") {
-		t.Fatalf("Run = (%d, %v), want unsafe-credential refusal", code, err)
-	}
-	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("unsafe profile reached runtime: %v", statErr)
-	}
-}
-
 // An account name becomes a folder name, so one that climbs out of the provider's folders stops the
 // launch before the runtime, and whatever it names stays as it was.
 func TestRunRefusesAnAccountNameOutsideItsFolderBeforeRuntime(t *testing.T) {
@@ -3021,7 +2997,7 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		cfg, spec, artifacts, recorder, rt := newFixture(t, "codex")
 		writeCopyFixture(t, filepath.Join(spec.Repo, ".agent", "skills", "SKILL.md"), "inside")
 		outside := t.TempDir()
-		link := filepath.Join(acpSharedDir(cfg, "claude"), "projects")
+		link := filepath.Join(filepath.Join(cfg.ConfigDir, "claude", "acp-sessions"), "projects")
 		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -3030,15 +3006,6 @@ func TestRunRequiredBoxArtifactFailuresStopBeforeRuntime(t *testing.T) {
 		}
 		t.Setenv("TMPDIR", outside)
 		assertTempIgnored(t, cfg, spec, artifacts, recorder, rt)
-	})
-
-	t.Run("selected provider instruction read", func(t *testing.T) {
-		cfg, spec, artifacts, recorder, rt := newFixture(t, "claude")
-		path := filepath.Join(cfg.AgentDir("claude"), "CLAUDE.md")
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		assertStopped(t, cfg, spec, artifacts, recorder, rt, "CLAUDE.md is not a regular file", false)
 	})
 
 	t.Run("shared instruction read", func(t *testing.T) {
@@ -3200,29 +3167,6 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 			}
 		}
 	}
-
-	t.Run("adapter generation", func(t *testing.T) {
-		cfg := newConfig(t)
-		settings := filepath.Join(cfg.AgentDir("gemini"), "settings.json")
-		if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(settings, []byte("{malformed"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		artifacts := defaultCompositionArtifactOps()
-		var created []string
-		originalWrite := artifacts.writeFile
-		artifacts.writeFile = func(_, content string) (string, error) {
-			path, err := originalWrite("", content)
-			if err == nil {
-				created = append(created, path)
-			}
-			return path, err
-		}
-		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"gemini"}, Agent: "gemini", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
-		assertStopped(t, cfg, spec, artifacts, "host native defaults are malformed", false, &created)
-	})
 
 	t.Run("generated config write", func(t *testing.T) {
 		cfg := newConfig(t)
@@ -3605,7 +3549,7 @@ func TestRunPreparesSharedSessionsOnlyWhenRequested(t *testing.T) {
 			if err != nil || dirExists(other) {
 				t.Fatal("unselected history scope created", err)
 			}
-			if dirExists(acpSharedDir(cfg, "gemini")) {
+			if dirExists(filepath.Join(cfg.ConfigDir, "gemini", "acp-sessions")) {
 				t.Fatal("retired global ACP store created")
 			}
 
@@ -3682,15 +3626,11 @@ func TestLeadInstructionMountPreset(t *testing.T) {
 // A preset scopes credentials precisely: the lead plus its (authed) consult/delegate
 // role agents — never the blanket all-authed-peers widening, and never a native role.
 func TestCredentialScopePreset(t *testing.T) {
-	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	// All three authed with a saved sign-in.
 	for _, agent := range []string{"claude", "codex", "gemini"} {
-		os.MkdirAll(filepath.Join(dir, agent, "profiles", "default"), 0o755)
+		seedCanonicalFixture(t, cfg, agent, "default")
 	}
-	// All three authed (codex uses auth.json, gemini its own marker file, claude .credentials.json).
-	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "codex", "profiles", "default", "auth.json"), []byte("{}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "gemini", "profiles", "default", "gemini-credentials.json"), []byte("{}"), 0o644)
-	cfg := &config.Config{ConfigDir: dir}
 
 	p := frontierPreset()
 	scope := credentialScope(cfg, RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Preset: p})

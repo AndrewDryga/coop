@@ -46,11 +46,12 @@ just because it is still `Ready`. A refusal is recorded beside the account (`ref
 the record's epoch and revision), so later runs and commands do not send that grant again either:
 the account reads as needing a sign-in until one publishes a newer record.
 
-Pre-cutover quota inspection may still renew the original legacy store under the same writer
-fences as cutover. It must never fork that authority, overlap canonical service, or fall back from
-a revoked canonical account. This narrow maintenance path is not a coding-home projection.
+Quota inspection reads the canonical account only; an account the old folders alone hold is refused
+by name and never renewed from them.
 
 ## Changelog
+- 2026-11-04 — removed the profile-folder quota renewals and the cutover writer fences they shared
+  (pre-v11 import removal); quota now renews only through the canonical account.
 - 2026-11-03 — a refused grant was forgotten when its run ended, so every later launch, warm box
   and `coop usage` sent it again and `coop credentials` called the account healthy. The refusal is
   now recorded under the account lock and `renewAccountAuthority` returns it without the provider;
@@ -83,8 +84,7 @@ a revoked canonical account. This narrow maintenance path is not a coding-home p
   `Complete` at the next locked read; nothing kept clears for a retry; the exchange outlives its
   caller's cancellation. Swept all four adapters and the native broker; check names the new tests.
 - 2026-10-09 — swept all four adapters, native account renewal, run publication and remote startup.
-  Updated the mechanism to canonical host renewal and expiring broker snapshots; legacy renewal
-  checks remain applicable only to fenced pre-cutover quota maintenance.
+  Updated the mechanism to canonical host renewal and expiring broker snapshots.
 - 2026-09-18 — Grok had the defect this card names: `Portability` and no `Prepare`, so a remote
   session failed once its six-hour token aged until a local run happened to refresh the profile.
   Wired `renewGrokCredential`. The grant shape was captured from the pinned 1.0.25 binary against

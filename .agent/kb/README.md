@@ -92,7 +92,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [repository-source-copies](repository-source-copies.md) — skills and fallback copies retain rooted content authority and validate links only after relocation; a lead's own agents are copied without following any link
 - [sign-in-again-is-actionable](sign-in-again-is-actionable.md) — refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover (a provider-refused grant included) and every command words it the same — run the coop login it names
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
-- [native-credential-cutover](native-credential-cutover.md) — existing native writer locks keep their inode during private normalization; uncertain legacy grants remain in custody
+- [native-credential-custody](native-credential-custody.md) — canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; Docker listings are patient and fail closed
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
 - [native-broker-images](native-broker-images.md) — Codex generation and editing require exact image routes for each provider credential family
@@ -102,7 +102,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [provider-scripted-e2e](provider-scripted-e2e.md) — drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 - [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 - [provider-client-qualification](provider-client-qualification.md) — locked clients, conformance rows, on-demand live suites and the client bump procedure
-- [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, pre-v11 import completion stamps, and the large-history regression contract
+- [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract; the pre-v11 import is gone
 - [usage-recorded-token-value](usage-recorded-token-value.md) — independent native quota and recorded token value, historical account ambiguity, and original-home Gemini refresh coordination
 - [usage-history-cache](usage-history-cache.md) — per-transcript token cache for coop usage: keys, invalidation, and per-folder pruning after a complete full check
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring

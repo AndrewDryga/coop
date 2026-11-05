@@ -105,6 +105,7 @@
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
+<li><a href="#unreleased-logins-and-history-from-before-v11-are-not-converted">Unreleased: logins and history from before v11 are not converted</a></li>
 <li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
 <li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
 <li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
@@ -143,6 +144,20 @@ long gone.</li>
 <li>Coop leaves these files on disk and changes none of them. A project they provably do not belong to
 starts as usual.</li>
 <li>Policy copies an old <code>coop net setup</code> check saved without a marker stay on disk, unused.</li>
+</ul>
+</section><section class="doc-section reference-section" id="unreleased-logins-and-history-from-before-v11-are-not-converted"><h2>Unreleased: logins and history from before v11 are not converted</h2>
+<p>Coop no longer moves a login out of <code>profiles/&lt;account&gt;</code> or <code>host-credentials/&lt;account&gt;</code>, and no
+longer imports history or editor thread bindings from the folders Coop before v11 used.</p>
+<ul>
+<li>Run <code>coop login &lt;agent&gt;@&lt;account&gt;</code> for every account that <code>coop credentials</code> shows as needing a
+new sign-in. The old folder stays where it is, untouched. A Coop-held API key (Gemini) is saved
+again the same way.</li>
+<li>To convert an account instead of signing in again, open it once with Coop v12.1.0 or earlier
+(for example <code>coop credentials &lt;agent&gt;</code> or starting a box with that account), then upgrade.</li>
+<li>A launch that says a history import &#34;was started by an older Coop and never finished&#34; needs the
+same: open that project once with Coop v12.1.0 or earlier, then upgrade.</li>
+<li>History and editor threads never imported stay in the old folders. They are not read, and a thread
+from before v11 reopens by its editor id only.</li>
 </ul>
 </section><section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
 <p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does

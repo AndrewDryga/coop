@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 )
 
@@ -47,7 +46,7 @@ func seedCanonicalFixture(t *testing.T, cfg *config.Config, provider, account st
 
 func scopedFixtureHome(t *testing.T, cfg *config.Config, provider, repo string, acp bool) string {
 	t.Helper()
-	home, err := PrepareNativeHome(t.Context(), cfg, runtime.Runtime{}, provider, cfg.ActiveProfile(provider), repo, acp)
+	home, err := PrepareNativeHome(t.Context(), cfg, provider, cfg.ActiveProfile(provider), repo, acp)
 	if err != nil {
 		t.Fatal(err)
 	}

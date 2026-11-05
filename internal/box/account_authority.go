@@ -122,32 +122,9 @@ func privateAccountDirectory(dir *os.File) error {
 	return nil
 }
 
-// privateAccountFile is privateAccountDirectory's check for a legacy writer lock, which lives in a
-// folder a box could reach.
-func privateAccountFile(file *os.File) error {
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 {
-		return errors.New("canonical credential file must be owner-private with one link")
-	}
-	return nil
-}
-
 func (r *accountAuthorityRoot) close() { _ = r.fd.Close() }
 
 func (r *accountAuthorityRoot) dir() *os.File { return r.fd }
-
-func sameAccountInode(a, b *os.File) bool {
-	x, err := a.Stat()
-	if err != nil {
-		return false
-	}
-	y, err := b.Stat()
-	return err == nil && os.SameFile(x, y)
-}
 
 // lock takes the custody's lock, waiting up to 30 seconds (or ctx's deadline) for another process
 // to finish its transaction.

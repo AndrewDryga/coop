@@ -2384,24 +2384,6 @@ func TestSessionTurnRunnerRenewsARefreshRequiredCredentialBeforeProjection(t *te
 	}
 }
 
-func TestSessionTurnRunnerReplacesStaleProjectedCredential(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
-	profile := filepath.Join(fixture.private, "codex", "profiles", "work")
-	if err := os.MkdirAll(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profile, "auth.json"), []byte("stale"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	turn := fixture.submit(t, "recover after crash")
-	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(profile, "auth.json")); !os.IsNotExist(err) {
-		t.Fatalf("projected credential remains after recovery: %v", err)
-	}
-}
-
 func TestEnsurePrivateDirectoryRejectsIntermediateSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -2515,15 +2497,11 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 		}
 		keyFree(t, fixture.private, "vault-key")
 		// A daemon killed mid-turn never runs the turn's own cleanup; closing the session must still
-		// take the key, even past a profile artifact it cannot remove.
-		stuck := filepath.Join(private.AgentProfileDir("gemini", "studio"), "gemini-credentials.json")
-		if err := os.Mkdir(stuck, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		// take the key.
 		bound := fixture.session
 		bound.Target = "gemini@studio"
-		if err := fixture.runner.cleanupSessionCredentials(bound); err == nil {
-			t.Fatal("cleanup reported success past an artifact it could not remove")
+		if err := fixture.runner.cleanupSessionCredentials(bound); err != nil {
+			t.Fatal(err)
 		}
 		if _, _, found, _ := box.LoadHostCredential(private, gemini, "studio"); found {
 			t.Fatal("the projected key outlived the session")
@@ -2618,13 +2596,11 @@ func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	credential := filepath.Join(profile, "auth.json")
 	history := filepath.Join(profile, "native-history")
 	instructions := filepath.Join(profile, "AGENTS.md")
 	defaults := filepath.Join(fixture.private, "defaults")
 	conf := filepath.Join(fixture.private, ".coop-conf-disabled")
 	for path, data := range map[string]string{
-		credential:   "stale credential",
 		history:      "keep native history",
 		instructions: "untrusted future instructions",
 		defaults:     "codex=work\n",
@@ -2637,7 +2613,7 @@ func TestSessionTurnRunnerStartupCleanupPreservesNativeHistory(t *testing.T) {
 	if err := fixture.runner.CleanupSession(context.Background(), fixture.session); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{credential, instructions, defaults, conf} {
+	for _, path := range []string{instructions, defaults, conf} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("projected file %s remains after startup cleanup: %v", path, err)
 		}
@@ -2653,13 +2629,11 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	credential := filepath.Join(profile, "auth.json")
 	history := filepath.Join(profile, "native-history")
 	instructions := filepath.Join(fixture.private, "INSTRUCTIONS.md")
 	defaults := filepath.Join(fixture.private, "defaults")
 	conf := filepath.Join(fixture.private, ".coop-conf-disabled")
 	for path, data := range map[string]string{
-		credential:   "crash-left credential",
 		history:      "keep native history",
 		instructions: "crash-left instructions",
 		defaults:     "codex=work\n",
@@ -2673,7 +2647,7 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 	if err := fixture.runner.ReapInterruptedTurn(context.Background(), fixture.session, turn); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{credential, instructions, defaults, conf} {
+	for _, path := range []string{instructions, defaults, conf} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("projected file %s remains after exact turn reap: %v", path, err)
 		}
@@ -2694,11 +2668,10 @@ func TestUnprovenSessionRuntimeProofTouchesOnlyRunLabelsAndProjectedCredentials(
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	credential := filepath.Join(profile, "auth.json")
 	history := filepath.Join(profile, "native-history")
 	workspace := filepath.Join(fixture.session.Workspace, "keep-workspace")
 	for path, data := range map[string]string{
-		credential: "projected credential", history: "keep native history", workspace: "keep workspace",
+		history: "keep native history", workspace: "keep workspace",
 		filepath.Join(fixture.private, "env"): "projected env",
 	} {
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
@@ -2719,7 +2692,7 @@ func TestUnprovenSessionRuntimeProofTouchesOnlyRunLabelsAndProjectedCredentials(
 	if strings.Contains(log, box.LabelExecution+"=") || strings.Contains(log, "com.docker.compose") {
 		t.Fatalf("unproven cleanup touched fork or service authority: %s", log)
 	}
-	for _, path := range []string{credential, filepath.Join(fixture.private, "env")} {
+	for _, path := range []string{filepath.Join(fixture.private, "env")} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("projected credential remains at %s: %v", path, err)
 		}
@@ -2852,16 +2825,6 @@ func TestUnprovenSessionRuntimeProofKeepsUncertainCleanup(t *testing.T) {
 		}
 		if got := readFile(t, sentinel); got != "outside private state" {
 			t.Fatalf("external credential data changed: %q", got)
-		}
-	})
-	t.Run("credential cleanup fails", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal")
-		credential := filepath.Join(fixture.private, "codex", "profiles", "work", "auth.json")
-		if err := os.MkdirAll(credential, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := fixture.runner.CleanupUnprovenSessionRuntime(context.Background(), fixture.session); err == nil {
-			t.Fatal("failed credential cleanup was reported as proof")
 		}
 	})
 }

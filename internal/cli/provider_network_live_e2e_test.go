@@ -373,7 +373,7 @@ func prepareProviderNetworkLiveMCP(layout procharness.Layout, selection liveprov
 	defer cancel()
 	// The isolated credential projection contains no legacy history to import.
 	// Publish the same repository home box.Run will mount before adding its tool.
-	profile, err := box.PrepareNativeHome(ctx, &config.Config{ConfigDir: layout.Config, HomeInBox: home}, runtime.Runtime{}, selection.Provider, selection.Account, layout.Repo, false)
+	profile, err := box.PrepareNativeHome(ctx, &config.Config{ConfigDir: layout.Config, HomeInBox: home}, selection.Provider, selection.Account, layout.Repo, false)
 	if err != nil {
 		return "", err
 	}

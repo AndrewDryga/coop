@@ -29,12 +29,8 @@ type codexAgent struct{}
 func (codexAgent) NativeCredentials() NativeCredentialSpec {
 	return NativeCredentialSpec{
 		Environment: nativeAPIEnvironment("apikey", "OPENAI_API_KEY"),
-		Defaults: func(source string) (map[string][]byte, error) {
-			return nativeDefaultSettings(source, "config.toml", "AGENTS.md", map[string]string{"model": "string", "model_reasoning_effort": "string"})
-		},
-		LegacyGrants: []string{"auth.json"}, LegacyLocks: []string{"auth.json.refresh.lock"},
-		Artifacts: []NativeCredentialArtifact{{Name: "auth.json", Limit: codexCredentialLimit, Required: true, Import: importCodexNative, AccessOnly: projectCodexCredential}},
-		Inspect:   inspectCodexNative, Renew: renewCodexNative, Complete: completeCodexNative,
+		Artifacts:   []NativeCredentialArtifact{{Name: "auth.json", Limit: codexCredentialLimit, Required: true, Import: importCodexNative, AccessOnly: projectCodexCredential}},
+		Inspect:     inspectCodexNative, Renew: renewCodexNative, Complete: completeCodexNative,
 		Broker: NativeBrokerSpec{Seed: seedCodexBroker, Routes: codexBrokerRoutes, Check: checkCodexBroker},
 	}
 }
@@ -307,69 +303,6 @@ func completeCodexNative(files map[string][]byte, raw []byte, at time.Time) (map
 	return next, nil
 }
 
-func (codexAgent) NativeHistory(source string, ownsCWD func(string) bool) (NativeHistoryPlan, error) {
-	s, err := openNativeHistory(source, ownsCWD)
-	if err != nil {
-		return NativeHistoryPlan{}, err
-	}
-	defer s.close()
-	type rollout struct{ path, id, cwd string }
-	var owned []rollout
-	origins := map[string]string{}
-	for _, root := range []string{"sessions", "archived_sessions"} {
-		s.walk(root, func(path string) {
-			if !strings.HasSuffix(path, ".jsonl") {
-				return
-			}
-			var meta struct {
-				Type    string                   `json:"type"`
-				Payload struct{ ID, Cwd string } `json:"payload"`
-			}
-			ok := s.inspect(path, func(reader io.Reader) error {
-				line, readErr := bufio.NewReader(io.LimitReader(reader, codexSessionMetadataLimit+1)).ReadString('\n')
-				if len(line) > codexSessionMetadataLimit || readErr != nil && readErr != io.EOF ||
-					json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
-					!ValidSessionID(meta.Payload.ID) || !filepath.IsAbs(meta.Payload.Cwd) {
-					return fmt.Errorf("invalid Codex session ownership metadata")
-				}
-				if !s.owns(meta.Payload.Cwd) {
-					return errNativeHistoryForeign
-				}
-				return nil
-			})
-			if ValidSessionID(meta.Payload.ID) && meta.Payload.Cwd != "" {
-				if previous, exists := origins[meta.Payload.ID]; exists && previous != meta.Payload.Cwd {
-					origins[meta.Payload.ID] = ""
-				} else if !exists {
-					origins[meta.Payload.ID] = meta.Payload.Cwd
-				}
-			}
-			if ok {
-				owned = append(owned, rollout{path, meta.Payload.ID, meta.Payload.Cwd})
-			}
-		})
-	}
-	sessions := map[string]string{}
-	for _, item := range owned {
-		if origins[item.id] != item.cwd {
-			s.skip(item.path, fmt.Errorf("native session ID has conflicting working folders"))
-			continue
-		}
-		s.add(item.path, item.cwd, item.id)
-		s.proofs[item.id] = append(s.proofs[item.id], item.path)
-		sessions[item.id] = item.cwd
-	}
-	// CLI, exec, ACP and archived rollouts retain their original IDs and bytes.
-	s.filter("history.jsonl", []string{"session_id"}, "", func(fields map[string]string) bool {
-		return sessions[fields["session_id"]] != ""
-	})
-	s.filter("session_index.jsonl", []string{"id"}, "id", func(fields map[string]string) bool {
-		return sessions[fields["id"]] != ""
-	})
-	s.companions([]string{"shell_snapshots"}, sessions)
-	return s.finish(), nil
-}
-
 func (codexAgent) Usage() UsageSpec {
 	return UsageSpec{Quota: codexUsageQuota, HistoryDirs: []string{"sessions", "archived_sessions"},
 		Reports:        usageReportSpec{format: reportDailyUSD, label: "OpenAI API", endpoint: "https://api.openai.com/v1/organization/costs", scope: func(s UsageReportSource) string { return "API organization " + s.Organization }},
@@ -528,25 +461,13 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	var state NativeCredentialState
-	var err error
-	if input.Current != nil {
-		// As Claude's: a refused grant is recorded with the account, not inferred from this error.
-		if state, _, err = input.Current(ctx, deadline); err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-	} else {
-		if err := renewCodexCredential(input.ProfileDir, deadline); err != nil {
-			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
-		}
-		data, readErr := readCodexCredential(filepath.Join(input.ProfileDir, "auth.json"))
-		if readErr != nil {
-			return UsageQuota{}, ErrUsageSignIn
-		}
-		state, err = inspectCodexNative(map[string][]byte{"auth.json": data}, time.Now())
-	}
-	if err != nil {
+	if input.Current == nil {
 		return UsageQuota{}, ErrUsageSignIn
+	}
+	// As Claude's: a refused grant is recorded with the account, not inferred from this error.
+	state, _, err := input.Current(ctx, deadline)
+	if err != nil {
+		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
 	}
 	if state.APIKey {
 		return UsageQuota{Auth: "API key"}, nil

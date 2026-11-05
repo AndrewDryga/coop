@@ -1072,9 +1072,9 @@ func TestExtractPeer(t *testing.T) {
 func TestResolvePeers(t *testing.T) {
 	dir := t.TempDir()
 	// claude authed (a credential file); codex/gemini not signed in.
-	os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755)
-	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
-	a := &app{cfg: &config.Config{ConfigDir: dir}}
+	cfg := &config.Config{ConfigDir: dir}
+	seedNativeFixture(t, cfg, "claude", "default")
+	a := &app{cfg: cfg}
 
 	peers, err := a.resolvePeers("coop claude", []string{"claude:opus-4.8"})
 	if err != nil || len(peers) != 1 || peers[0].Provider != "claude" || peers[0].Model != "opus-4.8" {
@@ -1106,9 +1106,9 @@ func TestResolvePeers(t *testing.T) {
 // re-scan the credential store per peer.
 func TestResolvePeersNamesTheFullPeerAndScansOnce(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "claude", "profiles", "default"), 0o755)
-	os.WriteFile(filepath.Join(dir, "claude", "profiles", "default", ".credentials.json"), []byte("{}"), 0o644)
-	a := &app{cfg: &config.Config{ConfigDir: dir}}
+	cfg := &config.Config{ConfigDir: dir}
+	seedNativeFixture(t, cfg, "claude", "default")
+	a := &app{cfg: cfg}
 
 	_, err := a.resolvePeers("coop claude", []string{"codex:gpt-5.6-sol"})
 	if err == nil || !strings.Contains(err.Error(), "Codex needs a usable account") {

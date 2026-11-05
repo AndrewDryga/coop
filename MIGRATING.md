@@ -23,6 +23,21 @@ closed.
   starts as usual.
 - Policy copies an old `coop net setup` check saved without a marker stay on disk, unused.
 
+## Unreleased: logins and history from before v11 are not converted
+
+Coop no longer moves a login out of `profiles/<account>` or `host-credentials/<account>`, and no
+longer imports history or editor thread bindings from the folders Coop before v11 used.
+
+- Run `coop login <agent>@<account>` for every account that `coop credentials` shows as needing a
+  new sign-in. The old folder stays where it is, untouched. A Coop-held API key (Gemini) is saved
+  again the same way.
+- To convert an account instead of signing in again, open it once with Coop v12.1.0 or earlier
+  (for example `coop credentials <agent>` or starting a box with that account), then upgrade.
+- A launch that says a history import "was started by an older Coop and never finished" needs the
+  same: open that project once with Coop v12.1.0 or earlier, then upgrade.
+- History and editor threads never imported stay in the old folders. They are not read, and a thread
+  from before v11 reopens by its editor id only.
+
 ## Unreleased: `coop codex -p` runs one prompt
 
 `coop codex -p <name>` used to pick a Codex profile. It now runs `<name>` as a prompt, as `-p` does

@@ -19,19 +19,16 @@ import (
 // UsageSpec keeps native quota, history and tariff differences in their owning adapter.
 // Native is supplied lazily by the host; most quota reads need no container runtime.
 type UsageSpec struct {
-	Quota                 func(context.Context, UsageQuotaInput) (UsageQuota, error)
-	HostHomes             func() []string
-	Reports               usageReportSpec
-	HistoryDirs           []string
-	HistoryFile           func(string) bool
-	HistoryFilter         func(*os.Root, string) (bool, error)
-	HistoryCacheID        string
-	StreamHistory         bool // The decoder bounds individual records rather than whole files.
-	ParseHistory          func(io.Reader) (UsageHistory, error)
-	Price                 func(UsageEvent) (float64, bool)
-	NativeCredentialLease bool
-	NativeCredentialCheck func(string) error
-	NativeEnv             []string
+	Quota          func(context.Context, UsageQuotaInput) (UsageQuota, error)
+	HostHomes      func() []string
+	Reports        usageReportSpec
+	HistoryDirs    []string
+	HistoryFile    func(string) bool
+	HistoryFilter  func(*os.Root, string) (bool, error)
+	HistoryCacheID string
+	StreamHistory  bool // The decoder bounds individual records rather than whole files.
+	ParseHistory   func(io.Reader) (UsageHistory, error)
+	Price          func(UsageEvent) (float64, bool)
 }
 
 // Native host history has no historical account binding. Only the owning CLI's declared
@@ -54,11 +51,9 @@ func nativeUsageHomes(dir, env string, parent bool) []string {
 }
 
 type UsageQuotaInput struct {
-	ProfileDir string
-	APIKey     bool
-	EnvKey     string
-	Native     func(context.Context, []string) ([]byte, error)
-	Current    func(context.Context, time.Time) (NativeCredentialState, map[string][]byte, error)
+	APIKey  bool
+	EnvKey  string
+	Current func(context.Context, time.Time) (NativeCredentialState, map[string][]byte, error)
 }
 
 type UsageQuota struct {

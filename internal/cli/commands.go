@@ -731,7 +731,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	case err != nil || code != 0:
 		return code, err // the box already reported how the command ended
 	}
-	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool), a.rt); err != nil {
+	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool)); err != nil {
 		keepStage = true
 		return -1, fmt.Errorf("could not save the sign-in. The provider's files are kept at %s: %w", stagingRoot, err)
 	}
@@ -757,7 +757,7 @@ func (a *app) loginWithHostCredential(ag agents.Agent, profile string) (int, err
 		return -1, err
 	}
 	defer clear(secret)
-	if err := box.SaveHostCredential(a.cfg, ag, profile, secret, a.rt); err != nil {
+	if err := box.SaveHostCredential(a.cfg, ag, profile, secret); err != nil {
 		return -1, err
 	}
 	loginResult(ag.Name(), profile, box.ProfileCredentialReady(a.cfg, ag.Name(), profile, time.Now()))

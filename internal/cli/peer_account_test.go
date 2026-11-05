@@ -142,18 +142,16 @@ func TestACPNetworkScopeSkipsOptionalLeadMissingPeerAccount(t *testing.T) {
 
 func TestACPNetworkScopeSkipsOptionalLeadWithIneligiblePeerAccount(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
-	// Unlike canonical portable fixtures, this legacy opaque account cannot be brokered.
+	// Unlike canonical portable fixtures, an unqualified Vertex key cannot be brokered.
 	dir := cfg.AgentProfileDir("gemini", "default")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{
-		"settings.json":           `{"security":{"auth":{"selectedType":"oauth-personal"}}}`,
-		"gemini-credentials.json": `{"encrypted":"host-bound"}`,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"vertex-ai"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("GOOGLE_API_KEY=unqualified-vertex\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	signInCred(t, cfg, "codex", "default")
 	ag, _ := agents.Get("gemini")

@@ -24,7 +24,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
@@ -765,7 +764,7 @@ func writeForkProviderSession(t *testing.T, suite *directProcessSuite, provider,
 
 func writeForkProviderSessionAt(t *testing.T, suite *directProcessSuite, provider, account, repo, ws, id, source string, modTime time.Time) {
 	t.Helper()
-	profile, err := box.PrepareNativeHome(t.Context(), &config.Config{ConfigDir: suite.layout.Config}, runtime.Runtime{}, provider, account, repo, false)
+	profile, err := box.PrepareNativeHome(t.Context(), &config.Config{ConfigDir: suite.layout.Config}, provider, account, repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}

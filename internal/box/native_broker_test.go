@@ -32,7 +32,7 @@ func TestNativeClaudeAPIHomeAdmitsLaterCanonicalSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
-	home, err := PrepareNativeHome(t.Context(), cfg, runtime.Runtime{}, "claude", "default", repo, false)
+	home, err := PrepareNativeHome(t.Context(), cfg, "claude", "default", repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestNativeRunPublishesGuardOnlyExpiringAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
-	home, err := PrepareNativeHome(ctx, cfg, runtime.Runtime{}, "codex", account, repo, false)
+	home, err := PrepareNativeHome(ctx, cfg, "codex", account, repo, false)
 	if err != nil {
 		t.Fatal(err)
 	}

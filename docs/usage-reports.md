@@ -41,8 +41,7 @@ when the provider supplies them. Checking usage never redeems a reset. Credits a
 provider's own units, not dollars.
 
 co:op checks the limits of the accounts it manages using credentials that stay on the host, and it
-sends no model prompt. A Gemini login that still uses its original credential store needs Docker
-for this check. If an account is busy, wait for its run to finish and try again.
+sends no model prompt. If an account is busy, wait for its run to finish and try again.
 
 API-key and Vertex accounts may have priced token history even when they have no subscription
 limits to report.

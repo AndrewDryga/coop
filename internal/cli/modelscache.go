@@ -335,16 +335,10 @@ func safeModelProbeCause(target agents.Target, text string) string {
 		return "The container runtime has no free storage."
 	case strings.Contains(text, "cannot connect to the docker daemon"), strings.Contains(text, "is the docker daemon running"):
 		return "Docker is unavailable."
-	case strings.Contains(text, "encrypted cache has no recorded storage identity"):
-		return "The selected account needs host recovery; its legacy encrypted cache is preserved."
 	case strings.Contains(text, "could not check which containers hold this saved sign-in"):
 		return "Docker could not verify existing credential mounts; retry when Docker is ready."
 	case strings.Contains(text, "credential file must be owner-private"), strings.Contains(text, "credential directory must be owner-private"):
 		return "Credential storage failed a safety check; preserve it for host recovery."
-	case strings.Contains(text, "cannot rule out that it holds this saved sign-in"):
-		return "A container mount could not be checked; stop the container that holds it, then retry."
-	case strings.Contains(text, "legacy native credential writer is busy"), strings.Contains(text, "credential home is mounted by a running or restartable container"):
-		return "An existing session is using this account; finish it before retrying."
 	case strings.Contains(text, "needs host sign-in or renewal"), strings.Contains(text, "coop login"):
 		// A probe starts only for an account that looked signed in, so the sign-in it hit is a saved
 		// one that stopped working.

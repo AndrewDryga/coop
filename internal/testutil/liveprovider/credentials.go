@@ -38,16 +38,14 @@ type Selection struct {
 
 // Prepared is an isolated credential config plus the opaque source-integrity baseline that made it.
 type Prepared struct {
-	ConfigDir   string
-	accounts    map[string]string
-	configured  map[string]bool
-	envBacked   map[string]bool
-	hostBacked  map[string]bool
-	profileDirs map[string]string
-	native      map[string]box.NativeAccessSnapshot
-	key         [32]byte
-	inputs      []sourceInput
-	baseline    [][32]byte
+	ConfigDir  string
+	accounts   map[string]string
+	configured map[string]bool
+	envBacked  map[string]bool
+	native     map[string]box.NativeAccessSnapshot
+	key        [32]byte
+	inputs     []sourceInput
+	baseline   [][32]byte
 }
 
 type sourceInput struct {
@@ -175,8 +173,8 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	}
 	p := &Prepared{
 		ConfigDir: destination, accounts: defaults, configured: map[string]bool{},
-		envBacked: map[string]bool{}, hostBacked: map[string]bool{}, profileDirs: map[string]string{},
-		native: map[string]box.NativeAccessSnapshot{},
+		envBacked: map[string]bool{},
+		native:    map[string]box.NativeAccessSnapshot{},
 	}
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return nil, errors.New("create source-integrity key")
@@ -213,12 +211,9 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 		return nil, errors.New("secure isolated credential staging directory")
 	}
 
-	primaryPresent := map[string]bool{}
-	activeEnvKeys := map[string][]string{}
-	markerBacked := map[string]bool{}
 	allowedEnvKeys := map[string][]string{}
 	for _, selection := range ordered {
-		ag, live, err := liveCredentialsFor(selection.Provider)
+		ag, _, err := liveCredentialsFor(selection.Provider)
 		if err != nil {
 			return nil, err
 		}
@@ -244,46 +239,10 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 			p.native[key] = snapshot
 			continue
 		}
-		for ordinal, artifact := range live.Artifacts {
-			sourcePath := filepath.Join(sourceDir, selection.Provider, "profiles", selection.Account, artifact.Name)
-			state, err := readSource(sourceDir, sourcePath, selection.Provider, ordinal, nil)
-			if err != nil {
-				return nil, err
-			}
-			if !state.exists {
-				continue
-			}
-			if artifact.Primary {
-				primaryPresent[key] = true
-			}
-			data, err := projectCredential(selection.Provider, ordinal, artifact, state.data)
-			if err != nil {
-				return nil, err
-			}
-			if data == nil {
-				continue
-			}
-			if err := writeCopy(filepath.Join(profileDir, artifact.Name), data, state.info); err != nil {
-				return nil, credentialError(selection.Provider, ordinal, err.Error())
-			}
-		}
-		vaultPath, err := selectedVaultPath(sourceDir, selection, ag)
-		if err != nil {
-			return nil, credentialError(selection.Provider, len(live.Artifacts), "host key selection failed")
-		}
-		if vaultPath != "" {
-			projected, err := box.ProjectHostCredential(&config.Config{ConfigDir: sourceDir}, &config.Config{ConfigDir: stage}, ag, selection.Account)
-			if err != nil {
-				return nil, credentialError(selection.Provider, len(live.Artifacts), "host key projection failed")
-			}
-			p.hostBacked[key] = projected != ""
-		}
-		activeEnvKeys[key] = ag.ActiveCredentialEnvKeys(profileDir, primaryPresent[key])
-		markerBacked[key] = primaryPresent[key] && agents.MarkerProvidesActiveCredential(ag, profileDir, activeEnvKeys[key])
+		// An account with no canonical record can only run on the default account's env-file key.
 		if selection.SourceDefault {
-			allowedEnvKeys[selection.Provider] = activeEnvKeys[key]
+			allowedEnvKeys[selection.Provider] = ag.ActiveCredentialEnvKeys(profileDir, false)
 		}
-		p.profileDirs[key] = filepath.Join(destination, selection.Provider, "profiles", selection.Account)
 	}
 	envLines, envProviders, err := selectedEnv(sourceDir, allowedEnvKeys)
 	if err != nil {
@@ -292,7 +251,7 @@ func Prepare(sourceDir, destination string, selections []Selection) (*Prepared, 
 	for _, selection := range ordered {
 		key := selectionKey(selection.Provider, selection.Account)
 		envBacked := selection.SourceDefault && envProviders[selection.Provider]
-		p.configured[key] = markerBacked[key] || envBacked || p.hostBacked[key]
+		p.configured[key] = envBacked
 		if snapshot, canonical := p.native[key]; canonical {
 			p.configured[key] = snapshot.Configured
 		}
@@ -383,7 +342,7 @@ func sourceInputs(sourceDir string, selections []Selection) ([]sourceInput, erro
 	inputs := make([]sourceInput, 0, len(selections)*2+1)
 	envNeeded := false
 	for _, selection := range selections {
-		ag, live, err := liveCredentialsFor(selection.Provider)
+		_, live, err := liveCredentialsFor(selection.Provider)
 		if err != nil {
 			return nil, err
 		}
@@ -395,22 +354,9 @@ func sourceInputs(sourceDir string, selections []Selection) ([]sourceInput, erro
 		}
 		envNeeded = envNeeded || selection.SourceDefault
 		if _, err := os.Lstat(canonical); err == nil {
-			continue // Canonical authority permanently supersedes legacy files.
+			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, credentialError(selection.Provider, 0, "canonical source cannot be inspected")
-		}
-		for ordinal, artifact := range live.Artifacts {
-			inputs = append(inputs, sourceInput{
-				provider: selection.Provider, ordinal: ordinal, root: sourceDir,
-				path: filepath.Join(sourceDir, selection.Provider, "profiles", selection.Account, artifact.Name),
-			})
-		}
-		path, err := selectedVaultPath(sourceDir, selection, ag)
-		if err != nil {
-			return nil, credentialError(selection.Provider, len(live.Artifacts), "host key selection failed")
-		}
-		if path != "" {
-			inputs = append(inputs, sourceInput{provider: selection.Provider, ordinal: len(live.Artifacts), root: sourceDir, path: path})
 		}
 		envNeeded = envNeeded || selection.SourceDefault
 	}
@@ -418,20 +364,6 @@ func sourceInputs(sourceDir string, selections []Selection) ([]sourceInput, erro
 		inputs = append(inputs, sourceInput{provider: "environment", ordinal: 0, root: sourceDir, path: filepath.Join(sourceDir, "env")})
 	}
 	return inputs, nil
-}
-
-func selectedVaultPath(sourceDir string, selection Selection, ag agents.Agent) (string, error) {
-	path, err := box.SelectedHostCredentialPath(&config.Config{ConfigDir: sourceDir}, ag, selection.Account)
-	if err != nil || path == "" || !selection.SourceDefault {
-		return path, err
-	}
-	// The default account's explicit env key wins in real launches. Do not read or copy a stale,
-	// unused vault key (nor let its permissions veto the credential the test will actually use).
-	_, configured, err := selectedEnv(sourceDir, map[string][]string{selection.Provider: {ag.HostCredential().EnvKey}})
-	if err != nil || configured[selection.Provider] {
-		return "", err
-	}
-	return path, nil
 }
 
 func selectedEnv(sourceDir string, allowedByProvider map[string][]string) ([]string, map[string]bool, error) {
@@ -555,7 +487,7 @@ func (p *Prepared) PreflightReason(provider, account string, deadline time.Time)
 	if !p.configured[key] {
 		return ReasonMissingCredential
 	}
-	if p.envBacked[key] || p.hostBacked[key] {
+	if p.envBacked[key] {
 		return ""
 	}
 	if snapshot, canonical := p.native[key]; canonical {
@@ -564,24 +496,7 @@ func (p *Prepared) PreflightReason(provider, account string, deadline time.Time)
 		}
 		return ReasonCredentialRefresh
 	}
-	_, live, err := liveCredentialsFor(provider)
-	if err != nil {
-		return ReasonUnsafeCredential
-	}
-	return portabilityReason(live.Portability(p.profileDirs[key], deadline))
-}
-
-func portabilityReason(status agents.CredentialPortability) string {
-	switch status {
-	case agents.CredentialPortable:
-		return ""
-	case agents.CredentialRefreshRequired:
-		return ReasonCredentialRefresh
-	case agents.CredentialNotPortable:
-		return ReasonCredentialNotPortable
-	default:
-		return ReasonUnsafeCredential
-	}
+	return ReasonUnsafeCredential
 }
 
 func liveCredentialsFor(provider string) (agents.Agent, agents.LiveCredentialSpec, error) {
@@ -594,17 +509,6 @@ func liveCredentialsFor(provider string) (agents.Agent, agents.LiveCredentialSpe
 		return nil, agents.LiveCredentialSpec{}, fmt.Errorf("%s live credential contract is unavailable", provider)
 	}
 	return ag, live, nil
-}
-
-func projectCredential(provider string, ordinal int, artifact agents.CredentialArtifact, data []byte) ([]byte, error) {
-	if artifact.Project == nil {
-		return nil, credentialError(provider, ordinal, "projection failed")
-	}
-	projected, err := artifact.Project(data)
-	if err != nil {
-		return nil, credentialError(provider, ordinal, "projection failed")
-	}
-	return projected, nil
 }
 
 // Account returns the account marked default in the isolated config for provider.

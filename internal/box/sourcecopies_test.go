@@ -601,7 +601,7 @@ func TestPrivateCopiesResolveRelativeTempDirectory(t *testing.T) {
 func TestPrivateCopiesIgnoreNonDirectoryInactiveACPRoot(t *testing.T) {
 	repo, temporary := t.TempDir(), t.TempDir()
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	writeCopyFixture(t, acpSharedDir(cfg, "claude"), "unused provider artifact")
+	writeCopyFixture(t, filepath.Join(cfg.ConfigDir, "claude", "acp-sessions"), "unused provider artifact")
 	t.Setenv("TMPDIR", temporary)
 	dir, err := privateWorkspaceTempDir(repo, "coop-inactive-", ConfigExposureRoots(cfg)...)
 	if err != nil {

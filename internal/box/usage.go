@@ -1,12 +1,10 @@
 package box
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +13,6 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
-	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
@@ -47,8 +44,8 @@ func UsageQuotaAuthority(cfg *config.Config, provider, account string) (agents.U
 		return input, nil
 	}
 	home := cfg.AgentProfileDir(provider, account)
-	input := agents.UsageQuotaInput{ProfileDir: home}
-	marker := ProfileMarkerPresent(cfg, provider, account)
+	input := agents.UsageQuotaInput{}
+	marker := profileMarkerPresent(ag, home)
 	values, err := effectiveCredentialEnv(cfg, RunSpec{Homes: true}, ag, provider, account, marker)
 	if err != nil {
 		return input, errors.New("selected authentication authority is unavailable")
@@ -62,14 +59,6 @@ func UsageQuotaAuthority(cfg *config.Config, provider, account string) (agents.U
 		}
 		input.EnvKey = key
 		input.APIKey = true
-	}
-	if input.EnvKey == "" && marker {
-		if detector, ok := ag.(agents.StoredAPIKeyDetector); ok {
-			input.APIKey, err = detector.StoredAPIKey(home)
-			if err != nil {
-				return input, errors.New("selected authentication authority is unavailable")
-			}
-		}
 	}
 	return input, nil
 }
@@ -146,8 +135,7 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 			releases[i]()
 		}
 	}
-	// A pending retained-history index import may replace its repository-local
-	// index only while no native client is using that complete home.
+	// An import of retained history by an older build that never finished leaves the home unusable.
 	if spec.Homes && !spec.Login {
 		ctx := spec.Ctx
 		if ctx == nil {
@@ -168,37 +156,6 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 				release()
 				return nil, err
 			}
-		}
-	}
-	if !rt.SupportsRestrictedFilesystem() {
-		return release, nil
-	}
-	for _, name := range credentialScope(cfg, *spec) {
-		if spec.native.selected(name) {
-			continue
-		}
-		if _, err := cfg.NativeHome(name); err == nil && !spec.Login {
-			// Offline native homes contain no account authority either; the shared
-			// history lease above covers them.
-			continue
-		}
-		ag, _ := agents.Get(name)
-		if !ag.Usage().NativeCredentialLease {
-			continue
-		}
-		lease, err := credentialUseLease(spec.Ctx, cfg, cfg.AgentProfileDir(name, cfg.ActiveProfile(name)), spec.Login)
-		if err != nil {
-			release()
-			return nil, err
-		}
-		releases = append(releases, lease.close)
-		if err := checkCredentialContainers(spec.Ctx, rt, name, lease.key, spec.Login); err != nil {
-			release()
-			return nil, err
-		}
-		spec.ExtraArgs = append(spec.ExtraArgs, "--label", "coop.credential."+name+"="+lease.key)
-		if spec.Login {
-			spec.ExtraArgs = append(spec.ExtraArgs, "--label", "coop.credential.writer="+lease.key)
 		}
 	}
 	return release, nil
@@ -226,87 +183,4 @@ func checkCredentialContainers(ctx context.Context, rt runtime.Runtime, provider
 		return errors.New("credential is busy — its previous runtime has not exited")
 	}
 	return nil
-}
-
-// ReadUsageQuotaNative is a maintenance helper, not a model run: no repository, generated
-// instructions, MCP, configurable image or inherited environment enters the process.
-func ReadUsageQuotaNative(ctx context.Context, cfg *config.Config, rt runtime.Runtime, ag agents.Agent, profile string, command []string) ([]byte, error) {
-	if !rt.SupportsRestrictedFilesystem() {
-		return nil, errors.New("native quota helper requires Docker")
-	}
-	if len(command) == 0 || !strings.HasPrefix(command[0], "/") {
-		return nil, errors.New("native quota helper has no command")
-	}
-	home := cfg.AgentProfileDir(ag.Name(), profile)
-	lease, err := credentialUseLease(ctx, cfg, home, true)
-	if err != nil {
-		return nil, err
-	}
-	defer lease.close()
-	if err := checkCredentialContainers(ctx, rt, ag.Name(), lease.key, true); err != nil {
-		return nil, err
-	}
-	check := ag.Usage().NativeCredentialCheck
-	if check == nil {
-		return nil, errors.New("native quota helper has no credential check")
-	}
-	if err := check(home); err != nil {
-		return nil, err
-	}
-	base := cfg.Clone()
-	base.BaseImage = ManagedBaseRepository
-	ResolveBaseImage(base)
-	image := rt.ImageIDContext(ctx, base.BaseImage)
-	if len(image) != 71 || !strings.HasPrefix(image, "sha256:") || strings.Trim(image[7:], "0123456789abcdef") != "" {
-		return nil, errors.New("native quota helper image is unavailable — run coop init to build the current base")
-	}
-	owner := randid.Hex(20)
-	if strings.ContainsAny(home+cfg.HomeInBox, ",\n\r") {
-		return nil, errors.New("native quota helper credential path is unsafe")
-	}
-	args := usageQuotaNativeArgs(cfg, ag.Name(), home, image, owner, lease.key, command, ag.Usage().NativeEnv)
-	var output quotaOutput
-	code, runErr := rt.RunInterruptible(ctx, nil, &output, io.Discard, args...)
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := rt.RemoveByLabel(cleanupCtx, "coop.usage", owner); err != nil {
-		return nil, errors.New("native quota helper cleanup failed")
-	}
-	if ctx.Err() != nil {
-		return nil, errors.New("native quota lookup timed out")
-	}
-	if runErr != nil || code != 0 || output.exceeded {
-		return nil, errors.New("native quota lookup unavailable")
-	}
-	return output.buffer.Bytes(), nil
-}
-
-func usageQuotaNativeArgs(cfg *config.Config, provider, home, image, owner, key string, command, env []string) []string {
-	args := []string{"run", "--rm", "--init", "--label", "coop.usage=" + owner,
-		"--label", "coop.credential.writer=" + key, "--label", "coop.credential." + provider + "=" + key,
-		"--user", boxAgentIdentity().user(), "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
-		"--cpus=1", "--memory=512m", "--pids-limit=128", "--workdir=/tmp",
-		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m", "--tmpfs", cfg.HomeInBox + ":rw,nosuid,nodev,mode=1777,size=16m",
-		"--mount", "type=bind,src=" + home + ",dst=" + cfg.HomeInBox + "/." + provider,
-		"--env", "HOME=" + cfg.HomeInBox}
-	for _, value := range env {
-		args = append(args, "--env", value)
-	}
-	args = append(args, "--entrypoint", command[0], image)
-	return append(args, command[1:]...)
-}
-
-type quotaOutput struct {
-	buffer   bytes.Buffer
-	exceeded bool
-}
-
-func (out *quotaOutput) Write(data []byte) (int, error) {
-	n := len(data)
-	if n > (1<<20)-out.buffer.Len() {
-		out.exceeded = true
-		data = data[:(1<<20)-out.buffer.Len()]
-	}
-	_, _ = out.buffer.Write(data)
-	return n, nil
 }
