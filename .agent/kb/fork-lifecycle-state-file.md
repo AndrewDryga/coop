@@ -70,8 +70,9 @@ record stands. Its `--json` names the system in `detached_system` (present only 
 itself never makes `cleanup_pending` true, though a dead local sandbox of the same fork still does,
 and the listing shows `elsewhere` until the record goes. The task snapshot (`ReadProjectSnapshot`,
 `internal/tasks/snapshot.go`) asks the same `forkspace.WorkerElsewhere` and agrees: the fork gets
-`DetachedSystem` (`detached_system`), never `CleanupPending`, so `coop tasks watch` shows
-"background loop started on Linux" and its `--json` matches fork ls. Neither counts that loop as
+`DetachedSystem` (`detached_system`), never `CleanupPending`, so `coop tasks watch` shows the
+fork's task as "running on Linux" (a fork with no task row as "background loop started on Linux")
+and its `--json` matches fork ls. Neither counts that loop as
 running, so it does not hold a drained board open.
 
 A terminal fork-loop result has a separate `<workspace>/.coop/loop-error` hint. `NoteForkLoopExit`
@@ -83,7 +84,10 @@ another system's worker still outranks the old failure, as does a host-owned rea
 confirmed new worker or foreground controller clears the old hint before running, so a stop cannot
 leave an earlier approval refusal behind. Queue outcomes (work remaining or blocked) and intentional
 interruptions are not failures. This file is a display diagnostic only: it does not create lifecycle
-or network-approval authority.
+or network-approval authority. `coop tasks watch` reads it too (`forkStopReason` in
+`internal/tasks/watch.go`, which cannot import forkctl, so it repeats the `<generation>\n<reason>`
+format): a stopped fork task's state comes from it, else from the last `✗` line in the tail of the
+fork's log, and a known reason maps to its complete fix commands.
 
 ## Unsupported state never becomes an identity
 
@@ -223,6 +227,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-05 — `coop tasks watch` reads the loop-error hint (then the fork log's last error) to say
+  why a fork's task stopped and which commands restart it; another system's loop reads "running on
+  <system>" on its task row.
 - 2026-11-05 — terminal loop failures survive liveness-record cleanup as a generation-bound display
   hint; live, cleanup and unknown status still take precedence, and the hint grants no authority.
 - 2026-11-04 — Linux start token v1 reads as unverifiable, and Linux writes no token when it cannot

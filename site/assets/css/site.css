@@ -302,7 +302,7 @@ main:focus { outline: none; }
 .s-todo { color: var(--body); }
 
 /* coop tasks watch: the board keeps the height of its fullest frame while it redraws */
-.scene-watch pre { min-height: calc(8 * 1.7em + 46px); }
+.scene-watch pre { min-height: calc(13 * 1.7em + 46px); }
 
 /* replays (coop loop, coop fork): a terminal 15 rows tall showing the newest rows; the loop's live
    bar runs under the last one while it plays */

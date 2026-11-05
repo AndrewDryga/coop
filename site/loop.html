@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7c7bb27166">
-  <script src="assets/js/site.js?v=7c7bb27166" defer></script>
-  <script src="assets/js/analytics.js?v=7c7bb27166" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
+  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
+  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -182,7 +182,8 @@ and lists the task and commits.</p>
 <h3 id="task-locks-and-claims">Task locks and claims</h3>
 <p>While an agent works on a task, co:op holds a lock on the host under
 <code>~/.local/state/coop/task-leases/</code>, so another loop skips that task and can work on an independent
-one. <code>coop tasks watch</code> shows the task as <code>busy</code>, <code>stalled</code> or <code>unleased</code>, without run IDs or PIDs.</p>
+one. <code>coop tasks watch</code> shows how long the task has been worked, how long its heartbeat has been
+quiet, or that its worker is gone, without run IDs or PIDs.</p>
 <p>A missing heartbeat can help you spot a stalled worker, but it doesn&#39;t release the task. The loop
 takes over as soon as the operating system&#39;s lock becomes available, never because a timeout has
 passed. It can also resume an in-progress task that no co:op process, such as a running

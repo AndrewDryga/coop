@@ -409,12 +409,14 @@ var terminalSources = map[string]terminalSource{
 			shape("Merge fork {} into {}"), shape("{} · +{} −{}", `"  %s · +%d −%d"`),
 			shape("Merge these commits? [Y/n] {}", `"Merge these commits?"`, `"Y/n"`), shape("Rebasing onto {}"),
 			shape("Running project checks"), shape("Running: {}"), shape("Merged fork {} into {}")}},
-	"watch": {goFiles: []string{"internal/tasks/watch.go", "internal/tasks/lease.go", "internal/taskstate/taskstate.go", "internal/ui/live.go"},
+	"watch": {goFiles: []string{"internal/tasks/watch.go", "internal/ui/live.go"},
 		shapes: []lineShape{
-			shape("[{}]  {} todo · {} working · {} paused · {} blocked · {} done today",
-				`"%d todo"`, `"%d working"`, `"%d paused"`, `"%d blocked"`, `"%d done today"`, `"░"`),
-			shape("◰ {} ({}/{}) · busy {} · {}", `"◰"`, `" (%d/%d)"`, `"busy "`, `"%dm"`, `"<1m"`),
-			shape("○ {}", `"○"`), shape("⚑ {}", `"⚑"`), shape("{}?", `decisionQuestion(`)}},
+			shape("[{}]  {} todo · {} working · {} stopped · {} blocked · {} done today",
+				`"%d todo"`, `"%d working"`, `"%d stopped"`, `"%d blocked"`, `"%d done today"`, `"░"`),
+			shape("Now", `"Now"`), shape("◰ {}", `"◰"`), shape("{}/{} · claude · working for {}", `"%d/%d"`, `"working for "`, `"%dm"`),
+			shape("Needs you · answer them: coop tasks decisions -i", `"Needs you"`, `" · answer them: coop tasks decisions -i"`),
+			shape("⚑ {} · {}h", `"⚑"`, `"%dh"`), shape("Up next · {}", `"Up next"`, `" · %d"`), shape("○ {}", `"○"`),
+			shape("+ {} more", `"  + %d more"`)}},
 }
 
 var (

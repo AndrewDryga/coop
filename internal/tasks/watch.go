@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -32,10 +34,18 @@ type mergedTask struct {
 	lease TaskLeaseObservation
 	// live: something is on the task right now — its fork's loop or session is running, or the
 	// process that claimed it is alive. A dead fork loop or owner leaves the task in progress but
-	// paused, and the board must not count that as work.
+	// stopped, and the board must not count that as work.
 	live bool
-	// decision is a blocked task's one-line state: its question, or why there is none to answer.
-	decision string
+	// agent is who works the task: the claimant, the fork's agent, or the agent a worker that has
+	// gone last ran. A held lease names its own agent, read fresh every tick.
+	agent string
+	// system is the other operating system a fork loop or claimant runs on: this one cannot check it.
+	system string
+	// since is when the task's current state began: claimed, its fork phase last changed, blocked,
+	// or its gone worker was last seen. Zero when unknown.
+	since time.Time
+	// stopReason is why a stopped fork's loop ended, as its loop recorded or logged it.
+	stopReason string
 	// doneToday: a done task finished today. The board's progress is today's, not the archive's.
 	doneToday bool
 }
@@ -59,15 +69,28 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		merged := make([]mergedTask, 0, len(snapshot.Tasks))
 		showQueues := len(snapshot.Queues) > 1
 		liveForks := liveForkGenerations(snapshot.Forks)
+		forkSystems := map[forkspace.Identity]string{}
+		for _, fork := range snapshot.Forks {
+			if fork.Identity != nil && fork.DetachedSystem != "" {
+				forkSystems[*fork.Identity] = fork.DetachedSystem
+			}
+		}
 		now := time.Now()
 		doneToday := map[string]int{} // by queue label, for the per-source lines
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		for _, task := range snapshot.Tasks {
 			m := mergedTask{Item: task.Item, phase: task.Phase}
-			if task.Item.State != StateTodo && task.ownerRecord != nil {
+			if task.Item.State != StateTodo && task.ownerRecord != nil && task.ownerRecord.Kind != TaskOwnerFork {
 				record := *task.ownerRecord
 				m.owner = taskOwnerLabel(record, false)
-				m.live = record.Kind != TaskOwnerFork && (record.ActorPID == 0 || ownerProcessLive(record))
+				m.live = record.ActorPID == 0 || ownerProcessLive(record)
+				m.agent, m.since = record.User, record.ClaimedAt
+				if record.Actor != "" {
+					m.agent = record.Actor
+				}
+				if claimantElsewhere(record) {
+					m.system = processidentity.System(record.ActorStart)
+				}
 			}
 			if showQueues {
 				m.queue = task.QueueLabel
@@ -75,12 +98,23 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			if task.Fork != nil {
 				m.fork = task.Fork.Name
 				m.live = liveForks[*task.Fork] || executionsRunning(task.Executions)
+				m.system = forkSystems[*task.Fork]
+				m.agent = forkAgent(repo, task.Fork.Name)
+				if task.ownerRecord != nil && task.ownerRecord.Fork != nil {
+					m.since = task.ownerRecord.Fork.UpdatedAt
+				}
+				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
+					m.stopReason = forkStopReason(repo, *task.Fork)
+				}
 			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, now)
+				if m.owner == "" && m.lease.State == leaseUnleased {
+					m.agent, m.since = goneWorker(task.Item)
+				}
 			}
 			switch task.Item.State {
 			case StateBlocked:
-				m.decision = blockedDecisionNote(task.Item)
+				m.since = folderChanged(task.Item.Dir)
 			case StateDone:
 				if m.doneToday = changedSince(task.Item.Dir, midnight); m.doneToday {
 					doneToday[task.QueueLabel]++
@@ -189,9 +223,16 @@ func liveForkGenerations(forks []ProjectForkSnapshot) map[forkspace.Identity]boo
 // since t. The move into done updates the folder's change time, not its modification time, and
 // completion does not always write inside it, so the later of the two is when it finished.
 func changedSince(dir string, t time.Time) bool {
+	at := folderChanged(dir)
+	return !at.IsZero() && !at.Before(t)
+}
+
+// folderChanged is when a task folder last arrived in its state directory or changed: the later of
+// its modification and change times. Zero when it cannot be read.
+func folderChanged(dir string) time.Time {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return false
+		return time.Time{}
 	}
 	at := info.ModTime()
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
@@ -199,7 +240,94 @@ func changedSince(dir string, t time.Time) bool {
 			at = changed
 		}
 	}
-	return !at.Before(t)
+	return at
+}
+
+// goneWorker is the agent and last sign of life of the worker that left a task in progress with
+// nothing holding it. A worker that crashed leaves its lease record behind with its last heartbeat;
+// otherwise the task's own files say when anyone last worked on it.
+func goneWorker(item Item) (string, time.Time) {
+	if meta, ok := readLeaseAuthorityMetadata(filepath.Dir(filepath.Dir(item.Dir)), item.ID); ok && !meta.HeartbeatAt.IsZero() {
+		return knownAgent(meta.Provider), meta.HeartbeatAt
+	}
+	last := folderChanged(item.Dir)
+	for _, name := range []string{"task.md", "state.md", "log.md"} {
+		if info, err := os.Lstat(filepath.Join(item.Dir, name)); err == nil && info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+	}
+	return "", last
+}
+
+// knownAgent is an agent name safe to print, or "" when there is none to name.
+func knownAgent(name string) string {
+	if agent := leaseProvider(name); agent != "unknown" {
+		return agent
+	}
+	return ""
+}
+
+// forkAgent is the agent a fork was last run with, from the note coop fork keeps in its workspace
+// (forkctl.SaveForkAgent). The workspace is agent-writable, so the note is read through the no-follow
+// metadata root and printed only when it reads as a name.
+func forkAgent(repo, name string) string {
+	root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, name), ".coop"))
+	if err != nil {
+		return ""
+	}
+	defer root.Close()
+	data, err := ReadTaskMetadataFile(root, "agent")
+	if err != nil {
+		return ""
+	}
+	return knownAgent(strings.TrimSpace(string(data)))
+}
+
+// forkStopReason is why a fork's loop ended: the failure the loop recorded for this generation
+// (forkctl.NoteForkLoopExit), else the last error line of its log (what coop fork logs shows), else
+// "" — nothing says why.
+func forkStopReason(repo string, identity forkspace.Identity) string {
+	if root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, identity.Name), ".coop")); err == nil {
+		data, readErr := ReadTaskMetadataFile(root, "loop-error")
+		root.Close()
+		if generation, reason, ok := strings.Cut(strings.TrimSpace(string(data)), "\n"); readErr == nil && ok && generation == string(identity.Generation) {
+			if reason = oneLineTitle(sanitizeCell(reason)); reason != "" {
+				return reason
+			}
+		}
+	}
+	return lastLoggedError(forkspace.LogPath(repo, identity.Name))
+}
+
+// forkLogTail bounds how much of a fork's log the board reads to find its last error.
+const forkLogTail = 16 << 10
+
+var ansiSequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// lastLoggedError is the last "✗" line (ui.Error) in the tail of a fork's log, or "".
+func lastLoggedError(path string) string {
+	f, err := forkspace.OpenStateFile(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	offset := max(info.Size()-forkLogTail, 0)
+	buf := make([]byte, info.Size()-offset)
+	n, _ := f.ReadAt(buf, offset)
+	lines := strings.Split(string(buf[:n]), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(ansiSequence.ReplaceAllString(lines[i], ""))
+		if reason, ok := strings.CutPrefix(line, "✗ "); ok {
+			if reason = oneLineTitle(sanitizeCell(reason)); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
 }
 
 func executionsRunning(executions []forkspace.ExecutionObservation) bool {
@@ -209,24 +337,6 @@ func executionsRunning(executions []forkspace.ExecutionObservation) bool {
 		}
 	}
 	return false
-}
-
-// blockedDecisionNote is the line under a blocked task: the question it waits on, so the board says
-// what you are being asked without opening decision.md. An answered or unwritten decision has no
-// question to weigh, so the note says that instead.
-func blockedDecisionNote(item Item) string {
-	path := filepath.Join(item.Dir, "decision.md")
-	body, exists, err := readOptionalTaskMetadataPath(path)
-	switch {
-	case err != nil:
-		return ""
-	case !exists || decisionUnwritten(string(body)):
-		return "Decision not written yet"
-	}
-	if answered, err := decisionResolved(path); err == nil && answered {
-		return "Answered, still blocked"
-	}
-	return decisionQuestion(string(body))
 }
 
 // boardRead is one full read of what a board shows.
@@ -391,42 +501,29 @@ func mergedCounts(merged []mergedTask) TaskCounts {
 	return c
 }
 
-// boardCounts is what the header reports: the state counts, how many tasks in progress something is
-// actually working, and how many finished today.
+// boardCounts is what the header reports: the state counts, how many tasks are under Now and
+// under Stopped, and how many finished today.
 type boardCounts struct {
 	TaskCounts
 	Working   int
+	Stopped   int
 	DoneToday int
 }
 
 func countBoard(merged []mergedTask) boardCounts {
 	b := boardCounts{TaskCounts: mergedCounts(merged)}
 	for _, m := range merged {
-		if m.working() {
+		switch classifyTask(m).section {
+		case sectionNow:
 			b.Working++
+		case sectionStopped:
+			b.Stopped++
 		}
 		if m.State == StateDone && m.doneToday {
 			b.DoneToday++
 		}
 	}
 	return b
-}
-
-// working reports whether something is on an in-progress task right now. A task a stopped fork,
-// a dead claimant or nobody holds is still in progress, but paused: counting it as work made four
-// tasks look busy when one was.
-func (m mergedTask) working() bool {
-	if m.State != StateInProgress {
-		return false
-	}
-	if m.fork != "" && m.phase != "" {
-		switch m.phase {
-		case ForkAssignmentPreparing, ForkAssignmentWorking, ForkAssignmentReviewing, ForkAssignmentBlocking:
-			return m.live
-		}
-		return false
-	}
-	return m.lease.State == leaseBusy || (m.owner != "" && m.live)
 }
 
 // tasksDrained reports whether the queue has no work left — nothing todo, in progress, or blocked,
@@ -443,10 +540,141 @@ func tasksWatchSettling(c TaskCounts, running int) bool {
 	return tasksDrained(c) && running == 0
 }
 
-// tasksWatchFrame renders the unified board. A single source leads with just the progress bar (no
-// label); several sources — configured queues and/or active forks — each get a labeled progress
-// line, so they're tellable apart. Below, the deduped tasks: blocked (waiting on you) first, then in
-// progress, then todo; done is the header count. Pure, so it unit-tests headless.
+// boardSection is where a task shows on the board.
+type boardSection int
+
+const (
+	sectionHidden   boardSection = iota // done: a header count, never a row
+	sectionNow                          // something is on it
+	sectionStopped                      // in progress, nothing on it, and it will not move by itself
+	sectionNeedsYou                     // waits on a person: a decision, or a fork's finished work
+	sectionUpNext                       // todo
+)
+
+// rowTone colors a detail line's state: dim while it moves, yellow while it waits but is alive,
+// red when it has stopped.
+type rowTone int
+
+const (
+	toneDim rowTone = iota
+	toneWaiting
+	toneStopped
+)
+
+// taskRow is what the board says about one task. Now and Stopped rows carry the state that ends
+// their detail line, and a Stopped row the commands that move it on. A Needs you row may carry one
+// fact for after its title.
+type taskRow struct {
+	section boardSection
+	state   string
+	tone    rowTone
+	fixVerb string   // "to resume, run:", "to fix, run:" or "to free it, run:"
+	fix     []string // the complete commands, in order
+}
+
+// classifyTask places a task on the board and says what its detail and fix lines read. Every
+// reason it gives comes from what coop already records: the lease and its heartbeat, the claim and
+// its process, the fork's phase, its loop and the failure the loop recorded or logged.
+func classifyTask(m mergedTask) taskRow {
+	switch m.State {
+	case StateTodo:
+		return taskRow{section: sectionUpNext}
+	case StateBlocked:
+		return taskRow{section: sectionNeedsYou}
+	case StateInProgress:
+	default:
+		return taskRow{section: sectionHidden}
+	}
+	if m.fork != "" && m.phase != "" {
+		return classifyForkTask(m)
+	}
+	switch {
+	case m.lease.State == leaseBusy:
+		return taskRow{section: sectionNow, state: workingFor(m.lease.Held)}
+	case m.lease.State == leaseStalled:
+		// A held lock means its process still exists; only its heartbeat went quiet.
+		return taskRow{section: sectionNow, state: "no heartbeat for " + shortElapsed(m.lease.Quiet), tone: toneWaiting}
+	case m.owner != "" && m.system != "":
+		return taskRow{section: sectionNow, state: "running on " + m.system}
+	case m.owner != "" && m.live:
+		return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
+	case m.owner != "":
+		return taskRow{section: sectionStopped, state: "claimed by a session that has ended", tone: toneStopped,
+			fixVerb: "to free it, run:", fix: []string{"coop tasks release " + m.ID}}
+	}
+	state := "worker gone"
+	if !m.since.IsZero() {
+		state += " " + shortElapsed(sinceOrZero(m.since)) + " ago"
+	}
+	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: "to resume, run:", fix: []string{"coop loop"}}
+}
+
+func classifyForkTask(m mergedTask) taskRow {
+	switch {
+	case m.phase == ForkAssignmentReady, m.phase == ForkAssignmentReviewing && !m.live:
+		return taskRow{section: sectionNeedsYou, state: "ready to merge"}
+	case m.phase == ForkAssignmentBlocked:
+		return taskRow{section: sectionNeedsYou}
+	case m.system != "":
+		return taskRow{section: sectionNow, state: "running on " + m.system}
+	case m.live:
+		switch m.phase {
+		case ForkAssignmentWorking:
+			return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
+		case ForkAssignmentReviewing:
+			return taskRow{section: sectionNow, state: "final review"}
+		}
+		return taskRow{section: sectionNow, state: string(m.phase)}
+	}
+	state, verb, fix := forkStopNext(m.fork, m.stopReason)
+	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: verb, fix: fix}
+}
+
+// forkStopNext turns why a fork's loop ended into the state a person reads and the complete set of
+// commands that move its task on. A known refusal names its fix and then the restart, because
+// fixing the cause alone does not start the loop again; an unknown one is shown as it was said.
+func forkStopNext(fork, reason string) (state, verb string, fix []string) {
+	restart := "coop fork " + fork + " --loop -d"
+	switch {
+	case reason == "":
+		return "loop ended unexpectedly", "to resume, run:", []string{restart}
+	case strings.Contains(reason, "has not been approved"):
+		return "network access not approved", "to fix, run:", []string{"coop approve", restart}
+	case strings.Contains(reason, "run coop login"):
+		return "sign-in no longer accepted", "to fix, run:", []string{"coop login", restart}
+	}
+	if _, clause, ok := strings.Cut(reason, " cannot start because "); ok && clause != "" {
+		reason = clause
+	}
+	return reason, "to resume, run:", []string{restart}
+}
+
+func workingFor(d time.Duration) string {
+	if d <= 0 {
+		return "working"
+	}
+	return "working for " + shortElapsed(d)
+}
+
+func sinceOrZero(t time.Time) time.Duration {
+	if t.IsZero() {
+		return 0
+	}
+	return max(time.Since(t), 0)
+}
+
+// Section caps keep the board glanceable: active work always shows in full, the lists do not.
+const (
+	needsYouCap = 3
+	upNextCap   = 2
+)
+
+// tasksWatchFrame renders the unified board: the progress header (and one line per source when
+// there are several), then Now, Stopped, Needs you and Up next, each left out when empty. Tasks
+// being worked or stopped get a title line and a detail line in one fixed order —
+// `<done>/<total> · <agent>[ in fork <name>] · <state>` — and a stopped one a line with the commands
+// that move it on. Tasks waiting in a list get one line. Nothing is right-aligned. Pure, so it
+// unit-tests headless.
 func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int) []string {
 	p := ui.For(os.Stdout)
 	b := countBoard(merged)
@@ -464,10 +692,9 @@ func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int
 			out = append(out, sourceLine(p, s.label, w, s.counts))
 		}
 	}
-	out = append(out, "")
-	out = append(out, mergedQueue(p, merged, spin, width)...)
-	if b.Blocked > 0 {
-		out = append(out, "", "Answer decisions: coop tasks decisions")
+	for _, section := range boardSections(p, merged, spin, width) {
+		out = append(out, "")
+		out = append(out, section...)
 	}
 	return out
 }
@@ -500,121 +727,179 @@ func sourceLine(p ui.Palette, label string, w int, c TaskCounts) string {
 	return line
 }
 
-// tasksCountSummary is the breakdown after the bar — todo · working · paused · blocked · done today
-// — each painted by the shared state key, so a glance maps color to state. Every cell shows, even at
-// zero, so the colors read as a consistent legend.
+// tasksCountSummary is the breakdown after the bar — todo · working · stopped · blocked · done today
+// — each painted like its section's marker, so a glance maps color to state. Every cell shows, even
+// at zero, so the colors read as a consistent legend.
 func tasksCountSummary(p ui.Palette, b boardCounts) string {
 	cells := []string{
 		paintState(p, StateTodo, fmt.Sprintf("%d todo", b.Todo)),
 		paintState(p, StateInProgress, fmt.Sprintf("%d working", b.Working)),
-		p.Dim(fmt.Sprintf("%d paused", b.Doing-b.Working)),
+		p.Red(fmt.Sprintf("%d stopped", b.Stopped)),
 		paintState(p, StateBlocked, fmt.Sprintf("%d blocked", b.Blocked)),
 		paintState(p, StateDone, fmt.Sprintf("%d done today", b.DoneToday)),
 	}
 	return strings.Join(cells, p.Dim(" · "))
 }
 
-// mergedQueue renders the deduped tasks as ONE list — blocked (waiting on you), then in progress,
-// then todo (up next) — with no per-state group headers: each row's icon+color (taskWatchMarker)
-// carries its state. Blocked and in-progress rows are never elided; only the cold todo backlog tail is
-// capped so the board stays glanceable. Done tasks are omitted (header count).
-func mergedQueue(p ui.Palette, merged []mergedTask, spin, width int) []string {
-	byState := map[string][]mergedTask{}
-	for _, m := range merged {
-		byState[m.State] = append(byState[m.State], m)
-	}
-	const (
-		todoCap            = 8 // cap only the cold todo backlog; active work always shows in full
-		taskRowPrefixWidth = 4 // two-space indent + one-column marker + separating space
-	)
-	var out []string
-	emit := func(m mergedTask) {
-		suffix := ""
-		// Only work under way has progress worth showing; a todo or blocked count is noise.
-		if n := len(m.Subtasks); n > 0 && m.State == StateInProgress {
-			suffix = fmt.Sprintf(" (%d/%d)", m.doneSubtasks(), n)
-		}
-		if m.State != StateTodo && m.fork != "" {
-			suffix += "  ← " + m.fork
-			if m.phase != "" {
-				suffix += " · " + forkTaskStatus(m)
-			} else if m.State == StateInProgress {
-				suffix += " · " + leaseText(m.lease)
-			}
-		} else if m.State != StateTodo && m.owner != "" {
-			suffix += "  ← " + m.owner
-		}
-		if queue := strings.TrimSuffix(m.queue, "/"+TasksRoot); queue != "" && queue != TasksRoot {
-			suffix += " · " + queue
-		}
-		// A claimed task nobody is actively holding a lock on would otherwise read "unleased" — a
-		// word that, beside "claimed by", wrongly suggests the loop may take it (see inProgressMarker).
-		// The lease label stays only while a lease is actually held: busy or stalled, never unleased.
-		if m.State == StateInProgress && m.fork == "" && (m.owner == "" || m.lease.State != leaseUnleased) {
-			suffix += " · " + leaseText(m.lease)
-		}
-		// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap. Give
-		// the title everything before that safety column and the row's fixed prefix/suffix.
-		titleWidth := width - 1 - taskRowPrefixWidth - len([]rune(suffix))
-		marker := taskWatchMarker(p, m.State, spin)
-		if m.State == StateInProgress && !m.working() {
-			marker = p.Dim(pausedMarker)
-		}
-		line := "  " + marker + " " + truncate(oneLineTitle(m.Title), titleWidth)
-		if suffix != "" {
-			line += p.Dim(suffix)
-		}
-		out = append(out, line)
-		if m.State == StateBlocked && m.decision != "" {
-			out = append(out, "    "+p.Dim(truncate(oneLineTitle(m.decision), width-5)))
-		}
-	}
-	for _, m := range byState[StateBlocked] { // waiting on you — never elided
-		emit(m)
-	}
-	for _, m := range byState[StateInProgress] { // being worked or paused — never elided
-		emit(m)
-	}
-	todo := byState[StateTodo]
-	for i, m := range todo {
-		if i >= todoCap {
-			out = append(out, p.Dim(fmt.Sprintf("  … +%d more", len(todo)-todoCap)))
+// span is a piece of a row and how it is painted (nil: as is).
+type span struct {
+	text  string
+	paint func(string) string
+}
+
+// fitSpans paints spans in order within room columns, cutting the first that does not fit with an
+// ellipsis, so a row ends at the terminal's width and never wraps.
+func fitSpans(spans []span, room int) string {
+	var b strings.Builder
+	for _, s := range spans {
+		if room <= 0 {
 			break
 		}
-		emit(m)
+		text := truncate(s.text, room)
+		room -= len([]rune(text))
+		if s.paint != nil {
+			text = s.paint(text)
+		}
+		b.WriteString(text)
 	}
-	return out
+	return b.String()
 }
 
-// forkTaskStatus is what a fork is doing with its task and, when nothing is, the command that
-// shows why or moves it on. A fork loop that died at start used to read "(paused)" like any other
-// fork, with no hint that it would never resume on its own.
-func forkTaskStatus(m mergedTask) string {
-	switch {
-	case m.working():
-		return string(m.phase)
-	case m.phase == ForkAssignmentReady, m.phase == ForkAssignmentReviewing:
-		return "waiting for review · coop fork review " + m.fork
-	case m.phase == ForkAssignmentBlocked:
-		return "blocked"
-	case m.phase == ForkAssignmentPaused:
-		return "paused · coop fork logs " + m.fork
-	case m.State == StateInProgress:
-		return "stopped · coop fork logs " + m.fork
+// boardSections renders Now, Stopped, Needs you and Up next, leaving out an empty one. A section's
+// first task starts right under its header; only Stopped tasks, three lines each, are set apart by a
+// blank line. A header carries no reason text: Up next its count, Needs you the command that answers.
+func boardSections(p ui.Palette, merged []mergedTask, spin, width int) [][]string {
+	const (
+		rowIndent  = 4 // two-space indent + one-column marker + separating space
+		lineIndent = "    "
+	)
+	// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap.
+	room, lineRoom := width-1-rowIndent, width-1-len(lineIndent)
+	var now, stopped, needsYou, upNext []mergedTask
+	for _, m := range merged {
+		switch classifyTask(m).section {
+		case sectionNow:
+			now = append(now, m)
+		case sectionStopped:
+			stopped = append(stopped, m)
+		case sectionNeedsYou:
+			needsYou = append(needsYou, m)
+		case sectionUpNext:
+			upNext = append(upNext, m)
+		}
 	}
-	return string(m.phase)
+	// A title is cut only by the terminal's width, at the end of its line: what follows it goes first.
+	titleLine := func(marker string, m mergedTask, extra ...span) string {
+		spans := []span{{oneLineTitle(m.Title), nil}}
+		if queue := strings.TrimSuffix(m.queue, "/"+TasksRoot); queue != "" && queue != TasksRoot {
+			spans = append(spans, span{" · " + queue, p.Dim})
+		}
+		return "  " + marker + " " + fitSpans(append(spans, extra...), room)
+	}
+	detailLine := func(m mergedTask, row taskRow) string {
+		var parts []string
+		if n := len(m.Subtasks); n > 0 {
+			parts = append(parts, fmt.Sprintf("%d/%d", m.doneSubtasks(), n))
+		}
+		agent := m.agent
+		if m.fork == "" && m.lease.State != leaseUnleased {
+			agent = knownAgent(m.lease.Provider)
+		}
+		if m.fork != "" { // the one place a fork is named
+			agent = strings.TrimSpace(agent + " in fork " + m.fork)
+		}
+		if agent != "" {
+			parts = append(parts, agent)
+		}
+		paint := p.Faint
+		switch row.tone {
+		case toneWaiting:
+			paint = p.Yellow
+		case toneStopped:
+			paint = p.Red
+		}
+		var spans []span
+		if len(parts) > 0 {
+			spans = append(spans, span{strings.Join(parts, " · ") + " · ", p.Faint})
+		}
+		return lineIndent + fitSpans(append(spans, span{row.state, paint}), lineRoom)
+	}
+	fixLine := func(row taskRow) string {
+		spans := []span{{row.fixVerb + " ", nil}}
+		for i, command := range row.fix {
+			if i > 0 {
+				spans = append(spans, span{", then ", nil})
+			}
+			spans = append(spans, span{command, p.Bold})
+		}
+		return lineIndent + fitSpans(spans, lineRoom)
+	}
+	more := func(n int) string { return p.Dim(fmt.Sprintf("  + %d more", n)) }
+
+	var sections [][]string
+	if len(now) > 0 {
+		lines := []string{"Now"}
+		for _, m := range now {
+			lines = append(lines, titleLine(p.Yellow(ui.CompactSpinFrame(spin)), m), detailLine(m, classifyTask(m)))
+		}
+		sections = append(sections, lines)
+	}
+	if len(stopped) > 0 {
+		lines := []string{"Stopped"}
+		for i, m := range stopped {
+			if i > 0 {
+				lines = append(lines, "")
+			}
+			row := classifyTask(m)
+			lines = append(lines, titleLine(p.Red(stoppedMarker), m), detailLine(m, row), fixLine(row))
+		}
+		sections = append(sections, lines)
+	}
+	if len(needsYou) > 0 {
+		// Newest first, as the ages read; a task whose age is unknown goes last.
+		sort.SliceStable(needsYou, func(i, j int) bool {
+			a, b := needsYou[i].since, needsYou[j].since
+			return !a.IsZero() && (b.IsZero() || a.After(b))
+		})
+		lines := []string{"Needs you" + p.Gray(" · answer them: coop tasks decisions -i")}
+		for i, m := range needsYou {
+			if i == needsYouCap {
+				lines = append(lines, more(len(needsYou)-needsYouCap))
+				break
+			}
+			var extra []span
+			if state := classifyTask(m).state; state != "" {
+				extra = append(extra, span{" · " + state, p.Dim})
+			}
+			if !m.since.IsZero() {
+				age, paint := sinceOrZero(m.since), p.Dim
+				if age >= 24*time.Hour {
+					paint = p.Yellow
+				}
+				extra = append(extra, span{" · ", p.Dim}, span{shortAge(age), paint})
+			}
+			lines = append(lines, titleLine(p.Red("⚑"), m, extra...))
+		}
+		sections = append(sections, lines)
+	}
+	if len(upNext) > 0 {
+		lines := []string{"Up next" + p.Gray(fmt.Sprintf(" · %d", len(upNext)))}
+		for i, m := range upNext {
+			if i == upNextCap {
+				lines = append(lines, more(len(upNext)-upNextCap))
+				break
+			}
+			lines = append(lines, titleLine(p.Cyan("○"), m))
+		}
+		sections = append(sections, lines)
+	}
+	return sections
 }
 
-// leaseText is a lease's label plus how long its holder has had the task, so a long-running task
-// can be told from a just-started one.
-func leaseText(o TaskLeaseObservation) string {
-	if o.State == leaseUnleased || o.Held <= 0 {
-		return o.label()
-	}
-	return o.label() + " · " + shortElapsed(o.Held)
-}
+// stoppedMarker marks a task in progress that nothing is working and that will not move by itself.
+const stoppedMarker = "✕"
 
-// shortElapsed is a compact duration for a busy row: "<1m", "14m", "2h 5m".
+// shortElapsed is a compact duration for a detail line: "<1m", "14m", "2h 5m".
 func shortElapsed(d time.Duration) string {
 	switch {
 	case d < time.Minute:
@@ -626,19 +911,17 @@ func shortElapsed(d time.Duration) string {
 	}
 }
 
-// pausedMarker marks a task in progress that nothing is working: the spinner's shape, standing still.
-const pausedMarker = "◻"
-
-// taskWatchMarker is the one-column per-task mark, colored to match the top counter legend
-// (paintState): yellow Corner Run for in-progress, a red flag for blocked, a cyan dot for todo.
-func taskWatchMarker(p ui.Palette, state string, spin int) string {
-	switch state {
-	case StateInProgress:
-		return p.Yellow(ui.CompactSpinFrame(spin))
-	case StateBlocked:
-		return p.Red("⚑")
-	default: // todo
-		return p.Cyan("○")
+// shortAge is how long a listed task has waited, in its largest unit: "<1m", "40m", "5h", "3d".
+func shortAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "<1m"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
 

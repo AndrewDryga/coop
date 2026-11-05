@@ -2,8 +2,8 @@
 name: task-watch-shows-work-not-workspace-ownership
 description: tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 scope: cli-output
-sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go]
-check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork'
+sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go, internal/forkctl/meta.go]
+check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog'
 updated: 2026-11-05
 ---
 
@@ -16,12 +16,15 @@ all lifecycle checks. If that same fork has an assignment, detached loop, cleanu
 or execution, show the task-affecting state without exposing the session owner id.
 
 A running box is not a second inventory either. The board carries no per-execution block: a box or
-session that belongs to a task shows on that task's own row (`← fork`), and one that does not has
-nothing to say to somebody reading the queue. The execution data stays in the snapshot, where
-activity accounting, auto-exit and `--json` read it. A fork with a task on the board shows only on
-that row, with what it is doing or the command that shows why it stopped; the `forks` lines are for
-forks with no task row. Count an in-progress task as working only when something is on it (a live
-fork generation in a working phase, a busy lease, a live claimant); everything else is paused.
+session that belongs to a task shows on that task's own rows, and one that does not has nothing to
+say to somebody reading the queue. The execution data stays in the snapshot, where activity
+accounting, auto-exit and `--json` read it. The board's sections are Now, Stopped, Needs you and Up
+next. A task being worked or stopped has a detail line in one fixed order,
+`<done>/<total> · <agent>[ in fork <name>] · <state>`, and a stopped one a fix line with the complete
+commands that move it on (never "see the logs": the board reads the fork's recorded failure or its
+log itself). A fork is named only as `in fork <name>` there, nothing is right-aligned, and headers
+carry no reason text. The `forks` lines are for forks with no task row. Now and Stopped are what the
+header counts as working and stopped.
 
 TODO rows never show a claim or fork attribution. Watch labels omit process IDs; an active task
 still names its owner and reports when that owner's process has stopped. Keep diagnostic ownership
@@ -47,6 +50,14 @@ and keep standalone fork rows only for lifecycle states that affect task progres
 
 ## Changelog
 
+- 2026-11-05 — the owner approved a new layout (task 2026-11-05-lay-out-coop-tasks-watch-as-now-
+  stopped-needs-yo, spec.md): Now / Stopped / Needs you / Up next, a detail line under each task
+  being worked or stopped, a fix line under each stopped one, and `in fork <name>` as the only place
+  a fork is named. The `← fork · paused · coop fork logs` suffix, the question under blocked tasks
+  and the closing `Answer decisions` line are gone. Swept watch.go's row, header and section
+  renderers and the homepage scene (tools/gendocs); `coop tasks ls`, `coop fork ls` and
+  `coop tasks decisions` keep their own wording. Added the layout, edge-case, placement, cap and
+  stop-reason tests to the check.
 - 2026-11-05 — the owner, looking at a board that said `4 in progress` when one task was being
   worked and three forks had died at start, asked how to improve it. The header now splits working
   from paused and counts today's finished tasks; fork rows carry their status and next command, so a

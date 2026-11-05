@@ -203,28 +203,33 @@ const (
 )
 
 // watchFrame is one frame of `coop tasks watch` (internal/tasks/watch.go), a board redrawn in place:
-// the bar and the counts (todo · working · paused · blocked · done today), then the queue: the
-// blocked task first with the question it waits on; then the task being worked, with the Corner Run
-// spinner, its subtasks, the lease and how long it has run; then todo (○).
+// the bar and the counts (todo · working · stopped · blocked · done today), then its sections. Now
+// holds the task being worked, with the Corner Run spinner and a detail line of its subtasks, its
+// agent and how long it has run; Needs you the blocked task with how long it has waited; Up next the
+// first two todo tasks and how many more.
 func watchFrame(done int, doing, subtasks, elapsed string, todo, blocked []string) string {
 	counts := strings.Join([]string{
 		`<span class="s-todo">` + strconv.Itoa(len(todo)) + ` todo</span>`, `<span class="s-doing">1 working</span>`,
-		`<span class="dim">0 paused</span>`, `<span class="s-blocked">` + strconv.Itoa(len(blocked)) + ` blocked</span>`,
+		`<span class="s-blocked">0 stopped</span>`, `<span class="s-blocked">` + strconv.Itoa(len(blocked)) + ` blocked</span>`,
 		`<span class="s-done">` + strconv.Itoa(done) + ` done today</span>`,
 	}, dot)
 	frame := line("", stateBar(done, 1, len(blocked), done+1+len(todo)+len(blocked), 22)+"  "+counts) + line("", "")
+	frame += line("", "Now") + line("", `  <span class="s-doing spin">◰</span> `+doing) +
+		line("", `    <span class="dim">`+subtasks+` · claude · working for `+elapsed+`</span>`) + line("", "")
+	frame += line("", `Needs you<span class="dim"> · answer them: coop tasks decisions -i</span>`)
 	for _, title := range blocked {
-		frame += line("", `  <span class="s-blocked">⚑</span> `+title) + line("", `    <span class="dim">`+sessionsQuestion+`</span>`)
+		frame += line("", `  <span class="s-blocked">⚑</span> `+title+`<span class="dim"> · 2h</span>`)
 	}
-	frame += line("", `  <span class="s-doing spin">◰</span> `+doing+`<span class="dim"> (`+subtasks+`) · busy claude · `+elapsed+`</span>`)
-	for _, title := range todo {
+	frame += line("", "") + line("", `Up next<span class="dim"> · `+strconv.Itoa(len(todo))+`</span>`)
+	for i, title := range todo {
+		if i == 2 {
+			frame += line("", `<span class="dim">  + `+strconv.Itoa(len(todo)-2)+` more</span>`)
+			break
+		}
 		frame += line("", `  <span class="s-todo">○</span> `+title)
 	}
 	return frame
 }
-
-// sessionsQuestion is the decision the blocked example task waits on.
-const sessionsQuestion = "How long should a signed-in session last?"
 
 // queueScene is the board as the loop works: subtasks tick, a task lands in done, the next one
 // starts. It rests on the fifth frame, which is also what shows without the script.
@@ -243,7 +248,7 @@ var queueScene = func() string {
 		watchFrame(5, taskTests, "0/1", "&lt;1m", []string{taskDocs}, blocked),
 	}
 	figure := `<figure class="window scene-watch" data-scene="watch" aria-label="coop tasks watch: today's progress, ` +
-		`one task waiting for your decision with its question, the task being worked with its subtasks, and the ones up next">` +
+		`the task being worked with its subtasks, one task waiting for your decision, and the ones up next">` +
 		windowBar("coop tasks watch") + "<pre><code>" + frames[4] + "</code></pre>"
 	for _, frame := range frames {
 		figure += "<template>" + frame + "</template>"

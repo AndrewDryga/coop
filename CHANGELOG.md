@@ -9,12 +9,14 @@
   A fork starts its own Compose project from its own folder, so its start now waits only for boxes
   in that fork. Changes to the project's approvals still wait for every box.
 
-- **`coop tasks watch` shows what is moving and what needs you.** The header splits tasks in
-  progress into working and paused, and counts what finished today instead of the whole archive,
-  so the bar moves during a run. A task nothing is working on gets a still marker. A fork's task
-  row says what the fork is doing, or gives the command that shows why it stopped. Blocked tasks
-  come first with their question underneath, and the board ends with `coop tasks decisions`. A
-  busy task shows how long its worker has had it. Subtask counts show only on work under way.
+- **`coop tasks watch` shows what is moving, what stopped and what needs you.** The board has four
+  sections: Now, Stopped, Needs you and Up next. Each task being worked or stopped has a second line
+  with its subtasks, its agent, the fork it runs in and what it is doing, so a worker that is gone,
+  a heartbeat that went quiet, a claim left by a closed session or a fork loop that ended reads in
+  plain words. Under a stopped task is the full command that moves it on, such as `coop approve,
+  then coop fork sweep-b --loop -d`, found from the fork's recorded failure or its log. Blocked
+  tasks are one line each with how long they have waited, under `coop tasks decisions -i`. The
+  header counts working and stopped tasks and what finished today.
 
 - **An editor thread can build the project's box.** When a filtered session waits on build files
   nobody approved, send `/build` in the thread. Coop saves the files, shows where they are on this
