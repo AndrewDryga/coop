@@ -103,7 +103,8 @@
     <div class="docs guide-body">
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
-        <nav aria-label="On this page"><ul role="list"><li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
 <li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
 <li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
 <li><a href="#v1200-network-records-are-renamed">v12.0.0: network records are renamed</a></li>
@@ -116,17 +117,14 @@
 <li class="reference-subsection"><a href="#canonical-tasks-across-isolated-forks">Canonical tasks across isolated forks</a></li>
 <li class="reference-subsection"><a href="#strict-coopconf-one-removal-verb-and-supported-runtimes">Strict coop.conf, one removal verb and supported runtimes</a></li>
 <li class="reference-subsection"><a href="#one-composition-model-direct-fork-loops">One composition model, direct fork loops</a></li>
-<li><a href="#v7-the-box-dockerfile-moves-into-agent">v7: the box Dockerfile moves into .agent/</a></li>
-<li><a href="#v4-the-target-grammar-one-way-to-name-a-run">v4: the target grammar, one way to name a run</a></li>
-<li><a href="#v3-retired-command-aliases">v3: retired command aliases</a></li>
-<li><a href="#monorepos-a-hand-set-coop_tasks--agentprojectyaml">Monorepos: a hand-set COOP_TASKS → .agent/project.yaml</a></li>
-<li><a href="#a-legacy-agenttasksmd--the-folder-task-system">A legacy .agent/TASKS.md → the folder task system</a></li>
-<li><a href="#a-legacy-agentbacklogmd--the-backlog-drawer">A legacy .agent/BACKLOG.md → the backlog drawer</a></li>
 <li><a href="#the-sweep-stop-hook-in-older-repos">The /sweep Stop hook in older repos</a></li>
 </ul></nav>
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
-        <section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
+<code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
 <p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does
 on every other agent. To pick a profile, use <code>coop codex --profile &lt;name&gt;</code>.</p>
 </section><section class="doc-section reference-section" id="unreleased-boxes-use-filtered-networking-by-default"><h2>Unreleased: boxes use filtered networking by default</h2>
@@ -594,270 +592,6 @@ retired v1/v2 formats, so upgrades between released versions need no conversion.
 <p>If an untagged developer build left a v1/v2 record, reconcile that task with the build that wrote
 it before you upgrade. Current co:op leaves the record intact and refuses to lease, complete or
 unblock the task. Don&#39;t delete raw task-authority registry files to get around that refusal.</p>
-</section><section class="doc-section reference-section" id="v7-the-box-dockerfile-moves-into-agent"><h2>v7: the box Dockerfile moves into <code>.agent/</code></h2>
-<p>v7.0.0 moved the box Dockerfile out of the repository root. co:op builds the box from
-<code>.agent/Dockerfile</code> and no longer reads a root <code>Dockerfile.agent</code>. A repo that still has one gets
-the standard box, without your toolchain, so move the file and rebuild:</p>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="v7: the box Dockerfile moves into .agent/ code example" tabindex="0"><code class="language-sh">mkdir -p .agent
-git mv Dockerfile.agent .agent/Dockerfile
-coop build
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>To keep the file where it is, set <code>box.dockerfile</code> in <code>.agent/project.yaml</code> to <code>Dockerfile.agent</code>
-instead. That key takes any regular file inside the repository, such as your app&#39;s own <code>Dockerfile</code>.</p>
-<p>The v7 box image also gained <code>socat</code>, which lets the box reach a sidecar&#39;s exposed port at
-<code>localhost:&lt;port&gt;</code>. Run <code>coop build</code> or <code>coop update</code> once to rebuild the box with it.</p>
-</section><section class="doc-section reference-section" id="v4-the-target-grammar-one-way-to-name-a-run"><h2>v4: the target grammar, one way to name a run</h2>
-<p>A target names who runs: <code>provider[:model][/effort][@account]</code>. For example: <code>claude</code>,
-<code>claude:opus</code>, <code>claude/xhigh</code>, <code>claude:opus/xhigh</code>, <code>claude@work</code>, <code>claude:opus@work</code>.</p>
-<p>A target must name the provider. The model, the account and a reasoning <code>/effort</code> are optional.
-co:op passes the effort (<code>low</code>/<code>medium</code>/<code>high</code>/<code>xhigh</code>/<code>max</code>) straight to the agent&#39;s CLI. At v4,
-Gemini had no effort levels and rejected the setting. Since v10.1.2 it takes <code>low</code> or <code>high</code>.
-<code>--model</code>, <code>--credential</code> and the boolean <code>--consult</code> are retired, and you name peers explicitly.</p>
-<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v4: the target grammar, one way to name a run table"><table class="ref">
-<thead>
-<tr>
-<th scope="col">Retired</th>
-<th scope="col">Use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>coop &lt;agent&gt; --model &lt;m&gt;</code></td>
-<td><code>coop &lt;agent&gt;:&lt;m&gt;</code>: for example <code>coop claude:opus</code></td>
-</tr>
-<tr>
-<td><code>coop &lt;agent&gt; --credential &lt;acct&gt;</code></td>
-<td><code>coop &lt;agent&gt;@&lt;acct&gt;</code>: for example <code>coop claude@work</code></td>
-</tr>
-<tr>
-<td><code>coop login &lt;agent&gt; --credential &lt;acct&gt;</code></td>
-<td><code>coop login &lt;agent&gt;@&lt;acct&gt;</code></td>
-</tr>
-<tr>
-<td><code>coop loop --model m@work</code></td>
-<td><code>coop loop &lt;agent&gt;:m@work</code> (account ladder: <code>&lt;agent&gt;@work,personal</code>)</td>
-</tr>
-<tr>
-<td>bare <code>coop</code> / <code>coop loop</code> (defaulted to claude)</td>
-<td>name the target: <code>coop claude</code>, <code>coop loop claude</code> (or, since v5.0.0, positional <code>coop loop &lt;preset&gt;</code>, whose lead supplies it)</td>
-</tr>
-<tr>
-<td><code>coop &lt;agent&gt; --consult</code> (boolean)</td>
-<td><code>coop &lt;target&gt; --peer &lt;target&gt;...</code>: name each peer (repeatable): <code>--peer codex:gpt-6-astra --peer gemini</code>. v4 named peers with <code>--consult &lt;peer&gt;</code>, and v5.0.0 renamed it <code>--peer</code></td>
-</tr>
-<tr>
-<td><code>coop fusion &lt;target&gt;</code> (consulted every signed-in agent)</td>
-<td><code>coop &lt;target&gt; --peer &lt;target&gt;...</code>: name only the peers this run may consult (v10.1.2 removed <code>coop fusion</code>)</td>
-</tr>
-</tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>The target grammar works in every current launch command: <code>coop &lt;target&gt;</code>, <code>loop</code>, <code>acp</code>,
-<code>fork &lt;name&gt; [acp]</code> and <code>login</code>. A Zed <code>agent_servers</code> entry can name a target as one token,
-<code>[&#34;acp&#34;,&#34;claude:opus@work&#34;]</code>, or, since v5.0.0, use <code>[&#34;acp&#34;]</code> for automatic startup and live
-selection.</p>
-<p>A peer takes part only when you name it. co:op mounts only a named peer&#39;s credentials for
-consultation, and the box&#39;s <code>coop-consult</code> refuses any other peer, so an overnight run can&#39;t hand
-your Codex login to a Claude lead that you never asked to consult it.</p>
-<p>Since v5.0.0, name a preset in the position that says who runs, as in <code>coop &lt;preset&gt;</code> or
-<code>coop loop &lt;preset&gt;</code>, instead of with <code>--preset</code>.</p>
-<p>Presets follow the same grammar. <code>agent:</code> holds a target or a target ladder, and native roles
-remain one Claude target. The separate <code>model:</code>/<code>models:</code> keys are retired:</p>
-<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v4: the target grammar, one way to name a run table"><table class="ref">
-<thead>
-<tr>
-<th scope="col">Retired preset shape</th>
-<th scope="col">Use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>lead: {agent: claude, models: [fable, opus@work]}</code></td>
-<td><code>lead: {agent: [claude:fable, claude:opus@work]}</code>: one <code>agent:</code> ladder (each entry a target)</td>
-</tr>
-<tr>
-<td>a role&#39;s <code>agent: codex</code> + <code>model: gpt-6-astra</code></td>
-<td><code>agent: codex:gpt-6-astra</code>: the model goes in <code>agent:</code> (a role runs its default account, with no <code>@account</code>)</td>
-</tr>
-</tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>A lead ladder can span providers, as in <code>agent: [claude:opus, codex:gpt-6-astra]</code>. On a rate limit,
-the loop rotates across vendors and runs each rung&#39;s agent. Since v5.0.0, an ACP session rotates
-too, and carries the conversation over, best effort, as a labeled plain-text preamble. The lead is
-the first rung&#39;s provider. It&#39;s the default agent, and the one a single run uses.</p>
-<p>Since v5.3.0, consult and delegate role ladders fail over inside their wrappers after a non-zero
-exit that co:op confirms is a rate limit. Role rungs always use each provider&#39;s default account,
-and <code>@account</code> remains lead-only. co:op skips providers you haven&#39;t signed in to, and mounts every
-available rung&#39;s credential home in the lead box.</p>
-</section><section class="doc-section reference-section" id="v3-retired-command-aliases"><h2>v3: retired command aliases</h2>
-<p>v3 has no backward-compatible aliases. Each retired form is now either unknown or stops with a hint,
-so rewrite it:</p>
-<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v3: retired command aliases table"><table class="ref">
-<thead>
-<tr>
-<th scope="col">Retired</th>
-<th scope="col">Use</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>coop clone &lt;name&gt;</code></td>
-<td><code>coop fork &lt;name&gt;</code></td>
-</tr>
-<tr>
-<td><code>coop profiles …</code></td>
-<td><code>coop credentials …</code>: a credential is a stored account or login, and orchestration recipes are presets (<code>coop help presets</code>)</td>
-</tr>
-<tr>
-<td><code>--profile &lt;name&gt;</code> (login/launch flags)</td>
-<td>put the account in the target: <code>&lt;agent&gt;@&lt;name&gt;</code>. <code>--profile</code> is no longer a coop flag. On an agent launch, it goes to the agent like any other argument (codex has its own <code>--profile</code>). Anywhere else, it&#39;s an unknown argument</td>
-</tr>
-<tr>
-<td><code>coop pool &lt;add|rm|clear&gt;</code></td>
-<td>There is no persistent pool. A loop rotates through its preset lead&#39;s <code>agent:</code> target ladder (<code>coop help presets</code>). A bare <code>provider:model</code> rung in that ladder runs on every signed-in account, which is what the pool used to do. co:op ignores a stray <code>pools.json</code>.</td>
-</tr>
-<tr>
-<td><code>coop profiles &lt;default|rm&gt; &lt;agent&gt; &lt;name&gt;</code> (verb-first)</td>
-<td><code>coop credentials &lt;agent&gt; &lt;name&gt; &lt;default|rm&gt;</code> (a path)</td>
-</tr>
-<tr>
-<td><code>coop profiles &lt;name&gt; model &lt;m&gt;</code> / a credential&#39;s model mark</td>
-<td>A credential is just an account, and the model is a separate choice. Set it in the target (<code>&lt;agent&gt;:&lt;m&gt;</code>) or in a preset lead&#39;s <code>agent:</code> target ladder (<code>coop help presets</code>). Both spellings of <code>coop credentials &lt;cred&gt; model</code> now fail.</td>
-</tr>
-<tr>
-<td><code>coop status</code></td>
-<td><code>coop tasks watch</code> (the queue and any active forks) / <code>coop fork ls</code> (fork state)</td>
-</tr>
-<tr>
-<td><code>coop tasks start &lt;id&gt;</code></td>
-<td><code>coop tasks claim &lt;id&gt;</code></td>
-</tr>
-<tr>
-<td><code>coop loop --debug</code></td>
-<td><code>coop loop --debug-on-fail</code></td>
-</tr>
-<tr>
-<td><code>&lt;any&gt; list</code> (e.g. <code>coop tasks list</code>)</td>
-<td><code>&lt;any&gt; ls</code>: <code>ls</code> is the only list verb</td>
-</tr>
-<tr>
-<td><code>&lt;any&gt; remove</code> (e.g. <code>coop tasks remove</code>)</td>
-<td><code>&lt;any&gt; rm</code>: <code>rm</code> is the only destructive verb</td>
-</tr>
-</tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-</section><section class="doc-section reference-section" id="monorepos-a-hand-set-coop_tasks--agentprojectyaml"><h2>Monorepos: a hand-set <code>COOP_TASKS</code> → <code>.agent/project.yaml</code></h2>
-<p>This change isn&#39;t breaking: <code>COOP_TASKS</code> still works, and it still overrides <code>.agent/project.yaml</code>.
-If you exported <code>COOP_TASKS=&#34;portal/.agent/tasks runner/.agent/tasks …&#34;</code> so co:op would see a
-monorepo&#39;s queues, you can delete the export. Commit a top-level <code>.agent/project.yaml</code> that lists
-the members:</p>
-<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Monorepos: a hand-set COOP_TASKS → .agent/project.yaml code example" tabindex="0" data-copy-source=""><code class="language-yaml">subprojects: [portal, runner, mcp, packs]
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p>Every task command gets its set of queues from this file: each member&#39;s queue, plus the root&#39;s own
-queue for changes that span members.</p>
-<p><code>coop init</code> at the root writes the file for you. It detects direct child directories that have a
-<code>.agent/</code>, and sets up any member that&#39;s missing its queue.</p>
-</section><section class="doc-section reference-section" id="a-legacy-agenttasksmd--the-folder-task-system"><h2>A legacy <code>.agent/TASKS.md</code> → the folder task system</h2>
-<p>Older co:op repos kept the work queue in a single <code>.agent/TASKS.md</code>, with <code>[ ]</code>/<code>[w]</code>/<code>[x]</code>/<code>[B]</code>
-checkboxes, plus a global <code>.agent/PENDING_DECISIONS.md</code>. Since v3, co:op no longer reads that
-layout, and there&#39;s no fallback. Each task is now a folder under <code>.agent/tasks/</code>, and a task&#39;s state
-is its directory: <code>00_todo/</code>, <code>10_in_progress/</code>, <code>50_blocked/</code> or <code>99_done/</code>.</p>
-<p>Convert once with an LLM, because the old task bodies are prose that needs mapping and a rigid
-parse won&#39;t work. The prompt below keeps all task content.</p>
-<ol>
-<li>Commit (or stash) first, so the conversion is easy to review as a diff.</li>
-<li>Paste the prompt below into any coding agent (Claude, Codex, Gemini, …) running in the repo.</li>
-<li>Afterwards, verify with <code>coop tasks</code> and <code>coop tasks lint</code>.</li>
-</ol>
-<div class="reference-code-frame"><pre class="code" role="region" aria-label="A legacy .agent/TASKS.md → the folder task system code example" tabindex="0"><code class="language-text">Convert this repo&#39;s legacy coop task queue to the folder-based format. Work
-carefully and lose no task content.
-
-SOURCE
-- `.agent/TASKS.md`: each top-level line `- [ ] / [w] / [x] / [B] &lt;title&gt;` is one
-  task; the indented bullets beneath it are that task&#39;s body.
-- `.agent/PENDING_DECISIONS.md` (if present): human decisions, each tied by its text
-  to a blocked task.
-- Ignore the header/legend comments, the `[E]` example task, and any `- [ ]` lines
-  inside ``` fenced code blocks (those are documentation, not tasks).
-
-TARGET — a folder per task; the task&#39;s STATE is its directory (the NN_ prefix is
-part of the directory name — use it verbatim):
-  `- [ ]` → `.agent/tasks/00_todo/`        `- [w]` → `.agent/tasks/10_in_progress/`
-  `- [B]` → `.agent/tasks/50_blocked/`      `- [x]` → `.agent/tasks/99_done/`
-
-FOR EACH TASK
-1. id = `YYYY-MM-DD-&lt;slug&gt;`: use a date from the task body if it has one, else
-   today; slug = the title lowercased with every run of non-alphanumeric characters
-   replaced by a single `-`, trimmed, ≤ 48 chars. Make each id unique.
-2. Write `.agent/tasks/&lt;state&gt;/&lt;id&gt;/task.md`:
-
-   ---
-   id: &lt;id&gt;
-   title: &lt;the task&#39;s one-line title&gt;
-   labels: []
-   updated: &lt;today, ISO-8601&gt;
-   ---
-
-   # &lt;title&gt;
-
-   **Context:** &lt;the body&#39;s Context, or a one-line summary of the task&gt;
-
-   **Acceptance criteria:** &lt;the body&#39;s &#34;Acceptance checks&#34;, if any&gt;
-
-   **Approach:** &lt;the body&#39;s &#34;Implementation direction&#34;, if any&gt;
-
-   ## Subtasks
-   - [ ] &lt;each concrete sub-step found in the body&gt;
-
-   Map the old body&#39;s Context / Likely files / Implementation direction /
-   Acceptance checks into these fields. Omit the Subtasks section if there are no
-   steps. Put anything that doesn&#39;t fit under a trailing `## Notes` heading —
-   never drop content. Do NOT add a `status:` field; the directory is the status.
-
-3. For a `[B]` (blocked) task, also write `.agent/tasks/50_blocked/&lt;id&gt;/decision.md`:
-
-   # Decision: &lt;the open question&gt;
-
-   **Blocks:** this task (`&lt;id&gt;`).
-
-   **The decision:** &lt;what must be chosen&gt;
-
-   **Options:**
-   - **A — &lt;name&gt;:** &lt;consequence&gt;
-   - **B — &lt;name&gt;:** &lt;consequence&gt;
-
-   **Recommendation:** &lt;if the body or PENDING_DECISIONS suggests one&gt;
-
-   ---
-
-   **Resolution:** &lt;fill in if it was already answered, else leave empty&gt;
-
-   If `.agent/PENDING_DECISIONS.md` has an entry matching this task (by the title or
-   topic it names), fold it into this `decision.md`. A pending decision that matches
-   no task → create a new `50_blocked/` task for it.
-
-CLEAN UP
-4. Once every task and decision has been migrated, delete `.agent/TASKS.md` and
-   `.agent/PENDING_DECISIONS.md`.
-
-VERIFY
-5. Run `coop tasks` (it should list the same number of tasks as the old file,
-   grouped by state) and `coop tasks lint` (it must be clean). Then report a
-   summary: tasks migrated per state, decisions folded in, and anything that did
-   not map cleanly.
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-</section><section class="doc-section reference-section" id="a-legacy-agentbacklogmd--the-backlog-drawer"><h2>A legacy <code>.agent/BACKLOG.md</code> → the backlog drawer</h2>
-<p>Older co:op repos kept unscheduled ideas in a single <code>.agent/BACKLOG.md</code>, with one <code>##</code> section
-per idea. The backlog is now a task-folder drawer, <code>.agent/tasks/xx_backlog/</code>, that you manage with
-<code>coop backlog</code>. When an idea is ready, promote it with <code>coop backlog promote &lt;id&gt;</code>. Don&#39;t rewrite
-it by hand. <code>coop init</code> no longer writes <code>BACKLOG.md</code>.</p>
-<p>If you never used the file, there&#39;s nothing to convert: <code>coop backlog add</code> creates the drawer when
-you need it. Otherwise, migrate by hand. For each <code>##</code> section in <code>.agent/BACKLOG.md</code>, run:</p>
-<div class="reference-code-frame"><pre class="code" role="region" aria-label="A legacy .agent/BACKLOG.md → the backlog drawer code example" tabindex="0"><code class="language-text">coop backlog add &#34;&lt;the item&#39;s title&gt;&#34;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
-<p><code>coop backlog add</code> prints the path of the new item&#39;s <code>task.md</code>. Paste the section&#39;s notes there.
-For a <code>— DEFERRED (&lt;why&gt;)</code> item, copy the reason across too. You can just drop an item that shipped
-or was cancelled. When every item has moved, delete <code>.agent/BACKLOG.md</code> and verify with
-<code>coop backlog</code>.</p>
 </section><section class="doc-section reference-section" id="the-sweep-stop-hook-in-older-repos"><h2>The /sweep Stop hook in older repos</h2>
 <p>The <code>/sweep</code> skill&#39;s <code>Stop</code> hook keeps only an active sweep running and holds no other session
 open. New projects get this setup from <code>coop init</code>, but <code>init</code> preserves existing files, so

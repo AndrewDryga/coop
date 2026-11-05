@@ -395,9 +395,9 @@ func TestInstallBundleRequired(t *testing.T) {
 	}
 }
 
-// The Zsh guidance has to WORK, not merely read well: the retired form sent the user at the first
-// fpath entry, which on a clean macOS Zsh is /usr/local/share/zsh/site-functions — absent and
-// unwritable — so the printed sequence failed at the redirect. This runs the printed sequence in a
+// The Zsh guidance has to WORK, not merely read well: the first fpath entry on a clean macOS Zsh
+// is /usr/local/share/zsh/site-functions, absent and unwritable, so a sequence aimed there fails
+// at the redirect. This runs the printed sequence in a
 // disposable HOME with `zsh -f`, and checks the one thing sourcing is for: the nocorrect alias,
 // which autoloading alone would never define.
 func TestInstallZshGuidanceActuallyWorks(t *testing.T) {

@@ -230,9 +230,6 @@ Edit them freely. `init` won't overwrite a skill you've changed. When `init` ado
 real `.claude/skills/` instead, it leaves that project-owned set unchanged and links the other
 selected agents to it.
 
-To convert a repo with a single `.agent/TASKS.md` to the folder format, paste the prompt in
-[MIGRATING.md](../MIGRATING.md) into any coding agent in the repo.
-
 ## Monorepos
 
 When one repo holds several components, each with its own work, list them once in the top-level

@@ -158,10 +158,9 @@ case ":$PATH:" in
 esac
 
 # Zsh only, and only ever as instructions: the installer never edits a shell startup file.
-# The path is the user's own ~/.config/coop, the same one `coop completion` prints. The retired
-# guidance sent them at the FIRST fpath entry instead, which is not theirs: on a clean macOS Zsh
-# it is /usr/local/share/zsh/site-functions, missing and unwritable, and where another tool's
-# completions come first, it is that tool's directory.
+# The path is the user's own ~/.config/coop, the same one `coop completion` prints, never the first
+# fpath entry, which is not theirs: on a clean macOS Zsh it is /usr/local/share/zsh/site-functions,
+# missing and unwritable, and where another tool's completions come first, it is that tool's directory.
 # The generated integration must be SOURCED (after compinit), not merely autoloaded — the
 # `alias coop='nocorrect coop'` inside it has to exist before Zsh parses the command line, or
 # CORRECT_ALL offers to "correct" `coop codex` to the repo's own .codex/ directory.
