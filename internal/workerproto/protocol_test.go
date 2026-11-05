@@ -156,12 +156,12 @@ func TestWorkerProtocolRejectsDuplicateCapabilities(t *testing.T) {
 	}
 }
 
-func TestWorkerProtocolRejectsRetiredAdvertisementsAndVersions(t *testing.T) {
+func TestWorkerProtocolRejectsUnknownAdvertisementsAndOtherVersions(t *testing.T) {
 	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"policy_digests", "policy_authority_digests", "repositories", "protocol_version"} {
+	for _, field := range []string{"unknown_advertisement", "protocol_version"} {
 		t.Run(field, func(t *testing.T) {
 			var fixture struct {
 				Poll map[string]any `json:"poll"`
@@ -179,13 +179,13 @@ func TestWorkerProtocolRejectsRetiredAdvertisementsAndVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := DecodePoll(encoded); err == nil {
-				t.Fatalf("retired worker field/version %s was accepted", field)
+				t.Fatalf("worker field or version %s was accepted", field)
 			}
 		})
 	}
 }
 
-func TestWorkerProtocolReplacesProductSpecificCommandsWithOneAPIRequest(t *testing.T) {
+func TestWorkerProtocolAcceptsOnlyTheAPIRequestCommand(t *testing.T) {
 	document, err := os.ReadFile(filepath.Join("..", "..", "testdata", "protocol", "coop-worker-v2.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestWorkerProtocolReplacesProductSpecificCommandsWithOneAPIRequest(t *testi
 	}
 	commands := fixture.Response["commands"].([]any)
 	command := commands[0].(map[string]any)
-	for _, kind := range []string{"api_request", "get_session", "get_turn", "validate_candidate", "fence_operation", "shell"} {
+	for _, kind := range []string{"api_request", "shell"} {
 		command["kind"] = kind
 		encoded, err := json.Marshal(fixture.Response)
 		if err != nil {

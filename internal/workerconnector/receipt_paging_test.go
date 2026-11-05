@@ -371,7 +371,7 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	}
 }
 
-func TestReceiptEncodingKeepsLegacyCommandIdentity(t *testing.T) {
+func TestReceiptEncodingKeepsCommandIdentity(t *testing.T) {
 	now := time.Date(2026, 9, 5, 18, 0, 0, 0, time.UTC)
 	command := createCommand(now.Add(time.Minute))
 	command.Payload = apiPayload("POST", "/v1/sessions", json.RawMessage(`{"task":"episode:<>&`+"\u2028\u2029"+`"}`))
@@ -379,63 +379,44 @@ func TestReceiptEncodingKeepsLegacyCommandIdentity(t *testing.T) {
 		CommandID: command.CommandID, OperationKey: command.IdempotencyKey, State: "succeeded",
 		Resource: json.RawMessage(`{"session":{"id":"session-1"},"value":"<>&` + "\u2028\u2029" + `"}`), Error: json.RawMessage("null"),
 	}
-	for _, legacy := range []bool{true, false} {
-		t.Run(fmt.Sprintf("legacy-%t", legacy), func(t *testing.T) {
-			dir := t.TempDir()
-			api := &fakeAPI{response: result.Resource}
-			open := func() *Executor {
-				t.Helper()
-				executor, err := NewExecutor(ExecutorConfig{API: api, JournalDir: dir, Now: func() time.Time { return now }, WorkerID: "worker-a"})
-				if err != nil {
-					t.Fatal(err)
-				}
-				return executor
-			}
-			executor := open()
-			entry, err := executor.journal.begin(command)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if legacy {
-				entry.State, entry.Result = "completed", &result
-				body, err := json.Marshal(entry)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(executor.journal.path(command.CommandID), body, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			} else if _, err := executor.Execute(context.Background(), command); err != nil {
-				t.Fatal(err)
-			}
-			expected := result
-			if !legacy {
-				expected.Resource = responsePayload(result.Resource)
-			}
-			for range 2 {
-				executor = open()
-				got, err := executor.Execute(context.Background(), command)
-				if err != nil || !sameResult(got, expected) {
-					t.Fatalf("receipt replay differs: %v", err)
-				}
-				stored, err := executor.journal.read(executor.journal.path(command.CommandID))
-				if err != nil || stored.CommandDigest != entry.CommandDigest {
-					t.Fatalf("command identity changed: %v", err)
-				}
-			}
-			wantCalls := 1
-			if legacy {
-				wantCalls = 0
-			}
-			if len(api.requests) != wantCalls {
-				t.Fatalf("API calls=%d, want %d", len(api.requests), wantCalls)
-			}
-			changed := command
-			changed.Payload = json.RawMessage(`{"external_ref":"changed","policy":"work-read-only","policy_digest":"` + repeatedDigest("b") + `"}`)
-			if _, err := executor.Execute(context.Background(), changed); !errors.Is(err, ErrCommandConflict) {
-				t.Fatalf("changed command identity accepted: %v", err)
-			}
-		})
+	dir := t.TempDir()
+	api := &fakeAPI{response: result.Resource}
+	open := func() *Executor {
+		t.Helper()
+		executor, err := NewExecutor(ExecutorConfig{API: api, JournalDir: dir, Now: func() time.Time { return now }, WorkerID: "worker-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return executor
+	}
+	executor := open()
+	entry, err := executor.journal.begin(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	expected := result
+	expected.Resource = responsePayload(result.Resource)
+	for range 2 {
+		executor = open()
+		got, err := executor.Execute(context.Background(), command)
+		if err != nil || !sameResult(got, expected) {
+			t.Fatalf("receipt replay differs: %v", err)
+		}
+		stored, err := executor.journal.read(executor.journal.path(command.CommandID))
+		if err != nil || stored.CommandDigest != entry.CommandDigest {
+			t.Fatalf("command identity changed: %v", err)
+		}
+	}
+	if len(api.requests) != 1 {
+		t.Fatalf("API calls=%d, want 1", len(api.requests))
+	}
+	changed := command
+	changed.Payload = json.RawMessage(`{"external_ref":"changed"}`)
+	if _, err := executor.Execute(context.Background(), changed); !errors.Is(err, ErrCommandConflict) {
+		t.Fatalf("changed command identity accepted: %v", err)
 	}
 }
 

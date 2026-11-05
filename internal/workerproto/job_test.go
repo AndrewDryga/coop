@@ -315,9 +315,15 @@ func TestJobSpecRejectsUnknownAndOversizedAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	spec.Egress = JobEgress{Mode: "filtered", Rules: []JobRule{{To: JobDestination{Domain: "database"}}}}
+	filtered, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, bad := range map[string][]byte{
 		"unknown top-level field": append(document[:len(document)-1], []byte(`,"host_path":"/tmp/repo"}`)...),
 		"unknown nested field":    []byte(strings.Replace(string(document), `"github_repository_id":17`, `"github_repository_id":17,"url":"https://example.invalid/repo"`, 1)),
+		"service destination":     []byte(strings.Replace(string(filtered), `"domain":"database"`, `"service":"database"`, 1)),
 		"oversized":               []byte(strings.Repeat(" ", maxJobDocumentBytes+1)),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -412,9 +418,6 @@ func TestJobSpecEnforcesExistingSessionBounds(t *testing.T) {
 		"long warm lease":       func(spec *JobSpec) { spec.Limits.WarmIdleTimeoutMS = 3_600_001 },
 		"open export": func(spec *JobSpec) {
 			spec.Egress.ExportDestinations = true
-		},
-		"service grant without service authority": func(spec *JobSpec) {
-			spec.Egress = JobEgress{Mode: "filtered", Rules: []JobRule{{To: JobDestination{Service: "database"}}}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

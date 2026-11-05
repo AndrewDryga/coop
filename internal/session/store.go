@@ -427,40 +427,6 @@ func (s *Store) MarkOperationRunning(ctx context.Context, operationID string, in
 	return nil
 }
 
-// ReplaceOperationIntent advances a running operation's recoverable intent
-// with an optimistic compare-and-swap. It is used when admission is durable
-// before a slow external read (for example Git ref resolution), then that read
-// supplies immutable pins required by the execution phase.
-func (s *Store) ReplaceOperationIntent(
-	ctx context.Context,
-	operationID string,
-	expected []byte,
-	intent []byte,
-) error {
-	if operationID == "" || !validBoundedText(operationID, MaxIDBytes) {
-		return &Error{Code: CodeInvalidRequest, Detail: "operation id is required"}
-	}
-	if len(expected) == 0 || len(intent) == 0 || len(intent) > MaxOperationResultBytes {
-		return &Error{Code: CodeInvalidRequest, Detail: "operation intent is outside bounds"}
-	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE operations SET result = ?, updated_at = ?
-		WHERE id = ? AND state = ? AND result = ?`,
-		intent, s.now().UnixNano(), operationID, string(OperationRunning), expected,
-	)
-	if err != nil {
-		return fmt.Errorf("replace operation intent: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("replace operation intent: %w", err)
-	}
-	if rows != 1 {
-		return &Error{Code: CodeOperationIntentConflict, Detail: "operation intent changed before it could be advanced"}
-	}
-	return nil
-}
-
 // MarkOperationUncertain preserves the recorded intent while making a running
 // operation non-replayable after its external outcome is unknown.
 func (s *Store) MarkOperationUncertain(ctx context.Context, operationID string) error {
@@ -819,17 +785,14 @@ func (s *Store) CompleteCreateSessionOperation(
 		if current.Method != "CreateRemoteSession" || current.ResourceType != "session" || current.ResourceID != req.ID {
 			return Session{}, ErrOperationIntentConflict
 		}
-		sess, err := s.replaySession(current)
-		if err != nil {
+		if _, err := s.replaySession(current); err != nil {
 			return Session{}, err
 		}
-		if req.JobDigest != "" {
-			// Public operation results deliberately omit the private job document. A v2 replay
-			// compares the durable session row, never a redacted projection of that authority.
-			sess, err = scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.ID))
-			if err != nil {
-				return Session{}, ErrOperationIntentConflict
-			}
+		// Public operation results deliberately omit the private job document. A replay compares the
+		// durable session row, never a redacted projection of that authority.
+		sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.ID))
+		if err != nil {
+			return Session{}, ErrOperationIntentConflict
 		}
 		if !initialSessionMatchesRequest(sess, req) {
 			return Session{}, ErrOperationIntentConflict
@@ -853,9 +816,8 @@ func (s *Store) CompleteCreateSessionOperation(
 	case err != nil:
 		return Session{}, fmt.Errorf("read existing remote session: %w", err)
 	default:
-		// A session that already exists for a still-running create can only be the retired
-		// two-operation shape, whose recovery needed freshness receipts no such crash could have
-		// recorded: it is an intent conflict, never finished by hand.
+		// This transaction writes the row with its receipt, so a running create finds no row of its
+		// own. One that exists is an intent conflict, never finished by hand.
 		return Session{}, ErrOperationIntentConflict
 	}
 	result, err := json.Marshal(sess)
@@ -948,12 +910,12 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, policy, policy_digest, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
+		(id, external_ref, target, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 source_binding,
 		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.Policy, sess.PolicyDigest, sess.AuthorityDigest, string(sess.JobDocument), sess.JobDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ControllerTools), responderToken(sess.ControllerTools), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		sess.AuthorityDigest, string(sess.JobDocument), sess.JobDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ControllerTools), responderToken(sess.ControllerTools), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), string(repositoryFreshness), string(sourceBinding),
 		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
@@ -1387,7 +1349,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, policy, policy_digest, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, repository_freshness, source_binding,
 	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
@@ -1404,7 +1366,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var responderEndpointValue, responderTokenValue, workspaceTaskValue, jobDocument string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
-	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.Policy, &sess.PolicyDigest, &sess.AuthorityDigest, &jobDocument, &sess.JobDigest,
+	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.AuthorityDigest, &jobDocument, &sess.JobDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.Mode, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
 		&sourceBinding,
 		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
@@ -3164,72 +3126,6 @@ func (s *Store) FailTurn(ctx context.Context, req FailTurnRequest) (Turn, error)
 
 func validErrorCode(code ErrorCode) bool {
 	return code != "" && validBoundedText(string(code), MaxMethodBytes)
-}
-
-func (s *Store) ExhaustBudget(ctx context.Context, key string, req ExhaustBudgetRequest) (Session, error) {
-	hash, err := CanonicalRequestHash(req)
-	if err != nil {
-		return Session{}, err
-	}
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return Session{}, fmt.Errorf("begin budget exhaustion: %w", err)
-	}
-	defer tx.Rollback()
-	op, replay, err := s.reserveOperationTx(ctx, tx, "ExhaustBudget", key, hash)
-	if err != nil {
-		return Session{}, err
-	}
-	if replay {
-		if err := tx.Commit(); err != nil {
-			return Session{}, fmt.Errorf("commit operation replay: %w", err)
-		}
-		return s.replaySession(op)
-	}
-	if req.SessionID == "" || req.ExpectedRevision <= 0 {
-		return Session{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidRequest, Detail: "session and revision are required"})
-	}
-	sess, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.SessionID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Session{}, s.failAndCommit(tx, op.ID, ErrSessionNotFound)
-	}
-	if err != nil {
-		return Session{}, fmt.Errorf("read session for budget: %w", err)
-	}
-	if err := validateRevision(sess, req.ExpectedRevision); err != nil {
-		return Session{}, s.failAndCommit(tx, op.ID, err)
-	}
-	if sess.State == SessionClosed || sess.State == SessionDiscarded {
-		return Session{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidSessionState, Detail: "terminal session cannot exhaust budget"})
-	}
-	now := s.now()
-	if err := s.exhaustQueuedTx(ctx, tx, req.SessionID, now); err != nil {
-		return Session{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, revision = revision + 1, updated_at = ? WHERE id = ?`, string(SessionExhausted), now.UnixNano(), req.SessionID); err != nil {
-		return Session{}, fmt.Errorf("exhaust session budget: %w", err)
-	}
-	if _, err := s.appendEventTx(ctx, tx, req.SessionID, "", EventSessionStateChanged, 1, mustJSON(map[string]any{"state": string(SessionExhausted)})); err != nil {
-		return Session{}, fmt.Errorf("append session.state_changed: %w", err)
-	}
-	if _, err := s.appendEventTx(ctx, tx, req.SessionID, "", EventBudgetExhausted, 1, mustJSON(map[string]any{"reason": string(StopBudget)})); err != nil {
-		return Session{}, fmt.Errorf("append budget.exhausted: %w", err)
-	}
-	sess, err = scanSession(tx.QueryRowContext(ctx, sessionSelect+" WHERE id = ?", req.SessionID))
-	if err != nil {
-		return Session{}, fmt.Errorf("read exhausted session: %w", err)
-	}
-	result, err := json.Marshal(sess)
-	if err != nil {
-		return Session{}, fmt.Errorf("encode exhausted session: %w", err)
-	}
-	if err := s.completeOperationTx(ctx, tx, op.ID, "session", sess.ID, result); err != nil {
-		return Session{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Session{}, fmt.Errorf("commit budget exhaustion: %w", err)
-	}
-	return sess, nil
 }
 
 func (s *Store) CloseSession(ctx context.Context, key string, req CloseSessionRequest) (Session, error) {

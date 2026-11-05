@@ -106,18 +106,15 @@ type turnCompletionStore interface {
 // sessionTurnRunner owns boxed ACP children. Policy-opted sessions can retain one authenticated
 // child across serialized turns; the same Coop fork path still owns box assembly and labels.
 type sessionTurnRunner struct {
-	service    *Service
-	sourceCfg  *config.Config
-	stateRoot  string
-	store      *session.Store
-	completion turnCompletionStore
-	rt         runtime.Runtime
-	executable string
-	host       Host
-	command    sessionACPCommand
-	// readMCPSnapshot is the shared authority boundary; nil uses mcp.ReadValidatedSnapshot.
-	// Tests replace it only to make source-retarget timing deterministic.
-	readMCPSnapshot func(string) ([]byte, bool, error)
+	service         *Service
+	sourceCfg       *config.Config
+	stateRoot       string
+	store           *session.Store
+	completion      turnCompletionStore
+	rt              runtime.Runtime
+	executable      string
+	host            Host
+	command         sessionACPCommand
 	warmMu          sync.Mutex
 	warm            map[string]*sessionWarmExecution
 	warming         int
@@ -1545,9 +1542,8 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if sameOrBelow(privateRoot, sourceRoot) || sameOrBelow(sourceRoot, privateRoot) {
 		return nil, acpFailure(sessionACPCredentialError, "private credential root overlaps source credentials")
 	}
-	sourceProfile := filepath.Join(sourceRoot, target.Provider, "profiles", account)
 	privateProfile := filepath.Join(privateRoot, target.Provider, "profiles", account)
-	mcpSnapshot, mcpActive, err := r.captureSessionMCP(sourceRoot, sourceProfile, privateRoot, bound)
+	mcpSnapshot, err := sessionMCPSnapshot(bound)
 	if err != nil {
 		return nil, err
 	}
@@ -1560,7 +1556,7 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if err := writeCredentialArtifact(conf, nil); err != nil {
 		return projection, acpFailure(sessionACPCredentialError, "private config isolation could not be written")
 	}
-	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection, mcpSnapshot, mcpActive); err != nil {
+	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection, mcpSnapshot); err != nil {
 		return projection, err
 	}
 	if err := ensurePrivateDirectory(privateProfile); err != nil {
@@ -1612,57 +1608,44 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	return projection, nil
 }
 
-func (r *sessionTurnRunner) captureSessionMCP(
-	sourceRoot string,
-	sourceProfile string,
-	privateRoot string,
-	bound session.Session,
-) ([]byte, bool, error) {
-	var snapshot []byte
-	active := false
-	if bound.ProjectMCP {
-		mcpFile := r.sourceCfg.MCPFile
-		if mcpFile == "" {
-			mcpFile = filepath.Join(sourceRoot, "mcp.json")
-		}
-		roots := []box.MCPSourceRoot{
-			{Kind: "selected credential home", Path: sourceProfile},
-			{Kind: "private session state", Path: privateRoot},
-			{Kind: "session workspace", Path: bound.Workspace},
-		}
-		for _, companion := range bound.Companions {
-			roots = append(roots, box.MCPSourceRoot{Kind: "session companion workspace", Path: companion.Workspace})
-		}
-		resolved, err := box.ResolveMCPSource(mcpFile, roots)
+// sessionMCPSnapshot is a session's private MCP file, nil when it has none. A job never inherits the
+// operator's shared servers, so the file holds only the controller's server, and an offline box
+// reaches no server by URL, the controller's included.
+func sessionMCPSnapshot(bound session.Session) ([]byte, error) {
+	if bound.ControllerTools == nil || bound.NetworkMode == string(egress.None) {
+		return nil, nil
+	}
+	snapshot, err := mcp.BindControllerTools(nil, bound.ControllerTools.Endpoint)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPCredentialError, "controller MCP binding is invalid"), err)
+	}
+	return snapshot, nil
+}
+
+// sessionEnvFile is the env file a session's child starts its box from, empty when it needs none: the
+// job's environment and the controller's token. A job never inherits the operator's shared env file.
+func sessionEnvFile(bound session.Session) ([]byte, error) {
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPCredentialError, "session job environment is invalid"), err)
+	}
+	keys := make([]string, 0, len(job.Environment))
+	for key := range job.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var data []byte
+	for _, key := range keys {
+		data = append(data, key+"="+job.Environment[key]+"\n"...)
+	}
+	// An offline session has no controller server to authenticate (sessionMCPSnapshot left it out).
+	if bound.ControllerTools != nil && bound.NetworkMode != string(egress.None) {
+		data, err = bindControllerToolsEnv(data, bound.ControllerTools.Token)
 		if err != nil {
-			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP source is unsafe"), err)
-		}
-		readSnapshot := r.readMCPSnapshot
-		if readSnapshot == nil {
-			readSnapshot = mcp.ReadValidatedSnapshot
-		}
-		snapshot, active, err = readSnapshot(resolved)
-		if err != nil {
-			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP config is invalid"), err)
+			return nil, acpFailure(sessionACPCredentialError, "controller MCP environment is invalid")
 		}
 	}
-	if bound.NetworkMode == string(egress.None) {
-		// An offline session reaches no remote server, the controller's included: its private copy
-		// carries only local ones, so neither its box nor its session/new sees the others.
-		local, _, err := mcp.WithoutRemoteServers(snapshot)
-		if err != nil {
-			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "shared MCP config is invalid"), err)
-		}
-		return local, active, nil
-	}
-	if bound.ControllerTools != nil {
-		boundSnapshot, err := mcp.BindControllerTools(snapshot, bound.ControllerTools.Endpoint)
-		if err != nil {
-			return nil, false, errors.Join(acpFailure(sessionACPCredentialError, "controller MCP binding is invalid"), err)
-		}
-		return boundSnapshot, true, nil
-	}
-	return snapshot, active, nil
+	return data, nil
 }
 
 func (r *sessionTurnRunner) projectSessionConfigFiles(
@@ -1670,90 +1653,45 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 	bound session.Session,
 	projection *sessionACPProjection,
 	mcpSnapshot []byte,
-	mcpActive bool,
 ) error {
-	sources := []struct {
-		name string
-		path string
-	}{
-		{name: "env", path: filepath.Join(sourceRoot, "env")},
-		{name: "INSTRUCTIONS.md", path: filepath.Join(sourceRoot, "INSTRUCTIONS.md")},
+	envDestination := filepath.Join(projection.privateRoot, "env")
+	if err := removeProjectedSessionFile(envDestination); err != nil {
+		return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
 	}
-	// An offline session has no controller server to authenticate (captureSessionMCP left it out).
-	offline := bound.NetworkMode == string(egress.None)
-	controllerTools := bound.ControllerTools != nil && !offline
-	for _, source := range sources {
-		destination := filepath.Join(projection.privateRoot, source.name)
-		if err := removeProjectedSessionFile(destination); err != nil {
-			return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
+	env, err := sessionEnvFile(bound)
+	if err != nil {
+		return err
+	}
+	if len(env) != 0 {
+		projection.files = append(projection.files, envDestination)
+		if err := writeCredentialArtifact(envDestination, env); err != nil {
+			return acpFailure(sessionACPCredentialError, "private config projection failed")
 		}
-		if source.name == "env" && !bound.ProjectEnv {
-			var data []byte
-			if bound.JobDigest != "" {
-				job, err := sessionJobSpec(bound)
-				if err != nil {
-					return errors.Join(acpFailure(sessionACPCredentialError, "session job environment is invalid"), err)
-				}
-				keys := make([]string, 0, len(job.Environment))
-				for key := range job.Environment {
-					keys = append(keys, key)
-				}
-				sort.Strings(keys)
-				for _, key := range keys {
-					data = append(data, key+"="+job.Environment[key]+"\n"...)
-				}
-			}
-			if !controllerTools && len(data) == 0 {
-				continue
-			}
-			if controllerTools {
-				var err error
-				data, err = bindControllerToolsEnv(data, bound.ControllerTools.Token)
-				if err != nil {
-					return acpFailure(sessionACPCredentialError, "controller MCP environment is invalid")
-				}
-			}
-			projection.files = append(projection.files, destination)
-			if err := writeCredentialArtifact(destination, data); err != nil {
-				return acpFailure(sessionACPCredentialError, "private config projection failed")
-			}
-			continue
-		}
-		sourcePath, err := filepath.Abs(filepath.Clean(source.path))
-		if err != nil {
-			return acpFailure(sessionACPCredentialError, "source private config path is invalid")
-		}
-		if sameOrBelow(sourcePath, projection.privateRoot) {
-			return acpFailure(sessionACPCredentialError, "source private config overlaps session state")
-		}
-		if err := ensureNoSymlinkPath(filepath.Dir(sourcePath)); err != nil {
-			return acpFailure(sessionACPCredentialError, "source private config path is unsafe")
-		}
-		data, present, err := readCredentialArtifact(sourcePath)
-		if err != nil {
-			return acpFailure(sessionACPCredentialError, "source private config is unsafe")
-		}
-		if source.name == "env" && present && (bound.NetworkMode == string(egress.Filtered) && !bound.ProjectMCP || offline) {
-			// A filtered session that withholds the shared MCP file brokers none of its servers, and an
-			// offline one can reach none of them, so their token variables have no business in the env
-			// its child starts a box from.
-			data = box.DropEnvKeys(data, r.sourceMCPReferences(sourceRoot))
-		}
-		if source.name == "env" && controllerTools {
-			data, err = bindControllerToolsEnv(data, bound.ControllerTools.Token)
-			if err != nil {
-				return acpFailure(sessionACPCredentialError, "controller MCP environment is invalid")
-			}
-			present = true
-		}
-		if !present {
-			continue
-		}
-		if bytes.IndexByte(data, 0) >= 0 {
+	}
+	instructionsDestination := filepath.Join(projection.privateRoot, "INSTRUCTIONS.md")
+	if err := removeProjectedSessionFile(instructionsDestination); err != nil {
+		return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
+	}
+	sourcePath, err := filepath.Abs(filepath.Clean(filepath.Join(sourceRoot, "INSTRUCTIONS.md")))
+	if err != nil {
+		return acpFailure(sessionACPCredentialError, "source private config path is invalid")
+	}
+	if sameOrBelow(sourcePath, projection.privateRoot) {
+		return acpFailure(sessionACPCredentialError, "source private config overlaps session state")
+	}
+	if err := ensureNoSymlinkPath(filepath.Dir(sourcePath)); err != nil {
+		return acpFailure(sessionACPCredentialError, "source private config path is unsafe")
+	}
+	instructions, present, err := readCredentialArtifact(sourcePath)
+	if err != nil {
+		return acpFailure(sessionACPCredentialError, "source private config is unsafe")
+	}
+	if present {
+		if bytes.IndexByte(instructions, 0) >= 0 {
 			return acpFailure(sessionACPCredentialError, "source private config is invalid")
 		}
-		projection.files = append(projection.files, destination)
-		if err := writeCredentialArtifact(destination, data); err != nil {
+		projection.files = append(projection.files, instructionsDestination)
+		if err := writeCredentialArtifact(instructionsDestination, instructions); err != nil {
 			return acpFailure(sessionACPCredentialError, "private config projection failed")
 		}
 	}
@@ -1761,7 +1699,7 @@ func (r *sessionTurnRunner) projectSessionConfigFiles(
 	if err := removeProjectedSessionFile(mcpDestination); err != nil {
 		return acpFailure(sessionACPCredentialError, "stale private config is unsafe")
 	}
-	if mcpActive {
+	if mcpSnapshot != nil {
 		projection.files = append(projection.files, mcpDestination)
 		if err := writeCredentialArtifact(mcpDestination, mcpSnapshot); err != nil {
 			return acpFailure(sessionACPCredentialError, "private config projection failed")
@@ -2197,16 +2135,13 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err != nil {
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session network capture is invalid"), err)
 	}
-	launchCfg := r.sourceCfg
-	if bound.JobDigest != "" {
-		job, err := sessionJobSpec(bound)
-		if err != nil {
-			return nil, errors.Join(acpFailure(sessionACPProcessError, "session job authority is invalid"), err)
-		}
-		launchCfg, err = AdmitJobResources(r.sourceCfg, r.rt, job.Resources)
-		if err != nil {
-			return nil, errors.Join(acpFailure(sessionACPProcessError, "session job resources are unavailable"), err)
-		}
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session job authority is invalid"), err)
+	}
+	launchCfg, err := AdmitJobResources(r.sourceCfg, r.rt, job.Resources)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session job resources are unavailable"), err)
 	}
 	env := append(sessionACPChildEnvironment(
 		bound.Repository, bound.Companions, bound.RepositoryReadOnly, privateRoot, runID,
@@ -2231,8 +2166,8 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	env = append(env, "COOP_ACP_ACTIVITY_ROLE="+string(activityRole))
 	// An online child's secret-bearing MCP servers reach its credential broker — the filtered gateway's,
 	// or the helper beside an open box — whose listeners and stand-ins only that child knows: it hands
-	// over its adapter's list, and nothing is rendered from the real private env. An offline child's
-	// servers are all local, so the daemon renders its list.
+	// over its adapter's list, and nothing is rendered from the real private env. An offline child has
+	// no MCP servers.
 	mcpHandoff := ""
 	if bound.NetworkMode != string(egress.None) {
 		mcpHandoff = sessionMCPHandoffPath(privateRoot, runID)
@@ -2259,20 +2194,13 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if err != nil {
 		return nil, acpFailure(sessionACPInvalidTarget, "session target must be one explicit provider and account")
 	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
+	if _, ok := agents.Get(target.Provider); !ok {
 		return nil, acpFailure(sessionACPInvalidTarget, "session target provider is unavailable")
 	}
-	var mcpServers []map[string]any
-	switch {
-	case mcpHandoff != "":
+	if mcpHandoff != "" {
 		// The child renders the list, but a private copy it could not load never reaches it.
 		if _, _, err := mcp.ReadValidatedSnapshot(filepath.Join(privateRoot, "mcp.json")); err != nil {
 			return nil, errors.Join(acpFailure(sessionACPCredentialError, "private MCP projection is invalid"), err)
-		}
-	default:
-		if mcpServers, err = r.sessionACPMCPServers(agent, privateRoot); err != nil {
-			return nil, err
 		}
 	}
 	stateRoot, rootErr := filepath.EvalSymlinks(r.stateRoot)
@@ -2292,7 +2220,6 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if process != nil {
 		process.runID = runID
 		process.nativeHome = nativeHome
-		process.mcpServers = mcpServers
 		process.mcpHandoff = mcpHandoff
 		process.cwd = workdir
 		process.outputRoot = filepath.Join(bound.Workspace, sessionOutputRoot)
@@ -2315,42 +2242,10 @@ func boxCredentialDeadline(_ session.Session, deadline time.Time) time.Time {
 	return deadline
 }
 
-// sourceMCPReferences are the token variables the daemon's shared MCP file reads — read leniently,
-// since a session that withholds the file must not fail on it.
-func (r *sessionTurnRunner) sourceMCPReferences(sourceRoot string) []string {
-	mcpFile := r.sourceCfg.MCPFile
-	if mcpFile == "" {
-		mcpFile = filepath.Join(sourceRoot, "mcp.json")
-	}
-	return mcp.ReferencedCredentialNames(mcpFile)
-}
-
 // sessionMCPHandoffPath is where a filtered child of this run hands over its ACP MCP list: in the
 // session's private root, named by the run, so an overlapping execution never reads another's.
 func sessionMCPHandoffPath(privateRoot, runID string) string {
 	return filepath.Join(privateRoot, "mcp-handoff-"+runID+".json")
-}
-
-// sessionACPMCPServers asks the agent for the MCP servers its ACP session has to be handed
-// directly, because its adapter cannot read the config file the box mounts (claude — see
-// claudeAgent.ACPMCPServers for what that cost in production). Nil for every other agent.
-//
-// Both inputs come from the session's OWN private root rather than the shared config: a policy
-// that withheld env or mcp.json from this session withholds them here too, and that root is
-// exactly what the box is started from, so a token resolved here is one the box also has.
-func (r *sessionTurnRunner) sessionACPMCPServers(agent agents.Agent, privateRoot string) ([]map[string]any, error) {
-	values := box.EnvFileValues(filepath.Join(privateRoot, "env"))
-	servers, err := agent.ACPMCPServers(
-		filepath.Join(privateRoot, "mcp.json"),
-		func(key string) (string, bool) {
-			value, ok := values[key]
-			return value, ok
-		},
-	)
-	if err != nil {
-		return nil, errors.Join(acpFailure(sessionACPCredentialError, "private MCP projection is invalid"), err)
-	}
-	return servers, nil
 }
 
 // sessionACPMCPServerParam is the "mcpServers" value for session/new and session/load. The

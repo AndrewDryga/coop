@@ -228,7 +228,6 @@ type StorageReclaim struct {
 // can tell "this worker is full" from "this request was wrong" without parsing prose.
 type StoragePressureError struct {
 	Reason               string
-	Repository           string
 	FreeBytes            int64
 	UsedBytes            int64
 	ReserveBytes         int64
@@ -841,7 +840,7 @@ func (s *Service) admitNewFork(repo, _ string) (func(), error) {
 	allocation, reason := s.storage.pressure.evaluate(limits, volume.CapacityBytes, projected, protected)
 	if allocation == workerproto.StorageAllocationRefused && reason != nil {
 		return nil, &StoragePressureError{
-			Reason: *reason, Repository: repo, FreeBytes: projected, UsedBytes: volume.CapacityBytes - projected,
+			Reason: *reason, FreeBytes: projected, UsedBytes: volume.CapacityBytes - projected,
 			ReserveBytes: limits.ReserveBytes, HighWatermarkBytes: limits.HighWatermarkBytes,
 			LowWatermarkBytes: limits.LowWatermarkBytes,
 			ProtectedBytes:    protected, ProtectedBudgetBytes: limits.ProtectedBudgetBytes,

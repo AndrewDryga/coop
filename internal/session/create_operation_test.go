@@ -39,12 +39,7 @@ func TestRemoteCreatePersistsPrivateJobAuthorityAndRejectsChangedReplay(t *testi
 	if bytes.Contains(public, document) || bytes.Contains(public, []byte(`"job_document"`)) {
 		t.Fatalf("public session leaked private job document: %s", public)
 	}
-	for _, obsolete := range []string{"policy", "policy_digest", "authority_digest"} {
-		if bytes.Contains(public, []byte(`"`+obsolete+`"`)) {
-			t.Fatalf("new session still exposes obsolete %s: %s", obsolete, public)
-		}
-	}
-	if stored.JobRef != "job:one" || stored.Policy != "" || stored.PolicyDigest != "" || stored.AuthorityDigest != "" {
+	if stored.JobRef != "job:one" || stored.AuthorityDigest != "" {
 		t.Fatalf("new session did not use job-only authority: %+v", stored)
 	}
 	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); err != nil {
@@ -89,7 +84,7 @@ func TestStoredJobIdentityRejectsCorruptionButKeepsHistoricalRowsReadable(t *tes
 		t.Fatal(err)
 	}
 	historical, err := store.GetSession(ctx, created.ID)
-	if err != nil || historical.JobRef != "" || historical.JobDigest != "" || historical.Policy != "historical" {
+	if err != nil || historical.JobRef != "" || historical.JobDigest != "" {
 		t.Fatalf("historical row was reinterpreted: %+v, %v", historical, err)
 	}
 	if _, err := store.CloseSession(ctx, "historical-close", CloseSessionRequest{SessionID: created.ID, ExpectedRevision: historical.Revision}); err != nil {

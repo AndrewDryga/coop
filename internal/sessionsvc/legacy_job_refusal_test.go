@@ -214,7 +214,7 @@ func TestSessionInARemovedModeRemainsReadableButCannotExecute(t *testing.T) {
 	if current, err = fixture.GetSession(ctx, old.ID); err != nil {
 		t.Fatal(err)
 	}
-	closed, err := fixture.CloseSession(ctx, "removed-mode-close", session.CloseSessionRequest{
+	closed, err := fixture.Close(ctx, "removed-mode-close", session.CloseSessionRequest{
 		SessionID: current.ID, ExpectedRevision: current.Revision,
 	})
 	if err != nil {

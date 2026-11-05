@@ -57,6 +57,12 @@ func TestUsageSnapshotReadsLiveWALWithoutMigrationOrCurrentTargetGuess(t *testin
 	if err != nil || len(snapshot.Turns) != 1 || snapshot.Turns[0].Target != "" {
 		t.Fatalf("mixed-credential turn was attributed: %+v %v", snapshot, err)
 	}
+	if _, err := store.db.Exec("PRAGMA user_version=21"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadUsageSnapshot(ctx, root, started.Add(-time.Hour), finished); err == nil {
+		t.Fatal("schema older than the reader's query accepted")
+	}
 	if _, err := store.db.Exec("PRAGMA user_version=999"); err != nil {
 		t.Fatal(err)
 	}

@@ -104,9 +104,6 @@ func sessionHasProjectRuntime(bound session.Session) bool {
 // host child. Its source repository is worker-private; the writable workspace is never a
 // source of new runtime authority, and the COOP_ variable never enters the agent box.
 func controllerRuntimeChildEnvironment(bound session.Session) ([]string, error) {
-	if bound.JobDigest == "" {
-		return nil, nil
-	}
 	job, err := sessionJobSpec(bound)
 	if err != nil {
 		return nil, err
@@ -219,13 +216,10 @@ func jobTargets(job workerproto.JobSpec) ([]agents.Target, error) {
 func jobEgressRules(job workerproto.JobSpec) ([]egress.Rule, error) {
 	rules := make([]egress.Rule, 0, len(job.Egress.Rules))
 	for _, rule := range job.Egress.Rules {
-		if rule.To.Service != "" {
-			return nil, errors.New("controller job service grants need explicit service authority")
-		}
 		rules = append(rules, egress.Rule{
 			To: egress.Destination{
 				Domain: rule.To.Domain, IP: rule.To.IP, CIDR: rule.To.CIDR,
-				Service: rule.To.Service, Provider: rule.To.Provider, Features: rule.To.Features,
+				Provider: rule.To.Provider, Features: rule.To.Features,
 			},
 			Protocol: rule.Protocol, Ports: rule.Ports, Types: rule.Types, Codes: rule.Codes,
 		})

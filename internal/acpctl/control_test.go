@@ -2251,14 +2251,6 @@ func TestACPSelectionNormalizesMixedState(t *testing.T) {
 		t.Fatalf("restored normalized selection = %+v", got)
 	}
 
-	c3 := newTestControl(t)
-	c3.sel = mixed // simulate state persisted by the retired composable contract
-	if handled, restart, ids := selectorSet(t, c3, CoopProviderID, "codex"); !handled || restart || !slices.Equal(ids, []string{CoopPresetID}) {
-		t.Fatalf("mixed-state provider replay = handled %v restart %v options %v, want normalized no-op", handled, restart, ids)
-	}
-	if got := c3.selection(); got != (Selection{Preset: "frontier"}) {
-		t.Fatalf("mixed state after provider replay = %+v, want preset-only", got)
-	}
 }
 
 // The controller must begin in the launch's preset state; otherwise the first toolbar says None

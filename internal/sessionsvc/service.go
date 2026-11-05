@@ -1788,15 +1788,6 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 	if err != nil {
 		return s.rejectCreateIntent(ctx, op.ID, "create operation job authority is unproven")
 	}
-	sessionExisted := false
-	if existing, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
-		sessionExisted = true
-		if err := requireSessionForkAuthority(existing); errors.Is(err, errLegacySessionForkUnproven) {
-			return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
-		}
-	} else if !errors.Is(err, session.ErrSessionNotFound) {
-		return session.Session{}, err
-	}
 	expectedIntent := op.Result
 	createReq := session.CreateSessionRequest{
 		ID: intent.SessionID, ExternalRef: intent.Task, Target: execution.Targets[0].String(),
@@ -1829,9 +1820,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		selected, base = job.Source.Binding.SelectedCommit, job.Source.Binding.BaseCommit
 		createReq.Source = session.CloneSourceBinding(&job.Source.Binding)
 	}
-	if !sessionExisted {
-		s.reclaimBeforeAllocation(ctx)
-	}
+	s.reclaimBeforeAllocation(ctx)
 	started := time.Now()
 	var primary *primarySnapshotSource
 	if execution.RepositoryReadOnly && job.Source != nil {
@@ -1895,14 +1884,7 @@ func (s *Service) executeCreateIntent(ctx context.Context, op session.Operation,
 		if readErr == nil && current.State == session.OperationSucceeded {
 			return s.replayCreateOperation(receiptCtx, current)
 		}
-		if sessionExisted && session.CodeOf(err) == session.CodeOperationIntentConflict &&
-			readErr == nil && current.State == session.OperationRunning &&
-			current.Method == "CreateRemoteSession" && bytes.Equal(current.Result, expectedIntent) {
-			return session.Session{}, s.makeOperationUncertain(
-				receiptCtx, current, "existing session conflicts with remote create intent",
-			)
-		}
-		if sessionExisted || readErr != nil || current.State != session.OperationRunning ||
+		if readErr != nil || current.State != session.OperationRunning ||
 			current.Method != "CreateRemoteSession" || !bytes.Equal(current.Result, expectedIntent) {
 			return session.Session{}, errors.Join(err, readErr)
 		}
@@ -2452,10 +2434,6 @@ func (s *Service) closeQuarantinedSession(ctx context.Context, key string, req s
 	return closed, s.correlateOperationError(ctx, key, closeErr)
 }
 
-func (s *Service) CloseSession(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
-	return s.Close(ctx, key, req)
-}
-
 func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceChanges, error) {
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
@@ -2831,21 +2809,6 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 			_ = preflight.close()
 			unlockWorkspace()
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("remove controller project services: %w", err))
-		}
-	}
-	if s.rt.Name != "" && sess.JobDigest == "" {
-		if err := box.DownServices(
-			s.rt,
-			workspacePlan.Workspace,
-			workspacePlan.Repo,
-			true,
-			io.Discard,
-			io.Discard,
-			append(box.ConfigExposureRoots(s.sourceCfg), s.stateRoot)...,
-		); err != nil {
-			_ = preflight.close()
-			unlockWorkspace()
-			return session.Session{}, s.failServiceOperation(ctx, op.ID, fmt.Errorf("remove session services: %w", err))
 		}
 	}
 	// The lock has been held since the validation, so the destruction uses that plan instead of

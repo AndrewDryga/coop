@@ -1041,9 +1041,6 @@ func discardSessionWorkspace(plan WorkspaceDiscardPlan) error {
 }
 
 type validatedSessionWorkspaceDiscard struct {
-	currentFork      forkspace.Identity
-	hasGeneration    bool
-	hasReservation   bool
 	workspacePresent bool
 	handle           *os.File
 	info             os.FileInfo
@@ -1060,7 +1057,7 @@ func (validated *validatedSessionWorkspaceDiscard) close() error {
 
 // validateSessionWorkspaceDiscardLocked proves the complete destructive plan without changing
 // services, workspace state, or lifecycle authority. The service runs it once, under LockState,
-// before DownServices, and destroys with its result.
+// before any teardown, and destroys with its result.
 func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validatedSessionWorkspaceDiscard, error) {
 	if _, _, err := forkspace.ReadImmutablePrimarySnapshot(plan.Workspace); err != nil {
 		return nil, err
@@ -1126,17 +1123,11 @@ func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validate
 			if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 				return nil, errors.New("refusing to discard a missing workspace with active or pending work")
 			}
-			return &validatedSessionWorkspaceDiscard{
-				currentFork: currentFork, hasGeneration: hasGeneration,
-				hasReservation: hasReservation,
-			}, nil
+			return &validatedSessionWorkspaceDiscard{}, nil
 		}
 		return nil, fmt.Errorf("discard plan is stale: pin workspace: %w", err)
 	}
-	validated := &validatedSessionWorkspaceDiscard{
-		currentFork: currentFork, hasGeneration: hasGeneration, hasReservation: hasReservation, workspacePresent: true,
-		handle: handle, info: info,
-	}
+	validated := &validatedSessionWorkspaceDiscard{workspacePresent: true, handle: handle, info: info}
 	fail := func(err error) (*validatedSessionWorkspaceDiscard, error) {
 		return nil, errors.Join(err, validated.close())
 	}
@@ -1220,9 +1211,9 @@ func applySessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan, validated *va
 	if _, err := stageSessionWorkspaceDiscard(plan.Repo, plan.Name, validated.info); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}
-	// The sibling services are already down — the session service brought them and their volumes
-	// down before applying the discard — so this only drops the fork's review ref and prunes an
-	// empty fork root.
+	// Any services are already down: a job with a project runtime stops them before the discard,
+	// and other jobs never start them. So this only drops the fork's review ref and prunes an empty
+	// fork root.
 	if err := forkspace.Destroy(plan.Repo, plan.Name); err != nil {
 		return fmt.Errorf("discard session workspace: %w", err)
 	}

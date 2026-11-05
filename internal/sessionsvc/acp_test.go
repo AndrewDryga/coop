@@ -41,7 +41,7 @@ import (
 
 func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
-	first := fixture.submit(t, "first prompt")
+	first := fixture.submitWithTools(t, "first prompt")
 	firstResult, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	assertMode(t, fixture.private, 0o700)
 
 	fixture.session = bound
-	second := fixture.submit(t, "second prompt")
+	second := fixture.submitWithTools(t, "second prompt")
 	secondResult, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, second)
 	if err != nil {
 		t.Fatal(err)
@@ -795,23 +795,25 @@ func (s delayedCompleteTurnStore) CompleteTurn(ctx context.Context, req session.
 	}
 }
 
+// sessionTestStandIns is the list the scripted child hands over for the controller's server.
+const sessionTestStandIns = `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"controller-tools","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
+
 // An ACP session's MCP servers arrive in the session/new parameter or not at all: the adapter
 // takes no flags, so the mounted mcp.json that --mcp-config points the claude CLI at is invisible
 // to it. Production ran that way — 706 tool calls from claude sessions, not one of them mcp.*. An
 // open session's list is its child's — the helper's listener and a stand-in — never a token the
 // daemon holds or the private env carries.
-func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
+func TestAClaudeACPSessionIsHandedItsChildsMCPServers(t *testing.T) {
 	t.Setenv("EMISAR_TOKEN", "ambient-token")
 	fixture := newSessionACPFixture(t, "normal", "claude@work")
-	first := fixture.submit(t, "first prompt")
+	first := fixture.submitWithTools(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
-		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != sessionTestStandIns {
+		t.Fatalf("session/new mcpServers = %s, want %s", got, sessionTestStandIns)
 	}
-	if log := readFile(t, fixture.childLog); strings.Contains(log, "observe-only") || strings.Contains(log, "ambient-token") {
+	if log := readFile(t, fixture.childLog); strings.Contains(log, testControllerTools().Token) || strings.Contains(log, "ambient-token") {
 		t.Fatal("a real token reached the adapter")
 	}
 
@@ -820,14 +822,14 @@ func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.session = bound
-	second := fixture.submit(t, "second prompt")
+	second := fixture.submitWithTools(t, "second prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, second); err != nil {
 		t.Fatal(err)
 	}
 	// The adapter fingerprints cwd plus this list to decide whether a load can reuse its process,
 	// so a load carrying a different list quietly restarts the conversation it was resuming.
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/load"); got != want {
-		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/load"); got != sessionTestStandIns {
+		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, sessionTestStandIns)
 	}
 }
 
@@ -836,15 +838,14 @@ func TestAClaudeACPSessionIsHandedTheSharedMCPServers(t *testing.T) {
 // holds; a child that hands over nothing fails the turn rather than falling back to that env.
 func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", false, egress.Filtered)
-	first := fixture.submit(t, "first prompt")
+	first := fixture.submitWithTools(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
-		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != sessionTestStandIns {
+		t.Fatalf("session/new mcpServers = %s, want %s", got, sessionTestStandIns)
 	}
-	if strings.Contains(readFile(t, fixture.childLog), "observe-only") {
+	if strings.Contains(readFile(t, fixture.childLog), testControllerTools().Token) {
 		t.Fatal("the private env's real token reached the adapter")
 	}
 	if handoffs, _ := filepath.Glob(filepath.Join(fixture.private, "mcp-handoff-*.json")); len(handoffs) != 0 {
@@ -855,12 +856,12 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.session = bound
-	second := fixture.submit(t, "second prompt")
+	second := fixture.submitWithTools(t, "second prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, second); err != nil {
 		t.Fatal(err)
 	}
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/load"); got != want {
-		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/load"); got != sessionTestStandIns {
+		t.Fatalf("session/load mcpServers = %s, want the session/new list %s", got, sessionTestStandIns)
 	}
 
 	for _, network := range []egress.Mode{egress.Filtered, egress.Open} {
@@ -872,19 +873,18 @@ func TestAFilteredSessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	}
 }
 
-// A session whose repository is read-only is handed its child's stand-ins too: the servers this
-// daemon projects for it are the user's own, and their secrets belong outside its box.
+// A session whose repository is read-only is handed its child's stand-ins too: the controller's
+// token belongs outside its box.
 func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	fixture := newSessionACPFixtureOn(t, "normal", "claude@work", true, egress.Open)
-	first := fixture.submit(t, "first prompt")
+	first := fixture.submitWithTools(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
-		t.Fatalf("session/new mcpServers = %s, want %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != sessionTestStandIns {
+		t.Fatalf("session/new mcpServers = %s, want %s", got, sessionTestStandIns)
 	}
-	if strings.Contains(readFile(t, fixture.childLog), "observe-only") {
+	if strings.Contains(readFile(t, fixture.childLog), testControllerTools().Token) {
 		t.Fatal("the private env's real token reached a read-only session's adapter")
 	}
 	if handoffs, _ := filepath.Glob(filepath.Join(fixture.private, "mcp-handoff-*.json")); len(handoffs) != 0 {
@@ -899,60 +899,30 @@ func TestAReadOnlySessionIsHandedOnlyItsBrokerStandIns(t *testing.T) {
 	}
 }
 
-// A filtered session that withholds the shared MCP file brokers none of its servers, so the env its
-// child starts from carries none of their token variables — while an open one keeps today's env.
-func TestAFilteredSessionWithoutSharedMCPDropsItsTokenVariables(t *testing.T) {
-	for _, network := range []egress.Mode{egress.Filtered, ""} {
-		fixture := newSessionACPFixtureOn(t, "normal", "codex@work", false, network)
-		if err := os.WriteFile(filepath.Join(fixture.source, "mcp.json"), []byte(`{"mcpServers":{"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		bound := fixture.session
-		bound.ProjectMCP = false
-		target, _ := agents.ParseTarget(bound.Target)
-		agent, _ := agents.Get(target.Provider)
-		projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
-		if err != nil {
-			t.Fatal(err)
-		}
-		env := readFile(t, filepath.Join(fixture.private, "env"))
-		if dropped := !strings.Contains(env, "EMISAR_TOKEN"); dropped != (network == egress.Filtered) {
-			t.Fatalf("%q session env = %q", network, env)
-		}
-		_ = projection.remove()
-	}
-}
-
-// An offline session reaches no remote MCP server: its private copy keeps only local servers, its
-// env drops the remote servers' tokens, and its session/new names only the local ones.
-func TestAnOfflineSessionIsHandedOnlyLocalMCPServers(t *testing.T) {
+// An offline session reaches no MCP server, the controller's included: no private copy, no token in
+// its env even on a row that carries a binding, and an empty session/new list.
+func TestAnOfflineSessionHasNoMCPServers(t *testing.T) {
 	fixture := newSessionACPFixtureOn(t, "normal", "codex@work", false, egress.None)
-	if err := os.WriteFile(filepath.Join(fixture.source, "mcp.json"), []byte(`{"mcpServers":{
-		"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"},
-		"local":{"command":"true"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// The private copy is what the offline box loads: it has no remote server, and no token for one.
-	target, _ := agents.ParseTarget(fixture.session.Target)
+	bound := fixture.session
+	bound.ControllerTools = testControllerTools()
+	target, _ := agents.ParseTarget(bound.Target)
 	agent, _ := agents.Get(target.Provider)
-	projection, err := fixture.runner.projectCredentials(fixture.session, target, agent, time.Now().Add(time.Hour))
+	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if copied := readFile(t, filepath.Join(fixture.private, "mcp.json")); strings.Contains(copied, "example.invalid") || !strings.Contains(copied, `"local"`) {
-		t.Fatalf("offline private MCP copy = %s", copied)
-	}
-	if env := readFile(t, filepath.Join(fixture.private, "env")); strings.Contains(env, "EMISAR_TOKEN") {
-		t.Fatalf("offline private env kept the remote token: %q", env)
+	for _, name := range []string{"env", "mcp.json"} {
+		if pathExists(filepath.Join(fixture.private, name)) {
+			t.Fatalf("an offline session was given a private %s", name)
+		}
 	}
 	_ = projection.remove()
 	leased := fixture.submit(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
 		t.Fatal(err)
 	}
-	got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new")
-	if strings.Contains(got, "example.invalid") || strings.Contains(got, "observe-only") || !strings.Contains(got, `"local"`) {
-		t.Fatalf("offline session/new mcpServers = %s", got)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
+		t.Fatalf("offline session/new mcpServers = %s, want []", got)
 	}
 }
 
@@ -961,279 +931,49 @@ func TestAnOfflineSessionIsHandedOnlyLocalMCPServers(t *testing.T) {
 // adapter deduplicates the mounted name before constructing Codex config.
 func TestACodexSessionIsHandedItsMountedMCPInventory(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
-	leased := fixture.submit(t, "first prompt")
+	leased := fixture.submitWithTools(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"headers":[{"name":"Authorization","value":"Bearer stand-in"}],"name":"emisar","type":"http","url":"http://127.0.0.1:15580/mcp"}]`
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != want {
-		t.Fatalf("codex session/new mcpServers = %s, want %s", got, want)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != sessionTestStandIns {
+		t.Fatalf("codex session/new mcpServers = %s, want %s", got, sessionTestStandIns)
 	}
 }
 
-func TestRemoteSessionMCPRejectsInvalidAuthorityBeforeProjectionOrChild(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{name: "malformed", body: `{`, want: "parsing"},
-		{name: "duplicate", body: `{"mcpServers":{},"mcpServers":{"x":{"command":"true"}}}`, want: "duplicate JSON object key"},
-		{name: "case alias", body: `{"MCPServers":{"x":{"command":"true"}}}`, want: "canonical spelling"},
-		{name: "ambiguous auth", body: `{"mcpServers":{"x":{"url":"https://example.invalid/mcp","headers":{"Authorization":"Bearer inline"},"bearer_token_env_var":"TOKEN"}}}`, want: "one Authorization source"},
+// A binding that cannot render stops the turn before any private state or child exists, and the
+// durable detail names no path.
+func TestInvalidControllerBindingStopsBeforeProjectionOrChild(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	turn := fixture.submit(t, "must not launch")
+	bound := fixture.session
+	bound.ControllerTools = &session.ControllerTools{Endpoint: strings.Repeat("a", 5<<20), Token: testControllerTools().Token}
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), bound, turn)
+	if err == nil || !strings.Contains(err.Error(), "controller MCP binding is invalid") {
+		t.Fatalf("Run error = %v, want the binding refused", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newSessionACPFixture(t, "normal", "claude@work")
-			source := filepath.Join(fixture.source, "mcp.json")
-			if err := os.WriteFile(source, []byte(tc.body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			turn := fixture.submit(t, "must not launch")
-			result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Run error = %v, want invalid MCP refusal containing %q", err, tc.want)
-			}
-			if result.State != session.TurnFailed || result.ErrorCode != sessionACPCredentialError {
-				t.Fatalf("failed MCP turn = %+v", result)
-			}
-			if result.ErrorDetail != "shared MCP config is invalid" || strings.Contains(result.ErrorDetail, fixture.source) {
-				t.Fatalf("durable MCP error detail = %q, want generic path-free detail", result.ErrorDetail)
-			}
-			assertNoSessionMCPLaunchOrProjection(t, fixture)
-			if after, readErr := os.ReadFile(source); readErr != nil || string(after) != tc.body {
-				t.Fatalf("rejected MCP source changed = (%q, %v), want %q", after, readErr, tc.body)
-			}
-		})
+	if result.State != session.TurnFailed || result.ErrorCode != sessionACPCredentialError {
+		t.Fatalf("failed binding turn = %+v", result)
+	}
+	if result.ErrorDetail != "controller MCP binding is invalid" {
+		t.Fatalf("durable binding error detail = %q", result.ErrorDetail)
+	}
+	for _, path := range []string{fixture.childLog, fixture.envLog, fixture.runtimeLog, fixture.private} {
+		if pathExists(path) {
+			t.Fatalf("a refused binding reached %s", path)
+		}
 	}
 }
 
-func TestRemoteSessionMCPRejectsFIFOAndCredentialHomeSource(t *testing.T) {
-	t.Run("fifo", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal", "claude@work")
-		source := filepath.Join(fixture.source, "mcp.json")
-		if err := os.Remove(source); err != nil {
-			t.Fatal(err)
-		}
-		if err := syscall.Mkfifo(source, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		turn := fixture.submit(t, "must not block")
-		type runResult struct {
-			turn session.Turn
-			err  error
-		}
-		finished := make(chan runResult, 1)
-		ctx := contextWithTurnDeadline(t)
-		go func() {
-			result, err := fixture.runner.Run(ctx, fixture.session, turn)
-			finished <- runResult{turn: result, err: err}
-		}()
-		var outcome runResult
-		select {
-		case outcome = <-finished:
-		case <-time.After(2 * time.Second):
-			// If a regression changed the reader back to a blocking FIFO open, give it a writer so
-			// the test process can finish after reporting the bounded failure.
-			unblock, _ := os.OpenFile(source, os.O_RDWR|syscall.O_NONBLOCK, 0)
-			if unblock != nil {
-				_ = unblock.Close()
-			}
-			t.Fatal("FIFO MCP source blocked session startup")
-		}
-		result, err := outcome.turn, outcome.err
-		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
-			t.Fatalf("FIFO Run error = %v, want regular-file refusal", err)
-		}
-		if result.ErrorCode != sessionACPCredentialError {
-			t.Fatalf("FIFO turn error code = %s", result.ErrorCode)
-		}
-		assertNoSessionMCPLaunchOrProjection(t, fixture)
-	})
-
-	t.Run("selected credential home", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal", "claude@work")
-		source := filepath.Join(fixture.source, "claude", "profiles", "work", "shared-mcp.json")
-		if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
-		if err := os.WriteFile(source, body, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		fixture.runner.sourceCfg.MCPFile = source
-		turn := fixture.submit(t, "must not read agent-owned authority")
-		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-		if err == nil || !strings.Contains(err.Error(), "inside selected credential home") {
-			t.Fatalf("credential-home Run error = %v", err)
-		}
-		if result.ErrorCode != sessionACPCredentialError {
-			t.Fatalf("credential-home turn error code = %s", result.ErrorCode)
-		}
-		if result.ErrorDetail != "shared MCP source is unsafe" || strings.Contains(result.ErrorDetail, fixture.source) {
-			t.Fatalf("durable MCP source error detail = %q, want generic path-free detail", result.ErrorDetail)
-		}
-		assertNoSessionMCPLaunchOrProjection(t, fixture)
-		if after, readErr := os.ReadFile(source); readErr != nil || !bytes.Equal(after, body) {
-			t.Fatalf("credential-home MCP source changed = (%q, %v)", after, readErr)
-		}
-	})
-
-	for _, tc := range []struct {
-		name string
-		kind string
-		set  func(*testing.T, *sessionACPFixture) string
-	}{
-		{
-			name: "session workspace",
-			kind: "inside session workspace",
-			set: func(_ *testing.T, fixture *sessionACPFixture) string {
-				return filepath.Join(fixture.session.Workspace, "shared-mcp.json")
-			},
-		},
-		{
-			name: "session workspace through parent symlink",
-			kind: "inside session workspace",
-			set: func(t *testing.T, fixture *sessionACPFixture) string {
-				link := filepath.Join(t.TempDir(), "workspace")
-				if err := os.Symlink(fixture.session.Workspace, link); err != nil {
-					t.Fatal(err)
-				}
-				return filepath.Join(link, "shared-mcp.json")
-			},
-		},
-		{
-			name: "companion workspace",
-			kind: "inside session companion workspace",
-			set: func(t *testing.T, fixture *sessionACPFixture) string {
-				workspace := t.TempDir()
-				fixture.session.Companions = []session.CompanionRepository{{
-					Name: "docs", Workspace: workspace, BaseCommit: strings.Repeat("a", 40),
-				}}
-				return filepath.Join(workspace, "shared-mcp.json")
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newSessionACPFixture(t, "normal", "claude@work")
-			source := tc.set(t, fixture)
-			body := []byte(`{"mcpServers":{"x":{"command":"true"}}}`)
-			if err := os.WriteFile(source, body, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			fixture.runner.sourceCfg.MCPFile = source
-			turn := fixture.submit(t, "must not trust agent-writable MCP")
-			result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-			if err == nil || !strings.Contains(err.Error(), tc.kind) {
-				t.Fatalf("Run error = %v, want %q", err, tc.kind)
-			}
-			if result.ErrorCode != sessionACPCredentialError {
-				t.Fatalf("turn error code = %s", result.ErrorCode)
-			}
-			if result.ErrorDetail != "shared MCP source is unsafe" || strings.Contains(result.ErrorDetail, source) {
-				t.Fatalf("durable workspace MCP error detail = %q, want generic path-free detail", result.ErrorDetail)
-			}
-			assertNoSessionMCPLaunchOrProjection(t, fixture)
-			if after, readErr := os.ReadFile(source); readErr != nil || !bytes.Equal(after, body) {
-				t.Fatalf("workspace MCP source changed = (%q, %v)", after, readErr)
-			}
-		})
+// With no controller server a session has no MCP servers at all, whatever the operator's shared
+// file names.
+func TestASessionWithoutControllerToolsIsHandedNoMCPServers(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal", "claude@work")
+	turn := fixture.submit(t, "run without tools")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRemoteSessionMCPUsesResolvedCapturedBytes(t *testing.T) {
-	t.Run("parent retarget", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal", "claude@work")
-		targetA, targetB := t.TempDir(), t.TempDir()
-		bodyA := []byte(`{"mcpServers":{"before":{"command":"true"}}}`)
-		bodyB := []byte(`{"mcpServers":{"after":{"command":"false"}}}`)
-		for path, body := range map[string][]byte{
-			filepath.Join(targetA, "mcp.json"): bodyA,
-			filepath.Join(targetB, "mcp.json"): bodyB,
-		} {
-			if err := os.WriteFile(path, body, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		link := filepath.Join(t.TempDir(), "authority")
-		if err := os.Symlink(targetA, link); err != nil {
-			t.Fatal(err)
-		}
-		fixture.runner.sourceCfg.MCPFile = filepath.Join(link, "mcp.json")
-		fixture.runner.readMCPSnapshot = func(resolved string) ([]byte, bool, error) {
-			resolvedInfo, resolvedErr := os.Stat(resolved)
-			targetInfo, targetErr := os.Stat(filepath.Join(targetA, "mcp.json"))
-			if resolvedErr != nil || targetErr != nil || !os.SameFile(resolvedInfo, targetInfo) {
-				t.Fatalf("resolved MCP source = %q, want target A; errors=(%v, %v)", resolved, resolvedErr, targetErr)
-			}
-			if err := os.Remove(link); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(targetB, link); err != nil {
-				t.Fatal(err)
-			}
-			return mcp.ReadValidatedSnapshot(resolved)
-		}
-		projection := projectSessionTestCredentials(t, fixture)
-		defer projection.remove()
-		if got := readFile(t, filepath.Join(fixture.private, "mcp.json")); got != string(bodyA) {
-			t.Fatalf("projected MCP after parent retarget = %q, want target A", got)
-		}
-	})
-
-	t.Run("source mutation after capture", func(t *testing.T) {
-		fixture := newSessionACPFixture(t, "normal", "claude@work")
-		source := filepath.Join(fixture.source, "mcp.json")
-		before := []byte(`{"mcpServers":{"before":{"command":"true"}}}`)
-		after := []byte(`{"mcpServers":{"after":{"command":"false"}}}`)
-		if err := os.WriteFile(source, before, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		fixture.runner.readMCPSnapshot = func(resolved string) ([]byte, bool, error) {
-			captured, active, err := mcp.ReadValidatedSnapshot(resolved)
-			if err == nil {
-				err = os.WriteFile(resolved, after, 0o600)
-			}
-			return captured, active, err
-		}
-		projection := projectSessionTestCredentials(t, fixture)
-		defer projection.remove()
-		if got := readFile(t, filepath.Join(fixture.private, "mcp.json")); got != string(before) {
-			t.Fatalf("projected MCP after source mutation = %q, want captured bytes", got)
-		}
-		if got := readFile(t, source); got != string(after) {
-			t.Fatalf("source mutation did not run = %q", got)
-		}
-	})
-}
-
-func TestRemoteSessionMCPMissingAndEmptyAreInert(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		body    string
-		missing bool
-	}{
-		{name: "missing", missing: true},
-		{name: "empty", body: `{"mcpServers":{}}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newSessionACPFixture(t, "normal", "claude@work")
-			source := filepath.Join(fixture.source, "mcp.json")
-			if tc.missing {
-				if err := os.Remove(source); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := os.WriteFile(source, []byte(tc.body), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			turn := fixture.submit(t, "run without tools")
-			if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil {
-				t.Fatal(err)
-			}
-			if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
-				t.Fatalf("inert session/new mcpServers = %s, want []", got)
-			}
-		})
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
+		t.Fatalf("session/new mcpServers = %s, want []", got)
 	}
 }
 
@@ -1298,40 +1038,6 @@ func pathsOverlapForTest(left, right string) bool {
 		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	}
 	return contains(left, right) || contains(right, left)
-}
-
-func projectSessionTestCredentials(t *testing.T, fixture *sessionACPFixture) *sessionACPProjection {
-	t.Helper()
-	target, err := agents.ParseTarget(fixture.session.Target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
-		t.Fatalf("test target provider %q is unavailable", target.Provider)
-	}
-	projection, err := fixture.runner.projectCredentials(fixture.session, target, agent, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return projection
-}
-
-func assertNoSessionMCPLaunchOrProjection(t *testing.T, fixture *sessionACPFixture) {
-	t.Helper()
-	for _, path := range []string{fixture.childLog, fixture.envLog, fixture.runtimeLog} {
-		if pathExists(path) {
-			t.Fatalf("rejected MCP reached launch log %s", path)
-		}
-	}
-	if pathExists(fixture.private) {
-		t.Fatalf("rejected MCP created private session state %s", fixture.private)
-	}
-	for _, name := range []string{"env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
-		if pathExists(filepath.Join(fixture.private, name)) {
-			t.Fatalf("rejected MCP mutated private projection %s", name)
-		}
-	}
 }
 
 // sessionACPRequestMCPServers returns the "mcpServers" parameter of the first logged request for
@@ -1945,7 +1651,7 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 	warmContext := func() context.Context {
 		return context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
 	}
-	first := fixture.submit(t, "first warm prompt")
+	first := fixture.submitWithTools(t, "first warm prompt")
 	if _, err := fixture.runner.Run(warmContext(), fixture.session, first); err != nil {
 		t.Fatal(err)
 	}
@@ -1963,7 +1669,7 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.session = bound
-	second := fixture.submit(t, "second warm prompt")
+	second := fixture.submitWithTools(t, "second warm prompt")
 	if _, err := fixture.runner.Run(warmContext(), fixture.session, second); err != nil {
 		t.Fatal(err)
 	}
@@ -2765,36 +2471,39 @@ func TestSessionACPProjectionTracksDestinationBeforeFailedWrite(t *testing.T) {
 	}
 }
 
-func TestSessionACPProjectionCanOmitSharedEnvironmentAndMCP(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
-	bound := fixture.session
-	bound.ProjectEnv = false
-	bound.ProjectMCP = false
-	target, err := agents.ParseTarget(bound.Target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
-		t.Fatal("codex test agent is unavailable")
-	}
-	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = projection.remove() })
-	for _, name := range []string{"env", "mcp.json"} {
-		if pathExists(filepath.Join(fixture.private, name)) {
-			t.Fatalf("policy-disabled %s was projected", name)
-		}
-	}
-	for _, path := range []string{
-		filepath.Join(fixture.private, "INSTRUCTIONS.md"),
-		filepath.Join(fixture.private, "defaults"),
-	} {
-		if !pathExists(path) {
-			t.Fatalf("required session projection is missing: %s", path)
-		}
+// A job never inherits the operator's shared env or MCP file, on any network: with nothing of its
+// own to carry a session has neither, and the rest of its private config still arrives.
+func TestSessionACPProjectionWithholdsSharedEnvironmentAndMCP(t *testing.T) {
+	for _, network := range []egress.Mode{egress.Open, egress.Filtered, egress.None} {
+		t.Run(string(network), func(t *testing.T) {
+			fixture := newSessionACPFixtureOn(t, "normal", "codex@work", false, network)
+			target, err := agents.ParseTarget(fixture.session.Target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent, ok := agents.Get(target.Provider)
+			if !ok {
+				t.Fatal("codex test agent is unavailable")
+			}
+			projection, err := fixture.runner.projectCredentials(fixture.session, target, agent, time.Now().Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = projection.remove() })
+			for _, name := range []string{"env", "mcp.json"} {
+				if pathExists(filepath.Join(fixture.private, name)) {
+					t.Fatalf("the shared %s reached the session", name)
+				}
+			}
+			for _, path := range []string{
+				filepath.Join(fixture.private, "INSTRUCTIONS.md"),
+				filepath.Join(fixture.private, "defaults"),
+			} {
+				if !pathExists(path) {
+					t.Fatalf("required session projection is missing: %s", path)
+				}
+			}
+		})
 	}
 }
 
@@ -2847,10 +2556,8 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(fixture.source, "env"), []byte("EMISAR_TOKEN=observe-only\nANTHROPIC_API_KEY=env-key\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		bound := fixture.session
-		bound.ProjectEnv = false
 		claude, _ := agents.Get("claude")
-		projection, err := fixture.runner.projectCredentials(bound, agents.Target{Provider: "claude"}, claude, time.Now().Add(time.Hour))
+		projection, err := fixture.runner.projectCredentials(fixture.session, agents.Target{Provider: "claude"}, claude, time.Now().Add(time.Hour))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2874,12 +2581,7 @@ func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 func TestControllerToolsBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	bound := fixture.session
-	bound.ProjectEnv = false
-	bound.ProjectMCP = false
-	bound.ControllerTools = &session.ControllerTools{
-		Endpoint: "https://responder.example/v1/state-tools/mcp",
-		Token:    strings.Repeat("t", 48),
-	}
+	bound.ControllerTools = testControllerTools()
 	target, err := agents.ParseTarget(bound.Target)
 	if err != nil {
 		t.Fatal(err)
@@ -2906,6 +2608,8 @@ func TestControllerToolsBindingSurvivesOmittedSharedMCPAndEnvironment(t *testing
 	}
 }
 
+// The shared file never enters the private copy, so a server in it named like the controller's
+// cannot shadow the binding.
 func TestControllerToolsBindingCannotBeShadowedBySharedMCP(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	if err := os.WriteFile(
@@ -2916,15 +2620,17 @@ func TestControllerToolsBindingCannotBeShadowedBySharedMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	bound := fixture.session
-	bound.ControllerTools = &session.ControllerTools{
-		Endpoint: "https://responder.example/v1/state-tools/mcp",
-		Token:    strings.Repeat("t", 48),
-	}
+	bound.ControllerTools = testControllerTools()
 	target, _ := agents.ParseTarget(bound.Target)
 	agent, _ := agents.Get(target.Provider)
 	projection, err := fixture.runner.projectCredentials(bound, target, agent, time.Now().Add(time.Hour))
-	if err == nil || !strings.Contains(err.Error(), "controller MCP binding is invalid") {
-		t.Fatalf("collision projection = %+v, err=%v", projection, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = projection.remove() })
+	config := readFile(t, filepath.Join(fixture.private, "mcp.json"))
+	if strings.Contains(config, "attacker") || !strings.Contains(config, bound.ControllerTools.Endpoint) {
+		t.Fatalf("private binding MCP config = %s", config)
 	}
 }
 
@@ -3429,7 +3135,6 @@ func TestJobACPProjectsFrozenEnvironmentAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound.ProjectEnv, bound.ProjectMCP = false, false
 	fixture.runner.sourceCfg.CPUs, fixture.runner.sourceCfg.Memory, fixture.runner.sourceCfg.Pids = "2", "2g", "512"
 	target, _ := agents.ParseTarget(bound.Target)
 	agent, _ := agents.Get(target.Provider)
@@ -3575,9 +3280,8 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, readOn
 	source := filepath.Join(root, "shared-agents")
 	writeSessionTestCredential(t, source, sessionTarget)
 	for name, body := range map[string]string{
-		"env": "EMISAR_TOKEN=observe-only\n",
-		// The production shape: a remote server the box authenticates from its env file, which
-		// only an agent holding that file can resolve for itself.
+		// The operator's shared files. Only the instructions may reach a session.
+		"env":             "EMISAR_TOKEN=observe-only\n",
 		"mcp.json":        `{"mcpServers":{"emisar":{"type":"http","url":"https://example.invalid/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`,
 		"INSTRUCTIONS.md": "Investigate before changing code.\n",
 	} {
@@ -3600,7 +3304,7 @@ func newSessionACPFixtureOn(t *testing.T, scenario, sessionTarget string, readOn
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	request := session.CreateSessionRequest{
-		Target: sessionTarget, Mode: "normal",
+		Target: sessionTarget, Mode: "normal", OmitEnv: true, OmitMCP: true,
 		Repository: repo, Workspace: workspace, ForkName: "fork", BaseCommit: strings.Repeat("a", 40),
 		RepositoryReadOnly: readOnly, NetworkMode: string(network),
 	}
@@ -3720,6 +3424,18 @@ func ladderContext(t *testing.T, parent context.Context, values ...string) conte
 
 func (f *sessionACPFixture) submit(t *testing.T, prompt string) session.Turn {
 	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt})
+}
+
+// testControllerTools is the one MCP server a session can have.
+func testControllerTools() *session.ControllerTools {
+	return &session.ControllerTools{
+		Endpoint: "https://responder.example/v1/state-tools/mcp",
+		Token:    strings.Repeat("t", 48),
+	}
+}
+
+func (f *sessionACPFixture) submitWithTools(t *testing.T, prompt string) session.Turn {
+	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt, ControllerTools: testControllerTools()})
 }
 
 func (f *sessionACPFixture) submitArtifacts(
@@ -4003,9 +3719,9 @@ func TestSessionACPChildHelper(t *testing.T) {
 	// An online child's box.Run hands over its adapter's MCP list — broker URLs and stand-ins —
 	// before the adapter can answer initialize: none when its private copy names no server.
 	if handoff := os.Getenv(box.SessionMCPHandoffEnv); handoff != "" && scenario != "no-mcp-handoff" {
-		servers := []map[string]any{{"type": "http", "name": "emisar", "url": "http://127.0.0.1:15580/mcp",
+		servers := []map[string]any{{"type": "http", "name": mcp.ControllerToolsServer, "url": "http://127.0.0.1:15580/mcp",
 			"headers": []map[string]any{{"name": "Authorization", "value": "Bearer stand-in"}}}}
-		if private, err := os.ReadFile(filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "mcp.json")); err != nil || !strings.Contains(string(private), `"emisar"`) {
+		if private, err := os.ReadFile(filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "mcp.json")); err != nil || !strings.Contains(string(private), `"`+mcp.ControllerToolsServer+`"`) {
 			servers = []map[string]any{}
 		}
 		data, _ := json.Marshal(map[string]any{"run_id": os.Getenv("COOP_SESSION_RUN_ID"), "gateway_epoch": "epoch", "mcpServers": servers})

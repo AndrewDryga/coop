@@ -213,21 +213,6 @@ func (j *journal) pending() ([]journalEntry, error) {
 	return entries, nil
 }
 
-func (j *journal) acknowledgeResults(commandIDs []string) error {
-	var failures error
-	for _, commandID := range commandIDs {
-		entry, err := j.read(j.path(commandID))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err == nil {
-			err = j.acknowledgeResult(entry)
-		}
-		failures = errors.Join(failures, err)
-	}
-	return failures
-}
-
 func (j *journal) acknowledgeResult(entry journalEntry) error {
 	if entry.State != "completed" || entry.Result == nil {
 		return fmt.Errorf("acknowledge incomplete worker command %s", entry.CommandID)

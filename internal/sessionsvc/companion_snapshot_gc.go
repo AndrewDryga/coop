@@ -38,10 +38,6 @@ type companionSnapshotSweep struct {
 	beforeCandidate      func(string) // deterministic filesystem/deadline fixture
 }
 
-func pruneCompanionSnapshots(ctx context.Context, stateRoot string, now time.Time, budget int64, max int, pressure bool) (int, []string) {
-	return pruneCompanionSnapshotsSweep(ctx, stateRoot, now, budget, max, pressure, &companionSnapshotSweep{})
-}
-
 func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now time.Time, budget int64, max int, pressure bool, sweep *companionSnapshotSweep) (int, []string) {
 	canonical, err := filepath.EvalSymlinks(stateRoot)
 	if err != nil {

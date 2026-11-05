@@ -486,7 +486,7 @@ func TestParkedEngineeringWorkspaceCheckpointCapturesExactCodeAndTaskState(t *te
 	if err := os.WriteFile(pendingPath, []byte("interrupted custody"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	closed, err := service.CloseSession(ctx, "checkpoint-close", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	closed, err := service.Close(ctx, "checkpoint-close", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,7 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 
 	// October 24: the host closed a completed session before checkpointing.
 	// Capture must preserve its exact work without reopening model execution.
-	source, err = service.CloseSession(context.Background(), "restore-source-close", session.CloseSessionRequest{
+	source, err = service.Close(context.Background(), "restore-source-close", session.CloseSessionRequest{
 		SessionID: source.ID, ExpectedRevision: source.Revision,
 	})
 	if err != nil {
@@ -1325,136 +1325,6 @@ func TestSessionServiceStartupQuarantinesUnprovenLegacySession(t *testing.T) {
 			!strings.Contains(err.Error(), detail) {
 			t.Fatalf("%s quarantine error = %v", name, err)
 		}
-	}
-}
-
-func TestSessionServiceStartupDoesNotResumeCreateIntoQuarantinedLegacySession(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
-	defer service.Stop()
-	req := service.request(t, "legacy-create-crash")
-	op, replay, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "legacy-create-crash", req)
-	if err != nil || replay {
-		t.Fatalf("reserve legacy create = %+v, replay=%v, err=%v", op, replay, err)
-	}
-	intent, err := service.captureCreateIntent(context.Background(), op, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	intentData, err := json.Marshal(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := forkspace.Setup(repo, intent.ForkName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := service.Store().CreateSession(context.Background(), "create-session-"+op.ID, session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest,
-		ID: intent.SessionID, ExternalRef: intent.Task, Target: "codex@work",
-		Repository: repo, Workspace: workspace, ForkName: intent.ForkName, BaseCommit: gitOut(repo, "rev-parse", "HEAD"),
-		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy = clearHistoricalJob(t, service.Store(), legacy.ID)
-	marker := filepath.Join(workspace, "preserve-create.txt")
-	if err := os.WriteFile(marker, []byte("legacy workspace\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := service.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	service.operationMu.Lock()
-	activeCreates := len(service.backgroundActive)
-	service.operationMu.Unlock()
-	if activeCreates != 0 {
-		t.Fatalf("quarantined create recovery started %d workers", activeCreates)
-	}
-	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
-	if err != nil || current.State != session.OperationRunning {
-		t.Fatalf("quarantined create operation = %+v, err=%v", current, err)
-	}
-	persisted, err := service.Store().GetSession(context.Background(), legacy.ID)
-	if err != nil || persisted.ForkGeneration != "" {
-		t.Fatalf("quarantined created session = %+v, err=%v", persisted, err)
-	}
-	if identity, ok, err := forkspace.ReadGeneration(repo, intent.ForkName); err != nil || ok {
-		t.Fatalf("quarantined create synthesized generation %+v, ok=%v, err=%v", identity, ok, err)
-	}
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "legacy workspace\n" {
-		t.Fatalf("quarantined create workspace marker = %q, err=%v", data, err)
-	}
-}
-
-func TestSessionServiceStartupUsesOperationIdentityToQuarantineCorruptCreateIntent(t *testing.T) {
-	repo, git := gitrepo.New(t)
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
-	defer service.Stop()
-	req := service.request(t, "corrupt-legacy-create-crash")
-	op, replay, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "corrupt-legacy-create-crash", req)
-	if err != nil || replay {
-		t.Fatalf("reserve corrupt legacy create = %+v, replay=%v, err=%v", op, replay, err)
-	}
-	intent, err := service.captureCreateIntent(context.Background(), op, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacySessionID := intent.SessionID
-	intent.SessionID = "substituted-session"
-	intentData, err := json.Marshal(intent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Store().MarkOperationRunning(context.Background(), op.ID, intentData); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := forkspace.Setup(repo, intent.ForkName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := service.Store().CreateSession(context.Background(), "corrupt-create-session-"+op.ID, session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest,
-		ID: legacySessionID, ExternalRef: intent.Task, Target: "codex@work",
-		Repository: repo, Workspace: workspace, ForkName: intent.ForkName, BaseCommit: gitOut(repo, "rev-parse", "HEAD"),
-		MaxTurns: 3, MaxQueuedTurns: 3, MaxQueuedBytes: 4096,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy = clearHistoricalJob(t, service.Store(), legacy.ID)
-	marker := filepath.Join(workspace, "preserve-corrupt-create.txt")
-	if err := os.WriteFile(marker, []byte("legacy workspace\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := service.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	service.operationMu.Lock()
-	activeCreates := len(service.backgroundActive)
-	service.operationMu.Unlock()
-	if activeCreates != 0 {
-		t.Fatalf("corrupt quarantined create recovery started %d workers", activeCreates)
-	}
-	current, err := service.Store().GetOperationByID(context.Background(), op.ID)
-	if err != nil || current.State != session.OperationRunning {
-		t.Fatalf("corrupt quarantined create operation = %+v, err=%v", current, err)
-	}
-	persisted, err := service.Store().GetSession(context.Background(), legacy.ID)
-	if err != nil || persisted.ForkGeneration != "" {
-		t.Fatalf("corrupt quarantined created session = %+v, err=%v", persisted, err)
-	}
-	if identity, ok, err := forkspace.ReadGeneration(repo, intent.ForkName); err != nil || ok {
-		t.Fatalf("corrupt quarantined create synthesized generation %+v, ok=%v, err=%v", identity, ok, err)
-	}
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "legacy workspace\n" {
-		t.Fatalf("corrupt quarantined create workspace marker = %q, err=%v", data, err)
 	}
 }
 
@@ -5019,57 +4889,47 @@ func TestSessionDiscardRejectsChangedWorkspaceBeforeServiceTeardown(t *testing.T
 // A controller job's boxes never start its repository's services, so discarding its session runs no
 // Compose teardown: Ryker's dind worker (a tcp:// Docker, which Compose refuses) could not discard
 // such a session at all, and a project file written for a newer Coop must not fail cleanup either.
-// A historical session may have started services, so it still tears them down.
-func TestSessionDiscardTearsDownComposeOnlyForHistoricalSessions(t *testing.T) {
-	for _, historical := range []bool{false, true} {
-		t.Run(fmt.Sprintf("historical=%v", historical), func(t *testing.T) {
-			repo, git := gitrepo.New(t)
-			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			git("add", ".agent/compose.yml")
-			git("commit", "-q", "-m", "services")
-			service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
-			defer service.Stop()
-			sess, err := service.CreateRemoteSession(context.Background(), "create-services", service.request(t, "discard"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if historical {
-				sess = clearHistoricalJob(t, service.Store(), sess.ID)
-			}
-			closed, err := service.Close(context.Background(), "close-services", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-			if err != nil {
-				t.Fatal(err)
-			}
-			planned, err := service.PlanDiscard(context.Background(), "plan-services", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !historical {
-				if err := os.WriteFile(filepath.Join(planned.Plan.Workspace.Repo, ".agent", "project.yaml"), []byte("from_a_newer_coop: true\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
-			runtimePath := filepath.Join(t.TempDir(), "runtime")
-			if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
-			service.rt = runtime.Runtime{Name: runtimePath}
-			discarded, err := service.Discard(context.Background(), "discard-services", DiscardRequest{PlanOperationID: planned.OperationID})
-			if err != nil || discarded.State != session.SessionDiscarded {
-				t.Fatalf("discard = %+v, %v", discarded, err)
-			}
-			calls, _ := os.ReadFile(runtimeLog)
-			if tornDown := strings.Contains(string(calls), " down "); tornDown != historical {
-				t.Fatalf("compose teardown ran = %v, want %v; runtime calls:\n%s", tornDown, historical, calls)
-			}
-		})
+func TestSessionDiscardRunsNoComposeTeardown(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".agent/compose.yml")
+	git("commit", "-q", "-m", "services")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	defer service.Stop()
+	sess, err := service.CreateRemoteSession(context.Background(), "create-services", service.request(t, "discard"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := service.Close(context.Background(), "close-services", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, err := service.PlanDiscard(context.Background(), "plan-services", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planned.Plan.Workspace.Repo, ".agent", "project.yaml"), []byte("from_a_newer_coop: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtimeLog := filepath.Join(t.TempDir(), "runtime.log")
+	runtimePath := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_DISCARD_RUNTIME_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_DISCARD_RUNTIME_LOG", runtimeLog)
+	service.rt = runtime.Runtime{Name: runtimePath}
+	discarded, err := service.Discard(context.Background(), "discard-services", DiscardRequest{PlanOperationID: planned.OperationID})
+	if err != nil || discarded.State != session.SessionDiscarded {
+		t.Fatalf("discard = %+v, %v", discarded, err)
+	}
+	calls, _ := os.ReadFile(runtimeLog)
+	if strings.Contains(string(calls), " down ") {
+		t.Fatalf("a controller job's discard ran a Compose teardown; runtime calls:\n%s", calls)
 	}
 }
 

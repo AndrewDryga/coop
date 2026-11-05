@@ -34,12 +34,10 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 	return head, nil
 }
 
-// Cleanup remains available for historical sessions without reauthorizing execution.
+// Cleanup needs no execution authority: a job that can no longer run can still be discarded.
 func (s *Service) pinDiscardSessionParent(ctx context.Context, sess session.Session) (string, error) {
-	if sess.JobDigest != "" {
-		if head, err := s.pinCurrentSessionParent(ctx, sess); err == nil {
-			return head, nil
-		}
+	if head, err := s.pinCurrentSessionParent(ctx, sess); err == nil {
+		return head, nil
 	}
 	// Missing/expired read authority must not orphan a workspace. The original
 	// local parent preserves the unmerged-work guard when a refresh is unavailable.

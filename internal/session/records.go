@@ -291,8 +291,6 @@ type Session struct {
 	ID              string `json:"id"`
 	ExternalRef     string `json:"external_ref"`
 	Target          string `json:"target"`
-	Policy          string `json:"policy,omitempty"`           // Historical rows only.
-	PolicyDigest    string `json:"policy_digest,omitempty"`    // Historical rows only.
 	AuthorityDigest string `json:"authority_digest,omitempty"` // Historical rows only.
 	// JobDocument is the controller's immutable execution authority for a v2 worker session.
 	// Historical policy-backed rows leave both job fields empty. The document stays private:
@@ -835,11 +833,6 @@ type CancelTurnRequest struct {
 	Usage             Usage
 	CumulativeCostUSD float64
 	CostRecorded      bool
-}
-
-type ExhaustBudgetRequest struct {
-	SessionID        string
-	ExpectedRevision int64
 }
 
 type CompleteTurnRequest struct {

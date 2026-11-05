@@ -338,23 +338,6 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 	}
 }
 
-// The real worker-to-private-service path: a worker authorized against policy "responder" keeps
-// advertising that policy's digests, the daemon restarts with a same-name policy that resolves
-// differently, and the pinned create is refused by the daemon at admission — a definite failure
-// on the worker side, a failed operation with no session on the daemon side.
-func TestWorkerCannotSendRetiredPolicyCreate(t *testing.T) {
-	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), "", nil)
-	defer service.Stop()
-	response := sessionHTTPTestRequest(t, NewHTTPHandler(service.Service), http.MethodPost, "/v1/sessions",
-		`{"task":"test:legacy","policy":"responder"}`, "legacy-create", "application/json")
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("retired create = %d %s", response.Code, response.Body.String())
-	}
-	if rows, err := service.ListSessions(context.Background(), 10); err != nil || len(rows) != 0 {
-		t.Fatalf("retired create wrote sessions: %v, %v", rows, err)
-	}
-}
-
 func connectorCreatePayload(t *testing.T, request CreateRemoteSessionRequest) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(workerproto.APIRequest{Method: "POST", Path: "/v1/sessions", Body: mustConnectorJSON(t, request)})

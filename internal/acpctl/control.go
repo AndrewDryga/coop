@@ -88,7 +88,7 @@ type Control struct {
 	networkAccounts map[string]map[string]bool  // immutable provider/account scope; nil for open/offline sessions
 
 	mu          sync.Mutex
-	sel         Selection                    // tagged plain lead or preset-owned selection
+	sel         Selection                    // tagged plain lead or preset-owned selection, never both (normalizeACPSelection)
 	autoAccount string                       // concrete account behind Account=Auto after a recovery rotation
 	authFailed  map[string]bool              // provider@account failures already tried in automatic mode
 	cached      map[string]json.RawMessage   // sessionId -> the rewritten configOptions array (for set responses)
@@ -343,7 +343,6 @@ func (c *Control) resumePrompt(session string) []byte {
 func (c *Control) selection() Selection {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.sel = normalizeACPSelection(c.sel)
 	return c.sel
 }
 
@@ -840,7 +839,7 @@ func (c *Control) commitNativeTarget(line []byte) nativeTargetResult {
 			delete(c.nativeLatest, key)
 		}
 		hasError := len(response.Error) > 0 && string(response.Error) != "null"
-		activeProvider := normalizeACPSelection(c.sel).Preset == "" && c.lead == change.provider && c.target.Provider == change.provider
+		activeProvider := c.sel.Preset == "" && c.lead == change.provider && c.target.Provider == change.provider
 		newerPending := c.hasNewerNativeTargetLocked(key, change.sequence)
 		sequenceCanWin := result.latest || (!newerPending && change.sequence > c.nativeAccepted[key])
 		restartRequired := sequenceCanWin && activeProvider && change.translated && hasError && modelRestartSuggested(response.Error)
@@ -1087,7 +1086,7 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 		c.mu.Lock()
 		if sel.Account == "" {
 			c.autoAccount = next
-		} else {
+		} else if c.sel.Preset == "" { // a dropdown may have picked a preset since sel was read
 			c.sel.Account = next
 		}
 		if canResend {
@@ -1119,7 +1118,7 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 	c.mu.Lock()
 	if sel.Account == "" {
 		c.autoAccount = acct
-	} else {
+	} else if c.sel.Preset == "" { // a dropdown may have picked a preset since sel was read
 		c.sel.Account = acct
 	}
 	c.resend[session] = true
@@ -2060,8 +2059,6 @@ func (c *Control) cacheModels(models []agents.Model) {
 func (c *Control) coopOptions() []json.RawMessage {
 	c.mu.Lock()
 	sel, lead, creds := c.sel, c.lead, c.creds
-	sel = normalizeACPSelection(sel)
-	c.sel = sel
 	c.mu.Unlock()
 	var presetTarget agents.Target
 	if sel.Preset != "" {
@@ -2221,7 +2218,6 @@ func marshalSelect(id, name, desc, current string, opts []Option) json.RawMessag
 func (c *Control) SelectorSelection(configID, value string) (next Selection, recognized bool) {
 	c.mu.Lock()
 	next, lead, creds := c.sel, c.lead, slices.Clone(c.creds)
-	next = normalizeACPSelection(next)
 	c.mu.Unlock()
 	switch configID {
 	case CoopProviderID:
@@ -2273,7 +2269,6 @@ func (c *Control) SelectorSelection(configID, value string) (next Selection, rec
 func (c *Control) SelectProvider(provider string) bool {
 	next, _ := c.SelectorSelection(CoopProviderID, provider)
 	c.mu.Lock()
-	c.sel = normalizeACPSelection(c.sel)
 	changed := next != c.sel
 	if changed {
 		c.sel = next
@@ -2321,7 +2316,7 @@ func (c *Control) Snapshot() Snapshot {
 		rotationLimited = c.rot.Limits()
 	}
 	return Snapshot{
-		Selection: normalizeACPSelection(c.sel), AutoAccount: c.autoAccount, AuthFailed: maps.Clone(c.authFailed),
+		Selection: c.sel, AutoAccount: c.autoAccount, AuthFailed: maps.Clone(c.authFailed),
 		Limited: maps.Clone(c.limited), RotationLimited: rotationLimited,
 		PlainTargets: maps.Clone(c.plainTargets), Cached: cloneRawMessageMap(c.cached), NativeCache: cloneNativeOptionCache(c.nativeCache),
 		Recreate: maps.Clone(c.recreate),
@@ -2336,9 +2331,6 @@ func (c *Control) Restore(s Snapshot) {
 	s.Selection = normalizeACPSelection(s.Selection)
 	c.mu.Lock()
 	c.retargetLocked(s.Lead)
-	if s.Target.Provider == "" {
-		s.Target = agents.Target{Provider: s.Lead, Model: s.Model, Effort: c.cfg.EffortFor(s.Lead)}
-	}
 	c.lead, c.sel, c.autoAccount, c.model, c.target, c.leadUsesSetModel = s.Lead, s.Selection, s.AutoAccount, s.Model, s.Target, s.LeadUsesSetModel
 	c.plainTargets = maps.Clone(s.PlainTargets)
 	if c.plainTargets == nil {
@@ -2790,7 +2782,6 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	// a dropdown to the value it's already on; restarting on that no-op would respawn the box before
 	// the session has any transcript, so the replayed session/load fails "Resource not found" and the
 	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
-	c.sel = normalizeACPSelection(c.sel)
 	changed := next != c.sel
 	if h.Params.ConfigID == CoopAccountID && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
 		if h.Params.Value == "auto" && c.autoAccount != "" {
@@ -2832,7 +2823,7 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 func (c *Control) authenticationTarget() (provider, account string) {
 	c.mu.Lock()
 	provider = c.lead
-	sel := normalizeACPSelection(c.sel)
+	sel := c.sel
 	account = sel.Account
 	if sel.Preset != "" {
 		account = c.target.Account()

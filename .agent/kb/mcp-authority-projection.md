@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -44,12 +44,10 @@ could change across a parent symlink; cleaning such a path before resolution is 
 proof. Snapshot capture uses the validated resolved path, so a later parent-symlink retarget cannot
 change which file the run reads.
 
-Remote-session projection crosses that boundary before changing its private config tree. It rejects
-an authority inside the agent-exposed primary/companion workspaces, selected credential profile, or
-private session state, copies only the captured bytes, and treats adapter rendering errors as
-credential-projection failures before the ACP child starts. Missing and server-empty authorities
-remain intentionally inert; malformed or ambiguous active configuration never degrades into a
-tool-free answer.
+A controller session never reads this authority: every job withholds the operator's shared file.
+Its private `mcp.json` holds only the controller-tools binding (`sessionMCPSnapshot`), rendered before
+its private config tree changes, and a binding that cannot render fails the turn before the ACP child
+starts. A session with no binding has no MCP file and an empty `session/new` list.
 
 `mcp.BindTaskTools` is a second coop-owned binding beside `BindControllerTools`: for a box that
 serves task tools — a loop work box, or an interactive agent session in a project with a task queue
@@ -140,8 +138,8 @@ header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer 
 `Authorization: Bearer ${NAME}`. A filtered SESSION child writes its lead adapter's
 final ACP list to the daemon-named `COOP_SESSION_MCP_HANDOFF` file before its container starts; the
 daemon renders nothing pre-spawn for it, reads the file once after `initialize` (bound to the run
-id), and refuses the turn without it. A filtered session that withholds MCP drops the source's token
-names from its private env copy.
+id), and refuses the turn without it. A session's private env holds only its job environment and the
+controller's token, so the source's token names never enter it.
 
 **A legacy SSE server takes the one wider route** (`CredentialBrokerMCPSSE`). The SSE transport
 names its message endpoint at runtime (`event: endpoint`, usually with a per-connection query), so
@@ -178,12 +176,12 @@ session is not offline), and `mcpStandIns.kept` lets a kept server's real value 
 the daemon used to. A session whose repository is read-only is an ordinary box and brokers the same
 way.
 
-**Offline runs drop every remote server** (`box.Run`, `sessionsvc` `captureSessionMCP`). A box on
+**Offline runs drop every remote server** (`box.Run`). A box on
 `--network none` cannot reach one, so `mcp.WithoutRemoteServers` removes each server with a `url`
 before any projection, `mcpScrub`'s names leave the env (and a `-e` of one is refused, as under
-filtered), and the network section names what was left out. An offline session's private copy is
-written without them and without the controller-tools binding. Its daemon-side `session/new` render
-reads that copy, so it needs no handoff. Residual: only names the configured file references are
+filtered), and the network section names what was left out. An offline session gets no private copy,
+not even the controller-tools binding, so its `session/new` list is empty and it needs no handoff.
+Residual: only names the configured file references are
 scrubbed — a leftover token elsewhere in the env file still rides a filtered box's env.
 
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
@@ -204,6 +202,8 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-04 — removed the shared-file branch of session projection, which no job could reach:
+  `sessionMCPSnapshot` replaced `captureSessionMCP`, and the daemon-side offline list went with it.
 - 2026-11-03 — `coop acp` and `coop <agent>` sessions bind `coop-tasks` too (see [[in-box-task-channel]]); the projection itself is unchanged.
 - 2026-11-03 — reproduced Zed Emisar startup refusal from editor stdio/shared HTTP name collision;
   shared authority now wins across sources, with same-source conflict refusal, safe warning, saved

@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -169,9 +170,23 @@ func TestClosedReceiptSurvivesLaterWorkspaceLoss(t *testing.T) {
 func TestQuarantinedExhaustedSessionClosesAfterRuntimeProof(t *testing.T) {
 	runner := &quarantineCloseRunner{}
 	service, bound := quarantinedCloseFixture(t, runner)
-	exhausted, err := service.Store().ExhaustBudget(context.Background(), "exhaust-retained", session.ExhaustBudgetRequest{SessionID: bound.ID, ExpectedRevision: bound.Revision})
-	if err != nil {
-		t.Fatal(err)
+	ctx, store := context.Background(), service.Store()
+	exhausted := bound
+	for turn := 0; exhausted.State != session.SessionExhausted; turn++ {
+		key := fmt.Sprintf("spend-%d", turn)
+		if _, err := store.SubmitTurn(ctx, key, session.SubmitTurnRequest{SessionID: bound.ID, ExpectedRevision: exhausted.Revision, Prompt: key}); err != nil {
+			t.Fatal(err)
+		}
+		leased, ok, err := store.LeaseNextTurn(ctx, bound.ID)
+		if err != nil || !ok {
+			t.Fatalf("lease = %v, %v", ok, err)
+		}
+		if _, err := store.FailTurn(ctx, session.FailTurnRequest{SessionID: bound.ID, TurnID: leased.ID, ErrorCode: session.CodeInternal, ErrorDetail: "spent"}); err != nil {
+			t.Fatal(err)
+		}
+		if exhausted, err = store.GetSession(ctx, bound.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	closed, err := service.Close(context.Background(), "close-exhausted-retained", session.CloseSessionRequest{SessionID: bound.ID, ExpectedRevision: exhausted.Revision})
 	if err != nil || closed.State != session.SessionClosed || runner.proofs != 1 {

@@ -166,10 +166,6 @@ func (s *Service) scheduleBackgroundOperation(operationID string) {
 	if err != nil || !backgroundOperation(op) {
 		return
 	}
-	if op.Method == "CreateRemoteSession" &&
-		s.sessionQuarantined(deterministicSessionID(op.ID)) {
-		return
-	}
 	s.mu.Lock()
 	if !s.started || s.ctx == nil {
 		s.mu.Unlock()

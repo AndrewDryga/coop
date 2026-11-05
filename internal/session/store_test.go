@@ -1068,7 +1068,7 @@ func TestMarkOperationRunningIsBoundedIdempotentAndRaceSafe(t *testing.T) {
 	}
 }
 
-func TestReplaceOperationIntentAndListIncompleteOperations(t *testing.T) {
+func TestListIncompleteOperations(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
@@ -1092,13 +1092,6 @@ func TestReplaceOperationIntentAndListIncompleteOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned := []byte(`{"phase":"pinned","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-	if err := store.ReplaceOperationIntent(ctx, first.ID, firstIntent, pinned); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ReplaceOperationIntent(ctx, first.ID, firstIntent, []byte(`{"phase":"stale"}`)); CodeOf(err) != CodeOperationIntentConflict {
-		t.Fatalf("stale intent replacement error = %v", err)
-	}
 	running, err := store.ListIncompleteOperations(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1110,16 +1103,13 @@ func TestReplaceOperationIntentAndListIncompleteOperations(t *testing.T) {
 	for _, operation := range running {
 		byID[operation.ID] = operation
 	}
-	if string(byID[first.ID].Result) != string(pinned) ||
+	if string(byID[first.ID].Result) != string(firstIntent) ||
 		string(byID[second.ID].Result) != string(secondIntent) ||
 		byID[reserved.ID].State != OperationReserved {
 		t.Fatalf("incomplete operation intents = %+v", byID)
 	}
 	if err := store.CompleteOperation(ctx, first.ID, "session", "s1", []byte(`{"id":"s1"}`)); err != nil {
 		t.Fatal(err)
-	}
-	if err := store.ReplaceOperationIntent(ctx, first.ID, pinned, []byte(`{"phase":"late"}`)); CodeOf(err) != CodeOperationIntentConflict {
-		t.Fatalf("terminal intent replacement error = %v", err)
 	}
 	running, err = store.ListIncompleteOperations(ctx)
 	if err != nil || len(running) != 2 {
@@ -1234,7 +1224,7 @@ func TestReconcileOperationRejectsAStaleSnapshotWithTheSameClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned := []byte(`{"phase":"pinned","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-	if err := store.ReplaceOperationIntent(ctx, op.ID, admitted, pinned); err != nil {
+	if _, err := store.db.ExecContext(ctx, "UPDATE operations SET result = ? WHERE id = ?", pinned, op.ID); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := store.ReconcileOperation(ctx, snapshot, OperationUncertain, CodeOperationUncertain, "stale watchdog")
@@ -1363,7 +1353,7 @@ func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.JobDigest != testJobDigest || sess.JobRef != "job:test" || sess.Policy != "" || sess.PolicyDigest != "" || sess.AuthorityDigest != "" || sess.ProjectEnv || sess.ProjectMCP ||
+	if sess.JobDigest != testJobDigest || sess.JobRef != "job:test" || sess.AuthorityDigest != "" || sess.ProjectEnv || sess.ProjectMCP ||
 		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
 		sess.ControllerTools == nil || sess.ControllerTools.Token != strings.Repeat("t", 48) {
@@ -1505,11 +1495,6 @@ func TestDiscardedSessionIsTerminal(t *testing.T) {
 	}); CodeOf(err) != CodeInvalidSessionState {
 		t.Fatalf("extend discarded session = %v", err)
 	}
-	if _, err := store.ExhaustBudget(ctx, "exhaust-discarded", ExhaustBudgetRequest{
-		SessionID: discarded.ID, ExpectedRevision: discarded.Revision,
-	}); CodeOf(err) != CodeInvalidSessionState {
-		t.Fatalf("exhaust discarded session = %v", err)
-	}
 	if _, err := store.CloseSession(ctx, "close-discarded", CloseSessionRequest{
 		SessionID: discarded.ID, ExpectedRevision: discarded.Revision,
 	}); CodeOf(err) != CodeInvalidSessionState {
@@ -1631,7 +1616,7 @@ func TestQueueBoundsQueuedCancellationAndBudgetExhaustion(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
 	defer store.Close()
-	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxQueuedTurns: 2, MaxQueuedBytes: 5})
+	sess, err := store.CreateSession(ctx, "create", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target", MaxTurns: 1, MaxQueuedTurns: 3, MaxQueuedBytes: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1653,10 +1638,23 @@ func TestQueueBoundsQueuedCancellationAndBudgetExhaustion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ExhaustBudget(ctx, "budget", ExhaustBudgetRequest{SessionID: sess.ID, ExpectedRevision: 2}); err != nil {
+	fourth, err := store.SubmitTurn(ctx, "fourth", SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: 2, Prompt: "z"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{second.ID, third.ID} {
+	if leased, ok, err := store.LeaseNextTurn(ctx, sess.ID); err != nil || !ok || leased.ID != second.ID {
+		t.Fatalf("lease the budget's last turn = %+v, ok=%v, err=%v", leased, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{SessionID: sess.ID, TurnID: second.ID, Message: "answer"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{third.ID, fourth.ID} {
 		turn, err := store.GetTurn(ctx, sess.ID, id)
 		if err != nil {
 			t.Fatal(err)

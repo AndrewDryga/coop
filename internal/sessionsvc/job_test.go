@@ -195,6 +195,8 @@ func TestSessionExecutionRejectsChangedFrozenSourceProjections(t *testing.T) {
 		"companion source":    func(s *session.Session) { s.Companions[0].Repository = repo },
 		"companion workspace": func(s *session.Session) { s.Companions[0].Workspace = repo },
 		"companion commit":    func(s *session.Session) { s.Companions[0].BaseCommit = strings.Repeat("c", 40) },
+		"shared env":          func(s *session.Session) { s.ProjectEnv = true },
+		"shared MCP":          func(s *session.Session) { s.ProjectMCP = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			bound := created
@@ -440,11 +442,6 @@ func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T)
 	created := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", string(request), "job-http-create", "application/json")
 	if created.Code != http.StatusOK || bytes.Contains(created.Body.Bytes(), document) || bytes.Contains(created.Body.Bytes(), []byte("job_document")) {
 		t.Fatalf("job HTTP create = %d %s", created.Code, created.Body.String())
-	}
-	for _, obsolete := range []string{"policy", "policy_digest", "authority_digest"} {
-		if bytes.Contains(created.Body.Bytes(), []byte(`"`+obsolete+`"`)) {
-			t.Fatalf("HTTP create still exposes obsolete %s: %s", obsolete, created.Body.String())
-		}
 	}
 	if !bytes.Contains(created.Body.Bytes(), []byte(`"mode":"normal"`)) {
 		t.Fatalf("HTTP create does not publish the session's mode: %s", created.Body.String())

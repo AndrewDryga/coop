@@ -76,22 +76,15 @@ func TestACPResumeStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestACPResumeStateRejectsInvalidOrLegacyProxySnapshots(t *testing.T) {
+func TestACPResumeStateRejectsInvalidProxySnapshots(t *testing.T) {
 	initialize := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
-	legacySetup, err := json.Marshal(map[string]any{
-		"proxy": map[string]any{"setup": [][]byte{initialize}},
-		"ctrl":  map[string]any{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	cases := []struct {
 		name string
 		raw  []byte
 		want string
 	}{
 		{name: "corrupt JSON", raw: []byte(`{"proxy":`), want: "unexpected end"},
-		{name: "legacy setup tape", raw: legacySetup, want: "initialize request"},
+		{name: "missing initialize request", raw: mustMarshalResumeState(t, ResumeState{}), want: "initialize request"},
 		{name: "missing adapter identity", raw: mustMarshalResumeState(t, ResumeState{Proxy: acpproxy.Snapshot{
 			Initialize: initialize, Sessions: []acpproxy.SessionSnap{{EditorID: "S1", Provider: "codex"}},
 		}}), want: "adapter identity"},
@@ -107,7 +100,7 @@ func TestACPResumeStateRejectsInvalidOrLegacyProxySnapshots(t *testing.T) {
 			}
 			t.Setenv("COOP_ACP_RESUME_STATE", path)
 			if _, err := ReadResumeState(path); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ReadResumeState legacy snapshot error = %v, want %q", err, tc.want)
+				t.Fatalf("ReadResumeState error = %v, want %q", err, tc.want)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("rejected resume file was not consumed: %v", err)

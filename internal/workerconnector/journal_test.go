@@ -9,6 +9,21 @@ import (
 	"time"
 )
 
+func (j *journal) acknowledgeResults(commandIDs []string) error {
+	var failures error
+	for _, commandID := range commandIDs {
+		entry, err := j.read(j.path(commandID))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err == nil {
+			err = j.acknowledgeResult(entry)
+		}
+		failures = errors.Join(failures, err)
+	}
+	return failures
+}
+
 // A receipt is the worker's memory of a command; every poll decodes all of them, so one torn by a
 // crash mid-write would stop polling for good. It must therefore appear whole or not at all.
 func TestCommandReceiptIsPublishedWholeOrNotAtAll(t *testing.T) {

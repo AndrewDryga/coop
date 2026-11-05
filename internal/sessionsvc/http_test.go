@@ -203,14 +203,6 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 	}
 	response = sessionHTTPTestRequest(
 		t, handler, http.MethodPost, "/v1/sessions",
-		`{"task":"retired-source","source":{"kind":"pull_request","number":514}}`,
-		"create-pull-request", "application/json",
-	)
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("pull request body status = %d body=%s", response.Code, response.Body.String())
-	}
-	response = sessionHTTPTestRequest(
-		t, handler, http.MethodPost, "/v1/sessions",
 		strings.Replace(service.body(t, "unknown-job-field"), `"job":{`, `"job":{"unknown":true,`, 1),
 		"create-bad-source", "application/json",
 	)
@@ -577,15 +569,19 @@ func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("malformed turn binding = %d %s", malformed.Code, malformed.Body.String())
 	}
+	// An unknown field can carry a bearer token, so every route that takes one refuses it and keeps nothing.
 	for _, test := range []struct{ path, body string }{
-		{"/v1/sessions/" + created.Session.ID + "/turns", strings.ReplaceAll(body, "controller_tools", "responder_binding")},
-		{"/v1/operations/fence", strings.ReplaceAll(fenceBody, "controller_tools", "responder_binding")},
-		{"/v1/sessions", strings.TrimSuffix(service.body(t, "old-binding"), "}") + `,"responder_binding":{"endpoint":"https://controller.example/mcp","token":"` + binding.Token + `"}}`},
+		{"/v1/sessions/" + created.Session.ID + "/turns", strings.ReplaceAll(body, "controller_tools", "unknown_binding")},
+		{"/v1/operations/fence", strings.ReplaceAll(fenceBody, "controller_tools", "unknown_binding")},
+		{"/v1/sessions", strings.TrimSuffix(service.body(t, "unknown-binding"), "}") + `,"unknown_binding":{"endpoint":"https://controller.example/mcp","token":"` + binding.Token + `"}}`},
 	} {
-		response := sessionHTTPTestRequest(t, handler, http.MethodPost, test.path, test.body, "retired-binding", "application/json")
+		response := sessionHTTPTestRequest(t, handler, http.MethodPost, test.path, test.body, "unknown-binding", "application/json")
 		if response.Code != http.StatusBadRequest {
-			t.Fatalf("retired field accepted at %s: %d %s", test.path, response.Code, response.Body.String())
+			t.Fatalf("unknown field accepted at %s: %d %s", test.path, response.Code, response.Body.String())
 		}
+	}
+	if rows, err := service.ListSessions(context.Background(), 10); err != nil || len(rows) != 1 {
+		t.Fatalf("a refused create wrote sessions: %v, %v", rows, err)
 	}
 }
 
@@ -933,9 +929,6 @@ func TestSessionHTTPPublishesTheGenericSourceBindingThroughCreateAndReview(t *te
 	if changesDocument["admitted_source_tree"] != binding["admitted_tree"] {
 		t.Fatalf("admitted_source_tree on the wire = %v, want %v",
 			changesDocument["admitted_source_tree"], binding["admitted_tree"])
-	}
-	if _, retired := changesDocument["pull_request_tree"]; retired {
-		t.Fatalf("changes still publish the retired pull_request_tree: %s", changes.Body.String())
 	}
 
 	const pageSize = 32

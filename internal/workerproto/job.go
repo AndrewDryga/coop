@@ -150,7 +150,6 @@ type JobDestination struct {
 	Domain   string   `json:"domain,omitempty"`
 	IP       string   `json:"ip,omitempty"`
 	CIDR     string   `json:"cidr,omitempty"`
-	Service  string   `json:"service,omitempty"`
 	Provider string   `json:"provider,omitempty"`
 	Features []string `json:"features,omitempty"`
 }
@@ -302,7 +301,7 @@ func requireJobFields(document []byte) error {
 		if err != nil {
 			return err
 		}
-		if _, err := object(rule["to"], nil, "domain", "ip", "cidr", "service", "provider", "features"); err != nil {
+		if _, err := object(rule["to"], nil, "domain", "ip", "cidr", "provider", "features"); err != nil {
 			return err
 		}
 	}
@@ -553,11 +552,8 @@ func (e JobEgress) valid() bool {
 		return false
 	}
 	for _, rule := range e.Rules {
-		if rule.To.Service != "" {
-			return false // no controller-fenced Compose service definition in this protocol
-		}
 		selectors := 0
-		for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Service, rule.To.Provider} {
+		for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Provider} {
 			if value != "" {
 				selectors++
 			}

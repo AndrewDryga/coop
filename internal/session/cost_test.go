@@ -79,8 +79,7 @@ func TestCandidateCostSurvivesEveryTerminalPath(t *testing.T) {
 					t.Fatal(err)
 				}
 				if finish == "exhaust" {
-					current, _ := store.GetSession(ctx, sess.ID)
-					_, err = store.ExhaustBudget(ctx, "exhaust", ExhaustBudgetRequest{SessionID: sess.ID, ExpectedRevision: current.Revision})
+					_, err = store.RetireQuarantinedSession(ctx, sess.ID)
 				} else {
 					var ok bool
 					turn, ok, err = store.LeaseNextTurn(ctx, sess.ID)

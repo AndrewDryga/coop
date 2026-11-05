@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
 )
+
+func pruneCompanionSnapshots(ctx context.Context, stateRoot string, now time.Time, budget int64, max int, pressure bool) (int, []string) {
+	return pruneCompanionSnapshotsSweep(ctx, stateRoot, now, budget, max, pressure, &companionSnapshotSweep{})
+}
 
 func ensureSessionCompanion(
 	stateRoot, sessionID string,

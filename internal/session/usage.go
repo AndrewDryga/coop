@@ -15,7 +15,6 @@ import (
 // categories and cannot identify the served model or the request times inside a turn.
 type RetainedUsage struct {
 	SessionID, TurnID, Target, Mode string
-	Started, Finished               time.Time
 	Usage                           Usage
 }
 
@@ -48,11 +47,11 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 	}
 	defer tx.Rollback()
 	var version int
-	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version > SchemaVersion || version < 5 {
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version > SchemaVersion || version < 22 {
 		return out, errors.New("retained session usage schema is unavailable")
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT t.id,t.session_id,COALESCE(t.started_at,t.queued_at),t.finished_at,s.mode,
+		SELECT t.id,t.session_id,s.mode,
 		       t.usage_input_tokens,t.usage_cached_input_tokens,t.usage_output_tokens,
 		       t.usage_reasoning_tokens,t.usage_cost_recorded,
 		       COALESCE((SELECT CASE WHEN length(e.payload)<=4096 THEN e.payload ELSE '' END FROM events e
@@ -75,10 +74,9 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 			break
 		}
 		var row RetainedUsage
-		var started, finished int64
 		var payload string
 		var rotations int
-		if err := rows.Scan(&row.TurnID, &row.SessionID, &started, &finished, &row.Mode,
+		if err := rows.Scan(&row.TurnID, &row.SessionID, &row.Mode,
 			&row.Usage.InputTokens, &row.Usage.CachedInputTokens, &row.Usage.OutputTokens,
 			&row.Usage.ReasoningTokens, &row.Usage.CostRecorded, &payload, &rotations); err != nil {
 			return out, errors.New("retained session usage cannot be decoded")
@@ -86,7 +84,6 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 		if !row.Usage.Recorded() {
 			continue
 		}
-		row.Started, row.Finished = time.Unix(0, started), time.Unix(0, finished)
 		if rotations == 0 {
 			var target struct {
 				Target string `json:"target"`
