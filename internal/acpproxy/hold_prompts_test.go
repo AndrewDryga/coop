@@ -400,3 +400,51 @@ func TestResendWaitsForAChildThatRunsTurns(t *testing.T) {
 	h.expectEditor(`"stopReason":"end_turn"`)
 	_ = h.shutdown()
 }
+
+// A command the person types while the child holds prompts is Coop's to answer: it is not held, it does
+// not count as the thread's one waiting message, and it never reaches a box. Anything the hook declines
+// is held as usual.
+func TestHeldCommandIsAnsweredBesideAWaitingMessage(t *testing.T) {
+	var asked []string
+	hooks := &Hooks{HeldCommand: func(sid string, line []byte) []byte {
+		if !bytes.Contains(line, []byte(`/build`)) {
+			return nil
+		}
+		asked = append(asked, sid)
+		return []byte(`{"jsonrpc":"2.0","id":7,"result":{"stopReason":"end_turn"}}` + "\n")
+	}}
+	h := newHoldingHarness(t, hooks, nil)
+	h.initialize(0)
+	h.newSession(0, "S1")
+	h.readEditor()
+	h.prompt("3")
+	h.expectEditor("waiting for the box")
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"/build"}]}}`)
+	if line := h.expectEditor(`"id":7`); !strings.Contains(line, "end_turn") {
+		t.Fatalf("the command got %s, want Coop's answer", line)
+	}
+	if len(asked) != 1 || asked[0] != "S1" {
+		t.Fatalf("the hook was asked for %q", asked)
+	}
+	if !h.r.MoveOffHolding() {
+		t.Fatal("the move was refused")
+	}
+	h.answerReplay(1)
+	if frame := parse(readLine(t, h.childIn[1])); string(frame.ID) != "3" {
+		t.Fatalf("the real box got prompt %s, want only the waiting message", frame.ID)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	h.expectEditor(`"stopReason":"end_turn"`)
+
+	// Once a real box runs the session, nothing is a command: the box gets it.
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"S1","prompt":[{"type":"text","text":"/build"}]}}`)
+	if frame := parse(readLine(t, h.childIn[1])); string(frame.ID) != "8" {
+		t.Fatalf("the real box got %s, want the prompt", frame.ID)
+	}
+	if len(asked) != 1 {
+		t.Fatalf("the hook was asked again on a real box: %q", asked)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":8,"result":{"stopReason":"end_turn"}}`)
+	h.expectEditor(`"id":8`)
+	_ = h.shutdown()
+}

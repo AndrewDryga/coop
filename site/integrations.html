@@ -339,7 +339,9 @@ never works without your project&#39;s tools.</p>
 itself.</li>
 <li>If they&#39;re new or changed, co:op waits for you, because an agent can edit them and a build runs
 them with ordinary networking. Review them, then run <code>coop build --egress filtered</code> in the
-project.</li>
+project. Or send <code>/build</code> in the thread: co:op saves the files and shows where they are on this
+computer, and <code>/build</code> with the code it gives builds exactly those saved files. The code works
+once, for ten minutes.</li>
 <li>If the project has services and no network rules for them, the thread says to run <code>coop approve</code>,
 which lists the services and offers to add their rules. Or set <code>box.network: false</code> to start
 without services.</li>

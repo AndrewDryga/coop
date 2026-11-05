@@ -72,6 +72,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	a.acpBoxWait.start()
+	hooks.HeldCommand = a.acpBoxWait.heldCommand
 	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{NoEditorHostAccess: a.acpCapture != nil, Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }, ChildFailed: a.acpBoxWait.childFailedHook()})
 	a.acpBoxWait.close()
 	cleanupErr := a.reapACPBoxes(superID)

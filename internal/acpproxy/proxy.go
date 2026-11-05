@@ -125,6 +125,10 @@ type Hooks struct {
 	// PromptHeld may publish status for a newly accepted prompt waiting for replacement.
 	// It runs outside mu, under controlMu, without admitting or claiming the prompt.
 	PromptHeld func(sessionID string) []byte
+	// HeldCommand may answer an editor prompt that a child holding prompts would otherwise hold: a Coop
+	// command typed in an open thread while no agent runs. A non-nil result goes to the editor instead
+	// and must answer the prompt's request. It runs outside mu, under controlMu, so it returns quickly.
+	HeldCommand func(sessionID string, line []byte) []byte
 	// PromptCancelled clears the owner's retry intent without closing the session.
 	// Return the raw JSON request ID of a suppressed terminal response whose retry
 	// the owner still holds; the proxy must complete that editor request locally.
@@ -906,6 +910,24 @@ func (p *proxy) forwardClient(line []byte, origin clientOrigin) {
 	p.forwardClientControlled(line, origin, origin == originEditor)
 }
 
+// heldCommand offers Hooks.HeldCommand a prompt the person typed in an open thread while the child
+// only holds prompts. Coop's own resends and replays are never commands, and before the hold and its
+// one-prompt limit, so a command still works beside a message already waiting.
+func (p *proxy) heldCommand(original header, line []byte, origin clientOrigin) []byte {
+	if origin != originEditor || p.hooks == nil || p.hooks.HeldCommand == nil {
+		return nil
+	}
+	sid := sessionID(original.Params)
+	p.mu.Lock()
+	s := p.sessions[sid]
+	open := sid != "" && s != nil && !s.closed && p.child != nil && p.child.HoldPrompts
+	p.mu.Unlock()
+	if !open {
+		return nil
+	}
+	return p.hooks.HeldCommand(sid, line)
+}
+
 // notAPromptRequest is a frame that could start a turn without being a prompt the proxy can hold: a
 // session/prompt with no id, or a JSON-RPC batch, which parse cannot see into.
 func notAPromptRequest(h header, line []byte) bool {
@@ -949,6 +971,10 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		}
 	}
 	if original.Method == "session/prompt" && original.isRequest() {
+		if answer := p.heldCommand(original, line, origin); len(answer) > 0 {
+			_, _ = p.out.Write(answer)
+			return
+		}
 		p.mu.Lock()
 		// A child that holds prompts never gets one, wherever it came from. A resend's own path skips
 		// such a child too (replayAt), and this is the line that makes the promise.

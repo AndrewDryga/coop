@@ -837,12 +837,13 @@ PROJECT BOX
   With filtered networking the editor connects even when this project's box
   cannot start yet. Messages wait, the thread says why, and the session moves
   onto the box once it is ready. Build files you approved with coop build
-  rebuild by themselves; new or changed ones wait for you to run it. Network
-  access nobody approved waits for you to run coop approve. A broken
-  .agent/project.yaml waits for you to fix it, and the thread says what is
-  wrong. A box that exits as it starts is tried again every 30 seconds, and
-  the agent log says why. A box that starts but does not answer within a
-  minute is treated the same way.
+  rebuild by themselves; new or changed ones wait for you to run it, or to
+  send /build in the thread, which shows where Coop saved them and gives a
+  code that builds exactly those files. Network access nobody approved waits
+  for you to run coop approve. A broken .agent/project.yaml waits for you to
+  fix it, and the thread says what is wrong. A box that exits as it starts is
+  tried again every 30 seconds, and the agent log says why. A box that starts
+  but does not answer within a minute is treated the same way.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.

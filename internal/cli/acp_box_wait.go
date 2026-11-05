@@ -88,12 +88,16 @@ type acpBoxWait struct {
 	check   func(context.Context) error         // box.EditorBoxReadiness under the session's current capture
 	rebuild func(context.Context, string) error // box.RebuildApprovedProject
 	stamp   func() string                       // box.EditorBoxStamp: when to ask again
-	holding func() bool                         // the live child only holds prompts
-	serving func() bool                         // the live child runs turns and has answered initialize
-	move    func() bool                         // replace it, once it owes the editor nothing
-	force   func() bool                         // replace it anyway
-	publish func(string)                        // what threads hear now; "" when nothing waits
-	notify  func(string)                        // shown once, with the next session update
+	// prepareBuild saves the build files for review (box.PrepareFilteredProjectBuild), and buildReviewed
+	// builds such a snapshot. A thread offers them only in a filtered session (heldCommand).
+	prepareBuild  func(context.Context) (acpPreparedBuild, error)
+	buildReviewed func(context.Context, acpPreparedBuild) error
+	holding       func() bool  // the live child only holds prompts
+	serving       func() bool  // the live child runs turns and has answered initialize
+	move          func() bool  // replace it, once it owes the editor nothing
+	force         func() bool  // replace it anyway
+	publish       func(string) // what threads hear now; "" when nothing waits
+	notify        func(string) // shown once, with the next session update
 	// announce is publish for a wait that can begin with every thread idle: each open one hears it now.
 	announce func(string)
 	lockBusy func() error // box.EditorServiceLaunchBusy: the lock alone, which costs a few stats
@@ -116,20 +120,23 @@ type acpBoxWait struct {
 
 	moveWanted time.Time // when the poll loop first could not move; only the poll loop touches it
 
-	mu          sync.Mutex
-	blocked     error                 // why a real box cannot start now; nil when it can
-	checked     time.Time             // when the question was last asked, whatever the answer
-	building    bool                  // a rebuild is running
-	failed      bool                  // the rebuild failed: what it could not do needs a person
-	startFailed bool                  // a real box could not start, and none has run since
-	failedHow   acpproxy.ChildFailure // how the last one failed
-	retrying    bool                  // a real box is being tried again; startFailed clears once it keeps running
-	retriedAt   time.Time             // when that started
-	moving      bool                  // real boxes can start, and the session's own has not answered yet
-	said        string                // what publish was last told
-	seen        string                // the stamp blocked was answered under
-	onHold      bool                  // the last child handed to the proxy holds prompts
-	closed      bool                  // no rebuild may start now
+	mu           sync.Mutex
+	blocked      error                 // why a real box cannot start now; nil when it can
+	checked      time.Time             // when the question was last asked, whatever the answer
+	building     bool                  // a rebuild is running
+	failed       bool                  // the rebuild failed: what it could not do needs a person
+	startFailed  bool                  // a real box could not start, and none has run since
+	failedHow    acpproxy.ChildFailure // how the last one failed
+	retrying     bool                  // a real box is being tried again; startFailed clears once it keeps running
+	retriedAt    time.Time             // when that started
+	moving       bool                  // real boxes can start, and the session's own has not answered yet
+	said         string                // what publish was last told
+	seen         string                // the stamp blocked was answered under
+	onHold       bool                  // the last child handed to the proxy holds prompts
+	closed       bool                  // no rebuild may start now
+	offer        *acpBuildOffer        // the snapshot a thread's /build saved, and its code
+	reviewFailed bool                  // the last build of a reviewed snapshot failed
+	reviewing    bool                  // the running build is a reviewed snapshot's, not an approved rebuild
 
 	live          *acpproxy.Child          // the last child handed to the proxy
 	launchWaits   map[*acpproxy.Child]bool // real children that say they wait for the lock now, parked or not
@@ -160,7 +167,21 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 			build.Ctx, build.Quiet, build.Stderr = ctx, true, os.Stderr // stdout is the editor's wire
 			return box.RebuildApprovedProject(a.cfg, a.rt, build, dfRel)
 		},
-		stamp:   func() string { return box.EditorBoxStamp(a.currentACPCapture(), spec) },
+		stamp: func() string { return box.EditorBoxStamp(a.currentACPCapture(), spec) },
+		prepareBuild: func(ctx context.Context) (acpPreparedBuild, error) {
+			return box.PrepareFilteredProjectBuild(ctx, a.cfg, spec)
+		},
+		buildReviewed: func(ctx context.Context, prepared acpPreparedBuild) error {
+			build, ok := prepared.(*box.PreparedProjectBuild)
+			if !ok {
+				return errors.New("the reviewed project build is no longer available")
+			}
+			rt, err := a.rt.FreezeCompose(ctx)
+			if err != nil {
+				return err
+			}
+			return build.Build(ctx, rt, a.cfg, os.Stderr, os.Stderr) // stdout is the editor's wire
+		},
 		holding: restarter.Holding,
 		serving: restarter.Serving,
 		move:    restarter.MoveOffHolding,
@@ -403,12 +424,27 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 		go w.runRebuild(required.Dockerfile)
 	}
 	text := acpBoxWaitText(blocked, required, w.failed)
-	if text == "" && w.startFailed {
+	unapproved := required != nil && !required.Approved
+	switch {
+	case text == "" && w.startFailed:
 		text = acpBoxFailedText(w.failedHow)
+	case unapproved && w.building && w.reviewing:
+		text = acpReviewedBuildText
+	case unapproved && w.building:
+		text = acpRebuildingText
+	case unapproved && w.filtered && w.prepareBuild != nil:
+		text = acpBuildableWaitText(w.reviewFailed)
+	}
+	var stale *acpBuildOffer
+	if !unapproved {
+		stale, w.offer, w.reviewFailed = w.offer, nil, false
 	}
 	repeat := text == w.said
 	w.said = text
 	w.mu.Unlock()
+	if stale != nil {
+		_ = stale.prepared.Close()
+	}
 	if changed {
 		if required != nil && required.Approved {
 			w.log(fmt.Errorf("rebuilding this project's box from the files you approved: %s", required.Reason))
@@ -483,7 +519,7 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
 	case required != nil && required.Approved:
-		return "**Rebuilding this project's box.**\n\nYour approved build files did not change, so this needs nothing from you. " + waits
+		return acpRebuildingText
 	case required != nil:
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
 			Detail:  "You have not approved its build files as they are now, and a build runs them with open networking, so Coop waits for you. " + waits + " Review the Dockerfile and the files it copies.",
@@ -494,6 +530,9 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 		return acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: "The reason is in the agent log. " + waits})
 	}
 }
+
+// acpRebuildingText is what threads hear while Coop rebuilds from build files a person approved before.
+const acpRebuildingText = "**Rebuilding this project's box.**\n\nYour approved build files did not change, so this needs nothing from you. Your messages wait here and go out once it is ready."
 
 // acpServicesWaitText shows a services refusal so that it reads whole at any panel width. An editor does
 // not wrap a code block, so a sentence in one runs off the panel's edge. Coop knows the rules and the
@@ -727,5 +766,6 @@ func (w *acpBoxWait) close() {
 		w.mu.Unlock()
 		w.cancel()
 		w.done.Wait()
+		w.dropOffer()
 	})
 }

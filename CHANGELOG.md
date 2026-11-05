@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor thread can build the project's box.** When a filtered session waits on build files
+  nobody approved, send `/build` in the thread. Coop saves the files, shows where they are on this
+  computer, and gives a code. `/build <code>` builds exactly the saved files, and the session moves
+  onto the box. The code is random, works once and expires after ten minutes. `coop build --egress
+  filtered` on the host still works.
+
 - **Network and file-protection errors say what went wrong.** Help and refusals no longer say a client,
   image or Docker setup is "qualified". They name what `coop net setup` checked or what Docker lacks.
 
