@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -237,7 +237,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <td>The services network to join, so parallel forks can share one database.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Choose one of these values for <code>COOP_EGRESS</code>:</p>
 <ul>
 <li><code>filtered</code> allows the AI provider and domains you&#39;ve approved. This is the default, and it needs
@@ -322,7 +322,7 @@ overrides <code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> 
 <td>Turns off the once-a-day &#34;a newer coop/box is available&#34; check.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>By default, a peer can take as long as it needs. In a loop, the lead&#39;s own limits still apply: 2
 hours for one tool call and 48 hours for one attempt. Set <code>COOP_CONSULT_TIMEOUT</code> to a whole number of seconds (max <code>86400</code>) to add a
 timeout. If a peer doesn&#39;t answer in time, co:op skips it and the lead uses the replies that
@@ -390,7 +390,7 @@ working, that answer is lost and needs a retry.</p>
 <td>Saves each streaming loop attempt&#39;s raw provider JSONL and rendered output under <code>.agent/runs/&lt;run&gt;.streams/</code>.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>You configure loop behavior in <code>.agent/loop.yaml</code>. See <a href="loop.html">the loop</a> for the whole file.</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Forks and loop table"><table class="ref">
 <thead>
@@ -417,7 +417,7 @@ working, that answer is lost and needs a retry.</p>
 <td>Runs the queue cleanup pass by default in this repository.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>The <code>--preflight</code> flag turns on the same cleanup for one run.</p>
 <h3 id="command-valued-settings">Command-valued settings</h3>
 <p>co:op splits <code>COOP_GATE</code>, <code>COOP_RUN_ARGS</code> and the <code>COOP_&lt;AGENT&gt;_CMD</code> overrides into <code>argv</code>. Single
@@ -494,7 +494,7 @@ Reporting keys belong in host environment variables, not <code>coop.conf</code>,
 <td>The routes for <a href="#path-routed-context">path-routed context</a>.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Explicit <code>COOP_*</code> settings in your environment or <code>coop.conf</code> override <code>box:</code> and <code>gate:</code>.
 Because the project settings file is committed and read on the host, it may tighten security
 restrictions but can&#39;t relax them on its own:</p>
@@ -509,7 +509,7 @@ restrictions but can&#39;t relax them on its own:</p>
   compose: .agent/review-compose.yml  # services the check needs, such as a test database
   env:
     DATABASE_URL: postgres://postgres:test@db:5432/app_test
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>review.env</code> values are literal strings, set only in the check&#39;s box. Names beginning with <code>COOP_</code>
 are reserved. A controller review with open networking starts the services in <code>review.compose</code>
 before the check, then removes them and their volumes. <code>coop fork review --gate</code> doesn&#39;t start
@@ -528,13 +528,13 @@ context:
   routes:
     - paths: [portal/**, &#34;**/*.ex&#34;]   # * within a segment, ** across segments
       include: [.agent/kb/portal.md]  # repo-relative docs to add when a path matches
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Path-routed context code example" tabindex="0"><code class="language-bash">coop context --changed            # scope = the paths git reports changed
 coop context --task &lt;id&gt;          # scope = a task&#39;s declared `paths:` frontmatter
 coop context portal/lib/user.ex   # scope = explicit repo-relative paths
 coop context --changed --json     # same, as data (files + the route that selected each)
 coop context --changed --rendered # the compiled content itself, canonical first
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op chooses paths from your arguments, Git&#39;s changed files, the task&#39;s declared paths or the
 current subproject, and never guesses them from a prompt. It reports an error if a route includes
 a missing document or a path outside the repo.</p>
@@ -575,7 +575,7 @@ against paths in its own tree.</p>
 <td><code>coop loop</code> only: Ctrl-C interrupted it before the final verdict.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>If final verification is enabled and fails, <code>coop loop</code> keeps the completed work and exits with
 <code>1</code>, or <code>3</code> if the only work left is blocked. An intentional <code>--max-tasks N</code> pause exits
 successfully but leaves final review pending. See <a href="loop.html#exit-codes">the loop&#39;s exit codes</a>, and

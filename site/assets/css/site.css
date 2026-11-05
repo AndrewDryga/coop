@@ -720,15 +720,19 @@ body:has(.docs-shell) .wrap { width: min(93rem, 100% - 2 * var(--gutter)); }
 .reference-example > .code-file-name { order: -2; }
 .reference-section > :is(.reference-table, .reference-code-frame),
 .reference-section > :is(.reference-table, .reference-code-frame) + * { margin-top: 32px; }
-.reference-scroll-hint { order: -1; grid-column: 1 / -1; margin: 0 0 8px; color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
-.reference-scroll-hint[hidden] { display: none; }
-:is(.code-file, .reference-example) > .reference-scroll-hint { margin: 0; padding: 8px 24px 12px; }
 .reference-content .ref-wide { min-width: 42rem; }
 .reference-content .ref :is(th, td) { padding-right: 20px; }
 .reference-content .ref-wide :is(th, td) { min-width: 10rem; }
 .reference-content .ref:not(.ref-wide) :is(th, td):first-child { width: 30%; min-width: 7rem; }
 .reference-content .ref td > code:only-child { white-space: normal; }
 .reference-content .ref code { overflow-wrap: normal; }
+/* A block wider than its column fades at the side that has more (site.js sets data-more). */
+.reference-content [data-more~="end"] { mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
+.reference-content [data-more~="start"] { mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); }
+.reference-content [data-more~="start"][data-more~="end"] { mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); }
+@media (forced-colors: active) {
+  .reference-content [data-more] { mask-image: none; border-inline-end: 2px dashed CanvasText; }
+}
 .reference-content pre.code { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
 .reference-content pre.code code { font: inherit; }
 .reference-content .code-file { min-width: 0; }
@@ -736,7 +740,6 @@ body:has(.docs-shell) .wrap { width: min(93rem, 100% - 2 * var(--gutter)); }
 .reference-example .code-file-name { padding-block: 12px; border-bottom: 1px solid var(--divider); }
 .reference-example pre.code { background: none; }
 .reference-content .code-file pre.code { min-width: 0; grid-row: 3; }
-.reference-content .code-file > .reference-scroll-hint { grid-row: 2; }
 .reference-list { display: grid; gap: 24px; padding-left: 0 !important; list-style: none !important; }
 .reference-list > li + li { margin-top: 0 !important; }
 .reference-list a { font-weight: 600; }

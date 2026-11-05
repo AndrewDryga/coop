@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -187,7 +187,7 @@ Checking filtered access:
   ✓ DNS does not resolve unapproved domains
 
 ✓ All 5 checks passed. This host is ready for filtered runs
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>If a check fails, co:op shows the error and the checks that passed before it. The output ends with
 <code>✗ this host is not ready for filtered runs</code> and <code>No setup was saved</code>.</p>
 <h3 id="fleet-workers-and-docker-in-docker">Fleet workers and Docker-in-Docker</h3>
@@ -255,7 +255,7 @@ and exact images in use.</p>
 <td>Docker publishes the port on the gateway, and the box shares the gateway&#39;s network namespace</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>In a filtered run, <code>COOP_RUN_ARGS</code> and extra runtime arguments accept bind mounts, <code>-e KEY=VALUE</code>
 and <code>--label KEY=VALUE</code> only. co:op refuses any other flag by name. Its own tracking labels take
 precedence over your labels with the same key.</p>
@@ -286,7 +286,7 @@ precedence over your labels with the same key.</p>
 <td><code>cli-chat-proxy.grok.com</code>, <code>code.grok.com</code> and <code>auth.x.ai</code> (the OAuth refresh)</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Provider rules don&#39;t include release feeds, package registries, update checks or telemetry
 (<code>raw.githubusercontent.com</code>, <code>registry.npmjs.org</code>, <code>api.github.com</code> and the Datadog intakes).
 co:op disables this traffic through each client&#39;s settings inside the box, and your host profiles
@@ -322,7 +322,7 @@ even when their home folders aren&#39;t mounted.</p>
 <td><code>GROK_<wbr/>DISABLE_<wbr/>AUTOUPDATER</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>A session that only answers a prompt should produce no blocked requests from these background
 features. If the agent or your project requests one of these hosts directly, co:op records the
 blocked request as usual and never hides it from the report. You can inspect it and approve access.</p>
@@ -378,7 +378,7 @@ their query strings. For Codex, these are:</p>
 <td><code>GET /openai/plugins.git/info/refs?service=git-upload-pack</code> and <code>POST /openai/plugins.git/git-upload-pack</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>The github.com lines fetch one public repository and never push. The same discovery path with
 <code>service=git-receive-pack</code> isn&#39;t in the list.</p>
 <p>The broker never turns the public Git download route into general GitHub access. Other GitHub
@@ -634,7 +634,7 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <td><code>&lt;Agent&gt; cannot start because the project directory at &lt;path&gt; was replaced since it was approved</code> · <code>Review it: coop approve</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>If co:op can&#39;t enforce a rule, it stops the launch before saving approval or creating a container.
 It never starts a run with a requested restriction silently removed.</p>
 <h3 id="ranges-no-rule-can-reach">Ranges no rule can reach</h3>
@@ -788,7 +788,7 @@ that run only. A rules file lists its rules under one top-level <code>egress_rul
   - to: {domain: &#34;docs.example.com&#34;}
     protocol: tls
     ports: [443]
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Keep the file outside the project. A rules file inside a folder mounted into the agent&#39;s box only
 requests access, so the agent can&#39;t use such a file to approve its own rules.</p>
 <p>Both flags only add to filtered access, and co:op refuses them by name on an open or offline run.</p>
@@ -849,7 +849,7 @@ retries automatically.</p>
 <p>To recover runs now:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="When a run is interrupted code example" tabindex="0"><code>coop net recover           # settle every pending run now
 coop net recover &lt;run&gt;     # settle one run now
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Without a run, <code>coop net recover</code> reports only the runs it cleaned up or couldn&#39;t clean up. A run
 whose own <code>coop</code> process is still running, in this project or another, is left for that process to
 clean up and isn&#39;t listed. Name the run to see why it was left alone.</p>

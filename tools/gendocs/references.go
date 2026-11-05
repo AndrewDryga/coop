@@ -334,7 +334,6 @@ func renderReference(ref docsPage, source string) (title, content, toc string, e
 			node.Parent.RemoveChild(node)
 			frame.AppendChild(wrapper)
 			wrapper.AppendChild(node)
-			frame.AppendChild(scrollHint())
 		}
 		if node.Data == "th" {
 			setDOMAttr(node, "scope", "col")
@@ -478,17 +477,10 @@ func styleReferenceCode(pre *dom.Node, heading string) {
 	pre.Parent.InsertBefore(wrapper, pre)
 	pre.Parent.RemoveChild(pre)
 	wrapper.AppendChild(pre)
-	wrapper.AppendChild(scrollHint())
 	if kind != "" {
 		setDOMAttr(wrapper, "data-copy-kind", kind)
 		setDOMAttr(pre, "data-copy-source", "")
 	}
-}
-
-func scrollHint() *dom.Node {
-	hint := elementNode("p", "class", "reference-scroll-hint")
-	hint.AppendChild(&dom.Node{Type: dom.TextNode, Data: "Scroll horizontally to see more →"})
-	return hint
 }
 
 func uniqueHeadingID(title string, used map[string]bool) string {

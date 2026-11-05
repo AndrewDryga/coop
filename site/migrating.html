@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -244,7 +244,7 @@ binary to start workers, fork loops or sessions with MCP.</p>
 <h3 id="controller-owned-workers-and-session-schema-25">Controller-owned workers and session schema 25</h3>
 <p>A worker now connects with one command:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controller-owned workers and session schema 25 code example" tabindex="0"><code class="language-sh">coop sessions connect --controller https://controller.example --token-file /private/enrollment-token
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Before you run it against an existing root, prepare that root:</p>
 <ol>
 <li>Stop the connection or service that owns it.</li>
@@ -365,7 +365,7 @@ after you&#39;ve verified that every note and change has a home.</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Canonical tasks across isolated forks code example" tabindex="0"><code class="language-sh">coop fork perf codex --loop -d
 coop fork docs claude --loop -d
 coop tasks watch
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>--tasks &lt;path&gt;</code> now selects a canonical queue, not a place to copy tasks to. The host gives each
 fork one assignment, which survives a stop or a crash, and shows the fork only that task in
 <code>.coop/task-executions/</code>. The canonical task completes only when the exact candidate reviewed for
@@ -425,7 +425,7 @@ retired loop settings with their <code>.agent/loop.yaml</code> fields:</p>
 <td><code>preflight.enabled</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Remove <code>COOP_AGENT_PACKAGES</code>, because images that co:op manages use locked client versions. If you
 need different tooling, review a custom image and select it explicitly.</p>
 <p>Project networking uses <code>box.egress: offline</code> instead of <code>none</code>, so update <code>.agent/project.yaml</code>.
@@ -463,7 +463,7 @@ automatic build records don&#39;t allow that reuse.</p>
 <td><code>coop net blocked</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p><code>coop tasks flags</code> is gone, with no replacement. No tagged release shipped it. A <code>flags.json</code> that
 an untagged build left in a task folder does nothing now, and co:op leaves it in place.</p>
 <p>On a machine with both Docker and Apple <code>container</code> installed, automatic runtime detection now picks
@@ -504,7 +504,7 @@ prompt. Presets, named peers, roles and consultation all stay.</p>
 <td><code>coop acp &lt;preset&gt;</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Plain <code>coop acp</code> again starts automatically with the first signed-in provider, in Claude, Codex,
 Gemini, Grok order, and its default account. An editor entry can use <code>[&#34;acp&#34;]</code> and choose through
 the live Preset, Provider and Account selectors. Explicit targets and presets still take
@@ -558,7 +558,7 @@ fork and loop commands:</p>
 <td><code>coop fork rm &lt;name&gt;</code> for each obsolete fork (<code>--yes</code> confirms without a prompt, and <code>--force</code> separately overrides the protection for dirty or unmerged forks).</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p><code>coop fork merge --all</code> still lands every fork through a rebase queue that checks each fork again.
 There&#39;s no batch up/down command, so start and stop each worker explicitly.</p>
 <p>co:op also no longer inspects or removes Compose projects named only after the folder, which date

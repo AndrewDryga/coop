@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -179,7 +179,7 @@ indexes stay together.</p>
 <td><code>config.toml</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Under <code>~/.config/coop/agents/&lt;agent&gt;/</code>, co:op keeps these separate folders:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Where agent settings live table"><table class="ref">
 <thead>
@@ -206,7 +206,7 @@ indexes stay together.</p>
 <td>older history and host defaults kept for reuse. Coding boxes never mount this folder</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>co:op copies reviewed host defaults into a new provider folder once. Later changes stay with that
 repository, and changing the defaults doesn&#39;t overwrite an existing folder. A fork co:op created
 shares its parent&#39;s history storage, and unrelated repositories keep separate history.</p>
@@ -240,7 +240,7 @@ recover them. See <a href="migrating.html">migration and recovery</a>.</p>
 coop login codex      # device-code login (the box has no browser for an OAuth redirect)
 coop login gemini     # hidden API-key prompt; stored outside the mounted Gemini home
 coop login grok       # device-code login, like Codex
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>coop claude login</code> does the same as <code>coop login claude</code>, and <code>coop claude@work login</code> signs in
 to the <code>work</code> account.</p>
 <h3 id="api-keys">API keys</h3>
@@ -252,7 +252,7 @@ chmod 600 ~/.config/coop/agents/env
 echo &#39;ANTHROPIC_API_KEY=sk-…&#39; &gt;&gt; ~/.config/coop/agents/env
 echo &#39;OPENAI_API_KEY=sk-…&#39;    &gt;&gt; ~/.config/coop/agents/env
 echo &#39;GEMINI_API_KEY=AIza…&#39;   &gt;&gt; ~/.config/coop/agents/env
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op lets only your user access the credential folder (<code>0700</code>) and its secret files (<code>0600</code>).</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="API keys table"><table class="ref ref-wide">
 <thead>
@@ -284,7 +284,7 @@ echo &#39;GEMINI_API_KEY=AIza…&#39;   &gt;&gt; ~/.config/coop/agents/env
 <td><code>XAI_<wbr/>API_<wbr/>KEY</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Subscription and OAuth accounts also keep their credentials on the host. Loops, peers, presets,
 editor sessions and remote sessions all use the broker, so you can switch between API-key and
 subscription accounts across runs without exposing either account&#39;s credentials to the box.</p>
@@ -322,7 +322,7 @@ coop login claude@personal    # …and a third
 coop credentials              # list them and which are signed in
 coop usage                    # limits and a 30-day API estimate
 coop usage codex@work         # include history and pricing details for one account
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <h3 id="failover">Failover</h3>
 <p>When <code>coop loop</code> (or a <code>coop fork --loop</code>) reaches a rate or usage limit, it switches to the next
 target. It waits only when every target has reached its limit. A
@@ -343,10 +343,10 @@ run <code>coop presets init my-ladder</code>, then edit that preset&#39;s lead:<
 lead:
   # Opus on all accounts, then Fable on work.
   agent: [claude:claude-opus-5-5, claude:claude-fable-5-1@work]
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Failover code example" tabindex="0"><code class="language-bash">coop loop my-ladder            # rotates that ladder; coop presets shows every recipe
 coop loop claude:opus@work     # or a one-off single target, no preset
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Switching accounts loses no work. Each loop iteration is a fresh run, and the queue and Git carry
 the progress.</p>
 <h3 id="choose-the-default-account">Choose the default account</h3>
@@ -355,7 +355,7 @@ special meaning, so choose names that help you recognize them. Use
 <code>coop credentials &lt;agent&gt; &lt;credential&gt; default</code> to set the default, or
 <code>coop credentials &lt;agent&gt; &lt;credential&gt; rm</code> to remove an account:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose the default account code example" tabindex="0"><code class="language-bash">coop credentials claude personal default  # `coop claude` now runs on the personal account
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 </section><section class="doc-section reference-section" id="picking-models"><h2>Picking models</h2>
 <p>To choose a model for a run, include it in the target as <code>&lt;agent&gt;:&lt;model&gt;</code>. This works for
 interactive sessions, loops, forks and editor connections:</p>
@@ -364,7 +364,7 @@ coop claude:fable --peer codex --peer gemini        # the lead&#39;s model (peer
 coop loop claude:haiku                              # a cheap overnight grind
 coop fork risky claude:opus                         # a careful fork on the big model
 coop acp claude:sonnet                              # pin an editor entry&#39;s model
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Save the model in a <a href="#presets">preset</a> if you use it regularly. Each of its roles chooses its own
 model. Credentials select the account and subscription, not the model.</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Picking models code example" tabindex="0"><code class="language-bash">coop models                        # the model menu per agent
@@ -372,7 +372,7 @@ coop claude:opus                   # one run on the big model
 coop codex/high                    # default model at high reasoning effort
 coop claude:opus/xhigh             # …at extra-high reasoning effort (low·medium·high·xhigh·max)
 coop frontier                      # a standing lead model + roles, from the preset (its lead leads)
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><a href="configuration.html#environment-variables"><code>COOP_&lt;AGENT&gt;_MODEL</code></a> sets the agent-wide
 default, for example <code>COOP_CLAUDE_MODEL=fable</code>.</p>
 <p>Use <a href="loop.html"><code>.agent/loop.yaml</code></a> to choose a model for each loop step. <code>work.agent</code> selects the
@@ -417,7 +417,7 @@ level to the agent&#39;s CLI:</p>
 <td>its thinking setting (<code>low</code> or <code>high</code> only)</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Haiku 4.5 doesn&#39;t support reasoning-effort settings, and co:op refuses the combination before
 starting. Use <code>claude:haiku</code> without an effort suffix, or a model that supports the setting, such
 as <code>claude:opus/low</code>.</p>
@@ -441,7 +441,7 @@ itself. Peers work with interactive runs, loops, forks, ACP and preset consult r
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Second opinions code example" tabindex="0"><code class="language-bash">coop codex --peer claude --peer gemini
 coop loop claude --peer codex --peer gemini
 coop acp claude --peer codex
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Add each peer with <code>--peer &lt;target&gt;</code>, repeating the flag for more. This also works with a <code>codex</code>,
 <code>gemini</code> or <code>grok</code> lead. The lead can use <code>coop-consult</code> to ask several peers in parallel.</p>
 <p>A peer may use the lead&#39;s provider with another model, for example
@@ -458,7 +458,7 @@ to add.</p>
 keeping separate models and instructions. Inside the box, use:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Inside the box code example" tabindex="0"><code class="language-bash">coop-consult claude --fresh    &#34;&lt;prompt&gt;&#34;   # new read-only session; never edits
 coop-consult gemini --continue &#34;&lt;prompt&gt;&#34;   # resume the peer&#39;s thread; send only the delta
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>A peer has none of the lead&#39;s conversation, so the lead writes a self-contained prompt instead of
 forwarding your message word for word.</p>
 <h3 id="continuity-and-fallback">Continuity and fallback</h3>
@@ -507,7 +507,7 @@ peer&#39;s answer.</p>
 <td>512 KiB</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>If output exceeds a limit, co:op doesn&#39;t try a fallback target or save a partial reply. If a
 complete reply is too large for the saved transcript, co:op returns it but can&#39;t resume that
 conversation, so use <code>--fresh</code> for the next call.</p>
@@ -523,7 +523,7 @@ the token counts and cost reported by the provider, and failed consultations add
 use the models you assign to them, so routine implementation can run on cheaper models. Peers
 from other providers give independent opinions. This uses co:op&#39;s built-in tools:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="The orchestrator pattern code example" tabindex="0"><code class="language-bash">coop claude:claude-fable-5-1 --peer codex --peer gemini # run it; --peer mounts the named peers
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Save the lead model and roles in a <a href="#presets">preset</a> to reuse this setup. Start it with
 <code>coop &lt;name&gt;</code> or <code>coop loop &lt;name&gt;</code>.</p>
 <p>In <code>.claude/agents/</code>, assign a larger model to reasoning work and a cheaper model to routine
@@ -565,7 +565,7 @@ call and when to use each role. Each role uses one of three modes:</p>
 <td>a worker that can edit files, called with <code>coop-delegate</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>An example recipe:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Presets code example" tabindex="0" data-copy-source=""><code class="language-yaml">lead:
   # agent: is a TARGET, or a fallback LADDER (model-first, even cross-provider). A bare
@@ -593,7 +593,7 @@ roles:
     when: [boilerplate, bulk-edits, test-scaffolding, repo-survey]
     commit: never                 # it edits; the LEAD reviews the diff, gates, commits
     concurrent: never             # delegate runs are serialized
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <h3 id="run-a-preset">Run a preset</h3>
 <p>Use the preset name where the command expects a target, and co:op runs its lead. A
 target in that position (<code>&lt;agent&gt;[:model][/effort][@account]</code>) runs the agent directly:</p>
@@ -601,7 +601,7 @@ target in that position (<code>&lt;agent&gt;[:model][/effort][@account]</code>) 
 coop frontier                    # interactive lead with the full routing contract
 coop loop frontier               # unattended: lead credentials rotate, roles ride along
 coop acp frontier                # the same preset from an editor
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>An interactive terminal run uses the first lead target in the preset, while ACP keeps the full
 fallback list.</p>
 <h3 id="where-presets-live">Where presets live</h3>
@@ -686,7 +686,7 @@ available at each agent&#39;s global instruction path:</p>
 <td><code>~/.grok/AGENTS.md</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>If the selected repository&#39;s provider folder already has its own instruction file, co:op uses it
 instead of the shared file. Edit that file for a local change, or the shared <code>INSTRUCTIONS.md</code> for
 repositories with no local override.</p>

@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -124,7 +124,7 @@ or use this page for the details.</p>
 coop tasks add &#34;...&#34;      # add a task (a folder under .agent/tasks/00_todo/)
 coop loop claude          # disposable agents work the queue until it&#39;s done, then sign off
 coop loop codex           # …or name claude, codex, gemini, grok, or a preset
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>A task is a folder under <code>.agent/tasks/</code>. Its state is the directory it sits in: <code>00_todo/</code>,
 <code>10_in_progress/</code>, <code>50_blocked/</code> or <code>99_done/</code>. The numeric prefix sorts <code>ls</code> in lifecycle order,
 and <code>coop tasks</code> shows the clean names.</p>
@@ -171,7 +171,7 @@ task. A rate limit doesn&#39;t count as a failed task attempt.</p>
 <td>The run was interrupted before the final verdict.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>A successful <code>--max-tasks</code> pause exits <code>0</code>, but the work still needs review. Run the same command
 without the limit to finish that review.</p>
 <p>The resumed review uses the <code>Coop-Task: &lt;id&gt;</code> trailer to find each task&#39;s commit among the
@@ -288,7 +288,7 @@ reviewer fix source. Every task queue stays read-only, and the host applies chan
 <td>an optional affected-feature pass after the final review</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Set <code>agent:</code> for <code>work</code>, <code>between</code>, <code>signoff</code> or <code>verify</code> to choose its models. Each setting takes
 a fallback list of targets (<code>provider[:model][/effort][@account]</code>) or preset names. For example,
 <code>signoff.agent</code> can use a stronger model to review work done by a cheaper <code>work.agent</code>. Every
@@ -354,7 +354,7 @@ workflows (<code>skills/</code>, <code>presets/</code>), fallback Claude setting
 <td>Committed project settings: <a href="#monorepos"><code>subprojects:</code></a>, <a href="box.html#dev-servers-in-your-browser"><code>serve:</code> ports</a>, box policy (<code>box:</code>), the merge <code>gate:</code>, and extra <code>gate_<wbr/>sources:</code> to review when changed. The <code>box:</code> policy sets egress, <a href="networking.html"><code>egress_<wbr/>rules:</code></a>, resource caps and <code>auto_<wbr/>up</code>/<code>network</code>. Explicit <code>COOP_<wbr/>*</code> environment or config settings override <code>box:</code> and <code>gate:</code>. This file can tighten security settings but cannot relax them by itself. Egress can require <code>filtered</code> or <code>offline</code>, but <code>open</code> needs human approval through <code>coop approve</code>. The file cannot set <code>no_<wbr/>new_<wbr/>privileges</code>.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>On a fresh setup, <code>init</code> also installs generic workflow skills into <code>.agent/skills/</code> and links the
 selected agents to it:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="The .agent/ folder table"><table class="ref">
@@ -390,7 +390,7 @@ selected agents to it:</p>
 <td>a thorough multi-hat review before landing</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Edit them freely. <code>init</code> won&#39;t overwrite a skill you&#39;ve changed. When <code>init</code> adopts an existing
 real <code>.claude/skills/</code> instead, it leaves that project-owned set unchanged and links the other
 selected agents to it.</p>
@@ -399,7 +399,7 @@ selected agents to it.</p>
 <code>.agent/project.yaml</code>:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Monorepos code example" tabindex="0" data-copy-source=""><code class="language-yaml"># .agent/project.yaml — committed with the repo
 subprojects: [runner, packs, portal, mcp]
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op then combines every member&#39;s <code>.agent/tasks</code> automatically:</p>
 <ul>
 <li><code>coop tasks</code> lists them under a header for each queue</li>
@@ -427,7 +427,7 @@ coop tasks watch                # canonical queue + assignments + every active s
 coop fork ls                    # worker state, sandbox activity, candidate/task progress, diff, cost
 coop fork logs -f               # tail every fork at once (compose-style, prefixed)
 coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Without <code>--tasks</code>, a fork takes work from the repo&#39;s <code>.agent/tasks</code> and every
 <a href="#monorepos">monorepo</a> member&#39;s queue. Use <code>--tasks &lt;path&gt;</code> to choose one queue, which can be an
 absolute path outside the project. The fork uses that original queue and doesn&#39;t copy it or change

@@ -68,7 +68,7 @@ func leftOutOfSearch(node *dom.Node) bool {
 		return true
 	}
 	classes := strings.Fields(domAttr(node, "class"))
-	for _, class := range []string{"docs-side", "window", "guide-eyebrow", "reference-scroll-hint", "reference-source", "sr-only"} {
+	for _, class := range []string{"docs-side", "window", "guide-eyebrow", "reference-source", "sr-only"} {
 		if slices.Contains(classes, class) {
 			return true
 		}

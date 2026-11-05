@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -114,12 +114,12 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>co:op runs on macOS and Linux, on amd64 or arm64, with Git and Docker:</p>
 <div class="reference-code-frame code-file" data-copy-kind="install"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0" data-copy-source=""><code class="language-copy-install">curl -fsSL https://coop.dryga.com/install.sh | sh
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The script puts <code>coop</code> in <code>~/.local/bin</code>. It needs <code>curl</code>, <code>tar</code>, and <code>sha256sum</code> or <code>shasum</code>. If
 Docker is available, it also builds the box image and runs <code>coop doctor</code>. If not, install Docker and
 run those yourself:</p>
 <div class="reference-code-frame code-file" data-copy-kind="command"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0" data-copy-source=""><code class="language-copy">coop build --egress open &amp;&amp; coop doctor
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>To change what the script does, set these before <code>sh</code>, as in
 <code>curl -fsSL https://coop.dryga.com/install.sh | COOP_NO_BUILD=1 sh</code>:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Overview table"><table class="ref">
@@ -143,14 +143,14 @@ run those yourself:</p>
 <td>Skip building the box image.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 </section><section class="doc-section reference-section" id="container-runtimes"><h2>Container runtimes</h2>
 <p>Online providers need Docker, which supports the helper that keeps provider credentials outside the
 box. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> on macOS 26+ can run commands with open
 networking and no credentials. If both are installed, co:op chooses Docker.</p>
 </section><section class="doc-section reference-section" id="build-from-source"><h2>Build from source</h2>
 <div class="reference-code-frame code-file" data-copy-kind="command"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Build from source code example" tabindex="0" data-copy-source=""><code class="language-copy">git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 </section><section class="doc-section reference-section" id="update"><h2>Update</h2>
 <p><code>coop update</code> updates the binary, then prepares the image for this project&#39;s network mode.
 <a href="migrating.html">Upgrading</a> lists what to change when a new version needs it.</p>
@@ -179,7 +179,7 @@ cosign verify-blob checksums.txt \
 
 # 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
 awk -v f=&#34;$ASSET&#34; &#39;$2==f{print $1&#34;  &#34;f}&#39; checksums.txt | shasum -a 256 -c -
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 </section>
         <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="docs.html"><span>Previous</span>Overview</a><a class="docs-pager-next" href="sandbox-guide.html"><span>Next</span>First sandbox run</a></nav>
         <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/install.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>

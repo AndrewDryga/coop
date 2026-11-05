@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -145,12 +145,12 @@ and handles account rotation.</p>
 builds an image with the ACP adapters included. Check that your shell can find it:</li>
 </ol>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Set up Zed code example" tabindex="0"><code class="language-bash">command -v coop      # e.g. /Users/you/.local/bin/coop
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <ol start="2">
 <li>Sign in to the agent you&#39;ll use. See <a href="agents.html#authentication">Authentication</a>.</li>
 </ol>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Set up Zed code example" tabindex="0"><code class="language-bash">coop login claude    # or codex / gemini / grok
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <ol start="3">
 <li>Register co:op in Zed. In the agent panel, use Add Custom Agent, or edit <code>settings.json</code>
 directly:</li>
@@ -169,7 +169,7 @@ directly:</li>
     }
   }
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <ol start="4">
 <li>Open the agent panel, pick <code>coop</code> from the dropdown and start a thread.</li>
 </ol>
@@ -197,7 +197,7 @@ The editor, terminal and ACP process then use the same remote filesystem and abs
     }
   }
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>SSH carries the process&#39;s input and output, and co:op doesn&#39;t open a TCP listener for ACP. Use
 this setup only if Zed can resolve the same absolute repository paths that the remote ACP process
 reports. If the machines use different paths, use native Remote Development.</p>
@@ -229,7 +229,7 @@ provider&#39;s ACP adapter in the box, and the adapter talks ACP to the editor o
 <td><code>grok agent stdio</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>In a normal writable session, co:op mounts the repository at its real host path, so Zed&#39;s absolute
 file paths resolve correctly.</p>
 <p>Tool calls don&#39;t ask for permission. co:op runs editor sessions in yolo mode, regardless of the
@@ -305,7 +305,7 @@ presets that can run in full under those network rules.</p>
 <td>its OAuth login</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>co:op refuses a Vertex <code>GOOGLE_API_KEY</code> in every network mode. Its broker keeps API keys and native
 OAuth grants outside the box.</p>
 <p>Switching providers never widens the session&#39;s network access. If you explicitly ask for an
@@ -407,7 +407,7 @@ no servers until you add them:</p>
     }
   }
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <h3 id="where-the-file-lives">Where the file lives</h3>
 <p>Set <code>COOP_MCP_FILE</code> to choose the shared file. The default is <code>mcp.json</code>. Keep it outside
 repositories, companion repositories, agent credential homes and ACP session stores. co:op mounts
@@ -444,7 +444,7 @@ shared file is active. If one of these files is unsafe or can&#39;t be read, co:
 <td>converted to their provider-specific <code>[mcp_<wbr/>servers.*]</code> tables in <code>config.toml</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>co:op mounts the generated configs read-only over the existing ones inside the box and leaves your
 source files unchanged.</p>
 <p>When the shared file is active, it&#39;s the only source of MCP server definitions, and co:op leaves
@@ -460,7 +460,7 @@ The values are literal strings, so <code>$VAR</code> is not expanded.</p>
 <p>To keep a token out of <code>mcp.json</code>, point <code>bearer_token_env_var</code> at a variable (<code>sentry</code> above),
 and put the value in the env file:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Tokens and headers code example" tabindex="0"><code class="language-bash">echo &#39;SENTRY_TOKEN=…&#39; &gt;&gt; ~/.config/coop/agents/env
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Every agent supports an HTTP server&#39;s <code>headers</code>. Claude and Grok turn <code>bearer_token_env_var</code>
 into an Authorization header using the environment variable&#39;s value.</p>
 <p>For Codex, a literal value becomes a static header, and a value containing exactly one
@@ -490,7 +490,7 @@ generated config. Codex can&#39;t represent a mixed value such as <code>Bearer $
 <td>co:op stops before launch and names the unsupported server.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>The Codex refusal applies wherever Codex takes part, including as a <code>--peer</code> of another lead.</p>
 <h3 id="network-modes">Network modes</h3>
 <h4 id="filtered-runs">Filtered runs</h4>
@@ -540,7 +540,7 @@ download is blocked, review the reported destination before granting access.</p>
 <p>A controller is your platform that assigns jobs to co:op workers. Start a worker, which connects
 out to the controller, on the controller&#39;s VM or a separate VM:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controllers and workers code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The controller supplies jobs with fixed repositories, context, model targets, network settings
 and execution limits. co:op authenticates the controller, fetches complete Git/LFS working trees
 and authorized submodules, runs the models in isolation and saves session state between runs.</p>
@@ -559,7 +559,7 @@ worker, stop it and run <code>coop sessions check</code> with the new build. See
 <a href="session-api.html#upgrading-a-worker">Upgrading a worker</a>.</p>
 <p>If an old database has duplicate prompts in retry receipts, stop the worker and run:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controllers and workers code example" tabindex="0"><code class="language-bash">coop sessions compact --backup /safe/path/session-before-compact.sqlite
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Choose a new backup file outside the state root and treat it as sensitive. Compaction preserves
 the original turns and prompts. Follow the API&#39;s
 <a href="session-api.html#compacting-old-turn-receipts">backup and recovery instructions</a>.</p>

@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -225,7 +225,7 @@ prod.yml
 config/stripe.live.json
 # a directory, hidden whole
 vault/
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Comments go on their own lines, as in <code>.gitignore</code>. <code>prod.yml  # note</code> is one pattern, comment and
 all, and co:op warns about it at launch.</p>
 <p>An exact-path rule also hides its final file or directory name everywhere that <code>.coopignore</code>
@@ -287,7 +287,7 @@ upwards, then falls back to <code>~/.tool-versions</code>. A repo with <code>.to
 <code>.agent/Dockerfile</code> or other setup for this:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Toolchain: .tool-versions code example" tabindex="0"><code class="language-bash">cd ~/code/phoenix-app       # has a .tool-versions
 coop claude --egress open   # provisions elixir/erlang/node/… from it, then runs the agent
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The first install of a new toolchain can be slow (Erlang compiles, for example). After that it&#39;s
 reused across runs and repos.</p>
 <p>Set <code>COOP_NO_ASDF=1</code> in <code>agents/env</code> to skip installing tools from <code>.tool-versions</code>. co:op still
@@ -307,7 +307,7 @@ check cannot format that language&#39;s files, so it skips them and prints a war
 </section><section class="doc-section reference-section" id="your-own-image-agentdockerfile"><h2>Your own image: .agent/Dockerfile</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Your own image: .agent/Dockerfile code example" tabindex="0"><code class="language-bash">coop init --stack asdf # writes an asdf .agent/Dockerfile (from .tool-versions)
 coop build             # builds the image for this project&#39;s network mode
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>A repository with an <code>.agent/Dockerfile</code> gets its own image tag, and every <code>coop</code>, <code>coop loop</code>,
 <code>coop fork</code> and <code>coop acp</code> run in that repo uses it.</p>
 <p>The generated Dockerfile installs the exact versions in <code>.tool-versions</code>, so keep them there and
@@ -336,7 +336,7 @@ for service containers. Set the paths relative to the repository in <code>.agent
 <td><code>.agent/compose.yml</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <h3 id="builds-and-network-modes">Builds and network modes</h3>
 <p>With filtered networking, the default, review the Dockerfile and the files it copies, then run
 <code>coop build</code> on the host. Plain <code>coop build</code> follows the project&#39;s network mode, so it builds the
@@ -373,7 +373,7 @@ overrides these defaults. Names beginning with <code>COOP_*</code> are reserved 
   env:
     PGHOST: db
     PGPORT: &#34;5432&#34;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <h3 id="the-box-contract">The box contract</h3>
 <p>You can choose your own base image where the network mode allows it, but filtered runs must inherit
 co:op&#39;s fixed client base. An agent box needs the following:</p>
@@ -411,7 +411,7 @@ RUN if id -u node &gt;/dev/null 2&gt;&amp;1; then \
    &amp;&amp; useradd -m -u &#34;$COOP_BOX_UID&#34; -g &#34;$COOP_BOX_GID&#34; -s /bin/bash node; \
     fi
 USER node
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Install Node first if your base doesn&#39;t include it. This example also needs the standard <code>useradd</code>,
 <code>usermod</code> and <code>groupmod</code> tools. <code>coop build</code> passes your host UID/GID as build arguments for project
 Dockerfiles. When you build <code>COOP_BASE_IMAGE</code> separately, you must supply those arguments yourself.</p>
@@ -433,7 +433,7 @@ FROM ${COOP_BASE_IMAGE}        # agent CLIs + ACP adapters, asdf, browser libs, 
 USER root
 RUN &lt;install your toolchain&gt;
 USER node
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Each box definition gets its own base-image tag, <code>coop-box:&lt;definition&gt;</code>, which <code>coop build</code>
 prints. After an upgrade, the next launch builds the new base if needed.</p>
 <p>A plain <code>docker build</code> of this file needs that tag passed in:
@@ -456,7 +456,7 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @goog
  &amp;&amp; git config --system --add safe.directory &#39;*&#39;
 USER &lt;the devcontainer&#39;s non-root user&gt;
 # If that user&#39;s home isn&#39;t /home/node, run with COOP_HOME_IN_BOX=/home/&lt;user&gt;.
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op adds secret hiding, its container restrictions, the task queue and the supervisor that runs
 it. A devcontainer alone mounts the whole workspace, including <code>.env</code>, and a malicious project
 running under <code>--dangerously-skip-permissions</code> can send the contents of <code>~/.claude</code> outside your
@@ -472,7 +472,7 @@ coop claude                  # the box reaches each service by its Compose name
 coop down                    # stop services; stored data is kept
 coop down --delete-volumes   # stop them and permanently delete their volumes (asks first)
 coop init --services         # add another service to a project that already has some
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>An open box joins the services&#39; private network. A filtered box reaches each service only through
 its approved rule. Connect with a URL such as
 <code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in <code>agents/env</code>.</p>
@@ -557,7 +557,7 @@ request before a service fails to start:</p>
 services:
   require_real_files:
     - dev/keycloak/certs/generated/tls.key  # a generated dev TLS key Keycloak reads
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The list helps reviewers recognize expected files, but does not grant access. An agent can edit
 it, so co:op still asks you to approve the files. In that prompt:</p>
 <ul>
@@ -575,7 +575,7 @@ the app running inside the box. Give the service an <code>expose:</code> port in
     expose: [&#34;8443&#34;]                     # coop publishes this to a stable, per-workspace localhost port
     labels:
       coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op assigns a stable host port for each development workspace or loop run, so concurrent stacks
 have separate ports. The host port listens only on loopback. Inside the box,
 <code>https://localhost:&lt;port&gt;</code> reaches the same Keycloak service, so both sides use the same issuer URL
@@ -628,7 +628,7 @@ configurations yourself.</p>
 dev server listens on in <code>.agent/project.yaml</code>:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Dev servers in your browser code example" tabindex="0" data-copy-source=""><code class="language-yaml">serve:
   ports: [5173]        # what the server binds INSIDE the box
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Each box for the repo (<code>coop acp</code>, <code>coop run</code>) maps these ports to stable host ports based on
 the repo&#39;s path. The URL stays the same between launches and differs between projects, so one
 Zed agent definition can serve all of them. When an ACP thread starts, co:op posts a browser link
@@ -655,7 +655,7 @@ URL stays the same, so run the server again.</li>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Keeping the box current code example" tabindex="0"><code class="language-bash">coop update              # self-update coop, then prepare this project&#39;s box image
 coop update --self-only  # just upgrade the coop binary
 coop update --box-only   # just prepare this project&#39;s box image
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>coop update</code> prepares the image for the project&#39;s network mode, using the definitions of the
 co:op version it installed. A filtered project keeps co:op&#39;s pinned client base, and an open or
 offline project gets fresh OS packages. See <a href="#stable-and-fresh-rebuilds">stable and fresh rebuilds</a>.</p>
@@ -710,7 +710,7 @@ start before you repeat the same command.</li>
 <td>updates the OS packages and runtime to the newest available versions</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <h3 id="agent-clients">Agent clients</h3>
 <p>All standard co:op boxes use the same fixed versions of the agent CLIs and ACP adapters, including
 plain runs, filtered runs, loops, presets and editor sessions. These are the versions checked for

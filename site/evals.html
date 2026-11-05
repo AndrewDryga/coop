@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -121,7 +121,7 @@ The <a href="https://coop.dryga.com/docs.html#evals">website guide</a> walks thr
 <p>Preview the shipped <code>core</code> suite. The preview launches no container or provider and spends
 nothing:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try it code example" tabindex="0"><code class="language-sh">coop eval run core codex --timeout 35m --dry-run
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>A dry run checks the plan, not whether your credentials, runtime or image are ready.</p>
 </li>
 <li>
@@ -130,7 +130,7 @@ a current co:op box image. If the image is missing, run <code>coop build --egres
 directory without a project Dockerfile. Building may download dependencies. Then run:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try it code example" tabindex="0"><code class="language-sh">coop eval run core codex --timeout 35m
 coop eval inspect
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>A real run uses your provider account and may spend credits.</p>
 </li>
 <li>
@@ -163,7 +163,7 @@ the same name.</p>
 <td>Allows two agent trials at once.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Each case also has its own timeout in <code>suite.yaml</code>, and a larger <code>--timeout</code> doesn&#39;t raise it.
 More configurations or repeats mean more paid work.</p>
 <p>Install <code>cloc</code> if you want change-size figures. Without it, grading and verdicts still work, and
@@ -187,7 +187,7 @@ official benchmark score, and <code>coop eval ls</code> doesn&#39;t list it as a
 a loop suite such as <code>queue</code>, and <code>core</code> and other single-agent suites accept targets only. This
 command previews two configurations:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose what to evaluate code example" tabindex="0"><code class="language-sh">coop eval run core codex:gpt-6.1-sol codex:gpt-6.1-sol/xhigh --timeout 70m --dry-run
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 </section><section class="doc-section reference-section" id="runtime-profiles-for-custom-agent-cases"><h2>Runtime profiles for custom agent cases</h2>
 <p>For an agent case that needs its own tools, use a trusted runtime profile, which gives the case a
 dedicated image that you build yourself in place of the shared image. Add these four fields to the
@@ -197,7 +197,7 @@ case:</p>
   workdir: /app
   agent_timeout: 15m
   verifier_timeout: 15m
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Set the case&#39;s <code>timeout</code> long enough to cover preparation, the agent&#39;s work and verification.
 Loop suites don&#39;t support runtime profiles.</p>
 <p>Keep the profile outside both the suite and co:op&#39;s evaluation state. It must contain no Git
@@ -247,7 +247,7 @@ settings:</p>
 <td>the same immutable image, with no network or credentials</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>These settings adapt the workload to co:op&#39;s runtime and don&#39;t show that it runs under the same
 conditions as an official benchmark. Exclude cases that depend on a disk quota or on running out
 of disk space.</p>
@@ -282,7 +282,7 @@ for explanations of the results.</p>
 <td>Grading is incomplete here too.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>A loop trial starts when its loop launches its first box. If the loop stops before that, for
 example because the image is missing or the account isn&#39;t signed in, the trial is an error, not a
 graded failure.</p>

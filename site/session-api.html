@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -144,7 +144,7 @@ separate VM. Ryker uses this protocol, but it can serve other products and has n
 terms.</p>
 </section><section class="doc-section reference-section" id="connect"><h2>Connect</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>This is the only command that starts a worker. It starts a private local service, the daemon, and a
 connector that sends requests to your controller, so you don&#39;t need to open an inbound TCP port.
 The worker has no JSON file or local policy YAML. Add <code>--state &lt;path&gt;</code> to choose where the worker
@@ -174,7 +174,7 @@ filtered networking.</p>
 <p>To check the local session service:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions doctor
 coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The local socket and state are private to the worker&#39;s OS account. Never mount the socket into a
 model&#39;s box or expose it through an unauthenticated proxy. Connecting out to a controller doesn&#39;t
 by itself prove that the controller can be trusted, so co:op verifies the TLS connection before it
@@ -215,7 +215,7 @@ worker&#39;s fork workspaces. The connector reads it from the daemon&#39;s
   &#34;allocation&#34;: &#34;open&#34;,
   &#34;refusal_reason&#34;: null
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <ul>
 <li><code>disposable_bytes</code> is the disk space a discard could still free.</li>
 <li><code>protected_bytes</code> is the disk space the worker must keep, including the repository data shared
@@ -308,7 +308,7 @@ work.</li>
 <td>Work remains</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <h3 id="upgrading-a-worker">Upgrading a worker</h3>
 <p>A new co:op build may need to convert the worker&#39;s session data when it first opens it, and the
 previous build can&#39;t read that data afterwards. Each build can perform only one upgrade step. If
@@ -321,7 +321,7 @@ Before replacing the worker, check its data with the new build:</p>
 <li>
 <p>Run the check with the new build or image, against the worker&#39;s state directory:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Upgrading a worker code example" tabindex="0"><code class="language-bash">coop sessions check --state /var/lib/coop/sessions
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>In a container, run it from the new image with the worker&#39;s volumes mounted, as the worker&#39;s
 own user.</p>
 </li>
@@ -364,7 +364,7 @@ own user.</p>
 <td>Fix the command</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>The command checks both the session database and the connector&#39;s command journal. It doesn&#39;t write
 to the state directory or create SQLite&#39;s <code>-wal</code> and <code>-shm</code> files. While checking, it holds a
 shared state lock to prevent a service from starting and converting the data. If a service is
@@ -376,7 +376,7 @@ report the file as an unsupported registry entry. Stop the worker, then run thes
 OS user to delete the files and any folders left empty:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Upgrading a worker code example" tabindex="0"><code class="language-bash">find ~/.local/state/coop/executions/v1 -mindepth 2 -maxdepth 2 -type f -name .service-launch.lock -delete
 find ~/.local/state/coop/executions/v1 -mindepth 1 -maxdepth 1 -type d -empty -delete
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <h3 id="session-inspection-evidence">Session inspection evidence</h3>
 <p>Your controller can request a versioned, size-limited report about a session hosted by the worker.
 Send an <code>api_request</code> command with the payload
@@ -398,11 +398,11 @@ session event. The daemon uses the same grouping, limits and destination-disclos
 <p>The examples below use curl&#39;s Unix-socket support:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Request rules code example" tabindex="0"><code class="language-bash">SOCKET=&#34;$HOME/.local/state/coop/sessions/control.sock&#34;
 curl --unix-socket &#34;$SOCKET&#34; http://localhost/healthz
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Every mutation is a <code>POST</code> with these headers:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Request rules code example" tabindex="0"><code class="language-text">Content-Type: application/json
 Idempotency-Key: &lt;globally unique caller-owned key&gt;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <ul>
 <li><code>Idempotency-Key</code> and <code>Content-Type</code> must each occur exactly once.</li>
 <li>Mutation URLs accept no query parameters.</li>
@@ -430,7 +430,7 @@ result, prompts, native provider IDs and host paths.</p>
 prompt or private execution settings. The daemon can still read older results that stored the full
 turn, and you can compact those during a planned maintenance window:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Compacting old turn receipts code example" tabindex="0"><code class="language-bash">coop sessions compact --state &lt;state-root&gt; --backup &lt;new-backup.sqlite&gt;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The command locks the state directory so the daemon can&#39;t use it during maintenance. The backup
 path must not exist yet and must not be inside the state root. After verifying the backup, the
 command rewrites the old results in one transaction, checks database integrity and vacuums the
@@ -461,7 +461,7 @@ containing its exact method and request:</p>
     &#34;prompt&#34;: &#34;the exact frozen prompt&#34;
   }
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Only <code>CreateRemoteSession</code> and <code>SubmitTurn</code> can be fenced.</p>
 <ul>
 <li>If the worker hasn&#39;t accepted the operation, including when it has only reserved it, co:op
@@ -495,7 +495,7 @@ unpublished answer, regardless of other changes to the session.</p>
           -&gt; exhausted when the turn budget is consumed
           -&gt; closed
           -&gt; discard plan -&gt; discarded
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Each session belongs to one worker. The worker saves turns in a queue with a size limit and runs
 them one at a time, in the order received. The queue survives restarts.</p>
 <p>Without <code>limits.warm_idle_timeout_ms</code>, co:op starts a new <code>coop fork &lt;name&gt; acp &lt;target&gt;</code> process
@@ -549,7 +549,7 @@ the exact schema bytes and their digest:</p>
   &#34;sha256&#34;: &#34;&lt;lowercase SHA-256 hex of the exact json_schema bytes&gt;&#34;,
   &#34;require_semantic_validation&#34;: true
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>When <code>output_contract</code> is present:</p>
 <ul>
 <li><code>json_schema</code> and <code>sha256</code> are required.</li>
@@ -568,7 +568,7 @@ decision, so you can check what happened if the HTTP response is lost. Send one 
 idempotency key to:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Structured output code example" tabindex="0"><code class="language-text">POST /v1/sessions/&lt;session&gt;/turns/&lt;turn&gt;/validation
 {&#34;candidate_sha256&#34;:&#34;&lt;digest&gt;&#34;,&#34;verdict&#34;:&#34;accept&#34;}
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>To reject the candidate instead, send <code>verdict: &#34;reject&#34;</code> with 1 to 20 <code>violations</code>. Each
 violation is capped at 4 KiB, and so is the combined list.</p>
 <p>An acceptance must not include violations. co:op copies the stored candidate into
@@ -614,7 +614,7 @@ use up one of those review attempts.</p>
 <td>Disk use measured by this daemon: <code>storage</code> (the summary for a fleet controller), <code>budget</code>, <code>totals</code>, <code>roots</code>, <code>forks</code> and <code>problems</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>The worker has four slots for model processes, shared by active turns and idle warm sessions. The
 session, turn and workspace counts all describe those same slots, so don&#39;t add them together. Time
 spent waiting in the queue doesn&#39;t count toward a turn&#39;s model timeout. If cleanup fails, the
@@ -707,7 +707,7 @@ co:op normalizes it. The error is <code>invalid_request</code>, and its detail n
   -H &#39;Prefer: respond-async&#39; \
   --data-binary @create-session.json \
   http://localhost/v1/sessions
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The job selects model targets, network rules, queue and turn limits, and the complete work and
 review setup. Its <code>mode</code> is always <code>&#34;normal&#34;</code>. Set <code>repository_read_only: true</code> for a job that must
 not change its repository. A job that asks for <code>readonly</code> or <code>bare</code> mode is refused with
@@ -717,7 +717,7 @@ not change its repository. A job that asks for <code>readonly</code> or <code>ba
   &#34;check&#34;: {&#34;argv&#34;: [&#34;make&#34;, &#34;test&#34;], &#34;environment&#34;: {&#34;DATABASE_URL&#34;: &#34;postgres://test-db/app&#34;}},
   &#34;resources&#34;: {&#34;cpu_millis&#34;: 2000, &#34;memory_bytes&#34;: 4294967296, &#34;pids&#34;: 512}
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>These fields must be present even when the environment maps and check argv are empty.</p>
 <p>co:op passes the job&#39;s environment variables only to processes in the box. Review uses those
 variables plus <code>check.environment</code>, and the check&#39;s value wins when a name appears in both. Names
@@ -753,7 +753,7 @@ check environment are empty, no check runs, so the review can&#39;t be published
 <td>1 to 65536</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Every job must set positive, finite CPU, memory and process limits. If a requested limit exceeds
 the worker&#39;s configured maximum, or the runtime can&#39;t enforce it, co:op refuses the job instead of
 silently lowering the value.</p>
@@ -768,7 +768,7 @@ separate source selector.</p>
   &#34;compose&#34;: &#34;dev/services.yml&#34;,
   &#34;environment&#34;: {&#34;PGHOST&#34;: &#34;db&#34;}
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>These are canonical repository-relative paths resolved by the controller at the frozen source.
 An empty Dockerfile uses the shared image; an empty Compose path starts no services. Retained jobs
 without this field keep their exact authority and digest. Send runtime-bearing jobs only to workers
@@ -849,7 +849,7 @@ state, prompts and credentials.</p>
 <td><code>expected_<wbr/>revision</code>, <code>task</code>. The session must be open, writable and unused.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>You can still read a session created in <code>readonly</code> or <code>bare</code> mode, but its job doesn&#39;t pass
 validation and a new turn returns <code>invalid_session_state</code>. Close and discard such a session instead
 of trying to run it again.</p>
@@ -907,7 +907,7 @@ Repeating the exact binding leaves the session unchanged.</p>
 <td>Binary body plus <code>X-Coop-Expected-Revision</code> and base64-JSON <code>X-Coop-Workspace-Checkpoint</code> headers</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can&#39;t restart model execution. To restore a checkpoint, create an unused replacement session
@@ -941,7 +941,7 @@ complete Git and LFS data.</p>
   -H &#39;Idempotency-Key: controller:turn:01J...&#39; \
   -d &#39;{&#34;expected_revision&#34;:1,&#34;prompt&#34;:&#34;Investigate the failing readiness check.&#34;}&#39; \
   http://localhost/v1/sessions/remote_.../turns
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Turns table"><table class="ref ref-wide">
 <thead>
 <tr>
@@ -982,7 +982,7 @@ complete Git and LFS data.</p>
 <td><code>candidate_<wbr/>sha256</code>, <code>verdict</code>. <code>accept</code> forbids <code>violations</code>, and <code>reject</code> requires 1 to 20.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Before accepting, rejecting or cancelling a turn awaiting validation, co:op stops and removes
 the provider runtime and temporary credential files that produced its candidate. If it can&#39;t
 confirm cleanup, the API returns <code>503 session_cleanup_error</code>. The candidate remains
@@ -1028,7 +1028,7 @@ removes its box. This doesn&#39;t undo actions already taken in external systems
 <h3 id="events">Events</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Events code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   &#39;http://localhost/v1/sessions/remote_.../events?after=41&amp;limit=100&#39;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The events endpoint returns a JSON array ordered by <code>sequence</code>, which increases within each
 session. Save the last sequence you processed, and after a disconnect, request <code>after=&lt;sequence&gt;</code>
 to continue from that point.</p>
@@ -1065,7 +1065,7 @@ checkout path removed. Each field has a size limit:</p>
 <td>64 KiB</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>If a field appears to contain a secret, the connector withholds the entire field. The event&#39;s
 <code>withheld</code> object identifies the field and reason, such as <code>likely GitHub token</code>. When tool
 input is withheld, the event still identifies the MCP server and tool. The structured
@@ -1093,7 +1093,7 @@ session.parked
 session.closed
 workspace.discarded
 network                 # one sealed filtered run&#39;s outcome: run_id, grouped denials, alerts
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op records a <code>network</code> event for blocked requests when a filtered run&#39;s network record is
 finalized. It can also report alerts, such as a mismatch in network permissions or incomplete
 evidence. A run with no refusals and no alerts produces no event, so this event isn&#39;t a heartbeat
@@ -1126,7 +1126,7 @@ permission.decided      # tool_call_id, title, outcome, option_id, option_kind
 activity.elided         # dropped, reason
 provider.backoff        # attempt, target, next_target, retry_after_seconds, reset_at, all_limited_until
 provider.alive          # frames, bytes, last_kind
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>When the provider reports it, <code>terminal_exit</code> contains the command&#39;s numeric <code>exit_code</code>, its
 termination <code>signal</code> or both. These fields are separate from the output, so truncating an output
 preview doesn&#39;t remove the exit result.</p>
@@ -1182,14 +1182,14 @@ itself never leaves co:op.</p>
   -H &#39;Idempotency-Key: controller:extend:01J...&#39; \
   -d &#39;{&#34;expected_revision&#34;:9,&#34;additional_turns&#34;:20}&#39; \
   http://localhost/v1/sessions/remote_.../budget
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>You can extend the turn budget only up to co:op&#39;s global <code>max_turns</code> limit. Your controller must
 decide who may authorize an extension and how much to spend. co:op enforces the numeric limit and
 prevents the same request from being applied twice.</p>
 <h3 id="changes">Changes</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Changes code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   http://localhost/v1/sessions/remote_.../changes
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>GET /v1/sessions/{session_id}/changes</code> returns:</p>
 <ul>
 <li>the immutable <code>base_commit</code>, the current <code>fork_head</code> and <code>fork_tree</code>, and the current
@@ -1217,7 +1217,7 @@ error, never an empty change list.</p>
 curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/connections
 curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/explanations/&lt;event_id&gt;
 curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/receipt
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>These four endpoints only read data. They don&#39;t probe a gateway or approve, grant or expand
 network access, and the session API can&#39;t grant network permissions.</p>
 <p><code>GET /v1/sessions/{session_id}/network</code> returns:</p>
@@ -1278,10 +1278,10 @@ different destinations, rules or disclosure settings.</p>
 <td>none</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <h3 id="session-evidence">Session evidence</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Session evidence code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../evidence
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>This endpoint returns a versioned, size-limited report for a controller&#39;s session-inspection page.
 It covers:</p>
 <ul>
@@ -1325,7 +1325,7 @@ read that found no activity:</p>
 <td><code>captured</code>, <code>absent</code>, <code>withheld</code></td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>An <code>unavailable</code> section includes a <code>reason</code>. A session that never ran filtered reports
 <code>not_filtered</code>. The network settings (<code>mode</code>, <code>fingerprint</code>) come from the saved session record and
 can&#39;t change. If the host can&#39;t read the network registry, those settings stay available while the
@@ -1367,14 +1367,14 @@ if your controller needs that history. If a bound task&#39;s folder is missing, 
 <td>none</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <h3 id="review">Review</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   -H &#39;Content-Type: application/json&#39; \
   -H &#39;Idempotency-Key: controller:review:01J...&#39; \
   -d &#39;{&#34;expected_revision&#34;:12,&#34;commit_message&#34;:&#34;Add per-worker memory metrics&#34;}&#39; \
   http://localhost/v1/sessions/remote_.../review
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Use the optional <code>commit_message</code> to set the reviewed commit&#39;s message, up to 4,096 bytes. If
 you omit it, co:op uses <code>Reviewed changes</code>. It also adds the <code>Coop-Review: &lt;operation id&gt;</code>
 trailer. The message is saved in the reviewed commit and stays the same when that commit is
@@ -1459,7 +1459,7 @@ as printed, whether the gate passes or fails. Read the output page by page with
 <code>GET /v1/sessions/{session_id}/reviews/{operation_id}/gate-output?cursor={cursor}</code>, starting without
 a cursor:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Gate output code example" tabindex="0" data-copy-source=""><code class="language-json">{&#34;output&#34;:&#34;1 test, 1 failure\n…&#34;,&#34;next_cursor&#34;:&#34;1048576&#34;,&#34;bytes&#34;:1843200,&#34;complete&#34;:true}
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Each page contains at most 1 MiB of output and ends at a character boundary. Invalid UTF-8 bytes
 appear as U+FFFD replacement characters. <code>next_cursor</code> is <code>null</code> on the last page. <code>bytes</code>
 reports the total amount of saved output. When <code>complete: false</code>, <code>incomplete</code> explains what
@@ -1481,7 +1481,7 @@ session that owns the review, and discarding that session removes it.</p>
   &#34;title&#34;: &#34;Fix retry handling&#34;,
   &#34;body&#34;: &#34;Reviewed changes and verification details.&#34;
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Leave <code>expected_head</code> empty to require a new branch. To update a previously authorized PR,
 provide its number and the exact commit you expect it to point to. The operation returns <code>202</code>
 while running. Use the operation key to check its state, then fetch
@@ -1513,7 +1513,7 @@ what gets published.</p>
   -H &#39;Idempotency-Key: controller:close:01J...&#39; \
   -d &#39;{&#34;expected_revision&#34;:15}&#39; \
   http://localhost/v1/sessions/remote_.../close
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>You can close a session only when it has no active or queued turns. Closing keeps the fork.</p>
 <p>Plan a discard only after you close the session:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
@@ -1521,7 +1521,7 @@ what gets published.</p>
   -H &#39;Idempotency-Key: controller:discard-plan:01J...&#39; \
   -d &#39;{&#34;expected_revision&#34;:16}&#39; \
   http://localhost/v1/sessions/remote_.../discard-plan
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The discard plan records the session revision, the specific fork instance and its reservation,
 and the workspace&#39;s inode, branch, head, status digest and running, dirty and unmerged states.
 The inode helps detect a replaced directory, but doesn&#39;t prove ownership on its own.</p>
@@ -1534,7 +1534,7 @@ the plan.</p>
   -H &#39;Idempotency-Key: controller:discard:01J...&#39; \
   -d &#39;{&#34;plan_operation_id&#34;:&#34;op_...&#34;}&#39; \
   http://localhost/v1/sessions/remote_.../discard
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Discard first checks that the plan belongs to the session named in the request path, then compares
 the current workspace with every recorded detail in the plan. If the plan is stale, the workspace
 was replaced or work is running, nothing is deleted. Otherwise, co:op deletes the fork workspace and
@@ -1549,7 +1549,7 @@ instead:</p>
   -H &#39;Idempotency-Key: controller:retire:01J...&#39; \
   -d &#39;{&#34;retire_quarantined&#34;:true,&#34;expected_revision&#34;:16}&#39; \
   http://localhost/v1/sessions/remote_.../discard
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>This marks the session record as retired without deleting its workspace:</p>
 <ul>
 <li>Queued turns are marked exhausted.</li>
@@ -1575,7 +1575,7 @@ warning.</p>
     &#34;operation_id&#34;: &#34;op_...&#34;
   }
 }
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>The error includes <code>operation_id</code> when co:op accepted an operation before it failed. The public
 API leaves out private internal details.</p>
 <p>The daemon also writes a size-limited JSON diagnostic to stderr, with the operation ID, method,
@@ -1616,7 +1616,7 @@ to connect the client error, saved operation and supervisor log without opening 
 <td>The worker is not ready, or it temporarily can&#39;t verify or use the required repository, runtime, network or storage access</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p><code>storage_unavailable</code> is a retryable <code>503</code>. The worker has reached its configured disk-space limits
 and won&#39;t create another workspace until space is freed. If <code>storage.refusal_reason</code> is
 <code>protected_storage_exceeds_budget</code>, you must reduce the protected data itself before the worker can
@@ -1713,7 +1713,7 @@ candidate. If the saved instructions can&#39;t be read or verified, the operatio
 <td>This response has no further patch pages. Don&#39;t treat a shortened preview as a complete diff. Publication uses the saved reviewed candidate, never a patch rebuilt from the preview.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>Stop the daemon before backing up the entire state directory. If you restore a database without
 its matching forks, an operator must resolve the mismatch. co:op won&#39;t assign ownership based
 only on directory names.</p>

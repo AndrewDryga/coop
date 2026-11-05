@@ -518,13 +518,21 @@ if ("IntersectionObserver" in window && matchMedia("(prefers-reduced-motion: no-
 const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
 if (target && document.fonts) document.fonts.ready.then(() => target.scrollIntoView({ behavior: "instant" }));
 
-// Make local overflow discoverable without suggesting a scroll when everything fits.
-// Without JS, the hints and keyboard-accessible regions remain available.
+// A block wider than its column fades at the edge that has more, so it reads as scrollable where
+// scrollbars are hidden. A block that fits shows nothing. The regions stay keyboard scrollable.
 for (const frame of document.querySelectorAll(".reference-table, .reference-code-frame")) {
   const scroller = frame.querySelector(".table-scroll, pre.code");
-  const hint = frame.querySelector(".reference-scroll-hint");
-  const update = () => { hint.hidden = scroller.scrollWidth <= scroller.clientWidth + 1; };
+  if (!scroller) continue;
+  const update = () => {
+    const end = scroller.scrollWidth - scroller.clientWidth;
+    const more = [];
+    if (scroller.scrollLeft > 1) more.push("start");
+    if (scroller.scrollLeft < end - 1) more.push("end");
+    if (more.length) scroller.dataset.more = more.join(" ");
+    else delete scroller.dataset.more;
+  };
   update();
+  scroller.addEventListener("scroll", update, { passive: true });
   if ("ResizeObserver" in window) new ResizeObserver(update).observe(scroller);
   if (document.fonts) document.fonts.ready.then(update);
 }

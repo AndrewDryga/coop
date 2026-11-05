@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
-  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
-  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=7cc8fee78a">
+  <script src="assets/js/site.js?v=7cc8fee78a" defer></script>
+  <script src="assets/js/analytics.js?v=7cc8fee78a" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -135,7 +135,7 @@ coop fork ls             # list your forks (branch, changes, state, last activit
 coop fork review perf    # review: the dossier, then the diff
 coop fork merge perf     # land: rebase onto your branch, then close the fork
 coop fork rm perf        # or discard it (confirms first; inspect task/Git impact before --force)
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>coop fork &lt;name&gt;</code> creates a fork or reopens an existing one. Add an agent, as in
 <code>coop fork perf codex</code>, or a target such as <code>codex:gpt-6-astra@work</code> to choose the model and
 account too. You can also name a preset, as in <code>coop fork perf frontier</code>, and the preset&#39;s lead runs
@@ -143,7 +143,7 @@ the fork.</p>
 <p>A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.</p>
 <p>Point a fork at a task queue and it works the queue unattended:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork api codex --loop -d   # loops the repo&#39;s task queue(s); -d detaches — tail with coop fork logs api -f
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><a href="loop.html">The loop</a> explains how iterations work. <a href="loop.html#parallel-forks">Parallel forks</a> shows
 how to run several at once.</p>
 </section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
@@ -151,7 +151,7 @@ how to run several at once.</p>
 coop fork research                 # the host remembers isolation
 coop fork review research --stat
 coop fork merge research --yes
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>An isolated fork keeps its own Git metadata and object files. co:op prevents the box from mounting
 your parent checkout or its Git storage, including through another path, a service or a volume
 that co:op inspects. The agent can still create commits and branches and run rebase inside the
@@ -260,7 +260,7 @@ directory.</p>
 <td>Recreates the whole fork while keeping its selected provider. It asks before deleting anything. Without an interactive terminal, it requires <code>--yes</code>.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>On <code>coop fork rm</code> and <code>--fresh</code>, <code>--force</code> can:</p>
 <ul>
 <li>stop the detached worker</li>
@@ -312,7 +312,7 @@ files are not merged.</p>
 <td>rebases a temporary clone, then runs the parent&#39;s configured check command in a box with that clone mounted. Ignored build output can be written there, but changes to HEAD or tracked files fail the check.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p><code>--gate</code> exits 0 when the checks pass, or after a clean rebase when no check command is configured.
 It exits 1 when the checks fail or the rebase conflicts. The parent and fork refs, branches and
 worktrees stay unchanged, and co:op always removes the temporary clone. You can combine <code>--gate</code>
@@ -330,7 +330,7 @@ directory with the first of these that&#39;s set:</p>
 <code>code</code>. Set one of the first two options to choose your editor explicitly:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">git config --global core.editor &#34;zed --wait&#34; # your standard git editor (git commit uses it too)
 export COOP_EDITOR=&#34;zed&#34;                     # coop-only; overrides core.editor
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>co:op runs the editor command as written, so with <code>core.editor = &#34;zed --wait&#34;</code> your terminal waits
 until you close the window. To return at once, set <code>COOP_EDITOR</code> without <code>--wait</code>, like
 <code>COOP_EDITOR=zed</code>.</p>
@@ -343,7 +343,7 @@ git config --global difftool.vscode.cmd &#39;code --wait --diff &#34;$LOCAL&#34;
 # Zed
 git config --global diff.tool zed
 git config --global difftool.zed.cmd &#39;zed --wait --diff &#34;$LOCAL&#34; &#34;$REMOTE&#34;&#39;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>JetBrains, Meld, Beyond Compare, vimdiff and others work the same way.
 <code>git difftool --tool-help</code> lists the tools git already knows.</p>
 <p>Set <code>COOP_REVIEW_CMD</code> to run a TUI or review script. co:op runs it with <code>sh -c</code> and provides
@@ -355,7 +355,7 @@ the fork&#39;s committed changes. Neither path is your parent checkout or the ag
 prints both paths. Remove them after the review tool has finished, even if it returned control to
 your terminal earlier.</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Review code example" tabindex="0"><code class="language-bash">export COOP_REVIEW_CMD=&#39;cd &#34;$COOP_FORK_PATH&#34; &amp;&amp; lazygit&#39;
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 </section><section class="doc-section reference-section" id="land-it"><h2>Land it</h2>
 <p><code>coop fork merge &lt;name&gt;</code> rebases the fork&#39;s commits onto your current branch, then advances the
 branch to include them, with no merge commit. The rebase runs on your host, so if you sign commits
@@ -397,7 +397,7 @@ shell, such as CI or a pipe, you must confirm up front, or co:op refuses to run 
 <td>Merges all forks in sequence. See <a href="loop.html#parallel-forks">parallel forks</a>.</td>
 </tr>
 </tbody>
-</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</table></div></div>
 <p>A fork loop takes work from the selected task queues. The host assigns each task to one fork
 generation, which lasts until you remove or recreate the fork, and places only the assigned task in
 the fork. It never mounts the whole queue there. The agent works on that copy of the task, including
