@@ -10,8 +10,9 @@
 // site/orchestrator.html from their templates in tools/site/, and the terminal windows in
 // site/docs.html. `-check` also fails when a site terminal shows a line the CLI no longer prints.
 //
-// The README carries no command tables: it links to docs/cli.md, which this tool writes. If a
-// generated command index is ever wanted elsewhere, add it in its own marker-bounded block.
+// The README carries no command tables: it links to the website's command reference, generated from
+// docs/cli.md, which this tool writes. If a generated command index is ever wanted elsewhere, add it
+// in its own marker-bounded block.
 package main
 
 import (

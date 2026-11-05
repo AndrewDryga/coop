@@ -31,7 +31,7 @@ import (
 
 var defaultFiles = []string{"README.md", "CONTRIBUTING.md", "MIGRATING.md", "site/index.html", "site/docs.html",
 	"docs/agents.md", "docs/box.md", "docs/cli.md", "docs/configuration.md", "docs/evals.md",
-	"docs/forks.md", "docs/integrations.md", "docs/loop.md", "docs/networking.md",
+	"docs/forks.md", "docs/install.md", "docs/integrations.md", "docs/loop.md", "docs/networking.md",
 	"docs/session-api.md"}
 
 var (

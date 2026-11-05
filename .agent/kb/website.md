@@ -1,8 +1,8 @@
 ---
 name: website
-description: site/ is static and partly generated; tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
+description: site/ is static and partly generated; tools/gendocs owns index.html, orchestrator.html, the docs menu and search index, and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gendocs/references.go, tools/gendocs/references_test.go, tools/site/reference.tpl.html, docs/networking.md, site/networking.html, tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/sandbox-guide.html, site/overnight-guide.html, tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/eval_cmd_test.go]
+sources: [tools/gendocs/references.go, tools/gendocs/references_test.go, tools/gendocs/search.go, tools/gendocs/docsmap_test.go, docs/README.md, site/search-index.json, tools/site/reference.tpl.html, docs/networking.md, site/networking.html, tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/sandbox-guide.html, site/overnight-guide.html, tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/eval_cmd_test.go]
 updated: 2026-11-04
 ---
 
@@ -22,21 +22,39 @@ page or terminal, then the site's content tests in `tools/gendocs/site_test.go`:
   from their matching `tools/site/*.tpl.html` templates. They reuse the docs contents and copy
   controls with scoped `.guide` styles. Examples remain ordinary HTML, and native disclosures
   keep optional explanations available without JavaScript.
-- **The public reference library** renders every inventoried `docs/*.md` through
-  `tools/site/reference.tpl.html`. `referenceLibrary` in `tools/gendocs/references.go` owns
-  routes, summaries and related links; Goldmark handles CommonMark/GFM before structural
-  HTML styling. `site/docs.html`'s `gen_reference_index` region and `site/sitemap.xml` use
-  that same inventory. Unknown Markdown topics and retired generated reference files fail
+- **The docs' map** is `docsPages` in `tools/gendocs/references.go`, in reading order. It owns the
+  menu every docs page shows, previous and next, the eyebrow, `docs/README.md`, the search index
+  and the routes and summaries of generated pages. `TestEveryDocsPageIsInTheMenu` fails on a page in
+  `site/` with no entry. Nested pages (the provider guides under the first sandbox run) are
+  alternatives, so previous and next step over them. Every docs page has the three-column frame:
+  `.docs-shell` holds the menu and `.docs-page`, `.docs` is `display: contents` so the contents and
+  article are grid items of `.docs-page`, and `body:has(.docs-shell) .wrap` widens the header and
+  footer to the frame. Two traps: `site/docs.html` is read and written back, so anything the generator inserts there
+  must settle on a second run; and the fold scripts run during parsing so a phone never paints the
+  open lists. Nothing runs site.js in `make
+  check`. `artifacts/tools/behave.mjs` in task 2026-11-04-give-the-docs-one-navigation-search-and-no-detou
+  (`.agent/tasks/`, local to this checkout) drives search and the menu with real key events and
+  holds a table of real queries and the page each must find; run it after changing either. Escape in
+  a `type=search` field only clears it, which is why the dialog handles Escape itself.
+- **Search** is `tools/gendocs/search.go` plus the last block of `site.js`. One entry per section
+  with an id, built from the rendered pages, so an entry can't name a section the page doesn't
+  have. The index is about 540 KB (164 KB gzipped) and is fetched on first open. Ranking is BM25
+  with word-start matching, a light word-root rule and stop words, because readers type sentences
+  ("how to add postgres"), and a substring match finds "zed" inside "authorized".
+- **The public reference pages** render every `docsPages` entry with a `Source` through
+  `tools/site/reference.tpl.html`; Goldmark handles CommonMark/GFM before structural HTML
+  styling. Unknown Markdown topics and retired generated reference files fail
   generation rather than silently leaving stale public pages. CLI Markdown comes from the
-  current in-memory generation targets, never the potentially stale on-disk copy.
+  current in-memory generation targets, never the potentially stale on-disk copy. `MIGRATING.md`
+  is published from the repo root, so `referenceLink` resolves links against each source's folder.
   Section IDs match existing GitHub-style links; tests resolve cross-page fragments too.
   Tables scroll locally and expose keyboard-focusable labeled regions. Code bytes remain
   intact. Explicit configuration fences copy as a block; shell examples and unlabelled
   transcripts stay selectable because one fence can mix alternatives and destructive steps.
 - **The docs' terminal windows** fill `site/docs.html` between `<!-- gen_site: NAME -->` and
   `<!-- /gen_site -->` (`docsScenes`: check-secrets, doctor, claude, loop, fork). The markers keep
-  the Python generator's name because they are bytes of the page. Outside these and the generated reference index, docs.html is
-  hand-written; `-check` catches an edited or stale region, not prose edits.
+  the Python generator's name because they are bytes of the page. Outside these and the generated
+  menu and pager, docs.html is hand-written; `-check` catches an edited or stale region, not prose edits.
 
 **The Orchestrator page** (`site/orchestrator.html`, from `tools/site/orchestrator.tpl.html`, with its own
 `orchestrator.css` and `orchestrator.js`) is the second landing, for people who want agents working

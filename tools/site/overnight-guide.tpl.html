@@ -40,16 +40,18 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide" tabindex="-1">
+  <div class="wrap docs-shell">
+{{docs_nav}}
+  <main id="main" class="docs-page guide" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        {{eyebrow}}
         <h1>Run a coding agent overnight.</h1>
         <p class="guide-lead">Prepare a task, run it in a separate fork, and review the result in the morning.</p>
         <div class="guide-prerequisites">
@@ -161,10 +163,12 @@ gate: make check</pre></div>
 <p>If review or merge stops with an error, fix the reported problem and review again. Pushing and deploying are separate actions.</p>
 <div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The reviewed changes are on the branch you intended, you have saved the check result, and the matching tasks in the parent queue are complete. Try a larger run after you have checked this result.</p></div>
           </section>
-        <a class="guide-next" href="orchestrator.html"><span class="guide-label">Explore the workflow</span><span>How the orchestrator works<span class="go" aria-hidden="true">→</span></span><small>Task queues, decisions, review and longer runs.</small></a>
+        <p class="doc-more"><a href="orchestrator.html">How the orchestrator works<span class="go" aria-hidden="true">→</span></a></p>
+      {{pager}}
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

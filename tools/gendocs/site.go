@@ -1,9 +1,10 @@
 package main
 
 // The website's generated pages: the homepage, site/index.html, from tools/site/index.tpl.html; the
-// Orchestrator page, site/orchestrator.html, from tools/site/orchestrator.tpl.html; and the terminal
-// windows in site/docs.html, which is written by hand except between its <!-- gen_site: NAME --> and
-// <!-- /gen_site --> markers, where the scene NAME goes (scenes.go). Edit a template or a scene, then
+// Orchestrator page, site/orchestrator.html, from tools/site/orchestrator.tpl.html; and the docs menu,
+// the pager and the terminal windows in site/docs.html, which is written by hand except between its
+// generated regions, such as <!-- gen_site: NAME --> and <!-- /gen_site -->, where the scene NAME
+// goes (scenes.go). The rest of the docs are listed in docsPages (references.go). Edit a template or a scene, then
 // regenerate; never edit the generated parts by hand. Every page has its links off the site marked
 // to open in a new tab with rel="nofollow noopener", and its stylesheet and script links stamped
 // with a hash of those files, so a page written without either fails -check until regenerated.
@@ -78,20 +79,29 @@ func sitePages(root string, generated map[string]string) (map[string]string, err
 	pages := map[string]string{
 		filepath.Join("site", "index.html"):        stampAssets(externalLinks(typographic(index)), version),
 		filepath.Join("site", "orchestrator.html"): stampAssets(externalLinks(typographic(orchestrator)), version),
-		filepath.Join("site", "docs.html"):         stampAssets(externalLinks(filled), version),
+		filepath.Join("site", "docs.html"):         stampAssets(externalLinks(foldContents(filled)), version),
 	}
-	for _, name := range []string{"sandbox-guide", "overnight-guide", "claude-code-sandbox", "codex-sandbox", "gemini-cli-sandbox", "grok-cli-sandbox"} {
-		guide, err := fillTemplate(root, name+".tpl.html", []block{{"release", release}})
+	for _, page := range docsPages {
+		if page.Source != "" || page.Slug == "docs" {
+			continue
+		}
+		guide, err := fillTemplate(root, page.Slug+".tpl.html", append(docsChrome(page), block{"release", release}))
 		if err != nil {
 			return nil, err
 		}
-		pages[filepath.Join("site", name+".html")] = stampAssets(externalLinks(typographic(guide)), version)
+		pages[filepath.Join("site", page.Slug+".html")] = stampAssets(externalLinks(typographic(foldContents(guide))), version)
 	}
 	references, err := referencePages(root, generated, version)
 	if err != nil {
 		return nil, err
 	}
 	maps.Copy(pages, references)
+	search, err := searchIndex(pages)
+	if err != nil {
+		return nil, err
+	}
+	pages[filepath.Join("site", "search-index.json")] = search
+	pages[filepath.Join("docs", "README.md")] = docsFolderMap()
 	pages[filepath.Join("site", "sitemap.xml")] = siteMap(pages)
 	return pages, nil
 }
@@ -147,18 +157,28 @@ func fillTemplate(root, name string, blocks []block) (string, error) {
 
 var docsRegion = regexp.MustCompile(`(<!-- gen_site: ([\w-]+) -->)(?s:.*?)(<!-- /gen_site -->)`)
 
-// fillDocs puts each marked region's scene into the docs.
+// fillRegion replaces what sits between <!-- name --> and <!-- /name -->.
+func fillRegion(page, name, content string) (string, error) {
+	before, rest, ok := strings.Cut(page, "<!-- "+name+" -->")
+	if !ok {
+		return "", fmt.Errorf("docs.html is missing its %s region", name)
+	}
+	_, after, ok := strings.Cut(rest, "<!-- /"+name+" -->")
+	if !ok {
+		return "", fmt.Errorf("docs.html is missing the end of its %s region", name)
+	}
+	return before + "<!-- " + name + " -->\n" + content + "\n<!-- /" + name + " -->" + after, nil
+}
+
+// fillDocs puts the menu, the pager and each marked region's scene into the docs.
 func fillDocs(docs string) (string, error) {
-	const indexStart, indexEnd = "<!-- gen_reference_index -->", "<!-- /gen_reference_index -->"
-	before, rest, ok := strings.Cut(docs, indexStart)
-	if !ok {
-		return "", fmt.Errorf("docs.html is missing the reference index")
+	docs, err := fillRegion(docs, "gen_docs_nav", docsNav("docs"))
+	if err != nil {
+		return "", err
 	}
-	_, after, ok := strings.Cut(rest, indexEnd)
-	if !ok {
-		return "", fmt.Errorf("docs.html is missing the reference index end")
+	if docs, err = fillRegion(docs, "gen_docs_pager", docsPager("docs")); err != nil {
+		return "", err
 	}
-	docs = before + indexStart + "\n" + referenceIndex() + indexEnd + after
 	var out strings.Builder
 	last := 0
 	regions := docsRegion.FindAllStringSubmatchIndex(docs, -1)

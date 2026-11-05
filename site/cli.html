@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
-  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
-  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -41,108 +41,153 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide reference" tabindex="-1">
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html" aria-current="page">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide reference" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Reference</p>
         <h1>Coop CLI reference</h1>
         <p class="guide-lead">Look up co:op commands and options, with examples of how to use them.</p>
       </div>
     </header>
     <div class="docs guide-body">
       <details class="docs-side" open>
-        <summary>On this page</summary>
+        <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
-<li><a href="#coop-run-run-a-command-in-the-box">coop run: run a command in the box</a></li>
-<li><a href="#coop-shell-open-a-shell-in-the-box">coop shell: open a shell in the box</a></li>
-<li><a href="#coop-claude-run-claude-in-the-box">coop claude: run Claude in the box</a></li>
-<li><a href="#coop-codex-run-codex-in-the-box">coop codex: run Codex in the box</a></li>
-<li><a href="#coop-gemini-run-gemini-in-the-box">coop gemini: run Gemini in the box</a></li>
-<li><a href="#coop-grok-run-grok-in-the-box">coop grok: run Grok in the box</a></li>
-<li><a href="#coop-login-sign-in-to-an-agent">coop login: sign in to an agent</a></li>
-<li><a href="#coop-credentials-show-and-manage-your-agent-accounts">coop credentials: show and manage your agent accounts</a></li>
-<li><a href="#coop-credentials-agent-account-default-choose-the-default-account">coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account</a></li>
-<li><a href="#coop-credentials-agent-account-rm-remove-a-saved-account">coop credentials &lt;agent&gt; &lt;account&gt; rm: remove a saved account</a></li>
-<li><a href="#coop-credentials-agent-account-show-an-account">coop credentials &lt;agent&gt; &lt;account&gt;: show an account</a></li>
-<li><a href="#coop-models-list-models-available-to-each-agent">coop models: list models available to each agent</a></li>
-<li><a href="#coop-usage-show-limits-and-a-30-day-api-estimate">coop usage: show limits and a 30-day API estimate</a></li>
-<li><a href="#coop-presets-init-create-a-preset-you-can-edit">coop presets init: create a preset you can edit</a></li>
-<li><a href="#coop-presets-configure-multiple-models-and-providers-to-work-together">coop presets: configure multiple models and providers to work together</a></li>
-<li><a href="#coop-tasks-manage-work-in-agenttasks">coop tasks: manage work in .agent/tasks/</a></li>
-<li><a href="#coop-tasks-ls-list-tasks-and-their-progress">coop tasks ls: list tasks and their progress</a></li>
-<li><a href="#coop-tasks-add-create-a-task-for-you-or-an-agent">coop tasks add: create a task for you or an agent</a></li>
-<li><a href="#coop-tasks-claim-take-responsibility-for-a-task">coop tasks claim: take responsibility for a task</a></li>
-<li><a href="#coop-tasks-release-return-a-task-to-the-queue-for-another-agent">coop tasks release: return a task to the queue for another agent</a></li>
-<li><a href="#coop-tasks-lease-reserve-a-task-while-work-is-running">coop tasks lease: reserve a task while work is running</a></li>
-<li><a href="#coop-tasks-block-pause-a-task-that-needs-a-decision">coop tasks block: pause a task that needs a decision</a></li>
-<li><a href="#coop-tasks-unblock-record-a-decision-and-return-a-task-to-todo">coop tasks unblock: record a decision and return a task to todo</a></li>
-<li><a href="#coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later">coop tasks park: keep a blocked task in the backlog for later</a></li>
-<li><a href="#coop-tasks-done-move-completed-work-to-the-archive">coop tasks done: move completed work to the archive</a></li>
-<li><a href="#coop-tasks-path-print-a-tasks-folder-path">coop tasks path: print a task&#39;s folder path</a></li>
-<li><a href="#coop-tasks-queues-print-task-queue-paths">coop tasks queues: print task queue paths</a></li>
-<li><a href="#coop-tasks-decisions-show-questions-waiting-for-your-answer">coop tasks decisions: show questions waiting for your answer</a></li>
-<li><a href="#coop-tasks-lint-check-task-files-for-missing-or-inconsistent-information">coop tasks lint: check task files for missing or inconsistent information</a></li>
-<li><a href="#coop-tasks-rm-permanently-delete-task-folders">coop tasks rm: permanently delete task folders</a></li>
-<li><a href="#coop-tasks-watch-watch-task-progress">coop tasks watch: watch task progress</a></li>
-<li><a href="#coop-backlog-save-ideas-that-need-more-planning">coop backlog: save ideas that need more planning</a></li>
-<li><a href="#coop-backlog-ls-list-saved-ideas">coop backlog ls: list saved ideas</a></li>
-<li><a href="#coop-backlog-add-save-an-idea-for-later">coop backlog add: save an idea for later</a></li>
-<li><a href="#coop-backlog-promote-move-an-idea-to-the-task-queue">coop backlog promote: move an idea to the task queue</a></li>
-<li><a href="#coop-backlog-rm-permanently-delete-a-saved-idea">coop backlog rm: permanently delete a saved idea</a></li>
-<li><a href="#coop-context-show-the-instructions-relevant-to-your-work">coop context: show the instructions relevant to your work</a></li>
-<li><a href="#coop-loop-let-agents-work-through-your-task-queue">coop loop: let agents work through your task queue</a></li>
-<li><a href="#coop-eval-check-whether-a-model-preset-or-loop-change-helped">coop eval: check whether a model, preset or loop change helped</a></li>
-<li><a href="#coop-eval-run-preview-or-run-a-repeatable-evaluation">coop eval run: preview or run a repeatable evaluation</a></li>
-<li><a href="#coop-eval-runs-find-recorded-evaluation-results">coop eval runs: find recorded evaluation results</a></li>
-<li><a href="#coop-eval-inspect-understand-a-run-and-its-failures">coop eval inspect: understand a run and its failures</a></li>
-<li><a href="#coop-eval-compare-compare-before-and-after-without-another-paid-run">coop eval compare: compare before and after without another paid run</a></li>
-<li><a href="#coop-eval-ls-choose-a-shipped-starter-suite">coop eval ls: choose a shipped starter suite</a></li>
-<li><a href="#coop-eval-init-create-a-custom-suite-you-can-edit">coop eval init: create a custom suite you can edit</a></li>
-<li><a href="#coop-fork-let-an-agent-work-in-a-separate-copy-of-your-project">coop fork: let an agent work in a separate copy of your project</a></li>
-<li><a href="#coop-fork-name-acp-use-an-existing-fork-from-an-acp-editor">coop fork &lt;name&gt; acp: use an existing fork from an ACP editor</a></li>
-<li><a href="#coop-fork-ls-show-forks-and-their-progress">coop fork ls: show forks and their progress</a></li>
-<li><a href="#coop-fork-review-inspect-a-fork-before-merging">coop fork review: inspect a fork before merging</a></li>
-<li><a href="#coop-fork-merge-bring-a-forks-commits-into-your-current-branch">coop fork merge: bring a fork&#39;s commits into your current branch</a></li>
-<li><a href="#coop-fork-rm-delete-a-fork-and-its-local-work">coop fork rm: delete a fork and its local work</a></li>
-<li><a href="#coop-fork-stop-stop-a-forks-background-loop">coop fork stop: stop a fork&#39;s background loop</a></li>
-<li><a href="#coop-fork-logs-show-a-forks-loop-output">coop fork logs: show a fork&#39;s loop output</a></li>
-<li><a href="#coop-fork-path-print-a-forks-folder-path">coop fork path: print a fork&#39;s folder path</a></li>
-<li><a href="#coop-fork-open-open-a-fork-in-your-editor">coop fork open: open a fork in your editor</a></li>
-<li><a href="#coop-up-start-this-projects-services">coop up: start this project&#39;s services</a></li>
-<li><a href="#coop-down-stop-this-projects-services">coop down: stop this project&#39;s services</a></li>
-<li><a href="#coop-doctor-check-that-the-boxs-isolation-works">coop doctor: check that the box&#39;s isolation works</a></li>
-<li><a href="#coop-approve-review-and-approve-this-projects-requested-access">coop approve: review and approve this project&#39;s requested access</a></li>
-<li><a href="#coop-net-control-network-access-and-see-what-happened">coop net: control network access and see what happened</a></li>
-<li><a href="#coop-net-runs-show-recorded-network-runs">coop net runs: show recorded network runs</a></li>
-<li><a href="#coop-net-inspect-show-a-runs-connections-and-blocked-traffic">coop net inspect: show a run&#39;s connections and blocked traffic</a></li>
-<li><a href="#coop-net-check-check-whether-network-rules-allow-a-connection">coop net check: check whether network rules allow a connection</a></li>
-<li><a href="#coop-net-blocked-find-blocked-connections-and-how-to-allow-them">coop net blocked: find blocked connections and how to allow them</a></li>
-<li><a href="#coop-net-watch-follow-a-runs-network-activity">coop net watch: follow a run&#39;s network activity</a></li>
-<li><a href="#coop-net-export-export-a-runs-network-record">coop net export: export a run&#39;s network record</a></li>
-<li><a href="#coop-net-forget-withdraw-this-projects-network-approval">coop net forget: withdraw this project&#39;s network approval</a></li>
-<li><a href="#coop-net-setup-prepare-this-host-for-filtered-networking">coop net setup: prepare this host for filtered networking</a></li>
-<li><a href="#coop-net-recover-clean-up-interrupted-network-runs">coop net recover: clean up interrupted network runs</a></li>
-<li><a href="#coop-check-secrets-check-project-files-for-exposed-secrets">coop check-secrets: check project files for exposed secrets</a></li>
-<li><a href="#coop-sign-sign-this-branchs-unpushed-commits-with-your-host-key">coop sign: sign this branch&#39;s unpushed commits with your host key</a></li>
-<li><a href="#coop-init-set-up-coop-in-this-project">coop init: set up Coop in this project</a></li>
-<li><a href="#coop-build-build-the-coop-box-image">coop build: build the Coop box image</a></li>
-<li><a href="#coop-update-update-coop-and-rebuild-the-box-image">coop update: update Coop and rebuild the box image</a></li>
-<li><a href="#coop-version-print-the-installed-coop-version">coop version: print the installed Coop version</a></li>
-<li><a href="#coop-acp-connect-your-editor-to-an-agent-running-in-a-coop-box">coop acp: connect your editor to an agent running in a Coop box</a></li>
-<li><a href="#coop-sessions-let-other-applications-start-and-manage-agents">coop sessions: let other applications start and manage agents</a></li>
-<li><a href="#coop-sessions-doctor-check-the-local-session-service">coop sessions doctor: check the local session service</a></li>
-<li><a href="#coop-sessions-check-see-whether-this-build-can-use-the-session-data-as-it-is">coop sessions check: see whether this build can use the session data as it is</a></li>
-<li><a href="#coop-sessions-quiescence-inspect-queued-and-running-work-before-a-restart">coop sessions quiescence: inspect queued and running work before a restart</a></li>
-<li><a href="#coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage">coop sessions compact: back up session data and reduce its disk usage</a></li>
-<li><a href="#coop-sessions-connect-run-a-worker-for-a-remote-controller">coop sessions connect: run a worker for a remote controller</a></li>
-<li><a href="#coop-prompt-print-a-short-project-status-for-your-shell-or-tmux">coop prompt: print a short project status for your shell or tmux</a></li>
-<li><a href="#coop-completion-print-shell-integration-for-bash-or-zsh">coop completion: print shell integration for Bash or Zsh</a></li>
+<li><a href="#coop-run-run-a-command-in-the-box">coop run</a></li>
+<li><a href="#coop-shell-open-a-shell-in-the-box">coop shell</a></li>
+<li><a href="#coop-claude-run-claude-in-the-box">coop claude</a></li>
+<li><a href="#coop-codex-run-codex-in-the-box">coop codex</a></li>
+<li><a href="#coop-gemini-run-gemini-in-the-box">coop gemini</a></li>
+<li><a href="#coop-grok-run-grok-in-the-box">coop grok</a></li>
+<li><a href="#coop-login-sign-in-to-an-agent">coop login</a></li>
+<li><a href="#coop-credentials-show-and-manage-your-agent-accounts">coop credentials</a></li>
+<li><a href="#coop-credentials-agent-account-default-choose-the-default-account">coop credentials &lt;agent&gt; &lt;account&gt; default</a></li>
+<li><a href="#coop-credentials-agent-account-rm-remove-a-saved-account">coop credentials &lt;agent&gt; &lt;account&gt; rm</a></li>
+<li><a href="#coop-credentials-agent-account-show-an-account">coop credentials &lt;agent&gt; &lt;account&gt;</a></li>
+<li><a href="#coop-models-list-models-available-to-each-agent">coop models</a></li>
+<li><a href="#coop-usage-show-limits-and-a-30-day-api-estimate">coop usage</a></li>
+<li><a href="#coop-presets-init-create-a-preset-you-can-edit">coop presets init</a></li>
+<li><a href="#coop-presets-configure-multiple-models-and-providers-to-work-together">coop presets</a></li>
+<li><a href="#coop-tasks-manage-work-in-agenttasks">coop tasks</a></li>
+<li><a href="#coop-tasks-ls-list-tasks-and-their-progress">coop tasks ls</a></li>
+<li><a href="#coop-tasks-add-create-a-task-for-you-or-an-agent">coop tasks add</a></li>
+<li><a href="#coop-tasks-claim-take-responsibility-for-a-task">coop tasks claim</a></li>
+<li><a href="#coop-tasks-release-return-a-task-to-the-queue-for-another-agent">coop tasks release</a></li>
+<li><a href="#coop-tasks-lease-reserve-a-task-while-work-is-running">coop tasks lease</a></li>
+<li><a href="#coop-tasks-block-pause-a-task-that-needs-a-decision">coop tasks block</a></li>
+<li><a href="#coop-tasks-unblock-record-a-decision-and-return-a-task-to-todo">coop tasks unblock</a></li>
+<li><a href="#coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later">coop tasks park</a></li>
+<li><a href="#coop-tasks-done-move-completed-work-to-the-archive">coop tasks done</a></li>
+<li><a href="#coop-tasks-path-print-a-tasks-folder-path">coop tasks path</a></li>
+<li><a href="#coop-tasks-queues-print-task-queue-paths">coop tasks queues</a></li>
+<li><a href="#coop-tasks-decisions-show-questions-waiting-for-your-answer">coop tasks decisions</a></li>
+<li><a href="#coop-tasks-lint-check-task-files-for-missing-or-inconsistent-information">coop tasks lint</a></li>
+<li><a href="#coop-tasks-rm-permanently-delete-task-folders">coop tasks rm</a></li>
+<li><a href="#coop-tasks-watch-watch-task-progress">coop tasks watch</a></li>
+<li><a href="#coop-backlog-save-ideas-that-need-more-planning">coop backlog</a></li>
+<li><a href="#coop-backlog-ls-list-saved-ideas">coop backlog ls</a></li>
+<li><a href="#coop-backlog-add-save-an-idea-for-later">coop backlog add</a></li>
+<li><a href="#coop-backlog-promote-move-an-idea-to-the-task-queue">coop backlog promote</a></li>
+<li><a href="#coop-backlog-rm-permanently-delete-a-saved-idea">coop backlog rm</a></li>
+<li><a href="#coop-context-show-the-instructions-relevant-to-your-work">coop context</a></li>
+<li><a href="#coop-loop-let-agents-work-through-your-task-queue">coop loop</a></li>
+<li><a href="#coop-eval-check-whether-a-model-preset-or-loop-change-helped">coop eval</a></li>
+<li><a href="#coop-eval-run-preview-or-run-a-repeatable-evaluation">coop eval run</a></li>
+<li><a href="#coop-eval-runs-find-recorded-evaluation-results">coop eval runs</a></li>
+<li><a href="#coop-eval-inspect-understand-a-run-and-its-failures">coop eval inspect</a></li>
+<li><a href="#coop-eval-compare-compare-before-and-after-without-another-paid-run">coop eval compare</a></li>
+<li><a href="#coop-eval-ls-choose-a-shipped-starter-suite">coop eval ls</a></li>
+<li><a href="#coop-eval-init-create-a-custom-suite-you-can-edit">coop eval init</a></li>
+<li><a href="#coop-fork-let-an-agent-work-in-a-separate-copy-of-your-project">coop fork</a></li>
+<li><a href="#coop-fork-name-acp-use-an-existing-fork-from-an-acp-editor">coop fork &lt;name&gt; acp</a></li>
+<li><a href="#coop-fork-ls-show-forks-and-their-progress">coop fork ls</a></li>
+<li><a href="#coop-fork-review-inspect-a-fork-before-merging">coop fork review</a></li>
+<li><a href="#coop-fork-merge-bring-a-forks-commits-into-your-current-branch">coop fork merge</a></li>
+<li><a href="#coop-fork-rm-delete-a-fork-and-its-local-work">coop fork rm</a></li>
+<li><a href="#coop-fork-stop-stop-a-forks-background-loop">coop fork stop</a></li>
+<li><a href="#coop-fork-logs-show-a-forks-loop-output">coop fork logs</a></li>
+<li><a href="#coop-fork-path-print-a-forks-folder-path">coop fork path</a></li>
+<li><a href="#coop-fork-open-open-a-fork-in-your-editor">coop fork open</a></li>
+<li><a href="#coop-up-start-this-projects-services">coop up</a></li>
+<li><a href="#coop-down-stop-this-projects-services">coop down</a></li>
+<li><a href="#coop-doctor-check-that-the-boxs-isolation-works">coop doctor</a></li>
+<li><a href="#coop-approve-review-and-approve-this-projects-requested-access">coop approve</a></li>
+<li><a href="#coop-net-control-network-access-and-see-what-happened">coop net</a></li>
+<li><a href="#coop-net-runs-show-recorded-network-runs">coop net runs</a></li>
+<li><a href="#coop-net-inspect-show-a-runs-connections-and-blocked-traffic">coop net inspect</a></li>
+<li><a href="#coop-net-check-check-whether-network-rules-allow-a-connection">coop net check</a></li>
+<li><a href="#coop-net-blocked-find-blocked-connections-and-how-to-allow-them">coop net blocked</a></li>
+<li><a href="#coop-net-watch-follow-a-runs-network-activity">coop net watch</a></li>
+<li><a href="#coop-net-export-export-a-runs-network-record">coop net export</a></li>
+<li><a href="#coop-net-forget-withdraw-this-projects-network-approval">coop net forget</a></li>
+<li><a href="#coop-net-setup-prepare-this-host-for-filtered-networking">coop net setup</a></li>
+<li><a href="#coop-net-recover-clean-up-interrupted-network-runs">coop net recover</a></li>
+<li><a href="#coop-check-secrets-check-project-files-for-exposed-secrets">coop check-secrets</a></li>
+<li><a href="#coop-sign-sign-this-branchs-unpushed-commits-with-your-host-key">coop sign</a></li>
+<li><a href="#coop-init-set-up-coop-in-this-project">coop init</a></li>
+<li><a href="#coop-build-build-the-coop-box-image">coop build</a></li>
+<li><a href="#coop-update-update-coop-and-rebuild-the-box-image">coop update</a></li>
+<li><a href="#coop-version-print-the-installed-coop-version">coop version</a></li>
+<li><a href="#coop-acp-connect-your-editor-to-an-agent-running-in-a-coop-box">coop acp</a></li>
+<li><a href="#coop-sessions-let-other-applications-start-and-manage-agents">coop sessions</a></li>
+<li><a href="#coop-sessions-doctor-check-the-local-session-service">coop sessions doctor</a></li>
+<li><a href="#coop-sessions-check-see-whether-this-build-can-use-the-session-data-as-it-is">coop sessions check</a></li>
+<li><a href="#coop-sessions-quiescence-inspect-queued-and-running-work-before-a-restart">coop sessions quiescence</a></li>
+<li><a href="#coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage">coop sessions compact</a></li>
+<li><a href="#coop-sessions-connect-run-a-worker-for-a-remote-controller">coop sessions connect</a></li>
+<li><a href="#coop-prompt-print-a-short-project-status-for-your-shell-or-tmux">coop prompt</a></li>
+<li><a href="#coop-completion-print-shell-integration-for-bash-or-zsh">coop completion</a></li>
 </ul></nav>
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
@@ -1844,18 +1889,12 @@ WHAT IT COMPLETES
   Commands, options, agents, models, accounts, presets, forks, and task IDs.
 </code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
 </section>
-        <nav class="reference-related" aria-label="Related guides">
-          <h2>Related guides</h2>
-          <ul class="reference-list" role="list"><li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
-<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
-<li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
-</ul>
-          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
-        </nav>
+        <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="evals.html"><span>Previous</span>Evaluations</a><a class="docs-pager-next" href="configuration.html"><span>Next</span>Configuration</a></nav>
         <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/cli.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

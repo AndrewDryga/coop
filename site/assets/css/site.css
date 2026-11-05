@@ -89,7 +89,7 @@ main:focus { outline: none; }
 .brand .brand-wordmark { width: var(--wordmark-width); height: auto; }
 .nav-links { display: flex; align-items: center; gap: 32px; }
 .nav-links > a:not(.button) { display: inline-flex; align-items: center; min-height: 44px; color: var(--body); font-size: 1rem; font-weight: 500; text-decoration: none; }
-.nav-links > a[aria-current="page"] { color: var(--text); }
+.nav-links > a[aria-current] { color: var(--text); }
 @media (hover: hover) { .brand:hover { color: var(--text); } .nav-links > a:not(.button):hover { color: var(--text); } }
 
 /* The story. The hero is its first step. On wide screens the picture stays pinned beside the
@@ -508,25 +508,56 @@ main:focus { outline: none; }
    One spacing scale on 8px: prose 24px apart; every block (code, command lists, files, terminals,
    boxes, callouts, tables) 32px clear of what's around it; a subheading 48px under the text above
    it and 16px over its own. */
-.docs { --flow: 24px; --block: 32px; display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 64px; }
-.docs-side { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; padding: 32px 0 48px; }
-.docs-side summary { color: var(--text); font-weight: 600; list-style: none; pointer-events: none; }
+.docs { --flow: 24px; --block: 32px; display: contents; }
+/* The frame, the same on every docs page: the menu, the article and this page's contents in three
+   columns across the whole page. The menu shares the logo's left edge, the contents share Install's
+   right edge, and the article sits centered with air on both sides. The side columns are small and
+   quiet, and look different from each other because they do different jobs: the menu is plain text
+   with the current page in a soft wash, the contents hang on a thin line. Below 1280px the contents
+   fold above the article; below 1024px the menu becomes a bar pinned to the top of the screen. */
+body:has(.docs-shell) .wrap { width: min(93rem, 100% - 2 * var(--gutter)); }
+.docs-shell { --rail: clamp(13rem, 16.5vw, 15rem); display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); column-gap: 48px; }
+.docs-page { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); grid-template-rows: auto 1fr; column-gap: 48px; min-width: 0; padding-top: 48px; }
+.docs-page > .guide-hero { grid-column: 1; width: 100%; max-width: 44rem; margin-inline: auto; }
+/* the menu */
+.docs-rail { position: sticky; top: -16px; align-self: start; padding-top: 48px; }
+.docs-search-open { display: flex; align-items: center; gap: 10px; width: calc(100% + 24px); height: 38px; margin-inline: -12px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--muted); font: 400 0.9375rem/1 var(--sans); cursor: pointer; transition: color 160ms var(--ease), border-color 160ms var(--ease); }
+.docs-search-open[hidden] { display: none; }
+.docs-search-open .icon { width: 16px; height: 16px; margin-left: -2px; }
+.docs-search-open kbd { margin-left: auto; color: var(--dim); font: inherit; font-size: 0.8125rem; }
+@media (hover: hover) { .docs-search-open:hover { border-color: rgb(255 255 255 / 24%); color: var(--text); } }
+@media (hover: none) { .docs-search-open kbd { display: none; } }
+.docs-nav > summary { display: none; }
+/* the list scrolls below search. It's sized for the column once the header has scrolled away, and the fade says there's more. */
+.docs-nav > nav { max-height: calc(100vh - 86px); margin: 4px -14px 0; padding: 0 14px 32px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 32px), transparent); }
+@media (hover: hover) { .docs-nav > nav:hover { scrollbar-color: var(--line) transparent; } }
+.docs-nav-group { margin-top: 24px; margin-bottom: 6px; color: var(--muted); font-size: 0.875rem; font-weight: 500; line-height: 20px; }
+.docs-nav ul ul a { padding-left: 24px; }
+.docs-nav a { display: block; margin-inline: -12px; padding: 5px 12px; border-radius: 8px; color: var(--body); font-size: 0.9375rem; line-height: 22px; text-decoration: none; transition: color 160ms var(--ease), background-color 160ms var(--ease); }
+.docs-nav a[aria-current] { background: rgb(255 255 255 / 7%); color: var(--text); font-weight: 500; }
+.docs-nav a:focus-visible { outline-offset: -2px; }
+.docs-nav .go { color: var(--dim); }
+@media (hover: hover) { .docs-nav a:hover { background: rgb(255 255 255 / 4%); color: var(--text); } }
+/* the page's contents */
+.docs-side { position: sticky; top: 32px; grid-column: 2; grid-row: 1 / span 2; align-self: start; max-height: calc(100vh - 48px); margin-left: -6px; padding: 0 0 32px 6px; overflow-y: auto; font-size: 0.875rem; line-height: 20px; scrollbar-width: thin; scrollbar-color: transparent transparent; mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); }
+@media (hover: hover) { .docs-side:hover { scrollbar-color: var(--line) transparent; } }
+.docs-side summary { position: sticky; top: 0; z-index: 1; padding-bottom: 12px; background: linear-gradient(var(--bg) 70%, transparent); color: var(--text); font-weight: 500; list-style: none; pointer-events: none; }
 .docs-side summary::-webkit-details-marker { display: none; }
-.side-group { margin-top: 24px; color: var(--muted); font-weight: 600; }
+.side-group { margin-top: 20px; color: var(--muted); font-weight: 500; }
 /* with the script, a group's name is a button and only one group is open at a time */
-.side-group:has(button) { margin-top: 8px; }
+.side-group:has(button) { margin-top: 4px; }
+.side-group:first-child:has(button) { margin-top: 0; }
 .side-group button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.side-group button::after { content: ""; width: 7px; height: 7px; margin-right: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: -45deg; transition: rotate 160ms var(--ease); }
+.side-group button::after { content: ""; width: 6px; height: 6px; margin-right: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: -45deg; transition: rotate 160ms var(--ease); }
 .side-group button[aria-expanded="true"] { color: var(--text); }
 .side-group button[aria-expanded="true"]::after { rotate: 45deg; translate: 0 -2px; }
 @media (hover: hover) { .side-group button:hover { color: var(--text); } }
-.docs-side ul { margin-top: 8px; }
-.docs-side a { display: block; padding: 4px 0 4px 16px; border-left: 1px solid var(--divider); color: var(--body); line-height: 1.5; text-decoration: none; }
+.docs-side ul { margin-top: 4px; }
+.docs-side a { display: block; padding: 6px 0 6px 16px; border-left: 1px solid var(--divider); color: var(--muted); text-decoration: none; transition: color 160ms var(--ease), border-color 160ms var(--ease); }
 .docs-side a[aria-current] { border-left-color: var(--text); color: var(--text); }
 @media (hover: hover) { .docs-side a:hover { color: var(--text); } }
-.docs-main { width: 100%; max-width: 42rem; min-width: 0; margin-inline: auto; padding-top: 32px; font-size: 1.125rem; line-height: 1.7778; }
-.docs-main > h1 { font-size: clamp(2.5rem, 1.9rem + 2vw, 3.25rem); }
-.docs-main > .lead { margin-top: var(--flow); }
+.docs-main { grid-column: 1; width: 100%; max-width: 44rem; min-width: 0; margin: 48px auto 0; font-size: 1.125rem; line-height: 1.7778; }
+.docs-main > .doc-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .doc-section { margin-top: 64px; padding-top: 64px; border-top: 1px solid var(--divider); }
 .doc-section h2 { font-size: clamp(1.75rem, 1.3rem + 1.2vw, 2.25rem); line-height: 1.2; letter-spacing: -0.03em; }
 .doc-section h3 { font-size: 1.5rem; line-height: 1.3333; letter-spacing: -0.015em; }
@@ -576,10 +607,9 @@ main:focus { outline: none; }
 
 /* Walkthroughs: a page-wide introduction anchors the contents and instructions below.
    The reference docs keep their existing layout; these additions belong to the guides. */
-.guide { padding-top: 48px; }
 .guide-hero { padding-bottom: 40px; border-bottom: 1px solid var(--divider); }
 .guide-intro { max-width: 48rem; }
-.guide-eyebrow { margin-bottom: 24px; font-size: 0.875rem; }
+.guide-eyebrow { display: none; margin-bottom: 24px; font-size: 0.875rem; }
 .guide-eyebrow a { color: var(--body); text-decoration: none; }
 .guide-hero h1 { font-size: clamp(2.5rem, 1.9rem + 2vw, 3.25rem); }
 .guide-lead { margin-top: 20px; font-size: 1.25rem; line-height: 1.6; }
@@ -588,17 +618,15 @@ main:focus { outline: none; }
 .guide-prerequisites ul { margin-top: 8px; padding-left: 1.25em; list-style: disc; }
 .guide-prerequisites li + li { margin-top: 4px; }
 .guide-prerequisites li::marker { color: var(--muted); }
-.guide-body { margin-top: 48px; }
-.guide .docs-side { padding-top: 0; top: 32px; max-height: calc(100vh - 64px); }
-.guide .docs-side ol { margin-top: 16px; }
-.guide .docs-side a { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 12px; min-height: 44px; padding: 10px 12px; font-size: 0.9375rem; }
-.guide .docs-side a > span { color: var(--muted); font: 400 0.8125rem/1.75 var(--mono); }
-.guide .docs-side a[aria-current] { background: var(--surface); }
-.guide-toc-group { margin-top: 24px; }
-.guide-toc-group > h2 { color: var(--text); font-size: 0.9375rem; font-weight: 600; line-height: 1.5; letter-spacing: 0; }
-.guide-toc-feature > h3 { margin-top: 16px; color: var(--muted); font-size: 0.8125rem; font-weight: 500; line-height: 1.5; letter-spacing: 0; }
-.guide .docs-side .guide-toc-group ol { margin-top: 8px; }
-.guide .docs-main { padding-top: 0; }
+.guide .docs-side ol { margin-top: 4px; }
+.guide .docs-side a { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 10px; }
+.guide .docs-side a > span { color: var(--dim); font: 400 0.75rem/20px var(--mono); }
+.guide .docs-side a[aria-current] > span { color: var(--muted); }
+.guide-toc-group { margin-top: 20px; }
+.guide-toc-group:first-child { margin-top: 0; }
+.guide-toc-group > h2 { color: var(--muted); font-size: 0.875rem; font-weight: 500; line-height: 20px; letter-spacing: 0; }
+.guide .docs-side .guide-toc-group > ol, .guide .docs-side .guide-toc-feature:first-of-type > ol { margin-top: 4px; }
+.guide .docs-side .guide-toc-feature > ol { margin-top: 0; }
 .guide-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .guide-section h2 { display: flex; align-items: baseline; gap: 16px; }
 .guide-step { flex: none; color: var(--muted); font: 400 1rem/1.5 var(--mono); letter-spacing: 0; }
@@ -651,17 +679,6 @@ main:focus { outline: none; }
 .guide-detail[open] summary::after { content: "−"; }
 .guide-detail > div { padding-bottom: 24px; }
 .guide-detail > div > * + * { margin-top: 16px; }
-.guide-next { display: grid; justify-items: start; gap: 12px; margin-top: 64px; padding-block: 32px; border-top: 1px solid var(--line); text-decoration: none; }
-.guide-next > span:nth-child(2) { font-size: 1.5rem; font-weight: 600; line-height: 1.35; letter-spacing: -0.015em; }
-.guide-next small { color: var(--body); font-size: 1rem; }
-@media (max-width: 1023px) {
-  .guide { max-width: 42rem; padding-top: 32px; }
-  .guide-hero { padding-bottom: 32px; }
-  .guide-body { margin-top: 32px; }
-  .guide .docs-side { top: auto; max-height: none; margin-top: 0; }
-  .guide .docs-side ol { margin-top: 0; }
-  .guide .docs-main { padding-top: 32px; }
-}
 @media (max-width: 640px) {
   .guide-eyebrow { margin-bottom: 20px; }
   .guide-lead { font-size: 1.125rem; }
@@ -675,21 +692,21 @@ main:focus { outline: none; }
   .guide .terminal-example { border: 1px solid CanvasText; }
   .guide .terminal-example :is(.cmds, pre.code) { border: 0; }
   .guide-checkpoint { border-color: Highlight; }
-  .guide-hero, .guide-example, .guide-detail, .guide-next { border-color: CanvasText; }
+  .guide-hero, .guide-example, .guide-detail, .docs-pager { border-color: CanvasText; }
   .guide-checklist li::before { border-color: CanvasText; }
 }
 @media print {
-  .guide .docs-side, .guide .copy { display: none; }
-  .guide-body { display: block; }
+  body:has(.docs-shell) .wrap, .docs-shell, .docs-page { display: block; width: auto; }
+  .docs-rail, .docs-side, .docs-pager, .guide .copy { display: none; }
   .guide-intro { max-width: none; }
   .guide .docs-main { max-width: none; }
 }
 
 /* Generated reference pages keep the source's tables and code readable at every width. */
-.reference .docs-main { max-width: 48rem; }
-.reference .docs-side a { display: block; min-height: 36px; padding: 6px 12px; }
-.reference .docs-side .reference-subsection a { padding-left: 24px; font-size: 0.875rem; }
-.reference .docs-side ul { margin-top: 16px; }
+.reference .docs-side a { display: block; }
+.reference .docs-side .reference-subsection a { padding-left: 28px; color: var(--dim); }
+.reference .docs-side .reference-subsection a[aria-current] { color: var(--text); }
+@media (hover: hover) { .reference .docs-side .reference-subsection a:hover { color: var(--text); } }
 .reference-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .reference-section > .sr-only + * { margin-top: 0; }
 .reference-content h4 { margin-top: 32px; color: var(--text); font-size: 1.125rem; font-weight: 600; }
@@ -720,18 +737,95 @@ main:focus { outline: none; }
 .reference-example pre.code { background: none; }
 .reference-content .code-file pre.code { min-width: 0; grid-row: 3; }
 .reference-content .code-file > .reference-scroll-hint { grid-row: 2; }
-.docs-library-link { margin-top: 16px; }
 .reference-list { display: grid; gap: 24px; padding-left: 0 !important; list-style: none !important; }
 .reference-list > li + li { margin-top: 0 !important; }
 .reference-list a { font-weight: 600; }
 .reference-list p { margin-top: 4px; font-size: 1rem; line-height: 1.6; }
-.reference-related { margin-top: 64px; padding-top: 32px; border-top: 1px solid var(--divider); }
-.reference-related h2 { font-size: 1.5rem; }
-.reference-related > * + * { margin-top: 24px; }
-.reference-related > a { display: inline-block; }
-.reference-source { margin-top: 32px; font-size: 0.875rem; }
+.reference-source { font-size: 0.875rem; }
+.reference-source a { color: var(--muted); }
+/* the page before and after this one, in reading order */
+.docs-pager { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 64px; padding-block: 32px; border-top: 1px solid var(--divider); }
+.docs-pager a { color: var(--text); font-size: 1.125rem; font-weight: 500; line-height: 1.4; text-decoration: none; }
+.docs-pager span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 0.875rem; font-weight: 400; line-height: 20px; }
+.docs-pager-previous span::before { content: "← " / ""; }
+.docs-pager-next { grid-column: 2; text-align: right; }
+.docs-pager-next span::after { content: " →" / ""; }
+@media (hover: hover) { .docs-pager a:hover { color: var(--cyan-hover); } }
+/* where a section's topic goes further */
+.doc-more a { text-underline-offset: 4px; }
+/* The docs' search: a dialog over the page, opened by the button in the menu, / or Cmd-K. */
+.docs-search { width: min(40rem, 100% - 2 * var(--gutter)); max-height: min(80vh, 40rem); margin: 10vh auto auto; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--raised); color: var(--body); }
+.docs-search[open] { display: flex; flex-direction: column; }
+.docs-search::backdrop { background: rgb(0 0 0 / 60%); }
+html:has(.docs-shell) { scrollbar-gutter: stable; }
+html:has(.docs-search[open]) { overflow: hidden; }
+.docs-search-field { display: flex; flex: none; align-items: center; gap: 12px; padding-inline: 16px; border-bottom: 1px solid var(--line); }
+.docs-search-field:focus-within { outline: 2px solid var(--cyan); outline-offset: -2px; border-radius: 16px 16px 0 0; }
+.docs-search-field .icon { flex: none; width: 20px; height: 20px; color: var(--muted); }
+.docs-search-field input { flex: 1; min-width: 0; height: 56px; border: 0; outline: 0; background: none; color: var(--text); font: 400 1.125rem/1.5 var(--sans); }
+.docs-search-field input::placeholder { color: var(--muted); opacity: 1; }
+.docs-search-field input::-webkit-search-cancel-button { display: none; }
+.docs-search-close { display: grid; flex: none; place-items: center; width: 44px; height: 44px; margin-right: -12px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+.docs-search-close .icon { width: 18px; height: 18px; color: inherit; }
+@media (hover: hover) { .docs-search-close:hover { color: var(--text); } }
+.docs-search-status { flex: none; padding: 12px 20px; color: var(--muted); }
+.docs-search-status:empty { display: none; }
+.docs-search-results { overflow-y: auto; padding: 0 8px 8px; }
+.docs-search-results a { display: block; padding: 10px 12px; border-radius: 8px; color: var(--body); line-height: 1.5; text-decoration: none; }
+.docs-search-results a:is(:hover, :focus) { background: rgb(255 255 255 / 6%); color: var(--body); }
+.docs-search-results a:focus-visible { outline-offset: -2px; }
+.docs-search-where, .docs-search-heading, .docs-search-snippet { display: block; }
+.docs-search-where { color: var(--muted); font-size: 0.875rem; }
+.docs-search-heading { color: var(--text); font-weight: 600; }
+.docs-search-snippet { margin-top: 2px; font-size: 0.9375rem; overflow-wrap: anywhere; }
+.docs-search mark { border-radius: 3px; background: rgb(98 211 240 / 18%); color: var(--text); }
+/* below 1280px: no room for three columns, so the contents fold into a box above the article */
+@media (max-width: 1279px) {
+  .docs-shell { --rail: 15rem; }
+  .docs-page { display: block; }
+  .docs-side, .guide .docs-side { position: static; width: 100%; max-width: 44rem; max-height: none; margin: 0 auto; padding: 0; overflow: visible; border-bottom: 1px solid var(--divider); font-size: 1rem; line-height: 1.5; mask-image: none; }
+  .docs-side summary { position: static; display: flex; align-items: center; justify-content: space-between; min-height: 3.25rem; padding: 0; background: none; color: var(--body); font-weight: 500; cursor: pointer; pointer-events: auto; }
+  .docs-side summary::after { content: ""; width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px; }
+  .docs-side[open] summary::after { rotate: 225deg; translate: 0 2px; }
+  .docs-side nav { padding-bottom: 20px; }
+  .side-group:first-child:has(button) { margin-top: 8px; }
+  .docs-side a { padding-block: 8px; color: var(--body); }
+  .guide .docs-side a > span { line-height: 24px; }
+  .docs-page > .guide-hero { padding-bottom: 32px; }
+  .docs-main { margin-top: 32px; }
+}
 @media (max-width: 1023px) {
-  .reference .docs-side ul { margin-top: 0; }
+  html:has(.docs-shell) { scroll-padding-top: 76px; }
+  .docs-shell { display: block; }
+  /* 720px lines up with the logo and Install on a tablet; wider than that it's centered */
+  .docs-page { max-width: 45rem; margin-inline: auto; padding-top: 32px; }
+  .docs-page > .guide-hero, .docs-main, .docs-side, .guide .docs-side { max-width: none; }
+  .guide-eyebrow { display: block; }
+  /* search and the menu: a bar, which stays on screen with the script and opens the menu over the page */
+  .docs-rail { position: static; display: flex; align-items: flex-start; gap: 8px; padding-top: 8px; }
+  .docs-search-open { order: 2; flex: none; width: auto; height: 2.75rem; margin: 0; padding: 0 16px; border: 0; border-radius: 12px; background: var(--surface); color: var(--text); font-size: 1rem; }
+  .docs-search-open kbd { display: none; }
+  .docs-nav { flex: 1; min-width: 0; }
+  .docs-nav > summary { display: flex; align-items: center; justify-content: space-between; height: 2.75rem; padding: 0 20px; border-radius: 12px; background: var(--surface); color: var(--text); font-weight: 600; cursor: pointer; list-style: none; }
+  .docs-nav > summary::-webkit-details-marker { display: none; }
+  .docs-nav > summary::after { content: ""; width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px; }
+  .docs-nav[open] > summary::after { rotate: 225deg; translate: 0 2px; }
+  .docs-nav > nav { max-height: none; margin: 0; padding: 8px 0 16px; overflow: visible; mask-image: none; }
+  .docs-nav a { display: flex; align-items: center; min-height: 44px; padding-block: 0; font-size: 1rem; }
+  .docs-nav ul ul a { padding-left: 24px; }
+  .docs-js .docs-rail { position: sticky; top: 0; z-index: 10; margin-inline: calc(-1 * var(--gutter)); padding: 8px max(var(--gutter), calc(50vw - 22.5rem)); border-bottom: 1px solid transparent; background: var(--bg); }
+  .docs-js .docs-rail.stuck { border-bottom-color: var(--divider); }
+  /* short enough to fit below the site's header, at the top of the page too */
+  .docs-js .docs-nav > nav { position: absolute; inset: 100% 0 auto; max-height: calc(100vh - 140px); max-height: calc(100svh - 140px); padding: 0 max(var(--gutter), calc(50vw - 22.5rem)) 24px; overflow-y: auto; border-bottom: 1px solid var(--line); background: var(--raised); }
+  .docs-js .docs-nav[open]::before { content: ""; position: fixed; inset: 0; z-index: -1; background: rgb(0 0 0 / 50%); }
+  .docs-search { margin-top: 8px; max-height: calc(100vh - 16px); max-height: calc(100svh - 16px); }
+}
+@media (forced-colors: active) {
+  .docs-nav a[aria-current] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .docs-nav > summary, .docs-search-open { border: 1px solid ButtonText; }
+}
+@media (forced-colors: active) and (max-width: 1023px) {
+  .docs-js .docs-nav > nav { border: 1px solid CanvasText; }
 }
 
 /* Motion. With the script running, pinned beside the text on wide screens (.js-story) or as the
@@ -811,13 +905,6 @@ main:focus { outline: none; }
 /* without the script, wide screens show both attack chapters as plain lists: keep a break between them */
 @media (min-width: 1024px) { html:not(.js-story) .step-group + .step-group { margin-top: 96px; } }
 @media (max-width: 1023px) {
-  .docs { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .docs-side { position: static; width: 100%; max-width: 42rem; max-height: none; overflow: visible; margin: 16px auto 0; padding: 0; border-radius: 12px; background: var(--surface); }
-  .docs-side summary { display: flex; align-items: center; justify-content: space-between; min-height: 3.25rem; padding: 0 20px; cursor: pointer; pointer-events: auto; }
-  .docs-side summary::after { content: ""; width: 8px; height: 8px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px; }
-  .docs-side[open] summary::after { rotate: 225deg; translate: 0 2px; }
-  .docs-side nav { padding: 0 20px 20px; }
-  .docs-side .side-group:first-child { margin-top: 8px; }
   .story { display: block; }
   .story-lead { min-height: 0; padding-block: 32px 0; }
   .stage { position: static; height: auto; margin-top: 48px; place-items: start; }

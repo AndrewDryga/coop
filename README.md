@@ -62,40 +62,7 @@ co:op runs on macOS and Linux with Docker. The `coop` binary is static.
 To build from source, run `git clone https://github.com/AndrewDryga/coop && cd coop && make install`.
 
 <a name="verifying-a-download"></a>
-<details><summary>Verifying a download</summary>
-
-The one-line command runs `install.sh` from the `main` branch, served by GitHub Pages at
-coop.dryga.com. You can also fetch the script from
-`https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh`.
-
-The script downloads the release's `checksums.txt` and checks the archive against it with
-`sha256sum` or `shasum`. It stops if the checksum file or the tool is missing.
-
-If [cosign](https://github.com/sigstore/cosign) is installed, the script also verifies that the
-checksum file came from the release workflow for that tag.
-
-To verify before you run any project code, download the release files by hand. Set `VER` to a tag
-from the [releases page](https://github.com/AndrewDryga/coop/releases), and change
-`darwin_arm64` if you use another platform:
-
-```bash
-VER=vX.Y.Z
-ASSET="coop_${VER#v}_darwin_arm64.tar.gz"
-base="https://github.com/AndrewDryga/coop/releases/download/$VER"
-curl -fsSLO "$base/$ASSET"
-curl -fsSLO "$base/checksums.txt"
-curl -fsSLO "$base/checksums.txt.bundle"
-
-# 1. checksums.txt is signed by the release workflow (keyless Sigstore):
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.bundle \
-  --certificate-identity "https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/$VER" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-
-# 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
-awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
-```
-</details>
+To check a download yourself, follow [Verifying a download](https://coop.dryga.com/install.html#verifying-a-download).
 
 ## Updating
 
@@ -112,7 +79,7 @@ coop claude                # 4. start the agent in the box
 ```
 
 `coop init` sets up the task queue, hooks, shared instructions and skills, and the
-selected [agent directories](docs/agents.md#instructions). It configures the agents you're signed
+selected [agent directories](https://coop.dryga.com/agents.html#instructions). It configures the agents you're signed
 in to, so sign in first.
 
 Each agent starts with its own "don't stop to ask" flag on (`--dangerously-skip-permissions`,
@@ -121,7 +88,7 @@ Each agent starts with its own "don't stop to ask" flag on (`--dangerously-skip-
 An agent that goes off the rails works on the repo you gave it, which you can restore from Git. The
 rest of your computer stays out of reach. You can also use `coop fork` to give the agent its own
 copy of your repo, so you can keep working in yours without risking your local changes. See
-[forks](docs/forks.md).
+[forks](https://coop.dryga.com/forks.html).
 
 Arguments after the agent's name go to the agent, so `coop claude --continue` resumes Claude's last
 session in the box. On every agent, `-p "…"` runs one prompt and exits.
@@ -155,8 +122,8 @@ coop run -- npm test                          # any command in the box
 `coop doctor` checks secret hiding, host access, credential isolation and offline networking
 against the real box on your computer. `coop net setup` checks that this computer can enforce
 filtered networking, and the first filtered run does that check for you. Read more in
-[the guide](https://coop.dryga.com/docs.html#sandbox), [the box](docs/box.md) and
-[networking](docs/networking.md).
+[the guide](https://coop.dryga.com/docs.html#sandbox), [the box](https://coop.dryga.com/box.html) and
+[networking](https://coop.dryga.com/networking.html).
 
 ## Hand off the work
 
@@ -175,7 +142,7 @@ coop tasks add "Add a /health endpoint" \
 coop loop claude
 ```
 
-See [the loop](docs/loop.md).
+See [the loop](https://coop.dryga.com/loop.html).
 
 ### Forks
 
@@ -189,7 +156,7 @@ coop fork review api --stat       # its commits and changed files
 coop fork merge api               # rebase, run your checks, merge
 ```
 
-See [forks](docs/forks.md).
+See [forks](https://coop.dryga.com/forks.html).
 
 ### Accounts, models and presets
 
@@ -200,10 +167,10 @@ in the target, as in `coop claude:opus/xhigh@work`.
 A preset is a team of models in one file: a lead, its fallbacks, and the roles it consults or hands
 work to. `coop presets init` writes a starter team you can change, and `coop loop frontier` runs it.
 
-See [agents, accounts and presets](docs/agents.md).
+See [agents, accounts and presets](https://coop.dryga.com/agents.html).
 
 `coop usage` shows your account limits and estimates your usage from activity on this computer.
-Optional [provider reports](docs/usage-reports.md) show API spend separately.
+Optional [provider reports](https://coop.dryga.com/usage-reports.html) show API spend separately.
 
 ## Your project's tools and services
 
@@ -214,7 +181,7 @@ the box, each in its own container. With filtered networking they share a privat
 no direct internet. `coop up` starts them, `coop down` stops them and keeps their data, and
 `coop down --delete-volumes` also deletes their data.
 
-See [the box](docs/box.md).
+See [the box](https://coop.dryga.com/box.html).
 
 ## Editors, MCP and your own platform
 
@@ -223,7 +190,7 @@ Define MCP servers once, outside your repo, and co:op makes them available to ev
 agent. You can also connect co:op workers to your own platform, which hands out the jobs. Models
 never see your GitHub credentials.
 
-See [editors, MCP and controllers](docs/integrations.md) and the [session API](docs/session-api.md).
+See [editors, MCP and controllers](https://coop.dryga.com/integrations.html) and the [session API](https://coop.dryga.com/session-api.html).
 
 ## Evaluations
 
@@ -235,17 +202,28 @@ which starts no container and spends nothing:
 coop eval run core codex --timeout 35m --dry-run
 ```
 
-See [evaluations](docs/evals.md).
+See [evaluations](https://coop.dryga.com/evals.html).
 
 ## Documentation
 
-- [The guide](https://coop.dryga.com/docs.html) covers every feature, start to finish.
-- Reference pages: [the box](docs/box.md), [agents, accounts and presets](docs/agents.md),
-  [forks](docs/forks.md), [the loop](docs/loop.md),
-  [editors, MCP and controllers](docs/integrations.md), [evaluations](docs/evals.md),
-  [configuration](docs/configuration.md), [networking](docs/networking.md),
-  [the session API](docs/session-api.md), and [every command](docs/cli.md).
-- Upgrading? Read [MIGRATING.md](MIGRATING.md) and the [changelog](CHANGELOG.md).
+[The docs](https://coop.dryga.com/docs.html) have a menu and search, and they cover every feature:
+
+- Get started: [overview](https://coop.dryga.com/docs.html), [install](https://coop.dryga.com/install.html),
+  [first sandbox run](https://coop.dryga.com/sandbox-guide.html) and
+  [first overnight run](https://coop.dryga.com/overnight-guide.html).
+- Sandbox: [files, images and services](https://coop.dryga.com/box.html) and
+  [networking](https://coop.dryga.com/networking.html).
+- Agents: [accounts, models and presets](https://coop.dryga.com/agents.html),
+  [editors and MCP](https://coop.dryga.com/integrations.html) and
+  [usage and billing](https://coop.dryga.com/usage-reports.html).
+- Hand off work: [task queues and loops](https://coop.dryga.com/loop.html),
+  [forks and review](https://coop.dryga.com/forks.html) and
+  [evaluations](https://coop.dryga.com/evals.html).
+- Reference: [commands](https://coop.dryga.com/cli.html),
+  [configuration](https://coop.dryga.com/configuration.html),
+  [the worker API](https://coop.dryga.com/session-api.html) and
+  [upgrading](https://coop.dryga.com/migrating.html).
+- What changed: [the changelog](CHANGELOG.md).
 - The background, in two write-ups:
   [Running an AI coding agent you can't trust](https://dryga.com/blog/untrusted-ai-coding-agent/)
   (the sandbox) and [One brain, two agents](https://dryga.com/blog/os-for-coding-agents/) (the

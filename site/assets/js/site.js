@@ -529,15 +529,16 @@ for (const frame of document.querySelectorAll(".reference-table, .reference-code
   if (document.fonts) document.fonts.ready.then(update);
 }
 
-// The docs: on wide screens the contents stay open beside the text and mark the section being read;
-// on narrow ones they fold into a box above it, which closes again once you pick a section.
+// The docs' contents: on wide screens they stay open beside the text and mark the section being read;
+// on narrower ones they fold into a box above it, which closes again once you pick a section.
 const side = document.querySelector(".docs-side");
 if (side) {
-  const fold = () => { side.open = wide.matches; };
-  wide.addEventListener("change", fold);
+  const besideText = matchMedia("(min-width: 1280px)");
+  const fold = () => { side.open = besideText.matches; };
+  besideText.addEventListener("change", fold);
   fold();
   const links = new Map([...side.querySelectorAll('a[href^="#"]')].map((link) => [link.hash.slice(1), link]));
-  for (const link of links.values()) link.addEventListener("click", () => { if (!wide.matches) side.open = false; });
+  for (const link of links.values()) link.addEventListener("click", () => { if (!besideText.matches) side.open = false; });
   // Only one group of the contents is open at a time, so the list stays shorter than a laptop's
   // window: the group holding the section being read, until you open another by its name.
   const groups = [...side.querySelectorAll(".side-group")].map((label, i) => {
@@ -570,11 +571,240 @@ if (side) {
         const group = groupOf(links.get(target.id));
         if (group !== readingGroup) show((readingGroup = group));
         // keep the marked entry in sight in the contents' own scroll, without moving the page
-        const link = links.get(target.id), item = link.getBoundingClientRect(), pane = side.getBoundingClientRect();
-        if (wide.matches && item.top < pane.top) side.scrollTop += item.top - pane.top;
-        else if (wide.matches && item.bottom > pane.bottom) side.scrollTop += item.bottom - pane.bottom;
+        if (!besideText.matches) continue;
+        const item = links.get(target.id).getBoundingClientRect(), pane = side.getBoundingClientRect();
+        // the list fades out over its last 32px, so stop short of that
+        const top = pane.top + side.querySelector("summary").offsetHeight, bottom = Math.min(pane.bottom, innerHeight) - 32;
+        if (item.top < top) side.scrollTop += item.top - top;
+        else if (item.bottom > bottom) side.scrollTop += item.bottom - bottom;
       }
     }, { rootMargin: "0px 0px -70% 0px" });
     for (const section of document.querySelectorAll(".doc-section[id], .reference-content h3[id]")) reading.observe(section);
   }
+}
+
+// The docs menu: a column on wide screens, always open. On narrower ones it opens over the page from
+// a bar at the top of the screen; a choice, Escape or a tap outside closes it again.
+const menu = document.querySelector(".docs-nav");
+if (menu) {
+  const rail = menu.parentElement, list = menu.querySelector("nav"), current = menu.querySelector("[aria-current]");
+  // keep this page's entry in sight in the list's own scroll, without moving the page: its group's
+  // name lands at the top of the list, so the list never opens on half a row
+  const showCurrent = () => {
+    if (!current || !menu.open) return;
+    const item = current.getBoundingClientRect(), pane = list.getBoundingClientRect(), bottom = Math.min(pane.bottom, innerHeight);
+    if (item.top >= pane.top && item.bottom <= bottom - 32) return;
+    const pages = current.parentElement.closest("li") ? current.parentElement.closest("li").closest("ul") : current.closest("ul");
+    list.scrollTop += pages.previousElementSibling.getBoundingClientRect().top - pane.top - 16;
+  };
+  const fold = () => {
+    menu.open = wide.matches;
+    showCurrent();
+  };
+  wide.addEventListener("change", fold);
+  fold();
+  menu.addEventListener("toggle", showCurrent);
+  // the bar shows its bottom edge only while it's pinned over the text
+  new IntersectionObserver(([entry]) => rail.classList.toggle("stuck", entry.intersectionRatio < 1), { rootMargin: "-1px 0px 0px 0px", threshold: 1 }).observe(rail);
+  menu.addEventListener("click", (event) => {
+    if (!wide.matches && (event.target === menu || event.target.closest("a"))) menu.open = false;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || wide.matches || !menu.open) return;
+    menu.open = false;
+    menu.querySelector("summary").focus();
+  });
+}
+
+// The docs' search runs here in the browser, over the generated index of every section. The index is
+// fetched the first time someone opens search. Without JavaScript the button stays hidden and the
+// menu still reaches every page.
+const searchButton = document.querySelector("[data-docs-search]");
+if (searchButton && window.HTMLDialogElement) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "docs-search";
+  dialog.setAttribute("aria-label", "Search the docs");
+  dialog.innerHTML = '<div class="docs-search-field"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>'
+    + '<input type="search" aria-label="Search the docs" placeholder="Search the docs" autocomplete="off" spellcheck="false" enterkeyhint="go">'
+    + '<button class="docs-search-close" type="button" aria-label="Close search"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>'
+    + '<p class="docs-search-status" role="status"></p><ul class="docs-search-results" role="list"></ul>';
+  document.body.append(dialog);
+  const input = dialog.querySelector("input"), status = dialog.querySelector("[role=status]"), results = dialog.querySelector("ul");
+  const plain = (text) => text.toLowerCase().replace(/’/g, "'");
+  let entries = null, averageLength = 1, loading = null;
+
+  // Words too common to say what someone is after, including what people call the docs themselves. A
+  // query of nothing else still searches for them.
+  const COMMON = new Set("a add an and are can do does doc docs documentation for from guide guides how i in is it manual my of on one or page pages run the three to tutorial two up use using what when where why with you your".split(" "));
+  // What readers type for what the docs say another way.
+  const ALSO = { setup: "set up", subcommand: "command", subcommands: "commands" };
+  const escaped = (word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A match starts at the beginning of a word, so "zed" isn't in "authorized", and ignores the word's
+  // ending, so "migration" finds "migrating". Typing "net" already finds "networking". A short root
+  // keeps its letters: "prove" must not become "prov", which is most of "provider".
+  const wordRoot = (word) => {
+    const single = word.length > 3 ? word.replace(/(?<=[sxz]|ch|sh)es$|s$/, "") : word;
+    const root = single.replace(/(?:ication|ation|ion|ing|ed)$/, "");
+    const stem = root.length >= 4 ? root : single;
+    return stem.length >= 6 ? stem.replace(/[ey]$/, "") : stem;
+  };
+  const termsOf = (query) => {
+    const words = query.split(/\s+/).flatMap((word) => (ALSO[word] ?? word).split(" "));
+    const meaningful = words.filter((word) => !COMMON.has(word));
+    return (meaningful.length ? meaningful : words).map((word) => ({
+      root: wordRoot(word),
+      start: new RegExp("(?<![a-z0-9])" + escaped(wordRoot(word)), "g"),
+      whole: new RegExp("(?<![a-z0-9])" + escaped(word) + "(?![a-z0-9])"),
+    }));
+  };
+  // BM25, the usual ranking for text search: a rare word counts for more than a common one, and saying
+  // a word more often counts for more, less so in a long section. A heading counts for much more
+  // than the text. A section with every word beats one with only some, and one with some still shows,
+  // since nobody knows which words the docs use. A page named by the query comes first, then a command
+  // it names. Upgrade notes describe old versions, the worker API is for integrators, the overview
+  // summarizes, and the command and settings references mention every topic in passing, so the pages
+  // about the topic come before them.
+  const rank = (terms, query) => {
+    const rows = entries.map((entry) => ({ entry, points: 0, matched: 0, titled: false }));
+    for (const term of terms) {
+      const counts = entries.map((entry) => entry.lowText.match(term.start)?.length ?? 0);
+      const having = counts.filter(Boolean).length;
+      const rarity = Math.log(1 + (entries.length - having + 0.5) / (having + 0.5));
+      rows.forEach((row, i) => {
+        const inHeading = row.entry.lowHeading.search(term.start) >= 0, inPage = row.entry.lowPage.search(term.start) >= 0;
+        if (!counts[i] && !inHeading && !inPage) return;
+        const said = counts[i] * 2.2 / (counts[i] + 1.2 * (0.25 + 0.75 * row.entry.lowText.length / averageLength));
+        const titled = term.whole.test(row.entry.lowHeading) ? 6 : inHeading ? 3 : 0;
+        row.points += rarity * (said + titled + (inPage ? 3 : 0));
+        row.titled ||= inHeading;
+        row.matched++;
+      });
+    }
+    for (const row of rows) {
+      const { entry } = row;
+      row.points *= (row.matched / terms.length) ** 2;
+      if (entry.lowHeading === query) row.points += 60;
+      else if (entry.lowHeading.startsWith(query) || entry.lowHeading.startsWith("coop " + query)) row.points += 20;
+      else if (entry.lowHeading.includes(query)) row.points += 10;
+      if (entry.lowText.includes(query)) row.points += 3;
+      if (!entry.url.includes("#") && terms.every((term) => (entry.lowPage + " " + entry.lowHeading).search(term.start) >= 0)) row.points += 80;
+      if (entry.url.startsWith("migrating.html")) row.points *= 0.5;
+      else if (entry.url.startsWith("session-api.html")) row.points *= 0.7;
+      else if (entry.url.startsWith("docs.html")) row.points *= 0.85;
+      else if (/^(cli|configuration)\.html/.test(entry.url) && !row.titled) row.points *= 0.6;
+    }
+    return rows.filter((row) => row.matched).sort((a, b) => b.points - a.points);
+  };
+  const excerpt = (entry, terms) => {
+    const hits = terms.map((term) => entry.lowText.search(term.start)).filter((at) => at >= 0);
+    const at = hits.length ? Math.min(...hits) : 0;
+    const start = at > 60 ? entry.text.indexOf(" ", at - 60) + 1 : 0;
+    const end = start + 160;
+    return (start ? "…" : "") + entry.text.slice(start, end) + (end < entry.text.length ? "…" : "");
+  };
+  const marked = (text, terms) => {
+    const pattern = new RegExp("(" + terms.map((term) => "(?<![a-z0-9])" + escaped(term.root) + "[a-z0-9]*").join("|") + ")", "gi");
+    return text.split(pattern).map((part, i) => {
+      if (i % 2 === 0) return part;
+      const mark = document.createElement("mark");
+      mark.textContent = part;
+      return mark;
+    });
+  };
+  const span = (name, ...content) => {
+    const el = document.createElement("span");
+    el.className = name;
+    el.append(...content);
+    return el;
+  };
+  const render = () => {
+    results.replaceChildren();
+    if (!entries) return;
+    status.classList.remove("sr-only");
+    const typed = input.value.trim();
+    if (!typed) {
+      status.textContent = "Type a command, a setting or a topic.";
+      return;
+    }
+    const query = plain(typed), terms = termsOf(query);
+    // The walkthroughs for each agent share their steps: one row for a step leaves room for other pages.
+    const steps = new Set();
+    const found = rank(terms, query).filter(({ entry }) => {
+      if (!entry.variant) return true;
+      if (steps.has(entry.lowHeading)) return false;
+      steps.add(entry.lowHeading);
+      return true;
+    });
+    if (!found.length) {
+      status.textContent = `Nothing matches “${typed}”. Try a command or a setting, or browse the docs menu.`;
+      return;
+    }
+    // A screen reader hears the count; everyone else sees the results.
+    status.textContent = `${Math.min(found.length, 20)} of ${found.length} results`;
+    status.classList.add("sr-only");
+    for (const { entry } of found.slice(0, 20)) {
+      const link = Object.assign(document.createElement("a"), { href: entry.url });
+      link.append(span("docs-search-where", entry.page), span("docs-search-heading", ...marked(entry.heading, terms)));
+      if (entry.text) link.append(span("docs-search-snippet", ...marked(excerpt(entry, terms), terms)));
+      const row = document.createElement("li");
+      row.append(link);
+      results.append(row);
+    }
+  };
+  const load = () => {
+    if (entries || loading) return;
+    status.textContent = "Loading the search index…";
+    loading = fetch("search-index.json")
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((list) => {
+        entries = list.map((entry) => ({ ...entry, lowHeading: plain(entry.heading), lowPage: plain(entry.page + " " + (entry.keywords ?? "")), lowText: plain(entry.text) }));
+        averageLength = entries.reduce((sum, entry) => sum + entry.lowText.length, 0) / entries.length;
+        render();
+      })
+      .catch(() => { status.textContent = "Search isn't available right now. Check your connection, or browse the docs menu."; })
+      .finally(() => { loading = null; });
+  };
+  const open = () => {
+    if (dialog.open) return;
+    if (menu && !wide.matches) menu.open = false;
+    dialog.showModal();
+    input.select();
+    load();
+    render();
+  };
+  searchButton.querySelector("kbd").textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
+  searchButton.addEventListener("click", open);
+  document.addEventListener("keydown", (event) => {
+    const typing = event.target.closest?.("input, textarea, select, [contenteditable]");
+    if ((event.key === "k" && (event.metaKey || event.ctrlKey)) || (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey)) {
+      event.preventDefault();
+      open();
+    }
+  });
+  input.addEventListener("input", render);
+  // A click on the backdrop lands on the dialog itself. Following a result closes it too, even one on this page.
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog || event.target.closest("a, .docs-search-close")) dialog.close();
+  });
+  dialog.addEventListener("keydown", (event) => {
+    const links = [...results.querySelectorAll("a")];
+    const at = links.indexOf(document.activeElement);
+    // By itself, Escape in a search field only clears the text and leaves the dialog open.
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dialog.close();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? Math.min(at + 1, links.length - 1) : at - 1;
+      (next < 0 ? input : links[next] ?? input).focus();
+    } else if (event.key === "Enter" && document.activeElement === input && links.length) {
+      event.preventDefault();
+      links[0].click();
+    } else if (event.key.length === 1 && at >= 0 && !event.metaKey && !event.ctrlKey) {
+      input.focus();
+    }
+  });
 }

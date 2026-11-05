@@ -23,9 +23,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
-  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
-  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -40,16 +40,61 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide" tabindex="-1">
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html" aria-current="page">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Get started</p>
         <h1>Run Claude Code or Codex in a sandbox.</h1>
         <p class="guide-lead">Set up co:op, run one small task, and review the changes.</p>
         <div class="guide-prerequisites">
@@ -64,7 +109,7 @@
     </header>
     <div class="docs guide-body">
       <details class="docs-side" open>
-        <summary>In this walkthrough</summary>
+        <summary>In this walkthrough</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ol role="list"><li><a href="#setup"><span aria-hidden="true">01</span>Install and sign in</a></li>
 <li><a href="#project"><span aria-hidden="true">02</span>Choose the project</a></li>
 <li><a href="#files"><span aria-hidden="true">03</span>Review visible files</a></li>
@@ -80,7 +125,7 @@
 <ul class="cmds" role="list">
               <li data-copy-kind="install"><code data-copy-source>curl -fsSL https://coop.dryga.com/<wbr>install.sh | sh</code></li>
             </ul>
-<p>The installer runs a downloaded script. For checksums and release verification, use the <a href="docs.html#install">installation reference</a>.</p>
+<p>The installer runs a downloaded script. For checksums and release verification, use the <a href="install.html#verifying-a-download">install page</a>.</p>
 <ul class="cmds" role="list">
               <li><code data-copy-source>coop version</code></li>
               <li><code data-copy-source>coop login claude</code></li>
@@ -164,10 +209,11 @@ customer-export.csv</pre></div>
 <p>Keep the next task small until the project builds and tests reliably inside the container. For a queue that can continue without your supervision, use the overnight walkthrough.</p>
 <details class="guide-detail"><summary>Other runtimes and editor sessions</summary><div><p>Use Docker for the provider sessions in this guide. It supports the helper that keeps your provider credentials outside the container. Apple container can run commands with open networking and no credentials, but cannot replace Docker for this setup.</p><p>An agent connected through ACP can ask your editor to read files or run commands on your computer. The editor controls that access. Read the <a href="docs.html#editors">editor documentation</a> before using it.</p></div></details>
           </section>
-        <a class="guide-next" href="overnight-guide.html"><span class="guide-label">Next walkthrough</span><span>Run a coding agent overnight<span class="go" aria-hidden="true">→</span></span><small>Prepare a task queue, work in a separate fork, and review before merging.</small></a>
+      <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="install.html"><span>Previous</span>Install</a><a class="docs-pager-next" href="overnight-guide.html"><span>Next</span>First overnight run</a></nav>
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

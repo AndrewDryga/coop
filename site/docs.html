@@ -23,9 +23,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
-  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
-  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -45,9 +45,63 @@
     </nav>
   </header>
 
-  <div class="wrap docs">
+  <div class="wrap docs-shell">
+<!-- gen_docs_nav -->
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html" aria-current="page">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+<!-- /gen_docs_nav -->
+    <main id="main" class="docs-page" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <h1>Documentation</h1>
+        <p class="guide-lead" id="reference-guides">Run coding agents in a container on your computer. Choose what they can read and reach, then review the work they produce.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
     <details class="docs-side" open>
-      <summary>On this page</summary>
+      <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
       <nav aria-label="On this page">
         <p class="side-group">Start here</p>
         <ul role="list">
@@ -88,18 +142,12 @@
         </ul>
         <p class="side-group">Reference</p>
         <ul role="list">
-          <li><a href="#reference-guides">Detailed guides</a></li>
           <li><a href="#config">Configuration</a></li>
           <li><a href="#troubleshooting">Troubleshooting</a></li>
         </ul>
       </nav>
     </details>
-
-    <main id="main" class="docs-main" tabindex="-1">
-      <h1>Documentation</h1>
-      <p class="lead">Run coding agents in a container on your computer. Choose what they can read and reach, then review the work they produce.</p>
-      <p class="docs-library-link"><a href="#reference-guides">Browse the detailed reference guides<span class="go" aria-hidden="true">→</span></a></p>
-
+    <article class="docs-main" aria-label="Overview">
       <section class="doc-section" id="idea">
         <h2>The idea</h2>
         <p class="section-lead">An agent needs to edit files and run commands to finish a coding task. On your computer, those same permissions can let it read private keys, upload code or delete the wrong folder. co:op limits the files and network destinations it can reach.</p>
@@ -110,21 +158,15 @@
 
       <section class="doc-section" id="install">
         <h2>Install</h2>
-        <p class="section-lead">co:op runs on macOS and Linux, on amd64 or arm64 machines. You need Git and a container runtime. The installer downloads a single executable; you do not need Go or a copy of the source:</p>
+        <p class="section-lead">co:op runs on macOS and Linux, on amd64 or arm64 machines. You need Git and Docker. The installer downloads a single executable; you do not need Go or a copy of the source:</p>
         <ul class="cmds" role="list">
           <li data-copy-kind="install"><code data-copy-source><span class="k">curl</span> -fsSL https://coop.dryga.com/<wbr>install.sh | sh</code></li>
         </ul>
-        <p>The script puts <code>coop</code> in <code>~/.local/bin</code>. If it finds a container runtime, it also builds the sandbox image and runs <code>coop doctor</code> to check it. If you install the runtime later, run those two steps yourself:</p>
+        <p>The script puts <code>coop</code> in <code>~/.local/bin</code>. If it finds Docker, it also builds the sandbox image and runs <code>coop doctor</code> to check it. If you install Docker later, run those two steps yourself:</p>
         <ul class="cmds" role="list">
           <li><code data-copy-source><span class="k">coop</span> build --egress open <span class="o">&amp;&amp;</span> <span class="k">coop</span> doctor</code></li>
         </ul>
-        <p>Use Docker to run an online provider, including with open networking. It supports the helper that keeps provider credentials outside the box. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> on macOS 26+ can run commands with open networking and no credentials. If both are installed, co:op chooses Docker.</p>
-        <p class="callout">The command downloads and runs a script from coop.dryga.com, served by GitHub Pages from this repository’s <code>main</code> branch. The script verifies the release checksum with a local SHA-256 tool and stops if verification fails.</p>
-        <p>If <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> is on your <code>PATH</code>, the script also verifies that the checksum came from the exact release workflow and tag. To check the download before running the installer, use the <a href="https://github.com/AndrewDryga/coop#verifying-a-download" target="_blank" rel="nofollow noopener">manual steps</a>.</p>
-        <p>You can also build co:op from source:</p>
-        <ul class="cmds" role="list">
-          <li><code data-copy-source><span class="k">git</span> clone https://github.com/AndrewDryga/coop <span class="o">&amp;&amp;</span> <span class="k">cd</span> coop <span class="o">&amp;&amp;</span> <span class="k">make</span> install</code></li>
-        </ul>
+        <p class="doc-more"><a href="install.html">Container runtimes, building from source and verifying a download<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="quickstart">
@@ -167,6 +209,7 @@
         </div>
         <p>Before the agent starts, co:op shows you what it set up: which secrets it hid, which account it signed in with and what the box can reach on the network.</p>
         <!-- gen_site: claude --><figure class="window" aria-label="coop claude hides two secret paths, connects your account, allows only Anthropic's endpoints, then starts Claude Code"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop claude</p><pre><code><span class="line cmdline"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop claude</span><span class="line strong">Protecting secrets</span><span class="line">  <span class="ok">✓</span> 2 secret paths hidden from the box</span><span class="line"></span><span class="line strong">Connecting account</span><span class="line">  <span class="ok">✓</span> Claude (default) · Signed in</span><span class="line"></span><span class="line strong">Configuring network access</span><span class="line">  <span class="ok">✓</span> Anthropic endpoints allowed</span><span class="line">  <span class="ok">✓</span> Everything else blocked</span><span class="line"></span><span class="line strong">Starting Claude Code</span></code></pre></figure><!-- /gen_site -->
+        <p class="doc-more"><a href="agents.html">Accounts, models and presets<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="sandbox">
@@ -178,6 +221,7 @@
         <p>The agent commits as you. co:op gives the box a trimmed Git config with your name and email, your global gitignore and <code>commit.gpgsign=false</code>, but never your signing key, so the box's commits are <em>authored</em> by you and left <em>unsigned</em>.</p>
         <p>If your global Git config has <code>commit.gpgsign=true</code>, co:op signs agent commits on your computer, where your key stays. It does this when an interactive run exits, after each <code>coop loop</code> cycle, and during <code>coop fork merge</code>.</p>
         <p>Editor sessions do not sign commits automatically. Run <code>coop sign</code> to sign the current branch’s unpushed commits. This lets agent work meet a protected <code>main</code> branch’s signature requirement.</p>
+        <p class="doc-more"><a href="box.html">Files, images and services<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="secrets">
@@ -200,6 +244,7 @@ vault/</pre>
         <p>A token inside an ordinary source file remains readable. <code>coop check-secrets</code> scans files you would commit for known provider tokens and long random values assigned to secret-like names. It reports each match as <code>file:line</code> so you can inspect and remove it.</p>
         <!-- gen_site: check-secrets --><figure class="window" aria-label="coop check-secrets finds an OpenAI API key in a source file, says how to remove it, and how to mark a false positive"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop check-secrets</p><pre><code><span class="line cmdline"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop check-secrets</span><span class="line"><span class="fail">✗</span> 1 possible secret found</span><span class="line"></span><span class="line">  config/client.go:12</span><span class="line">    OpenAI API key</span><span class="line"></span><span class="line">Remove real secrets from files you intend to commit.</span><span class="line">If this is a false positive, add this entry to .coopsecretsignore</span><span class="line">and replace &lt;reason&gt; with an explanation:</span><span class="line"></span><span class="line">  <span class="dim"># config/client.go — OpenAI API key</span></span><span class="line hash">  fp-v1:b2758b3a796f81888b6f896f9c420ee855608fdcb828dfc2b83f736768171a6c <span class="dim"># &lt;reason&gt;</span></span></code></pre></figure><!-- /gen_site -->
         <p>Add <code>--include-ignored</code> to check files Git ignores too. The command fails if it finds a possible secret or cannot finish scanning, so you can use it before a run or in CI. If you have confirmed a finding is a false positive, record the exception in <code>.coopsecretsignore</code>.</p>
+        <p class="doc-more"><a href="box.html#hiding-secrets">Everything about hiding secrets<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="networking">
@@ -226,6 +271,7 @@ box:
         </ul>
         <p>Besides <code>filtered</code>, a project can be <code>open</code> (everything) or <code>offline</code> (no network), and <code>open</code> needs your approval too. Filtering also protects API keys: if you sign in with one, the real key stays outside the box and the agent gets a stand-in that works only for that run.</p>
         <p>Before the first filtered run, co:op checks that Docker can enforce the rules. It repeats those checks when the saved results are no longer valid. Run <code>coop net setup</code> to check ahead of time. The <a href="networking.html">networking guide</a> explains the available rules and each provider’s access.</p>
+        <p class="doc-more"><a href="networking.html">Networking in full<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="doctor">
@@ -234,6 +280,7 @@ box:
         <p>The checks use a temporary project and test secrets, not your files or credentials. They test secret hiding, host access, privileges, offline networking, task and credential access, and what a fork contains:</p>
         <!-- gen_site: doctor --><figure class="window scene-replay scene-doctor" data-scene="doctor" aria-label="coop doctor tries to break out of its own box: secrets, host access, the network, tasks, credentials and the fork handoff, and all 37 checks pass"><p class="window-bar" aria-hidden="true"><span class="window-dots"><i></i><i></i><i></i></span>coop doctor</p><pre><code><span class="line cmdline" data-beat="0"><span class="path">~/code/shop</span> <span class="prompt">$ </span>coop doctor</span><span class="line" data-beat="1">Checking the Coop box on the Docker runtime</span><span class="line" data-beat="2"></span><span class="line strong" data-beat="2">Protecting secrets</span><span class="line" data-beat="2">  <span class="ok">✓</span> .env is hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> .envrc is hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Terraform variable files are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Private keys are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Custom .coopignore paths are hidden</span><span class="line" data-beat="2">  <span class="ok">✓</span> Secret directories cannot be read</span><span class="line" data-beat="2">  <span class="ok">✓</span> Links cannot reveal hidden secrets</span><span class="line" data-beat="2">  <span class="ok">✓</span> Hidden secret files cannot be written</span><span class="line" data-beat="2">  <span class="ok">✓</span> Environment templates stay readable</span><span class="line" data-beat="2">  <span class="ok">✓</span> Source files stay readable</span><span class="line" data-beat="2">  <span class="ok">✓</span> The test secret cannot be read</span><span class="line" data-beat="3"></span><span class="line strong" data-beat="3">Host access and privileges</span><span class="line" data-beat="3">  <span class="ok">✓</span> The host Coop CLI is absent</span><span class="line" data-beat="3">  <span class="ok">✓</span> The host Docker socket is absent</span><span class="line" data-beat="3">  <span class="ok">✓</span> The box runs as a non-root user</span><span class="line" data-beat="3">  <span class="ok">✓</span> Linux capabilities are removed</span><span class="line" data-beat="3">  <span class="ok">✓</span> The process limit is enforced (4096)</span><span class="line" data-beat="4"></span><span class="line strong" data-beat="4">Offline access</span><span class="line" data-beat="4">  <span class="ok">✓</span> Offline mode leaves only the loopback interface</span><span class="line" data-beat="5"></span><span class="line strong" data-beat="5">Task access</span><span class="line" data-beat="5">  <span class="ok">✓</span> The task channel exposes only its 8 task tools</span><span class="line" data-beat="5">  <span class="ok">✓</span> Calls outside the task tools are refused</span><span class="line" data-beat="5">  <span class="ok">✓</span> Changes to a task held by another process are refused</span><span class="line" data-beat="5">  <span class="ok">✓</span> The assigned task can be updated</span><span class="line" data-beat="6"></span><span class="line strong" data-beat="6">Credentials and settings</span><span class="line" data-beat="6">  <span class="ok">✓</span> Claude's native home is available</span><span class="line" data-beat="6">  <span class="ok">✓</span> Host account grants stay outside Claude's home</span><span class="line" data-beat="6">  <span class="ok">✓</span> Codex's native home is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Gemini's native home is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Grok's native home is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Claude's saved login takes priority over its environment key</span><span class="line" data-beat="6">  <span class="ok">✓</span> Codex's environment key is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> Gemini's environment key is hidden from Claude</span><span class="line" data-beat="6">  <span class="ok">✓</span> The box can write its settings directory</span><span class="line" data-beat="7"></span><span class="line strong" data-beat="7">Fork handoff</span><span class="line" data-beat="7">  <span class="ok">✓</span> .env is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> .envrc is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Secret directories are absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Private keys are absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> Tracked source files are present in the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> The test secret is absent from the clone</span><span class="line" data-beat="7">  <span class="ok">✓</span> The clone's origin is a local path</span><span class="line" data-beat="8"></span><span class="line" data-beat="8"><span class="ok">✓</span> All 37 checks passed</span></code></pre></figure><!-- /gen_site -->
         <p>Run it after you install, after you update co:op and whenever you change your config. If a check fails, it tells you what to fix.</p>
+        <p class="doc-more"><a href="cli.html#coop-doctor-check-that-the-boxs-isolation-works">The coop doctor command<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="toolchain">
@@ -252,6 +299,7 @@ box:
         <p><code>coop up</code> prints the service names from Compose when they are ready. If it cannot read the service list, it starts nothing and reports the problem.</p>
         <p>Agents can change data in services they can reach, so use disposable development databases. Deleting their volumes cannot be undone; co:op asks you to confirm first.</p>
         <p><code>coop update</code> updates co:op and prepares the box for the project’s network mode. A filtered project, the default, keeps co:op’s pinned client base. Open and offline projects get fresh system packages. To update only the box, use <code>coop update --box-only</code>. Use <code>coop build</code> to rebuild from the pinned base. These commands keep the agent versions fixed to those checked for your co:op release.</p>
+        <p class="doc-more"><a href="box.html#toolchain-tool-versions">Toolchains, project images and services<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="credentials">
@@ -273,6 +321,7 @@ box:
         <h3>Check limits and usage</h3>
         <p><code>coop usage</code> shows account limits, reset times and an estimate of what the last 30 days of tokens would cost at API prices. Use <code>coop usage codex@work</code> for one account without changing your default.</p>
         <p>The estimate includes subscription use. It flags incomplete history, missing prices and editor history it cannot assign to an account. It excludes web and phone use, other machines and charges unrelated to tokens. Checking quota uses the selected account on the host and sends no model prompt.</p>
+        <p class="doc-more"><a href="agents.html#several-accounts-and-failover">Several accounts and failover<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="models">
@@ -289,6 +338,7 @@ box:
         <p>Add <strong>reasoning effort</strong> after a slash in the target, as in <code>claude:opus/xhigh</code> or <code>codex/high</code>. The values are <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> and <code>max</code>; the provider decides which it supports.</p>
         <p>co:op passes the value to Claude’s <code>--effort</code>, Codex’s <code>model_reasoning_effort</code> or Grok’s <code>--reasoning-effort</code> without validating it. For supported Gemini models, it maps <code>low</code> and <code>high</code> to the model’s thinking setting. A thinking setting in your own Gemini config takes precedence.</p>
         <p>You can use <code>model/effort</code>, such as <code>opus/high</code>, in targets, preset fallback lists, <code>.agent/loop.yaml</code> and <code>COOP_&lt;AGENT&gt;_MODEL</code>.</p>
+        <p class="doc-more"><a href="agents.html#picking-models">Everything about picking models<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="peers">
@@ -303,6 +353,7 @@ box:
           <span class="why-label">Why it stays simple</span>
           <p>The lead chooses when to ask a peer. Peers cannot edit the repository or ask other peers, so the lead remains responsible for the result.</p>
         </div>
+        <p class="doc-more"><a href="agents.html#second-opinions">Everything about second opinions<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="presets">
@@ -360,6 +411,7 @@ roles:
           <p><code>coop presets init</code> creates editable starter prompts under <code>roles/</code>. A target on the command line, such as <code>claude:opus@work</code>, overrides the preset’s lead.</p>
           <p>Consult and delegate fallbacks skip providers you have not signed in to. co:op prepares access to each usable target while keeping reusable provider credentials outside the box. A consult replays its saved conversation when it switches targets. A delegate can switch only if the failed attempt left all files and Git history unchanged.</p>
         </div>
+        <p class="doc-more"><a href="agents.html#presets">Everything about presets<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="forks">
@@ -376,6 +428,7 @@ roles:
         <p>The check runs in the box on the rebased code. If it fails, nothing is merged and your branch stays unchanged. Use <code>coop fork review --gate</code> to run it before merging.</p>
         <p>The merge also stops on anything risky coming in: content that looks like a secret, files over 5 MB, and files that run on your computer, like Git hooks, <code>.envrc</code>, editor and agent settings, Compose files, Dockerfiles, CI config and new npm install scripts. Review them, then merge with <code>--force</code>; the checks still run.</p>
         <p>With <code>--loop</code>, a fork works through tasks on its own: it takes them from your project's <code>.agent/tasks/</code> queue one at a time, they stay in progress while you review the fork, and merging it completes them.</p>
+        <p class="doc-more"><a href="forks.html">Forks and review<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="loop">
@@ -447,6 +500,7 @@ roles:
             </tr>
           </table>
         </div>
+        <p class="doc-more"><a href="loop.html">Task queues and loops<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="parallel-forks">
@@ -465,6 +519,7 @@ roles:
           <span class="why-label">Why run parallel forks</span>
           <p>When agents write code quickly, <em>reviewing</em> it takes most of your time. Run the agents in parallel and review their forks in batches.</p>
         </div>
+        <p class="doc-more"><a href="loop.html#parallel-forks">Everything about parallel forks<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="evals">
@@ -512,6 +567,7 @@ roles:
         <p>Run the same tasks before and after your change, with the same number of repeats. Test one model or preset configuration in each run.</p>
         <p><code>compare</code> checks that the saved workloads match. If it cannot match the runs, it shows their results separately. It also reports missing or damaged records.</p>
         <p>The report shows what changed; you decide whether the result is useful. The evaluation guide explains <a href="evals.html#understand-a-result">how the results are compared</a>.</p>
+        <p class="doc-more"><a href="evals.html">Evaluations in full<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="editors">
@@ -550,6 +606,7 @@ roles:
         <p>Terminal and loop runs do not have this editor channel. See the <a href="integrations.html#files-and-terminals-on-your-computer">ACP security note</a> before connecting an editor.</p>
         <p>To open a dev server from the box in your browser, list its port under <code>serve:</code> in a committed <code>.agent/project.yaml</code> and bind the server to <code>0.0.0.0</code> inside the box. The thread then shows the address the box publishes it on, <code>http://localhost:&lt;port&gt;</code>.</p>
         <p class="callout">Desktop apps don't always get your shell's <code>PATH</code>. If your editor can't find <code>coop</code>, use the full path from <code>command -v coop</code> as the <code>command</code>.</p>
+        <p class="doc-more"><a href="integrations.html">Editors and MCP<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="mcp-remote">
@@ -561,26 +618,7 @@ roles:
           <li><code data-copy-source><span class="k">coop</span> sessions connect --controller &lt;url&gt; --token-file &lt;path&gt;</code></li>
         </ul>
         <p>The <a href="session-api.html#connect">worker connector guide</a> has the details.</p>
-      </section>
-
-      <section class="doc-section" id="reference-guides">
-        <h2>Detailed guides</h2>
-        <p>Find settings, examples and explanations for each part of co:op.</p>
-        <ul class="reference-list" role="list">
-<!-- gen_reference_index -->
-<li><a href="networking.html">Networking</a><p>Choose which network destinations an agent can reach, and review access before a run.</p></li>
-<li><a href="box.html">Sandbox, images and services</a><p>Control visible files, prepare a project image, and run databases and development servers beside your agent.</p></li>
-<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
-<li><a href="forks.html">Forks and review</a><p>Work in a separate copy of your project. Review the changes and checks before merging them.</p></li>
-<li><a href="loop.html">Task queues and loops</a><p>Set up a task queue for an agent to work through on its own, with decisions and a final review.</p></li>
-<li><a href="integrations.html">Editors and MCP</a><p>Connect an editor or MCP server and check which actions run on your computer or in the container.</p></li>
-<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
-<li><a href="usage-reports.html">Usage and billing reports</a><p>Connect your provider&#39;s billing reports and compare reported costs with local usage estimates.</p></li>
-<li><a href="evals.html">Evaluations</a><p>Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.</p></li>
-<li><a href="session-api.html">Worker API</a><p>Connect a worker and manage sessions, turns, evidence and publication through the worker API.</p></li>
-<li><a href="cli.html">Command reference</a><p>Look up co:op commands and options, with examples of how to use them.</p></li>
-<!-- /gen_reference_index -->
-        </ul>
+        <p class="doc-more"><a href="session-api.html">The worker API<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="config">
@@ -636,6 +674,7 @@ roles:
           </table>
         </div>
         <p>On Docker, the box also runs with every Linux capability dropped, no-new-privileges and a process limit. The <a href="configuration.html#environment-variables">configuration reference</a> lists every variable.</p>
+        <p class="doc-more"><a href="configuration.html">Every setting<span class="go" aria-hidden="true">→</span></a></p>
       </section>
 
       <section class="doc-section" id="troubleshooting">
@@ -710,7 +749,13 @@ roles:
           </table>
         </div>
         <p>The <a href="cli.html">command reference</a> lists every command's flags, and <code>coop help</code> (or <code>coop &lt;command&gt; --help</code>) is the live reference. Stuck on something that isn't covered? <a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Open an issue</a>.</p>
+        <p class="doc-more"><a href="cli.html">Every command<span class="go" aria-hidden="true">→</span></a></p>
       </section>
+<!-- gen_docs_pager -->
+<nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-next" href="install.html"><span>Next</span>Install</a></nav>
+<!-- /gen_docs_pager -->
+    </article>
+    </div>
     </main>
   </div>
 

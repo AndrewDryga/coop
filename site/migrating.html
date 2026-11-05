@@ -1,0 +1,893 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit MIGRATING.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Migrating · co:op</title>
+  <meta name="description" content="What to change when you upgrade co:op, newest version first. Follow the steps for each version since yours.">
+  <link rel="canonical" href="https://coop.dryga.com/migrating.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/migrating.html">
+  <meta property="og:title" content="Migrating">
+  <meta property="og:description" content="What to change when you upgrade co:op, newest version first. Follow the steps for each version since yours.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico?v=contained-entrance" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
+  <link rel="manifest" href="site.webmanifest?v=contained-entrance">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="32" height="32" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html" aria-current="true">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html" aria-current="page">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Reference</p>
+        <h1>Migrating</h1>
+        <p class="guide-lead">What to change when you upgrade co:op, newest version first. Follow the steps for each version since yours.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
+<li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
+<li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
+<li><a href="#v1200-network-records-are-renamed">v12.0.0: network records are renamed</a></li>
+<li><a href="#v1200-fork-records-move-into-coops-private-folder">v12.0.0: fork records move into Coop&#39;s private folder</a></li>
+<li><a href="#v1110-project-image-preparation">v11.1.0: project image preparation</a></li>
+<li><a href="#v1100-upgrading-from-v1012">v11.0.0: upgrading from v10.1.2</a></li>
+<li><a href="#v1012-upgrading-from-v810">v10.1.2: upgrading from v8.1.0</a></li>
+<li class="reference-subsection"><a href="#controller-owned-workers-and-session-schema-25">Controller-owned workers and session schema 25</a></li>
+<li class="reference-subsection"><a href="#anchored-fork-and-network-identity">Anchored fork and network identity</a></li>
+<li class="reference-subsection"><a href="#canonical-tasks-across-isolated-forks">Canonical tasks across isolated forks</a></li>
+<li class="reference-subsection"><a href="#strict-coopconf-one-removal-verb-and-supported-runtimes">Strict coop.conf, one removal verb and supported runtimes</a></li>
+<li class="reference-subsection"><a href="#one-composition-model-direct-fork-loops">One composition model, direct fork loops</a></li>
+<li><a href="#v7-the-box-dockerfile-moves-into-agent">v7: the box Dockerfile moves into .agent/</a></li>
+<li><a href="#v4-the-target-grammar-one-way-to-name-a-run">v4: the target grammar, one way to name a run</a></li>
+<li><a href="#v3-retired-command-aliases">v3: retired command aliases</a></li>
+<li><a href="#monorepos-a-hand-set-coop_tasks--agentprojectyaml">Monorepos: a hand-set COOP_TASKS → .agent/project.yaml</a></li>
+<li><a href="#a-legacy-agenttasksmd--the-folder-task-system">A legacy .agent/TASKS.md → the folder task system</a></li>
+<li><a href="#a-legacy-agentbacklogmd--the-backlog-drawer">A legacy .agent/BACKLOG.md → the backlog drawer</a></li>
+<li><a href="#the-sweep-stop-hook-in-older-repos">The /sweep Stop hook in older repos</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
+<p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does
+on every other agent. To pick a profile, use <code>coop codex --profile &lt;name&gt;</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-boxes-use-filtered-networking-by-default"><h2>Unreleased: boxes use filtered networking by default</h2>
+<p>Boxes now use filtered networking unless you choose another mode. An agent can reach its provider
+and the destinations you approved. A plain <code>coop run</code> or <code>coop shell</code> can reach only the destinations
+you approved.</p>
+<ul>
+<li>For unrestricted access, add <code>--egress open</code> to the command (in an editor, to the agent arguments),
+set <code>COOP_EGRESS=open</code> in your environment or <code>coop.conf</code>, or set <code>box.egress: open</code> in the project
+and approve it with <code>coop approve</code>.</li>
+<li>Installing <code>.tool-versions</code> tools when the box starts and starting <code>.agent/compose.yml</code> services
+automatically both need open networking. Run with <code>--egress open</code>, or build the tools into
+<code>.agent/Dockerfile</code> and start services with <code>coop up</code>.</li>
+<li>A project with its own <code>.agent/Dockerfile</code> and no <code>box.egress</code> needs one more <code>coop build</code>. After
+that, co:op rebuilds those files itself when its client image changes.</li>
+<li>Filtered project images have new names, so an existing filtered project also needs <code>coop build</code>
+once. <code>coop update</code> no longer builds new or changed files.</li>
+<li>Filtered networking needs Docker. On Apple&#39;s <code>container</code>, choose <code>--egress open</code> or
+<code>--egress offline</code>, or set <code>COOP_EGRESS</code>.</li>
+<li>The first filtered run on a host prepares the network images and checks the host, as
+<code>coop net setup</code> does.</li>
+</ul>
+</section><section class="doc-section reference-section" id="unreleased-the-no-network-mode-is-called-offline"><h2>Unreleased: the no-network mode is called offline</h2>
+<p>The command line and <code>COOP_EGRESS</code> now say <code>offline</code>, as <code>.agent/project.yaml</code> already did. co:op
+refuses <code>none</code> with a message that names <code>offline</code>.</p>
+<ul>
+<li>Replace <code>--egress none</code> with <code>--egress offline</code> in scripts, aliases and editor agent settings
+(for example <code>[&#34;acp&#34;, &#34;--egress&#34;, &#34;offline&#34;]</code>).</li>
+<li>Replace <code>COOP_EGRESS=none</code> with <code>COOP_EGRESS=offline</code> in your environment and <code>coop.conf</code>.</li>
+<li>Controller JobSpec documents and the session API keep <code>none</code> for their offline mode.</li>
+</ul>
+</section><section class="doc-section reference-section" id="v1200-network-records-are-renamed"><h2>v12.0.0: network records are renamed</h2>
+<p>co:op now names each project&#39;s network records by the project&#39;s folder.</p>
+<ul>
+<li>Run <code>coop net setup</code> once. This release&#39;s new images already need it, and co:op no longer reads
+the old setup record.</li>
+<li>Run <code>coop approve</code> once in each project that uses filtered networking, and review its access
+again. Until you do, its runs stop with &#34;coop renamed its network records&#34;. The review shows
+what changed since you last approved. To take a project&#39;s access back instead, run
+<code>coop net forget</code>.</li>
+<li>A project whose access you took back with <code>coop net forget</code> stays that way.</li>
+<li>Create a new session to replace each filtered worker session from before the upgrade. The old one
+can&#39;t find its saved network rules, and restarting the worker doesn&#39;t help.</li>
+<li>A filtered project with its own <code>.agent/Dockerfile</code> needs <code>coop build --egress filtered</code> once.</li>
+<li>Copies of launch network rules that earlier versions saved stay on disk, because co:op can&#39;t
+tell which sessions still use them. Copies made by <code>coop net setup</code> are the exception: co:op
+removes them with their check&#39;s run record.</li>
+</ul>
+</section><section class="doc-section reference-section" id="v1200-fork-records-move-into-coops-private-folder"><h2>v12.0.0: fork records move into Coop&#39;s private folder</h2>
+<p>co:op now keeps each project&#39;s fork records in <code>~/.local/state/coop/forks/&lt;key&gt;/</code> instead of
+<code>&lt;project&gt;-forks/.coop</code>. Fork workspaces stay in <code>&lt;project&gt;-forks/</code>.</p>
+<ul>
+<li>Stop every co:op process that uses forks before you upgrade: fork loops, <code>coop fork &lt;name&gt; acp</code>
+sessions and the session service. The first command of the new version in a project moves its
+records, and an older process still running would keep writing to the old place, which the new
+version never reads.</li>
+<li>In each project that has forks, start a box or run <code>coop fork ls</code> once after upgrading. Do this
+before you start a box from a folder that holds several projects. Until a project&#39;s records move, a box
+that can write to that project&#39;s forks folder could change them.</li>
+<li>Forks need each fork&#39;s folder and your home folder on one disk. co:op refuses forks for a project
+on another disk (an external drive or a separate APFS volume) and names both folders. That
+project&#39;s old folder stays in place, so an older co:op can still use its forks. On a session
+worker, check before you upgrade that its state root (<code>--state</code>) is on the same disk as the
+worker&#39;s home folder, because its job forks live under the state root.</li>
+<li>To go back to an older co:op, move the folder back first:
+<code>mv ~/.local/state/coop/forks/&lt;key&gt; &lt;project&gt;-forks/.coop</code>. <code>&lt;key&gt;</code> is the SHA-256 of the
+project&#39;s real path: <code>printf %s &#34;$(cd &lt;project&gt; &amp;&amp; pwd -P)&#34; | shasum -a 256</code>.</li>
+</ul>
+</section><section class="doc-section reference-section" id="v1110-project-image-preparation"><h2>v11.1.0: project image preparation</h2>
+<p>If you upgrade from v11.0.2 or earlier, run <code>coop update --box-only</code> once with the newly installed
+binary. The older updater keeps running in its old process after installation, so that first update
+can still build an ordinary image from the old definitions.</p>
+<p>When you start a provider interactively with filtered networking in a host terminal, co:op may also
+offer Build and continue. The default answer is No. Review the saved snapshot that the prompt shows,
+because a yes approves only those build files, not future edits. Headless commands, editor
+connections, loops and controller jobs don&#39;t get this prompt. Project builds still use ordinary
+networking, whatever network restrictions apply to the running box.</p>
+</section><section class="doc-section reference-section" id="v1100-upgrading-from-v1012"><h2>v11.0.0: upgrading from v10.1.2</h2>
+<p>Coding and editor sessions now each use a complete native home for their repository: a folder with
+the provider&#39;s own history, settings and other files. An ordinary home also belongs to the selected
+account, while an editor home stays when you switch accounts. co:op copies native settings into a
+new home once, and after that they stay local to that home.</p>
+<p>The first time co:op uses a home, it imports only the older transcripts that it can prove belong to
+the repository, and leaves the originals as they are. It keeps history that&#39;s ambiguous or
+unsupported, and doesn&#39;t show it to another project. While older sessions are writing history, co:op
+postpones the import without stopping them, so finish them and retry. An old source can&#39;t silently
+bring back sessions you deleted natively.</p>
+<p>co:op moves account credentials into one main store that stays on the host, and retires the old
+credential sources only after it has saved the credentials in a form it can recover and has checked
+for other writers. It doesn&#39;t copy refresh grants into repository homes, and the host renews them.
+Online provider runs now require Docker, including open-network runs. Raw workloads without
+credentials can still use Apple&#39;s container runtime.</p>
+<p>To sign in, run <code>coop login &lt;provider&gt;@&lt;account&gt;</code> on the host. To remove an account, run
+<code>coop credentials &lt;provider&gt; &lt;account&gt; rm</code>, which asks you to confirm. Removal deletes that
+account&#39;s ordinary repository histories, but not editor conversations.</p>
+<p>Logging in or out with the native client inside a box isn&#39;t a supported way to manage the shared
+account. If it changes local credential files, co:op refuses to reuse that home, and its error names
+the native home and the home&#39;s recovery directory, labeled &#34;recovery custody&#34;. To recover:</p>
+<ol>
+<li>Stop the sessions that use that home.</li>
+<li>Back up the entire recovery directory, including <code>home/</code>, <code>owner.json</code>, auth and import receipts.</li>
+<li>To recover credentials that were created locally, sign in explicitly on the host.</li>
+<li>Restore public auth files from a known-good backup, or explicitly move the entire backed-up
+recovery directory aside to start fresh. If you move only <code>home/</code>, the ownership receipts stay
+behind and co:op refuses to start.</li>
+</ol>
+<p>Keep the backup. A fresh home doesn&#39;t prove that the old home&#39;s unique history has been recovered.</p>
+<p>Before you upgrade an existing installation, finish older sessions and keep a verified backup of
+its stopped credential and history roots. After co:op moves the credentials, don&#39;t run older
+binaries against those roots. A rollback must use the current stored credentials or a fresh sign-in
+on the host, because restoring tokens from before a refresh can invalidate the account access you
+have left. Old binaries and native clients on the host don&#39;t take part in co:op&#39;s checks for other
+writers.</p>
+</section><section class="doc-section reference-section" id="v1012-upgrading-from-v810"><h2>v10.1.2: upgrading from v8.1.0</h2>
+<p>These steps cover the changes since v8.1.0. Do the ones that apply to you before you use the new
+binary to start workers, fork loops or sessions with MCP.</p>
+<h3 id="controller-owned-workers-and-session-schema-25">Controller-owned workers and session schema 25</h3>
+<p>A worker now connects with one command:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Controller-owned workers and session schema 25 code example" tabindex="0"><code class="language-sh">coop sessions connect --controller https://controller.example --token-file /private/enrollment-token
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Before you run it against an existing root, prepare that root:</p>
+<ol>
+<li>Stop the connection or service that owns it.</li>
+<li>Back it up. Use the old binary&#39;s <code>sessions compact --backup &lt;path&gt;</code> when it&#39;s available, or a
+verified copy of the stopped root.</li>
+</ol>
+<p>When the new service opens the state, it upgrades the SQLite schema to 25. An older binary can&#39;t
+reopen the upgraded root, so keep the backup and the old binary for rollback.</p>
+<p>Use <code>--state &lt;path&gt;</code> for a separate private worker root, and <code>--ca-file &lt;path&gt;</code> for a private
+controller CA. The connection owns its local service: it refuses a root that&#39;s already listening,
+and never reuses or replaces it. <code>coop worker</code>, <code>sessions serve</code>, <code>sessions policies</code> and
+<code>connect --config</code> are gone, and there&#39;s no worker JSON file or local execution-policy catalog to
+translate.</p>
+<p>Controllers must send worker protocol v2 and canonical version-2 JobSpec documents, and select
+workers that advertise live <code>job-setup:2</code>. Each job freezes its setup: source and companions,
+targets, mode, networking, explicit <code>environment</code>, <code>check.argv</code> and <code>check.environment</code> values, and
+positive CPU, memory and PID caps. Work and review use the same frozen setup, and check-only
+environment values override work values. Resolve repository defaults before you submit a job,
+because worker <code>COOP_GATE</code> and repository <code>gate:</code> no longer choose controller reviews.
+<a href="session-api.html#sessions">The session API</a> lists the fields, limits and digest requirements.</p>
+<p>You can still read older jobs. A job without the current setup can&#39;t run new turns or reviews, and
+can&#39;t finish a session creation that was interrupted. For each of those jobs:</p>
+<ol>
+<li>Preserve the work and history you need.</li>
+<li>Where you can, finish, close or discard it through the supported old workflow.</li>
+<li>Resubmit unfinished work as a new v2 job.</li>
+</ol>
+<p>Never edit saved documents or create your own permission records to make an old record run.</p>
+<p>Sign in to the provider accounts on each worker with co:op&#39;s normal login flow. Controllers don&#39;t
+transfer model credentials.</p>
+<h3 id="anchored-fork-and-network-identity">Anchored fork and network identity</h3>
+<p>co:op no longer identifies a fork or an approved project by directory metadata, because Linux
+overlay filesystems can reuse all of it, including the inode and birth time, right after a
+deletion. Fork generations and project network approvals now use a filesystem anchor: two hardlinks
+to one file.</p>
+<p>A fork has a <code>.coop-fork-generation</code> file, linked to a file in the fork state beside it. A reviewed
+project has a <code>.coop-network-approval</code> file, linked to a file in co:op&#39;s network state. Only the
+owner can access the fork state and the network state, and the visible files hold identifiers and no
+credentials. Whenever co:op uses an anchor, both names must still be the same owner-controlled
+<code>0600</code> inode with exactly two links.</p>
+<p>The two names must be on one filesystem that supports hardlinks. Fork state sits next to its
+workspace, so for forks this is normally automatic. For network approvals, keep the checkout and
+<code>$XDG_STATE_HOME</code> (or the default <code>~/.local/state</code>) on the same filesystem. If co:op can&#39;t create
+the link, it reports a clear error and doesn&#39;t fall back to timestamps.</p>
+<p>co:op migrates a stopped v1/v2 fork record to a hardlink anchor only when all of these are true:</p>
+<ul>
+<li>Its Git branch and absolute local origin still match.</li>
+<li>It has no execution record and no unfinished merge.</li>
+<li>It has no reservation.</li>
+</ul>
+<p>co:op never guesses ownership from a missing or foreign reservation, or from a live execution. It
+quarantines a remote session with an old reservation, and
+<a href="#canonical-tasks-across-isolated-forks">Canonical tasks across isolated forks</a> says what to do
+with it. If a legacy fork is still active, stop it and retry.</p>
+<p>Older network approvals grant nothing under the new binary. Run <code>coop approve</code> once to review and
+enroll the current project. Task records and remote-session discard plans keep their format.</p>
+<p>Ordinary Git status doesn&#39;t show the markers, but a manual <code>git clean -x</code> can still remove them. To
+repair a damaged project approval:</p>
+<ol>
+<li>Inspect it with <code>ls -l -- ./.coop-network-approval</code>.</li>
+<li>Once you&#39;ve verified that the damaged name is stale, run <code>rm -- ./.coop-network-approval</code>.</li>
+<li>Run <code>coop approve</code>.</li>
+</ol>
+<p>If you move an intact checkout to a new path, run only <code>coop approve</code>. co:op verifies and retires
+the old pair before it enrolls the new path. Copying the marker&#39;s bytes never transfers access, and
+never retires the original project&#39;s anchor.</p>
+<p>To repair a damaged fork marker:</p>
+<ol>
+<li>Preserve any Git work, task notes or other data you need.</li>
+<li>Remove the fork and its anchor with the normal <code>coop fork rm &lt;name&gt; --force</code> flow, which asks you
+to confirm. This permanently deletes the fork&#39;s unmerged work and service volumes, so inspect the
+deletion preview before you confirm.</li>
+<li>Recreate the fork.</li>
+</ol>
+<p>Don&#39;t remove only <code>.coop-fork-generation</code>, because the generation record and the private link must
+retire together.</p>
+<p>When an anchor exists, runtime arguments may mount the exact project. They may not mount:</p>
+<ul>
+<li>a path inside the project that an existing agent could swap before the runtime resolves the bind</li>
+<li>a writable folder above the project that could replace it</li>
+</ul>
+<p>No mount may expose co:op&#39;s private anchor, execution-record or launch-lock state, even read-only.
+That includes paths the first approval or fork will create. co:op refuses <code>--volumes-from</code>, whose
+sources it can&#39;t inspect, and custom volume drivers. It inspects existing named volumes before
+launch. To mount a cache, put it outside the checkout and name its path explicitly, so co:op can
+inspect it.</p>
+<p>Saved service-file approvals from earlier formats, including the first repository-scoped format,
+no longer grant access. Run <code>coop up</code> at a terminal to review eligible read-only secret files
+again. You can&#39;t approve secret directories or writable binds.</p>
+<p>An external or custom-named Docker volume now also needs an explicit review at a terminal.
+Automatic, filtered and non-terminal starts refuse such a volume and stop, even after approval. Your
+approval applies only to the selected Docker daemon and the inspected plain-local volume object, so
+switching the daemon or replacing a volume needs another review.</p>
+<p>The approval belongs to the repository&#39;s <code>.coop-service-approval</code> marker and a private hardlink in
+co:op state. Keep both on one filesystem. Copying the marker into another checkout doesn&#39;t copy the
+approval. Inspect a damaged marker before you remove it and review again.</p>
+<p>co:op now refuses sidecar repository binds that use SELinux relabel or propagation options. Remove
+those options before you retry. A read-only session also requires its bind source to exist
+already, because Compose&#39;s short syntax would otherwise create a directory on the host.</p>
+<h3 id="canonical-tasks-across-isolated-forks">Canonical tasks across isolated forks</h3>
+<p>Fork loops now take their tasks from the project&#39;s canonical task queue instead of copying a
+complete <code>.agent/tasks</code> tree into each fork, and <code>coop tasks split</code> is retired.</p>
+<p>Before you upgrade:</p>
+<ol>
+<li>Stop every detached fork loop with the co:op version that started it.</li>
+<li>Inspect each fork&#39;s Git work and copied task folders.</li>
+<li>Preserve any fork-only notes, decisions, artifacts or unfinished changes before you start the
+new loop. The new controller won&#39;t choose which of two copied folders is correct.</li>
+</ol>
+<p>The first new loop on a fork refuses to start while that workspace still has tasks under its own
+<code>.agent/tasks</code>, including configured subproject queues. Review and reconcile those copies, then
+recreate the fork with <code>coop fork &lt;name&gt; &lt;target&gt; --fresh --loop</code>. Add <code>--force</code> only after you&#39;ve
+reviewed any unmerged Git work and decided to discard it.</p>
+<p>co:op doesn&#39;t import or delete old <code>.agent/tasks.sliceN</code> directories in the canonical checkout.
+Turn work that&#39;s really separate into canonical tasks yourself, and archive the old slice only
+after you&#39;ve verified that every note and change has a home.</p>
+<p>After you migrate, start any number of forks against the same queue:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Canonical tasks across isolated forks code example" tabindex="0"><code class="language-sh">coop fork perf codex --loop -d
+coop fork docs claude --loop -d
+coop tasks watch
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>--tasks &lt;path&gt;</code> now selects a canonical queue, not a place to copy tasks to. The host gives each
+fork one assignment, which survives a stop or a crash, and shows the fork only that task in
+<code>.coop/task-executions/</code>. The canonical task completes only when the exact candidate reviewed for
+that fork generation lands through <code>coop fork merge</code>. Don&#39;t run an older worker that uses a copied
+queue beside the new scheduler.</p>
+<p>Current detached workers use <code>owner-v2</code> state, which records a fork generation that can&#39;t change.
+An <code>owner-v1</code> worker can&#39;t claim current task work or attach to a replacement workspace, and co:op
+reads its state only to handle an older worker that&#39;s stopped or waiting for cleanup. Never edit a
+pidfile to add a generation. Stop the old worker, let co:op bind a fresh generation, and restart it.</p>
+<p>Remote sessions created before their fork generation was saved need the same care. Before you
+upgrade, finish or discard them with the version that created them, and preserve any Git work you
+want to keep.</p>
+<p>On first start, the new co:op quarantines the record of each such session. Its session and turn
+history stays readable, but co:op doesn&#39;t run turns, inspect or review the workspace, clean its
+runtime or services, close it or discard it. This keeps a deleted and recreated fork with the same
+name from being mistaken for the old session.</p>
+<p>For a quarantined session:</p>
+<ol>
+<li>Inspect and preserve the quarantined workspace directly.</li>
+<li>Create a new remote session. Never fabricate a generation or reservation file to make the old
+record attach.</li>
+<li>When you&#39;re done with the record, retire it. <code>POST /v1/sessions/&lt;id&gt;/discard</code> with
+<code>{&#34;retire_quarantined&#34;:true,&#34;expected_revision&#34;:&lt;n&gt;}</code> marks the record as retired and leaves the
+workspace to you.</li>
+</ol>
+<p>The same applies to a session that co:op quarantines later because its workspace vanished.</p>
+<h3 id="strict-coopconf-one-removal-verb-and-supported-runtimes">Strict <code>coop.conf</code>, one removal verb and supported runtimes</h3>
+<p>co:op validates <code>coop.conf</code> on every command. An unknown key, a duplicate key, a malformed line or
+a retired key stops co:op before any work, and the error names the file and line. Replace the
+retired loop settings with their <code>.agent/loop.yaml</code> fields:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Strict coop.conf, one removal verb and supported runtimes table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired <code>coop.conf</code> key</th>
+<th scope="col"><code>.agent/loop.yaml</code> field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COOP_LOOP_MODEL</code></td>
+<td><code>work.agent</code></td>
+</tr>
+<tr>
+<td><code>COOP_REVIEW_MODEL</code></td>
+<td><code>signoff.agent</code></td>
+</tr>
+<tr>
+<td><code>COOP_MAX_REVIEW_ROUNDS</code></td>
+<td><code>signoff.rounds</code></td>
+</tr>
+<tr>
+<td><code>COOP_LOOP_CMD</code></td>
+<td><code>work.command</code></td>
+</tr>
+<tr>
+<td><code>COOP_PREFLIGHT</code></td>
+<td><code>preflight.enabled</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Remove <code>COOP_AGENT_PACKAGES</code>, because images that co:op manages use locked client versions. If you
+need different tooling, review a custom image and select it explicitly.</p>
+<p>Project networking uses <code>box.egress: offline</code> instead of <code>none</code>, so update <code>.agent/project.yaml</code>.
+Controller JobSpec documents still use <code>none</code> for their offline mode.</p>
+<p>Restricted project images need an explicit build. Review the project&#39;s build inputs, then run
+<code>coop build --egress filtered</code> before you reuse that image under filtered networking. Old
+automatic build records don&#39;t allow that reuse.</p>
+<p>Removal and privacy flags now have explicit names. Replace these commands and flags:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Strict coop.conf, one removal verb and supported runtimes table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop down -v</code> or <code>--volumes</code></td>
+<td><code>coop down --delete-volumes</code> (still deletes stored service data)</td>
+</tr>
+<tr>
+<td><code>coop net export --include-destinations</code></td>
+<td><code>--include-addresses</code> (still exposes hostnames/IPs)</td>
+</tr>
+<tr>
+<td><code>coop tasks clear</code></td>
+<td><code>coop tasks rm --all-done</code></td>
+</tr>
+<tr>
+<td><code>coop net approve</code></td>
+<td><code>coop approve</code></td>
+</tr>
+<tr>
+<td><code>coop net explain</code></td>
+<td><code>coop net blocked</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop tasks flags</code> is gone, with no replacement. No tagged release shipped it. A <code>flags.json</code> that
+an untagged build left in a task folder does nothing now, and co:op leaves it in place.</p>
+<p>On a machine with both Docker and Apple <code>container</code> installed, automatic runtime detection now picks
+Docker, where it used to pick <code>container</code>. Your box image must exist on the runtime you end up on,
+so if your images lived on the other one, run <code>coop build</code> once after you upgrade. To keep Apple
+<code>container</code>, set <code>COOP_RUNTIME=container</code>. co:op falls back to <code>container</code> only when Docker&#39;s daemon
+doesn&#39;t answer, and it tells you when it falls back.</p>
+<p>co:op no longer supports Podman as a container runtime. Install Docker, or Apple <code>container</code> on
+macOS 26, then run <code>coop build &amp;&amp; coop doctor</code>. Auto-detection no longer looks for Podman, and an
+explicit <code>COOP_RUNTIME=podman</code> now stops with the reason. co:op no longer manages anything on the
+Podman side, so stop leftover sibling stacks there first:
+<code>podman compose -p &lt;project&gt; -f .agent/compose.yml down --remove-orphans</code>.</p>
+<h3 id="one-composition-model-direct-fork-loops">One composition model, direct fork loops</h3>
+<p>co:op removes <code>coop fusion</code> and its mandatory &#34;consult everyone before every action&#34; governor
+prompt. Presets, named peers, roles and consultation all stay.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="One composition model, direct fork loops table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop fusion &lt;target&gt; --peer &lt;target&gt;...</code></td>
+<td><code>coop &lt;target&gt; --peer &lt;target&gt;...</code>: named peers remain read-only, explicit, and optional</td>
+</tr>
+<tr>
+<td><code>coop fusion &lt;preset&gt;</code></td>
+<td><code>coop &lt;preset&gt;</code>: the preset lead, native/consult/delegate roles, ladders, and personas are unchanged</td>
+</tr>
+<tr>
+<td><code>coop acp fusion &lt;target&gt; --peer &lt;target&gt;...</code></td>
+<td><code>coop acp &lt;target&gt; --peer &lt;target&gt;...</code></td>
+</tr>
+<tr>
+<td><code>coop acp fusion &lt;preset&gt;</code></td>
+<td><code>coop acp &lt;preset&gt;</code></td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Plain <code>coop acp</code> again starts automatically with the first signed-in provider, in Claude, Codex,
+Gemini, Grok order, and its default account. An editor entry can use <code>[&#34;acp&#34;]</code> and choose through
+the live Preset, Provider and Account selectors. Explicit targets and presets still take
+precedence, and <code>--bare</code> still requires a single explicit target. Filtered sessions offer only
+compatible providers and whole presets. An unrelated signed-in provider no longer prevents a
+supported lead from starting.</p>
+<p>Before the first launch with MCP after you upgrade, prepare your MCP config files:</p>
+<ul>
+<li>Make the configured <code>COOP_MCP_FILE</code> a private readable regular file no larger than 4 MiB.</li>
+<li>Set <code>COOP_MCP_FILE</code> to a canonical path without <code>..</code>.</li>
+<li>Shared MCP also inspects the selected Codex or Grok native config, so prepare that file the same
+way.</li>
+<li>co:op reads Gemini&#39;s native <code>settings.json</code> and generates the box&#39;s version even without shared
+MCP, so that file must be safe before any Gemini launch.</li>
+<li>Replace a final symlink with a private regular copy.</li>
+<li>Keep the shared source outside repositories, companion repositories, credential homes and ACP
+session stores that co:op mounts as a whole.</li>
+</ul>
+<p>co:op leaves an unsafe input untouched and refuses the launch it affects. After you correct the
+file or source path, retry the original command.</p>
+<p>A project Dockerfile selected by <code>.agent/Dockerfile</code> or <code>box.dockerfile</code> must now be a regular file
+inside the repository. If it&#39;s a symlink, replace it with a regular copy before <code>coop build</code>.</p>
+<p>co:op removes Fleet&#39;s commands, its live board and its <code>.agent/fleet.yaml</code> parser. Use the direct
+fork and loop commands:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="One composition model, direct fork loops table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop fleet init</code> / <code>.agent/fleet.yaml</code></td>
+<td>No manifest. Start each fork explicitly with <code>coop fork &lt;name&gt; &lt;target|preset&gt; --loop -d --tasks &lt;path&gt;</code>. co:op doesn&#39;t delete an existing ignored file, so remove it manually after you translate its entries.</td>
+</tr>
+<tr>
+<td><code>coop fleet up</code></td>
+<td>Run the direct detached fork command once per worker. Point workers at the same canonical queue, or use <code>--tasks &lt;path&gt;</code> only to select a genuinely separate canonical queue.</td>
+</tr>
+<tr>
+<td><code>coop fleet down</code></td>
+<td><code>coop fork stop &lt;name&gt;</code> for each running fork.</td>
+</tr>
+<tr>
+<td><code>coop fleet watch</code></td>
+<td><code>coop tasks watch</code> for merged task progress, <code>coop fork ls</code> for fork state and cost, and <code>coop fork logs -f</code> for output.</td>
+</tr>
+<tr>
+<td><code>coop fleet prune</code></td>
+<td><code>coop fork rm &lt;name&gt;</code> for each obsolete fork (<code>--yes</code> confirms without a prompt, and <code>--force</code> separately overrides the protection for dirty or unmerged forks).</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop fork merge --all</code> still lands every fork through a rebase queue that checks each fork again.
+There&#39;s no batch up/down command, so start and stop each worker explicitly.</p>
+<p>co:op also no longer inspects or removes Compose projects named only after the folder, which date
+from before project names included a hash for each workspace. Finish or stop sibling services
+before you upgrade. If one of those old stacks remains afterwards, inspect it with
+<code>docker compose ls</code>, then run
+<code>docker compose -p &lt;legacy-project&gt; -f .agent/compose.yml down --remove-orphans</code>.</p>
+<p>When you re-enter a fork session, co:op uses one record, <code>.coop/session.&lt;provider&gt;.&lt;account&gt;</code>. It
+ignores the older provider-only <code>.coop/session.&lt;provider&gt;</code> file, which you can remove whenever you
+like, and no longer adopts the latest Codex session by working directory. The first re-entry without
+a current exact hint starts a new conversation. When the provider creates one unambiguous session,
+co:op records an exact hint for later resumes.</p>
+<p><code>coop init</code> now maintains only the current scaffold, and doesn&#39;t rewrite files that versions before
+v8 generated. If you&#39;re upgrading from a version older than v8, make these changes yourself:</p>
+<ul>
+<li>In <code>.githooks/prepare-commit-msg</code>, replace <code>$HOME/.config/coop/git-hooks/prepare-commit-msg</code>
+with <code>$HOME/.coop-git-hooks/prepare-commit-msg</code>, then run
+<code>chmod +x .githooks/prepare-commit-msg</code>.</li>
+<li>If <code>.agent/rules/</code> exists, run <code>mkdir -p .agent/kb</code> and <code>git mv .agent/rules .agent/kb/rules</code> so
+the rule cards stay tracked at their current path. Then update project-owned instructions, such
+as <code>AGENTS.md</code>, to refer to <code>.agent/kb/rules/</code>.</li>
+<li>In <code>.gitignore</code>, remove the old co:op stanza that contains <code>.agent/*</code> or <code>**/.agent/*</code> together
+with <code>!.agent/rules/</code> or <code>!**/.agent/rules/</code>. Then run <code>coop init</code> once to append the current
+monorepo-aware stanza.</li>
+</ul>
+<p>Existing project-owned hooks and custom hook paths stay protected. Instead of overwriting them,
+<code>init</code> describes how to chain co:op&#39;s current hook.</p>
+<p>Audit-reopen records also support only the current formats. No tagged co:op release wrote the
+retired v1/v2 formats, so upgrades between released versions need no conversion. The now-unused
+<code>coop tasks unblock --adopt-audit-head</code> bridge has no replacement.</p>
+<p>If an untagged developer build left a v1/v2 record, reconcile that task with the build that wrote
+it before you upgrade. Current co:op leaves the record intact and refuses to lease, complete or
+unblock the task. Don&#39;t delete raw task-authority registry files to get around that refusal.</p>
+</section><section class="doc-section reference-section" id="v7-the-box-dockerfile-moves-into-agent"><h2>v7: the box Dockerfile moves into <code>.agent/</code></h2>
+<p>v7.0.0 moved the box Dockerfile out of the repository root. co:op builds the box from
+<code>.agent/Dockerfile</code> and no longer reads a root <code>Dockerfile.agent</code>. A repo that still has one gets
+the standard box, without your toolchain, so move the file and rebuild:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="v7: the box Dockerfile moves into .agent/ code example" tabindex="0"><code class="language-sh">mkdir -p .agent
+git mv Dockerfile.agent .agent/Dockerfile
+coop build
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>To keep the file where it is, set <code>box.dockerfile</code> in <code>.agent/project.yaml</code> to <code>Dockerfile.agent</code>
+instead. That key takes any regular file inside the repository, such as your app&#39;s own <code>Dockerfile</code>.</p>
+<p>The v7 box image also gained <code>socat</code>, which lets the box reach a sidecar&#39;s exposed port at
+<code>localhost:&lt;port&gt;</code>. Run <code>coop build</code> or <code>coop update</code> once to rebuild the box with it.</p>
+</section><section class="doc-section reference-section" id="v4-the-target-grammar-one-way-to-name-a-run"><h2>v4: the target grammar, one way to name a run</h2>
+<p>A target names who runs: <code>provider[:model][/effort][@account]</code>. For example: <code>claude</code>,
+<code>claude:opus</code>, <code>claude/xhigh</code>, <code>claude:opus/xhigh</code>, <code>claude@work</code>, <code>claude:opus@work</code>.</p>
+<p>A target must name the provider. The model, the account and a reasoning <code>/effort</code> are optional.
+co:op passes the effort (<code>low</code>/<code>medium</code>/<code>high</code>/<code>xhigh</code>/<code>max</code>) straight to the agent&#39;s CLI. At v4,
+Gemini had no effort levels and rejected the setting. Since v10.1.2 it takes <code>low</code> or <code>high</code>.
+<code>--model</code>, <code>--credential</code> and the boolean <code>--consult</code> are retired, and you name peers explicitly.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v4: the target grammar, one way to name a run table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop &lt;agent&gt; --model &lt;m&gt;</code></td>
+<td><code>coop &lt;agent&gt;:&lt;m&gt;</code>: for example <code>coop claude:opus</code></td>
+</tr>
+<tr>
+<td><code>coop &lt;agent&gt; --credential &lt;acct&gt;</code></td>
+<td><code>coop &lt;agent&gt;@&lt;acct&gt;</code>: for example <code>coop claude@work</code></td>
+</tr>
+<tr>
+<td><code>coop login &lt;agent&gt; --credential &lt;acct&gt;</code></td>
+<td><code>coop login &lt;agent&gt;@&lt;acct&gt;</code></td>
+</tr>
+<tr>
+<td><code>coop loop --model m@work</code></td>
+<td><code>coop loop &lt;agent&gt;:m@work</code> (account ladder: <code>&lt;agent&gt;@work,personal</code>)</td>
+</tr>
+<tr>
+<td>bare <code>coop</code> / <code>coop loop</code> (defaulted to claude)</td>
+<td>name the target: <code>coop claude</code>, <code>coop loop claude</code> (or, since v5.0.0, positional <code>coop loop &lt;preset&gt;</code>, whose lead supplies it)</td>
+</tr>
+<tr>
+<td><code>coop &lt;agent&gt; --consult</code> (boolean)</td>
+<td><code>coop &lt;target&gt; --peer &lt;target&gt;...</code>: name each peer (repeatable): <code>--peer codex:gpt-6-astra --peer gemini</code>. v4 named peers with <code>--consult &lt;peer&gt;</code>, and v5.0.0 renamed it <code>--peer</code></td>
+</tr>
+<tr>
+<td><code>coop fusion &lt;target&gt;</code> (consulted every signed-in agent)</td>
+<td><code>coop &lt;target&gt; --peer &lt;target&gt;...</code>: name only the peers this run may consult (v10.1.2 removed <code>coop fusion</code>)</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The target grammar works in every current launch command: <code>coop &lt;target&gt;</code>, <code>loop</code>, <code>acp</code>,
+<code>fork &lt;name&gt; [acp]</code> and <code>login</code>. A Zed <code>agent_servers</code> entry can name a target as one token,
+<code>[&#34;acp&#34;,&#34;claude:opus@work&#34;]</code>, or, since v5.0.0, use <code>[&#34;acp&#34;]</code> for automatic startup and live
+selection.</p>
+<p>A peer takes part only when you name it. co:op mounts only a named peer&#39;s credentials for
+consultation, and the box&#39;s <code>coop-consult</code> refuses any other peer, so an overnight run can&#39;t hand
+your Codex login to a Claude lead that you never asked to consult it.</p>
+<p>Since v5.0.0, name a preset in the position that says who runs, as in <code>coop &lt;preset&gt;</code> or
+<code>coop loop &lt;preset&gt;</code>, instead of with <code>--preset</code>.</p>
+<p>Presets follow the same grammar. <code>agent:</code> holds a target or a target ladder, and native roles
+remain one Claude target. The separate <code>model:</code>/<code>models:</code> keys are retired:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v4: the target grammar, one way to name a run table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired preset shape</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lead: {agent: claude, models: [fable, opus@work]}</code></td>
+<td><code>lead: {agent: [claude:fable, claude:opus@work]}</code>: one <code>agent:</code> ladder (each entry a target)</td>
+</tr>
+<tr>
+<td>a role&#39;s <code>agent: codex</code> + <code>model: gpt-6-astra</code></td>
+<td><code>agent: codex:gpt-6-astra</code>: the model goes in <code>agent:</code> (a role runs its default account, with no <code>@account</code>)</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>A lead ladder can span providers, as in <code>agent: [claude:opus, codex:gpt-6-astra]</code>. On a rate limit,
+the loop rotates across vendors and runs each rung&#39;s agent. Since v5.0.0, an ACP session rotates
+too, and carries the conversation over, best effort, as a labeled plain-text preamble. The lead is
+the first rung&#39;s provider. It&#39;s the default agent, and the one a single run uses.</p>
+<p>Since v5.3.0, consult and delegate role ladders fail over inside their wrappers after a non-zero
+exit that co:op confirms is a rate limit. Role rungs always use each provider&#39;s default account,
+and <code>@account</code> remains lead-only. co:op skips providers you haven&#39;t signed in to, and mounts every
+available rung&#39;s credential home in the lead box.</p>
+</section><section class="doc-section reference-section" id="v3-retired-command-aliases"><h2>v3: retired command aliases</h2>
+<p>v3 has no backward-compatible aliases. Each retired form is now either unknown or stops with a hint,
+so rewrite it:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="v3: retired command aliases table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Retired</th>
+<th scope="col">Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>coop clone &lt;name&gt;</code></td>
+<td><code>coop fork &lt;name&gt;</code></td>
+</tr>
+<tr>
+<td><code>coop profiles …</code></td>
+<td><code>coop credentials …</code>: a credential is a stored account or login, and orchestration recipes are presets (<code>coop help presets</code>)</td>
+</tr>
+<tr>
+<td><code>--profile &lt;name&gt;</code> (login/launch flags)</td>
+<td>put the account in the target: <code>&lt;agent&gt;@&lt;name&gt;</code>. <code>--profile</code> is no longer a coop flag. On an agent launch, it goes to the agent like any other argument (codex has its own <code>--profile</code>). Anywhere else, it&#39;s an unknown argument</td>
+</tr>
+<tr>
+<td><code>coop pool &lt;add|rm|clear&gt;</code></td>
+<td>There is no persistent pool. A loop rotates through its preset lead&#39;s <code>agent:</code> target ladder (<code>coop help presets</code>). A bare <code>provider:model</code> rung in that ladder runs on every signed-in account, which is what the pool used to do. co:op ignores a stray <code>pools.json</code>.</td>
+</tr>
+<tr>
+<td><code>coop profiles &lt;default|rm&gt; &lt;agent&gt; &lt;name&gt;</code> (verb-first)</td>
+<td><code>coop credentials &lt;agent&gt; &lt;name&gt; &lt;default|rm&gt;</code> (a path)</td>
+</tr>
+<tr>
+<td><code>coop profiles &lt;name&gt; model &lt;m&gt;</code> / a credential&#39;s model mark</td>
+<td>A credential is just an account, and the model is a separate choice. Set it in the target (<code>&lt;agent&gt;:&lt;m&gt;</code>) or in a preset lead&#39;s <code>agent:</code> target ladder (<code>coop help presets</code>). Both spellings of <code>coop credentials &lt;cred&gt; model</code> now fail.</td>
+</tr>
+<tr>
+<td><code>coop status</code></td>
+<td><code>coop tasks watch</code> (the queue and any active forks) / <code>coop fork ls</code> (fork state)</td>
+</tr>
+<tr>
+<td><code>coop tasks start &lt;id&gt;</code></td>
+<td><code>coop tasks claim &lt;id&gt;</code></td>
+</tr>
+<tr>
+<td><code>coop loop --debug</code></td>
+<td><code>coop loop --debug-on-fail</code></td>
+</tr>
+<tr>
+<td><code>&lt;any&gt; list</code> (e.g. <code>coop tasks list</code>)</td>
+<td><code>&lt;any&gt; ls</code>: <code>ls</code> is the only list verb</td>
+</tr>
+<tr>
+<td><code>&lt;any&gt; remove</code> (e.g. <code>coop tasks remove</code>)</td>
+<td><code>&lt;any&gt; rm</code>: <code>rm</code> is the only destructive verb</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="monorepos-a-hand-set-coop_tasks--agentprojectyaml"><h2>Monorepos: a hand-set <code>COOP_TASKS</code> → <code>.agent/project.yaml</code></h2>
+<p>This change isn&#39;t breaking: <code>COOP_TASKS</code> still works, and it still overrides <code>.agent/project.yaml</code>.
+If you exported <code>COOP_TASKS=&#34;portal/.agent/tasks runner/.agent/tasks …&#34;</code> so co:op would see a
+monorepo&#39;s queues, you can delete the export. Commit a top-level <code>.agent/project.yaml</code> that lists
+the members:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Monorepos: a hand-set COOP_TASKS → .agent/project.yaml code example" tabindex="0" data-copy-source=""><code class="language-yaml">subprojects: [portal, runner, mcp, packs]
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Every task command gets its set of queues from this file: each member&#39;s queue, plus the root&#39;s own
+queue for changes that span members.</p>
+<p><code>coop init</code> at the root writes the file for you. It detects direct child directories that have a
+<code>.agent/</code>, and sets up any member that&#39;s missing its queue.</p>
+</section><section class="doc-section reference-section" id="a-legacy-agenttasksmd--the-folder-task-system"><h2>A legacy <code>.agent/TASKS.md</code> → the folder task system</h2>
+<p>Older co:op repos kept the work queue in a single <code>.agent/TASKS.md</code>, with <code>[ ]</code>/<code>[w]</code>/<code>[x]</code>/<code>[B]</code>
+checkboxes, plus a global <code>.agent/PENDING_DECISIONS.md</code>. Since v3, co:op no longer reads that
+layout, and there&#39;s no fallback. Each task is now a folder under <code>.agent/tasks/</code>, and a task&#39;s state
+is its directory: <code>00_todo/</code>, <code>10_in_progress/</code>, <code>50_blocked/</code> or <code>99_done/</code>.</p>
+<p>Convert once with an LLM, because the old task bodies are prose that needs mapping and a rigid
+parse won&#39;t work. The prompt below keeps all task content.</p>
+<ol>
+<li>Commit (or stash) first, so the conversion is easy to review as a diff.</li>
+<li>Paste the prompt below into any coding agent (Claude, Codex, Gemini, …) running in the repo.</li>
+<li>Afterwards, verify with <code>coop tasks</code> and <code>coop tasks lint</code>.</li>
+</ol>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="A legacy .agent/TASKS.md → the folder task system code example" tabindex="0"><code class="language-text">Convert this repo&#39;s legacy coop task queue to the folder-based format. Work
+carefully and lose no task content.
+
+SOURCE
+- `.agent/TASKS.md`: each top-level line `- [ ] / [w] / [x] / [B] &lt;title&gt;` is one
+  task; the indented bullets beneath it are that task&#39;s body.
+- `.agent/PENDING_DECISIONS.md` (if present): human decisions, each tied by its text
+  to a blocked task.
+- Ignore the header/legend comments, the `[E]` example task, and any `- [ ]` lines
+  inside ``` fenced code blocks (those are documentation, not tasks).
+
+TARGET — a folder per task; the task&#39;s STATE is its directory (the NN_ prefix is
+part of the directory name — use it verbatim):
+  `- [ ]` → `.agent/tasks/00_todo/`        `- [w]` → `.agent/tasks/10_in_progress/`
+  `- [B]` → `.agent/tasks/50_blocked/`      `- [x]` → `.agent/tasks/99_done/`
+
+FOR EACH TASK
+1. id = `YYYY-MM-DD-&lt;slug&gt;`: use a date from the task body if it has one, else
+   today; slug = the title lowercased with every run of non-alphanumeric characters
+   replaced by a single `-`, trimmed, ≤ 48 chars. Make each id unique.
+2. Write `.agent/tasks/&lt;state&gt;/&lt;id&gt;/task.md`:
+
+   ---
+   id: &lt;id&gt;
+   title: &lt;the task&#39;s one-line title&gt;
+   labels: []
+   updated: &lt;today, ISO-8601&gt;
+   ---
+
+   # &lt;title&gt;
+
+   **Context:** &lt;the body&#39;s Context, or a one-line summary of the task&gt;
+
+   **Acceptance criteria:** &lt;the body&#39;s &#34;Acceptance checks&#34;, if any&gt;
+
+   **Approach:** &lt;the body&#39;s &#34;Implementation direction&#34;, if any&gt;
+
+   ## Subtasks
+   - [ ] &lt;each concrete sub-step found in the body&gt;
+
+   Map the old body&#39;s Context / Likely files / Implementation direction /
+   Acceptance checks into these fields. Omit the Subtasks section if there are no
+   steps. Put anything that doesn&#39;t fit under a trailing `## Notes` heading —
+   never drop content. Do NOT add a `status:` field; the directory is the status.
+
+3. For a `[B]` (blocked) task, also write `.agent/tasks/50_blocked/&lt;id&gt;/decision.md`:
+
+   # Decision: &lt;the open question&gt;
+
+   **Blocks:** this task (`&lt;id&gt;`).
+
+   **The decision:** &lt;what must be chosen&gt;
+
+   **Options:**
+   - **A — &lt;name&gt;:** &lt;consequence&gt;
+   - **B — &lt;name&gt;:** &lt;consequence&gt;
+
+   **Recommendation:** &lt;if the body or PENDING_DECISIONS suggests one&gt;
+
+   ---
+
+   **Resolution:** &lt;fill in if it was already answered, else leave empty&gt;
+
+   If `.agent/PENDING_DECISIONS.md` has an entry matching this task (by the title or
+   topic it names), fold it into this `decision.md`. A pending decision that matches
+   no task → create a new `50_blocked/` task for it.
+
+CLEAN UP
+4. Once every task and decision has been migrated, delete `.agent/TASKS.md` and
+   `.agent/PENDING_DECISIONS.md`.
+
+VERIFY
+5. Run `coop tasks` (it should list the same number of tasks as the old file,
+   grouped by state) and `coop tasks lint` (it must be clean). Then report a
+   summary: tasks migrated per state, decisions folded in, and anything that did
+   not map cleanly.
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="a-legacy-agentbacklogmd--the-backlog-drawer"><h2>A legacy <code>.agent/BACKLOG.md</code> → the backlog drawer</h2>
+<p>Older co:op repos kept unscheduled ideas in a single <code>.agent/BACKLOG.md</code>, with one <code>##</code> section
+per idea. The backlog is now a task-folder drawer, <code>.agent/tasks/xx_backlog/</code>, that you manage with
+<code>coop backlog</code>. When an idea is ready, promote it with <code>coop backlog promote &lt;id&gt;</code>. Don&#39;t rewrite
+it by hand. <code>coop init</code> no longer writes <code>BACKLOG.md</code>.</p>
+<p>If you never used the file, there&#39;s nothing to convert: <code>coop backlog add</code> creates the drawer when
+you need it. Otherwise, migrate by hand. For each <code>##</code> section in <code>.agent/BACKLOG.md</code>, run:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="A legacy .agent/BACKLOG.md → the backlog drawer code example" tabindex="0"><code class="language-text">coop backlog add &#34;&lt;the item&#39;s title&gt;&#34;
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop backlog add</code> prints the path of the new item&#39;s <code>task.md</code>. Paste the section&#39;s notes there.
+For a <code>— DEFERRED (&lt;why&gt;)</code> item, copy the reason across too. You can just drop an item that shipped
+or was cancelled. When every item has moved, delete <code>.agent/BACKLOG.md</code> and verify with
+<code>coop backlog</code>.</p>
+</section><section class="doc-section reference-section" id="the-sweep-stop-hook-in-older-repos"><h2>The /sweep Stop hook in older repos</h2>
+<p>The <code>/sweep</code> skill&#39;s <code>Stop</code> hook keeps only an active sweep running and holds no other session
+open. New projects get this setup from <code>coop init</code>, but <code>init</code> preserves existing files, so
+update a repo set up by an older co:op by hand:</p>
+<ol>
+<li>Remove only the stock <code>Stop</code> group from <code>.claude/settings.json</code>. Keep <code>PreToolUse</code> and custom
+hooks.</li>
+<li>Delete <code>.claude/hooks/stop-guard.sh</code>, but only if it&#39;s the old stock guard.</li>
+<li>Remove a stale <code>.agent/active</code>.</li>
+<li>Merge the current <code>.agent/skills/sweep/</code> files, keeping your local customizations.</li>
+</ol>
+</section>
+        <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="session-api.html"><span>Previous</span>Worker API</a></nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  </div>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://ryker.emisar.dev" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

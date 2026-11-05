@@ -159,6 +159,8 @@ technical.
 | Lead | 20px | 18px | 400 / 1.6 / normal |
 | Body | 16px | 16px | 400 / 1.6 / normal |
 | Docs prose | 18px | 18px | 400 / 1.78 (32px lines) / normal |
+| Docs contents | 14px | 16px | 400 / 20px / normal |
+| Docs menu | 15px | 16px | 400, current page 500 / 22px / normal |
 | Control (buttons, navigation) | 16px | 16px | 500, buttons 600 / 1.6 / normal |
 | Supporting label | 14px | 14px | 500 / 1.5 / normal |
 | Terminal / code | 16px | 16px | 400 / 1.7 (scene cards 1.5) / normal |
@@ -173,7 +175,8 @@ Terminal alignment uses mono. No tiny, low-contrast technical captions.
 Use a 4px spacing base: 4, 8, 12, 16, 24, 32, 48, 64, 96 and 128px. One wrapper owns each
 gap. Don't combine a parent's gap and a child's margins for the same space.
 
-- Maximum content width: 1200px. Gutters: 24px desktop, 20px mobile, 16px at 320px.
+- Maximum content width: 1200px, and 1488px for the docs' three-column frame. Gutters: 24px desktop,
+  20px mobile, 16px at 320px.
 - Desktop sections: 96 to 128px vertical space. Mobile: 64px. Documentation: 48px between
   sections, 24px within them.
 - Desktop navigation: 72px tall. Mobile: 64px. When it's sticky, keep its background
@@ -219,7 +222,8 @@ from illustrations. If you show a workflow animation, keep a complete static vie
 | Task row | Plain-language task, status word/icon, optional result. Mono only for ids/commands |
 | Hover row | Neutral 4% white wash. Do not recolor child text or turn a metric green |
 | Status | Text plus a matching icon. Use "Passed" only when verification passed |
-| Docs navigation | Active item uses a neutral wash plus a clear marker and `aria-current`, not an amber success-like pill |
+| Docs menu | Plain text at 15px. The current page has a neutral wash and `aria-current`, not an amber success-like pill |
+| Docs contents | Muted 14px text on a thin line. The section being read brightens its text and its part of the line |
 | Mobile menu | Labeled button, accurate `aria-expanded`, Escape closes and restores focus. Overlay prevents accidental background interaction |
 | Search | Labeled input, visible loading, results, no-results and error states, and keyboard operation |
 
@@ -258,9 +262,8 @@ useful workflow. Use this sequence instead of a set of obligatory card grids:
    and docs.
 7. Product family, then the closing install CTA and a quiet footer.
 
-Documentation uses the same palette and controls with less drama. It has a searchable
-navigation column on wide screens, a readable article, and a compact contents disclosure on
-mobile. Keep page URLs and deep links as they are. Code may scroll inside its own labeled
+Documentation uses the same palette and controls with less drama. It has three columns on wide screens, a searchable menu, a readable article and
+the page's contents, each with its own job, and a compact bar and contents disclosure on mobile. Keep page URLs and deep links as they are. Code may scroll inside its own labeled
 region, but the page must not scroll sideways. Explain a long command block before you show
 it. Never crop essential output to make a screenshot look cleaner.
 

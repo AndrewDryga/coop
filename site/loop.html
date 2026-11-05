@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
-  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
-  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -41,23 +41,68 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide reference" tabindex="-1">
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html" aria-current="page">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide reference" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Hand off work</p>
         <h1>The loop</h1>
         <p class="guide-lead">Set up a task queue for an agent to work through on its own, with decisions and a final review.</p>
       </div>
     </header>
     <div class="docs guide-body">
       <details class="docs-side" open>
-        <summary>On this page</summary>
+        <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#exit-codes">Exit codes</a></li>
 <li class="reference-subsection"><a href="#task-locks-and-claims">Task locks and claims</a></li>
@@ -157,7 +202,7 @@ remain part of the ordinary task history.</p>
 <h3 id="sweeps-and-commit-hooks">Sweeps and commit hooks</h3>
 <p>The <code>/sweep</code> skill has a <code>Stop</code> hook that keeps an active sweep running while it has tasks to work
 on, without holding other sessions open. <code>coop init</code> sets it up in new projects. A repo set up by
-an older co:op needs <a href="https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md#the-sweep-stop-hook-in-older-repos" target="_blank" rel="nofollow noopener">a manual update</a>.</p>
+an older co:op needs <a href="migrating.html#the-sweep-stop-hook-in-older-repos">a manual update</a>.</p>
 <p><code>init</code> installs a fast commit check for Claude. For other committers, it installs a Git pre-commit
 check at <code>.githooks/pre-commit</code> and sets <code>core.hooksPath</code>, so the format check runs for everyone,
 including Codex, Gemini and a plain <code>git commit</code>. Git tracks the hook files, but <code>core.hooksPath</code>
@@ -350,7 +395,7 @@ selected agents to it:</p>
 real <code>.claude/skills/</code> instead, it leaves that project-owned set unchanged and links the other
 selected agents to it.</p>
 <p>To convert a repo with a single <code>.agent/TASKS.md</code> to the folder format, paste the prompt in
-<a href="https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md" target="_blank" rel="nofollow noopener">MIGRATING.md</a> into any coding agent in the repo.</p>
+<a href="migrating.html">MIGRATING.md</a> into any coding agent in the repo.</p>
 </section><section class="doc-section reference-section" id="monorepos"><h2>Monorepos</h2>
 <p>When one repo holds several components, each with its own work, list them once in the top-level
 <code>.agent/project.yaml</code>:</p>
@@ -416,18 +461,12 @@ name. Running it twice is safe.</p>
 candidate and pending proposals. It also returns the fork&#39;s assigned tasks to their original
 queue.</p>
 </section>
-        <nav class="reference-related" aria-label="Related guides">
-          <h2>Related guides</h2>
-          <ul class="reference-list" role="list"><li><a href="forks.html">Forks and review</a><p>Work in a separate copy of your project. Review the changes and checks before merging them.</p></li>
-<li><a href="agents.html">Agents, accounts and presets</a><p>Sign in, choose models and accounts, and configure presets, teammates and instructions.</p></li>
-<li><a href="configuration.html">Configuration</a><p>Find project settings, environment variables, configuration files and exit codes.</p></li>
-</ul>
-          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
-        </nav>
+        <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="usage-reports.html"><span>Previous</span>Usage and billing</a><a class="docs-pager-next" href="forks.html"><span>Next</span>Forks and review</a></nav>
         <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/loop.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

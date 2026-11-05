@@ -16,9 +16,8 @@ not establish publication quality.
 
 - State the purpose briefly and list prerequisites before the first action. Use one reading
   sequence; do not repeat the introduction as an outcome sidebar and workflow strip
-  alongside the actual contents. Anchor the desktop contents and article under a page-wide,
-  left-aligned introduction, so the contents do not hang below an empty column. Keep intro
-  text at a comfortable measure. Label where commands run.
+  alongside the actual contents. Start the desktop contents beside the introduction, on the same
+  top line, so they do not hang below an empty column. Keep intro text at a comfortable measure. Label where commands run.
 - Provider-guide prerequisites are step00 in the article and contents, immediately above
   “What this sandbox controls”; keep them out of the hero.
 - Open sandbox guides with a short, scannable list: limited file access, shadowed secrets,

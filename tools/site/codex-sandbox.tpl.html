@@ -40,14 +40,16 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide" tabindex="-1">
-<header class="guide-hero"><div class="guide-intro"><p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Codex CLI</p><h1>Run Codex CLI in a sandbox.</h1><p class="guide-lead">Run Codex CLI in a local Docker sandbox with filtered network access and a clear diff to review.</p></div></header>
+  <div class="wrap docs-shell">
+{{docs_nav}}
+  <main id="main" class="docs-page guide" tabindex="-1">
+<header class="guide-hero"><div class="guide-intro">{{eyebrow}}<h1>Run Codex CLI in a sandbox.</h1><p class="guide-lead">Run Codex CLI in a local Docker sandbox with filtered network access and a clear diff to review.</p></div></header>
 <div class="docs guide-body"><details class="docs-side" open><summary>In this walkthrough</summary><nav aria-label="On this page">
 <div class="guide-toc-group"><h2>Get started</h2>
 <ol role="list" start="0">
@@ -59,18 +61,15 @@
 </ol>
 </div>
 <div class="guide-toc-group"><h2>Explore the protections</h2>
-<div class="guide-toc-feature"><h3>Secrets</h3>
-<ol role="list" start="5">
+<div class="guide-toc-feature"><ol role="list" start="5">
 <li><a href="#shadow-secret"><span aria-hidden="true">05</span>Verify secret protection</a></li>
 </ol>
 </div>
-<div class="guide-toc-feature"><h3>Credentials</h3>
-<ol role="list" start="6">
+<div class="guide-toc-feature"><ol role="list" start="6">
 <li><a href="#provider-token"><span aria-hidden="true">06</span>Verify credential protection</a></li>
 </ol>
 </div>
-<div class="guide-toc-feature"><h3>Network access</h3>
-<ol role="list" start="7">
+<div class="guide-toc-feature"><ol role="list" start="7">
 <li><a href="#network"><span aria-hidden="true">07</span>See what the agent can connect to</a></li>
 <li><a href="#blocked-website"><span aria-hidden="true">08</span>Block a website</a></li>
 <li><a href="#allow-website"><span aria-hidden="true">09</span>Allow one website</a></li>
@@ -108,7 +107,7 @@
 <pre class="code"><samp>coop {{release}}</samp></pre>
 </div>
 
-<p>The installer runs a downloaded script. Check the <a href="docs.html#install">installation reference</a> for release verification.</p>
+<p>The installer runs a downloaded script. Check the <a href="install.html#verifying-a-download">install page</a> for release verification.</p>
 <p>Next, sign in:</p>
 <ul class="cmds" role="list"><li><code data-copy-source>coop login codex</code></li></ul>
 <p>Open the link shown in your terminal, enter the code, and sign in with your ChatGPT account. Wait for the terminal to confirm you’re signed in.</p><details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Using an API key?</summary><div><p>For API billing, follow the <a href="agents.html#api-keys">API-key setup</a> with <code>OPENAI_API_KEY</code>. co:op does not accept <code>CODEX_API_KEY</code> or <code>CODEX_ACCESS_TOKEN</code>.</p></div></details>
@@ -363,7 +362,9 @@ git diff &quot;$coop_review_base&quot;</code></li></ul>
 <p>For longer jobs, the <a href="overnight-guide.html">overnight walkthrough</a> shows how to run a task queue. You can delete the test project at <code>$coop_demo_dir</code> when you’re finished. This does not sign you out.</p>
 
 <h3>Using another coding agent?</h3><ul class="reference-list" role="list"><li><a href="claude-code-sandbox.html">Run Claude Code in a sandbox</a><p>Claude sign-in, connectors and the container boundary.</p></li><li><a href="gemini-cli-sandbox.html">Run Gemini CLI in a sandbox</a><p>AI Studio keys, Google routes and supported authentication.</p></li><li><a href="grok-cli-sandbox.html">Run Grok CLI in a sandbox</a><p>Grok device sign-in, account access and network rules.</p></li></ul></section>
-</article></div></main>
+{{pager}}
+      </article></div></main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

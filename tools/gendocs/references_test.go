@@ -13,7 +13,7 @@ import (
 
 func TestReferenceMarkdownPreservesStructureAndCode(t *testing.T) {
 	source := "# Reference\n\nIntro with [network rules](networking.md#provider-access).\n\n## Your own paths: `.coopignore`\n\n| Rule | Result |\n| --- | --- |\n| `*.example.com` | <unsafe> |\n\n```yaml\n# not a heading\npath: \"a & b < c\"\n  nested: 'quoted'\n```\n\n    transcript: denied\n    # also not a heading\n\n### Repeated\n\nText.\n\n### Repeated\n\nOther.\n\n<script>alert(1)</script>\n"
-	title, content, toc, err := renderReference("box", source)
+	title, content, toc, err := renderReference(docsPage{Slug: "box", Source: "docs/box.md"}, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,13 +46,15 @@ func TestReferenceMarkdownPreservesStructureAndCode(t *testing.T) {
 func TestReferenceLinksKeepDocumentAndRepositoryDestinations(t *testing.T) {
 	for href, want := range map[string]string{
 		"configuration.md?view=full#project-settings-agentprojectyaml": "configuration.html?view=full#project-settings-agentprojectyaml",
-		"#authentication":                "#authentication",
-		"../MIGRATING.md":                "https://github.com/AndrewDryga/coop/blob/main/MIGRATING.md",
-		"../examples/evals/maintenance/": "https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance",
-		"../internal/workerproto/job.go": "https://github.com/AndrewDryga/coop/blob/main/internal/workerproto/job.go",
-		"https://example.com/a.md#b":     "https://example.com/a.md#b",
+		"#authentication":                 "#authentication",
+		"../MIGRATING.md":                 "migrating.html",
+		"install.md#verifying-a-download": "install.html#verifying-a-download",
+		"../README.md#license":            "https://github.com/AndrewDryga/coop/blob/main/README.md#license",
+		"../examples/evals/maintenance/":  "https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance",
+		"../internal/workerproto/job.go":  "https://github.com/AndrewDryga/coop/blob/main/internal/workerproto/job.go",
+		"https://example.com/a.md#b":      "https://example.com/a.md#b",
 	} {
-		if got := referenceLink("agents", href); got != want {
+		if got := referenceLink("docs/agents.md", href); got != want {
 			t.Errorf("%s => %s, want %s", href, got, want)
 		}
 	}
@@ -73,8 +75,11 @@ func referenceFixture(t *testing.T) string {
 	if err = os.WriteFile(filepath.Join(root, "tools/site/reference.tpl.html"), template, 0644); err != nil {
 		t.Fatal(err)
 	}
-	for _, ref := range referenceLibrary {
-		if err = os.WriteFile(filepath.Join(root, "docs", ref.Slug+".md"), []byte("# "+ref.Label+"\n\nDisk content.\n"), 0644); err != nil {
+	for _, ref := range docsPages {
+		if ref.Source == "" {
+			continue
+		}
+		if err = os.WriteFile(filepath.Join(root, filepath.FromSlash(ref.Source)), []byte("# "+ref.Label+"\n\nDisk content.\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,11 +125,11 @@ func TestReferenceGenerationUsesFreshCLIAndRejectsUnownedSources(t *testing.T) {
 
 func TestCLIReferenceSectionsPreserveHelpBodies(t *testing.T) {
 	manual := "coop: synopsis\n\n" + strings.Repeat("=", 78) + "\n\ncoop run: run a command\n\nUsage:\n  coop run -- echo '# example'\n"
-	_, content, toc, err := renderReference("cli", "# CLI\n\n```\n"+manual+"```\n")
+	_, content, toc, err := renderReference(docsPage{Slug: "cli", Source: "docs/cli.md"}, "# CLI\n\n```\n"+manual+"```\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(toc, "coop run: run a command") {
+	if !strings.Contains(toc, ">coop run</a>") {
 		t.Fatal("command missing from contents")
 	}
 	parsed, err := dom.Parse(strings.NewReader(content))
@@ -192,14 +197,17 @@ func TestSiteLinksResolveToSections(t *testing.T) {
 }
 
 func TestReferencePagesHaveMetadataNavigationAndSource(t *testing.T) {
-	for _, ref := range referenceLibrary {
+	for _, ref := range docsPages {
+		if ref.Source == "" {
+			continue
+		}
 		t.Run(ref.Slug, func(t *testing.T) {
 			markup := readSite(t, ref.Slug+".html")
 			page := parsePage(t, markup)
 			if page.count(func(e element) bool { return e.tag == "h1" }) != 1 {
 				t.Error("expected one h1")
 			}
-			for _, text := range []string{`href="https://` + siteHost + `/` + ref.Slug + `.html"`, `href="docs.html#reference-guides"`, `href="https://github.com/AndrewDryga/coop/blob/main/docs/` + ref.Slug + `.md"`} {
+			for _, text := range []string{`href="https://` + siteHost + `/` + ref.Slug + `.html"`, `<p class="guide-eyebrow"><a href="docs.html">Documentation</a> / ` + ref.Group + `</p>`, `href="` + repoURL + `/blob/main/` + ref.Source + `"`} {
 				if !strings.Contains(markup, text) {
 					t.Errorf("missing %s", text)
 				}
@@ -238,7 +246,7 @@ func TestReferenceCheckIsReadOnly(t *testing.T) {
 }
 
 func TestShellExamplesAreNotOneClickRecipes(t *testing.T) {
-	_, content, _, err := renderReference("forks", "# Forks\n\n```bash\ncoop fork review work\ncoop fork merge work --yes\ncoop fork rm work\n```\n")
+	_, content, _, err := renderReference(docsPage{Slug: "forks", Source: "docs/forks.md"}, "# Forks\n\n```bash\ncoop fork review work\ncoop fork merge work --yes\ncoop fork rm work\n```\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,6 +255,55 @@ func TestShellExamplesAreNotOneClickRecipes(t *testing.T) {
 	}
 	if !strings.Contains(content, "Shell examples") || !strings.Contains(content, "coop fork merge work --yes") {
 		t.Fatal("read-only example lost its label or source")
+	}
+}
+
+func TestCommandContentsNameTheCommandAlone(t *testing.T) {
+	manual := "coop: run agents\n\n" + strings.Repeat("=", 78) + "\n\ncoop run: run a command in the box\n\nUsage: coop run\n"
+	_, content, toc, err := renderReference(docsPage{Slug: "cli", Source: "docs/cli.md"}, "# CLI\n\n```\n"+manual+"```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(toc, `>coop run</a>`) || strings.Contains(toc, "run a command in the box") {
+		t.Errorf("contents: %s", toc)
+	}
+	if !strings.Contains(content, "coop run: run a command in the box</h2>") {
+		t.Errorf("the heading lost its description: %s", content)
+	}
+}
+
+func TestADocumentOpeningWithAHeadingHasNoEmptyOverview(t *testing.T) {
+	_, content, toc, err := renderReference(docsPage{Slug: "migrating", Source: "MIGRATING.md"}, "# Migrating\n\n## v2\n\nSteps.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(content, `id="overview"`) || strings.Contains(toc, "Overview") {
+		t.Errorf("an empty overview: %s\n%s", content, toc)
+	}
+	_, content, toc, err = renderReference(docsPage{Slug: "box", Source: "docs/box.md"}, "# Box\n\nAn intro.\n\n## One\n\nText.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `id="overview"`) || !strings.Contains(toc, "Overview") {
+		t.Errorf("the intro lost its overview: %s\n%s", content, toc)
+	}
+}
+
+func TestOnlyAMarkedShellFenceCopiesAsOneCommand(t *testing.T) {
+	_, content, _, err := renderReference(docsPage{Slug: "install", Source: "docs/install.md"}, "# Install\n\n```bash copy-install\ncurl -fsSL https://x/install.sh | sh\n```\n\n```bash copy\ncoop doctor\n```\n\n```bash\ncoop down --delete-volumes\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`data-copy-kind="install"`, `data-copy-kind="command"`} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %s in %s", want, content)
+		}
+	}
+	if strings.Count(content, "data-copy-source") != 2 {
+		t.Errorf("want Copy on the two marked fences only: %s", content)
+	}
+	if _, plain, ok := strings.Cut(content, "Shell examples"); !ok || strings.Contains(plain, "data-copy-source") {
+		t.Errorf("a plain shell fence got a Copy button: %s", content)
 	}
 }
 
@@ -273,7 +330,7 @@ func TestFullCLIReferenceRetainsEveryCommandBody(t *testing.T) {
 	if len(parts) < 20 {
 		t.Fatal("manual command separator changed")
 	}
-	_, content, _, err := renderReference("cli", source)
+	_, content, _, err := renderReference(docsPage{Slug: "cli", Source: "docs/cli.md"}, source)
 	if err != nil {
 		t.Fatal(err)
 	}

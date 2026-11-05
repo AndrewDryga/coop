@@ -13,7 +13,7 @@ and handles account rotation.
 
 ### Set up Zed
 
-1. Install co:op. The [install one-liner](../README.md#install) puts `coop` on your `PATH` and
+1. Install co:op. The [install one-liner](install.md) puts `coop` on your `PATH` and
    builds an image with the ACP adapters included. Check that your shell can find it:
 
 ```bash

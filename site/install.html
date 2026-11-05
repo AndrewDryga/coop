@@ -1,0 +1,204 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/install.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Install · co:op</title>
+  <meta name="description" content="Install co:op, keep it up to date, and verify a download yourself.">
+  <link rel="canonical" href="https://coop.dryga.com/install.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/install.html">
+  <meta property="og:title" content="Install">
+  <meta property="og:description" content="Install co:op, keep it up to date, and verify a download yourself.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico?v=contained-entrance" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
+  <link rel="manifest" href="site.webmanifest?v=contained-entrance">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="32" height="32" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html" aria-current="true">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html" aria-current="page">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Get started</p>
+        <h1>Install</h1>
+        <p class="guide-lead">Install co:op, keep it up to date, and verify a download yourself.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#container-runtimes">Container runtimes</a></li>
+<li><a href="#build-from-source">Build from source</a></li>
+<li><a href="#update">Update</a></li>
+<li><a href="#verifying-a-download">Verifying a download</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
+<p>co:op runs on macOS and Linux, on amd64 or arm64, with Git and Docker:</p>
+<div class="reference-code-frame code-file" data-copy-kind="install"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0" data-copy-source=""><code class="language-copy-install">curl -fsSL https://coop.dryga.com/install.sh | sh
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>The script puts <code>coop</code> in <code>~/.local/bin</code>. It needs <code>curl</code>, <code>tar</code>, and <code>sha256sum</code> or <code>shasum</code>. If
+Docker is available, it also builds the box image and runs <code>coop doctor</code>. If not, install Docker and
+run those yourself:</p>
+<div class="reference-code-frame code-file" data-copy-kind="command"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0" data-copy-source=""><code class="language-copy">coop build --egress open &amp;&amp; coop doctor
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>To change what the script does, set these before <code>sh</code>, as in
+<code>curl -fsSL https://coop.dryga.com/install.sh | COOP_NO_BUILD=1 sh</code>:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Overview table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Variable</th>
+<th scope="col">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>COOP_VERSION</code></td>
+<td>Install this release tag instead of the latest one.</td>
+</tr>
+<tr>
+<td><code>COOP_BIN_DIR</code></td>
+<td>Install into this folder instead of <code>~/.local/bin</code>.</td>
+</tr>
+<tr>
+<td><code>COOP_NO_BUILD=1</code></td>
+<td>Skip building the box image.</td>
+</tr>
+</tbody>
+</table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="container-runtimes"><h2>Container runtimes</h2>
+<p>Online providers need Docker, which supports the helper that keeps provider credentials outside the
+box. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> on macOS 26+ can run commands with open
+networking and no credentials. If both are installed, co:op chooses Docker.</p>
+</section><section class="doc-section reference-section" id="build-from-source"><h2>Build from source</h2>
+<div class="reference-code-frame code-file" data-copy-kind="command"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Build from source code example" tabindex="0" data-copy-source=""><code class="language-copy">git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section><section class="doc-section reference-section" id="update"><h2>Update</h2>
+<p><code>coop update</code> updates the binary, then prepares the image for this project&#39;s network mode.
+<a href="migrating.html">Upgrading</a> lists what to change when a new version needs it.</p>
+</section><section class="doc-section reference-section" id="verifying-a-download"><h2>Verifying a download</h2>
+<p><code>install.sh</code> comes from the <code>main</code> branch, served by GitHub Pages at coop.dryga.com. You can also
+fetch it from <code>https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh</code>.</p>
+<p>The script checks the archive against the release&#39;s <code>checksums.txt</code> with <code>sha256sum</code> or <code>shasum</code>, and
+stops if the file or the tool is missing. If <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> is
+installed, it also verifies the release signature, which proves <code>checksums.txt</code> came from the release
+workflow for that tag.</p>
+<p>To verify by hand before you run anything, download the release files. Set <code>VER</code> to a tag from the
+<a href="https://github.com/AndrewDryga/coop/releases" target="_blank" rel="nofollow noopener">releases page</a>, and change <code>darwin_arm64</code> for
+another platform:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Verifying a download code example" tabindex="0"><code class="language-bash">VER=vX.Y.Z
+ASSET=&#34;coop_${VER#v}_darwin_arm64.tar.gz&#34;
+base=&#34;https://github.com/AndrewDryga/coop/releases/download/$VER&#34;
+curl -fsSLO &#34;$base/$ASSET&#34;
+curl -fsSLO &#34;$base/checksums.txt&#34;
+curl -fsSLO &#34;$base/checksums.txt.bundle&#34;
+
+# 1. checksums.txt is signed by the release workflow (keyless Sigstore):
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.bundle \
+  --certificate-identity &#34;https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/$VER&#34; \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
+awk -v f=&#34;$ASSET&#34; &#39;$2==f{print $1&#34;  &#34;f}&#39; checksums.txt | shasum -a 256 -c -
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</section>
+        <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="docs.html"><span>Previous</span>Overview</a><a class="docs-pager-next" href="sandbox-guide.html"><span>Next</span>First sandbox run</a></nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/install.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  </div>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://ryker.emisar.dev" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

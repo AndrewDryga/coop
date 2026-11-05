@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -18,25 +19,195 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-type referencePage struct {
-	Slug, Label, Description string
-	Related                  []string
+// docsPage is one page of the documentation.
+type docsPage struct {
+	Group, Slug, Label string
+	// Parent nests the page under another in the menu. Nested pages are alternatives to their parent,
+	// so previous and next step over them.
+	Parent string
+	// Source is the Markdown a generated page comes from. A page without one has a template of its own.
+	Source, Description string
+	// Keywords are words readers search for that the page itself doesn't use.
+	Keywords string
 }
 
-// One inventory owns routes, summaries, the library and related-page links. The prose
-// remains in docs/*.md; additions there require an explicit publication decision here.
-var referenceLibrary = []referencePage{
-	{"networking", "Networking", "Choose which network destinations an agent can reach, and review access before a run.", []string{"box", "agents", "integrations"}},
-	{"box", "Sandbox, images and services", "Control visible files, prepare a project image, and run databases and development servers beside your agent.", []string{"networking", "configuration", "agents"}},
-	{"agents", "Agents, accounts and presets", "Sign in, choose models and accounts, and configure presets, teammates and instructions.", []string{"networking", "usage-reports", "loop"}},
-	{"forks", "Forks and review", "Work in a separate copy of your project. Review the changes and checks before merging them.", []string{"loop", "box", "configuration"}},
-	{"loop", "Task queues and loops", "Set up a task queue for an agent to work through on its own, with decisions and a final review.", []string{"forks", "agents", "configuration"}},
-	{"integrations", "Editors and MCP", "Connect an editor or MCP server and check which actions run on your computer or in the container.", []string{"networking", "agents", "session-api"}},
-	{"configuration", "Configuration", "Find project settings, environment variables, configuration files and exit codes.", []string{"box", "networking", "cli"}},
-	{"usage-reports", "Usage and billing reports", "Connect your provider's billing reports and compare reported costs with local usage estimates.", []string{"agents", "configuration", "cli"}},
-	{"evals", "Evaluations", "Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.", []string{"agents", "loop", "cli"}},
-	{"session-api", "Worker API", "Connect a worker and manage sessions, turns, evidence and publication through the worker API.", []string{"integrations", "networking", "forks"}},
-	{"cli", "Command reference", "Look up co:op commands and options, with examples of how to use them.", []string{"configuration", "agents", "networking"}},
+// docsPages is the one map of the documentation, in reading order. It owns the docs menu, the
+// previous and next links, the search index, the docs/ folder's map and the routes and summaries of
+// pages generated from Markdown. Prose stays in the sources; a new page needs an entry here.
+var docsPages = []docsPage{
+	{Group: "Get started", Slug: "docs", Label: "Overview"},
+	{Group: "Get started", Slug: "install", Label: "Install", Source: "docs/install.md", Description: "Install co:op, keep it up to date, and verify a download yourself."},
+	{Group: "Get started", Slug: "sandbox-guide", Label: "First sandbox run"},
+	{Group: "Get started", Slug: "claude-code-sandbox", Label: "Claude Code", Parent: "sandbox-guide"},
+	{Group: "Get started", Slug: "codex-sandbox", Label: "Codex CLI", Parent: "sandbox-guide"},
+	{Group: "Get started", Slug: "gemini-cli-sandbox", Label: "Gemini CLI", Parent: "sandbox-guide"},
+	{Group: "Get started", Slug: "grok-cli-sandbox", Label: "Grok CLI", Parent: "sandbox-guide"},
+	{Group: "Get started", Slug: "overnight-guide", Label: "First overnight run"},
+	{Group: "Sandbox", Slug: "box", Label: "Files, images and services", Source: "docs/box.md", Description: "Control visible files, prepare a project image, and run databases and development servers beside your agent."},
+	{Group: "Sandbox", Slug: "networking", Label: "Networking", Source: "docs/networking.md", Description: "Choose which network destinations an agent can reach, and review access before a run.", Keywords: "allowlist whitelist firewall"},
+	{Group: "Agents", Slug: "agents", Label: "Accounts, models, presets", Source: "docs/agents.md", Description: "Sign in, choose models and accounts, and configure presets, teammates and instructions."},
+	{Group: "Agents", Slug: "integrations", Label: "Editors and MCP", Source: "docs/integrations.md", Description: "Connect an editor or MCP server and check which actions run on your computer or in the container."},
+	{Group: "Agents", Slug: "usage-reports", Label: "Usage and billing", Source: "docs/usage-reports.md", Description: "Connect your provider's billing reports and compare reported costs with local usage estimates."},
+	{Group: "Hand off work", Slug: "loop", Label: "Task queues and loops", Source: "docs/loop.md", Description: "Set up a task queue for an agent to work through on its own, with decisions and a final review."},
+	{Group: "Hand off work", Slug: "forks", Label: "Forks and review", Source: "docs/forks.md", Description: "Work in a separate copy of your project. Review the changes and checks before merging them."},
+	{Group: "Hand off work", Slug: "evals", Label: "Evaluations", Source: "docs/evals.md", Description: "Run repeatable checks to compare changes to models, presets and loops. Keep the results for review."},
+	{Group: "Reference", Slug: "cli", Label: "Commands", Source: "docs/cli.md", Description: "Look up co:op commands and options, with examples of how to use them."},
+	{Group: "Reference", Slug: "configuration", Label: "Configuration", Source: "docs/configuration.md", Description: "Find project settings, environment variables, configuration files and exit codes."},
+	{Group: "Reference", Slug: "session-api", Label: "Worker API", Source: "docs/session-api.md", Description: "Connect a worker and manage sessions, turns, evidence and publication through the worker API."},
+	{Group: "Reference", Slug: "migrating", Label: "Upgrading", Source: "MIGRATING.md", Description: "What to change when you upgrade co:op, newest version first. Follow the steps for each version since yours."},
+}
+
+// projectLinks are the only documents the menu leaves the site for. They are about the project, not
+// about using co:op, so they stay on GitHub.
+var projectLinks = []struct{ Label, Href string }{
+	{"Changelog", repoURL + "/blob/main/CHANGELOG.md"},
+	{"Contributing", repoURL + "/blob/main/CONTRIBUTING.md"},
+	{"Report an issue", repoURL + "/issues"},
+}
+
+const repoURL = "https://github.com/AndrewDryga/coop"
+
+func docsPageBySlug(slug string) *docsPage {
+	for i := range docsPages {
+		if docsPages[i].Slug == slug {
+			return &docsPages[i]
+		}
+	}
+	return nil
+}
+
+func docsPageBySource(source string) *docsPage {
+	for i := range docsPages {
+		if source != "" && docsPages[i].Source == source {
+			return &docsPages[i]
+		}
+	}
+	return nil
+}
+
+// foldScript closes a disclosure below the width that shows it open, before the first paint, so a
+// phone never sees the whole list flash past. Without JavaScript it simply stays open.
+func foldScript(width string) string {
+	return `<script>if(!matchMedia("(min-width:` + width + `)").matches)document.currentScript.parentElement.open=false</script>`
+}
+
+var openContents = regexp.MustCompile(`(<details class="docs-side" open>\s*<summary>[^<]*</summary>)(?:<script>.*?</script>)?`)
+
+// foldContents gives every page's contents the same treatment; running it again changes nothing.
+func foldContents(page string) string {
+	return openContents.ReplaceAllString(page, "${1}"+foldScript("1280px"))
+}
+
+// docsNav is the menu every docs page shows, with its own entry marked. The search button appears
+// before the first paint, so the menu doesn't shift, and only with JavaScript to run it.
+func docsNav(current string) string {
+	var b strings.Builder
+	b.WriteString(`<div class="docs-rail">` + "\n")
+	b.WriteString(`<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>` + "\n")
+	b.WriteString(`<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script>` + foldScript("1024px") + "\n")
+	b.WriteString(`<nav aria-label="Documentation">` + "\n")
+	link := func(page docsPage) string {
+		mark := ""
+		if page.Slug == current {
+			mark = ` aria-current="page"`
+		}
+		return fmt.Sprintf(`<a href="%s.html"%s>%s</a>`, page.Slug, mark, html.EscapeString(page.Label))
+	}
+	group := ""
+	for _, page := range docsPages {
+		if page.Parent != "" {
+			continue
+		}
+		if page.Group != group {
+			if group != "" {
+				b.WriteString("</ul>\n")
+			}
+			group = page.Group
+			fmt.Fprintf(&b, `<p class="docs-nav-group">%s</p>`+"\n"+`<ul role="list">`+"\n", html.EscapeString(group))
+		}
+		b.WriteString("<li>" + link(page))
+		var nested []string
+		for _, child := range docsPages {
+			if child.Parent == page.Slug {
+				nested = append(nested, "<li>"+link(child)+"</li>")
+			}
+		}
+		if nested != nil {
+			b.WriteString(`<ul role="list">` + strings.Join(nested, "") + "</ul>")
+		}
+		b.WriteString("</li>\n")
+	}
+	b.WriteString("</ul>\n" + `<p class="docs-nav-group">Project</p>` + "\n" + `<ul role="list">` + "\n")
+	for _, l := range projectLinks {
+		fmt.Fprintf(&b, `<li><a href="%s">%s<span class="go" aria-hidden="true">↗</span></a></li>`+"\n", l.Href, html.EscapeString(l.Label))
+	}
+	b.WriteString("</ul>\n</nav>\n</details>\n</div>")
+	return b.String()
+}
+
+// docsPager links the pages before and after this one in reading order. A nested page sits between
+// its parent and whatever follows the parent.
+func docsPager(slug string) string {
+	var reading []docsPage
+	for _, page := range docsPages {
+		if page.Parent == "" {
+			reading = append(reading, page)
+		}
+	}
+	at := slices.IndexFunc(reading, func(p docsPage) bool { return p.Slug == slug })
+	var previous, next *docsPage
+	if parent := docsPageBySlug(slug).Parent; parent != "" {
+		at = slices.IndexFunc(reading, func(p docsPage) bool { return p.Slug == parent })
+		previous = &reading[at]
+	} else if at > 0 {
+		previous = &reading[at-1]
+	}
+	if at+1 < len(reading) {
+		next = &reading[at+1]
+	}
+	var b strings.Builder
+	b.WriteString(`<nav class="docs-pager" aria-label="Previous and next pages">`)
+	if previous != nil {
+		fmt.Fprintf(&b, `<a class="docs-pager-previous" href="%s.html"><span>Previous</span>%s</a>`, previous.Slug, html.EscapeString(previous.Label))
+	}
+	if next != nil {
+		fmt.Fprintf(&b, `<a class="docs-pager-next" href="%s.html"><span>Next</span>%s</a>`, next.Slug, html.EscapeString(next.Label))
+	}
+	b.WriteString("</nav>")
+	return b.String()
+}
+
+// docsChrome is what every docs template fills the same way.
+func docsChrome(page docsPage) []block {
+	eyebrow := `<p class="guide-eyebrow"><a href="docs.html">Documentation</a> / ` + html.EscapeString(page.Group) + `</p>`
+	return []block{{"docs_nav", docsNav(page.Slug)}, {"eyebrow", eyebrow}, {"pager", docsPager(page.Slug)}}
+}
+
+// docsFolderMap is docs/README.md: the same map for someone browsing the repository.
+func docsFolderMap() string {
+	var b strings.Builder
+	b.WriteString("# co:op documentation\n\n<!-- Generated by tools/gendocs from docsPages. Do NOT edit by hand; run: go run ./tools/gendocs -->\n\n")
+	b.WriteString("The website has a menu and search: <https://" + siteHost + "/docs.html>. These Markdown files are its source.\n")
+	group := ""
+	for _, page := range docsPages {
+		if page.Group != group {
+			group = page.Group
+			b.WriteString("\n## " + group + "\n\n")
+		}
+		target := "https://" + siteHost + "/" + page.Slug + ".html"
+		if page.Source != "" {
+			target = strings.TrimPrefix(page.Source, "docs/")
+			if !strings.Contains(page.Source, "/") {
+				target = "../" + page.Source
+			}
+		}
+		indent := ""
+		if page.Parent != "" {
+			indent = "  "
+		}
+		fmt.Fprintf(&b, "%s- [%s](%s)\n", indent, page.Label, target)
+	}
+	return b.String()
 }
 
 func referencePages(root string, generated map[string]string, version string) (map[string]string, error) {
@@ -49,7 +220,7 @@ func referencePages(root string, generated map[string]string, version string) (m
 		if err != nil {
 			return nil, err
 		}
-		if bytes.Contains(data, []byte("<!-- Generated public reference by tools/gendocs.")) && referenceBySlug(strings.TrimSuffix(filepath.Base(output), ".html")) == nil {
+		if bytes.Contains(data, []byte("<!-- Generated public reference by tools/gendocs.")) && docsPageBySlug(strings.TrimSuffix(filepath.Base(output), ".html")) == nil {
 			return nil, fmt.Errorf("unexpected generated reference %s; remove the retired page", output)
 		}
 	}
@@ -58,14 +229,17 @@ func referencePages(root string, generated map[string]string, version string) (m
 		return nil, err
 	}
 	for _, source := range sources {
-		slug := strings.TrimSuffix(filepath.Base(source), ".md")
-		if referenceBySlug(slug) == nil {
+		name := filepath.Base(source)
+		if name != "README.md" && docsPageBySource("docs/"+name) == nil {
 			return nil, fmt.Errorf("%s has no public reference entry", source)
 		}
 	}
 	pages := make(map[string]string)
-	for _, ref := range referenceLibrary {
-		sourcePath := filepath.Join("docs", ref.Slug+".md")
+	for _, ref := range docsPages {
+		if ref.Source == "" {
+			continue
+		}
+		sourcePath := filepath.FromSlash(ref.Source)
 		source, ok := generated[sourcePath]
 		if !ok {
 			data, err := os.ReadFile(filepath.Join(root, sourcePath))
@@ -74,33 +248,26 @@ func referencePages(root string, generated map[string]string, version string) (m
 			}
 			source = string(data)
 		}
-		title, content, toc, err := renderReference(ref.Slug, source)
+		title, content, toc, err := renderReference(ref, source)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", sourcePath, err)
 		}
-		page, err := fillTemplate(root, "reference.tpl.html", []block{
+		page, err := fillTemplate(root, "reference.tpl.html", append(docsChrome(ref), []block{
 			{"title", html.EscapeString(title)}, {"description", html.EscapeString(ref.Description)},
-			{"slug", ref.Slug}, {"content", content}, {"toc", toc}, {"related", relatedReferences(ref)},
-		})
+			{"slug", ref.Slug}, {"content", content}, {"toc", toc},
+			{"source_path", ref.Source}, {"source_url", repoURL + "/blob/main/" + ref.Source},
+		}...))
 		if err != nil {
 			return nil, err
 		}
-		pages[filepath.Join("site", ref.Slug+".html")] = stampAssets(externalLinks(typographic(page)), version)
+		pages[filepath.Join("site", ref.Slug+".html")] = stampAssets(externalLinks(typographic(foldContents(page))), version)
 	}
 	return pages, nil
 }
 
-func referenceBySlug(slug string) *referencePage {
-	for i := range referenceLibrary {
-		if referenceLibrary[i].Slug == slug {
-			return &referenceLibrary[i]
-		}
-	}
-	return nil
-}
-
-func renderReference(slug, source string) (title, content, toc string, err error) {
+func renderReference(ref docsPage, source string) (title, content, toc string, err error) {
 	var rendered bytes.Buffer
+	source = copyFence.ReplaceAllString(source, "```$1")
 	if err = goldmark.New(goldmark.WithExtensions(extension.GFM)).Convert([]byte(source), &rendered); err != nil {
 		return
 	}
@@ -113,7 +280,7 @@ func renderReference(slug, source string) (title, content, toc string, err error
 	for _, node := range nodes {
 		root.AppendChild(node)
 	}
-	if slug == "cli" {
+	if ref.Slug == "cli" {
 		splitCLIReference(root)
 	}
 	ids := map[string]bool{"main": true, "overview": true}
@@ -135,12 +302,17 @@ func renderReference(slug, source string) (title, content, toc string, err error
 				if node.Data == "h3" {
 					class = ` class="reference-subsection"`
 				}
-				toc += `<li` + class + `><a href="#` + html.EscapeString(id) + `">` + html.EscapeString(heading) + `</a></li>` + "\n"
+				label := heading
+				if ref.Slug == "cli" {
+					// the command alone; its heading carries the description
+					label, _, _ = strings.Cut(heading, ": ")
+				}
+				toc += `<li` + class + `><a href="#` + html.EscapeString(id) + `">` + html.EscapeString(label) + `</a></li>` + "\n"
 			}
 		}
 		if node.Data == "a" {
 			if href := domAttr(node, "href"); href != "" {
-				setDOMAttr(node, "href", referenceLink(slug, href))
+				setDOMAttr(node, "href", referenceLink(ref.Source, href))
 			}
 		}
 		if node.Data == "table" {
@@ -198,7 +370,12 @@ func renderReference(slug, source string) (title, content, toc string, err error
 		section.AppendChild(node)
 		node = next
 	}
-	toc = `<li><a href="#overview">Overview</a></li>` + "\n" + toc
+	// A document that opens with a heading has no overview to show or to list.
+	if blank := article.FirstChild; hasOnlyItsHeading(blank) {
+		article.RemoveChild(blank)
+	} else {
+		toc = `<li><a href="#overview">Overview</a></li>` + "\n" + toc
+	}
 	var output bytes.Buffer
 	for node := article.FirstChild; node != nil; node = node.NextSibling {
 		if err = dom.Render(&output, node); err != nil {
@@ -207,6 +384,15 @@ func renderReference(slug, source string) (title, content, toc string, err error
 	}
 	content = output.String()
 	return
+}
+
+func hasOnlyItsHeading(section *dom.Node) bool {
+	for child := section.FirstChild.NextSibling; child != nil; child = child.NextSibling {
+		if child.Type != dom.TextNode || strings.TrimSpace(child.Data) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // The CLI manual has explicit command separators, not Markdown headings. Split only
@@ -242,6 +428,11 @@ func splitCLIReference(root *dom.Node) {
 	}
 }
 
+// copyFence is a shell fence its author marks as one command to copy, as in ```bash copy. Plain shell
+// fences can mix alternatives and destructive steps, so they never get a Copy button. GitHub reads
+// the first word as the language, so the mark doesn't change how the file looks there.
+var copyFence = regexp.MustCompile("(?m)^```(?:bash|sh) (copy(?:-install)?)$")
+
 func styleReferenceCode(pre *dom.Node, heading string) {
 	setDOMAttr(pre, "class", "code")
 	setDOMAttr(pre, "role", "region")
@@ -256,6 +447,10 @@ func styleReferenceCode(pre *dom.Node, heading string) {
 	switch language {
 	case "bash", "sh", "shell", "zsh":
 		label = "Shell examples"
+	case "copy":
+		kind, label = "command", "Shell"
+	case "copy-install":
+		kind, label = "install", "Shell"
 	case "yaml", "yml":
 		kind, label = "configuration", "YAML"
 	case "json":
@@ -317,49 +512,32 @@ func uniqueHeadingID(title string, used map[string]bool) string {
 	return id
 }
 
-func referenceLink(slug, href string) string {
+// referenceLink resolves a Markdown link from source: to the published page when there is one, else
+// to the repository. Only source code and project files stay there.
+func referenceLink(source, href string) string {
 	u, err := url.Parse(href)
 	if err != nil || strings.HasPrefix(href, "#") || u.Scheme != "" || u.Host != "" {
 		return href
 	}
-	target := path.Clean(path.Join("docs", u.Path))
 	if u.Path == "" {
 		return href
 	}
-	if strings.HasPrefix(target, "docs/") && strings.HasSuffix(target, ".md") {
-		name := strings.TrimSuffix(strings.TrimPrefix(target, "docs/"), ".md")
-		if referenceBySlug(name) != nil {
-			u.Path = name + ".html"
-			return u.String()
-		}
+	target := path.Clean(path.Join(path.Dir(source), u.Path))
+	if page := docsPageBySource(target); page != nil {
+		u.Path = page.Slug + ".html"
+		return u.String()
 	}
-	// Source-only material stays in the repository. Directory links use GitHub's tree view.
+	// Directory links use GitHub's tree view.
 	kind := "blob"
 	if strings.HasSuffix(u.Path, "/") {
 		kind = "tree"
 	}
-	u.Scheme, u.Host, u.Path = "https", "github.com", "/AndrewDryga/coop/"+kind+"/main/"+target
+	repo, err := url.Parse(repoURL)
+	if err != nil {
+		return href
+	}
+	u.Scheme, u.Host, u.Path = repo.Scheme, repo.Host, repo.Path+"/"+kind+"/main/"+target
 	return u.String()
-}
-
-func relatedReferences(ref referencePage) string {
-	var b strings.Builder
-	for _, slug := range ref.Related {
-		related := referenceBySlug(slug)
-		if related == nil {
-			continue
-		}
-		fmt.Fprintf(&b, `<li><a href="%s.html">%s</a><p>%s</p></li>`+"\n", related.Slug, html.EscapeString(related.Label), html.EscapeString(related.Description))
-	}
-	return b.String()
-}
-
-func referenceIndex() string {
-	var b strings.Builder
-	for _, ref := range referenceLibrary {
-		fmt.Fprintf(&b, `<li><a href="%s.html">%s</a><p>%s</p></li>`+"\n", ref.Slug, html.EscapeString(ref.Label), html.EscapeString(ref.Description))
-	}
-	return b.String()
 }
 
 func siteMap(pages map[string]string) string {

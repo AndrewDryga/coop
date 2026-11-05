@@ -23,9 +23,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=d6e401f3ae">
-  <script src="assets/js/site.js?v=d6e401f3ae" defer></script>
-  <script src="assets/js/analytics.js?v=d6e401f3ae" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
+  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
+  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -40,16 +40,61 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide" tabindex="-1">
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html" aria-current="page">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Get started</p>
         <h1>Run a coding agent overnight.</h1>
         <p class="guide-lead">Prepare a task, run it in a separate fork, and review the result in the morning.</p>
         <div class="guide-prerequisites">
@@ -64,7 +109,7 @@
     </header>
     <div class="docs guide-body">
       <details class="docs-side" open>
-        <summary>In this walkthrough</summary>
+        <summary>In this walkthrough</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ol role="list"><li><a href="#prepare"><span aria-hidden="true">01</span>Define the finish line</a></li>
 <li><a href="#isolate"><span aria-hidden="true">02</span>Prepare the fork</a></li>
 <li><a href="#launch"><span aria-hidden="true">03</span>Start the run</a></li>
@@ -161,10 +206,12 @@ gate: make check</pre></div>
 <p>If review or merge stops with an error, fix the reported problem and review again. Pushing and deploying are separate actions.</p>
 <div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>The reviewed changes are on the branch you intended, you have saved the check result, and the matching tasks in the parent queue are complete. Try a larger run after you have checked this result.</p></div>
           </section>
-        <a class="guide-next" href="orchestrator.html"><span class="guide-label">Explore the workflow</span><span>How the orchestrator works<span class="go" aria-hidden="true">→</span></span><small>Task queues, decisions, review and longer runs.</small></a>
+        <p class="doc-more"><a href="orchestrator.html">How the orchestrator works<span class="go" aria-hidden="true">→</span></a></p>
+      <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="sandbox-guide.html"><span>Previous</span>First sandbox run</a><a class="docs-pager-next" href="box.html"><span>Next</span>Files, images and services</a></nav>
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

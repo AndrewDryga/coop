@@ -40,16 +40,18 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide" tabindex="-1">
+  <div class="wrap docs-shell">
+{{docs_nav}}
+  <main id="main" class="docs-page guide" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html">Documentation</a></p>
+        {{eyebrow}}
         <h1>Run Claude Code or Codex in a sandbox.</h1>
         <p class="guide-lead">Set up co:op, run one small task, and review the changes.</p>
         <div class="guide-prerequisites">
@@ -80,7 +82,7 @@
 <ul class="cmds" role="list">
               <li data-copy-kind="install"><code data-copy-source>curl -fsSL https://coop.dryga.com/<wbr>install.sh | sh</code></li>
             </ul>
-<p>The installer runs a downloaded script. For checksums and release verification, use the <a href="docs.html#install">installation reference</a>.</p>
+<p>The installer runs a downloaded script. For checksums and release verification, use the <a href="install.html#verifying-a-download">install page</a>.</p>
 <ul class="cmds" role="list">
               <li><code data-copy-source>coop version</code></li>
               <li><code data-copy-source>coop login claude</code></li>
@@ -164,10 +166,11 @@ customer-export.csv</pre></div>
 <p>Keep the next task small until the project builds and tests reliably inside the container. For a queue that can continue without your supervision, use the overnight walkthrough.</p>
 <details class="guide-detail"><summary>Other runtimes and editor sessions</summary><div><p>Use Docker for the provider sessions in this guide. It supports the helper that keeps your provider credentials outside the container. Apple container can run commands with open networking and no credentials, but cannot replace Docker for this setup.</p><p>An agent connected through ACP can ask your editor to read files or run commands on your computer. The editor controls that access. Read the <a href="docs.html#editors">editor documentation</a> before using it.</p></div></details>
           </section>
-        <a class="guide-next" href="overnight-guide.html"><span class="guide-label">Next walkthrough</span><span>Run a coding agent overnight<span class="go" aria-hidden="true">→</span></span><small>Prepare a task queue, work in a separate fork, and review before merging.</small></a>
+      {{pager}}
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

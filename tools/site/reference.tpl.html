@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Generated public reference by tools/gendocs. Edit docs/{{slug}}.md, not this file. -->
+<!-- Generated public reference by tools/gendocs. Edit {{source_path}}, not this file. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -41,16 +41,18 @@
       <a class="nav-optional" href="./#sandbox">Sandbox</a>
       <a href="orchestrator.html">Orchestrator</a>
       <a class="nav-optional" href="./#features">Features</a>
-      <a href="docs.html">Docs</a>
+      <a href="docs.html" aria-current="true">Docs</a>
       <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
       <a class="button button-small" href="./#start">Install</a>
     </nav>
   </header>
 
-  <main id="main" class="wrap guide reference" tabindex="-1">
+  <div class="wrap docs-shell">
+{{docs_nav}}
+  <main id="main" class="docs-page guide reference" tabindex="-1">
     <header class="guide-hero">
       <div class="guide-intro">
-        <p class="guide-eyebrow"><a href="docs.html#reference-guides">Documentation</a> / Reference</p>
+        {{eyebrow}}
         <h1>{{title}}</h1>
         <p class="guide-lead">{{description}}</p>
       </div>
@@ -62,15 +64,12 @@
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
         {{content}}
-        <nav class="reference-related" aria-label="Related guides">
-          <h2>Related guides</h2>
-          <ul class="reference-list" role="list">{{related}}</ul>
-          <a href="docs.html#reference-guides">Browse all references<span class="go" aria-hidden="true">→</span></a>
-        </nav>
-        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/{{slug}}.md">View this page on GitHub</a></p>
+        {{pager}}
+        <p class="reference-source"><a href="{{source_url}}">View this page on GitHub</a></p>
       </article>
     </div>
   </main>
+  </div>
   <footer class="wrap footer">
     <a class="brand brand-small" href="./" aria-label="co:op home">
       <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">

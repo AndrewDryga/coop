@@ -143,7 +143,7 @@ if command -v cosign >/dev/null 2>&1; then
     echo "checksums.txt.bundle is missing for $ver. Releases before v2.2.2 were not signed; signature verification was skipped." >&2
   fi
 else
-  echo "Cosign is not installed, so the release signature was not verified. See README: Verifying a download." >&2
+  echo "Cosign is not installed, so the release signature was not verified. See https://coop.dryga.com/install.html#verifying-a-download" >&2
 fi
 verify_checksum "$asset" "$tmp/checksums.txt" "$tmp/coop.tar.gz" || exit 1
 printf '  ✓ Download checksum verified\n'
