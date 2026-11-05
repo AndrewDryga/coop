@@ -601,3 +601,69 @@ func privateFilesystemControllerState(state string, roots []string) error {
 	}
 	return nil
 }
+
+const controllerStateFolder = "/filesystem-controllers/coop-fs-controller-"
+
+// orphanControllers picks the filesystem controllers a killed process left: each binds its own state
+// folder, and when that folder is gone nothing can lease or stop the controller again. One is chosen
+// only when no other container binds anything under the same state root, so a box still enforced by
+// it keeps it. A controller bound to an existing folder is never chosen.
+func orphanControllers(controllers, all []ContainerBindsView, exists func(string) bool) []string {
+	var orphans []string
+	for _, c := range controllers {
+		state := ""
+		for _, bind := range c.Binds {
+			if strings.Contains(bind, controllerStateFolder) {
+				state = bind
+			}
+		}
+		if state == "" || exists(state) {
+			continue
+		}
+		root := state[:strings.Index(state, controllerStateFolder)]
+		used := false
+		for _, other := range all {
+			if other.ID == c.ID {
+				continue
+			}
+			for _, bind := range other.Binds {
+				if bind == root || strings.HasPrefix(bind, root+"/") {
+					used = true
+				}
+			}
+		}
+		if !used {
+			orphans = append(orphans, c.ID)
+		}
+	}
+	return orphans
+}
+
+// ContainerBindsView is runtime.ContainerBinds, kept here so the choice can be tested without Docker.
+type ContainerBindsView = runtime.ContainerBinds
+
+// sweepOrphanControllers removes the controllers orphanControllers picks.
+func sweepOrphanControllers(ctx context.Context, rt runtime.Runtime) (int, error) {
+	controllers, err := rt.LabelledContainerBinds(ctx, map[string]string{LabelKey: "filesystem", "coop.filesystem.role": "controller"})
+	if err != nil || len(controllers) == 0 {
+		return 0, err
+	}
+	all, err := rt.LabelledContainerBinds(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	exists := func(path string) bool {
+		_, err := os.Lstat(path)
+		return !errors.Is(err, os.ErrNotExist)
+	}
+	removed := 0
+	var problems []error
+	for _, id := range orphanControllers(controllers, all, exists) {
+		if err := rt.RemoveListedContainer(ctx, id); err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		removed++
+	}
+	return removed, errors.Join(problems...)
+}

@@ -307,3 +307,79 @@ func shortContainerID(id string) string {
 	}
 	return id
 }
+
+// ContainerBinds is one container and the host folders it binds.
+type ContainerBinds struct {
+	ID    string
+	Binds []string
+}
+
+// LabelledContainerBinds lists every container, running or stopped, carrying labels (all of them for
+// none), with its bind sources. Docker only. A runtime pinned to one daemon asks that daemon.
+func (r Runtime) LabelledContainerBinds(ctx context.Context, labels map[string]string) ([]ContainerBinds, error) {
+	if r.kind() != runtimeDocker {
+		return nil, fmt.Errorf("container inspection is unsupported by %s", r.Name)
+	}
+	run := func(args ...string) ([]byte, error) { return contextCommand(ctx, r.Name, args...).Output() }
+	if r.composeEndpoint != "" {
+		docker, err := bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+		if err != nil {
+			return nil, err
+		}
+		defer docker.Close()
+		run = func(args ...string) ([]byte, error) { return docker.output(ctx, 4<<20, args...) }
+	}
+	args := []string{"ps", "-q", "-a"}
+	var filters []string
+	for key, value := range labels {
+		filters = append(filters, "label="+key+"="+value)
+	}
+	sort.Strings(filters)
+	for _, filter := range filters {
+		args = append(args, "--filter", filter)
+	}
+	out, err := run(args...)
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out, err = run(append([]string{"inspect", "--type", "container", "--format", `{"ID":{{json .Id}},"Mounts":{{json .Mounts}}}`}, ids...)...)
+	if err != nil {
+		return nil, fmt.Errorf("inspect containers: %w", err)
+	}
+	var found []ContainerBinds
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var record struct {
+			ID     string
+			Mounts []struct{ Type, Source string }
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			return nil, fmt.Errorf("container inspection is malformed")
+		}
+		c := ContainerBinds{ID: record.ID}
+		for _, mount := range record.Mounts {
+			if mount.Type == "bind" {
+				c.Binds = append(c.Binds, mount.Source)
+			}
+		}
+		found = append(found, c)
+	}
+	return found, nil
+}
+
+// RemoveListedContainer removes a container LabelledContainerBinds found, from the same daemon.
+func (r Runtime) RemoveListedContainer(ctx context.Context, id string) error {
+	if r.composeEndpoint == "" {
+		return r.RemoveContainerContext(ctx, id)
+	}
+	docker, err := bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	_, err = docker.output(ctx, 1<<20, "rm", "-f", id)
+	return err
+}

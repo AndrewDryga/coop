@@ -1096,9 +1096,9 @@ func TestDropboxRules(t *testing.T) {
 	}
 	for body, want := range map[string]bool{
 		"# Dropbox template\n# /Backup/.config/coop/runfiles/\n": false,
-		"/Backup/.config/coop/runfiles/\n":                         true,
-		"!/Backup/.config/coop/coop.conf\n":                        true,
-		"/Backup/.config/other/\n":                                 false,
+		"/Backup/.config/coop/runfiles/\n":                       true,
+		"!/Backup/.config/coop/coop.conf\n":                      true,
+		"/Backup/.config/other/\n":                               false,
 	} {
 		if err := os.WriteFile(rules, []byte(body), 0o600); err != nil {
 			t.Fatal(err)

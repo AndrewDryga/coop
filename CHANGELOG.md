@@ -8,6 +8,10 @@
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
 
+- **The daily sweep removes filesystem controllers left by a killed process.** A controller whose own state
+  folder is gone can no longer be stopped by Coop, and it blocked launches that use a saved sign-in. One
+  is removed only when no other container binds anything under that state folder.
+
 - **`coop doctor` respects a chosen Dropbox setup.** When `rules.dropboxignore` already has rules for Coop's
   folder, it says the folder syncs by those rules. Otherwise it also says which account file should sync.
 

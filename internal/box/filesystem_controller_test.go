@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +91,25 @@ func TestFilesystemControllerBindingKeepsAdmissionNameSeparate(t *testing.T) {
 		if r.matchesController(ready) {
 			t.Fatal("foreign incarnation accepted")
 		}
+	}
+}
+
+// A controller goes only when its own state folder is gone and nothing else binds under that state
+// root; a live box's binds there keep it, and an existing folder always keeps it.
+func TestOrphanControllers(t *testing.T) {
+	dead := "/tmp/coop-test-state-1/service-state"
+	live := "/home/me/.local/state/coop"
+	gone := func(path string) bool { return !strings.HasPrefix(path, dead) }
+	orphan := ContainerBindsView{ID: "orphan", Binds: []string{"/sys/fs/bpf", dead + "/filesystem-controllers/coop-fs-controller-a-1"}}
+	used := ContainerBindsView{ID: "used", Binds: []string{"/tmp/coop-test-state-2/service-state/filesystem-controllers/coop-fs-controller-b-1"}}
+	box := ContainerBindsView{ID: "box", Binds: []string{"/tmp/coop-test-state-2/service-state/filesystem/coop-fs-x/policy"}}
+	kept := ContainerBindsView{ID: "kept", Binds: []string{live + "/filesystem-controllers/coop-fs-controller-c-1"}}
+	other := ContainerBindsView{ID: "other", Binds: []string{"/sys/fs/bpf"}}
+	controllers := []ContainerBindsView{orphan, used, kept, other}
+	all := append(slices.Clone(controllers), box)
+	exists := func(path string) bool { return strings.HasPrefix(path, live) || !gone(path) && false }
+	got := orphanControllers(controllers, all, exists)
+	if !slices.Equal(got, []string{"orphan"}) {
+		t.Errorf("orphans = %q, want only the one nothing uses", got)
 	}
 }

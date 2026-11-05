@@ -153,7 +153,12 @@ func pendingCreateSettled(dir string) bool {
 func RecoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	admissions, err := recoverFilesystemAdmissions(ctx, rt, workspace)
 	controllers, controllerErr := recoverFilesystemControllers(ctx, rt)
-	return admissions + controllers, errors.Join(err, controllerErr)
+	orphans := 0
+	var orphanErr error
+	if workspace == "" && rt.SupportsRestrictedFilesystem() {
+		orphans, orphanErr = sweepOrphanControllers(ctx, rt)
+	}
+	return admissions + controllers + orphans, errors.Join(err, controllerErr, orphanErr)
 }
 
 func recoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
