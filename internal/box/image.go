@@ -367,7 +367,12 @@ WORKDIR /workspace
 `
 
 const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
-  if [ -z "$COOP_NO_ASDF" ]; then
+  # COOP_NO_ASDF takes Coop's on and off words in any letter case; unset or an off word provisions.
+  case "$(printf '%s' "${COOP_NO_ASDF:-}" | tr '[:upper:]' '[:lower:]')" in
+    ''|0|false|no|off) coop_skip_asdf= ;;
+    *) coop_skip_asdf=1 ;;
+  esac
+  if [ -z "$coop_skip_asdf" ]; then
     f=; d=$PWD
     while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
     [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions

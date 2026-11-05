@@ -250,7 +250,7 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 			t.Errorf("BaseDockerfile missing %q", want)
 		}
 	}
-	skipProvisioning := strings.Index(df, `if [ -z "$COOP_NO_ASDF" ]; then`)
+	skipProvisioning := strings.Index(df, `if [ -z "$coop_skip_asdf" ]; then`)
 	repairNode := strings.Index(df, "if ! node --version >/dev/null 2>&1; then")
 	if skipProvisioning < 0 || repairNode < 0 || repairNode < skipProvisioning {
 		t.Errorf("node repair should run after the COOP_NO_ASDF provisioning branch")
@@ -645,5 +645,37 @@ func TestProvisioningMakesTheProjectPinsTheBoxDefault(t *testing.T) {
 				t.Fatalf("home pins = %q, %v; want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// COOP_NO_ASDF takes Coop's on and off words: an off word provisions like unset, an on word skips.
+func TestProvisioningReadsCoopNoAsdfAsAnOnOffSetting(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "asdf-ran")
+	for name, body := range map[string]string{
+		"asdf": "#!/bin/sh\necho \"$@\" >> " + marker + "\n[ \"$1\" = current ] && echo 'nodejs ______ No version is set' && exit 1\nexit 0\n",
+		"node": "#!/bin/sh\necho v24.0.0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for value, provisions := range map[string]bool{
+		"": true, "0": true, "false": true, "No": true, "OFF": true,
+		"1": false, "true": false, "YES": false, "on": false,
+	} {
+		_ = os.Remove(marker)
+		home, project := t.TempDir(), t.TempDir()
+		if err := os.WriteFile(filepath.Join(project, ".tool-versions"), []byte("nodejs 24.0.0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "-c", baseProvisioningScript)
+		cmd.Dir = project
+		cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "HOME=" + home, "COOP_QUIET=1", "COOP_NO_ASDF=" + value}
+		_, _ = cmd.CombinedOutput()
+		_, err := os.Stat(marker)
+		if ran := err == nil; ran != provisions {
+			t.Errorf("COOP_NO_ASDF=%q: asdf ran = %v, want %v", value, ran, provisions)
+		}
 	}
 }

@@ -8,6 +8,10 @@
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
 
+- **`COOP_NO_ASDF=0` installs your pinned tools again.** The box treated any value as "skip". It now
+  takes the same on and off words as Coop's other settings. The base image changes with it, so it
+  rebuilds once on its own.
+
 - **A launch blocked by a leftover container names it.** When a container mounts a folder that no longer
   exists, Coop refuses to touch a saved sign-in it might hold. It now names the container and the
   `docker rm -f` command that removes it.
