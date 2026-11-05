@@ -283,6 +283,7 @@ func renderReference(ref docsPage, source string) (title, content, toc string, e
 	if ref.Slug == "cli" {
 		splitCLIReference(root)
 	}
+	breakAfterUnderscores(root)
 	ids := map[string]bool{"main": true, "overview": true}
 	heading := "Overview"
 	walkDOM(root, func(node *dom.Node) {
@@ -606,4 +607,43 @@ func walkDOM(node *dom.Node, visit func(*dom.Node)) {
 		walkDOM(child, visit)
 		child = next
 	}
+}
+
+// breakAfterUnderscores lets a long name in a table cell, such as COOP_ALLOW_CASE_EXPOSED_SECRETS,
+// wrap only after an underscore. A <wbr> adds no character, so the copied name stays exact.
+func breakAfterUnderscores(root *dom.Node) {
+	var codes []*dom.Node
+	walkDOM(root, func(node *dom.Node) {
+		if node.Type == dom.ElementNode && node.Data == "code" && insideTableCell(node) {
+			codes = append(codes, node)
+		}
+	})
+	for _, code := range codes {
+		for text := code.FirstChild; text != nil; {
+			next := text.NextSibling
+			if text.Type == dom.TextNode && strings.Contains(text.Data, "_") {
+				parts := strings.SplitAfter(text.Data, "_")
+				for i, part := range parts {
+					if part == "" {
+						continue
+					}
+					code.InsertBefore(&dom.Node{Type: dom.TextNode, Data: part}, text)
+					if i < len(parts)-1 && strings.HasSuffix(part, "_") {
+						code.InsertBefore(&dom.Node{Type: dom.ElementNode, Data: "wbr", DataAtom: atom.Wbr}, text)
+					}
+				}
+				code.RemoveChild(text)
+			}
+			text = next
+		}
+	}
+}
+
+func insideTableCell(node *dom.Node) bool {
+	for parent := node.Parent; parent != nil; parent = parent.Parent {
+		if parent.Type == dom.ElementNode && (parent.Data == "td" || parent.Data == "th") {
+			return true
+		}
+	}
+	return false
 }

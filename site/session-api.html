@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
-  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
-  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
+  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
+  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -601,7 +601,7 @@ use up one of those review attempts.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/capabilities</code></td>
-<td><code>{&#34;job_spec_versions&#34;:[2],&#34;controller_tools_versions&#34;:[1],&#34;repository_freshness_receipt_versions&#34;:[2],&#34;session_evidence_versions&#34;:[1],&#34;review_commit_message_versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
+<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -738,12 +738,12 @@ check environment are empty, no check runs, so the review can&#39;t be published
 </thead>
 <tbody>
 <tr>
-<td><code>cpu_millis</code></td>
+<td><code>cpu_<wbr/>millis</code></td>
 <td>CPU, in thousandths of one core</td>
 <td>10 to 128000</td>
 </tr>
 <tr>
-<td><code>memory_bytes</code></td>
+<td><code>memory_<wbr/>bytes</code></td>
 <td>Memory, in bytes</td>
 <td>6 MiB to 1 TiB</td>
 </tr>
@@ -826,7 +826,7 @@ state, prompts and credentials.</p>
 <tr>
 <td><code>POST</code></td>
 <td><code>/v1/sessions</code></td>
-<td><code>task</code>, <code>job</code>, <code>expected_job_digest</code>, and optional <code>controller_tools</code></td>
+<td><code>task</code>, <code>job</code>, <code>expected_<wbr/>job_<wbr/>digest</code>, and optional <code>controller_<wbr/>tools</code></td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -835,18 +835,18 @@ state, prompts and credentials.</p>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}</code></td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
-<td><code>/v1/sessions/{session_id}/prepare</code></td>
-<td><code>expected_revision</code>. The job must turn on warm execution.</td>
+<td><code>/v1/sessions/{session_<wbr/>id}/prepare</code></td>
+<td><code>expected_<wbr/>revision</code>. The job must turn on warm execution.</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
-<td><code>/v1/sessions/{session_id}/workspace</code></td>
-<td><code>expected_revision</code>, <code>task</code>. The session must be open, writable and unused.</td>
+<td><code>/v1/sessions/{session_<wbr/>id}/workspace</code></td>
+<td><code>expected_<wbr/>revision</code>, <code>task</code>. The session must be open, writable and unused.</td>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
@@ -894,7 +894,7 @@ Repeating the exact binding leaves the session unchanged.</p>
 <tr>
 <td><code>POST</code></td>
 <td><code>/v1/sessions/{id}/checkpoint</code></td>
-<td>JSON: <code>session_ref</code>, <code>expected_revision</code>, <code>placement_generation</code>, <code>repository_ref</code>. Returns the operation and descriptor.</td>
+<td>JSON: <code>session_<wbr/>ref</code>, <code>expected_<wbr/>revision</code>, <code>placement_<wbr/>generation</code>, <code>repository_<wbr/>ref</code>. Returns the operation and descriptor.</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -953,33 +953,33 @@ complete Git and LFS data.</p>
 <tbody>
 <tr>
 <td><code>POST</code></td>
-<td><code>/v1/sessions/{session_id}/turns</code></td>
-<td><code>expected_revision</code>, <code>prompt</code>. Optional: <code>artifacts</code>, <code>min_target_index</code>, <code>rewind_target</code>, <code>output_contract</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns</code></td>
+<td><code>expected_<wbr/>revision</code>, <code>prompt</code>. Optional: <code>artifacts</code>, <code>min_<wbr/>target_<wbr/>index</code>, <code>rewind_<wbr/>target</code>, <code>output_<wbr/>contract</code></td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/turns?after=0&amp;limit=100</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns?after=0&amp;limit=100</code></td>
 <td>Continue after the numbered turn given by the cursor</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/turns/{turn_id}</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns/{turn_<wbr/>id}</code></td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns/{turn_<wbr/>id}/artifacts/{artifact_<wbr/>id}</code></td>
 <td>raw generated image</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
-<td><code>/v1/sessions/{session_id}/turns/{turn_id}/cancel</code></td>
-<td><code>expected_revision</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns/{turn_<wbr/>id}/cancel</code></td>
+<td><code>expected_<wbr/>revision</code></td>
 </tr>
 <tr>
 <td><code>POST</code></td>
-<td><code>/v1/sessions/{session_id}/turns/{turn_id}/validation</code></td>
-<td><code>candidate_sha256</code>, <code>verdict</code>. <code>accept</code> forbids <code>violations</code>, and <code>reject</code> requires 1 to 20.</td>
+<td><code>/v1/sessions/{session_<wbr/>id}/turns/{turn_<wbr/>id}/validation</code></td>
+<td><code>candidate_<wbr/>sha256</code>, <code>verdict</code>. <code>accept</code> forbids <code>violations</code>, and <code>reject</code> requires 1 to 20.</td>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
@@ -1259,22 +1259,22 @@ different destinations, rules or disclosure settings.</p>
 <tbody>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/network</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/network</code></td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/network/connections</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/network/connections</code></td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/network/explanations/{event_id}</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/network/explanations/{event_<wbr/>id}</code></td>
 <td>none</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/network/receipt</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/network/receipt</code></td>
 <td>none</td>
 </tr>
 </tbody>
@@ -1306,22 +1306,22 @@ read that found no activity:</p>
 <tbody>
 <tr>
 <td><code>network.access</code></td>
-<td><code>captured</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+<td><code>captured</code>, <code>not_<wbr/>filtered</code>, <code>unavailable</code></td>
 </tr>
 <tr>
 <td><code>network.observation</code></td>
-<td><code>observed</code>, <code>no_run</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+<td><code>observed</code>, <code>no_<wbr/>run</code>, <code>not_<wbr/>filtered</code>, <code>unavailable</code></td>
 </tr>
 <tr>
 <td><code>network.receipt</code></td>
-<td><code>available</code>, <code>not_filtered</code>, <code>unavailable</code></td>
+<td><code>available</code>, <code>not_<wbr/>filtered</code>, <code>unavailable</code></td>
 </tr>
 <tr>
 <td><code>task</code></td>
 <td><code>bound</code>, <code>unbound</code>, <code>unavailable</code></td>
 </tr>
 <tr>
-<td><code>task.snapshot.state_note</code></td>
+<td><code>task.snapshot.state_<wbr/>note</code></td>
 <td><code>captured</code>, <code>absent</code>, <code>withheld</code></td>
 </tr>
 </tbody>
@@ -1363,7 +1363,7 @@ if your controller needs that history. If a bound task&#39;s folder is missing, 
 <tbody>
 <tr>
 <td><code>GET</code></td>
-<td><code>/v1/sessions/{session_id}/evidence</code></td>
+<td><code>/v1/sessions/{session_<wbr/>id}/evidence</code></td>
 <td>none</td>
 </tr>
 </tbody>
@@ -1682,7 +1682,7 @@ candidate. If the saved instructions can&#39;t be read or verified, the operatio
 </tr>
 <tr>
 <td>Other running operation at restart</td>
-<td>co:op marks it <code>operation_uncertain</code>. Inspect what happened before deciding what to do. Don&#39;t resubmit it under a new key.</td>
+<td>co:op marks it <code>operation_<wbr/>uncertain</code>. Inspect what happened before deciding what to do. Don&#39;t resubmit it under a new key.</td>
 </tr>
 <tr>
 <td>Operation remains running after startup</td>

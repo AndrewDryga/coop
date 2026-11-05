@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
-  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
-  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
+  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
+  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -137,102 +137,102 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 </thead>
 <tbody>
 <tr>
-<td><code>COOP_HOME</code></td>
-<td><code>$XDG_CONFIG_HOME/coop</code>, or <code>~/.config/coop</code></td>
+<td><code>COOP_<wbr/>HOME</code></td>
+<td><code>$XDG_<wbr/>CONFIG_<wbr/>HOME/coop</code>, or <code>~/.config/coop</code></td>
 <td>Absolute path of co:op&#39;s settings folder, which holds accounts and <code>coop.conf</code>. Use it to keep them out of a sync service, and set it for your editor too. co:op doesn&#39;t move your files.</td>
 </tr>
 <tr>
-<td><code>COOP_RUNTIME</code></td>
+<td><code>COOP_<wbr/>RUNTIME</code></td>
 <td>auto (Docker preferred)</td>
 <td>Picks the runtime: <code>docker</code> or <code>container</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_IMAGE</code></td>
+<td><code>COOP_<wbr/>IMAGE</code></td>
 <td>auto</td>
 <td>Forces a specific image, overriding <code>.agent/Dockerfile</code> detection.</td>
 </tr>
 <tr>
-<td><code>COOP_BASE_IMAGE</code></td>
+<td><code>COOP_<wbr/>BASE_<wbr/>IMAGE</code></td>
 <td><code>coop-box</code></td>
 <td>The shared base image. <code>coop-box</code> selects co:op&#39;s own image, with a <code>coop-box:&lt;definition&gt;</code> tag for each box definition.</td>
 </tr>
 <tr>
-<td><code>COOP_REPO</code></td>
+<td><code>COOP_<wbr/>REPO</code></td>
 <td>the nearest folder with <code>.git</code></td>
 <td>Chooses the repo instead of detecting it from the current directory. co:op follows links, but refuses a link that leads to your home folder or any folder above it. With this unset outside a repository, the current folder is the project, unless it&#39;s your home folder or above, which co:op refuses.</td>
 </tr>
 <tr>
-<td><code>COOP_WORKDIR</code></td>
+<td><code>COOP_<wbr/>WORKDIR</code></td>
 <td>the repo&#39;s real path</td>
 <td>Where the repo mounts in the box.</td>
 </tr>
 <tr>
-<td><code>COOP_HOME_IN_BOX</code></td>
+<td><code>COOP_<wbr/>HOME_<wbr/>IN_<wbr/>BOX</code></td>
 <td><code>/home/node</code></td>
 <td>Where provider homes and instructions mount in the box.</td>
 </tr>
 <tr>
-<td><code>COOP_RUN_ARGS</code></td>
+<td><code>COOP_<wbr/>RUN_<wbr/>ARGS</code></td>
 <td>unset</td>
 <td>Extra arguments for the container runtime. Filtered runs accept only bind mounts, <code>-e KEY=VALUE</code> and <code>--label KEY=VALUE</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_BOX</code></td>
+<td><code>COOP_<wbr/>BOX</code></td>
 <td><code>1</code> in every box</td>
 <td>Lets a process detect that it&#39;s running inside a co:op box.</td>
 </tr>
 <tr>
-<td><code>COOP_PIDS</code></td>
+<td><code>COOP_<wbr/>PIDS</code></td>
 <td><code>4096</code></td>
 <td>Limits the number of processes in the box. <code>0</code>, <code>unlimited</code> or empty turns it off.</td>
 </tr>
 <tr>
-<td><code>COOP_MEMORY</code>, <code>COOP_CPUS</code></td>
+<td><code>COOP_<wbr/>MEMORY</code>, <code>COOP_<wbr/>CPUS</code></td>
 <td>unset</td>
 <td>Limits the box&#39;s memory and CPUs, for example <code>4g</code> and <code>2</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_NO_NEW_PRIVILEGES</code></td>
+<td><code>COOP_<wbr/>NO_<wbr/>NEW_<wbr/>PRIVILEGES</code></td>
 <td><code>1</code></td>
 <td>Runs the box with <code>--security-opt no-new-privileges</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_ALLOW_CASE_EXPOSED_SECRETS</code></td>
+<td><code>COOP_<wbr/>ALLOW_<wbr/>CASE_<wbr/>EXPOSED_<wbr/>SECRETS</code></td>
 <td>off</td>
 <td>On a Mac, lets one run start when mount protection can&#39;t hide every letter-case spelling of a long filename. The box or a service could then read a secret through a name such as <code>.ENV.PRODUCTION</code>. To remember this access for file paths you&#39;ve reviewed, use <code>coop approve --case-exposure</code>. Runs protected by eBPF keep these files hidden and need neither. See <a href="box.html#hiding-secrets">hiding secrets</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_HOMES</code></td>
+<td><code>COOP_<wbr/>HOMES</code></td>
 <td><code>1</code></td>
 <td>Mounts each selected agent&#39;s repository home into the box. <code>0</code> keeps those homes out and disables preset and consult runs.</td>
 </tr>
 <tr>
-<td><code>COOP_EGRESS</code></td>
+<td><code>COOP_<wbr/>EGRESS</code></td>
 <td><code>filtered</code></td>
 <td>Chooses how the box can use the network. See the choices below and <a href="networking.html">networking</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_NO_ASDF</code></td>
+<td><code>COOP_<wbr/>NO_<wbr/>ASDF</code></td>
 <td>off</td>
 <td>Skips installing the tools pinned in <code>.tool-versions</code> when the box starts. Set it in <code>agents/env</code>, not your host shell.</td>
 </tr>
 <tr>
-<td><code>COOP_NETWORK</code></td>
+<td><code>COOP_<wbr/>NETWORK</code></td>
 <td><code>1</code></td>
 <td>Joins the services network.</td>
 </tr>
 <tr>
-<td><code>COOP_CACHE</code></td>
+<td><code>COOP_<wbr/>CACHE</code></td>
 <td><code>1</code></td>
 <td>Mounts the cache volume.</td>
 </tr>
 <tr>
-<td><code>COOP_AUTO_UP</code></td>
+<td><code>COOP_<wbr/>AUTO_<wbr/>UP</code></td>
 <td><code>1</code></td>
 <td>Runs <code>compose up</code> for working boxes when <code>.agent/compose.yml</code> exists and egress is <code>open</code>. Start a filtered project&#39;s services with <code>coop up</code>. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_SERVICES_NET</code></td>
+<td><code>COOP_<wbr/>SERVICES_<wbr/>NET</code></td>
 <td>auto</td>
 <td>The services network to join, so parallel forks can share one database.</td>
 </tr>
@@ -267,57 +267,57 @@ overrides <code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> 
 </thead>
 <tbody>
 <tr>
-<td><code>COOP_CONFIG_DIR</code></td>
+<td><code>COOP_<wbr/>CONFIG_<wbr/>DIR</code></td>
 <td><code>~/.config/coop/agents</code></td>
 <td>The folder for each agent&#39;s credentials and settings.</td>
 </tr>
 <tr>
-<td><code>COOP_CONF</code></td>
+<td><code>COOP_<wbr/>CONF</code></td>
 <td><code>~/.config/coop/coop.conf</code></td>
 <td>Environment only. Reads <code>coop.conf</code> from this path, which must name a readable regular file.</td>
 </tr>
 <tr>
-<td><code>NO_COLOR</code></td>
+<td><code>NO_<wbr/>COLOR</code></td>
 <td>unset</td>
 <td>Environment only. Any value, even an empty one, turns off ANSI color everywhere (<a href="https://no-color.org" target="_blank" rel="nofollow noopener">no-color.org</a>).</td>
 </tr>
 <tr>
-<td><code>COOP_&lt;AGENT&gt;_CMD</code>, like <code>COOP_CLAUDE_CMD</code></td>
+<td><code>COOP_<wbr/>&lt;AGENT&gt;_<wbr/>CMD</code>, like <code>COOP_<wbr/>CLAUDE_<wbr/>CMD</code></td>
 <td>the agent&#39;s autonomous command</td>
 <td>Overrides an agent&#39;s base command.</td>
 </tr>
 <tr>
-<td><code>COOP_&lt;AGENT&gt;_MODEL</code>, like <code>COOP_CLAUDE_MODEL</code></td>
+<td><code>COOP_<wbr/>&lt;AGENT&gt;_<wbr/>MODEL</code>, like <code>COOP_<wbr/>CLAUDE_<wbr/>MODEL</code></td>
 <td>the CLI&#39;s default</td>
 <td>The agent-wide default model, everywhere that agent runs. See <a href="agents.html#picking-models">picking models</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_CONSULT_TIMEOUT</code></td>
+<td><code>COOP_<wbr/>CONSULT_<wbr/>TIMEOUT</code></td>
 <td><code>0</code> (unlimited)</td>
 <td>How long <code>coop-consult</code> waits for each peer, in seconds. See below.</td>
 </tr>
 <tr>
-<td><code>COOP_CONSULT_STREAM_LIMIT</code></td>
+<td><code>COOP_<wbr/>CONSULT_<wbr/>STREAM_<wbr/>LIMIT</code></td>
 <td><code>0</code> (unlimited)</td>
 <td>The most output, in bytes, <code>coop-consult</code> accepts from a peer&#39;s reply or diagnostics. It discards a larger reply. Set it in <code>agents/env</code>. See <a href="agents.html#limits">limits</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_PRESETS_DIR</code></td>
+<td><code>COOP_<wbr/>PRESETS_<wbr/>DIR</code></td>
 <td><code>~/.config/coop/presets</code></td>
 <td>The folder for global presets. See <a href="agents.html#where-presets-live">where presets live</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_MCP_FILE</code></td>
+<td><code>COOP_<wbr/>MCP_<wbr/>FILE</code></td>
 <td><code>~/.config/coop/agents/mcp.json</code></td>
 <td>The file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full.</td>
 </tr>
 <tr>
-<td><code>COOP_SHELL</code></td>
+<td><code>COOP_<wbr/>SHELL</code></td>
 <td><code>bash</code></td>
 <td>The shell <code>coop shell</code> opens.</td>
 </tr>
 <tr>
-<td><code>COOP_NO_UPDATE_CHECK</code></td>
+<td><code>COOP_<wbr/>NO_<wbr/>UPDATE_<wbr/>CHECK</code></td>
 <td>off</td>
 <td>Turns off the once-a-day &#34;a newer coop/box is available&#34; check.</td>
 </tr>
@@ -340,52 +340,52 @@ working, that answer is lost and needs a retry.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>COOP_GATE</code></td>
+<td><code>COOP_<wbr/>GATE</code></td>
 <td>unset</td>
 <td>The check command, such as <code>make check</code>, that runs in the box during a local fork merge or during review with <code>--gate</code>. Controller-job reviews use the check in the submitted job instead.</td>
 </tr>
 <tr>
-<td><code>COOP_EDITOR</code></td>
+<td><code>COOP_<wbr/>EDITOR</code></td>
 <td>detected</td>
 <td>The editor for <code>coop fork review --open</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_REVIEW_CMD</code></td>
+<td><code>COOP_<wbr/>REVIEW_<wbr/>CMD</code></td>
 <td>unset</td>
 <td>A full override for <code>coop fork review</code>, run with <code>sh -c</code>.</td>
 </tr>
 <tr>
-<td><code>COOP_TASKS</code></td>
+<td><code>COOP_<wbr/>TASKS</code></td>
 <td>derived</td>
 <td>The task queue directories for <code>coop tasks</code> and the loop, separated by spaces. If unset, co:op uses the queues listed in <code>.agent/project.yaml</code> for a <a href="loop.html#monorepos">monorepo</a>, or <code>.agent/tasks</code> otherwise. For one run, <code>--tasks</code> replaces this choice and doesn&#39;t add to it.</td>
 </tr>
 <tr>
-<td><code>COOP_CAFFEINATE</code></td>
+<td><code>COOP_<wbr/>CAFFEINATE</code></td>
 <td><code>1</code></td>
 <td>On a Mac, uses <code>caffeinate</code> to prevent idle sleep while the loop runs. <code>0</code> or <code>false</code> turns it off.</td>
 </tr>
 <tr>
-<td><code>COOP_ACP_WARM</code></td>
+<td><code>COOP_<wbr/>ACP_<wbr/>WARM</code></td>
 <td><code>1</code></td>
 <td>Environment only. Keeps a box ready for each other editor ACP provider you&#39;re signed in to, so switching to that provider&#39;s default model skips box startup. Set <code>0</code> or <code>false</code> to save memory.</td>
 </tr>
 <tr>
-<td><code>COOP_ACP_CARRY_TOKENS</code></td>
+<td><code>COOP_<wbr/>ACP_<wbr/>CARRY_<wbr/>TOKENS</code></td>
 <td><code>200000</code></td>
 <td>How much of an editor conversation, in tokens of about 4 bytes, co:op carries to a new provider when you switch, dropping the oldest messages first.</td>
 </tr>
 <tr>
-<td><code>COOP_ACP_TRACE</code></td>
+<td><code>COOP_<wbr/>ACP_<wbr/>TRACE</code></td>
 <td>unset</td>
 <td>Environment only. Set it to any value in the editor&#39;s agent environment to record each <code>coop acp</code> server&#39;s traffic. See <a href="integrations.html#tracing-a-session">tracing a session</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_SPINNER</code></td>
+<td><code>COOP_<wbr/>SPINNER</code></td>
 <td><code>1</code></td>
 <td>Environment only. Animates the Box Run beside progress bars and the Corner Run (<code>◰ ◳ ◲ ◱</code>) in task rows. Set <code>0</code> or <code>false</code> to freeze them and stop frequent loop-screen redraws.</td>
 </tr>
 <tr>
-<td><code>COOP_STREAM_TRACE</code></td>
+<td><code>COOP_<wbr/>STREAM_<wbr/>TRACE</code></td>
 <td>off</td>
 <td>Saves each streaming loop attempt&#39;s raw provider JSONL and rendered output under <code>.agent/runs/&lt;run&gt;.streams/</code>.</td>
 </tr>
@@ -442,7 +442,10 @@ reads <code>COOP_NO_ASDF</code> and <code>COOP_CONSULT_STREAM_LIMIT</code>, so t
 or a similar service. If two machines refresh the same single-use sign-in, one of them can get
 signed out. If that happens, run <code>coop login</code> on that machine.</p>
 <p>Records that belong to one machine, such as each run&#39;s generated files, image records, usage caches and ACP traces,
-live in <code>$XDG_STATE_HOME/coop</code> or <code>~/.local/state/coop</code>. They never need syncing.</p>
+live in <code>$XDG_STATE_HOME/coop</code> or <code>~/.local/state/coop</code>. They never need syncing. Of an account, only
+<code>agents/&lt;agent&gt;/credentials/&lt;account&gt;/authority.json</code> needs to sync. Its other files are journals and
+locks for one machine. With Dropbox, put these rules in <code>rules.dropboxignore</code> at the Dropbox root, and
+<code>coop doctor</code> notes that the folder syncs by them.</p>
 <p>co:op also writes a <code>.gitignore</code> in <code>~/.config/coop</code> if there is none, so a dotfiles repository
 keeps only shared settings. Accounts and <code>agents/env</code> stay out of Git.</p>
 <p>Optional <a href="usage-reports.html">provider usage reports</a> use a separate host-only
@@ -468,18 +471,18 @@ Reporting keys belong in host environment variables, not <code>coop.conf</code>,
 </tr>
 <tr>
 <td><code>box:</code></td>
-<td>The box policy: the <a href="box.html#your-own-image-agentdockerfile"><code>dockerfile</code> and <code>compose</code> paths</a>, <a href="box.html#box-only-environment-boxenv"><code>env</code> defaults</a>, egress and <a href="networking.html"><code>egress_rules:</code></a>, resource caps (<code>memory</code>, <code>cpus</code>, <code>pids</code>), <code>auto_up</code> and <code>network</code>.</td>
+<td>The box policy: the <a href="box.html#your-own-image-agentdockerfile"><code>dockerfile</code> and <code>compose</code> paths</a>, <a href="box.html#box-only-environment-boxenv"><code>env</code> defaults</a>, egress and <a href="networking.html"><code>egress_<wbr/>rules:</code></a>, resource caps (<code>memory</code>, <code>cpus</code>, <code>pids</code>), <code>auto_<wbr/>up</code> and <code>network</code>.</td>
 </tr>
 <tr>
 <td><code>services:</code></td>
-<td><code>require_real_files:</code>, the hidden files your services need to read. Listing a file grants no access. See <a href="box.html#secret-files-in-services">secret files in services</a>.</td>
+<td><code>require_<wbr/>real_<wbr/>files:</code>, the hidden files your services need to read. Listing a file grants no access. See <a href="box.html#secret-files-in-services">secret files in services</a>.</td>
 </tr>
 <tr>
 <td><code>gate:</code></td>
 <td>The merge gate: the check command that <code>coop fork merge</code> runs in the box.</td>
 </tr>
 <tr>
-<td><code>gate_sources:</code></td>
+<td><code>gate_<wbr/>sources:</code></td>
 <td>The exact paths of project-specific files that define the gate. The loop always reviews changes to them.</td>
 </tr>
 <tr>

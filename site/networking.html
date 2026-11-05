@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
-  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
-  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
+  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
+  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -303,23 +303,23 @@ even when their home folders aren&#39;t mounted.</p>
 <tbody>
 <tr>
 <td>Claude</td>
-<td>runs with <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code> and <code>DISABLE_UPDATES=1</code></td>
-<td><code>DISABLE_UPDATES</code></td>
+<td>runs with <code>CLAUDE_<wbr/>CODE_<wbr/>DISABLE_<wbr/>NONESSENTIAL_<wbr/>TRAFFIC=1</code> and <code>DISABLE_<wbr/>UPDATES=1</code></td>
+<td><code>DISABLE_<wbr/>UPDATES</code></td>
 </tr>
 <tr>
 <td>Codex</td>
-<td>reads a generated <code>config.toml</code> that sets <code>check_for_update_on_startup = false</code>, <code>analytics.enabled = false</code> and the <code>otel</code> exporters to <code>none</code>, on top of your own settings</td>
-<td><code>/etc/codex/managed_config.toml</code>, which also turns off Codex&#39;s background server and its updater</td>
+<td>reads a generated <code>config.toml</code> that sets <code>check_<wbr/>for_<wbr/>update_<wbr/>on_<wbr/>startup = false</code>, <code>analytics.enabled = false</code> and the <code>otel</code> exporters to <code>none</code>, on top of your own settings</td>
+<td><code>/etc/codex/managed_<wbr/>config.toml</code>, which also turns off Codex&#39;s background server and its updater</td>
 </tr>
 <tr>
 <td>Gemini</td>
-<td>gets <code>general.enableAutoUpdate</code>, <code>general.enableAutoUpdateNotification</code> and <code>privacy.usageStatisticsEnabled</code> off, plus <code>GEMINI_TELEMETRY_ENABLED=false</code></td>
+<td>gets <code>general.enableAutoUpdate</code>, <code>general.enableAutoUpdateNotification</code> and <code>privacy.usageStatisticsEnabled</code> off, plus <code>GEMINI_<wbr/>TELEMETRY_<wbr/>ENABLED=false</code></td>
 <td><code>/etc/gemini-cli/settings.json</code></td>
 </tr>
 <tr>
 <td>Grok</td>
-<td>runs with <code>GROK_TELEMETRY_ENABLED=false</code> and <code>GROK_DISABLE_AUTOUPDATER=1</code></td>
-<td><code>GROK_DISABLE_AUTOUPDATER</code></td>
+<td>runs with <code>GROK_<wbr/>TELEMETRY_<wbr/>ENABLED=false</code> and <code>GROK_<wbr/>DISABLE_<wbr/>AUTOUPDATER=1</code></td>
+<td><code>GROK_<wbr/>DISABLE_<wbr/>AUTOUPDATER</code></td>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
@@ -587,19 +587,19 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 </tr>
 <tr>
 <td>a project image not built on the client image</td>
-<td><code>this project&#39;s .agent/Dockerfile did not build on coop&#39;s client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …</code></td>
+<td><code>this project&#39;s .agent/Dockerfile did not build on coop&#39;s client image — start it with ARG COOP_<wbr/>BASE_<wbr/>IMAGE and FROM ${COOP_<wbr/>BASE_<wbr/>IMAGE} …</code></td>
 </tr>
 <tr>
 <td>a project image that changes a pinned client</td>
 <td><code>this project&#39;s .agent/Dockerfile changes claude&#39;s cli client at /opt/coop/bin/claude — a filtered box runs the clients this host&#39;s setup qualified …</code></td>
 </tr>
 <tr>
-<td><code>COOP_IMAGE</code></td>
-<td><code>a filtered box runs coop&#39;s own image — unset COOP_IMAGE to start one</code></td>
+<td><code>COOP_<wbr/>IMAGE</code></td>
+<td><code>a filtered box runs coop&#39;s own image — unset COOP_<wbr/>IMAGE to start one</code></td>
 </tr>
 <tr>
 <td>a runtime other than Docker, including a run with no mode set</td>
-<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker</code></td>
+<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_<wbr/>EGRESS, or set COOP_<wbr/>RUNTIME=docker</code></td>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> rule</td>
@@ -619,7 +619,7 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 </tr>
 <tr>
 <td>a rules file that is a bare list, or nests its rules under <code>box:</code></td>
-<td><code>--egress-rules takes a file that lists its rules under one top-level egress_rules key, like this:</code>, then a rules file to copy</td>
+<td><code>--egress-rules takes a file that lists its rules under one top-level egress_<wbr/>rules key, like this:</code>, then a rules file to copy</td>
 </tr>
 <tr>
 <td><code>open</code>, in a project with no approval yet</td>

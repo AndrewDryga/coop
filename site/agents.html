@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=aa9fe130c6">
-  <script src="assets/js/site.js?v=aa9fe130c6" defer></script>
-  <script src="assets/js/analytics.js?v=aa9fe130c6" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=64ea3c575b">
+  <script src="assets/js/site.js?v=64ea3c575b" defer></script>
+  <script src="assets/js/analytics.js?v=64ea3c575b" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -265,23 +265,23 @@ echo &#39;GEMINI_API_KEY=AIza…&#39;   &gt;&gt; ~/.config/coop/agents/env
 <tbody>
 <tr>
 <td>Claude</td>
-<td><code>ANTHROPIC_API_KEY</code></td>
-<td><code>ANTHROPIC_AUTH_TOKEN</code>, <code>CLAUDE_CODE_OAUTH_TOKEN</code></td>
+<td><code>ANTHROPIC_<wbr/>API_<wbr/>KEY</code></td>
+<td><code>ANTHROPIC_<wbr/>AUTH_<wbr/>TOKEN</code>, <code>CLAUDE_<wbr/>CODE_<wbr/>OAUTH_<wbr/>TOKEN</code></td>
 </tr>
 <tr>
 <td>Codex</td>
-<td><code>OPENAI_API_KEY</code></td>
-<td><code>CODEX_API_KEY</code>, <code>CODEX_ACCESS_TOKEN</code></td>
+<td><code>OPENAI_<wbr/>API_<wbr/>KEY</code></td>
+<td><code>CODEX_<wbr/>API_<wbr/>KEY</code>, <code>CODEX_<wbr/>ACCESS_<wbr/>TOKEN</code></td>
 </tr>
 <tr>
 <td>Gemini</td>
-<td><code>GEMINI_API_KEY</code></td>
-<td>Vertex <code>GOOGLE_API_KEY</code></td>
+<td><code>GEMINI_<wbr/>API_<wbr/>KEY</code></td>
+<td>Vertex <code>GOOGLE_<wbr/>API_<wbr/>KEY</code></td>
 </tr>
 <tr>
 <td>Grok</td>
 <td>none</td>
-<td><code>XAI_API_KEY</code></td>
+<td><code>XAI_<wbr/>API_<wbr/>KEY</code></td>
 </tr>
 </tbody>
 </table></div><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
@@ -406,7 +406,7 @@ level to the agent&#39;s CLI:</p>
 </tr>
 <tr>
 <td>Codex</td>
-<td><code>model_reasoning_effort</code></td>
+<td><code>model_<wbr/>reasoning_<wbr/>effort</code></td>
 </tr>
 <tr>
 <td>Grok</td>
@@ -488,11 +488,11 @@ peer&#39;s answer.</p>
 <tbody>
 <tr>
 <td>Provider reply and diagnostic streams</td>
-<td>unlimited by default. <code>COOP_CONSULT_STREAM_LIMIT</code> sets a limit in bytes</td>
+<td>unlimited by default. <code>COOP_<wbr/>CONSULT_<wbr/>STREAM_<wbr/>LIMIT</code> sets a limit in bytes</td>
 </tr>
 <tr>
 <td>Consult time</td>
-<td>unlimited by default. <code>COOP_CONSULT_TIMEOUT</code> sets a limit in whole seconds</td>
+<td>unlimited by default. <code>COOP_<wbr/>CONSULT_<wbr/>TIMEOUT</code> sets a limit in whole seconds</td>
 </tr>
 <tr>
 <td>stdin</td>

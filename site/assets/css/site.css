@@ -728,7 +728,7 @@ body:has(.docs-shell) .wrap { width: min(93rem, 100% - 2 * var(--gutter)); }
 .reference-content .ref-wide :is(th, td) { min-width: 10rem; }
 .reference-content .ref:not(.ref-wide) :is(th, td):first-child { width: 30%; min-width: 7rem; }
 .reference-content .ref td > code:only-child { white-space: normal; }
-.reference-content .ref code { overflow-wrap: anywhere; }
+.reference-content .ref code { overflow-wrap: normal; }
 .reference-content pre.code { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
 .reference-content pre.code code { font: inherit; }
 .reference-content .code-file { min-width: 0; }
