@@ -257,11 +257,14 @@ func TestSessionServicesNameTheSupervisorThatDiedDuringTheLaunchWait(t *testing.
 	read := make(chan struct{})
 	var readOnce sync.Once
 	parentPID = func() int {
-		readOnce.Do(func() { close(read) })
+		pid := os.Getpid()
 		if supervisorGone.Load() {
-			return 1 // what a killed parent leaves
+			pid = 1 // what a killed parent leaves
 		}
-		return os.Getpid()
+		// Signal only once the answer is fixed: the test kills the supervisor the moment it hears the
+		// read, and signalling first let that land before this first read, so it saw a dead parent.
+		readOnce.Do(func() { close(read) })
+		return pid
 	}
 	t.Cleanup(func() { parentPID = os.Getppid })
 	unlock, err := forkspace.LockServiceLaunch(context.Background(), repo, true)
