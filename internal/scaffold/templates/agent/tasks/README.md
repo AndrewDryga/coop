@@ -29,7 +29,7 @@ archive is a manual, human step: `coop tasks rm --all-done`.
 
 ## A task folder (`<id>` is `YYYY-MM-DD-<slug>`)
 
-    10_in_progress/2026-06-26-egress-fail-closed/
+    10_in_progress/2026-06-26-timeout-fail-closed/
       task.md        REQUIRED — frontmatter + Context / Acceptance / Approach + subtasks
       log.md         append-only journal — what you did and WHY (newest last)
       state.md       overwritten resume snapshot — where you are / the next action
@@ -177,7 +177,7 @@ A task goes to `50_blocked/` when it hits a choice that's expensive to undo and 
 `coop tasks block <id>` creates this file; the agent fills the question, why it is blocked, the
 options, and a recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
 or do both at once with `coop tasks unblock <id> "<answer>"`.**
-`coop tasks decisions` lists every open one with its full recommendation.
+`coop tasks decisions` lists every open one with its recommendation.
 To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
 its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.
 

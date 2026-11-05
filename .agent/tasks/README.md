@@ -52,17 +52,21 @@ that placeholder and leave literal defaults intact (or append if there is no pla
 
 Each seeded file opens with a short
 HTML-comment header that explains the file (so it's self-documenting, yet renders clean once
-filled). `coop tasks block <id>` adds **decision.md**. You add `spec.md` yourself (or via
-`/spec`) only when the design is substantial. Every file is plain markdown, so it syncs cleanly
-to GitHub Issues / Jira. Only the `task.md` Template block is a live creation template;
-the log/state/decision blocks below document their generated shape.
+filled). Adding with the content flags (`--context/--acceptance/--approach/--subtask`) fills
+task.md instead, so it gets no header — there is nothing left to replace. `coop tasks block
+<id>` adds **decision.md**. You add `spec.md` yourself (or via `/spec`) only when the design is
+substantial. Every file is plain markdown. Only the `task.md` Template block is a live
+creation template; the log/state/decision blocks below document their generated shape.
 
 ---
 
 ## task.md — the spec (REQUIRED)
 
 A fresh agent must be able to work the task from this file alone: the problem, the bar for
-"done", and the plan. Keep the body short; move a big design into `spec.md`.
+"done", and the plan. Keep the body short; move a big design into `spec.md`. A freshly-added
+task is a stub: whoever picks it up replaces every `<…>` placeholder *before* writing code —
+that thinking is step one — or `coop tasks block`s it if they can't yet. The generated
+header comment says exactly this, so the reminder travels with the task.
 
 **Template:**
 
@@ -172,7 +176,8 @@ reviewer (or the next agent) needs. Add to the bottom; never rewrite it. This is
 
 A task goes to `50_blocked/` when it hits a choice that's expensive to undo and needs a human.
 `coop tasks block <id>` creates this file; the agent fills the question, why it is blocked, the
-options, and a recommendation; **the human writes the Resolution and runs `coop tasks unblock <id>`.**
+options, and a recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
+or do both at once with `coop tasks unblock <id> "<answer>"`.**
 `coop tasks decisions` lists every open one with its recommendation.
 To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
 its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.
@@ -217,7 +222,7 @@ its decision still open, so no preflight re-queues it, and `coop backlog promote
 
     ---
 
-    **Resolution:** A — go with env-only.    ← the human writes this, then `coop tasks unblock <id>`
+    **Resolution:** A — go with env-only.    ← human writes this + `coop tasks unblock <id>`, or in one step: `coop tasks unblock <id> "A — env-only"`
 
 ---
 
