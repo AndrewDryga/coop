@@ -3832,7 +3832,12 @@ func TestSessionServiceStopCancelsInFlightCreateGitAndRestartRecovers(t *testing
 }
 
 type startupCleaningRunner struct {
-	cleaned   []string
+	// Start drains historical runtimes on its own goroutine, so cleanups can
+	// arrive while the test reads them; mu guards cleaned.
+	mu      sync.Mutex
+	cleaned []string
+	// release, when set, holds every cleanup until the test closes it.
+	release   chan struct{}
 	reaped    []string
 	err       error
 	reapErr   error
@@ -4003,8 +4008,19 @@ func (*startupCleaningRunner) Run(_ context.Context, _ session.Session, turn ses
 }
 
 func (r *startupCleaningRunner) CleanupSession(_ context.Context, sess session.Session) error {
+	if r.release != nil {
+		<-r.release
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.cleaned = append(r.cleaned, sess.ID)
 	return r.err
+}
+
+func (r *startupCleaningRunner) cleanedCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cleaned)
 }
 
 func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session.Session, turn session.Turn) error {
@@ -4022,7 +4038,10 @@ func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session
 func TestSessionServiceDefersOutlivedParkedCleanupWithoutDelayingStartup(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
-	runner := &startupCleaningRunner{}
+	// Every cleanup blocks until released, so Start returning first proves it
+	// never waits on one. Each cleanup also fails, which ends the background
+	// drain after its first pass and leaves that pass's size observable.
+	runner := &startupCleaningRunner{err: errors.New("runtime still in use"), release: make(chan struct{})}
 	service, err := openSessionFixture(t, Config{
 		StateRoot:       filepath.Join(t.TempDir(), "state"),
 		Runner:          runner,
@@ -4037,15 +4056,31 @@ func TestSessionServiceDefersOutlivedParkedCleanupWithoutDelayingStartup(t *test
 			t.Fatal(err)
 		}
 	}
-	if err := service.Start(context.Background()); err != nil {
-		t.Fatal(err)
+	drained := make(chan struct{})
+	service.testAfterStartupDrain = func() { close(drained) }
+	started := make(chan error, 1)
+	go func() { started <- service.Start(context.Background()) }()
+	select {
+	case err := <-started:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(wait.Deadline):
+		close(runner.release)
+		t.Fatal("startup waited on outlived parked cleanup")
 	}
-	if len(runner.cleaned) != 0 {
-		t.Fatalf("startup synchronously cleaned %d outlived parked sessions", len(runner.cleaned))
+	close(runner.release)
+	select {
+	case <-drained:
+	case <-time.After(wait.Deadline):
+		t.Fatal("the startup drain never finished")
+	}
+	if got := runner.cleanedCount(); got != runtimeCleanupBatchSize {
+		t.Fatalf("startup drain attempted %d outlived parked cleanups, want one bounded batch of %d", got, runtimeCleanupBatchSize)
 	}
 	service.cleanupIdleSessionRuntimes(context.Background())
-	if len(runner.cleaned) != 2 {
-		t.Fatalf("first deferred cleanup batch = %d, want 2", len(runner.cleaned))
+	if got := runner.cleanedCount(); got != 2*runtimeCleanupBatchSize {
+		t.Fatalf("deferred cleanup pass attempted %d more, want %d", got-runtimeCleanupBatchSize, runtimeCleanupBatchSize)
 	}
 }
 
