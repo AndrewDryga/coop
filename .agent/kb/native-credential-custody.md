@@ -2,7 +2,7 @@
 name: native-credential-custody
 description: canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; Docker listings are patient and fail closed
 subsystem: credentials
-sources: [internal/box/account_authority.go, internal/box/authority_mounts.go, internal/box/native_account.go, internal/box/docker_listing.go, internal/box/docker_listing_test.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go]
+sources: [internal/box/account_authority.go, internal/box/authority_mounts.go, internal/box/native_account.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go]
 updated: 2026-11-04
 ---
 

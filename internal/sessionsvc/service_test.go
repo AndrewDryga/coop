@@ -1205,6 +1205,8 @@ func TestStartupRejectsUnreservedOrForeignLegacySessionGeneration(t *testing.T) 
 				defer service.Stop()
 				sess, identity := createLegacyBoundSession(t, service, repo, "legacy-denied", "legacy-session", owner)
 				before := downgradeSessionGeneration(t, repo, identity, version)
+				reservationFile := filepath.Join(forkspace.StateDir(repo), "reservations", identity.Name+"."+string(identity.Generation)+".json")
+				reservationBefore, reservationErr := os.ReadFile(reservationFile)
 				if err := service.Start(t.Context()); err != nil {
 					t.Fatal(err)
 				}
@@ -1215,9 +1217,11 @@ func TestStartupRejectsUnreservedOrForeignLegacySessionGeneration(t *testing.T) 
 				if err != nil || !bytes.Equal(before, after) {
 					t.Fatalf("legacy generation changed: %v", err)
 				}
-				reservation, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
-				if err != nil || present != (owner != "") || present && reservation.OwnerID != owner {
-					t.Fatalf("reservation changed: %+v, %t, %v", reservation, present, err)
+				// The version 1 reservation this test plants is refused by its reader, so check the
+				// file itself: startup must leave it exactly as it was, or leave none.
+				reservationAfter, err := os.ReadFile(reservationFile)
+				if (reservationErr == nil) != (owner != "") || (err == nil) != (reservationErr == nil) || !bytes.Equal(reservationBefore, reservationAfter) {
+					t.Fatalf("reservation changed: before %v, after %v", reservationErr, err)
 				}
 				if got := mustSession(t, service, sess.ID); got.ForkGeneration != "" {
 					t.Fatalf("unproven generation bound into session: %q", got.ForkGeneration)
