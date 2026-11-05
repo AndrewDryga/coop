@@ -3,7 +3,7 @@ name: host-execution-surfaces
 description: local execution classifications, fork protections and controller-authorized CI publication
 subsystem: hostsurface
 sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go, internal/scaffold/stock.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 Shared-write boxes can plant metadata that native host tools execute even before a merge,
@@ -57,12 +57,9 @@ The consumers:
 - Session review refuses local execution and content findings before retaining the exact
   candidate for controller-authorized publication.
 
-There is no task-side consumer: the task-flags feature (`flags.json`, `Item.HasFlags`,
-`coop tasks flags --ack`) was removed outright on 2026-09-11, so completion writes no record and
-the board carries no acknowledgement marker. Old `flags.json` files are inert: nothing reads,
-writes or deletes them. Review agent work at the fork boundary instead.
-
 ## Changelog
+- 2026-11-04: dropped the paragraph on the removed task-flags feature. The 2026-09-11 entry below
+  records the removal, and MIGRATING.md tells a user that an old `flags.json` is left in place.
 - 2026-11-03: check-secrets counts Coop's unchanged setup files instead of listing them
   (`scaffold.Stock`, proven against every file init writes by TestStockMatchesEveryFileInitWrites).
 - 2026-10-30: separated authorized remote CI publication from local fork execution policy;

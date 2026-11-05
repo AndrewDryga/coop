@@ -3,14 +3,14 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-10-18
+updated: 2026-11-04
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
 git executes whatever that repository's configuration names — filters, textconv, merge drivers —
 as soon as an in-tree `.gitattributes` assigns one. `GitHardening` blanks the fixed-name knobs;
-driver names are arbitrary, so no `-c` list can blank them, and enumerating them first
-(`DriverNeutralizer`, retired 2026-09-06) missed includes/`config.worktree` and raced the agent.
+driver names are arbitrary, so no `-c` list can blank them, and enumerating them first would miss
+includes/`config.worktree` and race the agent.
 
 **The mechanism.** `forkspace.GitCommand(ctx, dir, args...)` runs git with `GIT_DIR` pointing at a
 coop-owned view directory: `config` projected from the repository's local config through an
@@ -21,7 +21,7 @@ credential helpers, submodule settings, hook/pager/editor paths); `objects`, `re
 copy; `GIT_INDEX_FILE` naming the real index; no `hooks`, `info/attributes`, `config.worktree`,
 `modules`. Git reads exactly the bytes coop wrote, so there is no enumerate-then-execute race.
 `GitOut`, `GitOutErr`, `GitOutput` (untrimmed) and `GitRun` are the one shared set of read/run
-helpers over it; cli, forkctl, loop and tasks used to carry their own copies.
+helpers over it.
 Every refresh reads the repository config again, but parses it (a `git config --file` process)
 only when its bytes differ from the ones the view last projected (`gitView.configSource`): a
 parse of the same bytes gives the same projection, and each parse is a git process of its own
@@ -139,7 +139,7 @@ inside the folder give one path, and the secret walk looks inside it (see
 [[secret-shadow-walk]]); an override that cannot be resolved is kept as given. `EvalSymlinks` keeps
 the case the override was typed in, so on a case-insensitive disk that spelling still differs.
 
-A view refuses the same climb (`repositoryOf`, behind `gitDirsOf`, so `RunGitFsck` and the
+A view refuses the same climb (in `gitDirsOf`, so `RunGitFsck` and the
 observation snapshots too): a box that deleted the `.git` of a folder Coop later runs host git for
 (a loop's commit, sign or review step, a fork merge, a session clone) moved the view, and host
 git's reads and writes, to a home folder kept in Git. Only a climb is refused. A folder holding the
@@ -242,6 +242,9 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-11-04 — dropped the retired `DriverNeutralizer` and the helpers' old per-package copies from
+  the body, and named `gitDirsOf` where it said `repositoryOf` (not a function in the code).
+  Verified against internal/forkspace/gitview.go and gitcommand.go.
 - 2026-10-18 — caller `-c` settings are a typed list, ref-only commands accept exact shapes only,
   and the source guard resolves call-result receivers and pins git calls through generic wrappers
   (task 2026-10-17-tighten-the-host-git-guard-against-wrapper-calls).

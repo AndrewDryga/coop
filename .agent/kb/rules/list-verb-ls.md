@@ -4,7 +4,7 @@ description: "entity-listing subcommands use `ls`; recorded-run views use `runs`
 scope: cli-grammar
 sources: [internal/cli/help.go, internal/cli/conformance_test.go]
 check: "go test ./internal/cli -run TestCLIConformance"
-updated: 2026-09-29
+updated: 2026-11-04
 ---
 
 # Entity listings use `ls`; recorded-run views use `runs`
@@ -24,13 +24,15 @@ dual-accepting compat. This mirrors [[destructive-verb-rm]] (rm is the only dest
 - Dispatch is a single `case "ls":` (no `, "list"`), and `list` is NOT in `tasksVerbs`/`isTasksSubcommand`.
 - Prose descriptions may still say "list" as the English verb ("ls — list tasks by state"); that's
   the *description*, not an accepted subcommand.
-- `coop conformance` (TestCLIConformance) asserts `ls` lists and `list` is unknown. The
+- `TestCLIConformance` asserts `ls` lists and `list` is unknown. The
   intentionally named `coop net runs` and `coop eval runs` list their families' run records;
   neither has a `list` alias or replaces another family's `ls`.
 
 See also [[destructive-verb-rm]] (the sibling: rm is the only destructive verb) and [[help-output-style]].
 
 ## Changelog
+- 2026-11-04 — `coop conformance` is not a command; the line names `TestCLIConformance` alone.
+  Verified against internal/cli/conformance_test.go.
 - 2026-09-29 — swept `eval` and `net` dispatch/help: both use `runs` for recorded runs, while
   `eval ls` lists starter suites. Clarified those two deliberate nouns without adding aliases.
 - 2026-09-27 — removed a reference to the obsolete test-only `unknownErr` helper; the

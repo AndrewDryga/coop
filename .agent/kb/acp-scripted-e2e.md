@@ -3,7 +3,7 @@ name: acp-scripted-e2e
 description: ACP state machines are exhaustive in the scripted runtime; real adapters get an isolated conformance layer
 subsystem: acp
 sources: [Makefile, internal/acpproxy/scripted_matrix_e2e_test.go, internal/acpproxy/scripted_startup_e2e_test.go, internal/acpproxy/scripted_cancel_e2e_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, internal/acpproxy/testdata/acpfixture/main.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/cleanup.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 `COOP_RUNTIME` lets process tests drive the built outer supervisor, inner re-exec, controller,
@@ -46,16 +46,15 @@ not exit gets its whole process group signalled (TERM, then KILL). The harness t
 `coop.live-test` label until it stays quiet, and only after that deletes the projected
 credentials (`acpproxy/e2e_test.go`). The sweep limits writes after deletion but does not prove
 there are none: production gives each `docker run` client and each generation its own process group,
-so a client still starting a container after the quiet window is outside the group kill. A same-user host
-process is outside Coop's threat model (audit decision 3.5, 2026-10-15), so the live build no
-longer carries a tag of its own: the `cooplivetest` process registry, authenticated control
-descriptor and credential revocation before each signal were removed. `make check` runs the
-deterministic harness and contract tests through `make live-process-control`; the
+so a client still starting a container after the quiet window is outside the group kill. `make check`
+runs the deterministic harness and contract tests through `make live-process-control`; the
 installed-adapter prompts remain opt-in.
 
 Related: [[acp-replay-publication]], [[acp-target-commit]], [[acp-carry-echo]].
 
 ## Changelog
+- 2026-11-04 — dropped the sentence on the removed `cooplivetest` registry, control descriptor and
+  credential revocation; the 2026-10-15 entry below records the removal.
 - 2026-10-17 — named the two matrix tests and the `acp-scripted-e2e` Makefile target instead of line
   numbers (the Makefile one pointed at `provider-live-e2e-all` even when written); both tests
   re-verified in internal/acpproxy/scripted_matrix_e2e_test.go.

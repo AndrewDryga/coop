@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go, internal/workerconnector/job_sources.go, internal/workerconnector/job_sources_refresh_test.go]
-updated: 2026-10-20
+updated: 2026-11-04
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -15,11 +15,9 @@ healthy run pays nothing (the poll returns as soon as the condition holds), whil
 (2–5 s was common) fails whenever the gate's race suite runs beside a Docker-heavy suite — the
 2026-09-06 inventory: `TestSpawnBoxExportsEmptyPresetSelection`, the fork lifecycle lock waiters,
 `TestConsultWrapperLockSerializesAndRecoversAfterOwnerExit`,
-`TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose` (deleted 2026-09-15: a review box no
-longer starts its own services), `TestRemoveByLabelAppleContainerExactMatch`, `waitForSessionTest`.
-All of them passed alone. The survivors now use `internal/testutil/wait` (`wait.For`,
-`wait.ForFile`, `wait.Deadline` = 60 s, 5 ms poll), whose failure names the missing event and the
-deadline.
+`TestRemoveByLabelAppleContainerExactMatch`, `waitForSessionTest`. All of them passed alone. They
+now use `internal/testutil/wait` (`wait.For`, `wait.ForFile`, `wait.Deadline` = 60 s, 5 ms poll),
+whose failure names the missing event and the deadline.
 
 **A timing bound** is the behavior: a coop-owned consult must be reaped in seconds and never sit
 through the 30 s drain window; a forwarder must not delay a failed provider by more than a
@@ -135,6 +133,8 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-11-04 — dropped the deleted `TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose`
+  from the 2026-09-06 inventory; the other tests it names still exist.
 - 2026-10-20 — held a Linux/dash child immediately before sleep exec, observed pending terminal
   SIGINT in the correct foreground group, resumed every descendant and found the workload still
   alive. The lifecycle stand-in now traps INT around an interruptible wait; an INT-ignoring

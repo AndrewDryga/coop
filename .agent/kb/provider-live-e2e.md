@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, live_selection_test.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -148,11 +148,7 @@ diagnostics are bounded structural codes, never account names, paths, tokens, ra
 
 Live ACP uses the same shape without weakening normal provider/model switching: the editor going
 away (stdin closed) stops the supervisor's generations, a supervisor that does not exit gets its
-whole process group signalled, then the label sweep, then credential deletion. Until 2026-10-15
-the live build carried its own `cooplivetest` machinery (an authenticated control descriptor, a
-private registry of per-generation PGID records with kernel start tokens, credential revocation
-before every signal); a same-user host process is outside Coop's threat model (audit decision
-3.5), so it was removed and the tag with it.
+whole process group signalled, then the label sweep, then credential deletion.
 `make check` runs the deterministic harness and contract tests through `make live-process-control`; real prompts
 remain opt-in. A tagged test is one or the other by name: `make live-process-control` selects the
 deterministic ones by prefix, and only a test that needs a real provider ends in …LiveCompatibility
@@ -184,6 +180,9 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-11-04 — dropped the sentence on the removed `cooplivetest` machinery from the live ACP
+  teardown paragraph; the 2026-10-15 entry below records the removal. Teardown order, the label
+  sweep and `make live-process-control` are unchanged.
 - 2026-10-17 — live_selection_test.go parses the tagged files, so a test-shaped line inside a string
   no longer counts, shares its Makefile reader with runtime_selection_test.go, and counts a test as
   selected only when live-process-control's own -tags build its file.

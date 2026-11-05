@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/state_root.go, internal/forkspace/legacy_records.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-10-19
+updated: 2026-11-04
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -189,10 +189,7 @@ to a process or a container, or prints, it is supervision.
 **Folders in the forks tree open without waiting.** `forkspace.OpenFolder` opens a folder with
 `O_DIRECTORY|O_NONBLOCK` and, unless told to follow, `O_NOFOLLOW`, so a FIFO or link where the
 records folder, the forks folder or the staged-discard folder belongs fails at once; the listings
-(`Names`, `LifecycleNames`, `StagedDiscards`) and the folder syncs use it. Only the fork home's
-parent, the project's own parent folder, may be reached through a link (`confirmForkHomeEntry`).
-forkctl's `syncIsolatedPath` opens files and folders under the records folder with
-`O_NONBLOCK|O_NOFOLLOW`.
+(`Names`, `LifecycleNames`, `StagedDiscards`) use it.
 
 **Removal rechecks the fork once its services stop.** `DestroyFork(rt, repo, name, force)` is rm's
 and `--fresh`'s removal, under the fork's lifecycle lock. A service with a writable bind can write
@@ -219,6 +216,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-04 — dropped the clauses naming `confirmForkHomeEntry`, `syncIsolatedPath` and the folder
+  syncs: they went with the directory fsyncs on 2026-10-18 (462c87be). Verified against
+  `OpenFolder` and its callers in internal/forkspace/forkspace.go.
 - 2026-10-19 — a planted link at the forks folder or at the old `.coop` is nothing to move, so box
   launches no longer fail on one (task 2026-10-19-keep-box-launches-working-when-a-project-s-forks).
 - 2026-10-19 — the records key uses the disk's own spelling (fsidentity.StoredPath, remembered per

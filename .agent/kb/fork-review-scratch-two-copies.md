@@ -3,7 +3,7 @@ name: fork-review-scratch-two-copies
 description: forkctl and sessionsvc each keep their own review-scratch clone on purpose — the same 18-line scaffold under opposite anchoring contracts; do not unify them
 subsystem: fork
 sources: [internal/forkctl/review.go, internal/sessionsvc/review.go, internal/forkspace/git.go, internal/forkspace/create.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 Two packages build a disposable rebased clone for a review gate, and they read like copy-paste:
@@ -33,11 +33,11 @@ it on the other caller.
 
 **Why not one shared home.** A `forkspace.ReviewScratch` IS feasible, and nobody should have to
 re-derive that: forkspace is the leaf both consumers already import, and it holds every primitive
-the scaffold needs (`GitClone`, `PropagateGitIdentity`, `GitHardening`; forkctl's `gitRun` is its
-own). It is simply not worth it. Both `prepare*` must stay where they are regardless — each calls
-package-local helpers (`ReviewGitIdentity`/`sessionReviewIsAncestor` in sessionsvc, `gitOut` in
-forkctl) — so unifying would export a four-field type plus three methods out of a leaf and rewrite
-~40 field references to delete ~18 duplicated lines. The line count goes UP, and what remains is a
+the scaffold needs (`GitClone`, `PropagateGitIdentity`, `GitHardening`). It is simply not worth
+it. Both `prepare*` must stay where they are regardless — each calls helpers of its own package
+(`ReviewGitIdentity`/`sessionReviewIsAncestor` in sessionsvc, `detachBase` in forkctl) — so
+unifying would export a four-field type plus three methods out of a leaf and rewrite ~40 field
+references to delete ~18 duplicated lines. The line count goes UP, and what remains is a
 shared base type quietly inviting the next reader to merge the two prepare policies: a correctness
 regression wearing a cleanup's clothes.
 
@@ -59,6 +59,9 @@ HEAD, or a fork preview that verifies a captured intent. Then one type would car
 this note is obsolete. See [[fork-lifecycle-state-file]] for the fork state this machinery reviews.
 
 ## Changelog
+- 2026-11-04 — the shared-home paragraph no longer names forkctl's `gitRun` or `gitOut`: forkctl
+  calls `forkspace.GitRun` and `forkspace.GitOut` now. It names `detachBase`, a helper forkctl keeps
+  to itself, instead. Verified against internal/forkctl/review.go.
 - 2026-10-17 — named the two `prepare*` functions, their deferred cleanup and
   `Service.executeReviewIntent` instead of review.go line numbers (the table cells now sit under
   their function); re-verified every table row against both functions in internal/forkctl/review.go

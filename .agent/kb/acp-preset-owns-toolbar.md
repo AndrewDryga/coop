@@ -3,7 +3,7 @@ name: acp-preset-owns-toolbar
 description: Active ACP presets own the whole lead target and refuse stale Provider/Account editor replays; the box's own wire messages are the only truth the controller may cache
 subsystem: acp
 sources: [internal/agent/agent.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/e2e_test.go, internal/cli/help.go]
-updated: 2026-10-28
+updated: 2026-11-04
 ---
 
 ACP selection is tagged: `Preset != ""` means Provider and Account are empty. A preset's ladder
@@ -45,18 +45,19 @@ recreate.
 `session/new`'s `configOptions`/`models`, `config_option_update`, and `usage_update` are the only
 truth for provider/model/toolbar state. `Control`'s caches (`c.cached`, `c.nativeCache`,
 `c.plainTargets`, `c.leadUsesSetModel`, and the opportunistic on-disk model cache) are a REWRITE of
-that truth, never an independent write. `git log --follow` on the pre-extraction
-`internal/cli/acpcontrol.go` carries at least 15 fix-shaped commits clustered on one bug shape: a new
-trigger (a `config_option_update`, a mid-turn switch, an auto-rotated account, a translated
-`set_model`) wrote or assumed a cache value at its own call site instead of routing through the small,
-closed set of existing resync entry points, all `Control` methods in internal/acpctl/control.go —
-`rewriteToEditor`, `rewriteUpdateConfigOptions`, `configOptionUpdate`, `rewriteConfigOptions`,
-`sessionReady`. A new provider or message type is safe only when it is plumbed
-through one of those — never when it pokes `c.cached[...]` (or any of the other caches above) from a
-new call site. This is a semantic property a `check:` can't verify reliably (whether a new call site
+that truth, never an independent write. `git log --follow internal/acpctl/control.go` carries at
+least 15 fix-shaped commits clustered on one bug shape: a new trigger (a `config_option_update`, a
+mid-turn switch, an auto-rotated account, a translated `set_model`) wrote or assumed a cache value
+at its own call site instead of routing through the small, closed set of existing resync entry
+points, all `Control` methods in internal/acpctl/control.go — `rewriteToEditor`,
+`rewriteUpdateConfigOptions`, `configOptionUpdate`, `rewriteConfigOptions`, `sessionReady`. A new
+provider or message type is safe only when it is plumbed through one of those — never when it pokes
+`c.cached[...]` (or any of the other caches above) from a new call site. This is a semantic property a `check:` can't verify reliably (whether a new call site
 "routed through" the resync path is a design read, not a grep), so review is what catches a violation.
 
 ## Changelog
+- 2026-11-04 — `git log --follow` names `internal/acpctl/control.go`; `internal/cli/acpcontrol.go`
+  is gone.
 - 2026-10-28 — required the setting method before selector dispatch; unrelated-method regression
   failed before the guard and passes alongside normal selector behavior under the race detector.
 - 2026-10-17 — named the five resync entry points by method instead of control.go line numbers

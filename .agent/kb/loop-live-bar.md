@@ -3,7 +3,7 @@ name: loop-live-bar
 description: the loop's sticky bottom bar; every paint parks the cursor at column 0 so a kernel ^C echo can't wrap the line and desync the region's erase math — the subsystem once deleted instead of debugged
 subsystem: loop
 sources: [internal/loop/bar.go, internal/loop/iteration.go, internal/loop/loop.go, internal/ui/live.go, internal/ui/ui.go, internal/loop/bar_test.go, internal/loop/interrupt_test.go, internal/ui/live_test.go, internal/ui/region_skip_test.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 `coop loop` renders a Docker-build-style live view: the agent's output scrolls in the region
@@ -14,9 +14,9 @@ That choice is the reason everything below is cursor arithmetic.
 **What paints, and when.** `runIterationWithMode` builds the live stack only when BOTH stdout and stderr
 are terminals and `TERM` is not `dumb` — the agent's stdout
 is funneled into stderr's region, so a redirected stdout would lose its bytes into the bar.
-Terminal brand is deliberately irrelevant: Warp gets the bar like everything else
-(an earlier Warp exclusion was reverted). `TERM=dumb` is the explicit capability opt-out for
-supervising a real PTY with static output; `COOP_SPINNER=0` alone only stops the ticker. The region writes to `os.Stderr` and
+Terminal brand is deliberately irrelevant: Warp gets the bar like everything else. `TERM=dumb` is
+the explicit capability opt-out for supervising a real PTY with static output; `COOP_SPINNER=0`
+alone only stops the ticker. The region writes to `os.Stderr` and
 re-samples `ui.TermWidth(os.Stderr)` on every paint, so a resize is picked up (`liveWidth` in
 `runIterationWithMode`). Three writers cause a repaint, and all of them funnel through
 `loopBar.render` → `Region.Update(history, []string{line})`:
@@ -76,8 +76,6 @@ committed: today's standing pins are byte-level assertions only (`TestRegion`,
 **Where the state lives.** The bar owns no cursor state — only its own fields under `b.mu` (the
 `loopBar` struct). ALL cursor bookkeeping is `ui.Region`'s: `shown`, `closed`, `lastLines`, `lastW`
 under `r.mu`. The sink is process-global, guarded by `liveSinkMu` (internal/ui/ui.go).
-The bar moved out of `internal/cli/live_loop.go` to `internal/loop/bar.go` in the 2026-08
-loop-engine extraction (its sink test `internal/cli/loopbar_sink_test.go` → `bar_test.go`);
 `internal/loop` is a granted member of `uiPresentationOwners` precisely because this incremental
 render is the one shape "return data, let the caller print it" cannot express
 ([[internal-import-dag]]).
@@ -90,6 +88,9 @@ loudly. A glitch here is cursor arithmetic to root-cause, never a reason to remo
 [[nonzero-progress-segments-stay-visible]] for the segment-visibility contract of the bar it paints.
 
 ## Changelog
+- 2026-11-04 — dropped the aside on the bar's old home in `internal/cli` (the 2026-08-10 entry below
+  records the move) and the one on the reverted Warp exclusion. Verified `uiPresentationOwners` in
+  internal/importdag_test.go.
 - 2026-10-17 — the live stack, spinner, live sink and teardown live in `runIterationWithMode` since
   4ab6df01 (`runIteration` only calls it); the body names it.
 - 2026-10-17 — replaced every line-number citation with the function, type or test it meant

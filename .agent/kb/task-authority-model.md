@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -25,17 +25,8 @@ adapter like codex; and the completion-window index lock, `internal/tasks/comple
 integrity journal) — real, but scoped to one adapter or one bookkeeping structure rather than "who may
 act on this task," which is why they aren't in the headline four.
 
-Authorities 1, 2, and 4 live together in `internal/tasks` (the 2026-08 extraction that moved the
-folder-task model, the lease/authority registry, and the trusted completion audit out of
-`internal/cli` — one package, not the `internal/authority`+`internal/taskq` pair a first pass
-considered, because the audit half reads several of these types' unexported fields directly and a
-pair split would have forced a much larger export surface for no functional gain; see that task's
-`spec.md` if the pair is ever revisited). Authority 3 (checkout) lives in `internal/loop/lock.go`;
-the two narrower locks stay beside their owners. `lockLoopCheckout` has exactly one loop-engine
-caller, unlike `LockRefAuthority`, which
-`internal/tasks/queue.go`'s own `done` verb takes directly (the forcing fact that moved authority 4
-with the rest: leaving it in `cli` would have required the new package to import back into it, which
-`internal/importdag_test.go`'s invariant 1 forbids).
+Authorities 1, 2, and 4 live together in `internal/tasks`. Authority 3 (checkout) lives in
+`internal/loop/lock.go`; the two narrower locks stay beside their owners.
 
 ## The two KINDS of authority — this is the whole design
 
@@ -120,6 +111,10 @@ but never replace — the folder is still the only source of a task's lifecycle 
 decide who may act on it.
 
 ## Changelog
+- 2026-11-04 — the paragraph on where the authorities live keeps only which package holds which. The
+  account of the 2026-08 extraction, and of an `internal/authority`+`internal/taskq` split that was
+  never built, is gone (the 2026-08-10 entry below records the move). Verified `LockRefAuthority`
+  and `lockLoopCheckout` against internal/tasks/refauthority.go and internal/loop/lock.go.
 - 2026-10-17 — replaced the line-number citations with the functions they meant (adding
   `lockInteractiveSession` and the `TaskLeaseOwner` comment) and corrected two renamed identifiers:
   `leaseAuthorityKey` is now the exported `LeaseAuthorityKey` (same sha256 of root + NUL + id) and

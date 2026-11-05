@@ -15,8 +15,8 @@ evidence already on disk and proposes what it finds.
 a rule is obeyed, so a wrong one does real damage.
 
 ## 1. Gather the corpus
-Git history is the durable source. The task archive is NOT — `99_done/` gets
-pruned and is usually near-empty; use it only if it happens to be populated.
+Git history is the durable source. The task archive in `99_done/` is git-ignored and
+local, so a fresh clone has none; read it, when it is there, for the reasoning behind a fix.
 
 ```sh
 git log --format='%h %s' --grep='fix\|Fix\|regress\|broke\|wrong\|stale\|revert'

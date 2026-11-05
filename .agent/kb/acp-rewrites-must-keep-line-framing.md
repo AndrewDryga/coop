@@ -3,11 +3,11 @@ name: acp-rewrites-must-keep-line-framing
 description: an ACP line rewrite that drops the trailing newline hangs the session silently — no error, no timeout, and unit tests that parse the line still pass
 subsystem: acp
 sources: [internal/acpctl/control.go, internal/acpproxy/proxy.go]
-updated: 2026-08-24
+updated: 2026-11-04
 ---
-ACP is newline-delimited JSON. Every builder in `internal/acpctl/control.go` therefore ends with
-`append(out, '\n')` — `sessionMessage`, `wrapPromptLine`, `canonicalCwd`, the lot. `json.Marshal`
-does NOT add one.
+ACP is newline-delimited JSON. Every line builder `internal/acpctl/control.go` uses therefore ends
+with `append(out, '\n')` — `acpproxy.SessionMessageLine`, `wrapPromptLine`, `canonicalCwd`, the lot.
+`json.Marshal` does NOT add one.
 
 Drop the terminator and there is no error to find: the adapter has a complete JSON object sitting in
 its buffer and goes on waiting for the end of the line. `session/prompt` or `session/new` simply
@@ -33,6 +33,8 @@ in seconds, the box is healthy and the rewrite is the whole story. See [[acp-scr
 driving the real supervisor/control/proxy path when a unit test cannot reach the bug.
 
 ## Changelog
+- 2026-11-04 — `sessionMessage` is `acpproxy.SessionMessageLine` now (internal/acpproxy/proxy.go);
+  the body names it. Verified it ends with `append(b, '\n')`.
 - 2026-08-24 — created after a cwd-normalizing rewrite in `fromEditor` shipped without its trailing
   newline and hung `session/new` indefinitely while its unit tests were green; verified against
   `wrapPromptLine`/`sessionMessage`, which have always appended one.
