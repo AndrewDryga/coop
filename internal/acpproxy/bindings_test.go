@@ -180,3 +180,61 @@ func TestProxyBindingsFollowNewAndDelete(t *testing.T) {
 	}
 	h.shutdown()
 }
+
+// A thread opened and never prompted has no transcript, so reopening it after a reload makes the
+// adapter answer "Resource not found". The thread starts afresh on a new native session instead of
+// failing: the editor's load succeeds, and its next prompt reaches the new session.
+func TestProxyLoadWithNoTranscriptStartsAfresh(t *testing.T) {
+	store := newMemBindings(map[string]SessionBinding{"S1": {Provider: "claude", AdapterID: "S1"}})
+	h := newProxyHarnessWith(t, 1, nil, RunOpts{Bindings: store}, "claude")
+	h.initialize(0)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"cwd":"/w","mcpServers":[],"sessionId":"S1"}}`)
+	if load := parse(readLine(t, h.childIn[0])); load.Method != "session/load" {
+		t.Fatalf("box received %q first", load.Method)
+	}
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":2,"error":{"code":-32002,"message":"Resource not found: S1"}}`)
+	fresh := parse(readLine(t, h.childIn[0]))
+	if fresh.Method != "session/new" || sessionID(fresh.Params) != "" || !strings.Contains(string(fresh.Params), `"cwd":"/w"`) {
+		t.Fatalf("after a missing transcript the box got %s %s, want session/new in /w", fresh.Method, fresh.Params)
+	}
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":`+string(fresh.ID)+`,"result":{"sessionId":"N2","modes":{"currentModeId":"default"}}}`)
+	answer := string(readLine(t, h.clientOut))
+	if !strings.Contains(answer, `"id":2`) || !strings.Contains(answer, `"result"`) || strings.Contains(answer, "N2") || strings.Contains(answer, "error") {
+		t.Fatalf("editor's load was answered %s, want success without the native id", answer)
+	}
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	if prompt := parse(readLine(t, h.childIn[0])); prompt.Method != "session/prompt" || sessionID(prompt.Params) != "N2" {
+		t.Fatalf("prompt reached the box as %q on %q, want the fresh session N2", prompt.Method, sessionID(prompt.Params))
+	}
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	readLine(t, h.clientOut)
+	if saves, _ := store.snapshot(); len(saves) == 0 || saves[len(saves)-1] != "S1→claude:N2" {
+		t.Fatalf("binding saves = %v, want S1→claude:N2", saves)
+	}
+	h.shutdown()
+}
+
+// Any other load failure, and a fresh session that fails too, reach the editor as the adapter's answer.
+func TestProxyLoadFailureOtherThanMissingTranscriptIsForwarded(t *testing.T) {
+	for name, tc := range map[string]struct{ first, fresh string }{
+		"other error":         {first: `{"code":-32603,"message":"internal"}`},
+		"fresh session fails": {first: `{"code":-32002,"message":"Resource not found: S1"}`, fresh: `{"code":-32603,"message":"no"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newProxyHarnessWith(t, 1, nil, RunOpts{Bindings: newMemBindings(nil)}, "claude")
+			h.initialize(0)
+			writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"cwd":"/w","sessionId":"S1"}}`)
+			readLine(t, h.childIn[0])
+			writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":2,"error":`+tc.first+`}`)
+			if tc.fresh != "" {
+				fresh := parse(readLine(t, h.childIn[0]))
+				writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":`+string(fresh.ID)+`,"error":`+tc.fresh+`}`)
+			}
+			if answer := string(readLine(t, h.clientOut)); !strings.Contains(answer, `"id":2`) || !strings.Contains(answer, tc.first[9:15]) {
+				t.Fatalf("editor got %s, want the adapter's first answer %s", answer, tc.first)
+			}
+			h.shutdown()
+		})
+	}
+}

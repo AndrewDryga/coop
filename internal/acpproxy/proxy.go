@@ -638,6 +638,7 @@ type proxy struct {
 	unavailable    map[string]bool                             // editor sessions that did not establish on the active child
 	reactivating   map[string]string                           // retired native id -> pending load/resume request that may stream history
 	injected       map[string][]byte                           // synthetic request id -> request, for response diagnostics
+	reloads        map[string]reloadAsNew                      // synthetic session/new id -> the editor load it stands in for
 	forceByID      map[string]*forceChain                      // active setting request id -> its ordered chain
 	forceBySess    map[string]*forceChain                      // adapter session id -> active setting chain
 	forceFailed    map[string]string                           // adapter session id -> setting failure; prompts fail loudly
@@ -1517,8 +1518,25 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 				p.sessions[op.editorID] == nil && p.byAdapter[op.adapterID] == op.editorID {
 				delete(p.byAdapter, op.adapterID) // the provisional cold-load remap: nothing was bound
 			}
+			var reloadID string
+			var reload []byte
+			if wasSession && op.method == "session/load" && op.generation == generation && p.sessions[op.editorID] == nil &&
+				errorCode(h.Error) == resourceNotFound {
+				reloadID, reload = p.reloadAsNewLocked(op, h.ID, line, generation)
+			}
 			p.mu.Unlock()
 			p.flushBindings()
+			if reload != nil {
+				// A session with no turn has no transcript to load (Claude's adapter answers "Resource
+				// not found"), so the thread starts afresh on a new native session, as replay does.
+				Trace("session/load of %s found no transcript; starting it afresh", op.editorID)
+				if _, err := child.In.Write(reload); err == nil {
+					return nil
+				}
+				p.mu.Lock()
+				delete(p.reloads, reloadID)
+				p.mu.Unlock()
+			}
 			if heldLifecycle != "" {
 				p.failHeldPromptsForLifecycle(held, heldLifecycle)
 			} else {
@@ -1582,6 +1600,85 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 		return nil
 	})
 	p.sendHeldText()
+}
+
+// resourceNotFound is the JSON-RPC code an adapter answers a session/load with when it has no
+// transcript under that id.
+const resourceNotFound = -32002
+
+// reloadAsNew is an editor's session/load the proxy answers with a fresh native session instead.
+type reloadAsNew struct {
+	editorID, provider string
+	request            json.RawMessage // the editor's request id
+	params             json.RawMessage // session/new params: the load's, without its sessionId
+	failure            []byte          // the adapter's own answer, sent if the fresh session fails too
+	generation         uint64
+}
+
+// reloadAsNewLocked registers and returns a session/new standing in for a load that found no
+// transcript. p.mu must be held.
+func (p *proxy) reloadAsNewLocked(op sessionRequest, request json.RawMessage, failure []byte, generation uint64) (string, []byte) {
+	var params map[string]json.RawMessage
+	if json.Unmarshal(op.params, &params) != nil {
+		return "", nil
+	}
+	delete(params, "sessionId")
+	stripped, err := json.Marshal(params)
+	if err != nil {
+		return "", nil
+	}
+	id := fmt.Sprintf("%sreload-%d-%s", InjectPrefix, generation, trimQuotes(request))
+	msg, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/new", "params": json.RawMessage(stripped)})
+	if err != nil {
+		return "", nil
+	}
+	if p.reloads == nil {
+		p.reloads = map[string]reloadAsNew{}
+	}
+	p.reloads[id] = reloadAsNew{
+		editorID: op.editorID, provider: op.provider, request: clone(request), params: stripped,
+		failure: clone(failure), generation: generation,
+	}
+	return id, append(msg, '\n')
+}
+
+// finishReload binds the editor's thread to the fresh session and answers its load, or sends the
+// adapter's original answer when the fresh session failed or its box is gone. controlMu is held.
+func (p *proxy) finishReload(child *Child, generation uint64, r reloadAsNew, h header) {
+	fresh := ""
+	if responseSucceeded(h) {
+		fresh = sessionID(h.Result)
+	}
+	p.mu.Lock()
+	ok := fresh != "" && child != nil && p.child == child && p.generation == generation && r.generation == generation &&
+		p.sessions[r.editorID] == nil && !p.freshSessionIDCollidesLocked(fresh)
+	if ok {
+		p.bindSessionLocked(r.editorID, fresh, r.provider, r.params, false)
+	}
+	p.mu.Unlock()
+	if !ok {
+		p.writeControllerResponse(r.failure)
+		return
+	}
+	p.flushBindings()
+	var result map[string]json.RawMessage
+	_ = json.Unmarshal(h.Result, &result)
+	delete(result, "sessionId") // a load answers for the editor's own id
+	answer, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": r.request, "result": result})
+	p.writeControllerResponse(append(answer, '\n'))
+	p.forceSessionFor(child, generation, fresh)
+	if p.hooks != nil && p.hooks.SessionRecreated != nil {
+		p.hooks.SessionRecreated(r.editorID)
+	}
+}
+
+// errorCode is a JSON-RPC error's code, or 0.
+func errorCode(raw json.RawMessage) int {
+	var e struct {
+		Code int `json:"code"`
+	}
+	_ = json.Unmarshal(raw, &e)
+	return e.Code
 }
 
 // controlMu is held through gate installation and release.
@@ -1798,6 +1895,12 @@ func (p *proxy) handleInjectedResponseControlled(line []byte, child *Child, gene
 	h := parse(line)
 	id := string(trimQuotes(h.ID))
 	p.mu.Lock()
+	if reload, ok := p.reloads[id]; ok {
+		delete(p.reloads, id)
+		p.mu.Unlock()
+		p.finishReload(child, generation, reload, h)
+		return
+	}
 	if child != nil && (p.child != child || p.generation != generation) {
 		p.mu.Unlock()
 		Trace("dropping injected response from a retired child generation")
