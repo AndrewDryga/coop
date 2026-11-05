@@ -181,31 +181,9 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 	})
 
-	t.Run("pre-v9 session adoption is ignored", func(t *testing.T) {
+	t.Run("cwd history is not adopted as a session hint", func(t *testing.T) {
 		resetForkProcessRepo(t, suite)
 		account := "work"
-
-		claudeWS, err := forkspace.Setup(suite.layout.Repo, "provider-only-hint")
-		if err != nil {
-			t.Fatal(err)
-		}
-		legacyID := "11111111-2222-4333-8444-000000000010"
-		if err := os.MkdirAll(filepath.Join(claudeWS, ".coop"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(claudeWS, ".coop", "session.claude"), []byte(legacyID+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		writeForkProviderSession(t, suite, "claude", account, claudeWS, legacyID, "cli", time.Now())
-		claudeTarget := forkProcessTarget("claude", "fork-model-claude", "high", account)
-		result, trace := runForkProcess(t, suite, []string{"provider-only-hint", claudeTarget}, "claude")
-		currentID := forkctl.ReadForkSession(claudeWS, "claude", account)
-		assertForkProcessSuccess(t, result, "claude")
-		assertForkProcessContract(t, suite, trace, claudeWS, "claude", account,
-			forkStartArgv("claude", "fork-model-claude", "high", currentID), "fork-model-claude", "high")
-		if currentID == "" || currentID == legacyID {
-			t.Fatalf("provider-only hint selected %q, want a new account-scoped id", currentID)
-		}
 
 		codexWS, err := forkspace.Setup(suite.layout.Repo, "cwd-history")
 		if err != nil {
@@ -214,7 +192,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		oldCodexID := "11111111-2222-4333-8444-000000000011"
 		writeForkProviderSession(t, suite, "codex", account, codexWS, oldCodexID, "cli", time.Now())
 		codexTarget := forkProcessTarget("codex", "fork-model-codex", "high", account)
-		result, trace = runForkProcess(t, suite, []string{"cwd-history", codexTarget}, "codex")
+		result, trace := runForkProcess(t, suite, []string{"cwd-history", codexTarget}, "codex")
 		assertForkProcessSuccess(t, result, "codex")
 		assertForkProcessContract(t, suite, trace, codexWS, "codex", account,
 			forkStartArgv("codex", "fork-model-codex", "high", ""), "fork-model-codex", "high")

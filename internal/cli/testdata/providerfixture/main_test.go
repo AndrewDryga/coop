@@ -23,6 +23,10 @@ import (
 // TestMain keeps the fixture's tests out of the developer's real Coop state.
 func TestMain(m *testing.M) { os.Exit(teststate.Isolate(m.Run)) }
 
+func parseRuntime(root, image string, args []string, providerHomes ...string) (runtimeCommand, error) {
+	return parseRuntimeForProvider(root, image, args, "", providerHomes...)
+}
+
 func TestCacheVolumeNamesMatchNativeLinuxIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		linux    bool

@@ -410,16 +410,19 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, confirmErr)
 		}
 		defer forkspace.ClearPidIfMine(repo, fa.name, worker.Generation)
-		if worker.Generation != "" {
-			current, ok, readErr := forkspace.ReadGeneration(repo, fa.name)
-			if readErr != nil || !ok || current.Name != fa.name || current.Generation != worker.Generation {
-				return 1, fmt.Errorf("fork %s detached worker generation no longer matches host authority", fa.name)
-			}
-			if err := forkspace.ValidateGenerationWorkspace(repo, current); err != nil {
-				return 1, fmt.Errorf("fork %s detached worker generation is stale: %w", fa.name, err)
-			}
-			forkIdentity = current
+		// The parent records the generation it started this worker for, and task authority hangs off
+		// it, so a record without one stops here.
+		if worker.Generation == "" {
+			return 1, fmt.Errorf("fork %s detached worker has no generation — stop it and restart", fa.name)
 		}
+		current, ok, readErr := forkspace.ReadGeneration(repo, fa.name)
+		if readErr != nil || !ok || current.Name != fa.name || current.Generation != worker.Generation {
+			return 1, fmt.Errorf("fork %s detached worker generation no longer matches host authority", fa.name)
+		}
+		if err := forkspace.ValidateGenerationWorkspace(repo, current); err != nil {
+			return 1, fmt.Errorf("fork %s detached worker generation is stale: %w", fa.name, err)
+		}
+		forkIdentity = current
 	}
 	// The fork's preset (named in the positional who slot): load + fail fast (pure local reads),
 	// then default the fork's agent, credentials, and model from the preset's lead — a positional
@@ -763,10 +766,6 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		if err != nil {
 			return 1, fmt.Errorf("bind fork %s for an ordinary launch: %w", fa.name, err)
 		}
-	} else if forkIdentity.Generation == "" {
-		// A legacy worker record without a generation stays stoppable, but new task authority is
-		// unavailable until the old worker is stopped and the workspace is adopted into a generation.
-		return 1, fmt.Errorf("fork %s detached worker has legacy state without a generation — stop it and restart", fa.name)
 	}
 	if err := forkctl.SaveForkAgent(ws, fa.agent); err != nil {
 		return -1, fmt.Errorf("save fork provider before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))

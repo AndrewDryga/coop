@@ -174,8 +174,8 @@ func TestParseForkCreate(t *testing.T) {
 }
 
 // TestParseForkCreatePeer: --peer <target> is repeatable and rides a loop fork's args; on a
-// non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), a valueless --peer
-// errors (it takes a value), and the retired --consult is now just an unknown arg.
+// non-loop fork it's rejected (an interactive fork has no ad-hoc peer set), and a valueless --peer
+// errors (it takes a value).
 func TestParseForkCreatePeer(t *testing.T) {
 	fa, err := parseForkCreate([]string{"perf", "claude", "--loop", "--peer", "codex", "--peer", "gemini:gemini-3.5-flash"})
 	if err != nil || !slices.Equal(fa.peers, []string{"codex", "gemini:gemini-3.5-flash"}) {
@@ -186,9 +186,6 @@ func TestParseForkCreatePeer(t *testing.T) {
 	}
 	if _, err := parseForkCreate([]string{"perf", "claude", "--peer", "codex"}); err == nil {
 		t.Error("parseForkCreate: --peer without --loop must error (name peers on a loop)")
-	}
-	if _, err := parseForkCreate([]string{"perf", "claude", "--loop", "--consult", "codex"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--consult"`) {
-		t.Errorf("parseForkCreate: --consult is retired — should be an unknown flag now, got %v", err)
 	}
 }
 
@@ -780,7 +777,7 @@ func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
 }
 
 // Fork ACP accepts at most one positional target after peer extraction. Invalid account selection
-// reaches credential validation, while a retired flag, junk, or second target fails before run
+// reaches credential validation, while an unknown flag, junk, or second target fails before run
 // config changes.
 func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
@@ -1504,30 +1501,6 @@ func TestForkLaunchCmd(t *testing.T) {
 	if safeID == "" || safeID == "../../outside" || !slices.Contains(cmd, safeID) || slices.Contains(cmd, "../../outside") {
 		t.Errorf("invalid persisted id was not replaced: cmd %v id %q", cmd, safeID)
 	}
-
-	// A provider-only pre-v9 hint is ignored even when the selected account contains that exact
-	// session. Only the current account-scoped hint may select a conversation.
-	legacyID := "77777777-2222-4333-8444-555555555555"
-	legacyWS := filepath.Join(t.TempDir(), "myrepo-forks", "legacy")
-	if err := os.MkdirAll(filepath.Join(legacyWS, ".coop"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacyWS, ".coop", "session.claude"), []byte(legacyID+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	legacySession := filepath.Join(home("claude", legacyWS), "projects", agents.ClaudeProjectKey(legacyWS), legacyID+".jsonl")
-	if err := os.MkdirAll(filepath.Dir(legacySession), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(legacySession, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd = launch(forkArgs{name: "legacy", agent: "claude"}, legacyWS, true)
-	got := forkctl.ReadForkSession(legacyWS, "claude", "work")
-	if got == "" || got == legacyID || !slices.Contains(cmd, "--session-id") ||
-		slices.Contains(cmd, "--resume") || slices.Contains(cmd, legacyID) {
-		t.Errorf("provider-only hint = id %q cmd %v, want a new account-scoped session", got, cmd)
-	}
 }
 
 type fixedSessionDiscoverer []string
@@ -1739,8 +1712,17 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
 		t.Skip("kernel process identity unavailable")
 	}
-	repo, name := t.TempDir(), "perf"
-	if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+	repo, name := initRepo(t), "perf"
+	if _, err := forkspace.Setup(repo, name); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, name)
+	unlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	presetDir := filepath.Join(repo, ".agent", "presets", "vanish")
@@ -1752,15 +1734,38 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	// This test process stands in for the child its parent recorded.
-	if err := forkspace.WritePid(repo, name, os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, name, os.Getpid(), identity.Generation); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 1 || err == nil {
+	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 1 || err == nil || !strings.Contains(err.Error(), `Could not load preset "vanish"`) {
 		t.Fatalf("worker with a broken preset = (%d, %v), want the preset failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
 		t.Fatal("the failed worker left its own record behind")
+	}
+}
+
+// Task authority hangs off the generation a worker's parent records, so a record with none refuses
+// before anything else runs, and goes with the worker.
+func TestDetachedWorkerWithoutAGenerationRefuses(t *testing.T) {
+	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
+		t.Skip("kernel process identity unavailable")
+	}
+	repo, name := t.TempDir(), "perf"
+	if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// This test process stands in for the child its parent recorded.
+	if err := forkspace.WritePid(repo, name, os.Getpid(), ""); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	if code, err := a.forkCreate([]string{name, "claude", "--loop", "--_detached"}); code != 1 || err == nil || !strings.Contains(err.Error(), "has no generation") {
+		t.Fatalf("worker with no generation = (%d, %v), want the refusal", code, err)
+	}
+	if pathExists(forkspace.PidPath(repo, name)) {
+		t.Fatal("the refused worker left its own record behind")
 	}
 }
 

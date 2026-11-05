@@ -190,6 +190,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-04 — removed `networkstate.Store.Resolve` (see the 2026-09-10 entry below) and
+  `Store.CheckRequests`, which nothing called. `Admit` and `PreviewAdmission` are the ways in, and the
+  tests of those rules now run through them.
 - 2026-11-04 — `coop net approve` no longer exists, so the `approve` row names only the top-level command.
 - 2026-11-04 — `coop approve` with nothing to approve also shows a services refusal a box would still get.
 - 2026-11-03 — an editor session connects on a holding capture while its project's request waits.

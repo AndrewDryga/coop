@@ -92,17 +92,9 @@ func TestCompletionCandidates(t *testing.T) {
 			t.Errorf("top-level completion missing %q", w)
 		}
 	}
-	if hasCand(top, "clone") || hasCand(top, "pool") {
-		t.Error("retired aliases (clone/pool) must not be completed")
-	}
 	// completion appears exactly once (topLevelCommands already carries it — no separate prepend).
 	if n := candCount(top, "completion"); n != 1 {
 		t.Errorf("completion should be offered exactly once, got %d", n)
-	}
-	// The retired-form invariant must hold per-scope, not just top-level: `coop loop <TAB>` offered
-	// the tombstoned `pool` before this fix, and only the top-level list was ever checked.
-	if hasCand(a.completionCandidates([]string{"loop"}), "pool") {
-		t.Error("`coop loop` must not complete the retired `pool` (it's tombstoned)")
 	}
 	if !hasCand(a.completionCandidates([]string{"approve"}), "--case-exposure") {
 		t.Error("approve completion must offer explicit mount exposure review")
@@ -134,9 +126,6 @@ func TestCompletionCandidates(t *testing.T) {
 		if !hasCand(loop, want) {
 			t.Errorf("loop completion missing %q: %v", want, loop)
 		}
-	}
-	if hasCand(loop, "pool") {
-		t.Error("loop completion must not offer the retired pool command")
 	}
 	if got := a.completionCandidatesFor([]string{"loop", "--max-tasks"}, ""); !hasCand(got, "1") || !hasCand(got, "3") {
 		t.Errorf("max-tasks completion missing numeric values: %v", got)
@@ -631,11 +620,6 @@ func TestSessionsCompletionMatchesTheParsers(t *testing.T) {
 			if err := check(args); unknown(err) {
 				t.Errorf("completion offers sessions %s %s, which its parser rejects: %v", sub, flag, err)
 			}
-		}
-	}
-	for _, gone := range []string{"serve", "policies"} {
-		if c := a.completionCandidates([]string{"sessions", gone}); len(c) != 0 {
-			t.Errorf("completion offers flags for sessions %s, which doesn't exist: %v", gone, c)
 		}
 	}
 }

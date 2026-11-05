@@ -130,7 +130,7 @@ func TestControllerLeaseValidationAndAtomicSharedIPRefresh(t *testing.T) {
 	now := testBootNow()
 	c.now = func() BootInstant { return now }
 	lease := Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: now.Add(10 * time.Second)}
-	if until, err := c.Admit(context.Background(), lease); err != nil || !until.Equal(lease.Expires.Add(-ControllerUpdateTimeout-KernelTickAllowance)) {
+	if until, err := c.Admit(context.Background(), lease); err != nil || until != lease.Expires.Add(-ControllerUpdateTimeout-KernelTickAllowance) {
 		t.Fatal(err)
 	}
 	if len(batches) != 2 || batches[1] != "flush set inet coop_net leases4\nadd element inet coop_net leases4 { 93.184.216.34 . 443 timeout 9750ms }\n" {
@@ -237,7 +237,7 @@ func TestControllerDelayedCommitCannotExtendOldDNSAuthority(t *testing.T) {
 	start := now
 	lease := Lease{Name: "api.example.com", Port: 443, Peer: netip.MustParseAddr("93.184.216.34"), Expires: start.Add(time.Second)}
 	until, err := c.Admit(context.Background(), lease)
-	if err != nil || !until.Equal(start.Add(730*time.Millisecond)) || !strings.Contains(batch, "timeout 750ms") {
+	if err != nil || until != start.Add(730*time.Millisecond) || !strings.Contains(batch, "timeout 750ms") {
 		t.Fatalf("short-TTL conservative admission: %v %s %s", err, until, batch)
 	}
 	// Add another peer just before the old DNS answer expires. The old entry

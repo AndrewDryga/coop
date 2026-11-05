@@ -15,7 +15,6 @@ type BootInstant int64
 func (b BootInstant) Valid() bool                         { return b > 0 }
 func (b BootInstant) Before(other BootInstant) bool       { return b.Valid() && b < other }
 func (b BootInstant) After(other BootInstant) bool        { return b.Valid() && b > other }
-func (b BootInstant) Equal(other BootInstant) bool        { return b == other }
 func (b BootInstant) Sub(other BootInstant) time.Duration { return time.Duration(b - other) }
 func (b BootInstant) Add(delta time.Duration) BootInstant {
 	if !b.Valid() || delta > 0 && int64(b) > (1<<63-1)-int64(delta) {

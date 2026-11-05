@@ -181,8 +181,8 @@ func TestApplyPresetRejectsMissingPinnedFirstAccount(t *testing.T) {
 }
 
 // The who-runs positional names a target OR a preset: a fork takes a bare preset NAME in that
-// slot (the retired --preset flag is now just an unknown arg), a target stays a target, and a
-// run picks ONE — a target plus a preset in the same fork errors.
+// slot, a target stays a target, and a run picks ONE — a target plus a preset in the same fork
+// errors.
 func TestForkPositionalPreset(t *testing.T) {
 	fa, err := parseForkCreate([]string{"api", "frontier", "--loop"})
 	if err != nil || fa.preset != "frontier" || fa.agent != "" || fa.agentSet {
@@ -196,10 +196,6 @@ func TestForkPositionalPreset(t *testing.T) {
 	// A run picks ONE: a target AND a preset in the same fork (two who-runs) errors.
 	if _, err := parseForkCreate([]string{"api", "claude", "frontier", "--loop"}); err == nil || !strings.Contains(err.Error(), `Unexpected argument "frontier"`) {
 		t.Errorf("fork: a target plus a preset must error, got %v", err)
-	}
-	// --preset is retired — now just an unknown flag.
-	if _, err := parseForkCreate([]string{"api", "--loop", "--preset", "frontier"}); err == nil || !strings.Contains(err.Error(), `Unknown option "--preset"`) {
-		t.Errorf("fork: --preset should be an unknown flag now, got %v", err)
 	}
 }
 

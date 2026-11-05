@@ -79,7 +79,7 @@ func TestKernelSamplingIsCachedAndIndependentOfControl(t *testing.T) {
 		t.Fatal("sampler did not start")
 	}
 	for range 20 {
-		sample, err := client.Counters(context.Background())
+		sample, err := client.countersAfter(context.Background(), 0)
 		if err != nil || sample.Counters != nil || sample.Reason != "kernel_counters_unavailable" {
 			t.Fatalf("unmeasured kernel counter claimed available: %#v %v", sample, err)
 		}
@@ -95,7 +95,7 @@ func TestKernelSamplingIsCachedAndIndependentOfControl(t *testing.T) {
 	}
 	wrong := client
 	wrong.Identity.Epoch = strings.Repeat("f", 32)
-	if _, err := wrong.Counters(context.Background()); err == nil {
+	if _, err := wrong.countersAfter(context.Background(), 0); err == nil {
 		t.Fatal("observation crossed gateway epoch")
 	}
 	if !c.Ready() {

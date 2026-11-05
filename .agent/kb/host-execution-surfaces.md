@@ -15,7 +15,7 @@ config on the next editor start, `.agent/compose.yml` on the next box start, a C
 the Makefile on `make`. `internal/hostsurface` is the ONE classifier for those paths; every place
 that reviews agent work reads it, so a new surface is added there and nowhere else.
 
-Two tiers, decided by `Finding.Automatic`:
+Two tiers, decided by the `automatic` result of `Classify`:
 - **automatic** — runs without a deliberate command (hooks, `.envrc`, `.gitattributes` filters,
   `.gitmodules`, pre-commit config, `.claude/`, `.codex/`, `.gemini/` settings and hooks, MCP
   configs, `.agent/` skills, compose, Dockerfile, project/loop config, `.vscode`/`.zed`/`.idea`
@@ -29,7 +29,7 @@ Each finding's `Reason` is ONE sentence naming when the file runs — "Runs duri
 "Runs when you use make." — because it is printed under the path in `coop check-secrets` and in the
 fork review brief, where a clause like "runs on your machine on `git commit`" read as a fragment of
 somebody else's sentence. Change the wording here and every consumer follows; the TIER
-(`Automatic`), not the wording, is what decides whether a merge blocks.
+(`automatic`), not the wording, is what decides whether a merge blocks.
 
 `package.json` is deliberately NOT a path surface: `PolicyScan` keeps the content check that flags
 only a NEW lifecycle script (`postinstall` etc.), so a version bump does not block a merge.
@@ -58,6 +58,8 @@ The consumers:
   candidate for controller-authorized publication.
 
 ## Changelog
+- 2026-11-04: removed `Finding.Automatic`, which nothing read. `PolicyScan` and isolated publication
+  read the tier from `Classify` directly; both still block as described above.
 - 2026-11-04: dropped the paragraph on the removed task-flags feature. The 2026-09-11 entry below
   records the removal, and MIGRATING.md tells a user that an old `flags.json` is left in place.
 - 2026-11-03: check-secrets counts Coop's unchanged setup files instead of listing them

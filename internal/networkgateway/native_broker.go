@@ -177,7 +177,6 @@ type nativeBrokerRoute struct {
 
 type nativeBrokerOrigin struct {
 	certificate          tls.Certificate
-	accountHeaders       http.Header
 	clientAccountHeaders http.Header
 	routes               []nativeBrokerRoute
 	transport            *http.Transport
@@ -272,7 +271,7 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 			}
 			clientAccountHeaders.Set(name, value)
 		}
-		origin := nativeBrokerOrigin{certificate: declared.Certificate, accountHeaders: accountHeaders, clientAccountHeaders: clientAccountHeaders, transport: transport}
+		origin := nativeBrokerOrigin{certificate: declared.Certificate, clientAccountHeaders: clientAccountHeaders, transport: transport}
 		b.origins[host] = origin // establish cleanup ownership before further validation
 		for _, line := range declared.Requests {
 			if !line.valid() || accountHeaders.Get(line.Header) != "" || line.ClientHeader != "" && accountHeaders.Get(line.ClientHeader) != "" {

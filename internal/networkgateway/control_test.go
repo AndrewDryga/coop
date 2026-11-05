@@ -142,7 +142,7 @@ func TestControllerAcceptsKernelEquivalentClockDomains(t *testing.T) {
 	if until, err := client.AdmitBroker(context.Background(), lease); err != nil || until.After(lease.Expires) {
 		t.Fatalf("equivalent kernel clocks refused broker lease: %v", err)
 	}
-	if _, err := client.Counters(context.Background()); err != nil {
+	if _, err := client.countersAfter(context.Background(), 0); err != nil {
 		t.Fatalf("equivalent kernel clocks refused observation: %v", err)
 	}
 }

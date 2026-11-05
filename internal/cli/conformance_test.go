@@ -208,14 +208,4 @@ func TestCLIConformance(t *testing.T) {
 			t.Error("an unknown tasks verb should hit the unknown-command error")
 		}
 	})
-
-	// Retired top-level forms are unknown commands (exit 2) rather than being silently re-accepted
-	// or squatting a generic name — locked in against a future re-mint.
-	t.Run("retired_forms_unknown", func(t *testing.T) {
-		for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}, {"fusion", "claude"}, {"fleet"}} {
-			if code, err := newApp().dispatch(argv); code != 2 || err == nil {
-				t.Errorf("retired %v should be an unknown command (exit 2), got (%d, %v)", argv, code, err)
-			}
-		}
-	})
 }

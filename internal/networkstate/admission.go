@@ -253,25 +253,8 @@ func (s *Store) Admit(project string, input Admission) (egress.Snapshot, error) 
 	return s.capture(project, id, mode, input.Requests, operator, input.Bundles, input.ExportDestinations)
 }
 
-// Resolve compiles exactly what Admit would authorize and returns it WITHOUT
-// publishing: no approval is written, no snapshot is saved (an older build's
-// withdrawal may move to its new name, as in PreviewAdmission), and the caller must
-// have opened the store without creating an owner key. It answers "what would
-// this launch run under" for a host that has to publish a fence before anyone
-// asks for a launch. A launch still has to Admit.
-func (s *Store) Resolve(project string, input Admission) (egress.Snapshot, error) {
-	id, mode, operator, err := s.authorized(project, input)
-	if err != nil {
-		return egress.Snapshot{}, err
-	}
-	return s.compile(project, id, mode, input.Requests, operator, input.Bundles, input.ExportDestinations)
-}
-
-// authorized is the ONE input assembly behind both of them. Read one approval
-// for both posture and envelope checks: rereading between them could combine two
-// different operator decisions. Publishing is the only difference between Admit
-// and Resolve, so a resolved fingerprint cannot describe authority the capture
-// would have compiled differently.
+// authorized assembles Admit's input. Read one approval for both posture and envelope checks:
+// rereading between them could combine two different operator decisions.
 func (s *Store) authorized(project string, input Admission) (string, egress.Mode, []egress.Input, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return "", "", nil, err
@@ -304,7 +287,7 @@ func (s *Store) authorized(project string, input Admission) (string, egress.Mode
 	if err := s.checkBundles(input.Bundles); err != nil {
 		return "", "", nil, err
 	}
-	if _, err := s.checkRequests(approval, input.Requests, input.Bundles); err != nil {
+	if err := s.checkRequests(approval, input.Requests, input.Bundles); err != nil {
 		return "", "", nil, err
 	}
 	operator := append([]egress.Input{}, input.Operator...)

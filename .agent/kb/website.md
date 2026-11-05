@@ -2,8 +2,8 @@
 name: website
 description: site/ is static and partly generated; tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; the night board, code-block, cache-bust and social-card traps
 subsystem: website
-sources: [tools/gendocs/references.go, tools/gendocs/references_test.go, tools/site/reference.tpl.html, docs/networking.md, site/networking.html, tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/sandbox-guide.html, site/overnight-guide.html, tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/help_test.go, internal/cli/eval_cmd_test.go]
-updated: 2026-10-30
+sources: [tools/gendocs/references.go, tools/gendocs/references_test.go, tools/site/reference.tpl.html, docs/networking.md, site/networking.html, tools/site/sandbox-guide.tpl.html, tools/site/overnight-guide.tpl.html, site/sandbox-guide.html, site/overnight-guide.html, tools/gendocs/site.go, tools/gendocs/scenes.go, tools/gendocs/site_test.go, tools/lifecyclebench/main.go, tools/servicesbench/main.go, tools/site/index.tpl.html, tools/site/orchestrator.tpl.html, site/index.html, site/orchestrator.html, site/docs.html, site/README.md, site/assets/css/site.css, site/assets/css/orchestrator.css, site/assets/js/site.js, site/assets/js/orchestrator.js, tools/aligncomments/main.go, internal/cli/eval_cmd_test.go]
+updated: 2026-11-04
 ---
 
 The homepage and docs are static files in `site/`, published by `.github/workflows/pages.yml` on
@@ -175,10 +175,9 @@ supporting size, with the Copy button level with the command. The label spans th
 (`grid-column: 1 / -1`); without that, the grid places the command beside the label, not under it.
 
 **Tests pin docs wording.** Rewording `site/docs.html` can fail Go tests far from the site:
-`internal/cli/help_test.go` TestCurrentDocsDoNotAdvertiseRetiredContracts needs "commits no starter
-subagents" and rejects retired config names; `internal/cli/eval_cmd_test.go` needs the eval commands
-verbatim; the site tests (`tools/gendocs/site_test.go`) need the `#evals` section and `coop down
---delete-volumes`. Run `go test ./internal/cli/` after a docs copy pass, not only `make docs-check`.
+`internal/cli/eval_cmd_test.go` needs the eval commands verbatim; the site tests
+(`tools/gendocs/site_test.go`) need the `#evals` section and `coop down --delete-volumes`. Run `go
+test ./internal/cli/` after a docs copy pass, not only `make docs-check`.
 
 **Cache-busting.** Every page loads its stylesheets and scripts with `?v=<hash of site.css,
 site.js, analytics.js, orchestrator.css and orchestrator.js>`, written by `make docs`
@@ -205,6 +204,8 @@ Orchestrator board at morning (`og-orchestrator.png`). They and the icons, drawn
 nothing. A site test checks each landing page names its committed card.
 
 ## Changelog
+- 2026-11-04 — the docs test that pinned retired config names and starter-subagent wording is gone,
+  so the pinned-wording trap names the two that remain.
 - 2026-10-30 — adopted the approved Contained entrance mark and outlined wordmark. Website
   navigation uses `site/assets/img/coop-mark.svg` and `coop-wordmark.svg`; favicon/app/avatar
   exports derive from `brand/assets/coop-flat.svg`. README and sibling product cards share the

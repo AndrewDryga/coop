@@ -89,9 +89,6 @@ func TestWithdrawalBarrierRefusesTheDefaultAfterAForget(t *testing.T) {
 			if _, err := s.Admit(project, tc.request); err == nil {
 				t.Fatal("Admit walked through the withdrawal barrier")
 			}
-			if _, err := s.Resolve(project, tc.request); err == nil {
-				t.Fatal("Resolve walked through the withdrawal barrier")
-			}
 		})
 	}
 }

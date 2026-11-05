@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-10-15
+updated: 2026-11-04
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -43,7 +43,7 @@ launch shapes; provider, account, cwd, and explicit-ID isolation; remembered-pro
 across `--fresh`; task seeding; confirmation; merge; and parent queue reconciliation. Claude,
 Gemini, and Grok use Coop-owned IDs scoped by provider and account. Coop records Codex's native
 post-run ID and later requires that exact account/cwd match; a missing hint starts fresh rather
-than adopting provider-only fork metadata or the latest conversation for a cwd. Provider choice
+than adopting the latest conversation for a cwd. Provider choice
 and Coop-owned IDs must persist before launch. Codex's necessarily post-run write reports partial
 success if its exact native ID cannot persist; it never silently promises resumability. All Coop-owned
 interactive Codex producers for one profile/cwd take the same host-only ConfigDir lock, even across
@@ -152,6 +152,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-04 — dropped the proof that a provider-only `.coop/session.<provider>` file is ignored:
+  `forkctl.ForkSessionFile` always names the account and no code reads the old name.
 - 2026-10-15 — the consult capture stalls are explained: macOS can lose a FIFO reader's EOF
   (reproduced shell-free; see [[provider-consult-e2e]]); `await_capture` now re-delivers it.
 - 2026-10-07 — every loop-review hang guard comes from loopReviewBudget (attempts x 10 s, at least

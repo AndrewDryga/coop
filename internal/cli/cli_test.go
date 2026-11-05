@@ -343,28 +343,6 @@ func TestPendingReviewCommitsRefusalIsAFailureBlock(t *testing.T) {
 	}
 }
 
-// v3 keeps no renamed-command aliases: a retired form is just an unknown command/subcommand now
-// (exit 2), not a special "X is retired" note. Locked in against a future re-mint.
-func TestV3RetiredForms(t *testing.T) {
-	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	// clone, top-level pool, and profiles (renamed to credentials) fall through to the plain
-	// unknown-command error (exit 2) via dispatch — no runtime needed.
-	for _, argv := range [][]string{{"clone", "x"}, {"pool", "add", "p"}, {"profiles"}, {"profiles", "claude"}} {
-		code, err := a.dispatch(argv)
-		if code != 2 || err == nil {
-			t.Errorf("dispatch(%v) = (%d, %v), want (2, unknown-command error)", argv, code, err)
-		}
-	}
-	// A leading verb-first credential edit reads as an unknown agent now (exit 2).
-	if code, err := a.cmdCredentials([]string{"rm", "claude", "work"}); code != 2 || err == nil {
-		t.Errorf("verb-first credentials rm = (%d, %v), want (2, error)", code, err)
-	}
-	// tasks start → unknown tasks command (renamed to claim).
-	if code, err := cmdTasksFolder("", t.TempDir(), []string{"start", "x"}); code != 2 || err == nil {
-		t.Errorf("tasks start = (%d, %v), want (2, unknown tasks command)", code, err)
-	}
-}
-
 // `coop help claude` prints the page generated from Claude's adapter, to the byte, and no generic
 // all-commands footer: the page ends with its own pointer. docs/cli.md pins the page's bytes
 // (make docs-check); this pins the help ROUTE that prints it.

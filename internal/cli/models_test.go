@@ -75,8 +75,8 @@ func TestProfilePathGrammar(t *testing.T) {
 	}
 }
 
-// The models command is read-only: an unknown agent (or a mutation verb like the retired
-// `default`/`clear`) errors, and a stray token after a valid agent errors too.
+// The models command is read-only: an unknown agent or a mutation verb errors, and a stray token
+// after a valid agent errors too.
 func TestModelsCommandIsReadOnly(t *testing.T) {
 	a := modelsApp(t)
 	for _, args := range [][]string{{"borg"}, {"default"}, {"clear"}, {"claude", "extra"}} {
@@ -87,8 +87,8 @@ func TestModelsCommandIsReadOnly(t *testing.T) {
 }
 
 // TestModelsIsACompactMenu: `coop models` is a block of ids per agent plus two copyable footers —
-// no title, no repeated field labels, no healthy cache age, no credential rows, and none of the
-// old one-run/standing/loop-steps/everywhere table.
+// no title, no repeated field labels, no healthy cache age, no credential rows. The 12-models-*
+// transcripts pin its bytes; this fixture adds a stored account they don't have.
 func TestModelsIsACompactMenu(t *testing.T) {
 	a := modelsApp(t)
 	out := captureStdout(t, func() {
@@ -105,14 +105,11 @@ func TestModelsIsACompactMenu(t *testing.T) {
 			t.Errorf("menu missing %q:\n%s", want, out)
 		}
 	}
-	// The old shapes: a title, per-block labels, a healthy age, the env var, the how-to table, and
-	// the per-credential dump ("\n  work" anchors the name as a row, not a substring).
-	for _, reject := range []string{
-		"Models:", "Last refreshed", "COOP_CLAUDE_MODEL", "one run", "loop steps", "everywhere",
-		"\n  work", "mark:", "(default profile)", "--refresh",
-	} {
+	// Ids and footers only: no title, env var or option, and no credential row ("\n  work" anchors
+	// the name as a row, not a substring).
+	for _, reject := range []string{"Models:", "COOP_CLAUDE_MODEL", "\n  work", "--refresh"} {
 		if strings.Contains(out, reject) {
-			t.Errorf("menu still shows %q:\n%s", reject, out)
+			t.Errorf("menu shows %q:\n%s", reject, out)
 		}
 	}
 }

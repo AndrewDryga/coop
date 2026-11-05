@@ -261,10 +261,6 @@ func (c ControllerClient) callPath(ctx context.Context, request controlRequest, 
 	return reply.ValidUntil, err
 }
 
-func (c ControllerClient) Counters(ctx context.Context) (KernelSample, error) {
-	return c.countersAfter(ctx, 0)
-}
-
 func (c ControllerClient) countersAfter(ctx context.Context, cutoff BootInstant) (KernelSample, error) {
 	reply, err := c.exchange(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "counters", AfterBoot: cutoff}, c.Path+".observe")
 	if err != nil || reply.Kernel == nil {

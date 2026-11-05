@@ -506,37 +506,16 @@ func (s *Store) approval(id string) (*Approval, error) {
 	return &approval, nil
 }
 
-func (s *Store) CheckRequests(project string, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
-	if err := s.authorityAvailable(); err != nil {
-		return nil, err
-	}
-	approval, err := s.Approval(project)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.checkBundles(bundles); err != nil {
-		return nil, err
-	}
-	_, canonical, _, err := s.projectIdentity(project)
-	if err != nil {
-		return nil, err
-	}
-	if pending := s.checkDirectory(approval, canonical); pending != nil {
-		return nil, pending
-	}
-	return s.checkRequests(approval, requests, bundles)
-}
-
-// checkRequests proves the request fits the approval. Its callers check the bundles first
-// (checkBundles), each before its own other checks.
-func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) (*Approval, error) {
+// checkRequests proves the request fits the approval. Its caller checks the bundles first
+// (checkBundles).
+func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundles []egress.Bundle) error {
 	rules, err := checkRequestEnvelope(approval, requests)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	features, err := featureApprovals(rules, bundles)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, feature := range features {
 		found := false
@@ -548,10 +527,10 @@ func (s *Store) checkRequests(approval *Approval, requests []egress.Rule, bundle
 			}
 		}
 		if !found {
-			return nil, errors.New("the optional provider features changed since they were approved — run 'coop approve'")
+			return errors.New("the optional provider features changed since they were approved — run 'coop approve'")
 		}
 	}
-	return approval, nil
+	return nil
 }
 
 // Preliminary envelope checks do not derive optional features from mutable
@@ -597,9 +576,7 @@ func (s *Store) capture(project, id string, mode egress.Mode, requests []egress.
 	return snapshot, nil
 }
 
-// compile is the authority itself and touches nothing on disk. Both a capture
-// and a non-publishing Resolve end here, so the fingerprint one publishes is the
-// fingerprint the other reports.
+// compile is the authority itself and touches nothing on disk.
 func (s *Store) compile(project, id string, mode egress.Mode, requests []egress.Rule, operator []egress.Input, bundles []egress.Bundle, exportDestinations bool) (egress.Snapshot, error) {
 	if err := s.authorityAvailable(); err != nil {
 		return egress.Snapshot{}, err

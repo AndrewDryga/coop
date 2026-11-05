@@ -166,7 +166,7 @@ func TestRenamedRecordsAskToApproveAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := legacyProjectRecords(t, s, project)
-	_, err := s.CheckRequests(project, requests, nil)
+	_, err := s.Admit(project, Admission{Requests: requests})
 	var pending *PendingApproval
 	if !errors.As(err, &pending) || !strings.Contains(pending.Reason, "renamed its network records") {
 		t.Fatalf("an approval under the old id = %v; want a pending review that names the rename", err)
@@ -181,8 +181,8 @@ func TestRenamedRecordsAskToApproveAgain(t *testing.T) {
 	if err := s.Approve(context.Background(), project, egress.Filtered, requests, nil, nil, review.Digest); err != nil {
 		t.Fatalf("approving again after the rename: %v", err)
 	}
-	if approval, err := s.CheckRequests(project, requests, nil); err != nil || approval == nil {
-		t.Fatalf("after approving again = %v, %v", approval, err)
+	if got, err := s.Admit(project, Admission{Requests: requests}); err != nil || got.Fingerprint == "" {
+		t.Fatalf("after approving again = %+v, %v", got, err)
 	}
 	assertLegacyApprovalRetired(t, s, legacy)
 }

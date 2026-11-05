@@ -394,10 +394,6 @@ func detachedWorkerReexec(argv []string) bool {
 }
 
 func (a *app) dispatch(argv []string) (int, error) {
-	if len(argv) == 0 { // unreachable (Main intercepts bare coop); defensive
-		printHelp(a.cfg)
-		return 0, nil
-	}
 	sub, rest := argv[0], argv[1:]
 	// These commands always run a container, so detect the runtime up front (fail fast with the
 	// actionable "runtime not found"). The mixed command fork (ls/path are local) and update

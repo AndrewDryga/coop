@@ -132,13 +132,12 @@ func TestParseLoopArgs(t *testing.T) {
 		// --no-mcp: this run's boxes mount no MCP (the committed form is loop.yaml mcp: false).
 		{args: []string{"--no-mcp"}, wantNoMCP: true},
 		{args: []string{"claude", "--no-mcp", "--preflight"}, wantAgent: "claude", wantPreflight: true, wantNoMCP: true},
-		// The model/account ride the target now; --model/--credential are unexpected args (error).
+		// The model/account ride the target; --model/--credential are unexpected args (error).
 		{args: []string{"codex:gpt-5"}, wantAgent: "codex", wantModel: "gpt-5"},
 		{args: []string{"claude:opus-4.8@work"}, wantAgent: "claude", wantModel: "opus-4.8", wantAccount: "work"},
 		{args: []string{"--model", "haiku"}, wantErr: true, wantOptionError: true},
 		{args: []string{"claude", "--model", "opus"}, wantErr: true, wantOptionError: true},
 		{args: []string{"claude", "--credential", "work"}, wantErr: true, wantOptionError: true},
-		{args: []string{"claude", "--preset", "frontier"}, wantErr: true, wantOptionError: true},
 	}
 	for _, c := range cases {
 		tg, hasTarget, ps, debug, preflight, noMCP, maxTasks, err := parseLoopArgs(c.args, c.def)
@@ -147,7 +146,7 @@ func TestParseLoopArgs(t *testing.T) {
 			continue
 		}
 		if c.wantOptionError && (!strings.Contains(err.Error(), "Unknown option") || !strings.Contains(err.Error(), `for "coop loop"`)) {
-			t.Errorf("retired option %v lacks loop remedy: %v", c.args, err)
+			t.Errorf("option %v lacks loop remedy: %v", c.args, err)
 		}
 		if !c.wantErr && (tg.Provider != c.wantAgent || tg.Model != c.wantModel || ps != c.wantPreset || debug != c.wantDebug || preflight != c.wantPreflight || noMCP != c.wantNoMCP || maxTasks != c.wantMaxTasks) {
 			t.Errorf("parseLoopArgs(%v, def=%v) = (provider=%q model=%q preset=%q debug=%v preflight=%v noMCP=%v maxTasks=%d), want (%q, %q, %q, %v, %v, %v, %d)",
@@ -1032,7 +1031,7 @@ func TestSessionServiceACPChildKeepsTheAdmittedDefaultWhenTheDefaultChanges(t *t
 
 // TestExtractPeer: --peer is REPEATABLE, one peer target per flag. A valueless occurrence errors
 // (points at the repeatable form); each value is collected in order; after `--` an agent's own
-// --peer passes through verbatim. The retired --consult spelling is now an ordinary passthrough arg.
+// --peer passes through verbatim.
 func TestExtractPeer(t *testing.T) {
 	cases := []struct {
 		args     []string
@@ -1051,8 +1050,6 @@ func TestExtractPeer(t *testing.T) {
 		{[]string{"--peer", "--other"}, nil, nil, true},
 		// After --, a --peer is the agent's own arg, not coop's — passed through verbatim.
 		{[]string{"--", "--peer", "x"}, nil, []string{"--", "--peer", "x"}, false},
-		// The retired --consult is now just an unknown/passthrough token, not a peer flag.
-		{[]string{"--consult", "codex"}, nil, []string{"--consult", "codex"}, false},
 	}
 	for _, c := range cases {
 		got, rest, err := extractPeer("coop run", c.args)

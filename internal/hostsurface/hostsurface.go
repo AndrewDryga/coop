@@ -24,14 +24,10 @@ import (
 )
 
 // Finding is one changed file that alters what runs on the host, with the reason a reviewer
-// should read it — one sentence saying when the file runs. Automatic marks the surfaces that run WITHOUT
-// a deliberate command — a hook on your next commit, a settings file your editor session loads,
-// a compose file a box start runs — as opposed to a Makefile you choose to run: the former
-// refuse a fork merge unless forced, the latter are listed and flagged but never block.
+// should read it — one sentence saying when the file runs.
 type Finding struct {
-	Path      string
-	Reason    string
-	Automatic bool
+	Path   string
+	Reason string
 }
 
 // Key is the name a case-insensitive disk resolves a slash-separated path to: each segment in
@@ -54,9 +50,12 @@ func Key(p string) string {
 }
 
 // Classify reports why a changed file at repo-relative path is a host-execution surface ("" when
-// it is not) and whether it runs automatically. status is the `git diff --name-status` code
-// (A/M/R/C/T…); a deletion never counts — removing a hook cannot run anything. It judges the
-// path's Key, so every spelling of a surface counts.
+// it is not) and whether it runs automatically. An automatic surface runs WITHOUT a deliberate
+// command — a hook on your next commit, a settings file your editor session loads, a compose file a
+// box start runs — as opposed to a Makefile you choose to run: forkctl.PolicyScan makes the former
+// refuse a fork merge unless forced, while the latter are listed and flagged but never block.
+// status is the `git diff --name-status` code (A/M/R/C/T…); a deletion never counts — removing a
+// hook cannot run anything. It judges the path's Key, so every spelling of a surface counts.
 func Classify(status, relPath string) (reason string, automatic bool) {
 	return classify(status, relPath, true)
 }
@@ -135,12 +134,12 @@ func Findings(changes []gitdiff.Change) []Finding {
 	seen := map[string]bool{}
 	var out []Finding
 	for _, change := range changes {
-		reason, automatic := Classify(change.Status, change.Path)
+		reason, _ := Classify(change.Status, change.Path)
 		if reason == "" || seen[change.Path] {
 			continue
 		}
 		seen[change.Path] = true
-		out = append(out, Finding{Path: change.Path, Reason: reason, Automatic: automatic})
+		out = append(out, Finding{Path: change.Path, Reason: reason})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out

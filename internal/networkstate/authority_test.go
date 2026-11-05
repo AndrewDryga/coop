@@ -27,23 +27,23 @@ func openStore(t *testing.T) *Store {
 func TestApprovalRequestsNeverGrantAndPostureSurvivesRemoval(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("a.example.com"), rule("b.example.com")}
-	if _, err := s.CheckRequests(project, requests, nil); err == nil {
-		t.Fatal("unapproved requests gained authority")
+	if got, err := s.Admit(project, Admission{Requests: requests}); !refusedWith(err, "never approved") || got.Fingerprint != "" {
+		t.Fatalf("unapproved requests gained authority: %+v, %v", got, err)
 	}
 	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, current := range [][]egress.Rule{requests, requests[:1], nil, requests} {
-		approval, err := s.CheckRequests(project, current, nil)
-		if err != nil || approval == nil || approval.Posture != egress.Filtered {
-			t.Fatalf("narrow/reintroduce lost approved posture: %#v %v", approval, err)
+		got, err := s.Admit(project, Admission{Requests: current})
+		if err != nil || got.Mode != egress.Filtered {
+			t.Fatalf("narrow/reintroduce lost approved posture: %+v, %v", got, err)
 		}
 	}
-	if _, err := s.CheckRequests(project, append(requests, rule("extra.example.com")), nil); err == nil {
-		t.Fatal("new destination reused approval")
+	if got, err := s.Admit(project, Admission{Requests: append(requests, rule("extra.example.com"))}); !refusedWith(err, "more than what was approved") || got.Fingerprint != "" {
+		t.Fatalf("new destination reused approval: %+v, %v", got, err)
 	}
-	if _, err := s.CheckRequests(t.TempDir(), requests, nil); err == nil {
-		t.Fatal("another project reused approval")
+	if got, err := s.Admit(t.TempDir(), Admission{Requests: requests}); !refusedWith(err, "never approved") || got.Fingerprint != "" {
+		t.Fatalf("another project reused approval: %+v, %v", got, err)
 	}
 	if err := approve(s, project, egress.Open, requests, nil); err == nil {
 		t.Fatal("open posture ignored rules")
@@ -51,13 +51,18 @@ func TestApprovalRequestsNeverGrantAndPostureSurvivesRemoval(t *testing.T) {
 	if err := approve(s, project, egress.Open, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	approval, err := s.CheckRequests(project, nil, nil)
-	if err != nil || approval.Posture != egress.Open {
-		t.Fatal("explicit host posture reset failed")
+	if got, err := s.Admit(project, Admission{}); err != nil || got.Mode != egress.Open {
+		t.Fatalf("explicit host posture reset failed: %+v, %v", got, err)
 	}
-	if approval, err := s.CheckRequests(project, requests, nil); err == nil || approval != nil {
-		t.Fatal("refused requests under open posture returned usable approval")
+	if got, err := s.Admit(project, Admission{Requests: requests}); !refusedWith(err, "never approved") || got.Fingerprint != "" {
+		t.Fatalf("requests under open posture returned usable authority: %+v, %v", got, err)
 	}
+}
+
+// refusedWith says err is the named refusal, so a test that wants one rule's refusal can't pass on
+// some other check that happens to fail first.
+func refusedWith(err error, reason string) bool {
+	return err != nil && strings.Contains(err.Error(), reason)
 }
 
 func TestApprovalPermitsNarrowerRulesWithoutWidening(t *testing.T) {
@@ -67,15 +72,16 @@ func TestApprovalPermitsNarrowerRulesWithoutWidening(t *testing.T) {
 	if err := approve(s, project, egress.Filtered, []egress.Rule{approved}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CheckRequests(project, []egress.Rule{rule("a.example.com")}, nil); err != nil {
-		t.Fatal(err)
+	got, err := s.Admit(project, Admission{Requests: []egress.Rule{rule("a.example.com")}})
+	if err != nil || !got.Domain("a.example.com", 443).Allowed {
+		t.Fatalf("a covered name was refused: %+v, %v", got, err)
 	}
 	for _, name := range []string{"example.com", "a.b.example.com", "a.example.com.attacker.net", "*.a.example.com"} {
-		if _, err := s.CheckRequests(project, []egress.Rule{rule(name)}, nil); err == nil {
-			t.Fatalf("wildcard approval widened to %s", name)
+		if _, err := s.Admit(project, Admission{Requests: []egress.Rule{rule(name)}}); !refusedWith(err, "more than what was approved") {
+			t.Fatalf("wildcard approval widened to %s: %v", name, err)
 		}
 	}
-	if _, err := s.CheckRequests(project, []egress.Rule{rule("*.example.com")}, nil); err != nil {
+	if _, err := s.Admit(project, Admission{Requests: []egress.Rule{rule("*.example.com")}}); err != nil {
 		t.Fatal("same wildcard narrowed to TLS443 was rejected:", err)
 	}
 }
@@ -200,7 +206,7 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 	}
 	bundle.Core = append(bundle.Core, rule("new.example.com"))
 	bundle.Version = "2"
-	if _, err := s.CheckRequests(project, requests, []egress.Bundle{bundle}); err != nil {
+	if _, err := s.Admit(project, Admission{Requests: requests, Bundles: []egress.Bundle{bundle}}); err != nil {
 		t.Fatal("new core release unnecessarily required feature reapproval:", err)
 	}
 	old, err := s.LoadSnapshot(project, snapshot.Fingerprint)
@@ -209,8 +215,8 @@ func TestBundleMaintenanceAndFrozenSnapshots(t *testing.T) {
 	}
 	bundle.Version = "3"
 	bundle.Features["cloud-mcp"] = append(bundle.Features["cloud-mcp"], rule("new-mcp.example.com"))
-	if _, err := s.CheckRequests(project, requests, []egress.Bundle{bundle}); err == nil {
-		t.Fatal("new optional access did not require review")
+	if _, err := s.Admit(project, Admission{Requests: requests, Bundles: []egress.Bundle{bundle}}); !refusedWith(err, "optional provider features changed") {
+		t.Fatalf("new optional access did not require review: %v", err)
 	}
 }
 

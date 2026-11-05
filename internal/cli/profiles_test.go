@@ -221,7 +221,7 @@ func TestCmdProfilesDefault(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-	}{ // path grammar: coop profiles <agent> <profile> default (verb-first is retired)
+	}{ // path grammar: coop credentials <agent> <account> default
 		{"unknown agent", []string{"nope", "work", "default"}},
 		{"unknown profile", []string{"claude", "ghost", "default"}},
 	} {
@@ -259,7 +259,7 @@ func TestProfilesRemoveGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: cfg}
-	code, err := a.cmdCredentials([]string{"claude", "work", "rm"}) // path grammar (verb-first retired)
+	code, err := a.cmdCredentials([]string{"claude", "work", "rm"}) // path grammar
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("profiles rm without --yes = (%d, %v), want (2, a refusal naming --yes)", code, err)
 	}
@@ -283,7 +283,7 @@ func TestRemoveProfile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-	}{ // path grammar: coop profiles <agent> <profile> rm (verb-first is retired)
+	}{ // path grammar: coop credentials <agent> <account> rm
 		{"unknown agent", []string{"nope", "default", "rm"}},
 		{"unknown profile", []string{"claude", "ghost", "rm"}},
 		{"refuses the marked default", []string{"claude", "personal", "rm"}},

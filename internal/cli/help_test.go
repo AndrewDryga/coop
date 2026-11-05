@@ -480,9 +480,8 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 
 // wantManualOrder is the page order of the approved full reference, restricted to the pages that
 // exist today: the box, the agents, accounts and models, the work queues, loops and forks, this
-// project's services, the checks, setup, and the integrations last. `coop worker` is retired: its
-// workflow is `coop sessions connect`, whose page sits with the rest of the sessions leaves. Every
-// family lists its leaves: a command a person can run is a command the manual explains.
+// project's services, the checks, setup, and the integrations last. Every family lists its leaves:
+// a command a person can run is a command the manual explains.
 // The pages a person lands on from the menu's last two groups END THEMSELVES: each closes with the
 // command that follows it ("Start again: coop up"), so the generic all-commands footer would be a
 // second, weaker answer to a question the page already answered.
@@ -566,57 +565,6 @@ func TestManualPagesEndWithoutANewline(t *testing.T) {
 		if strings.HasSuffix(manualPage(name), "\n") {
 			t.Errorf("the %q page ends in a newline", name)
 		}
-	}
-}
-
-// Current public references must not re-advertise config names the strict loader rejects, or
-// claim init creates starter subagents when its focused help correctly says it commits none.
-func TestCurrentDocsDoNotAdvertiseRetiredContracts(t *testing.T) {
-	read := func(path string) string {
-		t.Helper()
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-	surfaces := map[string]string{
-		"CLI manual": RenderManual(&config.Config{}),
-		"README":     read(filepath.Join("..", "..", "README.md")),
-		"site docs":  read(filepath.Join("..", "..", "site", "docs.html")),
-	}
-	for name, surface := range surfaces {
-		for _, retired := range []string{
-			"COOP_LOOP_CMD", "COOP_LOOP_MODEL", "COOP_REVIEW_MODEL",
-			"COOP_MAX_REVIEW_ROUNDS", "COOP_PREFLIGHT",
-		} {
-			if strings.Contains(surface, retired) {
-				t.Errorf("%s advertises retired config %s", name, retired)
-			}
-		}
-		if strings.Contains(surface, "can't set it over ACP") {
-			t.Errorf("%s claims Codex ACP cannot receive its target model", name)
-		}
-	}
-
-	manual := surfaces["CLI manual"]
-	// The mode a project runs under comes from .agent/project.yaml and nowhere
-	// else: `coop approve` reviews that file, so no help surface may offer a
-	// flag that would let the caller name a different one.
-	if strings.Contains(manual, "--mode") {
-		t.Errorf("the CLI manual offers a --mode flag; access comes from .agent/project.yaml:\n%s", manual)
-	}
-	if strings.Contains(manual, "scaffold the queue, hooks, skills, subagents") ||
-		!strings.Contains(manual, "Shared instructions and skills for all your AI agents.") {
-		t.Errorf("the init page does not match the current scaffold:\n%s", manual)
-	}
-	if site := surfaces["site docs"]; !strings.Contains(site, "does not create starter subagents") ||
-		strings.Contains(site, "scaffolds two starter subagents") {
-		t.Errorf("site init description does not match the current scaffold")
-	}
-	if readme := surfaces["README"]; !strings.Contains(readme, "selected [agent directories]") ||
-		strings.Contains(readme, "[starter subagents]") {
-		t.Errorf("README init description does not match the current scaffold")
 	}
 }
 

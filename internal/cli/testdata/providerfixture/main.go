@@ -406,10 +406,6 @@ func daemonIDProbe(args []string) bool {
 	return len(args) == 3 && args[0] == "info" && args[1] == "--format" && args[2] == "{{.ID}}"
 }
 
-func parseRuntime(root, image string, args []string, providerHomes ...string) (runtimeCommand, error) {
-	return parseRuntimeForProvider(root, image, args, "", providerHomes...)
-}
-
 func parseRuntimeForProvider(root, image string, args []string, provider string, providerHomes ...string) (runtimeCommand, error) {
 	if len(args) == 1 && args[0] == "--version" {
 		return runtimeCommand{Kind: "version"}, nil
