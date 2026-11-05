@@ -3,14 +3,11 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -170,29 +167,45 @@ func TestASessionNeedsOnlyCanonicalStartupReadiness(t *testing.T) {
 }
 
 // Filtered and open runs share the same startup horizon; neither prematurely
-// consumes a refresh grant just because its turn could last longer.
+// consumes a refresh grant just because its turn could last longer. Any renewal, whatever the
+// provider answers, leaves a file in the account's folder (its journal, then a retry, refusal or
+// archived answer), so an unchanged folder proves no renewal was tried.
 func TestAFilteredGrokSessionDoesNotRefreshForTheWholeTurn(t *testing.T) {
 	for _, network := range []egress.Mode{egress.Open, egress.Filtered} {
 		t.Run(string(network), func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "renewed-access", "refresh_token": "rotated-refresh", "expires_in": 21600})
-			}))
-			defer server.Close()
-			t.Setenv("GROK_REFRESH_TOKEN_URL_OVERRIDE", server.URL)
 			fixture := newSessionACPFixtureOn(t, "normal", "grok@work", false, network)
 			writeSessionTestCredential(t, fixture.source, "grok@work", time.Now().Add(30*time.Minute))
-			before := readFile(t, filepath.Join(fixture.source, "grok", "credentials", "work", "authority.json"))
+			account := filepath.Join(fixture.source, "grok", "credentials", "work")
+			before := accountFolderSnapshot(t, account)
 			turn := fixture.submit(t, "renew")
 			result, err := fixture.runner.Run(contextWithTurnTimeout(t, 2*time.Hour), fixture.session, turn)
-			stored := readFile(t, filepath.Join(fixture.source, "grok", "credentials", "work", "authority.json"))
 			if err != nil || result.State != session.TurnCompleted {
 				t.Fatalf("%s turn on a 30-minute renewable login = %+v, %v", network, result, err)
 			}
-			if requests.Load() != 0 || stored != before {
-				t.Fatalf("%s turn unnecessarily renewed (%d requests)", network, requests.Load())
+			if after := accountFolderSnapshot(t, account); after != before {
+				t.Fatalf("%s turn tried to renew a login that covers its start:\nbefore %s\nafter  %s", network, before, after)
 			}
 		})
 	}
+}
+
+// accountFolderSnapshot lists an account folder's entries with their bytes, lock files aside.
+func accountFolderSnapshot(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".lock") {
+			continue
+		}
+		b.WriteString(entry.Name() + "=")
+		if !entry.IsDir() {
+			b.WriteString(readFile(t, filepath.Join(dir, entry.Name())))
+		}
+		b.WriteString(";")
+	}
+	return b.String()
 }
