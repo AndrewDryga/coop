@@ -8,6 +8,10 @@
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
 
+- **Editor sessions start after Coop's folder is restored from Dropbox.** A sync service restores files
+  group- and world-readable, and `coop acp` stopped with "unsafe thread binding lock". Coop now makes such
+  a lock or saved API key owner-only again. A file another user could write is still refused.
+
 - **`coop net approve` is gone.** It has only pointed at `coop approve` since 10.1.2, and now gets
   the usual unknown-command error.
 

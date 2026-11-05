@@ -120,3 +120,36 @@ func (c *Config) TryLock(kind, key string) (release func(), holder string, err e
 		_ = f.Close()
 	}, "", nil
 }
+
+// TightenReadable makes an owner's file or folder owner-only again when only its group or world
+// read and search bits are set. A sync service restores files with the account's default mode
+// (Dropbox writes 0644), and those bits let nobody change the file. Write bits for anyone else, a
+// link count above one or another owner are left alone, so the caller still refuses those. It
+// returns the file's info as it is now.
+func TightenReadable(file *os.File) (os.FileInfo, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	perm := info.Mode().Perm()
+	if !ok || stat.Uid != uint32(os.Geteuid()) || perm&0o077 == 0 || perm&0o022 != 0 ||
+		!info.Mode().IsRegular() && !info.IsDir() || info.Mode().IsRegular() && stat.Nlink != 1 {
+		return info, nil
+	}
+	if err := file.Chmod(perm &^ 0o077); err != nil {
+		return info, nil
+	}
+	return file.Stat()
+}
+
+// TightenReadablePath is TightenReadable for a path, never following its last link. A path that
+// cannot be opened is left for the caller's own check to report.
+func TightenReadablePath(path string) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = TightenReadable(file)
+}

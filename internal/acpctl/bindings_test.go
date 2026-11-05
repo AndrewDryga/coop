@@ -1,6 +1,7 @@
 package acpctl
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -113,5 +114,35 @@ func TestThreadBindingsPruneStaleEntries(t *testing.T) {
 	}
 	if _, ok := reopened.Lookup("fresh"); !ok {
 		t.Fatal("prune removed a fresh binding")
+	}
+}
+
+// A sync service brings the lock back group- and world-readable. The store makes it owner-only and
+// works; a lock another user could write is still refused.
+func TestThreadBindingsLockSurvivesASyncedMode(t *testing.T) {
+	s := &ThreadBindings{dir: filepath.Join(t.TempDir(), "bindings")}
+	f, err := s.lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	lock := filepath.Join(s.custody(), "lock")
+	if err := os.Chmod(lock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err = s.lock(context.Background())
+	if err != nil {
+		t.Fatalf("a synced 0644 lock = %v", err)
+	}
+	_ = f.Close()
+	if info, _ := os.Stat(lock); info.Mode().Perm() != 0o600 {
+		t.Errorf("lock mode = %o", info.Mode().Perm())
+	}
+	if err := os.Chmod(lock, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := s.lock(context.Background()); err == nil {
+		_ = f.Close()
+		t.Error("a lock others can write was accepted")
 	}
 }

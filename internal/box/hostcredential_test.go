@@ -205,11 +205,17 @@ func TestLegacyHostCredentialMtimeTracksSelectedPrivateKey(t *testing.T) {
 	if got, ok := ProfileTokenMtime(cfg, "gemini", "work"); !ok || !got.Equal(stamp) {
 		t.Fatalf("selected legacy key mtime: %v %v", got, ok)
 	}
-	if err := os.Chmod(key, 0644); err != nil {
+	if err := os.Chmod(key, 0644); err != nil { // a sync service restores files this way
+		t.Fatal(err)
+	}
+	if _, ok := ProfileTokenMtime(cfg, "gemini", "work"); !ok {
+		t.Fatal("a synced key was not made owner-only again")
+	}
+	if err := os.Chmod(key, 0664); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := ProfileTokenMtime(cfg, "gemini", "work"); ok {
-		t.Fatal("nonprivate key supplied rotation time")
+		t.Fatal("a key others can write supplied rotation time")
 	}
 	if _, ok := hostCredentialMtime(cfg, ag, "../work"); ok {
 		t.Fatal("invalid account supplied rotation time")

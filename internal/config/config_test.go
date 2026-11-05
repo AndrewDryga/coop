@@ -1036,3 +1036,49 @@ func TestMoveLocalRecords(t *testing.T) {
 		t.Error("LocalHome chose the wrong folder")
 	}
 }
+
+// A synced file comes back group- and world-readable; Coop makes it owner-only again. Anything
+// another user could change stays as it is, for the caller to refuse.
+func TestTightenReadable(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]struct {
+		mode, want os.FileMode
+	}{
+		"synced":   {0o644, 0o600},
+		"script":   {0o755, 0o700},
+		"writable": {0o664, 0o664},
+		"private":  {0o600, 0o600},
+	}
+	for name, tc := range cases {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		TightenReadablePath(path)
+		if info, _ := os.Stat(path); info.Mode().Perm() != tc.want {
+			t.Errorf("%s: %o, want %o", name, info.Mode().Perm(), tc.want)
+		}
+	}
+	linked := filepath.Join(dir, "linked")
+	if err := os.WriteFile(linked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(linked, filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	TightenReadablePath(linked)
+	if info, _ := os.Stat(linked); info.Mode().Perm() != 0o644 {
+		t.Errorf("a file with two links changed to %o", info.Mode().Perm())
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	TightenReadablePath(sub)
+	if info, _ := os.Stat(sub); info.Mode().Perm() != 0o700 {
+		t.Errorf("folder = %o", info.Mode().Perm())
+	}
+}

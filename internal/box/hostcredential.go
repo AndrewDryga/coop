@@ -84,6 +84,8 @@ func LoadHostCredential(cfg *config.Config, ag agents.Agent, profile string) (en
 	if err != nil {
 		return "", "", false, err
 	}
+	config.TightenReadablePath(dir)
+	config.TightenReadablePath(filepath.Join(dir, spec.File))
 	before, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", "", false, nil
@@ -217,6 +219,7 @@ func hostCredentialMtime(cfg *config.Config, ag agents.Agent, profile string) (o
 	if err != nil {
 		return nil, false
 	}
+	config.TightenReadablePath(filepath.Join(dir, spec.File))
 	info, err := os.Lstat(filepath.Join(dir, spec.File))
 	return info, err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o077 == 0
 }

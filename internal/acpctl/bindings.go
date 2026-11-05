@@ -41,7 +41,7 @@ func (s *ThreadBindings) lock(ctx context.Context) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
+	info, err := config.TightenReadable(f)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
@@ -173,7 +173,7 @@ func LegacyThreadBindings(source string, owns func(acpproxy.SessionBinding) bool
 				plan.Skipped = append(plan.Skipped, name+": unsafe binding")
 				continue
 			}
-			before, err := file.Stat()
+			before, err := config.TightenReadable(file)
 			if err != nil {
 				_ = file.Close()
 				return plan, err
