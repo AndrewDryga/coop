@@ -343,25 +343,33 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			loopRecoveryTarget("codex", "limited-sol", "personal"),
 		}
 		writeLoopRecoveryPreset(t, suite.layout.Repo, "all-limited-resume", targets)
+		// Only the last target gets the short reset. Had the first one been short, a slow host
+		// could let it expire before the third limit, and the loop would rightly rotate back to it
+		// without waiting. Hour-long earlier cooldowns cannot expire, so the third limit always
+		// leaves every target cooling, and the loop parks on the soonest reset and resumes there.
 		attempts := []loopProcessAttempt{
-			{Target: targets[0], Stage: "work", Result: "rate-limit-short"},
-			{Target: targets[1], Stage: "work", Result: "rate-limit-short"},
+			{Target: targets[0], Stage: "work", Result: "rate-limit"},
+			{Target: targets[1], Stage: "work", Result: "rate-limit"},
 			{Target: targets[2], Stage: "work", Result: "rate-limit-short"},
-			{Target: targets[0], Stage: "work", Result: "complete"},
+			{Target: targets[2], Stage: "work", Result: "complete"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopRecovery(t, suite, "all-limited-resume")
+		// The all-limited wait never sleeps less than ladder's 10s floor, which would leave the
+		// shared 20s budget only ~10s for four attempts on a loaded host.
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		defer cancel()
+		result := procharness.Run(ctx, loopRecoveryCommand(suite, "all-limited-resume"))
 		output := result.Stdout + result.Stderr
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "All configured agents have reached their usage limits.") ||
-			!strings.Contains(output, "fixture-loop-complete-claude") ||
+			!strings.Contains(output, "fixture-loop-complete-codex") ||
 			strings.Contains(output, "Stopped after") {
 			t.Fatalf("all-limited wait/resume = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		trace := readProcessTrace(t, suite.layout.Trace)
 		assertLoopAttemptContracts(t, suite, trace, taskID, attempts)
-		parsed, _ := agents.ParseTarget(targets[0])
-		assertLoopProcessResult(t, suite, "claude", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 4, false)
+		parsed, _ := agents.ParseTarget(targets[2])
+		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 4, false)
 		records := readLoopStageRecords(t, suite)
 		if len(records) != 4 {
 			t.Fatalf("all-limited wait/resume telemetry = %#v", records)
