@@ -122,12 +122,12 @@ func TestStartNoticeText(t *testing.T) {
 		{
 			name:    "a short network list is named",
 			network: &NetworkLimit{Sites: []string{"proxy.golang.org", "sum.golang.org"}, Servers: []string{"emisar_admin"}},
-			want:    "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- proxy\\.golang\\.org\n- sum\\.golang\\.org\n- the emisar\\_admin MCP server\n\n" + limits,
+			want:    "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- Sites: proxy\\.golang\\.org, sum\\.golang\\.org\n- MCP server: emisar\\_admin\n\n" + limits,
 		},
 		{
-			name:    "a long network list is counted",
-			network: &NetworkLimit{Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"docs"}, Other: 1},
-			want: "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- 5 approved network rules\n- 1 MCP server\n- 1 other destination\n\n" +
+			name:    "a long network list names three and counts the rest",
+			network: &NetworkLimit{Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"emisar", "immersive", "ryker", "blitz", "docs", "grafana"}, Other: 1},
+			want: "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- Sites: a\\.example, b\\.example, c\\.example and 2 more\n- MCP servers: emisar, immersive, ryker and 3 more\n- 1 other destination\n\n" +
 				"To see them all, run this on the host:\n\n```\ncoop net\n```\n\n" + limits,
 		},
 		{

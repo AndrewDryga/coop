@@ -38,8 +38,8 @@ type NetworkLimit struct {
 // to run, introduced by Purpose ("on the host, to see why").
 type Problem struct{ Title, Detail, Command, Purpose string }
 
-// maxNamedAllowances is how many approved destinations the network line names before it counts them.
-const maxNamedAllowances = 5
+// maxNamedAllowances is how many sites or MCP servers a network line names before it says how many more.
+const maxNamedAllowances = 3
 
 // SetServices records the project services this session's boxes publish. Listing them asks the
 // container runtime, so the supervisor calls this from a goroutine; a thread that opens before it
@@ -228,36 +228,45 @@ func serviceAddress(s ServiceLink) string {
 // networkText says what a filtered session may reach, in the terminal's grouping
 // (box.NetworkAllowed). The agent's provider always leads, however it is reached: through Coop's
 // credential broker the policy holds no grant for it, so naming vendors from the policy alone said
-// nothing was allowed. A short list is named in full; a longer one is counted, with the command
-// that lists it.
+// nothing was allowed. Sites and MCP servers each get a line naming up to maxNamedAllowances of them
+// and how many more, with the command that lists the rest.
 func networkText(n NetworkLimit) string {
-	allowed := []string{"the agent's provider"}
-	named := len(n.Sites)+len(n.Servers) <= maxNamedAllowances
-	if named {
-		allowed = append(allowed, n.Sites...)
-		for _, server := range n.Servers {
-			allowed = append(allowed, "the "+server+" MCP server")
+	allowed := []string{MarkdownText("the agent's provider")}
+	more := false
+	line := func(one, many string, names []string) {
+		if len(names) == 0 {
+			return
 		}
-	} else {
-		if len(n.Sites) > 0 {
-			allowed = append(allowed, count(len(n.Sites), "approved network rule"))
+		label := many
+		if len(names) == 1 {
+			label = one
 		}
-		if len(n.Servers) > 0 {
-			allowed = append(allowed, count(len(n.Servers), "MCP server"))
+		shown := names
+		if len(names) > maxNamedAllowances {
+			shown, more = names[:maxNamedAllowances], true
 		}
+		escaped := make([]string, len(shown))
+		for i, name := range shown {
+			escaped[i] = MarkdownText(name)
+		}
+		list := strings.Join(escaped, ", ")
+		if rest := len(names) - len(shown); rest > 0 {
+			list += fmt.Sprintf(" and %d more", rest)
+		}
+		allowed = append(allowed, label+": "+list)
 	}
+	line("Site", "Sites", n.Sites)
+	line("MCP server", "MCP servers", n.Servers)
 	if n.Other > 0 {
-		allowed = append(allowed, count(n.Other, "other destination"))
-	}
-	for i := range allowed {
-		allowed[i] = MarkdownText(allowed[i])
+		allowed = append(allowed, MarkdownText(count(n.Other, "other destination")))
+		more = true
 	}
 	text := "**Internet is filtered.**\n\nAllowed: " + allowed[0] + "."
 	if len(allowed) > 1 {
 		text = "**Internet is filtered.**\n\nAllowed:\n\n- " + strings.Join(allowed, "\n- ")
 	}
 	// One section: its parts are paragraphs, and a rule only sets sections apart (startNoticeText).
-	if !named {
+	if more {
 		text += "\n\nTo see them all, run this on the host:\n\n" + CodeBlock("coop net")
 	}
 	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
