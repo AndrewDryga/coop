@@ -256,11 +256,12 @@ func networkText(n NetworkLimit) string {
 	if len(allowed) > 1 {
 		text = "**Internet is filtered.**\n\nAllowed:\n\n- " + strings.Join(allowed, "\n- ")
 	}
+	// One section: its parts are paragraphs, and a rule only sets sections apart (startNoticeText).
 	if !named {
-		text += threadSectionBreak + "To see them all, run this on the host:\n\n" + CodeBlock("coop net")
+		text += "\n\nTo see them all, run this on the host:\n\n" + CodeBlock("coop net")
 	}
-	return text + threadSectionBreak + "To allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
-		CodeBlock("coop approve") + "\n\nOpen threads pick it up on their own."
+	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
+		CodeBlock("coop approve")
 }
 
 // ProblemText renders a problem the way a thread's start message does: the title alone on its line, the

@@ -4,7 +4,7 @@ description: A thread message has its title alone on a line, short paragraphs, a
 scope: cli-output
 sources: [internal/acpctl/start_notice.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/thread_tail.go, internal/cli/acp_box_wait.go, internal/cli/acp_refresh.go, internal/cli/acp_start_notice.go, internal/testutil/threadtext/threadtext.go]
 check: make thread-messages-check
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 # Thread messages read top down, and their commands can be copied
@@ -13,8 +13,10 @@ An editor renders what Coop writes into a thread as Markdown. Write for that:
 
 - A title goes alone on its line, then a blank line: `⚠ **Title.**` for something to fix, `**Title.**` for a
   state. Never run a sentence on after it.
-- Separate the sections of a message with a `---` rule. Zed puts space under a paragraph and none under a list, so
-  without one a title after a list sits closer to the list than to its own text.
+- Separate the sections of a message with a `---` rule: the ports, the services, the network, each problem. Zed
+  puts space under a paragraph and none under a list, so without one a title after a list sits closer to the list
+  than to its own text. Never rule between the parts of one section: its follow-up lines are plain paragraphs.
+- No reassurance lines a capable reader does not need ("Open threads pick it up on their own").
 - Short paragraphs follow, one thought each. Several items are a list; one item stays a sentence.
 - Every command the person should run is its own fenced code block (`acpctl.CodeBlock`), introduced by a line
   saying where to run it ("Run this in this project, on the host:"). An editor offers to copy a block whole. Never
@@ -37,6 +39,9 @@ code block. Only `LoadError::Other` (a `session/new` failure that is not auth) i
 literally and still reads.
 
 ## Changelog
+- 2026-11-05 — the owner saw rules between the network section's own parts ("To see them all", "To allow
+  another site") and a closing "Open threads pick it up on their own": rules now only set sections apart, and the
+  sentence is gone. Sweep: the network text was the only one ruling inside a section.
 - 2026-11-04 — the owner saw a notice right under the last reply with nothing between: a message after agent text
   now opens with a rule. Sweep: Coop's two line builders are one now, so every notice goes through it.
 - 2026-11-04 — the owner saw a title closer to the list above it than to its own text: sections now take a `---` rule.
