@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1759,6 +1760,32 @@ func TestSpawnedHoldingChildGetsNoWaitDescriptor(t *testing.T) {
 	child.Stop()
 	if err != nil || !child.HoldPrompts || strings.TrimSpace(string(out)) != "[]" {
 		t.Fatalf("hold=%v descriptor=%q err=%v", child.HoldPrompts, out, err)
+	}
+}
+
+// The reporter writes on a descriptor it does not own, so dropping it never closes that descriptor: a
+// finalizer closing it later closed whatever file had reused the number, mid-use, in another test.
+func TestLaunchWaitReporterNeverClosesTheDescriptor(t *testing.T) {
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	t.Setenv(acpLaunchWaitEnv, strconv.Itoa(int(write.Fd())))
+	report, _ := acpLaunchWaitReporter()
+	report(true)
+	report = nil
+	for range 5 {
+		goruntime.GC()
+		goruntime.Gosched()
+	}
+	if _, err := write.Write([]byte{acpLaunchDone}); err != nil {
+		t.Fatalf("the reporter's owner lost its descriptor: %v", err)
+	}
+	got := make([]byte, 2)
+	if _, err := io.ReadFull(read, got); err != nil || string(got) != string([]byte{acpLaunchWaiting, acpLaunchDone}) {
+		t.Fatalf("read %q, %v", got, err)
 	}
 }
 

@@ -3,7 +3,7 @@ name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
 sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -123,6 +123,8 @@ offline session has this wait and no other (`EditorUnfilteredBoxReadiness`, `fil
 thread hears it at once (`announce`, `Restarter.TellOpen`), since it can begin with all of them idle. The
 lock can also be taken just after the check, so a real child says it waits on the descriptor named by
 `COOP_ACP_LAUNCH_WAIT_FD` (never stdout, the wire, or stderr, which carries what a box writes), and
+`acpLaunchWaitReporter` writes to it by number, never through an `*os.File`: a file wrapping a descriptor
+it does not own closes it from its finalizer, and in the test binary that closed other tests' files. Then
 `heedLaunchWait` puts the session on a holding child (`Restarter.ReplaceUnstarted`). A parked box's word is
 nobody's news until the session takes that box. Only a session's own parked boxes holding the lock is not
 a wait to report: nobody can close them. `EditorBoxStamp` watches the lock, so the session moves when it
@@ -220,6 +222,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-05 — the launch-wait reporter stopped wrapping its inherited descriptor in an `*os.File`; its
+  finalizer closed a reused descriptor (EBADF in TestReapACPChildBoxesUsesExactExecutionAuthority under race).
 - 2026-11-04 — `coop approve` offers the missing service rules, and the thread sends the person there instead of
   showing rules to paste. Verified with a real session moving on after the approval.
 - 2026-11-04 — exit 0 no longer makes any service a finished step: the file has to declare it. A broken file's reason

@@ -721,15 +721,24 @@ func acpLaunchWaitReporter() (func(waiting bool), func()) {
 		return nil, nil
 	}
 	syscall.CloseOnExec(fd) // docker has no use for it, and would hold it open after this child is gone
-	word := os.NewFile(uintptr(fd), "launch wait")
-	own := func() { _, _ = word.Write([]byte{acpLaunchOwnBoxes}) }
-	return func(waiting bool) {
-		b := byte(acpLaunchDone)
-		if waiting {
-			b = acpLaunchWaiting
+	// Write by number, never through an *os.File: the descriptor is inherited for the process's life,
+	// and a file wrapping it would close it from its finalizer once these funcs are dropped, closing
+	// whatever file has reused that number by then.
+	word := func(b byte) {
+		for {
+			// A supervisor that stopped listening is stopping this child too, so other errors are dropped.
+			if _, err := syscall.Write(fd, []byte{b}); err != syscall.EINTR {
+				return
+			}
 		}
-		_, _ = word.Write([]byte{b}) // a supervisor that stopped listening is stopping this child too
-	}, own
+	}
+	return func(waiting bool) {
+		if waiting {
+			word(acpLaunchWaiting)
+		} else {
+			word(acpLaunchDone)
+		}
+	}, func() { word(acpLaunchOwnBoxes) }
 }
 
 // start runs the poll loop until close. A nil wait starts nothing.
