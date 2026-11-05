@@ -8,6 +8,9 @@
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
 
+- **`coop doctor` respects a chosen Dropbox setup.** When `rules.dropboxignore` already has rules for Coop's
+  folder, it says the folder syncs by those rules. Otherwise it also says which account file should sync.
+
 - **An offline one-prompt run stops at once.** `coop claude -p`, `coop codex exec` and the like in an offline
   box used to wait for ever, since the agent cannot reach its provider. Coop now refuses them before
   starting and points to `--egress filtered`. Interactive offline sessions still start.

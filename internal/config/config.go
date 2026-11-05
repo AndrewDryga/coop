@@ -1412,3 +1412,37 @@ func (c *Config) MoveLocalRecords() {
 		}
 	}
 }
+
+// DropboxRules reports whether Dropbox's rules file at the sync root holds an active rule for path,
+// the sign that someone chose what of it syncs. Comment lines don't count, so Dropbox's own commented
+// template is no choice. Other sync services have no such file.
+func DropboxRules(path string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = path
+	}
+	parts := strings.Split(filepath.ToSlash(resolved), "/")
+	for i, part := range parts {
+		lower := strings.ToLower(part)
+		if lower != "dropbox" && !strings.HasPrefix(lower, "dropbox (") {
+			continue
+		}
+		root := filepath.FromSlash(strings.Join(parts[:i+1], "/"))
+		inside := "/" + strings.Join(parts[i+1:], "/")
+		data, err := os.ReadFile(filepath.Join(root, "rules.dropboxignore"))
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			rule := strings.TrimPrefix(strings.TrimSpace(line), "!")
+			if rule == "" || strings.HasPrefix(rule, "#") {
+				continue
+			}
+			if rule == inside || strings.HasPrefix(rule, inside+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}

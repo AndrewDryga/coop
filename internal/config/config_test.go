@@ -1082,3 +1082,32 @@ func TestTightenReadable(t *testing.T) {
 		t.Errorf("folder = %o", info.Mode().Perm())
 	}
 }
+
+// Rules count when the Dropbox root's rules file names the folder in an active line.
+func TestDropboxRules(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Dropbox")
+	folder := filepath.Join(root, "Backup", ".config", "coop")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rules := filepath.Join(root, "rules.dropboxignore")
+	if DropboxRules(folder) {
+		t.Error("no rules file counted as rules")
+	}
+	for body, want := range map[string]bool{
+		"# Dropbox template\n# /Backup/.config/coop/runfiles/\n": false,
+		"/Backup/.config/coop/runfiles/\n":                         true,
+		"!/Backup/.config/coop/coop.conf\n":                        true,
+		"/Backup/.config/other/\n":                                 false,
+	} {
+		if err := os.WriteFile(rules, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := DropboxRules(folder); got != want {
+			t.Errorf("%q = %v, want %v", body, got, want)
+		}
+	}
+	if DropboxRules(t.TempDir()) {
+		t.Error("a folder outside Dropbox counted")
+	}
+}

@@ -1050,7 +1050,13 @@ func noteSyncedSettings(home string) {
 	if home == "" || service == "" {
 		return
 	}
+	if service == "Dropbox" && config.DropboxRules(home) {
+		ui.Note("Coop's settings sync through Dropbox, by the rules in its rules.dropboxignore.\n")
+		return
+	}
 	ui.Note("Coop's settings and sign-ins sync through %s: %s", service, ui.SafeInline(home))
+	ui.Note("  Of an account, only agents/<agent>/credentials/<account>/authority.json should sync;")
+	ui.Note("  its other files are journals and locks for one machine.")
 	ui.Note("  If one machine gets signed out after another refreshes, run coop login there.")
 	ui.Note("  To keep them on this machine only, set COOP_HOME to a folder outside %s.\n", service)
 }

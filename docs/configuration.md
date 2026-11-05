@@ -137,7 +137,10 @@ or a similar service. If two machines refresh the same single-use sign-in, one o
 signed out. If that happens, run `coop login` on that machine.
 
 Records that belong to one machine, such as each run's generated files, image records, usage caches and ACP traces,
-live in `$XDG_STATE_HOME/coop` or `~/.local/state/coop`. They never need syncing.
+live in `$XDG_STATE_HOME/coop` or `~/.local/state/coop`. They never need syncing. Of an account, only
+`agents/<agent>/credentials/<account>/authority.json` needs to sync. Its other files are journals and
+locks for one machine. With Dropbox, put these rules in `rules.dropboxignore` at the Dropbox root, and
+`coop doctor` notes that the folder syncs by them.
 
 co:op also writes a `.gitignore` in `~/.config/coop` if there is none, so a dotfiles repository
 keeps only shared settings. Accounts and `agents/env` stay out of Git.
