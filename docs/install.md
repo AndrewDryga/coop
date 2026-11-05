@@ -71,3 +71,56 @@ cosign verify-blob checksums.txt \
 # 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
 awk -v f="$ASSET" '$2==f{print $1"  "f}' checksums.txt | shasum -a 256 -c -
 ```
+
+## Uninstall
+
+Quit editor sessions, loops and other `coop` commands first. Then, in each project:
+
+- Merge or save any fork you still need. `coop fork ls` lists them, and their folders sit next to the
+  project in `<project>-forks/`.
+- If the project has services, run `coop down`. Add `--delete-volumes` to also delete their data,
+  such as a database.
+
+Remove co:op's containers, images and volumes from Docker. The volumes hold caches and any service
+data `coop down` kept, in volumes named `coop-<project>-<id>_<name>`. Each `ls` shows what the next
+command removes, so check it first:
+
+```bash
+docker ps -a --filter label=coop
+docker rm -f $(docker ps -aq --filter label=coop)
+
+docker image ls --filter reference='coop-*'
+docker image rm $(docker image ls --filter reference='coop-*' --format '{{.Repository}}:{{.Tag}}')
+
+docker volume ls --filter name=^coop-
+docker volume rm $(docker volume ls -q --filter name=^coop-)
+```
+
+Removing an image by name keeps it if another tag still uses it.
+
+Remove the binary and this machine's records: run history, network approvals and editor sessions.
+Use your `COOP_BIN_DIR` if you installed elsewhere, or `command -v coop` to find the binary.
+
+```bash
+rm -f ~/.local/bin/coop
+rm -rf ~/.local/state/coop "${XDG_STATE_HOME:-$HOME/.local/state}/coop"
+```
+
+In each project you approved, delete the hidden approval file. Without the records above, a later
+install refuses to run there until it is gone:
+
+```bash
+rm -f .coop-network-approval
+```
+
+The last step deletes your settings and every account you signed in to with `coop login`, along with
+the API keys in `agents/env`, your presets and MCP servers. If the folder syncs through Dropbox or
+another service, it disappears from your other machines too. Copy anything you want to keep, then:
+
+```bash
+rm -rf "${COOP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/coop}"
+```
+
+Your projects keep their `.agent/` folder and the instruction files `coop init` added, which are
+yours to keep or delete. Also remove any `coop completion` line from your shell startup file and any
+editor setting that runs `coop acp`.

@@ -108,6 +108,7 @@
 <li><a href="#build-from-source">Build from source</a></li>
 <li><a href="#update">Update</a></li>
 <li><a href="#verifying-a-download">Verifying a download</a></li>
+<li><a href="#uninstall">Uninstall</a></li>
 </ul></nav>
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
@@ -180,6 +181,44 @@ cosign verify-blob checksums.txt \
 # 2. the archive matches the now-trusted checksum (Linux: sha256sum -c -):
 awk -v f=&#34;$ASSET&#34; &#39;$2==f{print $1&#34;  &#34;f}&#39; checksums.txt | shasum -a 256 -c -
 </code></pre></div>
+</section><section class="doc-section reference-section" id="uninstall"><h2>Uninstall</h2>
+<p>Quit editor sessions, loops and other <code>coop</code> commands first. Then, in each project:</p>
+<ul>
+<li>Merge or save any fork you still need. <code>coop fork ls</code> lists them, and their folders sit next to the
+project in <code>&lt;project&gt;-forks/</code>.</li>
+<li>If the project has services, run <code>coop down</code>. Add <code>--delete-volumes</code> to also delete their data,
+such as a database.</li>
+</ul>
+<p>Remove co:op&#39;s containers, images and volumes from Docker. The volumes hold caches and any service
+data <code>coop down</code> kept, in volumes named <code>coop-&lt;project&gt;-&lt;id&gt;_&lt;name&gt;</code>. Each <code>ls</code> shows what the next
+command removes, so check it first:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Uninstall code example" tabindex="0"><code class="language-bash">docker ps -a --filter label=coop
+docker rm -f $(docker ps -aq --filter label=coop)
+
+docker image ls --filter reference=&#39;coop-*&#39;
+docker image rm $(docker image ls --filter reference=&#39;coop-*&#39; --format &#39;{{.Repository}}:{{.Tag}}&#39;)
+
+docker volume ls --filter name=^coop-
+docker volume rm $(docker volume ls -q --filter name=^coop-)
+</code></pre></div>
+<p>Removing an image by name keeps it if another tag still uses it.</p>
+<p>Remove the binary and this machine&#39;s records: run history, network approvals and editor sessions.
+Use your <code>COOP_BIN_DIR</code> if you installed elsewhere, or <code>command -v coop</code> to find the binary.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Uninstall code example" tabindex="0"><code class="language-bash">rm -f ~/.local/bin/coop
+rm -rf ~/.local/state/coop &#34;${XDG_STATE_HOME:-$HOME/.local/state}/coop&#34;
+</code></pre></div>
+<p>In each project you approved, delete the hidden approval file. Without the records above, a later
+install refuses to run there until it is gone:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Uninstall code example" tabindex="0"><code class="language-bash">rm -f .coop-network-approval
+</code></pre></div>
+<p>The last step deletes your settings and every account you signed in to with <code>coop login</code>, along with
+the API keys in <code>agents/env</code>, your presets and MCP servers. If the folder syncs through Dropbox or
+another service, it disappears from your other machines too. Copy anything you want to keep, then:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Uninstall code example" tabindex="0"><code class="language-bash">rm -rf &#34;${COOP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/coop}&#34;
+</code></pre></div>
+<p>Your projects keep their <code>.agent/</code> folder and the instruction files <code>coop init</code> added, which are
+yours to keep or delete. Also remove any <code>coop completion</code> line from your shell startup file and any
+editor setting that runs <code>coop acp</code>.</p>
 </section>
         <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="docs.html"><span>Previous</span>Overview</a><a class="docs-pager-next" href="sandbox-guide.html"><span>Next</span>First sandbox run</a></nav>
         <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/install.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
