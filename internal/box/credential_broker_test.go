@@ -108,7 +108,7 @@ func onePlan(route *credentialRoute) *credentialPlan {
 
 // A brokered Codex key also brokers what its client fetches for itself: with an API key the pinned
 // codex looks up chatgpt.com and github.com on every start for its curated plugin store, which no
-// API-key policy grants, so each start used to end in refusals nobody could act on. Coop fetches
+// API-key policy grants, so each start would end in refusals nobody could act on. Coop fetches
 // those PUBLIC bytes for it — the featured list and one repository's git fetch — with no credential
 // of any kind, and points the client at itself through its two own levers.
 func TestACodexKeyBrokersItsPluginStoreWithoutACredential(t *testing.T) {

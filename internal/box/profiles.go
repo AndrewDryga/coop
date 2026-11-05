@@ -191,14 +191,14 @@ func profileMarkerPresent(ag agents.Agent, profileDir string) bool {
 	return fileExists(filepath.Join(profileDir, file))
 }
 
-// ProfileTokenMtime returns when agent's named-profile token material last changed on disk — the
-// mtime of its AuthMarker file (claude's .credentials.json, codex/grok's auth.json). ANY rewrite
-// bumps it: a fresh login OR an OAuth refresh, both of which mint new material and retire the old
-// copy — so this answers "how stale is the token a leak could still use", the signal behind
-// rotating a credential to contain a blast radius. It stats ONLY the marker file, not the whole
-// profile dir, so unrelated session-transcript writes don't masquerade as a rotation. ok=false
-// when the login is an env-key one (no file) or the marker is missing/unreadable — the caller
-// renders that as a graceful "—", never an error.
+// ProfileTokenMtime returns when agent's named-account token material last changed on disk — the
+// mtime of its canonical authority.json or, for an account not yet cut over, of its host credential
+// or AuthMarker file (claude's .credentials.json, codex/grok's auth.json). ANY rewrite bumps it: a
+// fresh login OR an OAuth refresh, both of which mint new material and retire the old copy — so this
+// answers "how stale is the token a leak could still use", the signal behind rotating a credential
+// to contain a blast radius. It stats ONLY those files, so provider state beside them doesn't
+// masquerade as a rotation. ok=false when the login is an env-key one (no file) or the file is
+// missing/unreadable — the caller renders that as a graceful "—", never an error.
 func ProfileTokenMtime(cfg *config.Config, agent, profile string) (time.Time, bool) {
 	ag, ok := agents.Get(agent)
 	if !ok {

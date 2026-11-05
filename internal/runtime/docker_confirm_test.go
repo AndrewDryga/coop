@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-// The seven-way check that used to hide behind one message: each condition is named, and each is
-// sorted into confirmed / retry-me / no-retry-will-help. This is the classification the flake was
-// about — a slow or unsettled probe must be RETRIED, only a gone, restarted or never-started
-// container is a truth.
+// A seven-way check: each condition is named, and each is sorted into confirmed / retry-me /
+// no-retry-will-help. A slow or unsettled probe must be RETRIED; only a gone, restarted or
+// never-started container is a truth.
 func TestClassifyTerminalNamesAndSortsEveryCondition(t *testing.T) {
 	exited := DockerContainer{State: DockerContainerState{Status: "exited", StartedAt: time.Now().UTC(), ExitCode: 3}}
 	cases := []struct {

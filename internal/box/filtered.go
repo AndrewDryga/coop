@@ -264,9 +264,9 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		// login, or silently strip grants and launch a different policy from the one admitted.
 		return nil, errors.New("sign-in does not start project services; this filtered policy includes service grants — sign in from a project with a service-free network policy")
 	}
-	// box.network is the old join-everything switch; in filtered mode a sidecar
-	// is reached through an approved `to: {service: <name>}` grant, one exact
-	// container at a time, never by joining a shared network.
+	// box.network joins the whole sibling-services network on an open box; in
+	// filtered mode a sidecar is reached through an approved `to: {service: <name>}`
+	// grant, one exact container at a time, never by joining a shared network.
 	if err := checkServicesHaveRules(cfg, spec, composeFile, approvedServices); err != nil {
 		return nil, err
 	}

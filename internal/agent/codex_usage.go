@@ -26,7 +26,7 @@ type TurnTokens struct {
 // model call, while the client's own session record holds every call of the turn.
 type TurnRecord interface {
 	// LastTurnTokens reads the selected complete native home, never an account's
-	// legacy profile: the usage of its last task and that task's last call.
+	// profile folder: the usage of its last task and that task's last call.
 	LastTurnTokens(home, nativeID string) (whole, last TurnTokens, ok bool)
 }
 

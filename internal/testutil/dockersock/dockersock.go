@@ -1,6 +1,6 @@
 // Package dockersock answers the one request coop sends a Docker daemon's socket itself: GET /info,
 // the daemon's identity. A test that fakes the docker CLI pairs it with this, since the identity
-// check no longer runs a docker process.
+// check asks the socket, not a docker process.
 package dockersock
 
 import (

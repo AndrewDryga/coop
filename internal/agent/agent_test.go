@@ -569,8 +569,8 @@ func TestResume(t *testing.T) {
 		t.Errorf("gemini Resume = (%v, %v)", cmd, ok)
 	}
 	// gemini's tmp bucket is a version-dependent slug/hash of the path, not the raw basename — so
-	// resume must find the id regardless of the bucket name (the old raw-basename lookup silently
-	// missed a fork named e.g. "My.Repo" whose real bucket is "my-repo").
+	// resume must find the id regardless of the bucket name (a fork named "My.Repo" has the bucket
+	// "my-repo").
 	slugWs := filepath.Join(t.TempDir(), "My.Cool_Repo")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", ".project_root"), slugWs+"\n")
 	mustWrite(t, filepath.Join(cfg.AgentDir("gemini"), "tmp", "my-cool-repo", "chats", "s.jsonl"),

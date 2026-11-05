@@ -19,8 +19,8 @@ var credentialLiteralPatterns = func() []credentialLiteralPattern {
 	for _, pattern := range secretPatterns {
 		patterns = append(patterns, pattern.re.String())
 	}
-	// Publication previously enforced these shapes at the controller. Keep that
-	// barrier at the host that now exports the bytes, including older token forms.
+	// The host that exports the bytes enforces these shapes itself, including older
+	// token forms.
 	patterns = append(patterns, `(?i:\bxox[baprs]-[A-Za-z0-9-]{10,}\b)`,
 		`\bxapp-[A-Za-z0-9-]{10,}\b`, `\bemk-[A-Za-z0-9_-]{10,}\b`, `\bgh[pousr]_[A-Za-z0-9]{20,}\b`)
 	compiled := make([]credentialLiteralPattern, 0, len(patterns))

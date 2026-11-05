@@ -523,13 +523,9 @@ func TestNewLayoutKeepsConfigEmptyForVaultPublication(t *testing.T) {
 	}
 }
 
-// A leader that exits cleanly, leaving nothing behind, must never be reported as a leak.
-//
-// It used to be, intermittently. The check asked two different questions: `kill(-pid, 0)` decided
-// whether the group survived, and a later `ps` explained who survived. A leader is a member of its
-// own group and remains there as a zombie until it is reaped, so between those two questions the
-// answer could change — and the failure it produced contradicted itself in one sentence: "process
-// group N survived leader exit (nothing was left in the group by the time it was listed)".
+// A leader that exits cleanly, leaving nothing behind, must never be reported as a leak. A leader
+// is a member of its own group and remains there as a zombie until it is reaped, so asking in two
+// steps whether the group survived and then who survived can get two different answers.
 //
 // That is a CLEANUP assertion, so the same race could equally report success while a descendant
 // genuinely survived. Repeats because a race proven once is proven by luck.
@@ -549,9 +545,9 @@ func TestRunDoesNotReportALeakWhenTheLeaderSimplyExits(t *testing.T) {
 	}
 }
 
-// The property that fixes it: the survivor listing excludes the leader, because the leader being in
-// its own group is exactly what the old check mistook for a survivor. Proven on a real group leader
-// with a real child, so neither side of the comparison is hypothetical.
+// The survivor listing excludes the leader, because the leader being in its own group makes it no
+// survivor. Proven on a real group leader with a real child, so neither side of the comparison is
+// hypothetical.
 func TestListGroupExcludesTheLeaderItself(t *testing.T) {
 	// Publish the one child before listing. A second foreground sleep can start between
 	// the two snapshots and hide the removed leader in their row counts.

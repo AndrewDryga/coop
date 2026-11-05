@@ -67,7 +67,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
 	// coop runs this file on the HOST daemon, so validate it first: an in-box agent may author it
-	// (the compose path is no longer shadowed), but the host refuses anything that reaches outside a
+	// (the compose path is not shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
 	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.Name == "docker" && filesystemProfileCandidate(workspace))

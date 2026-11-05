@@ -209,8 +209,8 @@ func TestScanSecretsMinifiedLines(t *testing.T) {
 	}
 }
 
-// A committed 3-part JWT used to be suppressed — its dotted shape parses as a code
-// reference (codeRefRe) on the entropy path — so it has its own provider pattern now.
+// A committed 3-part JWT's dotted shape parses as a code reference (codeRefRe) on the
+// entropy path, so it has its own provider pattern.
 func TestScanSecretsJWT(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 	for _, line := range []string{

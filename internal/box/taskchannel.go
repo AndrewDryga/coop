@@ -82,7 +82,7 @@ func taskChannelMount(volume string) string {
 // own channel on the way out; one whose coop was killed first — a replaced editor child, a closed
 // terminal, a SIGKILL — leaves the volume behind, while its helper exits with its client. A volume
 // something still mounts is refused by the runtime and left for a later sweep, and a volume with no
-// owner label (a coop that predates it, or one that could not name itself) is never touched.
+// owner label (its coop could not name itself, or came before the label) is never touched.
 func ReapOrphanTaskChannels(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	host, _ := thisHost()
 	volumes, err := rt.VolumeLabels(ctx, LabelKey, LabelTaskChannel, LabelHost)

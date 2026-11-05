@@ -88,7 +88,7 @@ func markImageUsed(cfg *config.Config, img string) {
 
 // reclaimable reports whether img is one Coop built and tagged by its definition — the only kind
 // this file ever removes. A `:latest` or any other tag of those repositories is left alone: Coop
-// no longer creates one, and an operator may be pinning it.
+// does not create one, and an operator may be pinning it.
 func reclaimable(img string) bool {
 	if derivedImageProject(img) != "" {
 		// Shape only. Whether this one is COOP's is a question for the runtime (the label), asked
@@ -147,8 +147,8 @@ func reclaimSupersededImages(ctx context.Context, rt runtime.Runtime, cfg *confi
 		info, err := os.Stat(imageUsePath(cfg, tag))
 		switch {
 		case err != nil:
-			// Never recorded — by a Coop that predates this record, by an operator's own
-			// `docker build --build-arg COOP_BASE_IMAGE=…`, or simply by never having run yet.
+			// Never recorded: an earlier Coop's image, an operator's own
+			// `docker build --build-arg COOP_BASE_IMAGE=…`, or one that has not run yet.
 			// An absent record is not evidence of disuse, so it is SEEDED here and judged by the
 			// next build: this rule may only remove what it watched go unused.
 			markImageUsed(cfg, tag)

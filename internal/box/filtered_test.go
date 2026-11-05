@@ -400,7 +400,7 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 	if faultSelects(d.corruptRole, role) {
 		v.User = "0"
 	}
-	if d.corruptRole == "agent-legacy-user" && role == "agent" {
+	if d.corruptRole == "agent-wrong-user" && role == "agent" {
 		v.User = "1000:1000"
 	}
 	plan, err := networkMountPlan(spec.Options)
@@ -965,10 +965,10 @@ func TestFilteredCreatedSecurityMismatchNeverStartsAgent(t *testing.T) {
 	}
 }
 
-func TestFilteredNativeLinuxUserRejectsLegacyContainerIdentity(t *testing.T) {
+func TestFilteredNativeLinuxUserRejectsAnotherContainerIdentity(t *testing.T) {
 	f, d := filteredFixture(t)
 	f.agentIdentity = agentIdentity{1001, 1002}
-	d.corruptRole = "agent-legacy-user"
+	d.corruptRole = "agent-wrong-user"
 	_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
 	if err == nil || slices.Contains(d.log, "start:agent") {
 		t.Fatal("UID-1000 container started for UID-1001 host user", err)
@@ -1343,9 +1343,9 @@ func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
 	}
 }
 
-// Every exit from cleanup attempts the two named volumes. The old shape returned
-// before them when host storage failed, and the containment fallback removed
-// containers only — so an interrupted run leaked a volume pair per launch.
+// Every exit from cleanup attempts the two named volumes, including when host
+// storage failed and in the containment fallback: otherwise an interrupted run
+// leaks a volume pair per launch.
 func TestFilteredCleanupContainsVolumesOnEveryExit(t *testing.T) {
 	t.Run("unreadable registry", func(t *testing.T) {
 		f, d := filteredFixture(t)

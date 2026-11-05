@@ -155,8 +155,8 @@ func TestCredentialScope(t *testing.T) {
 		{"plain claude", RunSpec{Homes: true, Agent: "claude"}, []string{"claude"}},
 		{"raw run", RunSpec{Homes: true}, nil},
 		{"homes off", RunSpec{Agent: "claude"}, nil},
-		// Narrowing: a consult with NO named peer mounts the lead alone — gemini is authed but
-		// unnamed, so its credentials stay out (the old policy would have widened to it).
+		// A consult with NO named peer mounts the lead alone — gemini is authed but unnamed, so its
+		// credentials stay out.
 		{"consult, no named peer → lead only", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude"}, []string{"claude"}},
 		{"consult names gemini", RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude", Peers: peerTargets("gemini")}, []string{"claude", "gemini"}},
 		{"consult names two peers", RunSpec{Homes: true, Agent: "codex", ConsultLead: "codex", Peers: peerTargets("claude", "gemini")}, []string{"codex", "claude", "gemini"}},

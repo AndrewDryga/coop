@@ -19,8 +19,8 @@ import (
 )
 
 func TestStageBaseImageFilesKeepsSystemPathsReadableUnderPrivateUmask(t *testing.T) {
-	// The build runs from an operator's shell; unlike project staging, embedded-file staging
-	// used to inherit umask 077 and make COPY system/ / replace /etc with mode 0700.
+	// The build runs from an operator's shell: embedded-file staging, like project staging, must
+	// not inherit umask 077, which would make COPY system/ / replace /etc with mode 0700.
 	previous := syscall.Umask(0o077)
 	defer syscall.Umask(previous)
 	dir := t.TempDir()

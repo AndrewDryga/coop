@@ -68,7 +68,7 @@ const rebootMargin = 24 * time.Hour
 // whole run, never mounting it, so old and unmounted does not mean unused there. Removing a live one
 // costs the run nothing, since Docker reads a missing one as empty, and in that owner-only folder no
 // one else can recreate it. In a shared /tmp anyone could, with a Docker config of their own, so a
-// temp directory sweep never looks for these, not even the ones earlier versions left there.
+// temp directory sweep never looks for these.
 var runfilesPrefixes = slices.Concat(tempPrefixes, []string{"coop-docker-client-", runDirPrefix, mcpHandoffDirPrefix})
 
 // ownedFolderPrefixes are the runfiles folders that name the process that made them
@@ -145,8 +145,8 @@ func reapOrphanRunfiles(ctx context.Context, lister mountLister, cfg *config.Con
 // recordRunOwner names, inside a run folder it has just made, the coop process that made it, before
 // anything else goes in: a run killed at any later moment leaves a folder a sweep can attribute.
 // owner is "" when this host cannot name the process (supervisorLabelValue); the folder then has no
-// record and is judged as an earlier Coop's were. A record cut short could read as another process
-// that is gone, so only a complete one stays.
+// record and runFolderUnused judges it as owner-less. A record cut short could read as another
+// process that is gone, so only a complete one stays.
 func recordRunOwner(runDir, owner string) {
 	if owner == "" {
 		return
@@ -212,9 +212,9 @@ type runJudge struct {
 //   - It names its owner: that process is provably gone from this host (pid gone or reused), and
 //     the run either started no container (no daemon record), started its box on the pinned daemon
 //     (whose listing the caller checked), or ended before this host's last boot.
-//   - It names no owner, as every folder an earlier Coop made: it names the pinned daemon, or it
-//     last changed before this host's last boot. No process outlives a reboot, nor does a box on a
-//     daemon that can mount this host's files.
+//   - It names no owner, because this host could not name the process or an earlier Coop made the
+//     folder: it names the pinned daemon, or it last changed before this host's last boot. No
+//     process outlives a reboot, nor does a box on a daemon that can mount this host's files.
 //
 // Everything else stays: a live owner, one this host cannot check, a record it cannot read, a box
 // on another or an unnamed daemon, an owner-less folder from since the boot.

@@ -318,8 +318,8 @@ func TestJSONDefaultsPreserveLargeNumbers(t *testing.T) {
 	}
 }
 
-// `{...}{...}` used to parse as its first object, so a settings file with a second document
-// appended read as though the rest were not there.
+// `{...}{...}` must not parse as its first object, or a settings file with a second document
+// appended reads as though the rest were not there.
 func TestReadJSONDefaultsRefusesTrailingContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(`{"theme":"dark"}{"theme":"light"}`), 0o600); err != nil {

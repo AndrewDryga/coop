@@ -193,7 +193,7 @@ func ComposeProject(workspacePath string) string {
 	return ServicesProject(canon) + "-" + hex.EncodeToString(sum[:])[:8]
 }
 
-// ComposeProjectFor returns the development project's historical name when owner is empty, and
+// ComposeProjectFor returns ComposeProject's name when owner is empty, and
 // a private Compose project for one logical loop/session otherwise. The owner is hashed rather
 // than embedded because run identifiers are host bookkeeping, not public Docker names.
 func ComposeProjectFor(workspacePath, owner string) string {

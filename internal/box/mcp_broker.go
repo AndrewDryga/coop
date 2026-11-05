@@ -35,7 +35,7 @@ const SessionMCPHandoffEnv = "COOP_SESSION_MCP_HANDOFF"
 const mcpHandoffDirPrefix = "coop-acp-mcp-"
 
 // NewSessionMCPHandoffDir keeps the child's rendered tools under the same protected control
-// home as other run artifacts, never where an older box's broad system-temp bind can reach them.
+// home as other run artifacts, out of the shared system temp directory.
 // The folder names this process as its owner first, as a run folder does.
 func NewSessionMCPHandoffDir(cfg *config.Config, repo string) (string, error) {
 	base, err := config.PrivateRunfiles(cfg)

@@ -33,10 +33,10 @@ func mountInventoryFixture(t *testing.T, ids []string, inspect string) (Runtime,
 }
 
 // A box removed between the listing and its inspect mounts nothing, so it must not abort the sweep
-// that asked: one vanished box used to cancel the whole day's temp cleanup. The inspect's wording is
-// no proof (Docker 29 prints "error: no such object"), so only the same listing, run again and no
-// longer showing the box, counts. A re-listing that fails, or still shows the id — the box itself,
-// or another box sharing its short id — keeps the inspect's error.
+// that asked and cancel the whole day's temp cleanup. The inspect's wording is no proof (Docker 29
+// prints "error: no such object"), so only the same listing, run again and no longer showing the
+// box, counts. A re-listing that fails, or still shows the id — the box itself, or another box
+// sharing its short id — keeps the inspect's error.
 func TestMountSourcesSkipsABoxThatVanishedBeforeItsInspect(t *testing.T) {
 	for _, tc := range []struct {
 		name, relist, detail string

@@ -77,7 +77,7 @@ func TestIsolatedServiceBindsRejectControlSourcesBeforeCompose(t *testing.T) {
 			if err := os.WriteFile(file, data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// Generic containment alone used to accept these sources.
+			// Generic containment alone accepts these sources.
 			if err := validateComposeData(data, file, ws, false); err != nil {
 				t.Fatal(err)
 			}

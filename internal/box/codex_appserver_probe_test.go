@@ -7,11 +7,10 @@ package box
 // them over stdio JSON-RPC. Two probes drive it, so the driving lives here once.
 //
 // The delicate part is when to close stdin. App-server exits the moment its stdin closes, taking any
-// MCP server it spawned with it, so the feeder has to stay open until the answer is in. Both probes
-// used to hold it open for a FIXED sleep, which is wrong in both directions: too short and a slow or
-// freshly-built host closes stdin mid-handshake, which reads as "the client never launched the
-// server" — a false red in `skills-e2e` or `mcp-e2e` that looks exactly like a real regression;
-// too long and every green run pays the worst case whether it needs to or not.
+// MCP server it spawned with it, so the feeder has to stay open until the answer is in. A FIXED sleep
+// is wrong in both directions: too short and a slow or freshly-built host closes stdin mid-handshake,
+// which reads as "the client never launched the server" — a false red in `skills-e2e` or `mcp-e2e`
+// that looks exactly like a real regression; too long and every green run pays the worst case.
 //
 // So the feeder waits for the REPLY instead, and the fixed number left is only a give-up bound.
 

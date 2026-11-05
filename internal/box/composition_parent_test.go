@@ -62,10 +62,9 @@ func TestRunComposesUnderExplicitParentWithoutChangingOrdinaryCleanup(t *testing
 	}
 	repo := t.TempDir()
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  env:\n    FIXTURE_ENV: synthetic\n")
-	// Shared skills and a home fallback: the two producers that USED to escape the parent. The
-	// fixture had neither, which is how every filtered launch in a repository with shared skills
-	// was refused ("generated network workload mount is not an owned descendant") without this
-	// invariant test noticing.
+	// Shared skills and a home fallback produce copies too. Without them in the fixture, a copy
+	// outside the parent would refuse every filtered launch in a repository with shared skills
+	// ("generated network workload mount is not an owned descendant") without this test noticing.
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "skills", "probe", "SKILL.md"), "---\nname: probe\n---\n")
 	writeCopyFixture(t, filepath.Join(repo, ".agent", "claude", "settings.json"), "{}\n")
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}

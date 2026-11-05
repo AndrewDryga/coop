@@ -107,8 +107,8 @@ type SignInError struct {
 func (e *SignInError) Error() string { return e.Need.Remedy(e.Target) }
 func (e *SignInError) Unwrap() error { return e.Err }
 
-// DisplayTarget keeps credential diagnostics one-line and terminal-safe even if a legacy profile
-// directory or hand-written preset contains control characters.
+// DisplayTarget keeps credential diagnostics one-line and terminal-safe even if an account folder's
+// name or a hand-written preset contains control characters.
 func DisplayTarget(target string) string {
 	for _, r := range target {
 		if !unicode.IsPrint(r) {

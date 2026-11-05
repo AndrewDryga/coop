@@ -173,7 +173,8 @@ func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile str
 }
 
 // SelectedHostCredentialPath identifies the selected account's credential input without
-// modifying it. A legacy path may be absent: isolated callers must also detect a key appearing.
+// modifying it. The path of an account not yet cut over may be absent: isolated callers must also
+// detect a key appearing.
 // Unselected credential families return no path, even when a stale vault key remains on disk.
 func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile string) (string, error) {
 	spec := ag.HostCredential()

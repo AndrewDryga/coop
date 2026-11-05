@@ -719,8 +719,8 @@ func TestGenerateGeminiHTTPPassthrough(t *testing.T) {
 
 // The pinned Codex client (codex-cli 0.153.4) accepts BOTH header tables beside
 // bearer_token_env_var — qualified with `codex mcp get` against that exact binary, which lists
-// http_headers, env_http_headers and bearer_token_env_var for one server. Coop used to refuse any
-// header at all, so a shared mcp.json that authenticated with Grok was rejected for Codex.
+// http_headers, env_http_headers and bearer_token_env_var for one server. So a shared mcp.json that
+// authenticates with a header works for Codex too.
 //
 // The split is the point: a literal value is written into the file, and a value that is exactly one
 // ${VARIABLE} becomes the variable's NAME in env_http_headers, so the secret is resolved by the

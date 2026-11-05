@@ -41,8 +41,8 @@ func Scaffoldable() []string {
 	return out
 }
 
-// EstablishedSkillsSources follows the shared .agent/skills source when adopting
-// an older real project skill tree. It is independent of the selected providers.
+// EstablishedSkillsSources lists the real project skill trees a repository with no
+// .agent/skills keeps using. It is independent of the selected providers.
 func EstablishedSkillsSources() []string {
 	var out []string
 	for _, name := range Names() {

@@ -461,8 +461,7 @@ func TestAgentProfileResolution(t *testing.T) {
 	c := &Config{ConfigDir: dir}
 	claudeDir := filepath.Join(dir, "claude")
 
-	// Every profile — "default" included — resolves under profiles/. There's no longer a branch
-	// where the agent dir itself is the default.
+	// Every profile — "default" included — resolves under profiles/, never the agent dir itself.
 	if got, want := c.AgentProfileDir("claude", "default"), filepath.Join(claudeDir, "profiles", "default"); got != want {
 		t.Errorf("default = %q, want %q", got, want)
 	}

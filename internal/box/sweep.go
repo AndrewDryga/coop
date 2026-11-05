@@ -402,9 +402,9 @@ var coopComposeProjectName = regexp.MustCompile(`^coop-[a-z0-9_-]*-[0-9a-f]{8}(-
 
 // ReapOrphanNetworks removes every network of a coop compose project that no container — running
 // or stopped — is attached to, across all workspaces, and reports how many. These are what a
-// session leaves behind when its containers were removed without a `compose down` (a crash, or a
-// coop older than StopSessionServices' network cleanup), and Docker's default address pool holds
-// only about thirty of them. Anyone else's compose networks are never inspected for removal.
+// session leaves behind when its containers were removed without a `compose down`, as in a crash,
+// and Docker's default address pool holds only about thirty of them. Anyone else's compose networks
+// are never inspected for removal.
 func ReapOrphanNetworks(ctx context.Context, rt runtime.Runtime) (int, error) {
 	ids, err := rt.NetworkIDs(ctx, "label="+composeProjectLabel)
 	if err != nil {

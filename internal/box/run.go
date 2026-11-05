@@ -158,10 +158,10 @@ type RunSpec struct {
 	SupervisorID    string             // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	sessionSupervisor string // a supervised box's service label, read once as the run starts (rememberSessionSupervisor)
-	ShareACPSessions  bool   // mount credential-independent ACP transcript dirs across account switches
+	ShareACPSessions  bool   // mount the primary's per-repository ACP home, so a session survives an account switch
 	ForkName          string // non-empty for a detached fork loop's box: readable runtime label
 	ForkOwner         string // repo-scoped label used by `coop fork stop`; required with ForkName
-	ForkGeneration    string // immutable host-owned generation; empty only for legacy callers
+	ForkGeneration    string // immutable host-owned generation; empty for every non-fork run
 	ForkWorker        bool   // this box belongs to the detached worker stopped by `coop fork stop`
 	// ActivityRepo is the canonical project whose host-owned execution registry receives this
 	// sandbox. ActivityKind empty preserves the ordinary unregistered maintenance-box behavior.
@@ -284,12 +284,11 @@ type RunSpec struct {
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
-	// account: a same-provider peer shares the lead account; others use their default). It
-	// REPLACES the old implicit "every authed
-	// agent is a peer" policy: only these providers' credentials mount as peers, only
-	// they are named in the consult directive, and the in-box coop-consult refuses any
-	// other (COOP_PEERS). A preset's own consult/delegate roles join separately (their
-	// role agents also mount + become consultable). Empty = the lead consults no ad-hoc peer.
+	// account: a same-provider peer shares the lead account; others use their default).
+	// Only these providers' credentials mount as peers, only they are named in the consult
+	// directive, and the in-box coop-consult refuses any other (COOP_PEERS). A preset's own
+	// consult/delegate roles join separately (their role agents also mount + become
+	// consultable). Empty = the lead consults no ad-hoc peer.
 	Peers []agents.Target
 
 	// Preset, when set, is the loaded orchestration preset for this run: the lead's
@@ -434,10 +433,8 @@ func snapshotPolicyMounts(repo string, mounts []Mount, artifacts compositionArti
 // composedCopyDir allocates a writable copy directory the box will mount. Every generated mount lands
 // in compositionArtifactOps.parent, the run's private artifact directory: a filtered run's is its
 // execution's, where the launch proves each mount is an owned descendant and exact-owned cleanup
-// reaches it. The skills and home-fallback copies were the exception: they went to the system temp
-// dir, so a filtered box refused ANY repository with shared skills ("generated network workload
-// mount is not an owned descendant"), for every agent, and a copy a test lost stayed in TMPDIR, where
-// no sweep removes it. An empty parent is refused (privateTempDirUnder), never read as TMPDIR.
+// reaches it. An empty parent is refused (privateTempDirUnder), never read as TMPDIR: a filtered box
+// refuses a mount from there, and no sweep removes a copy a test lost there.
 func composedCopyDir(repo, artifactParent, pattern string, exposedRoots ...string) (string, error) {
 	// The artifact parent is already proven outside every mount when it is prepared; the same check
 	// runs here anyway, so a future caller cannot hand this an exposed parent.
@@ -907,8 +904,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	sections.coopignoreComments(shadowpath.RepoCommentedEntries(spec.Repo), spec.Quiet)
 	// The sibling-services compose file is NOT shadowed: an in-box agent may author it, but coop
 	// validates it host-side before auto-running it (ValidateComposeFile), so
-	// it can only ever declare a repo-scoped, loopback-only container — never host root. That
-	// removes the read-only decoy that used to strand an empty .agent/compose.yml in the repo.
+	// it can only ever declare a repo-scoped, loopback-only container — never host root.
 	if !sections.on {
 		for _, nudge := range nudges {
 			ui.Note("%s", nudge)
@@ -2592,7 +2588,7 @@ func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) error
 // agent's cwd. The default is the repo's real host path, so an ACP editor's
 // absolute paths resolve in the box, and `coop` and `coop loop` file their
 // per-project session history (~/.<agent>/projects/<cwd>) under the same key.
-// Editor threads live in their own store (acpSharedDir), apart from both. An
+// Editor threads live in the repository's ACP home, apart from both. An
 // explicit spec.Workdir (doctor's self-contained fixture) or COOP_WORKDIR
 // (cfg.Workdir) overrides it, in that order.
 func resolveWorkdir(spec RunSpec, cfg *config.Config) string {
@@ -2617,7 +2613,7 @@ func Workdir(cfg *config.Config, repo string) string {
 // boxEnvNote is the always-present environment briefing every agent receives up front, so it
 // doesn't burn a turn rediscovering the box (the user's INSTRUCTIONS.md, if any, follows it).
 // It states the ground truth the agents most often probe or trip over: the missing OS sandbox,
-// what's installed (now that the image carries bare python/pip), where it may write, and that
+// what's installed (bare python/pip included), where it may write, and that
 // secrets are read-only decoys.
 //
 // Where other toolchains come from depends on the image. An open box runs the base image, whose
@@ -2783,8 +2779,8 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 		return nil, nil, fmt.Errorf("inspect shared skills source: %w", err)
 	}
 	if !present {
-		// The old .claude source is only a compatibility fallback. Invalid links and other
-		// unusable legacy shapes remain equivalent to absence.
+		// A project with no .agent/skills may keep a real .claude/skills. Invalid links and other
+		// unusable shapes count as absent.
 		for _, candidate := range agents.EstablishedSkillsSources() {
 			info, lstatErr := os.Lstat(filepath.Join(sources.path, candidate))
 			if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -3363,17 +3359,17 @@ func checkEfforts(cfg *config.Config, spec RunSpec) error {
 	return nil
 }
 
-// assembleArgs builds the full container-runtime argument list. It is pure given
-// its inputs and the on-disk presence of the env/instruction files, so the whole
-// run plan can be unit-tested without a container daemon. limits is the runtime's
-// resource/privilege caps (see boxLimits).
-// acpSharedDir is the credential-independent session-transcript store for an agent's ACP boxes: a
-// mid-session credential/preset switch keeps the conversation because every credential's box mounts
-// this same dir over its session store, so session/load still finds the transcript after the switch.
+// acpSharedDir is where ACP boxes kept an agent's transcripts, across credentials, before each
+// repository got its own ACP home. No box mounts it now; the host reads what it still holds as an
+// import source and for a repository's session inventory.
 func acpSharedDir(cfg *config.Config, agent string) string {
 	return filepath.Join(cfg.ConfigDir, agent, "acp-sessions")
 }
 
+// assembleArgs builds the full container-runtime argument list. It is pure given
+// its inputs and the on-disk presence of the env/instruction files, so the whole
+// run plan can be unit-tested without a container daemon. limits is the runtime's
+// resource/privilege caps (see boxLimits).
 func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
 	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped

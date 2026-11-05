@@ -511,8 +511,8 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	if err != nil {
 		return err
 	}
-	// The CLI announces a build in the approved words (cli.announceBuild), so this legacy entry —
-	// used by an automatic rebuild inside a fork or loop launch — says only the plain fact, once.
+	// The CLI announces a build in the approved words (cli.announceBuild), so this entry — used by
+	// an automatic rebuild inside a launch — says only the plain fact, once.
 	if plan.Project && cfg.Egress != "" && cfg.Egress != "open" {
 		mode := egress.Mode(cfg.Egress).Word()
 		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking", mode, plan.Dockerfile, mode)

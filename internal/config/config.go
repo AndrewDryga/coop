@@ -363,8 +363,9 @@ const (
 	profilesSubdir = "profiles"
 )
 
-// AgentDir is the host folder mounted at the box's ~/.<agent>: the active profile's
-// credential + session dir (see AgentProfileDir). Defaults to the "default" profile.
+// AgentDir is the active profile's host folder (see AgentProfileDir). A sign-in box mounts it from
+// its staging config; a coding box mounts a native home instead, and what an older login left here
+// is only an import source for that home. Defaults to the "default" profile.
 func (c *Config) AgentDir(agent string) string {
 	return c.AgentProfileDir(agent, c.activeProfile(agent))
 }
@@ -427,7 +428,7 @@ func (c *Config) AgentSettingsDir(provider string) (string, error) {
 
 // activeProfile resolves which profile AgentDir uses for agent: a per-run selection wins
 // (a target's @account, or the loop's rotation), then the agent's marked default, then the
-// built-in DefaultProfile (so an unmarked single login still resolves to the legacy slot).
+// built-in DefaultProfile (so an unmarked single login resolves to it).
 func (c *Config) activeProfile(agent string) string {
 	if p := c.activeProfiles[agent]; p != "" {
 		return p
@@ -1236,8 +1237,8 @@ func decimalDigits(value string) bool {
 }
 
 // loadDefaultsFile parses the small agent=profile defaults file. It is provider-owned advisory
-// state, not the operator policy in coop.conf; missing or malformed entries retain the historical
-// best-effort behavior while the main config reader above stays strict.
+// state, not the operator policy in coop.conf; a missing file or malformed entry is skipped while
+// the main config reader above stays strict.
 func loadDefaultsFile(path string) map[string]string {
 	out := map[string]string{}
 	f, err := os.Open(path)

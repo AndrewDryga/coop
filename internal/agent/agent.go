@@ -262,8 +262,8 @@ type CredentialArtifact struct {
 }
 
 // MarkerCredentialSelector is the optional capability for an adapter whose native marker can
-// hold the same selected credential as an environment key. Returning false does not veto the
-// existing marker fallback for selectors that declare no environment authority.
+// hold the same selected credential as an environment key. Returning false does not veto a marker
+// when the account selects no environment key.
 type MarkerCredentialSelector interface {
 	MarkerProvidesSelectedCredential(profileDir string) bool
 }
@@ -504,8 +504,8 @@ type Agent interface {
 	// whether a session was found (else the caller starts fresh via StartSession). id
 	// is the persisted session id for this (fork, agent, account): preset-id agents resume the
 	// coop-owned id; codex resumes its previously recorded native id. Every adapter accepts only
-	// this exact persisted id. home is the provider home whose history is searched (today the
-	// account's profile, cfg.AgentDir), never derived here, so a caller decides which store counts.
+	// this exact persisted id. home is the provider home whose history is searched (the
+	// repository's native home), never derived here, so a caller decides which store counts.
 	Resume(cfg *config.Config, home, ws, id string) ([]string, bool)
 	// StartSession is the fresh interactive command under the coop-chosen session id:
 	// claude/gemini/grok stamp it via --session-id so a later Resume can pin exactly it;
@@ -648,8 +648,8 @@ type Agent interface {
 }
 
 // MarkerProvidesActiveCredential reports whether a present native marker can satisfy this
-// profile. Adapters with no selected environment family retain the historical marker behavior;
-// an optional selector may additionally recognize a native form of an env-backed credential.
+// profile. A marker satisfies a profile with no selected environment family; an optional selector
+// may additionally recognize a native form of an env-backed credential.
 func MarkerProvidesActiveCredential(ag Agent, profileDir string, activeEnvKeys []string) bool {
 	if len(activeEnvKeys) == 0 {
 		return true

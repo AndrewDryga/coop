@@ -3,7 +3,7 @@ name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go, internal/box/account_renewal.go, internal/box/native_account.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
@@ -90,13 +90,17 @@ nothing from it. `coop usage provider@account` uses its own listing ([[usage-his
 empty and never calls the default missing. Completion and hints ignore listing errors, and rotation
 ignores them while its ladder still has an account to run.
 
-The host privacy boundary is deliberately above provider-owned state. Configuration load and box
-home preparation require the shared credential root, provider root, `profiles/`, and selected
-profile to be real `0700` directories before reading or mounting them. Shared `env`, `defaults`,
-and the default MCP file are `0600`. Coop does not recursively chmod provider transcripts or state;
-the private ancestors protect those descendants without taking ownership of their formats.
+The host privacy boundary is deliberately above provider-owned state. Configuration load tightens
+the shared credential root to a real `0700` directory before reading it. Box home preparation
+creates each level above a native home owner-only, refuses a link at any of them, and refuses to
+serve a home others can read. Shared `env`, `defaults`, and the default MCP file are `0600`. Coop
+does not recursively chmod provider transcripts or state; the private ancestors protect those
+descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-11-04 - the privacy paragraph described mounting profile folders; it now says what config
+  load and native home preparation do; verified against internal/config/config.go and
+  internal/box/account_authority.go
 - 2026-11-03 - a provider-refused grant is recorded and reads as not ready; `ProfileSignIn` is the
   shared sign-in state over presence and readiness; verified against internal/box/profiles.go,
   account_renewal.go and native_account.go

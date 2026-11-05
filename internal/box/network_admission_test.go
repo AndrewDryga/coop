@@ -303,9 +303,8 @@ func TestAdmitNetworkUnapprovedProjectRulesRefuse(t *testing.T) {
 }
 
 // A project's own Dockerfile is built on the locked client image and proven at
-// launch (derived_image.go), so admission no longer refuses one. COOP_IMAGE has
-// no such proof available, so it still fails before any state or runtime
-// resource exists.
+// launch (derived_image.go), so admission does not refuse one. COOP_IMAGE has
+// no such proof available, so it fails before any state or runtime resource exists.
 func TestAdmitNetworkRefusesAnImageOverrideButNotAProjectDockerfile(t *testing.T) {
 	for _, kind := range []string{"policy", "file"} {
 		t.Run(kind, func(t *testing.T) {
@@ -372,10 +371,8 @@ func TestAdmitNetworkRefusesARuntimeThatCannotServeFiltered(t *testing.T) {
 }
 
 // Filtered MCP has a literal-only rule — the gateway cannot grant a destination whose routing an
-// environment variable could change after approval. That rule belongs to FILTERED launches only.
-// Admission used to derive the shared file's network dependencies before it knew the posture, so a
-// server with a ${VARIABLE} header refused an explicitly open launch for a constraint only a
-// filtered gateway has; env-backed headers were unusable everywhere.
+// environment variable could change after approval. That rule belongs to FILTERED launches only:
+// a server with a ${VARIABLE} header must not refuse an explicitly open launch.
 func TestAdmitNetworkOpenLaunchIgnoresFilteredMCPRules(t *testing.T) {
 	cfg, repo, root := admissionFixture(t)
 	cfg.MCPFile = filepath.Join(t.TempDir(), "mcp.json")

@@ -178,8 +178,8 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 			continue
 		}
 		if _, err := cfg.NativeHome(name); err == nil && !spec.Login {
-			// Offline native homes contain no account authority either. Their
-			// shared history lease above replaces the retired profile lease.
+			// Offline native homes contain no account authority either; the shared
+			// history lease above covers them.
 			continue
 		}
 		ag, _ := agents.Get(name)

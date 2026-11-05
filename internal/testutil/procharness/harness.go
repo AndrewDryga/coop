@@ -316,8 +316,7 @@ func (p *Process) wait(ctx context.Context) Result {
 		result.ExitCode, result.Err = processExit(err)
 		// Did any DESCENDANT outlive the leader? Decided from one listing that excludes the leader
 		// itself, because a leader is a member of its own group and sits there as a zombie between
-		// its exit and its reaping — the window that used to make this check report a survivor and
-		// then fail to name one.
+		// its exit and its reaping, which makes it no survivor.
 		if survivors, listErr := listGroup(result.PID, false); listErr != nil || len(survivors) > 0 {
 			var survivorErr error
 			if listErr != nil {

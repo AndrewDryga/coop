@@ -238,8 +238,8 @@ func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error
 	return result, nil
 }
 
-// AccountBrokersKey reports whether an account uses host brokering. Despite the historical name,
-// canonical subscription credentials use the broker too; this is not an API-key family detector.
+// AccountBrokersKey reports whether an account uses host brokering. Despite the name, canonical
+// subscription credentials use the broker too; this is not an API-key family detector.
 func AccountBrokersKey(cfg *config.Config, provider, account string) (bool, error) {
 	ag, ok := agents.Get(provider)
 	if !ok {
