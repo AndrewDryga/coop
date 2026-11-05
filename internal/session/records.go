@@ -23,12 +23,9 @@ const (
 	MaxIdempotencyKeyBytes = 256
 	MaxTargetBytes         = 512
 	MaxExternalRefBytes    = 512
-	// 256 KiB, up from 64 KiB: at the old cap the Responder deployment
-	// trimmed context on 100% of turns — dropping evidence, related
-	// summaries, and continuity on nearly every call — and still hit
-	// transport elision. Every ladder model accepts far larger inputs, and
-	// callers bound their sources independently, so the cap's job is to be
-	// a transport backstop, not the working ceiling of every turn.
+	// A transport backstop, not the working ceiling of a turn: every ladder model accepts far larger
+	// inputs and callers bound their sources themselves. At 64 KiB Responder trimmed context on
+	// every turn.
 	MaxPromptBytes = 256 << 10
 	// Output contracts are control data, not prompt text. Keep one exact schema
 	// beside the turn so the completion boundary can enforce it after a restart.
@@ -157,10 +154,8 @@ const (
 	EventActivityElided EventType = "activity.elided"
 	// EventProviderBackoff narrates a rate-limit decision mid-turn: a rung
 	// marked cooling, the rotation taken or refused, and the reset the
-	// provider promised. Before it existed a throttled turn was silent — a
-	// client watching the event stream could not tell a model waiting out a
-	// 429 from a dead transport, and Responder cancelled crawling turns on
-	// exactly that ambiguity (2026-08-15).
+	// provider promised. It lets a client watching the event stream tell a
+	// model waiting out a 429 from a dead transport.
 	EventProviderBackoff EventType = "provider.backoff"
 	// EventProviderAlive is the transport's own pulse: frames are still
 	// arriving from the provider child, and nothing higher-level has been
@@ -293,7 +288,7 @@ type Session struct {
 	Target          string `json:"target"`
 	AuthorityDigest string `json:"authority_digest,omitempty"` // Historical rows only.
 	// JobDocument is the controller's immutable execution authority for a v2 worker session.
-	// Historical policy-backed rows leave both job fields empty. The document stays private:
+	// A row from before jobs leaves both job fields empty. The document stays private:
 	// public session responses expose only its digest, never source-transfer descriptors.
 	JobDocument json.RawMessage `json:"-"`
 	JobRef      string          `json:"job_ref,omitempty"`
@@ -342,9 +337,9 @@ type Session struct {
 	UpdatedAt            time.Time     `json:"updated_at"`
 }
 
-// RepositoryFreshnessReceipt is the non-secret proof captured by the Coop
-// process that actually resolves repository policy. RemoteIdentity is the
-// configured remote alias, never its potentially credential-bearing URL.
+// RepositoryFreshnessReceipt is the non-secret proof of which revision a session's
+// repository was resolved to. RemoteIdentity is the configured remote alias, never
+// its potentially credential-bearing URL.
 type RepositoryFreshnessReceipt struct {
 	Version               int       `json:"version"`
 	Name                  string    `json:"name"`
@@ -389,12 +384,12 @@ func ControllerToolsDigest(value *ControllerTools) string {
 }
 
 // SourceKind is the closed set of sources a caller may select INSIDE the repository its
-// session policy already authorizes. It names no repository, path, remote, URL or raw ref:
-// every ref is derived by Coop from the operator policy plus one bounded selector value.
+// job authorizes. It names no repository, path, remote, URL or raw ref: every ref derives from
+// the job's remote plus one bounded selector value.
 type SourceKind string
 
 const (
-	// SourceDefault is the policy-configured remote and default branch.
+	// SourceDefault is the job's remote and default branch.
 	SourceDefault SourceKind = "default"
 	// SourceBranch derives refs/heads/<name> and nothing else.
 	SourceBranch SourceKind = "branch"
@@ -404,8 +399,7 @@ const (
 	SourceCommit SourceKind = "commit"
 )
 
-// MaxSourceBranchBytes bounds a selected branch name, matching the bound an operator-configured
-// policy branch already carries.
+// MaxSourceBranchBytes bounds a selected branch name.
 const MaxSourceBranchBytes = 240
 
 // MaxSourcePullRequestNumber bounds a selected pull-request number. It is far above any real
@@ -426,8 +420,7 @@ type SourceSelector struct {
 
 // ValidateSourceSelectorShape is the transport-neutral half of selector validation: the union
 // discriminator, per-kind field exclusivity, and bounds. It deliberately runs no subprocess, so
-// the durable store can repeat it as its final boundary; the service layer adds Git's own ref
-// rules and the operator-policy authority check on top.
+// the durable store can repeat it as its final boundary.
 func ValidateSourceSelectorShape(selector SourceSelector) error {
 	invalid := func(detail string) error {
 		return &Error{Code: CodeInvalidRequest, Detail: detail}
@@ -482,10 +475,10 @@ func validSourceBranchName(name string) bool {
 // states which exact objects the session was admitted on.
 const SourceBindingVersion = 1
 
-// SourceBinding is the immutable version-1 source identity of one session, resolved by Coop
-// against the operator-configured remote BEFORE the workspace exists. Repository authority
-// remains in the session's policy; this records only policy-derived refs, the exact objects, and
-// when they were proven. It never carries a remote URL or credential.
+// SourceBinding is the immutable version-1 source identity of one session, resolved by the
+// controller BEFORE the workspace exists. Repository authority remains in the session's job; this
+// records only the refs that job derives, the exact objects, and when they were proven. It never
+// carries a remote URL or credential.
 //
 // SelectedRef is null for an exact commit, which has no advertised ref to name. For the default
 // source the selected and default identities are equal. BaseCommit is the merge base of the
@@ -609,7 +602,7 @@ func validSourceRemoteIdentity(remote string) bool {
 	return true
 }
 
-// CompanionRepository is an operator-policy-selected repository snapshot available read-only
+// CompanionRepository is a job-selected repository snapshot available read-only
 // during a session. Repository and Workspace are durable host bindings and are omitted from the
 // public HTTP DTO; BaseCommit is the immutable identity presented to clients.
 type CompanionRepository struct {
@@ -643,7 +636,7 @@ type Turn struct {
 	// controller restart — the floor has to survive the crash the same way the
 	// prompt does.
 	MinTargetIndex int `json:"min_target_index,omitempty"`
-	// RewindTarget explicitly starts this turn on the first policy rung. An
+	// RewindTarget explicitly starts this turn on the ladder's first rung. An
 	// omitted floor cannot express that: ordinary turns inherit the session's
 	// durable current target, which may already be a higher rung.
 	RewindTarget bool `json:"rewind_target,omitempty"`
@@ -680,13 +673,7 @@ type TurnCandidate struct {
 	Attempt int    `json:"attempt"`
 }
 
-// Usage is what one turn cost the provider.
-//
-// The stream decoders have always parsed these — codex reports input, cached
-// input, output and reasoning tokens — but only the `coop run` telemetry path
-// kept them, written to .agent/runs/<run>.jsonl. A caller driving sessions
-// through this API had no way to learn what a turn spent, so a host could show
-// a hundred completed turns and not one number about any of them.
+// Usage is what one turn cost the provider, as its stream reports it.
 //
 // Cached input is reported separately rather than folded into the input total:
 // it is priced differently by every provider, and a caller computing cost from
@@ -769,11 +756,9 @@ type CreateSessionRequest struct {
 }
 
 // SubmitTurnRequest admits one turn. MinTargetIndex is the escalation floor: the
-// turn is delivered no lower than that rung of the session policy's target
-// ladder, for this turn only. Zero is absent, which is also rung zero, so a
-// caller that never sets it is indistinguishable from one submitting against the
-// pre-ladder-floor API — including in CanonicalRequestHash, which the omitempty
-// tag keeps byte-identical so an in-flight idempotency key still replays.
+// turn is delivered no lower than that rung of the job's target ladder, for this
+// turn only. Zero is absent, which is also rung zero, and the omitempty tag keeps
+// it out of CanonicalRequestHash.
 type SubmitTurnRequest struct {
 	SessionID        string
 	ExpectedRevision int64

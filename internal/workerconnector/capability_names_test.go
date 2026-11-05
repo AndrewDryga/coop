@@ -19,8 +19,8 @@ func TestWorkerFreshnessCapabilityRequiresLiveSessionDaemonProof(t *testing.T) {
 	}
 
 	for name, scripted := range map[string]*capabilityAPI{
-		"old endpoint": {err: errors.New("404")},
-		"malformed":    {response: json.RawMessage(`{"repository_freshness_receipt_versions":[1]}`)},
+		"no endpoint": {err: errors.New("404")},
+		"malformed":   {response: json.RawMessage(`{"repository_freshness_receipt_versions":[1]}`)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := LiveCapabilities(context.Background(), scripted)

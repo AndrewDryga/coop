@@ -68,8 +68,8 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Session database schema | `<state>/session.sqlite` | 26 | 1 | converted when the service opens the store | builds using schema 26 |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
-| Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | none exist | none |
-| Worker create origins | `<state>/connector/create-origins/` | 1 | 1 | none exist | none |
+| Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | no older version, but a version 1 stream with no create origin can remain from before origins; kept as a dormant generation floor, and `coop sessions check` cannot tell it apart | none |
+| Worker create origins | `<state>/connector/create-origins/` | 1 | 1 | no older version, but a version 1 origin with an empty `operation_id` can remain from a receipt that proved only the session; read in place | none |
 | Fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 3 | 1 | read; converted when the stopped fork next starts (isolated forks write 4) | v10.1.2 and later |
 | Fork reservation | `~/.local/state/coop/forks/<key>/reservations/` | 2 | 1 | held: keeps the fork name blocked until recovered offline | none |
 | Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
@@ -83,7 +83,7 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | `<repo>-forks/.coop/` | copied in once, by the first open of the project or a box launch in it | builds after v11.3.0 |
 | Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | read | read, updated and ended; new records go to the project's own registry | builds after v11.3.0 |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
-| Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | read | none needed |
+| Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | decoded so restore can refuse it by name; only a checkpoint file in the worker's own state is still served | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
@@ -105,6 +105,8 @@ label then reads as unknown: reported, never removed.
 ## Changelog
 - 2026-11-04 — the isolated-fork source receipt no longer reads version 1: no commit wrote one, so a
   stray one is refused as invalid. It stays out of the table, having only one format.
+- 2026-11-04 — corrected three "Older versions today" cells against the code: event streams and create
+  origins can hold older records under version 1, and restore refuses a version 1 checkpoint bundle.
 - 2026-11-03 — added the version 1 immutable primary receipt and stopped-worker inventory of
   current workspaces and staged discards. Current-format checks use the runtime reader; unknown
   versions remain protected. Swept version constants through TestOneUpgradeWaypoints.

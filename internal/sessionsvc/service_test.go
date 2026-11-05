@@ -1426,10 +1426,10 @@ func TestLegacySessionDiscardReplayCannotTouchReplacementWorkspace(t *testing.T)
 
 // Responder's first live engineering-confirmation acceptance on 2026-08-18
 // produced a real commit from an ordinary triage session. This holds the whole
-// operator-policy seam shut: the authority bit must survive async workspace
+// seam shut: the authority bit must survive async workspace
 // creation, durable session lookup, and the public API projection used by the
 // caller to audit the session it received.
-func TestAReadOnlyPolicyRemainsReadOnlyThroughSessionCreation(t *testing.T) {
+func TestAReadOnlyJobRemainsReadOnlyThroughSessionCreation(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
@@ -1449,15 +1449,15 @@ func TestAReadOnlyPolicyRemainsReadOnlyThroughSessionCreation(t *testing.T) {
 	}
 	if !created.RepositoryReadOnly || !persisted.RepositoryReadOnly ||
 		!publicSession(persisted).RepositoryReadOnly {
-		t.Fatalf("read-only policy widened across creation: created=%+v persisted=%+v public=%+v",
+		t.Fatalf("read-only job widened across creation: created=%+v persisted=%+v public=%+v",
 			created, persisted, publicSession(persisted))
 	}
 }
 
 // Responder model evals must fail closed unless the public Coop resource proves that
-// neither project environment nor project MCP authority reached the model session. The
-// policy already enforced and persisted these bits, but omitting them from SessionDTO
-// made an isolated real session indistinguishable from an ambient-authority session.
+// neither project environment nor project MCP authority reached the model session.
+// Omitting these bits from SessionDTO would make an isolated real session
+// indistinguishable from an ambient-authority session.
 func TestProjectIsolationRemainsPublicThroughSessionCreation(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
@@ -2019,17 +2019,17 @@ func TestOperationalErrorDetailRepairsShortInvalidUTF8BeforeReceipt(t *testing.T
 	}
 }
 
-func TestSessionServiceCreateReplayRejectsLegacyRepositoryPinsWithoutFreshness(t *testing.T) {
+func TestSessionServiceCreateReplayRejectsAnIntentWithNoJob(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
 	defer service.Stop()
-	request := service.request(t, "legacy-pinned-task")
+	request := service.request(t, "no-job-task")
 	op, replay, err := service.Store().ReserveOperation(
-		context.Background(), "CreateRemoteSession", "legacy-pinned-create", request,
+		context.Background(), "CreateRemoteSession", "no-job-create", request,
 	)
 	if err != nil || replay {
-		t.Fatalf("reserve legacy pinned create = %+v, replay=%v, err=%v", op, replay, err)
+		t.Fatalf("reserve create = %+v, replay=%v, err=%v", op, replay, err)
 	}
 	intent, err := service.captureCreateIntent(context.Background(), op, request)
 	if err != nil {
@@ -2045,17 +2045,17 @@ func TestSessionServiceCreateReplayRejectsLegacyRepositoryPinsWithoutFreshness(t
 	}
 
 	if _, err := service.CreateRemoteSession(
-		context.Background(), "legacy-pinned-create", request,
+		context.Background(), "no-job-create", request,
 	); session.CodeOf(err) != session.CodeOperationUncertain {
-		t.Fatalf("legacy pinned create replay error = %v", err)
+		t.Fatalf("no-job create replay error = %v", err)
 	}
 	failed, err := service.Store().GetOperationByID(context.Background(), op.ID)
 	if err != nil || failed.State != session.OperationUncertain ||
 		failed.ErrorCode != session.CodeOperationUncertain {
-		t.Fatalf("legacy pinned create operation = %+v, err=%v", failed, err)
+		t.Fatalf("no-job create operation = %+v, err=%v", failed, err)
 	}
 	if _, err := service.Store().GetSession(context.Background(), intent.SessionID); !errors.Is(err, session.ErrSessionNotFound) {
-		t.Fatalf("legacy pinned intent created an unproven session: %v", err)
+		t.Fatalf("no-job intent created an unproven session: %v", err)
 	}
 }
 
@@ -3918,7 +3918,7 @@ func (r *recoveredTurnCleanupRunner) Run(_ context.Context, sess session.Session
 	return turn, errors.New("fixture stops after the ordering assertion")
 }
 
-func TestSessionServiceCleansHistoricalRuntimeBeforeFirstRecoveredTurn(t *testing.T) {
+func TestSessionServiceCleansOutlivedRuntimeBeforeFirstRecoveredTurn(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &recoveredTurnCleanupRunner{ran: make(chan struct{})}
@@ -3933,7 +3933,7 @@ func TestSessionServiceCleansHistoricalRuntimeBeforeFirstRecoveredTurn(t *testin
 	ctx := context.Background()
 	job := service.Job
 	job.Limits.MaxTurns, job.Limits.MaxQueuedTurns, job.Limits.MaxQueuedBytes = 2, 2, 1024
-	sess, err := service.CreateRemoteSession(ctx, "historical-runtime", jobRequest(t, job, "historical-runtime"))
+	sess, err := service.CreateRemoteSession(ctx, "outlived-runtime", jobRequest(t, job, "outlived-runtime"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3951,7 +3951,7 @@ func TestSessionServiceCleansHistoricalRuntimeBeforeFirstRecoveredTurn(t *testin
 		t.Fatal("recovered turn did not start")
 	}
 	if runner.runBeforeCleanup.Load() {
-		t.Fatal("recovered turn started before its historical runtime was cleaned")
+		t.Fatal("recovered turn started before its outlived runtime was cleaned")
 	}
 }
 
@@ -3972,11 +3972,11 @@ func (r *startupCleaningRunner) ReapInterruptedTurn(_ context.Context, _ session
 	return r.reapErr
 }
 
-// Cleaning every historical session synchronously once made daemon restart
-// issue more than one hundred serial Docker inventory calls before the control
-// socket became useful. Interrupted turns have their exact reaper above; the
+// Cleaning every session that outlived the last daemon synchronously would make
+// a restart issue more than one hundred serial Docker inventory calls before the
+// control socket is useful. Interrupted turns have their exact reaper above; the
 // ordinary parked backlog must remain bounded janitor work.
-func TestSessionServiceDefersHistoricalParkedCleanupWithoutDelayingStartup(t *testing.T) {
+func TestSessionServiceDefersOutlivedParkedCleanupWithoutDelayingStartup(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &startupCleaningRunner{}
@@ -4000,7 +4000,7 @@ func TestSessionServiceDefersHistoricalParkedCleanupWithoutDelayingStartup(t *te
 		t.Fatal(err)
 	}
 	if len(runner.cleaned) != 0 {
-		t.Fatalf("startup synchronously cleaned %d historical parked sessions", len(runner.cleaned))
+		t.Fatalf("startup synchronously cleaned %d outlived parked sessions", len(runner.cleaned))
 	}
 	service.cleanupIdleSessionRuntimes(context.Background())
 	if len(runner.cleaned) != 2 {
@@ -4024,7 +4024,7 @@ func TestSessionServiceCleanupFailureDoesNotBrickStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := service.Start(context.Background()); err != nil {
-		t.Fatalf("startup failed because one historical cleanup failed: %v", err)
+		t.Fatalf("startup failed because one outlived cleanup failed: %v", err)
 	}
 }
 
@@ -5547,10 +5547,3 @@ func TestRetireQuarantinedSessionTombstonesWithoutTouchingTheWorkspace(t *testin
 		t.Fatalf("retire of a healthy session = %v, want invalid_session_state", err)
 	}
 }
-
-// The ancestry error names the component at fault and, for a link, the real path to pass — /tmp
-// on macOS and a dotfile-managed ~/.config are links, and the operator needs the fix, not a riddle.
-// A create pinned to a policy digest is refused, before any intent is journaled or a workspace
-// exists, when the daemon's current resolution of that same-name policy no longer produces it —
-// the full digest and the model-independent authority digest each on their own. Unpinned creates
-// and matching pins are unchanged.

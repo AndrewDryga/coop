@@ -1341,7 +1341,7 @@ func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testin
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
 	store := openTestStore(t, root)
-	sess, err := store.CreateSession(ctx, "policy-fields", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+	sess, err := store.CreateSession(ctx, "job-fields", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
 		Target: "target", OmitEnv: true, OmitMCP: true,
 		RepositoryReadOnly: true,
 		TurnTimeout:        3 * time.Minute, MaxPatchBytes: 1234,
@@ -1357,7 +1357,7 @@ func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testin
 		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
 		sess.ControllerTools == nil || sess.ControllerTools.Token != strings.Repeat("t", 48) {
-		t.Fatalf("created policy fields = %+v", sess)
+		t.Fatalf("created job fields = %+v", sess)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -1370,7 +1370,7 @@ func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testin
 		reopened.TurnTimeout != sess.TurnTimeout || reopened.MaxPatchBytes != sess.MaxPatchBytes ||
 		reopened.ControllerTools == nil || reopened.ControllerTools.Endpoint != sess.ControllerTools.Endpoint ||
 		reopened.ControllerTools.Token != sess.ControllerTools.Token {
-		t.Fatalf("reopened policy fields = %+v, err=%v", reopened, err)
+		t.Fatalf("reopened job fields = %+v, err=%v", reopened, err)
 	}
 
 	badSessionReq := CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "target"}

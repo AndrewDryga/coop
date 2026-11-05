@@ -28,7 +28,7 @@ const (
 
 // companionPrepareParallelism bounds how many companion repositories one
 // session creation prepares at once. A cache miss materializes a full clone and
-// checkout; previously sixteen sequential copies held session creation for six minutes
+// checkout; sixteen sequential copies held session creation for six minutes
 // on a colima worker before the agent could start (2026-10-15).
 const companionPrepareParallelism = 4
 

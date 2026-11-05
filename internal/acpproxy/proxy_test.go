@@ -73,8 +73,8 @@ func (f *fakeChild) child() *Child {
 	return child
 }
 
-// proxyHarness wires a full Run around in-memory pipes — the prologue every restart-flavored
-// proxy test used to copy. The test writes editor frames to clientIn, reads what the editor
+// proxyHarness wires a full Run around in-memory pipes, the prologue of every restart-flavored
+// proxy test. The test writes editor frames to clientIn, reads what the editor
 // would see from clientOut, and talks as box i via children[i] (whose inR side is pre-wrapped
 // in childIn[i]). n children are queued into the factory: child 0 is the first live box, each
 // restart consumes the next.

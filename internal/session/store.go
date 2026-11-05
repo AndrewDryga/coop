@@ -1290,8 +1290,8 @@ func (s *Store) RetiredQuarantinedSessions(ctx context.Context) ([]string, error
 }
 
 // ListRuntimeCleanupTurns returns turns whose runtime may still exist after their durable work is
-// recoverable. An exact runtime receipt outlives a terminal turn until teardown succeeds. Legacy
-// active turns without a receipt remain eligible through their deterministic turn runtime ID.
+// recoverable. An exact runtime receipt outlives a terminal turn until teardown succeeds. An active
+// turn a crash stopped before it recorded a receipt stays eligible through its deterministic run ID.
 func (s *Store) ListRuntimeCleanupTurns(ctx context.Context) ([]Turn, error) {
 	// Runtime ownership needs identity, state, and the candidate digest only.
 	// Selecting the full turn here would read every durable schema and candidate
@@ -1631,7 +1631,7 @@ func validateSubmitRequest(req SubmitTurnRequest) error {
 		return &Error{Code: CodeInvalidRequest, Detail: "prompt must be bounded UTF-8 text"}
 	}
 	// The store owns only the shape of the index. Whether the rung exists is a
-	// question about the session's policy ladder, which this layer never sees;
+	// question about the job's target ladder, which this layer never sees;
 	// the service checks it there, where the answer can name the ladder's size.
 	if req.MinTargetIndex < 0 {
 		return &Error{Code: CodeInvalidRequest, Detail: "min_target_index must not be negative"}
@@ -2133,7 +2133,7 @@ func validateWorkspaceTaskBinding(binding WorkspaceTaskBinding) error {
 	return nil
 }
 
-// RotateTurnTarget moves a session onto another rung of its policy's target ladder — because the
+// RotateTurnTarget moves a session onto another rung of its job's target ladder — because the
 // active rung rate limited the in-flight turn, or because that turn was admitted with an
 // escalation floor above it — and rewinds the turn so it can be delivered again. It
 // compare-and-swaps on the active target, so a rotation can never double-advance past a rung

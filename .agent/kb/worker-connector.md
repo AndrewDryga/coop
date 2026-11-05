@@ -51,7 +51,7 @@ The traps the code does not make obvious:
   own settings and exact source. `job-setup:2` is advertised only when the running daemon proves
   it can decode v2 complete setup. Source selection has no separate advertised capability.
 - **Poll references are opaque correlation, not worker identity.** Identity validation, connector
-  construction and polling share one formatter. IDs up to 230 bytes keep the legacy
+  construction and polling share one formatter. IDs up to 230 bytes use the
   `poll:<ID>:<sequence>` shape, reserving all 20 uint64 digits. Longer IDs use
   `poll-sha256:<SHA256(ID)>:<sequence>`, a disjoint namespace so hash-like short IDs cannot collide.
   The full Worker.ID is still validated and advertised. Exact response echo remains mandatory
@@ -175,6 +175,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-04 — `poll:` is the normal shape for any ID up to 230 bytes, not a legacy one.
 - 2026-10-28 — bounded failed origin lookups without rewriting pending custody or starving new activity.
 - 2026-10-27 — kept acknowledged create conflicts from starving activity; bounded exact-operation
   repair preserves original receipt bytes until retirement and leaves generation watermarks intact.

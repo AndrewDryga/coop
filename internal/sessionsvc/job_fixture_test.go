@@ -16,7 +16,7 @@ import (
 )
 
 // The fixture authors the same job document a controller sends. It does not intercept
-// service calls or admit the retired policy-name request format.
+// service calls.
 type sessionFixture struct {
 	*Service
 	Job workerproto.JobSpec

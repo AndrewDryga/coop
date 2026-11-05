@@ -215,7 +215,7 @@ func TestReceiptPagesRespectCountAndWireBytesAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
+func TestUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 5, 18, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
@@ -232,32 +232,32 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	if err := executor.journal.bindEventStream(createCommand(now.Add(time.Minute)), "coop-session-1"); err != nil {
 		t.Fatal(err)
 	}
-	legacy := createCommand(now.Add(time.Minute))
-	legacy.CommandID, legacy.IdempotencyKey = "command:legacy", "operation:legacy"
-	legacy.Kind, legacy.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
-	entry, err := executor.journal.begin(legacy)
+	unsendable := createCommand(now.Add(time.Minute))
+	unsendable.CommandID, unsendable.IdempotencyKey = "command:unsendable", "operation:unsendable"
+	unsendable.Kind, unsendable.Payload = "api_request", apiPayload("GET", "/v1/sessions/session-1", nil)
+	entry, err := executor.journal.begin(unsendable)
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry.State = "completed"
 	entry.Result = &workerproto.CommandResult{
-		CommandID: legacy.CommandID, OperationKey: legacy.IdempotencyKey, State: "succeeded",
+		CommandID: unsendable.CommandID, OperationKey: unsendable.IdempotencyKey, State: "succeeded",
 		Resource: json.RawMessage(`{"value":"` + strings.Repeat("<", 300<<10) + `"}`), Error: json.RawMessage("null"),
 	}
-	// Reproduce the old writer expanding a legal result beyond the protocol bound.
-	legacyBytes, err := json.Marshal(entry)
+	// Write a legal result that its encoding expands beyond the protocol bound.
+	unsendableBytes, err := json.Marshal(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyPath := executor.journal.path(legacy.CommandID)
-	if err := os.WriteFile(legacyPath, legacyBytes, 0o600); err != nil {
+	unsendablePath := executor.journal.path(unsendable.CommandID)
+	if err := os.WriteFile(unsendablePath, unsendableBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	legacyInfo, err := os.Stat(legacyPath)
+	unsendableInfo, err := os.Stat(unsendablePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	healthy := legacy
+	healthy := unsendable
 	healthy.CommandID, healthy.IdempotencyKey = "command:healthy", "operation:healthy"
 	if _, err := executor.Execute(ctx, healthy); err != nil {
 		t.Fatal(err)
@@ -274,14 +274,14 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 		}
 		poll, err := workerproto.DecodePoll(body)
 		if err != nil {
-			t.Errorf("invalid legacy-isolation poll: %v", err)
+			t.Errorf("invalid poll beside an unsendable receipt: %v", err)
 			http.Error(w, "invalid", http.StatusBadRequest)
 			return
 		}
 		response := workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: now}
 		for _, result := range poll.CommandResults {
-			if result.CommandID == legacy.CommandID {
-				t.Error("legacy unsendable result reached the controller")
+			if result.CommandID == unsendable.CommandID {
+				t.Error("unsendable result reached the controller")
 			}
 			response.AcknowledgedResultCommandIDs = append(response.AcknowledgedResultCommandIDs, result.CommandID)
 		}
@@ -337,8 +337,8 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 		}
 	}
 	mode.Store(4)
-	if err := poll(); err == nil || !strings.Contains(err.Error(), legacy.CommandID) {
-		t.Fatalf("legacy/cursor refusal = %v", err)
+	if err := poll(); err == nil || !strings.Contains(err.Error(), unsendable.CommandID) {
+		t.Fatalf("unsendable/cursor refusal = %v", err)
 	}
 	if _, err := os.Stat(executor.journal.path(healthy.CommandID)); !os.IsNotExist(err) {
 		t.Fatalf("cursor failure prevented acknowledgement: %v", err)
@@ -351,8 +351,8 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	}
 	mode.Store(0)
 	for range 2 {
-		if err := poll(); err == nil || !strings.Contains(err.Error(), legacy.CommandID) {
-			t.Fatalf("legacy delivery issue = %v", err)
+		if err := poll(); err == nil || !strings.Contains(err.Error(), unsendable.CommandID) {
+			t.Fatalf("unsendable delivery issue = %v", err)
 		}
 	}
 	if _, err := os.Stat(executor.journal.path(delivered.CommandID)); !os.IsNotExist(err) {
@@ -361,13 +361,13 @@ func TestLegacyUnsendableReceiptDoesNotBlockSettlementOrCommands(t *testing.T) {
 	if len(api.afters) == 0 {
 		t.Fatal("unsendable custody permanently suppressed activity")
 	}
-	got, err := os.ReadFile(legacyPath)
-	if err != nil || !bytes.Equal(got, legacyBytes) {
-		t.Fatalf("legacy custody changed: %v", err)
+	got, err := os.ReadFile(unsendablePath)
+	if err != nil || !bytes.Equal(got, unsendableBytes) {
+		t.Fatalf("unsendable custody changed: %v", err)
 	}
-	currentInfo, err := os.Stat(legacyPath)
-	if err != nil || !os.SameFile(legacyInfo, currentInfo) {
-		t.Fatalf("legacy receipt replaced: %v", err)
+	currentInfo, err := os.Stat(unsendablePath)
+	if err != nil || !os.SameFile(unsendableInfo, currentInfo) {
+		t.Fatalf("unsendable receipt replaced: %v", err)
 	}
 }
 

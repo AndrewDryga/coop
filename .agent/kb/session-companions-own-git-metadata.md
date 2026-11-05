@@ -3,7 +3,7 @@ name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
 sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
-updated: 2026-11-03
+updated: 2026-11-04
 ---
 
 # Session companions own their Git metadata
@@ -53,8 +53,9 @@ commit-bound ownership marker before discard. Cleanliness
 is computed with a private temporary Git directory, config, and index that reads only the verified
 companion object database and worktree. It ignores submodule recursion but separately streams the
 pinned index's gitlinks and independently verifies populated children's exact HEAD and cleanliness.
-Empty placeholders remain recognized only for historical cleanup. Legacy linked snapshots remain
-recognizable so sessions created by older Coop binaries can be safely discarded during rollout.
+Empty placeholders remain recognized only for historical cleanup. The check still accepts a linked
+snapshot, but no discard reaches one: discard needs an owner binding, and linked companions stopped
+before bindings began.
 New workspaces receive full LFS payloads and independently owned object storage at every recursive
 level; clean companion replay rehydrates any pointers before exposing the workspace again.
 The isolated check never enables repository filters; it treats a worktree
@@ -110,6 +111,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-04 — corrected the linked-snapshot line: nothing reaches one, so it is not a rollout path.
 - 2026-11-03 — extend immutable payload sharing to frozen read-only primaries; close unreserved native-launch and unknown-receipt cleanup gaps.
 - 2026-11-03 — share verified immutable companion payloads while keeping per-session metadata, mounts and custody; bounded cache reclamation uses durable filesystem references.
 - 2026-10-17 — dropped the run.go line numbers after `companionRepositoryMounts`, which the sentence

@@ -108,8 +108,8 @@ func TestSessionHTTPUnixSocketOwnershipAndStalePaths(t *testing.T) {
 	}
 }
 
-// The daemon proves each supported contract version independently; an older daemon behind a new
-// connector must not inherit a newer connector's job authority claim.
+// The daemon proves each supported contract version independently, so a connector claims only
+// what its daemon answers.
 func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
@@ -1333,7 +1333,7 @@ func (r *preparingHTTPRunner) PrepareSession(_ context.Context, _ session.Sessio
 	return nil
 }
 
-func TestSessionHTTPPreparesPolicyOptedWarmExecution(t *testing.T) {
+func TestSessionHTTPPreparesAJobsWarmExecution(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	runner := &preparingHTTPRunner{}

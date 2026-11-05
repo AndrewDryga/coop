@@ -133,7 +133,7 @@ func TestAPassingReviewKeepsItsGatesWarnings(t *testing.T) {
 }
 
 // A gate that could not start still leaves what Coop printed while starting it,
-// and the start failure itself is no longer hidden from the controller.
+// and the start failure itself reaches the controller.
 func TestAReviewWhoseGateCouldNotStartKeepsWhatItPrinted(t *testing.T) {
 	service, sess := reviewGateOutputFixture(t, "gate-output-startup", func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
 		fmt.Fprintln(request.Output, "pulling the check image")

@@ -142,9 +142,9 @@ func TestSessionLFSWorkSurvivesPrimaryCompanionAndReviewMaterialization(t *testi
 		companion := created.Companions[0]
 		child := filepath.Join(companion.Workspace, path)
 		pointer := sessionWorkspaceGit(t, child, "show", "HEAD:asset.bin") + "\n"
-		// Reproduce a historical unhydrated file as a private inode. Current
-		// snapshots are immutable; mutating their shared inode is not a valid
-		// way to construct the older partially materialized checkout.
+		// Plant an unhydrated file as a private inode. Snapshots are immutable;
+		// mutating their shared inode is not a valid way to construct a
+		// partially materialized checkout.
 		if err := os.Remove(filepath.Join(child, "asset.bin")); err != nil {
 			t.Fatal(err)
 		}

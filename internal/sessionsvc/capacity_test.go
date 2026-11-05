@@ -60,11 +60,11 @@ func TestRuntimeCapacityReservationIsAtomicAndCleanupFailureStaysOccupied(t *tes
 	}
 	s.historicalPending = map[string]struct{}{"old": {}}
 	if ok, _ := s.reserveRuntimeSlot("new"); ok || s.RuntimeCapacity().TurnSlotsFree != 0 {
-		t.Fatal("unknown historical runtime admitted new work")
+		t.Fatal("a runtime that outlived the last daemon admitted new work")
 	}
 	s.markHistoricalRuntimeClean("old")
 	if ok, _ := s.reserveRuntimeSlot("new"); !ok {
-		t.Fatal("historical cleanup did not wake admission")
+		t.Fatal("its proven cleanup did not wake admission")
 	}
 }
 

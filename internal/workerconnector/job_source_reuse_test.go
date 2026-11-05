@@ -14,8 +14,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
-// A fresh resolution of the same revision used to materialize the whole source
-// tree again. Its Git packs shared bytes, but every checkout and LFS payload grew.
+// A fresh resolution of the same revision must not materialize the whole source
+// tree again. Its Git packs would share bytes, but every checkout and LFS payload would grow.
 func TestFreshSourceReceiptsReuseImmutableWorkingTreeBytes(t *testing.T) {
 	ctx := context.Background()
 	remote, source := backgroundStagingFixture(t)

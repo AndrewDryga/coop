@@ -261,8 +261,7 @@ func ReloadSnapshot(err error) (*Snapshot, bool) {
 
 // RunWith is Run plus resume/reload: opts.Resume seeds + replays session state onto the first child
 // (a resumed start), and a receive on opts.Reload snapshots, stops the child, and returns a
-// reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is
-// byte-identical to the pre-reload Run.
+// reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is plain Run.
 func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -682,8 +681,9 @@ type SessionSnap struct {
 	Turned    bool            `json:"turned"`
 }
 
-// Validate rejects handoffs that predate the current single-initialize and explicit native-identity
-// contract. A failed validation is a fresh-start condition; no partial session state is restored.
+// Validate rejects a handoff with no single initialize request or explicit native identities, which
+// a re-exec can receive from an older binary. A failed validation is a fresh-start condition; no
+// partial session state is restored.
 func (snap Snapshot) Validate() error {
 	if len(snap.Initialize) == 0 || parse(snap.Initialize).Method != "initialize" {
 		return errors.New("ACP resume snapshot is missing its initialize request")

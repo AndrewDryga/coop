@@ -64,8 +64,8 @@ func TestAFirstChildThatNeverAnswersMovesTheSessionToAHoldingChild(t *testing.T)
 	_ = h.shutdown()
 }
 
-// A replacement that hangs used to end the session after the long grace, with nothing said. Its threads
-// and a prompt waiting on it now move to the holding child, which runs no turn.
+// A replacement that hangs must not end the session: after the long grace its threads and a prompt
+// waiting on it move to the holding child, which runs no turn.
 func TestAReplacementThatNeverAnswersMovesTheSessionToAHoldingChild(t *testing.T) {
 	shrinkFirstAnswer(t, 60*time.Millisecond, time.Hour)
 	window := ChildStartWindow
@@ -278,8 +278,8 @@ func TestHoldingChildrenThatNeverAnswerEndTheSessionAndSayWhy(t *testing.T) {
 	}
 }
 
-// A real box that answers initialize and then goes quiet in replay is hung too. It used to end the
-// session; it now counts as a child that could not start.
+// A real box that answers initialize and then goes quiet in replay is hung too: it counts as a child
+// that could not start.
 func TestAChildThatGoesQuietPartwayThroughReplayMovesToAHoldingChild(t *testing.T) {
 	idle := replayIdleTimeout
 	replayIdleTimeout = 100 * time.Millisecond

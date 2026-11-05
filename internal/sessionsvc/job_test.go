@@ -463,8 +463,8 @@ func TestControllerJobHTTPCreateCarriesAuthorityAndRedactsDocument(t *testing.T)
 	}
 }
 
-// Work used to run without the repository's tools or database. Only the controller's frozen
-// setup may fix that: an inherited host value or an agent-edited workspace cannot grant it.
+// Only the controller's frozen setup gives Work the repository's tools or database: an inherited
+// host value or an agent-edited workspace cannot grant it.
 func TestProjectRuntimeChildUsesTheFrozenJobAndPrivateSource(t *testing.T) {
 	repo, _ := gitrepo.NewCommitted(t)
 	fixture := newReviewTestService(t, repo, 1<<20, nil)

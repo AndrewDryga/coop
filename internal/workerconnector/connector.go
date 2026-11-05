@@ -58,7 +58,7 @@ func NewConnector(config ConnectorConfig) (*Connector, error) {
 
 func pollReference(workerID string, sequence uint64) string {
 	// Reserve all 20 uint64 digits up front so sequence growth cannot exceed the
-	// protocol's 256-byte bound. Keep hashed IDs outside the legacy poll: namespace.
+	// protocol's 256-byte bound. Keep hashed IDs outside the poll: namespace.
 	if len(workerID) > 256-len("poll::")-20 {
 		return fmt.Sprintf("poll-sha256:%x:%d", sha256.Sum256([]byte(workerID)), sequence)
 	}

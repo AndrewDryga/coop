@@ -157,16 +157,15 @@ const schemaV9 = `
 ALTER TABLE turns ADD COLUMN min_target_index INTEGER NOT NULL DEFAULT 0;
 `
 
-// A turn may explicitly return a durably escalated session to its first policy
+// A turn may explicitly return a durably escalated session to its ladder's first
 // rung. This is request data like the escalation floor and must survive the
 // asynchronous admission/lease boundary.
 const schemaV10 = `
 ALTER TABLE turns ADD COLUMN rewind_target INTEGER NOT NULL DEFAULT 0;
 `
 
-// Repository access is immutable session authority. It must survive daemon
-// restarts rather than being re-read from an operator policy that may have
-// changed while the session was open.
+// Repository access is immutable session authority: it must survive daemon
+// restarts unchanged.
 const schemaV11 = `
 ALTER TABLE sessions ADD COLUMN repository_read_only INTEGER NOT NULL DEFAULT 0;
 `
@@ -226,8 +225,7 @@ ALTER TABLE turns ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
 ALTER TABLE turns ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
 `
 
-// Policy identity includes model and budget choices. Keep the model-independent authority digest
-// beside it so a controller can prove that differently sized execution lanes cannot widen access.
+// The model-independent authority digest of a session from before jobs. New rows leave it empty.
 const schemaV19 = `
 ALTER TABLE sessions ADD COLUMN authority_digest TEXT NOT NULL DEFAULT '';
 `
@@ -250,22 +248,21 @@ ALTER TABLE sessions ADD COLUMN network_qualification TEXT NOT NULL DEFAULT '';
 `
 
 // The execution mode is immutable session authority like the read-only bit above it: a
-// restarted daemon relaunches the session under the mode it was created with, never under
-// a policy edited since. A row from before modes existed stores an empty mode and reads as normal.
+// restarted daemon relaunches the session under the mode it was created with. A row from
+// before modes existed stores an empty mode and reads as normal.
 const schemaV22 = `
 ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';
 `
 
-// One session binds one immutable source inside its policy's repository. The three PR-only
-// columns below it are retained as the historical record of sessions created before selectors
-// existed; nothing writes them any more, and migration derives a generic binding from them only
-// where their exact values, beside the immutable freshness receipts, prove one.
+// One session binds one immutable source inside its job's repository. Nothing writes the three
+// pull_request_* columns; migration derives a binding from them only where their exact values,
+// beside the immutable freshness receipts, prove one.
 const schemaV23 = `
 ALTER TABLE sessions ADD COLUMN source_binding TEXT NOT NULL DEFAULT '';
 `
 
-// New worker jobs carry complete immutable authority. Historical policy-backed sessions keep
-// empty fields and remain readable/closeable without inventing a job they never received.
+// A worker job carries complete immutable authority. A session from before jobs keeps empty
+// fields and stays readable and closeable without inventing a job it never received.
 const schemaV24 = `
 ALTER TABLE sessions ADD COLUMN job_document TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN job_digest TEXT NOT NULL DEFAULT '';

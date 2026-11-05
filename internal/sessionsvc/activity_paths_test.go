@@ -45,7 +45,7 @@ func TestActivityPathCompletionDoesNotRewriteTheStartedEvent(t *testing.T) {
 }
 
 // Codex ACP's edit content carries full oldText/newText. Preview truncation
-// used to erase the short path too, hiding even an explicitly outside edit.
+// must keep the short path, or even an explicitly outside edit is hidden.
 func TestActivityEditPathsSurviveLargeDiffPreviews(t *testing.T) {
 	store, sess := newActivityTestStore(t)
 	activity := newSessionActivity(store, sess, "turn-large-edit", sess.Workspace)

@@ -15,15 +15,14 @@ type sessionCapabilities struct {
 	ControllerToolsVersions            []int `json:"controller_tools_versions"`
 	RepositoryFreshnessReceiptVersions []int `json:"repository_freshness_receipt_versions"`
 	// SessionEvidenceVersions proves the daemon serves the session evidence read this connector
-	// forwards an api_request GET to. Omitted by an older daemon, which then advertises nothing.
+	// forwards an api_request GET to.
 	SessionEvidenceVersions []int `json:"session_evidence_versions,omitempty"`
 	// ReviewCommitMessageVersions proves a review accepts the controller's commit message.
 	ReviewCommitMessageVersions []int `json:"review_commit_message_versions,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local
-// session daemon proves them. A connector restart must not speak for an older
-// daemon that is still serving its Unix socket during a rolling upgrade.
+// session daemon proves them, so a hello never claims more than the daemon answers.
 func LiveCapabilities(ctx context.Context, api API) []workerproto.Capability {
 	result := []workerproto.Capability{}
 	if api == nil {

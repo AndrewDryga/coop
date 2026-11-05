@@ -17,8 +17,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
-// Publication has always been one commit. Freeze that commit before the gate,
-// not at approval time: the reviewed SHA is the SHA that will be pushed.
+// Publication is one commit. Freeze it before the gate, not at approval time:
+// the reviewed SHA is the SHA that will be pushed.
 func freezeReviewCommit(ctx context.Context, candidate reviewScratch, op session.Operation, message string) (string, string, error) {
 	head, tree, err := ReviewGitIdentity(candidate.dir, candidate.name)
 	if err != nil {

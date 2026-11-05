@@ -103,7 +103,7 @@ type turnCompletionStore interface {
 	CompleteTurn(context.Context, session.CompleteTurnRequest) (session.Turn, error)
 }
 
-// sessionTurnRunner owns boxed ACP children. Policy-opted sessions can retain one authenticated
+// sessionTurnRunner owns boxed ACP children. A job with warm execution can retain one authenticated
 // child across serialized turns; the same Coop fork path still owns box assembly and labels.
 type sessionTurnRunner struct {
 	service         *Service
@@ -133,7 +133,7 @@ type sessionTurnRunner struct {
 	testNetworkExecutions func(session.Session) ([]networkstate.Execution, bool, error)
 }
 
-// sessionLadder is a session's rotation plus the ladder it was built from, so a policy edit
+// sessionLadder is a session's rotation plus the ladder it was built from, so a different ladder
 // rebuilds it instead of rotating against rungs that no longer exist.
 type sessionLadder struct {
 	rendered string
@@ -189,7 +189,7 @@ func sessionLadderIndex(members []string, target string) int {
 }
 
 // startAtLadderFloor honors a turn's escalation floor before its FIRST delivery: the turn runs no
-// lower than rung floor of the policy ladder. Responder re-delivers a corrected turn this way, and
+// lower than rung floor of the job's ladder. Responder re-delivers a corrected turn this way, and
 // the rung that produced the answer being corrected is not the rung to correct it on — so a floor
 // that cannot be resolved fails the turn instead of quietly answering from below it, which would
 // reach the client as an honored escalation. A session already at or above the floor does not
@@ -1085,8 +1085,8 @@ func (r *sessionTurnRunner) removeTurnBox(repo, runID string) error {
 // removeInterruptedTurnBoxes resolves a persisted session receipt back to the exact host activity
 // records that launched its sandbox. A stale receipt may never become a caller-controlled runtime
 // label: every matching record must belong to this session's immutable fork generation and
-// workspace before any removal starts. The deterministic run label remains only as a migration
-// path when no execution record exists (pre-registry launches cannot have an execution label).
+// workspace before any removal starts. With no execution record, because the crash came before the
+// box registered one, the deterministic run label is the receipt.
 func (r *sessionTurnRunner) removeInterruptedTurnBoxes(bound session.Session, runID string) error {
 	if r.rt.Name == "" {
 		return acpFailure(sessionACPCleanupError, "runtime cleanup is unavailable")
@@ -1159,8 +1159,8 @@ func (r *sessionTurnRunner) ReapInterruptedTurn(ctx context.Context, bound sessi
 	}
 	runID := turn.RuntimeRunID
 	if runID == "" {
-		// Pre-v15 active turns used the deterministic per-turn identity without
-		// persisting it. Preserve that one-way migration path.
+		// A crash between leasing this turn and bindTurnRuntime leaves no recorded run, yet its
+		// credentials may already be projected. Clean up under the deterministic per-turn identity.
 		runID = sessionTurnRunID(bound.ID, turn.ID)
 	} else if runID != sessionTurnRunID(bound.ID, turn.ID) && runID != sessionWarmRunID(bound.ID) {
 		return acpFailure(sessionACPCleanupError, "interrupted turn runtime identity is invalid")
@@ -2513,12 +2513,10 @@ func sessionACPExitStatus(process *sessionACPProcess, exited bool) string {
 
 // sessionACPRejectionDetail renders an adapter's JSON-RPC error as a bounded single line.
 //
-// Every rejection used to collapse to a fixed "ACP request was rejected", which named neither
-// the cause nor the fix: a spent quota, a retired model id, and a revoked login were the same
-// four words, and the payload was discarded before the turn failed, so no log downstream could
-// recover it. The adapter's own `message` is the diagnostic, so it is carried instead of thrown
-// away — unlike box stderr, which stays allowlisted in safeSessionACPExitDetail because a
-// crashing process can print anything it had in memory.
+// The adapter's own `message` is the diagnostic: a spent quota, a retired model id and a revoked
+// login need different fixes, and no log downstream can recover the payload. Box stderr, by
+// contrast, stays allowlisted in safeSessionACPExitDetail because a crashing process can print
+// anything it had in memory.
 //
 // It is normalised to one line, stripped of control characters, and truncated: it reaches an
 // operator through a turn's error detail, and an adapter is not a trusted formatter.

@@ -37,16 +37,16 @@ func TestCompactTurnResultReplaysTheExactPublicProjection(t *testing.T) {
 	}
 }
 
-func TestPublicTurnHidesHistoricalCandidateAfterValidation(t *testing.T) {
-	legacy := session.Turn{
+func TestPublicTurnHidesItsCandidateAfterValidation(t *testing.T) {
+	accepted := session.Turn{
 		ID: "accepted-turn", State: session.TurnCompleted, AssistantMessage: "accepted",
 		Candidate:       &session.TurnCandidate{Message: "accepted", SHA256: "candidate-sha", Attempt: 1},
 		CandidateSHA256: "candidate-sha", ValidationAttempt: 1,
 		ValidationReceipt: "validation-receipt",
 	}
-	got := publicTurn(legacy)
-	if got.Candidate != nil || got.ValidationCandidateSHA256 != legacy.CandidateSHA256 ||
-		got.ValidationReceipt != legacy.ValidationReceipt {
-		t.Fatalf("completed historical turn projection = %+v", got)
+	got := publicTurn(accepted)
+	if got.Candidate != nil || got.ValidationCandidateSHA256 != accepted.CandidateSHA256 ||
+		got.ValidationReceipt != accepted.ValidationReceipt {
+		t.Fatalf("completed turn projection = %+v", got)
 	}
 }

@@ -58,8 +58,8 @@ func bindSyntheticSessionOwner(t *testing.T, store *session.Store, id string) {
 	}
 }
 
-// Historical and runner-only fixtures seed stored authority without exposing
-// the retired generation-adoption writer to production code.
+// Production records a generation when it creates a session; fixtures that
+// build the row themselves seed it here.
 func setSyntheticSessionGeneration(t *testing.T, store *session.Store, id, generation string) session.Session {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(store.Root(), "session.sqlite"))

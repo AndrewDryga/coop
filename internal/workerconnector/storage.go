@@ -19,9 +19,9 @@ type storageReport struct {
 }
 
 // LiveStorage reads the local session daemon's own storage accounting. It returns nil for every
-// failure — an older daemon with no such endpoint, a measurement that could not be taken, an
-// object that does not satisfy its own contract — because the hello's storage field is OPTIONAL
-// and a measurement problem must never stop a worker from polling.
+// failure — a measurement that could not be taken, an object that does not satisfy its own
+// contract — because the hello's storage field is OPTIONAL and a measurement problem must never
+// stop a worker from polling.
 func LiveStorage(ctx context.Context, api API) *workerproto.Storage {
 	if api == nil {
 		return nil

@@ -332,7 +332,7 @@ func (s *Service) storageLimitsLocked(capacityBytes int64) StorageLimits {
 }
 
 // Staging precedes session creation, so a crashed create can leave owned forks
-// with no session row. Historical rows also retain their original fork roots.
+// with no session row. A row can also name a fork root no staged source holds.
 func (s *Service) storageRepositories(sessions []session.Session) ([]string, error) {
 	seen := map[string]bool{}
 	var repos []string
@@ -921,8 +921,8 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 	}
 }
 
-// Historical forks may use ordinary .git/modules storage; companion custody's
-// independent-directory requirement does not apply to them. Each populated child
+// A fork may use ordinary .git/modules storage; companion custody's
+// independent-directory requirement does not apply to it. Each populated child
 // still gets a private pinned index and its own trusted view, never parent Git recursion.
 func storageGitlinksClean(ctx context.Context, workspace, commit string, depth int, remaining *int) (bool, error) {
 	if depth > 32 || *remaining <= 0 {

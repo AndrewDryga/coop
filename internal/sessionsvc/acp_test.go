@@ -1574,8 +1574,7 @@ func TestAnEscalationFloorNeverDemotesASessionAlreadyAboveIt(t *testing.T) {
 
 // A rung that is not on the ladder cannot be silently ignored: the turn would run
 // on the rung the caller escalated past and read as an honored escalation. The
-// service refuses the index at admission; this is the same refusal at the far end,
-// where a policy edited between admission and lease lands.
+// service refuses the index at admission; this is the same refusal at the far end.
 func TestAnEscalationFloorOffTheLadderFailsTheTurnPlainly(t *testing.T) {
 	for name, ladderRungs := range map[string][]string{
 		"beyond the ladder": {"codex@work", "codex@backup"},
@@ -2507,10 +2506,9 @@ func TestSessionACPProjectionWithholdsSharedEnvironmentAndMCP(t *testing.T) {
 	}
 }
 
-// An API-key account has no login to project. The session hands its child the key where the host
-// keeps one — Coop's vault, or the default account's env line even when the policy withholds the
-// shared env — in the private config, never the profile the box mounts, and removes it after the
-// turn; the child's filtered run brokers it like any other.
+// An API-key account has no login to project. Its key stays where the host keeps it — Coop's vault,
+// or the default account's env line — and never enters the private config or the profile the box
+// mounts; the child's filtered run brokers it like any other.
 func TestSessionACPProjectionHandsAKeyToTheBrokerNotTheBox(t *testing.T) {
 	keyFree := func(t *testing.T, dir, key string) {
 		t.Helper()
@@ -2707,7 +2705,7 @@ func TestSessionTurnRunnerInterruptedTurnReapRemovesProjectedCredentials(t *test
 
 func TestUnprovenSessionRuntimeProofTouchesOnlyRunLabelsAndProjectedCredentials(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
-	turn := fixture.submit(t, "legacy runtime")
+	turn := fixture.submit(t, "recorded runtime")
 	runID := sessionTurnRunID(fixture.session.ID, turn.ID)
 	if err := fixture.store.BindTurnRuntime(context.Background(), fixture.session.ID, turn.ID, "", runID); err != nil {
 		t.Fatal(err)
@@ -2754,7 +2752,7 @@ func TestUnprovenSessionRuntimeProofTouchesOnlyRunLabelsAndProjectedCredentials(
 	}
 	stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
 	if err != nil || stored.RuntimeRunID != runID {
-		t.Fatalf("historical turn receipt changed: %+v, %v", stored, err)
+		t.Fatalf("unproven cleanup changed the turn receipt: %+v, %v", stored, err)
 	}
 }
 
@@ -2956,11 +2954,9 @@ func TestSessionTurnRunnerDoesNotReapBeforeChildStarts(t *testing.T) {
 	}
 }
 
-// A completed turn outranks its janitorial proof. This test used to assert the
-// opposite — that an unprovable service cleanup FAILS the turn — and production
-// showed what that costs: every session_cleanup_error turn on 2026-08-07 was a
-// finished multi-minute investigation destroyed over a slow `docker rm`, while
-// the per-minute janitor stood ready to retry the same teardown anyway.
+// A completed turn outranks its janitorial proof: failing it would destroy a
+// finished multi-minute investigation over a slow `docker rm`, while the
+// per-minute janitor stands ready to retry the same teardown anyway.
 func TestSessionTurnRunnerCompletesTheTurnWhenCleanupFails(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	t.Setenv("COOP_TEST_SESSION_SERVICE_CLEANUP_FAIL", "1")
@@ -3194,7 +3190,7 @@ func claudeTestCredential(expires time.Time) string {
 }
 
 // writeSessionTestCredential signs the fixture's account in for whichever provider the target
-// names through host sign-in. Only explicit migration tests seed legacy grants.
+// names through host sign-in.
 func writeSessionTestCredential(t *testing.T, source, target string, expiry ...time.Time) {
 	t.Helper()
 	parsed, err := agents.ParseTarget(target)
@@ -3416,7 +3412,7 @@ func (f *sessionACPFixture) signIn(t *testing.T, agent, credential string) {
 	writeSessionTestCredential(t, f.source, agent+"@"+credential)
 }
 
-// ladderContext supplies the policy ladder the service would attach to a turn's context.
+// ladderContext supplies the target ladder the service would attach to a turn's context.
 func ladderContext(t *testing.T, parent context.Context, values ...string) context.Context {
 	t.Helper()
 	return context.WithValue(parent, sessionTargetLadderContextKey{}, mustTargets(values...))
@@ -3471,7 +3467,7 @@ func (f *sessionACPFixture) submitSemanticContract(t *testing.T, prompt string) 
 }
 
 // submitFromRung admits a turn the caller requires to be delivered no lower than
-// the named rung of the policy ladder — Responder's escalation path.
+// the named rung of the target ladder — Responder's escalation path.
 func (f *sessionACPFixture) submitFromRung(t *testing.T, prompt string, floor int) session.Turn {
 	return f.submitRequest(t, session.SubmitTurnRequest{Prompt: prompt, MinTargetIndex: floor})
 }
