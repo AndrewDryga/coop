@@ -344,8 +344,8 @@ func TestInitStackPreflightPreservesTree(t *testing.T) {
 						return err
 					}
 					before := snapshotInitTree(t, root)
-					// A file keeps the old implementation's long progress output from
-					// filling a pipe while this regression is expected to fail.
+					// A file keeps long progress output from filling a pipe if this regression
+					// comes back.
 					log, err := os.CreateTemp(t.TempDir(), "init-output-")
 					if err != nil {
 						t.Fatal(err)

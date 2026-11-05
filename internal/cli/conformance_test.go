@@ -10,8 +10,8 @@ import (
 )
 
 // TestCLIConformance graduates the committed .agent/kb/rules into the gate: it walks the CLI surface as
-// data and asserts the taste rules mechanically, so drift (a lister that forgot `list`, a destructive
-// verb without `remove`, a verb added with no help row, a retired alias quietly re-accepted) fails CI
+// data and asserts the taste rules mechanically, so drift (a lister that forgot `ls`, a destructive
+// verb without `rm`, a verb added with no help row, a `list` or `remove` alias) fails CI
 // instead of review. See .agent/kb/rules/{list-verb-ls,destructive-verb-rm,help-output-style}.md.
 func TestCLIConformance(t *testing.T) {
 	newApp := func() *app {
@@ -137,8 +137,8 @@ func TestCLIConformance(t *testing.T) {
 	})
 
 	// usage-placeholder-style: optional metavariables remain visibly distinct from literal flags
-	// and verbs. This pins the public help/error surfaces that previously used bare [agent], [name],
-	// [paths...], and [@account] forms without pretending to parse every provider-owned argument.
+	// and verbs. This pins the public help/error surfaces against bare [agent], [name], [paths...],
+	// and [@account] forms without pretending to parse every provider-owned argument.
 	t.Run("usage_metavariables", func(t *testing.T) {
 		errorText := func(name string, err error) string {
 			t.Helper()

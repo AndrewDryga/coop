@@ -300,9 +300,9 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 	}
 	if len(subs) > 0 {
-		// A re-init keeps an existing project.yaml, so newly-added members were previously only
-		// REPORTED and you had to list them by hand. Register them instead — an unlisted member is
-		// a queue coop silently ignores, which is never what you wanted when you created it.
+		// A re-init keeps an existing project.yaml, so register newly-added members in it: an
+		// unlisted member is a queue coop silently ignores, which is never what you wanted when you
+		// created it.
 		registered, err = scaffold.RegisterSubprojects(repo, subs)
 		if err != nil {
 			return 1, setupFailure(repo, err)

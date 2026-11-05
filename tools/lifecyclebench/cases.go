@@ -34,8 +34,8 @@ type stopStep struct {
 }
 
 // stopSteps end a launch the way a person's terminal would, escalating only if it refuses. SIGKILL
-// first is how this tool used to lose a filtered launch's gateway containers and volumes: coop was
-// killed mid-teardown and the resources it had not reached yet stayed.
+// first would kill coop mid-teardown and leave a filtered launch's gateway containers and volumes
+// behind.
 var stopSteps = []stopStep{{syscall.SIGINT, 20 * time.Second}, {syscall.SIGTERM, 10 * time.Second}, {syscall.SIGKILL, killGrace}}
 
 const killGrace = 5 * time.Second

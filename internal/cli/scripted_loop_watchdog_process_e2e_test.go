@@ -96,7 +96,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			t.Fatalf("timeout warning does not report the observed silence\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
 		}
 		// The phases the override never named ran at the SHIPPED values — this is the default-on
-		// proof: with the old disabled defaults they would be announced as "disabled".
+		// proof: a disabled default would be announced as "disabled".
 		if !strings.Contains(output, "start=2s idle=30m0s tool=2h0m0s attempt ceiling=48h0m0s") {
 			t.Fatalf("unnamed phases did not keep the shipped armed defaults\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
 		}

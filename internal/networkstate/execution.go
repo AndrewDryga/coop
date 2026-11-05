@@ -45,7 +45,7 @@ var (
 
 // Supervisor is the coop process that runs an execution. Its pid means something only on the host
 // and in the PID namespace it was read in, which Host names as the supervisor labels do (empty when
-// that coop could not name its host, and in records written before the field existed).
+// that coop could not name its host).
 type Supervisor struct {
 	PID        int    `json:"pid"`
 	StartToken string `json:"start_token"`

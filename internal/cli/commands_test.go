@@ -1538,7 +1538,7 @@ func TestStrictFlagParsing(t *testing.T) {
 }
 
 // A bare --services on a fresh project opens the same chooser it opens on an initialized one; it
-// used to count as an answer of "none" and skip the question.
+// is not an answer of "none" that skips the question.
 func TestInitBareServicesOpensTheChooser(t *testing.T) {
 	hermeticGit(t)
 	repo := t.TempDir()
@@ -2009,7 +2009,7 @@ func TestLoopReportsUsageBeforeRuntimeDiscovery(t *testing.T) {
 	}
 }
 
-// A stale/activity observation is no longer a workspace-wide refusal. The mount-launch barrier,
+// A stale/activity observation is not a workspace-wide refusal. The mount-launch barrier,
 // held by actual boxes, owns the dangerous start window instead, and only that makes coop up wait.
 func TestCmdUpAllowsAnIndependentStackBesideARecordedBox(t *testing.T) {
 	repo := t.TempDir()
@@ -2087,10 +2087,9 @@ func TestCmdUpWarnsAboutHiddenServiceSecretsWithoutATerminal(t *testing.T) {
 	}
 }
 
-// `coop acp <agent> --egress filtered` is in the contract, and used to die on
-// "unexpected argument": the flags were never parsed and the ACP path never
-// admitted. The supervisor admits ONCE, and each child it spawns receives a
-// reference to that one capture — never authority, and never its own admission.
+// `coop acp <agent> --egress filtered` is in the contract. The supervisor admits
+// ONCE, and each child it spawns receives a reference to that one capture —
+// never authority, and never its own admission.
 func TestACPParsesTheNetworkFlagsAndAdmitsInTheSupervisor(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := t.TempDir()

@@ -88,9 +88,8 @@ func TestGatewayRecipeBuildsThePackedGoVersion(t *testing.T) {
 	}
 }
 
-// Every Dependabot bump used to change the embedded go.mod and go.sum, and with
-// them every filtered user's network setup. Only a bump of a module coop-net loads
-// may move the fingerprint now.
+// A changed embedded go.mod or go.sum changes every filtered user's network setup, so
+// only a bump of a module coop-net loads may move the fingerprint, not every Dependabot bump.
 func TestOnlyGatewayModuleBumpsMoveTheFingerprint(t *testing.T) {
 	root := filepath.Join("..", "..")
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))

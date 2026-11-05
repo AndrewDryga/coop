@@ -516,7 +516,7 @@ func (a *app) applyOneOff(tool, model, credential, effort string) error {
 // extractPeer pulls every --peer <target> (repeatable) out of a run's args — each value is one
 // peer the lead may consult read-only on hard calls (see box.RunSpec.Peers). A valueless occurrence
 // is refused in the shared block, naming the command it came from. `--`-aware. The one --peer parser
-// for every command (the retired --consult spelling is now just an unknown flag).
+// for every command.
 func extractPeer(command string, args []string) (peers, rest []string, err error) {
 	return extractRepeatable(command, args, "--peer",
 		command+" --peer <target> [--peer <target>...]", command+" --peer codex")
@@ -681,7 +681,8 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 			Rows:     [][2]string{{"Help:", "coop help login"}},
 		}
 	}
-	// Named credentials live under profiles/, so create that storage before activation.
+	// Saving a named sign-in reads any older login under profiles/, so make that folder's private
+	// ancestors safe before anything starts.
 	if profile != config.DefaultProfile {
 		if err := box.EnsureProfilesDir(a.cfg, tool); err != nil {
 			return -1, err

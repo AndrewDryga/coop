@@ -60,8 +60,7 @@ func (s *Store) ApprovalAt(project string) (ApprovalRecord, error) {
 // Forget removes the ONE approval a record names, reporting whether a record
 // was actually there. It is deliberately not a sweep: an approval is filed under
 // a hash of the project path and stores no path, so this store can answer
-// "is this project approved?" and never "which projects are approved?" — and no
-// record written before today could answer it either.
+// "is this project approved?" and never "which projects are approved?".
 //
 // There is no review digest here, unlike Approve: forgetting fails safe, since a
 // launch with no approval asks for one. What it must never do is report success

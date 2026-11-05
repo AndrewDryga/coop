@@ -31,9 +31,8 @@ func modelsApp(t *testing.T) *app {
 	}
 }
 
-// TestCredentialsModelIsNotAnAttribute: v3 dropped model-on-credential — a credential is just an
-// account, the model is a separate axis. A `model` token (path form or leading verb) is now just an
-// unknown attribute/agent (exit 2), not a special note.
+// TestCredentialsModelIsNotAnAttribute: a credential is just an account, the model is a separate
+// axis. A `model` token (path form or leading verb) is an unknown attribute/agent (exit 2).
 func TestCredentialsModelIsNotAnAttribute(t *testing.T) {
 	a := modelsApp(t)
 	for _, args := range [][]string{

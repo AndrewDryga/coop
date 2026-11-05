@@ -81,9 +81,9 @@ type app struct {
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command
-// needs it. Pure-local families (tasks, profiles, models, init, check-secrets, fork ls/path, group
-// help) never call it, so they work with no runtime installed — Main no longer detects eagerly. The
-// error is the same actionable "runtime not found" Main used to surface.
+// needs it. Pure-local families (tasks, credentials, models, init, check-secrets, fork ls/path,
+// group help) never call it, so they work with no runtime installed. A command that does gets the
+// actionable "runtime not found".
 func (a *app) ensureRuntime() error {
 	return a.ensureRuntimeContext(context.Background())
 }

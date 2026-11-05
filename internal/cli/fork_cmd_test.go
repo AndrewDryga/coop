@@ -32,9 +32,9 @@ import (
 
 const testForkSessionStoreID = "store_test"
 
-// Regression: a fork name that escapes the forks home or carries shell syntax must be refused by
-// EVERY name-taking verb before it reaches a workspace, subprocess, or runtime call. `coop fork rm
-// ..` used to filepath.Join-clean to the parent of all projects and delete it. Each guard runs before
+// A fork name that escapes the forks home or carries shell syntax must be refused by EVERY
+// name-taking verb before it reaches a workspace, subprocess, or runtime call: `coop fork rm ..`
+// would filepath.Join-clean to the parent of all projects and delete it. Each guard runs before
 // box.ResolveRepo, so an unsafe name returns without touching the filesystem.
 func TestForkVerbsRejectUnsafeName(t *testing.T) {
 	repo := t.TempDir()
@@ -267,7 +267,7 @@ func TestForkLifecycleMutationWaitsForCommandPreflight(t *testing.T) {
 		synctest.Wait()
 		var preflightComplete atomic.Bool
 		got := runForkCommandAcrossLockedMutation(t, repo, "delayed", func() (int, error) {
-			// Virtual time deterministically exceeds the old helper's 80 ms guess.
+			// A slow preflight, in virtual time: the helper must wait for the lock, not guess how long.
 			time.Sleep(150 * time.Millisecond)
 			preflightComplete.Store(true)
 			unlock, err := forkspace.LockState(repo, "delayed")

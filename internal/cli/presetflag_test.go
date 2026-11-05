@@ -91,11 +91,11 @@ func TestApplyPresetPrecedence(t *testing.T) {
 	}
 }
 
-// TestRoleModelDoesNotShadowRotatedLead is the regression for the frontier dogfood miss: a
-// provider that first appears as a preset ROLE (codex thinker on terra) and later becomes the
-// LEAD via cross-provider rotation (codex:sol) must launch on the LEAD's rotated model, not the
-// role's. Before the fix, the role seeded codex into the active-model tier, which ModelFor
-// preferred over the rotation target — so the lead ran terra while telemetry announced sol.
+// TestRoleModelDoesNotShadowRotatedLead: a provider that first appears as a preset ROLE (codex
+// thinker on terra) and later becomes the LEAD via cross-provider rotation (codex:sol) must launch
+// on the LEAD's rotated model, not the role's. A role must not seed its provider into the
+// active-model tier: ModelFor prefers that over the rotation target, so the lead would run terra
+// while telemetry announced sol.
 func TestRoleModelDoesNotShadowRotatedLead(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
 	// Frontier in miniature: claude leads first, failing over to codex:sol; codex ALSO owns the

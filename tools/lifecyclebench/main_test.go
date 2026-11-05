@@ -325,8 +325,8 @@ func TestInitializeResultIsTheAnswerToRequestOne(t *testing.T) {
 	if info, _ := answer["agentInfo"].(map[string]any); info["name"] != "coop" {
 		t.Errorf("answer = %v", answer)
 	}
-	// Substring matching used to accept all of these, and a log line that happens to contain the
-	// right characters would have been timed as the agent's answer.
+	// Substring matching would accept all of these, and time a log line that happens to contain the
+	// right characters as the agent's answer.
 	for _, line := range []string{
 		`log: sending {"id":1,"result":...}`,
 		`{"jsonrpc":"2.0","method":"session/update","params":{"id":1,"result":true}}`,

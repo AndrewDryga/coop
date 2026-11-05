@@ -61,9 +61,9 @@ func needsAccountErr(agent string) error {
 }
 
 // noProviderErr is coop's one actionable message when a launch names no target (and no
-// preset supplies a lead) — the implicit claude default is gone, so every agent-launching
-// surface routes an empty selection here. cmd is the command word for the usage line
-// ("loop", "acp", "fork", "" for a bare `coop`).
+// preset supplies a lead). No agent is implied, so every agent-launching surface routes an
+// empty selection here. cmd is the command word for the usage line ("loop", "acp", "fork",
+// "" for a bare `coop`).
 func noProviderErr(cmd string) error {
 	usage := "coop " + cmd
 	if cmd == "" {

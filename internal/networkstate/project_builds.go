@@ -13,7 +13,7 @@ import (
 
 // projectBuildRecord approves the immutable image a project build produced from these inputs. A
 // restricted launch builds on a miss only files a person already approved (projectBuildReviewRecord).
-// Version 1 was an automatic-build cache, not human authority, and cannot authorize reuse.
+// Only the current version is human authority: any other cannot authorize reuse.
 //
 // There is one record per output tag — one project on one locked client image — so a tree that
 // keeps changing (a loop commits every iteration) replaces its record instead of accumulating them.

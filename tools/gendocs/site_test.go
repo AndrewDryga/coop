@@ -745,8 +745,8 @@ var pickerCommands = map[string]string{"login": "coop login ${agent}", "run": "c
 
 // The picker rewrites each command's data-cmd span, and the copy handlers copy what a command shows,
 // so each command owns one copy source, button and status line, with its one rewritable span directly
-// in the copy source. Executing site.js itself needed Node, which the repository's tools no longer
-// use; its picker table must still write the exact command for every step a page uses.
+// in the copy source. Executing site.js would need Node, which the repository's tools don't use;
+// its picker table must still write the exact command for every step a page uses.
 func TestEveryStartCommandFollowsTheAgentPicker(t *testing.T) {
 	written := map[string]string{}
 	for _, m := range pickerStep.FindAllStringSubmatch(readSite(t, "assets/js/site.js"), -1) {

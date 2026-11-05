@@ -299,8 +299,8 @@ func exchangeBothWays(t *testing.T, client, private net.Conn) {
 }
 
 // A guarded flow lives as long as its two ends keep it open; the admission budget bounds admission
-// alone. Every guarded TLS flow used to close when that budget ran out — ten seconds in, mid-
-// response — because the private leg's close was wired to the admission deadline.
+// alone, so the private leg's close must not be wired to the admission deadline, or every guarded
+// TLS flow would close mid-response when that budget runs out.
 func TestGuardFlowOutlivesTheAdmissionBudget(t *testing.T) {
 	shortAdmission(t, 200*time.Millisecond)
 	fixture := startGuardFixture(t)

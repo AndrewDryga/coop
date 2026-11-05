@@ -26,7 +26,7 @@ install: ## Build from source and install to ~/.local/bin/coop
 test: require-git-lfs ## Run unit tests (no container runtime needed)
 	@# -p 4 for the same reason as the race target: every package at once oversubscribes a laptop
 	@# until fixture guards and production grace periods expire in tests that pass alone.
-	@# Serial session Git/LFS fixtures exceeded Go's default 10 m package timeout under gate load.
+	@# Serial session Git/LFS fixtures can outlast Go's default 10 m package timeout under gate load.
 	@# This 20 m bound guards a hung package, not operation deadlines; behavioral
 	@# timing assertions remain tight, as in the race target.
 	@go test -count=1 -p 4 -timeout 20m ./...
@@ -58,12 +58,11 @@ gateway-sources-check: ## Verify embedded network helper sources match the check
 lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
 	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting (run: gofmt -w .)'; exit 1; }
 # Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
-# *_linux.go file never compiles: a stale Linux-only test kept CI red for a week while every local
-# gate passed. So each check below covers both platforms, whichever host runs it — with cgo off,
-# which the tree never uses, so the other platform never needs a C toolchain.
+# *_linux.go file never compiles. So each check below covers both platforms, whichever host runs
+# it — with cgo off, which the tree never uses, so the other platform never needs a C toolchain.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... || exit 1; done
-# The e2e/live files sit behind build tags, so the pass above never compiles them — a lost cancel
-# lived there unseen. Every tag in the tree in one pass.
+# The e2e/live files sit behind build tags, so the pass above never compiles them. Every tag in the
+# tree in one pass.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) ./... || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: make install-staticcheck"; exit 1; }
 	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: make install-staticcheck"; exit 1; }
@@ -73,7 +72,7 @@ lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and
 	@# files are only built without them, so neither pass covers everything alone.
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck -tags $(VET_TAGS) ./... || exit 1; done
 
-# Plumbing for CI's install step, which reads the pin from here instead of repeating it.
+# Prints the pinned Staticcheck version for anyone who wants the pin without reading this file.
 staticcheck-version:
 	@echo $(STATICCHECK_VERSION)
 
@@ -146,17 +145,14 @@ rules-check: ## Fail if a .agent/kb card or rule is malformed, unindexed, or nam
 build-all: ## Compile every package (a package no test imports can still break the build)
 	@go build ./...
 
-# internal/acpproxy is concurrent (the editor-reader goroutine and the main loop share
-# p.mu-guarded state) — a data race there does not fail the plain `make test` run. Its own
-# target so a race failure is legible; -race is ~2-3× slower, which is why its slowest package
-# runs as two shards.
+# A data race does not fail the plain `make test` run. Its own target so a race failure is legible;
+# -race is ~2-3× slower, which is why its slowest package runs as two shards.
 race: check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2 ## Full unit suite under the race detector (the slowest gate step)
 
-# The race suite's long pole is internal/sessionsvc: 945 s of race time on a Mac, 557 s on CI, where
-# it started 3.5 minutes into the job and finished last. It runs as two shards beside the rest.
+# The race suite's long pole is internal/sessionsvc, so it runs as two shards beside the rest.
 # -run and -skip take the same pattern, so every test, example and fuzz seed is in exactly one
 # shard, and a new or renamed test can only move between them, never out. The pattern halves the
-# measured race time (2026-10-15: 475 s and 469 s); release_test.go keeps both sides non-empty.
+# package's race time; release_test.go keeps both sides non-empty.
 SESSIONSVC := github.com/AndrewDryga/coop/internal/sessionsvc
 SESSIONSVC_SHARD := ^Test(Session|Large|Replacement)
 
@@ -180,16 +176,15 @@ check-race-sessionsvc-2: require-git-lfs ## Race-detector tests of internal/sess
 
 # THE GATE. One Make-owned union of owners: CI runs each owner in CI_OWNERS on a runner of its
 # own; `make check` runs the static owner first, then the test owners side by side. CI installs the
-# pinned tools. A new check belongs HERE, never in the
-# workflow's step list: the two were maintained separately, drifted in both directions (race and
-# build were CI-only; cast/rules/tools checks were local-only), and main rotted red with no local
-# gate able to see it. Ordered so the cheap and most common failures surface first. Required tools
-# hard-fail with their install line — a soft skip is how a check silently stops running.
+# pinned tools. A new check belongs HERE, never in the workflow's step list: a check only one side
+# runs can go red where the other cannot see it. Ordered so the cheap and most common failures
+# surface first. Required tools hard-fail with their install line — a soft skip is how a check
+# silently stops running.
 # Locally the race owners stand in for check-unit: they run the same packages and tests under the
-# race detector, since no Go file has a race build constraint (release_test.go holds that), and
-# the plain pass took a quarter of the 52-minute local gate. CI runs both. One part of check-unit
-# has no local stand-in: it runs the tests with only TEST_HOST_PROGRAMS on PATH and CGO_ENABLED=0
-# (test-minimal-path), which the race owners cannot do: on Linux -race needs cgo, and they keep the
+# race detector, since no Go file has a race build constraint (release_test.go holds that), so the
+# plain pass would only add time. CI runs both. One part of check-unit has no local stand-in: it
+# runs the tests with only TEST_HOST_PROGRAMS on PATH and CGO_ENABLED=0 (test-minimal-path), which
+# the race owners cannot do: on Linux -race needs cgo, and they keep the
 # full PATH so the tests of optional programs still run somewhere. Run 'make test-minimal-path' by
 # hand after a test starts using a program.
 # CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
@@ -200,10 +195,10 @@ CI_OWNERS := check-static check-unit check-process-loop check-process-rest check
 # most check-race-rest's four packages and three single-package owners share the host (see
 # check-race-rest for why the gate bounds its parallelism).
 GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-process-loop check-race-rest check-process-rest
-# The gate builds with a cache of its own, which no other checkout or `go clean -cache` shares:
-# one gate died when another session cleared the shared cache under it. -trimpath keeps the folder
+# The gate builds with a cache of its own, which no other checkout or `go clean -cache` shares, so
+# another session clearing the shared cache cannot kill a running gate. -trimpath keeps the folder
 # out of each cache key, so every checkout that runs the gate shares that cache instead of adding its
-# own copy (measured: a second checkout's test build took 2 s and no space, against 12 s and 100 MB).
+# own copy.
 GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 
 check: export GOCACHE := $(GATE_GOCACHE)
@@ -278,8 +273,8 @@ provider-scripted-e2e: provider-scripted-loop-e2e provider-scripted-other-e2e ##
 
 # The suite runs ~11 minutes on a Mac and 4.5 on CI, so it runs as two shards, the loop tests (60%
 # of its time) and the rest: -run and -skip take the same pattern, so each test is in exactly one.
-# Go's 10-minute default failed the whole suite under ordinary load with every test passing. The
-# 20-minute bound is a hang guard; the behavior deadlines live inside the tests.
+# Under ordinary load it can outlast Go's 10-minute default with every test passing. The 20-minute
+# bound is a hang guard; the behavior deadlines live inside the tests.
 PROVIDER_SHARD := ^TestProviderScriptedLoop
 
 provider-scripted-loop-e2e: ## The scripted provider suite's loop tests

@@ -100,7 +100,7 @@ func TestRejectArgs(t *testing.T) {
 }
 
 // The stdout "views" must gate color on stdout (ui.For(os.Stdout)), not on stderr (the package-level
-// ui.Bold/ui.Dim), so `coop profiles | grep` / `coop help | cat` from an interactive shell get clean
+// ui.Bold/ui.Dim), so `coop credentials | grep` / `coop help | cat` from an interactive shell get clean
 // text. In `go test` both streams are non-tty, so this locks the non-tty-clean invariant; it can't
 // reproduce the stderr-tty/stdout-pipe split without a pty (that repro is in the task log). fork ls
 // needs a live fork to print its header, so it's covered by review — its header uses the same one-liner.
@@ -173,8 +173,7 @@ func TestMainBarePrintsHelp(t *testing.T) {
 }
 
 // `coop help <cmd> [<sub>]` shows that command's page (≡ `coop <cmd> [<sub>] --help`), and
-// `coop help <unknown>` is a usage error (exit 2) — the help arg used to be ignored, always
-// printing the top-level menu.
+// `coop help <unknown>` is a usage error (exit 2), never the top-level menu.
 func TestMainHelpSubcommand(t *testing.T) {
 	useEmptyMainConfig(t)
 	old := os.Stdout
@@ -401,7 +400,7 @@ func TestHelpForAgentIsGeneratedPerAdapter(t *testing.T) {
 }
 
 // `coop fork --help` must match every other command's template: a Usage line under the title and
-// the standard footer (it used to have neither).
+// the standard footer.
 func TestForkHelpTemplate(t *testing.T) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()

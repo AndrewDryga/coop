@@ -80,8 +80,8 @@ func TestHelpTextAligned(t *testing.T) {
 	out := helpText(&config.Config{BoxHome: "/home/u/.config/coop", ConfigDir: "/home/u/.config/coop/agents"})
 
 	// No command row may glue its description to the command: every "  coop …" line must
-	// keep a column gap (a run of ≥2 spaces after the 2-space indent). This is the bug the
-	// old fixed-width %-33s produced when a command was longer than the column.
+	// keep a column gap (a run of ≥2 spaces after the 2-space indent). A fixed-width %-33s
+	// would lose it whenever a command is longer than the column.
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "  coop ") && !strings.Contains(line[2:], "  ") {
 			t.Errorf("command row has no column gap (description glued):\n%q", line)

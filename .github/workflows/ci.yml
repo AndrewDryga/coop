@@ -14,7 +14,7 @@ permissions:
 jobs:
   # One runner per Make owner in the Makefile's CI_OWNERS. The race suite's long pole,
   # internal/sessionsvc, and the scripted provider suite each run as two shards, so no owner
-  # holds the others up for long (the race job took 13 minutes while the rest took 5 to 7).
+  # holds the others up for long.
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -28,8 +28,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      # setup-go keys its cache on the dependency files alone, so every owner restored whatever
-      # the first to finish had saved, and the race owners rebuilt everything with -race. Each
+      # setup-go keys its cache on the dependency files alone, so every owner would restore whatever
+      # the first to finish saved, and the race owners would rebuild everything with -race. Each
       # owner keeps its own modules and compiled objects instead, newest main push first.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -83,9 +83,8 @@ jobs:
           echo 'All free checks and runtime jobs passed.'
 
   # Exercise the real container boundary per runtime, so a change that breaks isolation,
-  # process reaping, signal forwarding, or a runtime's run-args fails CI. (The fork-merge
-  # hardening test already runs in `check` via `go test`.) Docker is the one supported
-  # runtime CI can drive and is blocking. Apple's `container` needs macOS 26+ runners, so
+  # process reaping, signal forwarding, or a runtime's run-args fails CI. Docker is the one
+  # supported runtime CI can drive and is blocking. Apple's `container` needs macOS 26+ runners, so
   # it isn't covered here yet — the matrix is where it lands when they exist.
   doctor:
     runs-on: ubuntu-latest

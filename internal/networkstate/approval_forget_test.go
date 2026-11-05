@@ -51,7 +51,7 @@ func TestForgetRemovesOneApprovalAndKeepsEveryOtherRecord(t *testing.T) {
 	delete(want, projectAnchorName(record.ID, record.Approval.ProjectAnchor))
 	got := inventory(t, s)
 	// Removing the grant is only half of it: the withdrawal marker is what keeps
-	// a project whose YAML is gone from falling back to the open default.
+	// a project whose YAML is gone from falling back to the built-in default.
 	barrier, ok := got[withdrawalRecord(record.ID)]
 	if !ok {
 		t.Fatalf("forget left no withdrawal marker:\n%v", got)

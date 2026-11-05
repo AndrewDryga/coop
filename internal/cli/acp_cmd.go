@@ -681,13 +681,8 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	// After any spawn — Run's first one included — the pool re-centres on the provider now in use:
 	// warm the others, the one just left included, and drop a spare of the active one.
 	//
-	// Filling at connect used to start three more containers in the same millisecond as the lead's own,
-	// and the lead's adapter then booted on a machine busy starting them. Measured 2026-09-21 on this
-	// host: the whole initialize is ~0.97 s with the pool on versus ~0.81 s with COOP_ACP_WARM=0, while
-	// the time BEFORE the first spawn is identical (~0.12 s either way) — so the cost is not coop's own
-	// startup work, it is contention with the fan-out. Deferring the fan-out until the editor has been
-	// answered keeps the pool (a switch is a human decision away, many seconds later) and gives the
-	// editor its answer at the unwarmed speed.
+	// The fan-out waits until the editor has been answered: containers started beside the lead's own
+	// would slow its adapter's boot, and a switch is a human decision away, many seconds later.
 	fanOut := &acpFanOut{lead: ctrl.LeadProvider, waiting: a.acpBoxWait.waitingNow, fill: func(active string) {
 		go func() { pool.Rebalance(active, ctrl.SpawnableProviders(active)) }()
 	}}

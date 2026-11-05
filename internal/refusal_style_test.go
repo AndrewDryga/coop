@@ -22,8 +22,8 @@ const refusalStyleCard = ".agent/kb/rules/command-output-tiers.md"
 // every non-test .go file under internal/ (testdata excluded) is parsed, and three shapes count as
 // an ad-hoc refusal, each printed as a lone "✗ <lowercase sentence>" line:
 //
-//   - errors.New or fmt.Errorf with a message that opens with a lowercase "coop …", most often the
-//     old way a refusal named its command ("coop tasks add: …");
+//   - errors.New or fmt.Errorf with a message that opens with a lowercase "coop …", most often an
+//     ad-hoc refusal naming its command ("coop tasks add: …");
 //   - return 2, errors.New(…) or return 2, fmt.Errorf(…): exit 2 is rejected input, which is data
 //     for ui.UsageError, not a sentence;
 //   - ui.Error with a message that starts in lowercase.

@@ -25,8 +25,8 @@ import (
 //
 //	coop credentials claude personal default
 //
-// A leading verb (`default|rm|model …`) reads as an unknown agent now — the path grammar above is
-// the only spelling for an edit.
+// A leading verb (`default|rm|model …`) reads as an unknown agent: the path grammar above is the
+// only spelling for an edit.
 func (a *app) cmdCredentials(args []string) (int, error) {
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); ok && len(args) > 1 {

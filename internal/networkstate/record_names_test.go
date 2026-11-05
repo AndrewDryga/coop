@@ -189,7 +189,7 @@ func TestRenamedRecordsAskToApproveAgain(t *testing.T) {
 
 // The box can delete the checkout's marker and the project's settings, never the older build's
 // approval record: that record keeps the project refused, so its remembered posture cannot fall
-// through to the open default. Approving again starts a fresh pair and retires the old records.
+// through to the built-in default. Approving again starts a fresh pair and retires the old records.
 func TestRenamedRecordsRefuseWithoutTheMarker(t *testing.T) {
 	s, project := openStore(t), t.TempDir()
 	requests := []egress.Rule{rule("docs.example.com")}
@@ -271,7 +271,7 @@ func TestApprovalDigestWithoutTheStoreKeyNeverApproves(t *testing.T) {
 	}
 }
 
-// Record names no longer depend on owner.key: with the key replaced, approvals are still found,
+// Record names do not depend on owner.key: with the key replaced, approvals are still found,
 // while snapshots captured under the old key fail their check instead of being trusted.
 func TestReplacedKeyKeepsApprovalsAndRefusesOldSnapshots(t *testing.T) {
 	s, project := openStore(t), t.TempDir()

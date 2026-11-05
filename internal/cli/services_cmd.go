@@ -371,8 +371,8 @@ func (d *distinctLines) flush() {
 	}
 }
 
-// downOptions is `coop down`'s whole grammar, and the list a correction is drawn from. The
-// retired -v/--volumes spelling is not in it: it is gone, not hidden.
+// downOptions is `coop down`'s whole grammar, and the list a correction is drawn from. Compose's
+// -v/--volumes is not in it: deleting stored data takes the spelled-out --delete-volumes.
 var downOptions = []string{"--delete-volumes", "--yes"}
 
 // servicesLeft reports whether this project's development stack still has something only its

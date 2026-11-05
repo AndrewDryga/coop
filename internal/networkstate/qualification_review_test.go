@@ -78,9 +78,9 @@ func TestExecutionInspectionRetainsGoodRecordsAndDoesNotInventPartialCursor(t *t
 	if err != nil || !page.Incomplete || page.Unreadable != 2 || len(page.Executions) != 1 || page.Executions[0].ID != r.ID {
 		t.Fatal("one bad record hid good custody", page, err)
 	}
-	// Cheap filler entries: the listing used to stop after 10,000 directory entries and hide what
-	// came after, marking the page incomplete. Retention keeps the directory small now, so the
-	// listing reads all of it — with the broken records gone, a cap would be the only cause.
+	// Cheap filler entries: retention keeps the directory small, so the listing reads all of it
+	// with no cap that hides what comes after — with the broken records gone, a cap would be the
+	// only cause of an incomplete page.
 	for _, name := range []string{"execution-invalid.json", "execution-" + strings.Repeat("f", 32) + ".json"} {
 		if err := s.root.Remove(name); err != nil {
 			t.Fatal(err)

@@ -196,8 +196,8 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 		doctorCheckUID(host, results["UID"], usingReal)
 		doctorCheckCaps(host, results["CAPS"], hardened)
 		doctorCheckPids(host, results["PIDS"], hardened, a.cfg.Pids)
-		// Launches no longer test their share, so this is where kernel protection proves the
-		// spellings and aliases mounts never covered.
+		// Launches don't test their share, so this is where kernel protection proves the spellings
+		// and aliases mounts don't cover.
 		if kernel {
 			runKernelSpellings(a, img).record(secrets)
 		}

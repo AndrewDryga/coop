@@ -10,8 +10,8 @@ import (
 
 // Withdrawing an approval has to fail CLOSED, and deleting the record is not
 // enough to do that: with the approval gone and the project's YAML gone too,
-// mode resolution falls through to coop's built-in default, which is open. So
-// forgetting writes a marker FIRST and removes the grant second — after a
+// mode resolution falls through to coop's built-in default, access nobody
+// approved again. So forgetting writes a marker FIRST and removes the grant second — after a
 // withdrawal this project's ordinary launches stop until a human approves
 // again, and the only thing that clears the marker is that fresh approval.
 //

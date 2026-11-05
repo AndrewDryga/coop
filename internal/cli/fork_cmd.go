@@ -935,9 +935,9 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 	return ag.StartSession(a.cfg, id), nil
 }
 
-// sessionHome is where fork re-entry looks up a provider's native sessions: the repository's
-// history store when the provider keeps one (prepared now, before any lookup, so the first re-entry
-// after an upgrade finds sessions moved into it), else the account's profile.
+// sessionHome is where a resume looks up a provider's native sessions: the workspace's native home,
+// the one its box mounts. It is prepared now so the first lookup finds retained history imported
+// into it.
 func (a *app) sessionHome(provider, ws string) (string, error) {
 	return box.PrepareNativeHome(context.Background(), a.cfg, a.rt, provider, a.cfg.ActiveProfile(provider), ws, false)
 }
@@ -1029,9 +1029,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			},
 		}
 	}
-	// --model/--credential are retired — name the fork's ACP session in the positional target
-	// (coop fork <name> acp claude:opus@work), like plain `coop acp`. Without one, the fork's own
-	// agent starts and the editor's model and effort selectors choose from there.
+	// The positional target names the fork's ACP session (coop fork <name> acp claude:opus@work),
+	// like plain `coop acp`. Without one, the fork's own agent starts and the editor's model and
+	// effort selectors choose from there.
 	var t agents.Target
 	if len(rest) == 0 {
 		if t.Provider, err = a.forkACPAgent(name); err != nil {

@@ -192,11 +192,11 @@ func TestAccountRefusalsNameAFailedListing(t *testing.T) {
 	}
 }
 
-// `coop profiles ls`/`list` steers to the bare listing (which already lists) instead of reading `ls`
+// `coop credentials ls` steers to the bare listing (which already lists) instead of reading `ls`
 // as an unknown agent (rule: `ls` is the list verb, it must lead somewhere useful).
 func TestProfilesLsRedirect(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	code, err := a.cmdCredentials([]string{"ls"}) // v3: only `ls` redirects; `list` reads as an unknown agent
+	code, err := a.cmdCredentials([]string{"ls"}) // only `ls` redirects; `list` reads as an unknown agent
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "coop credentials") {
 		t.Errorf("cmdCredentials([ls]) = (%d, %v), want (2, pointing at bare `coop credentials`)", code, err)
 	}

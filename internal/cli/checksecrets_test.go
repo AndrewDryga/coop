@@ -105,8 +105,8 @@ func TestCheckSecretsIgnoredWarningAgreement(t *testing.T) {
 	}
 }
 
-// joinScan renders a scan the way the old string-returning scanner did, so these tests keep
-// asserting on "which file, flagged how" rather than on the report's layout.
+// joinScan renders a scan as one line per finding, so these tests assert on "which file, flagged
+// how" rather than on the report's layout.
 func joinScan(scan treeScan) string {
 	var b strings.Builder
 	for _, f := range scan.findings {
