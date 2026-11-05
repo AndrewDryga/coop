@@ -1285,3 +1285,6 @@ func grokCatalogAuthMethod(raw json.RawMessage) (string, error) {
 	}
 	return method, nil
 }
+
+// OnePrompt is -p, --single: one prompt, then exit.
+func (grokAgent) OnePrompt(cmd []string) bool { return onePromptCommand(cmd, "-p", "--single") }

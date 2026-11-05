@@ -479,6 +479,9 @@ type Agent interface {
 	// InteractiveInvocation distinguishes native TUI commands from print/protocol commands.
 	// Host build confirmation uses this, not native-history session production.
 	InteractiveInvocation(cmd []string) bool
+	// OnePrompt reports a command that answers one prompt and exits, such as claude -p or codex
+	// exec. Offline, such a run cannot reach its provider, and every client then waits for ever.
+	OnePrompt(cmd []string) bool
 	// Headless is the one-shot, non-interactive form carrying a prompt (the loop).
 	Headless(cfg *config.Config, prompt string) []string
 	// HeadlessSession starts or resumes one exact non-interactive native session. Review uses it
@@ -1021,4 +1024,20 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// onePromptCommand reports cmd holding one of an agent's one-prompt flags or subcommands, in any
+// position after the program, as a separate argument or a joined value (-p=x, --print=x).
+func onePromptCommand(cmd []string, markers ...string) bool {
+	for _, arg := range cmd[min(1, len(cmd)):] {
+		if arg == "--" {
+			return false
+		}
+		for _, marker := range markers {
+			if arg == marker || strings.HasPrefix(arg, marker+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }

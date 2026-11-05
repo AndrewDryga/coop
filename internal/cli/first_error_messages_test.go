@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/AndrewDryga/coop/internal/box"
 	"strings"
 	"testing"
 
@@ -25,5 +26,19 @@ func TestNoAccountOffersOnlyASignInLoginAccepts(t *testing.T) {
 	}
 	if got := noAccountErr("claude", "../x").Error(); strings.Contains(got, "coop login") {
 		t.Errorf("offered a sign-in login refuses: %s", got)
+	}
+}
+
+// An offline box stops a one-prompt agent run before it starts; an interactive one is allowed.
+func TestRefuseOfflineOnePrompt(t *testing.T) {
+	offline := &config.Config{Egress: "none"}
+	if err := refuseOfflineOnePrompt(offline, box.RunSpec{Agent: "codex", AgentCommand: true, Cmd: []string{"codex", "exec", "hi"}}); err == nil || !strings.Contains(err.Error(), "--egress filtered") {
+		t.Errorf("offline exec = %v", err)
+	}
+	if err := refuseOfflineOnePrompt(offline, box.RunSpec{Agent: "codex", AgentCommand: true, Cmd: []string{"codex"}}); err != nil {
+		t.Errorf("offline interactive = %v", err)
+	}
+	if err := refuseOfflineOnePrompt(&config.Config{Egress: "filtered"}, box.RunSpec{Agent: "claude", AgentCommand: true, Cmd: []string{"claude", "-p", "x"}}); err != nil {
+		t.Errorf("filtered one prompt = %v", err)
 	}
 }

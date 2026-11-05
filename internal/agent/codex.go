@@ -1903,3 +1903,22 @@ func parseCodexModels(out []byte) ([]Model, error) {
 	}
 	return models, nil
 }
+
+// OnePrompt is codex exec (or e): one prompt, then exit. Its help and version stay usable offline.
+func (codexAgent) OnePrompt(cmd []string) bool {
+	for i := 1; i < len(cmd); i++ {
+		arg := cmd[i]
+		if arg == "--" {
+			return false
+		}
+		if strings.HasPrefix(arg, "-") {
+			if slices.Contains(codexValueFlags, arg) {
+				i++ // the flag's value is not a subcommand
+			}
+			continue
+		}
+		rest := cmd[i+1:]
+		return (arg == "exec" || arg == "e") && !slices.Contains(rest, "--help") && !slices.Contains(rest, "-h")
+	}
+	return false
+}

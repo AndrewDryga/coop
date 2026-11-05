@@ -1556,3 +1556,6 @@ func completeGeminiAuthority(original, raw []byte, at time.Time) ([]byte, int64,
 func validGeminiGrant(value string) bool {
 	return len(value) >= 8 && len(value) <= 32<<10 && !strings.ContainsAny(value, "\x00\r\n")
 }
+
+// OnePrompt is -p, --prompt: one prompt, then exit.
+func (geminiAgent) OnePrompt(cmd []string) bool { return onePromptCommand(cmd, "-p", "--prompt") }

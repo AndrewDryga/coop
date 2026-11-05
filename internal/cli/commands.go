@@ -232,6 +232,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 		return 1, err
 	}
 	defer capture.Close()
+	if err := refuseOfflineOnePrompt(a.cfg, spec); err != nil {
+		return 1, err
+	}
 	spec.CapturedEgress = capture
 	// A filtered box runs the qualified client image, so the shared image's currency is not its
 	// concern; an open or offline one runs this repo's, repaired here when its definition drifted.
@@ -877,4 +880,16 @@ func promptLine(c tasks.TaskCounts, forks, looping int, signWarn bool) string {
 		seg = append(seg, "unsigned commit")
 	}
 	return strings.Join(seg, " · ")
+}
+
+// refuseOfflineOnePrompt stops a one-prompt agent run in an offline box: it cannot reach its provider,
+// and every client waits for ever, so a script would hang. An interactive session still starts.
+func refuseOfflineOnePrompt(cfg *config.Config, spec box.RunSpec) error {
+	ag, ok := agents.Get(spec.Agent)
+	if !ok || !spec.AgentCommand || cfg.Egress != "none" || !ag.OnePrompt(spec.Cmd) {
+		return nil
+	}
+	return ui.CommandFailed(ag.DisplayName()+" cannot answer a prompt offline",
+		ag.DisplayName()+" needs to reach "+ag.Vendor()+", and an offline box blocks that, so the run would wait for ever.",
+		[2]string{"", "Run it with --egress filtered, which reaches the provider and nothing you have not approved."})
 }

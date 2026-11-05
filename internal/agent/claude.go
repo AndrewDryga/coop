@@ -1493,3 +1493,6 @@ func ClaudeCreditLimitNotice(text string) bool {
 }
 
 func (claudeAgent) PlainOutputProbe() PlainOutputProbe { return &claudePlainLimitProbe{} }
+
+// OnePrompt is -p, --print: one prompt, then exit.
+func (claudeAgent) OnePrompt(cmd []string) bool { return onePromptCommand(cmd, "-p", "--print") }
