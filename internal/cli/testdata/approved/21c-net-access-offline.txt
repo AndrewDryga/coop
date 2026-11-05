@@ -1,5 +1,4 @@
-New runs are offline according to .agent/project.yaml.
-An agent cannot reach its provider.
+As .agent/project.yaml asks, new runs are offline: an agent cannot reach its provider.
 
 For more details see:
   coop help net

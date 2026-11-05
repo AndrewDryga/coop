@@ -1,5 +1,4 @@
-Network access is restricted according to the configuration in .agent/project.yaml.
-Only approved network traffic and agent provider connections are allowed.
+.agent/project.yaml limits new runs to your agent's provider and approved traffic.
 
 APPROVED NETWORK RULES
   github.com:443 · TLS

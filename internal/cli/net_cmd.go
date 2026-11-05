@@ -419,42 +419,36 @@ func writeNetPending(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 	fmt.Fprintf(w, "\n  %s\n", p.Cyan(netPendingReview))
 }
 
-// netModeExplanation is what a new run may reach, and why. The YAML explanation
-// is used only where the project file actually selected the mode; every other
-// source keeps its own truthful cause, so a host setting, a stored approval or
-// coop's default is never attributed to a file that did not decide it.
+// netModeExplanation is what a new run may reach, and why, in one sentence. The project file is
+// named only where it actually selected the mode; every other source keeps its own truthful cause,
+// so a host setting, a stored approval or coop's default is never attributed to a file that did not
+// decide it. The cause is said as the place a person would go to change it.
 func netModeExplanation(mode egress.Mode, source string) string {
-	if source == box.AccessFromProject && mode == egress.Filtered {
-		return "Network access is restricted according to the configuration in .agent/project.yaml.\n" +
-			"Only approved network traffic and agent provider connections are allowed."
+	if mode == egress.Filtered {
+		reach := "your agent's provider and approved traffic"
+		switch source {
+		case box.AccessFromApproval:
+			return "New runs reach only your agent's provider and the traffic this project approved."
+		case box.AccessFromHost:
+			return "COOP_EGRESS limits new runs to " + reach + "."
+		case box.AccessFromProject:
+			return ".agent/project.yaml limits new runs to " + reach + "."
+		}
+		return "By default, new runs reach only " + reach + "."
 	}
-	access := "use filtered internet access"
-	switch mode {
-	case egress.Open:
-		access = "have unrestricted internet access"
-	case egress.None:
-		access = "are offline"
+	state := "new runs have unrestricted internet access."
+	if mode == egress.None {
+		state = "new runs are offline: an agent cannot reach its provider."
 	}
-	// Where the setting came from, said as the place a person would go to change it. "because that
-	// is what you approved" was true but read as a justification for a decision under discussion;
-	// the reader is looking for which of the four sources is in force.
-	cause := "by default"
 	switch source {
 	case box.AccessFromApproval:
-		cause = "according to approved settings for this project"
+		return "As this project approved, " + state
 	case box.AccessFromHost:
-		cause = "according to COOP_EGRESS"
+		return "As COOP_EGRESS sets, " + state
 	case box.AccessFromProject:
-		cause = "according to .agent/project.yaml"
+		return "As .agent/project.yaml asks, " + state
 	}
-	line := "New runs " + access + " " + cause + "."
-	switch mode {
-	case egress.Filtered:
-		line += "\nOnly approved network traffic and agent provider connections are allowed."
-	case egress.None:
-		line += "\nAn agent cannot reach its provider."
-	}
-	return line
+	return "By default, " + state
 }
 
 // netModeChange writes the access mode as a diff when it changes: what it was,
