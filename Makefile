@@ -55,8 +55,18 @@ mod-check: ## Verify module metadata is tidy without changing qualified sources
 gateway-sources-check: ## Verify embedded network helper sources match the checkout
 	@go test ./internal/gatewayimage -run '^TestEmbeddedGatewaySourcesExactlyMatchCheckout$$' -count=1
 
-lint: ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
-	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting (run: gofmt -w .)'; exit 1; }
+# fmt-check judges the tracked and new non-ignored Go files git lists, never the whole directory: a
+# recursive `gofmt -l .` also walked ignored task scratch (.agent/tasks/*/tmp), where a box hides
+# secret-shaped paths, and failed on "operation not permitted" before judging a single file. The
+# list goes through a file so a git failure fails the check; a tracked file deleted from the work
+# tree is skipped, and any file gofmt cannot read fails it.
+fmt-check: ## gofmt check over the tracked and new non-ignored Go files
+	@set -e; list="$$(mktemp)"; trap 'rm -f "$$list"' EXIT; \
+	git ls-files -z -c -o --exclude-standard -- '*.go' >"$$list"; \
+	files="$$(xargs -0 sh -c 'for f do [ ! -e "$$f" ] || printf "%s\0" "$$f"; done' sh <"$$list" | xargs -0 gofmt -l)"; \
+	[ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting (run: gofmt -w <file>)'; exit 1; }
+
+lint: fmt-check ## gofmt check + go vet + Staticcheck at the pinned version, for Linux and macOS alike
 # Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
 # *_linux.go file never compiles. So each check below covers both platforms, whichever host runs
 # it — with cgo off, which the tree never uses, so the other platform never needs a C toolchain.
@@ -252,9 +262,8 @@ LOCAL_cli := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acppr
 
 ITERATION_SCOPE := $(if $(filter 1,$(words $(SCOPE))),$(filter agent runtime sessions tasks connector cli,$(SCOPE)))
 ifneq ($(ITERATION_SCOPE),)
-check-local: require-git-lfs ## Scoped local checks; SCOPE=docs|rules|agent|runtime|sessions|tasks|connector|cli (unknown = broad)
+check-local: require-git-lfs fmt-check ## Scoped local checks; SCOPE=docs|rules|agent|runtime|sessions|tasks|connector|cli (unknown = broad)
 	@echo 'Local checks: $(ITERATION_SCOPE) owner and reverse consumers; no race or live providers'
-	@files="$$(gofmt -l .)" || exit 1; [ -z "$$files" ] || { printf '%s\n' "$$files"; echo 'gofmt: files need formatting'; exit 1; }
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
@@ -396,7 +405,7 @@ help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
 .PHONY: thread-messages-check
-.PHONY: build install test test-minimal-path cover lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
+.PHONY: build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: trim-gate-cache check-static check-unit check-process check-race
