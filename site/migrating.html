@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
 <li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
 <li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
 <li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
@@ -124,6 +125,25 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-old-network-records-are-refused-by-name"><h2>Unreleased: old network records are refused by name</h2>
+<p>Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
+earlier. If your network folder (<code>~/.local/state/coop/network</code>) still holds any, a project they
+could belong to stops with a message that names each file. A withdrawal still keeps its project
+closed.</p>
+<ul>
+<li>For a project that still exists, run <code>coop net forget --project &lt;path&gt;</code>. It removes the old
+approval and withdrawal files, keeps the project closed, and <code>coop approve</code> there opens it again.</li>
+<li>If the project no longer exists, delete the files the message names from
+<code>~/.local/state/coop/network</code>. Each name is <code>approval-&lt;64 hex digits&gt;.json</code> or
+<code>withdrawn-&lt;64 hex digits&gt;.json</code>; a matching <code>project-&lt;64 hex digits&gt;-&lt;32 hex digits&gt;.anchor</code> can go
+with them.</li>
+<li>A named <code>execution-&lt;32 hex digits&gt;.json</code> run record is not cleaned up by this Coop. Open the
+project once with Coop v12.1.0, which removes that run&#39;s leftovers, or delete the file if the run is
+long gone.</li>
+<li>Coop leaves these files on disk and changes none of them. A project they provably do not belong to
+starts as usual.</li>
+<li>Policy copies an old <code>coop net setup</code> check saved without a marker stay on disk, unused.</li>
+</ul>
 </section><section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
 <p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does
 on every other agent. To pick a profile, use <code>coop codex --profile &lt;name&gt;</code>.</p>
