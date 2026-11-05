@@ -136,3 +136,51 @@ func TestUnfinishedHistoryImportIsRefusedByName(t *testing.T) {
 		t.Fatalf("the receipt changed: %q, %v", data, readErr)
 	}
 }
+
+// Every launch leaves the provider's own login files in profiles/<account>, which is the account's
+// home. A signed-in account whose home holds them, beside a key in the old host-credentials folder,
+// is judged by its canonical record alone and never refused as one an older build saved.
+func TestSignedInAccountBesideOldLoginFilesIsNotRefused(t *testing.T) {
+	for _, name := range agents.Names() {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir()}
+			ag, _ := agents.Get(name)
+			seedCanonicalFixture(t, cfg, name, "work")
+			marker, _ := ag.AuthMarker()
+			home := cfg.AgentProfileDir(name, "work")
+			old := []string{filepath.Join(home, marker), filepath.Join(home, "oauth_creds.json")}
+			if ag.HostCredential().Declared() {
+				dir, err := hostCredentialDir(cfg, name, "work")
+				if err != nil {
+					t.Fatal(err)
+				}
+				old = append(old, filepath.Join(dir, ag.HostCredential().File))
+			}
+			for _, path := range old {
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("inert-old-login"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, exists, err := ensureNativeAccount(t.Context(), cfg, ag, "work"); err != nil || !exists {
+				t.Errorf("ensureNativeAccount = %v, %v; want the signed-in account", exists, err)
+			}
+			if _, selected, err := previewNativeAuthority(t.Context(), cfg, ag, "work"); err != nil || !selected {
+				t.Errorf("previewNativeAuthority = %v, %v; want the signed-in account", selected, err)
+			}
+			if ag.HostCredential().Declared() {
+				if _, _, _, err := LoadHostCredential(cfg, ag, "work"); err != nil {
+					t.Errorf("LoadHostCredential = %v", err)
+				}
+				if _, err := SelectedHostCredentialPath(cfg, ag, "work"); err != nil {
+					t.Errorf("SelectedHostCredentialPath = %v", err)
+				}
+			}
+			if !ProfileAuthed(cfg, name, "work") {
+				t.Error("the signed-in account did not count as signed in")
+			}
+		})
+	}
+}

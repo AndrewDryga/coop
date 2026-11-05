@@ -195,39 +195,7 @@ func normalizeNativeAccount(ag agents.Agent, files map[string][]byte) (*accountA
 // RemoveNativeAccount advances the epoch before any history is deleted. Existing
 // broker snapshots can no longer be renewed for the removed identity.
 func RemoveNativeAccount(ctx context.Context, cfg *config.Config, provider, account string) error {
-	if err := removeNativeAuthority(ctx, cfg, provider, account); err != nil {
-		return err
-	}
-	path := filepath.Join(cfg.ConfigDir, provider, "cutovers", account)
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	root, err := openPrivateAccountTree(cfg.ConfigDir, provider, "cutovers", account)
-	if err != nil {
-		return err
-	}
-	defer root.close()
-	lock, err := root.lock(ctx)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	entries, err := os.ReadDir(root.path)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if name != "cutover.json" && !strings.HasPrefix(name, ".private-") {
-			continue
-		}
-		if err := os.Remove(filepath.Join(root.path, name)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return removeNativeAuthority(ctx, cfg, provider, account)
 }
 
 func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, account string) error {
@@ -257,7 +225,7 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name != accountRenewalName && name != accountRetryName && name != accountRefusalName && name != "cutover.json" && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
+		if name != accountRenewalName && name != accountRetryName && name != accountRefusalName && !strings.HasPrefix(name, "recovery-") && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") && !strings.HasPrefix(name, ".renewal-") {
 			continue
 		}
 		if err := os.Remove(filepath.Join(root.path, name)); err != nil {

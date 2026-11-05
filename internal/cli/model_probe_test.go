@@ -108,8 +108,6 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 		{"run coop build --egress filtered " + secret, "The filtered project image needs rebuilding: coop build --egress filtered"},
 		{"run coop net setup " + secret, "Filtered networking needs host setup: coop net setup"},
 		{"no space left on device " + secret, "The container runtime has no free storage."},
-		{"Docker did not answer in time — Coop could not check which containers hold this saved sign-in.\nNothing was changed. Try again. " + secret, "Docker could not verify existing credential mounts; retry when Docker is ready."},
-		{"Docker could not list its containers — Coop could not check which containers hold this saved sign-in.\nNothing was changed. Try again when Docker is ready. " + secret, "Docker could not verify existing credential mounts; retry when Docker is ready."},
 		{"canonical credential file must be owner-private with one link " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
 		{"native account needs host sign-in or renewal " + secret, "Sign in again: coop login claude@work"},
 		{"Sign in again: coop login claude@work " + secret, "Sign in again: coop login claude@work"},

@@ -160,27 +160,3 @@ func runCredentialUseLeases(cfg *config.Config, rt runtime.Runtime, spec *RunSpe
 	}
 	return release, nil
 }
-
-// A failed teardown can outlive its host process/flock. Container labels keep that original
-// store busy until absence is proven; include created/stopped containers that could restart.
-func checkCredentialContainers(ctx context.Context, rt runtime.Runtime, provider, key string, exclusive bool) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	label := "coop.credential.writer"
-	if exclusive {
-		label = "coop.credential." + provider
-	}
-	var containers []runtime.Container
-	err := listDockerPatiently(ctx, func(ctx context.Context) (err error) {
-		containers, err = rt.ContainersByLabel(ctx, label, key)
-		return err
-	})
-	if err != nil {
-		return err
-	}
-	if len(containers) > 0 {
-		return errors.New("credential is busy — its previous runtime has not exited")
-	}
-	return nil
-}
