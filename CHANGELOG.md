@@ -10,6 +10,20 @@
   onto the box. The code is random, works once and expires after ten minutes. `coop build --egress
   filtered` on the host still works.
 
+- **Session data older than schema 26 is no longer converted.** A worker whose `session.sqlite` is at
+  schema 25 or lower now stops at start with a message naming the converting build, and
+  `coop sessions check` exits 4. The file is left untouched. The schema 26 conversion of pending turn
+  costs went with it. Open the data once with a Coop build at or before commit 29133b0e, then
+  upgrade (see MIGRATING.md).
+
+- **Stored sessions with no saved job or an old mode are quarantined.** A session that
+  has no job, a blank execution or network mode, or was created in the removed
+  `readonly` or `bare` mode no longer runs and is no longer read as a historical row. It is
+  quarantined at start with its session ID in the log, keeps its record and files, and is retired
+  with a `retire_quarantined` discard. A read-only fork that has no primary snapshot receipt is
+  refused by name instead of kept. Network evidence for a session with no job is no longer read
+  from its project snapshot.
+
 - **Network and file-protection errors say what went wrong.** Help and refusals no longer say a client,
   image or Docker setup is "qualified". They name what `coop net setup` checked or what Docker lacks.
 

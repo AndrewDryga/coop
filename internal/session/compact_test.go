@@ -173,14 +173,11 @@ func TestCompactTurnOperationResultsRefusesAnActiveStateRoot(t *testing.T) {
 	}
 }
 
-func TestCompactTurnOperationResultsBacksUpBeforeSchemaMigration(t *testing.T) {
+func TestCompactTurnOperationResultsBacksUpBeforeRewriting(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	databasePath := filepath.Join(root, databaseName)
-	buildLegacyDatabase(t, databasePath, SchemaVersion-1)
+	createStore(t, root)
 	db, err := sql.Open("sqlite", sqliteFileURI(databasePath, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -219,8 +216,8 @@ func TestCompactTurnOperationResultsBacksUpBeforeSchemaMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupDB.Close()
-	if backupVersion != SchemaVersion-1 {
-		t.Fatalf("backup schema = %d, want original %d", backupVersion, SchemaVersion-1)
+	if backupVersion != SchemaVersion {
+		t.Fatalf("backup schema = %d, want original %d", backupVersion, SchemaVersion)
 	}
 	store := openTestStore(t, root)
 	defer store.Close()

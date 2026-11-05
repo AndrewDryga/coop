@@ -44,6 +44,28 @@ var errSessionForkUnproven = errors.New("remote session workspace authority is u
 
 var errLegacySessionForkUnproven = fmt.Errorf("%w: legacy remote session has no store-bound fork ownership proof", errSessionForkUnproven)
 
+// oldSessionRowRefusal names a stored session this build no longer reads: one with no saved job
+// (made before controller jobs), a blank or removed execution mode (readonly, bare), or a blank
+// network mode. Such a row is quarantined at start, never run, resumed or discarded on a guess,
+// and its owner either retires the record or discards the session with a build that still reads it.
+func oldSessionRowRefusal(sess session.Session) error {
+	var what string
+	switch {
+	case sess.JobDigest == "" || len(sess.JobDocument) == 0:
+		what = "has no saved job (it predates controller jobs)"
+	case sess.Mode == "":
+		what = "has no execution mode (it predates session schema 22)"
+	case sess.Mode != "normal":
+		what = fmt.Sprintf("was created in the removed %q mode", sess.Mode)
+	case sess.NetworkMode == "":
+		what = "has no network mode (it predates session schema 21)"
+	default:
+		return nil
+	}
+	return fmt.Errorf("session %s %s; retire its record with a retire_quarantined discard, or cancel, close and discard "+
+		"it first with a coop build at or before commit 29133b0e (session schema 26), then upgrade", sess.ID, what)
+}
+
 const (
 	sessionPolicyMaxWarmIdleTimeout = time.Hour
 	sessionServiceCleanupInterval   = time.Minute
@@ -672,10 +694,17 @@ func (s *Service) Start(parent context.Context) error {
 		if sessions[index].State == session.SessionDiscarded {
 			continue
 		}
+		if refusal := oldSessionRowRefusal(sessions[index]); refusal != nil {
+			s.host.warnf("remote session %s is quarantined: %v; its record, workspace, and services were kept", sessions[index].ID, refusal)
+			quarantined[sessions[index].ID] = struct{}{}
+			quarantinedIDs = append(quarantinedIDs, sessions[index].ID)
+			skipRuntimeRecovery[sessions[index].ID] = struct{}{}
+			continue
+		}
 		bound, bindErr := s.ensureSessionForkAuthority(parent, sessions[index])
 		if bindErr != nil {
 			if errors.Is(bindErr, errSessionForkUnproven) {
-				s.host.warnf("remote session %s is quarantined: %v; its durable history, workspace, and services were left untouched", sessions[index].ID, bindErr)
+				s.host.warnf("remote session %s is quarantined: %v; its record, workspace, and services were kept", sessions[index].ID, bindErr)
 				quarantined[sessions[index].ID] = struct{}{}
 				quarantinedIDs = append(quarantinedIDs, sessions[index].ID)
 				skipRuntimeRecovery[sessions[index].ID] = struct{}{}
@@ -1008,16 +1037,6 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 		return errors.New("session workspace reservation changed")
 	}
 	return nil
-}
-
-// normalizedSessionMode reads a blank mode as normal: a session replayed from an operation
-// receipt written before modes existed carries none, and it ran as every session did then. A
-// row created in a removed mode keeps that mode, so it reads back as what it was.
-func normalizedSessionMode(mode string) string {
-	if mode == "" {
-		return "normal"
-	}
-	return mode
 }
 
 // requireSessionWorkspace refuses a repository-specific operation on a session that has no
@@ -2566,6 +2585,11 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 	if err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
+	if s.sessionQuarantined(sess.ID) {
+		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "session is quarantined; retire its record with a retire_quarantined discard",
+		})
+	}
 	if err := s.validateSessionForkAuthorityForDiscardPlan(ctx, sess); err != nil {
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
@@ -2573,9 +2597,8 @@ func (s *Service) executePlanDiscard(ctx context.Context, op session.Operation, 
 		return PlanDiscardResult{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "discard planning requires a closed idle session"})
 	}
 	if sess.Workspace == "" {
-		// Nothing to plan against: a session without a workspace (an unbound record, or one created
-		// in the removed bare mode) discards its private state and retires the record. The plan
-		// still pins the revision the discard must find.
+		// Nothing to plan against: a session without a workspace (an unbound record) discards its
+		// private state and retires the record. The plan still pins the revision the discard must find.
 		return s.completePlanDiscard(ctx, op, PlanDiscardResult{
 			OperationID: op.ID, Plan: DiscardPlan{SessionID: sess.ID, Revision: sess.Revision},
 		})
@@ -2756,6 +2779,12 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
+	// A plan recorded before the session was quarantined must not reach its files.
+	if s.sessionQuarantined(sess.ID) {
+		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+			Code: session.CodeInvalidSessionState, Detail: "session is quarantined; retire its record with a retire_quarantined discard",
+		})
+	}
 	if err := requireSessionForkAuthority(sess); err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()})
 	}
@@ -2842,9 +2871,9 @@ func (s *Service) executeDiscard(ctx context.Context, op session.Operation, plan
 	return completed, nil
 }
 
-// retireWorkspacelessSession is the discard of a session that never had a workspace (a bare
-// session): its private ACP state goes, the record is tombstoned, and no fork, service or
-// companion is touched because none exists.
+// retireWorkspacelessSession is the discard of an unbound record that never had a workspace:
+// its private ACP state goes, the record is tombstoned, and no fork, service or companion is
+// touched because none exists.
 func (s *Service) retireWorkspacelessSession(ctx context.Context, op session.Operation, sess session.Session) (session.Session, error) {
 	if err := removePrivateSessionState(s.store.Root(), sess.ID); err != nil {
 		return session.Session{}, wrapServiceOperationError(op.ID, session.ErrOperationUncertain)

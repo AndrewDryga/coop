@@ -16,11 +16,12 @@ import (
 	"testing"
 )
 
-// This task retires nothing: every schema a released or untagged build ever wrote still converts.
-func TestSupportedSchemasStillConvertEveryHistoricalStore(t *testing.T) {
-	for version := 1; version < SchemaVersion; version++ {
-		if got := supportedSchemas.status(version); got != StoreConverts {
-			t.Errorf("schema %d status = %v, want StoreConverts", version, got)
+// Every schema below the oldest one is refused, never converted; a store at the current schema is
+// used as it is.
+func TestSupportedSchemasRefuseEveryHistoricalStore(t *testing.T) {
+	for version := 1; version < OldestSchemaVersion; version++ {
+		if got := supportedSchemas.status(version); got != StoreTooOld {
+			t.Errorf("schema %d status = %v, want StoreTooOld", version, got)
 		}
 	}
 	for version, want := range map[int]StoreStatus{0: StoreEmpty, SchemaVersion: StoreCurrent, SchemaVersion + 1: StoreTooNew} {
@@ -41,7 +42,7 @@ func TestSchemaWindowRefusesOutsideItAndNamesTheConvertingSchema(t *testing.T) {
 	}{
 		{0, StoreEmpty, ""},
 		{24, StoreTooOld, "session schema 24 is older than this coop build supports (25 to 26); " +
-			"open it once with a coop build that uses session schema 25, then upgrade"},
+			"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade"},
 		{25, StoreConverts, ""},
 		{26, StoreCurrent, ""},
 		{27, StoreTooNew, "session schema 27 is newer than this coop build supports (25 to 26)"},
@@ -78,9 +79,14 @@ func TestCheckStoreReportsWithoutWriting(t *testing.T) {
 			}
 		}, supportedSchemas, StoreEmpty, 0},
 		{"current", func(t *testing.T, root string) { createStore(t, root) }, supportedSchemas, StoreCurrent, SchemaVersion},
+		// The window is a fixture: this build converts nothing, but the check reports what a
+		// window with a lower floor would do.
 		{"converts", func(t *testing.T, root string) {
 			stoppedHistoricalStore(t, root, SchemaVersion-1)
-		}, supportedSchemas, StoreConverts, SchemaVersion - 1},
+		}, schemaWindow{oldest: SchemaVersion - 1, current: SchemaVersion}, StoreConverts, SchemaVersion - 1},
+		{"refused by this build", func(t *testing.T, root string) {
+			stoppedHistoricalStore(t, root, SchemaVersion-1)
+		}, supportedSchemas, StoreTooOld, SchemaVersion - 1},
 		{"too old", func(t *testing.T, root string) {
 			stoppedHistoricalStore(t, root, 24)
 		}, schemaWindow{oldest: 25, current: 26}, StoreTooOld, 24},
@@ -268,17 +274,24 @@ func execAndClose(t *testing.T, path, statement string) {
 	}
 }
 
-// convertingStore opens a store one schema behind, so the conversion Open commits is still only
-// in the write-ahead log when the returned store is copied; the store closes with the test.
+// convertingStore leaves a store whose write-ahead log is newer than its main file: the main file
+// says one schema behind and only the log knows the current one, as after a crash. The returned
+// root stays live until the test ends.
 func convertingStore(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "live")
-	stoppedHistoricalStore(t, root, SchemaVersion-1)
-	store, err := Open(root)
+	createStore(t, root)
+	path := filepath.Join(root, databaseName)
+	setUserVersion(t, path, SchemaVersion-1)
+	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
+		t.Fatal(err)
+	}
 	return root
 }
 

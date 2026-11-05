@@ -2068,7 +2068,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		}
 	}
 	// A row stored in a removed execution mode never starts, least of all as a writable session.
-	if normalizedSessionMode(bound.Mode) != "normal" || bound.Target == "" {
+	if bound.Mode != "normal" || bound.Target == "" {
 		return nil, acpFailure(sessionACPProcessError, "bound session mode or target is invalid")
 	}
 	if !filepath.IsAbs(bound.Repository) || !filepath.IsAbs(bound.Workspace) ||

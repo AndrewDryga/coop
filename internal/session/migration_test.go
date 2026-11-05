@@ -1,7 +1,7 @@
 package session
 
 import (
-	"context"
+	"bytes"
 	"database/sql"
 	"fmt"
 	"os"
@@ -70,86 +70,36 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	}
 }
 
-// A database left behind at any historical version must migrate cleanly to the current schema:
-// the version pragma lands on SchemaVersion, pre-existing rows stay readable through today's
-// scanners (proving no column was renamed or reordered incompatibly along the way), and the
-// columns/tables added after that version come back with sane defaults rather than missing data.
-func TestMigrationFromEachHistoricalVersionReachesCurrentSchema(t *testing.T) {
-	ctx := context.Background()
-	for version := 1; version < SchemaVersion; version++ {
+// A store left behind below the oldest schema this build converts is refused by name, with the
+// schema whose builds convert it, and Open changes nothing on disk.
+func TestOpenRefusesEveryOlderSchemaByNameAndLeavesTheStoreAlone(t *testing.T) {
+	for version := 1; version < OldestSchemaVersion; version++ {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "state")
-			if err := os.Mkdir(root, 0o700); err != nil {
+			stoppedHistoricalStore(t, root, version)
+			path := filepath.Join(root, databaseName)
+			before, err := os.ReadFile(path)
+			if err != nil {
 				t.Fatal(err)
 			}
-			buildLegacyDatabase(t, filepath.Join(root, databaseName), version)
 
-			store := openTestStore(t, root)
-			defer store.Close()
-			if owned, err := store.OwnsSessionFork(ctx, "legacy-session"); err != nil || owned {
-				t.Fatalf("migrated session gained a new store owner: owned=%t err=%v", owned, err)
+			want := fmt.Sprintf("session schema %d is older than this coop build supports (%d to %d); "+
+				"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade",
+				version, OldestSchemaVersion, SchemaVersion, OldestSchemaVersion)
+			if store, err := Open(root); err == nil || err.Error() != want {
+				if store != nil {
+					store.Close()
+				}
+				t.Fatalf("Open = %v, want %q", err, want)
 			}
-
-			var gotVersion int
-			if err := store.db.QueryRow("PRAGMA user_version").Scan(&gotVersion); err != nil {
-				t.Fatal(err)
+			if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("the refusal changed the database: %v", err)
 			}
-			if gotVersion != SchemaVersion {
-				t.Fatalf("user_version after v%d migration = %d, want %d", version, gotVersion, SchemaVersion)
+			if _, err := os.Lstat(path + "-wal"); err == nil {
+				t.Fatal("the refusal left a write-ahead log behind")
 			}
-
-			op, err := store.GetOperation(ctx, "legacy-key")
-			if err != nil || op.State != OperationSucceeded || op.ResourceID != "legacy-session" {
-				t.Fatalf("legacy operation after v%d migration = %+v, err=%v", version, op, err)
-			}
-
-			sess, err := store.GetSession(ctx, "legacy-session")
-			if err != nil {
-				t.Fatalf("legacy session after v%d migration: %v", version, err)
-			}
-			if sess.Target != "codex:legacy" || sess.State != SessionOpen ||
-				sess.MaxPatchBytes != 1048576 || !sess.ProjectEnv || !sess.ProjectMCP {
-				t.Fatalf("legacy session after v%d migration = %+v", version, sess)
-			}
-			if len(sess.JobDocument) != 0 || sess.JobDigest != "" {
-				t.Fatalf("historical session gained invented job authority after v%d migration", version)
-			}
-			wantCompanions := 0
-			if version >= 2 {
-				wantCompanions = 1
-			}
-			if len(sess.Companions) != wantCompanions {
-				t.Fatalf("v%d migration companions = %+v, want %d entries", version, sess.Companions, wantCompanions)
-			}
-			if len(sess.RepositoryFreshness) != 0 {
-				t.Fatalf("v%d legacy repository freshness = %+v, want explicit unavailable", version, sess.RepositoryFreshness)
-			}
-			// A session created before restricted networking existed ran open, and
-			// nothing froze a policy for it: the migration must say exactly that
-			// rather than leaving a mode nobody can compare a run against.
-			if sess.NetworkMode != "open" || sess.NetworkFingerprint != "" || sess.NetworkQualification != "" {
-				t.Fatalf("v%d legacy session network = %q/%q/%q, want open with no capture",
-					version, sess.NetworkMode, sess.NetworkFingerprint, sess.NetworkQualification)
-			}
-			// Likewise the execution mode: a session from before modes existed ran as every
-			// session did, so it reads as normal — never relabeled, never blank.
-			if sess.Mode != "normal" {
-				t.Fatalf("v%d legacy session mode = %q, want normal", version, sess.Mode)
-			}
-
-			turn, err := store.GetTurn(ctx, "legacy-session", "turn-legacy")
-			if err != nil {
-				t.Fatalf("legacy turn after v%d migration: %v", version, err)
-			}
-			if turn.Prompt != "legacy prompt" || turn.Usage.Recorded() || turn.RuntimeRunID != "" {
-				t.Fatalf("legacy turn after v%d migration = %+v", version, turn)
-			}
-
-			// The migrated store is not just readable, it is fully writable under the
-			// current schema.
-			created, err := store.CreateSession(ctx, fmt.Sprintf("post-migration-v%d", version), CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex"})
-			if err != nil || len(created.Companions) != 0 {
-				t.Fatalf("post-migration create after v%d = %+v, err=%v", version, created, err)
+			if got := immutableUserVersion(t, path); got != version {
+				t.Fatalf("user_version after the refusal = %d, want unchanged %d", got, version)
 			}
 		})
 	}
@@ -178,9 +128,6 @@ func TestFailedMigrationRollsBackAndLeavesUserVersionUntouched(t *testing.T) {
 	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN companions TEXT NOT NULL DEFAULT '[]'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
-		t.Fatal(err)
-	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +149,8 @@ func TestFailedMigrationRollsBackAndLeavesUserVersionUntouched(t *testing.T) {
 	if err := verify.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("user_version after failed migration = %d, want unchanged 1", version)
+	if version != 0 {
+		t.Fatalf("user_version after failed migration = %d, want unchanged 0", version)
 	}
 }
 

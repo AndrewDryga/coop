@@ -16,7 +16,7 @@ const (
 	// OldestSchemaVersion is the oldest store schema Open still converts. A store below it is
 	// refused with the schema that converts it (.agent/kb/rules/one-upgrade-for-old-state.md).
 	// Raise it only once every known store has passed that waypoint, together with the card.
-	OldestSchemaVersion = 1
+	OldestSchemaVersion = 26
 
 	MaxIDBytes             = 256
 	MaxMethodBytes         = 128
@@ -283,10 +283,9 @@ type Operation struct {
 }
 
 type Session struct {
-	ID              string `json:"id"`
-	ExternalRef     string `json:"external_ref"`
-	Target          string `json:"target"`
-	AuthorityDigest string `json:"authority_digest,omitempty"` // Historical rows only.
+	ID          string `json:"id"`
+	ExternalRef string `json:"external_ref"`
+	Target      string `json:"target"`
 	// JobDocument is the controller's immutable execution authority for a v2 worker session.
 	// A row from before jobs leaves both job fields empty. The document stays private:
 	// public session responses expose only its digest, never source-transfer descriptors.
@@ -301,8 +300,8 @@ type Session struct {
 	ControllerTools       *ControllerTools      `json:"-"`
 	ControllerToolsDigest string                `json:"controller_tools_digest,omitempty"`
 	WorkspaceTask         *WorkspaceTaskBinding `json:"workspace_task,omitempty"`
-	// Mode is the execution mode the session was created under — normal, readonly or bare —
-	// fixed for its life. A row written before modes existed reads as normal.
+	// Mode is the execution mode the session was created under, fixed for its life. Only "normal"
+	// runs; the service quarantines a stored row with any other value, blank included.
 	Mode                string                       `json:"mode"`
 	RepositoryReadOnly  bool                         `json:"repository_read_only"`
 	Repository          string                       `json:"repository"`

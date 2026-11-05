@@ -24,6 +24,24 @@ Coop no longer reads these records of builds up to v12.1.0. None is changed or d
   account once with Coop v12.1.0 to finish it, or run `coop login <agent>@<account>`.
 - **Version 4 service approvals** grant nothing and are not read. `coop up` shows the review again.
 
+## Unreleased: old session store data is refused by name
+
+Coop no longer converts session data below schema 26 and no longer reads a few old session shapes.
+Nothing is deleted: the data is refused or quarantined until you act. A turn that was running when
+the worker stopped is still marked interrupted, as before.
+
+1. Stop the worker or service, then run `coop sessions check --state <path>` with the new build.
+   Exit 0 means the data is current. Exit 4 with "session schema N is older than this coop build
+   supports" means the store needs the converting build first.
+2. For a store below schema 26, back up the stopped state folder, open it once with a Coop build at
+   or before commit 29133b0e (it converts to schema 26 on start), stop it, then use the new build.
+3. For a stored session that the log names as quarantined (no saved job, a blank mode, or the
+   removed `readonly` or `bare` mode), either retire its record with
+   `{"retire_quarantined": true, "expected_revision": N}` on `/v1/sessions/{id}/discard`, or cancel,
+   close and discard it with a build at or before commit 29133b0e before you upgrade.
+4. A read-only fork that the error says has no primary snapshot receipt: discard its session with a
+   build at or before commit 29133b0e, then upgrade.
+
 ## Unreleased: old network records are refused by name
 
 Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and

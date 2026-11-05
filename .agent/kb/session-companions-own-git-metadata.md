@@ -102,8 +102,8 @@ commits; private metadata restores their fork branch, origin and admitted tracki
 checkout or reset. Writable primaries still use independent clones. Task binding, checkpoint,
 restore and publication already refuse readonly sessions; review rebases an independent scratch.
 A versioned, inode-bound primary marker is durable before publication. Retries of a marked fork
-verify only; historical independent copies keep their hydration path. Missing provenance cannot
-adopt shared payloads as an independent copy (the separately proven generation anchor is excluded).
+verify only. A read-only fork with no receipt (made before 265b81a4) is refused by name, never
+adopted or hydrated; writable independent forks keep their hydration path.
 The marker denies native mutation and actual writable mounts even before generation/reservation
 publication, including ancestor aliases and child paths. Unknown marker versions remain protected
 through discard planning, revalidation, staging and purge. Stopped-worker checks inventory them.
@@ -111,6 +111,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-04 — a read-only primary fork without an immutable primary receipt is refused by name instead of kept when it shares no inodes (task 2026-11-04-drop-the-old-session-store-row-readers).
 - 2026-11-04 — linked companions and bounded, shallow or missing history markers are refused now; the owner accepted a code proof and every store on this Mac had none. The empty-submodule check stays, since a running box can produce one.
 - 2026-11-04 — corrected the linked-snapshot line: nothing reaches one, so it is not a rollout path.
 - 2026-11-03 — extend immutable payload sharing to frozen read-only primaries; close unreserved native-launch and unknown-receipt cleanup gaps.

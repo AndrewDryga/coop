@@ -105,6 +105,7 @@
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#unreleased-old-host-state-is-refused-or-read-as-unknown">Unreleased: old host state is refused or read as unknown</a></li>
+<li><a href="#unreleased-old-session-store-data-is-refused-by-name">Unreleased: old session store data is refused by name</a></li>
 <li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
 <li><a href="#unreleased-logins-and-history-from-before-v11-are-not-converted">Unreleased: logins and history from before v11 are not converted</a></li>
 <li><a href="#unreleased-old-fork-and-task-records-are-refused-not-converted">Unreleased: old fork and task records are refused, not converted</a></li>
@@ -148,6 +149,23 @@ by Coop v11.3.0 or earlier). The message says it was kept without an arrival tim
 account once with Coop v12.1.0 to finish it, or run <code>coop login &lt;agent&gt;@&lt;account&gt;</code>.</li>
 <li><strong>Version 4 service approvals</strong> grant nothing and are not read. <code>coop up</code> shows the review again.</li>
 </ul>
+</section><section class="doc-section reference-section" id="unreleased-old-session-store-data-is-refused-by-name"><h2>Unreleased: old session store data is refused by name</h2>
+<p>Coop no longer converts session data below schema 26 and no longer reads a few old session shapes.
+Nothing is deleted: the data is refused or quarantined until you act. A turn that was running when
+the worker stopped is still marked interrupted, as before.</p>
+<ol>
+<li>Stop the worker or service, then run <code>coop sessions check --state &lt;path&gt;</code> with the new build.
+Exit 0 means the data is current. Exit 4 with &#34;session schema N is older than this coop build
+supports&#34; means the store needs the converting build first.</li>
+<li>For a store below schema 26, back up the stopped state folder, open it once with a Coop build at
+or before commit 29133b0e (it converts to schema 26 on start), stop it, then use the new build.</li>
+<li>For a stored session that the log names as quarantined (no saved job, a blank mode, or the
+removed <code>readonly</code> or <code>bare</code> mode), either retire its record with
+<code>{&#34;retire_quarantined&#34;: true, &#34;expected_revision&#34;: N}</code> on <code>/v1/sessions/{id}/discard</code>, or cancel,
+close and discard it with a build at or before commit 29133b0e before you upgrade.</li>
+<li>A read-only fork that the error says has no primary snapshot receipt: discard its session with a
+build at or before commit 29133b0e, then upgrade.</li>
+</ol>
 </section><section class="doc-section reference-section" id="unreleased-old-network-records-are-refused-by-name"><h2>Unreleased: old network records are refused by name</h2>
 <p>Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
 earlier. If your network folder (<code>~/.local/state/coop/network</code>) still holds any, a project they

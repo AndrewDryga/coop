@@ -4033,11 +4033,9 @@ func TestSessionServiceDefersOutlivedParkedCleanupWithoutDelayingStartup(t *test
 	}
 	defer service.Stop()
 	for i := 0; i < 10; i++ {
-		sess, err := service.Store().CreateSession(context.Background(), fmt.Sprintf("create-%d", i), session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest, Target: "codex@work"})
-		if err != nil {
+		if _, err := service.Store().CreateSession(context.Background(), fmt.Sprintf("create-%d", i), session.CreateSessionRequest{JobDocument: storedTestJobDocument, JobDigest: storedTestJobDigest, Target: "codex@work"}); err != nil {
 			t.Fatal(err)
 		}
-		clearHistoricalJob(t, service.Store(), sess.ID)
 	}
 	if err := service.Start(context.Background()); err != nil {
 		t.Fatal(err)

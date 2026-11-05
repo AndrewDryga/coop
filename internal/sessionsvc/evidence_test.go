@@ -94,7 +94,7 @@ func filteredReadsFixture(export bool) sessionNetworkReads {
 
 func filteredSessionFixture() session.Session {
 	return session.Session{ID: "sess", NetworkMode: string(egress.Filtered), NetworkFingerprint: strings.Repeat("a", 64),
-		NetworkQualification: strings.Repeat("b", 64), AuthorityDigest: strings.Repeat("c", 64), Revision: 4, State: session.SessionOpen,
+		NetworkQualification: strings.Repeat("b", 64), JobDigest: strings.Repeat("c", 64), Revision: 4, State: session.SessionOpen,
 		CreatedAt: time.Date(2026, 9, 11, 14, 20, 0, 0, time.UTC)}
 }
 

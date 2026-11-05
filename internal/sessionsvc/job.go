@@ -18,14 +18,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
-// Network receipts predate jobs. Preserve their historical authority when inspecting old rows.
-func sessionNetworkAuthorityDigest(bound session.Session) string {
-	if bound.JobDigest != "" {
-		return bound.JobDigest
-	}
-	return bound.AuthorityDigest
-}
-
 func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (executionConfig, error) {
 	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, bound.ID, ""); err != nil || pending {
 		return executionConfig{}, errors.Join(err, errors.New("workspace restore must finish before execution"))

@@ -358,6 +358,9 @@ func loadSessionSnapshot(bound session.Session) (egress.Snapshot, error) {
 	if bound.NetworkMode != string(egress.Filtered) || bound.NetworkFingerprint == "" {
 		return egress.Snapshot{}, errors.New("session has no captured network policy")
 	}
+	if bound.JobDigest == "" {
+		return egress.Snapshot{}, errors.New("session has no saved job, so its network policy cannot be read")
+	}
 	root, err := box.NetworkStatePath()
 	if err != nil {
 		return egress.Snapshot{}, err
@@ -371,10 +374,7 @@ func loadSessionSnapshot(bound session.Session) (egress.Snapshot, error) {
 		return egress.Snapshot{}, err
 	}
 	defer store.Close()
-	if bound.JobDigest != "" {
-		return store.LoadJobSnapshot(networkstate.JobSnapshotRef{JobDigest: bound.JobDigest, SessionID: bound.ID}, bound.NetworkFingerprint)
-	}
-	return store.LoadSnapshot(bound.Repository, bound.NetworkFingerprint)
+	return store.LoadJobSnapshot(networkstate.JobSnapshotRef{JobDigest: bound.JobDigest, SessionID: bound.ID}, bound.NetworkFingerprint)
 }
 
 // SessionNetworkDTO is the live read: what this session may reach, and what its newest run has
@@ -426,7 +426,7 @@ func (s *Service) SessionNetwork(ctx context.Context, id string) (SessionNetwork
 		return SessionNetworkDTO{}, err
 	}
 	out := SessionNetworkDTO{
-		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode),
+		SessionID: bound.ID, Mode: bound.NetworkMode,
 		Fingerprint: bound.NetworkFingerprint, Requested: []string{}, Effective: []string{},
 		Alerts: []networkview.Alert{}, Projection: "destinations-withheld",
 		Current: SessionNetworkCurrentDTO{Status: "no run yet"},
@@ -511,7 +511,7 @@ func (s *Service) SessionNetworkReceipt(ctx context.Context, id string) (Session
 		return SessionNetworkReceiptDTO{}, err
 	}
 	out := SessionNetworkReceiptDTO{
-		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode),
+		SessionID: bound.ID, Mode: bound.NetworkMode,
 		Fingerprint: bound.NetworkFingerprint,
 	}
 	if out.Mode != string(egress.Filtered) {
@@ -532,7 +532,7 @@ func (s *Service) SessionNetworkReceipt(ctx context.Context, id string) (Session
 		return SessionNetworkReceiptDTO{}, &session.Error{Code: session.CodeNetworkUnavailable, Detail: err.Error()}
 	}
 	identity := networkview.SessionNetworkIdentity{
-		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: sessionNetworkAuthorityDigest(bound),
+		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: bound.JobDigest,
 		Mode: egress.Filtered, StartedAt: bound.CreatedAt, RunsComplete: complete,
 	}
 	if bound.State == session.SessionClosed || bound.State == session.SessionDiscarded {
@@ -570,7 +570,7 @@ func sessionRunObservations(evidence *networkstate.Evidence, bound session.Sessi
 				continue
 			}
 			observation := inspection.AggregateObservation
-			observation.Receipt.AuthorityDigest = sessionNetworkAuthorityDigest(bound)
+			observation.Receipt.AuthorityDigest = bound.JobDigest
 			if err := observation.Receipt.SealDigest(); err != nil {
 				if !yield(networkview.RunObservation{}, err) {
 					return
@@ -582,13 +582,6 @@ func sessionRunObservations(evidence *networkstate.Evidence, bound session.Sessi
 			}
 		}
 	}
-}
-
-func normalizedSessionNetworkMode(mode string) string {
-	if mode == "" {
-		return string(egress.Open)
-	}
-	return mode
 }
 
 // SessionNetworkConnectionsDTO is the live drilldown Responder needs: the newest run's bounded
@@ -615,7 +608,7 @@ func (s *Service) SessionNetworkConnections(ctx context.Context, id string) (Ses
 		return SessionNetworkConnectionsDTO{}, err
 	}
 	out := SessionNetworkConnectionsDTO{
-		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode),
+		SessionID: bound.ID, Mode: bound.NetworkMode,
 		Status: "no run yet", Connections: []networkview.Connection{}, Projection: "destinations-withheld",
 	}
 	if out.Mode != string(egress.Filtered) {
@@ -676,7 +669,7 @@ func (s *Service) SessionNetworkExplanation(ctx context.Context, id, eventID str
 		return SessionNetworkExplanationDTO{}, err
 	}
 	out := SessionNetworkExplanationDTO{
-		SessionID: bound.ID, Mode: normalizedSessionNetworkMode(bound.NetworkMode), Projection: "destinations-withheld",
+		SessionID: bound.ID, Mode: bound.NetworkMode, Projection: "destinations-withheld",
 	}
 	if out.Mode != string(egress.Filtered) {
 		out.Reason = "this session did not run under restricted networking, so it retained no refusals"

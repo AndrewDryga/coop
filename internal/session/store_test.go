@@ -1353,7 +1353,7 @@ func TestSessionPersistsJobAndExecutionFieldsAndRejectsMalformedReplay(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.JobDigest != testJobDigest || sess.JobRef != "job:test" || sess.AuthorityDigest != "" || sess.ProjectEnv || sess.ProjectMCP ||
+	if sess.JobDigest != testJobDigest || sess.JobRef != "job:test" || sess.ProjectEnv || sess.ProjectMCP ||
 		!sess.RepositoryReadOnly ||
 		sess.TurnTimeout != 3*time.Minute || sess.MaxPatchBytes != 1234 ||
 		sess.ControllerTools == nil || sess.ControllerTools.Token != strings.Repeat("t", 48) {

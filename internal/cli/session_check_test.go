@@ -78,15 +78,15 @@ func TestRunSessionCheckReportsEachVerdictWithoutWriting(t *testing.T) {
 			"  Data            <state>",
 			fmt.Sprintf("  Session schema  %d", session.SchemaVersion),
 		}},
-		{"converts", func(t *testing.T, state string) func() {
+		{"older than this build converts", func(t *testing.T, state string) func() {
 			createSessionStore(t, state)
-			setSessionSchema(t, state, session.SchemaVersion-1)
+			setSessionSchema(t, state, session.OldestSchemaVersion-1)
 			return nil
-		}, sessionCheckConverts, []string{
-			"⚠ This build will convert the session data",
-			fmt.Sprintf("  Session schema  %d → %d", session.SchemaVersion-1, session.SchemaVersion),
-			"  Coop builds with an older session schema can't open it afterwards.",
-			"  To keep a way back, back up the data directory while the service is stopped.",
+		}, sessionCheckRefused, []string{
+			"✗ This build can't use the session data",
+			fmt.Sprintf("      Session schema %d is older than this coop build supports (%d to %d); "+
+				"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade.",
+				session.OldestSchemaVersion-1, session.OldestSchemaVersion, session.SchemaVersion, session.OldestSchemaVersion),
 		}},
 		{"too new", func(t *testing.T, state string) func() {
 			createSessionStore(t, state)
@@ -158,11 +158,33 @@ func TestRunSessionCheckReportsEachVerdictWithoutWriting(t *testing.T) {
 	}
 }
 
+// This build converts no older schema, so the converting verdict is rendered from a made-up check:
+// it is what a later build with a lower floor reports.
+func TestSessionCheckReportsAConvertingStore(t *testing.T) {
+	var lines []string
+	ui.SetLiveSink(func(line string) { lines = append(lines, line) })
+	defer ui.SetLiveSink(nil)
+	code, err := reportSessionCheck("/srv/state", session.StoreCheck{Status: session.StoreConverts, Version: session.SchemaVersion - 1}, nil)
+	output := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"⚠ This build will convert the session data",
+		fmt.Sprintf("Session schema  %d → %d", session.SchemaVersion-1, session.SchemaVersion),
+		"Coop builds with an older session schema can't open it afterwards.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output lacks %q:\n%s", want, output)
+		}
+	}
+	if code != sessionCheckConverts || err != nil {
+		t.Fatalf("converting store = (%d, %v), want exit %d", code, err, sessionCheckConverts)
+	}
+}
+
 // Nothing a released build writes is too old yet, so this renders the verdict a later build
 // returns once a waypoint is set: the refusal names the converting schema and exits 4.
 func TestSessionCheckRefusesATooOldStoreWithItsWaypoint(t *testing.T) {
 	refusal := errors.New("session schema 24 is older than this coop build supports (25 to 26); " +
-		"open it once with a coop build that uses session schema 25, then upgrade")
+		"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade")
 	code, err := reportSessionCheck("/srv/state", session.StoreCheck{Status: session.StoreTooOld, Version: 24, Refusal: refusal},
 		[]workerconnector.RecordCheck{{Noun: "worker command receipt", Version: 1, Current: 3}})
 	if code != sessionCheckRefused || err == nil {
@@ -170,7 +192,7 @@ func TestSessionCheckRefusesATooOldStoreWithItsWaypoint(t *testing.T) {
 	}
 	got := usageBlock(t, err)
 	want := "      Session schema 24 is older than this coop build supports (25 to 26); " +
-		"open it once with a coop build that uses session schema 25, then upgrade."
+		"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade."
 	if !strings.Contains(got, "✗ This build can't use the session data") || !strings.Contains(got, want) ||
 		strings.Contains(got, "newer coop build") {
 		t.Fatalf("too-old refusal:\n%s", got)

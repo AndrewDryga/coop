@@ -910,12 +910,12 @@ func (s *Store) insertInitialSessionTx(ctx context.Context, tx *sql.Tx, sess *Se
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sessions
-		(id, external_ref, target, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
+		(id, external_ref, target, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, mode, repository_read_only, repository, workspace, fork_name, fork_generation, base_commit, companions, repository_freshness,
 		 source_binding,
 		 network_mode, network_fingerprint, network_qualification,
 		 turn_timeout, max_patch_bytes, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
-		sess.AuthorityDigest, string(sess.JobDocument), sess.JobDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ControllerTools), responderToken(sess.ControllerTools), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, sess.ID, sess.ExternalRef, sess.Target,
+		string(sess.JobDocument), sess.JobDigest, sess.ProjectEnv, sess.ProjectMCP, responderEndpoint(sess.ControllerTools), responderToken(sess.ControllerTools), normalizedMode(sess.Mode), sess.RepositoryReadOnly, sess.Repository, sess.Workspace, sess.ForkName, sess.ForkGeneration, sess.BaseCommit,
 		string(companions), string(repositoryFreshness), string(sourceBinding),
 		normalizedNetworkMode(sess.NetworkMode), sess.NetworkFingerprint, sess.NetworkQualification,
 		int64(sess.TurnTimeout), sess.MaxPatchBytes, sess.Revision, string(sess.State), string(sess.Activity), sess.MaxTurns,
@@ -1181,10 +1181,9 @@ func normalized(value, fallback int) int {
 	return value
 }
 
-// normalizedMode reads the empty execution mode as normal: a create request from before modes
-// existed and a row migrated across schema v22 both stored nothing, and both ran as every
-// session did before modes existed. The value is not validated here — the service creates only
-// normal sessions, and a row kept from a removed mode never runs — it is only never left blank.
+// normalizedMode defaults the mode of a create request that names none, so a new row is never
+// blank. Reading never defaults: a stored row with another value is the service's to refuse.
+// The value is not validated here.
 func normalizedMode(mode string) string {
 	if mode == "" {
 		return "normal"
@@ -1192,9 +1191,8 @@ func normalizedMode(mode string) string {
 	return mode
 }
 
-// normalizedNetworkMode keeps a pre-network create request and a row migrated
-// from schema 20 reading the same way: the built-in posture is open, so an
-// unset mode is open rather than an empty string nobody can compare against.
+// normalizedNetworkMode defaults a create request that names no network mode to the built-in
+// posture, open, so a new row is never blank.
 func normalizedNetworkMode(mode string) string {
 	if mode == "" {
 		return "open"
@@ -1349,7 +1347,7 @@ func (s *Store) ListSessionRuntimeCleanupTurns(ctx context.Context, sessionID st
 	return turns, nil
 }
 
-const sessionSelect = `SELECT id, external_ref, target, authority_digest, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
+const sessionSelect = `SELECT id, external_ref, target, job_document, job_digest, project_env, project_mcp, responder_endpoint, responder_token, workspace_task, mode, repository_read_only, repository, workspace, fork_name, fork_generation,
 	   base_commit, companions, repository_freshness, source_binding,
 	   network_mode, network_fingerprint, network_qualification,
 	   native_session_id, turn_timeout, max_patch_bytes, revision, state, activity,
@@ -1366,7 +1364,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var responderEndpointValue, responderTokenValue, workspaceTaskValue, jobDocument string
 	var turnTimeout int64
 	var createdAt, updatedAt int64
-	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &sess.AuthorityDigest, &jobDocument, &sess.JobDigest,
+	if err := row.Scan(&sess.ID, &sess.ExternalRef, &sess.Target, &jobDocument, &sess.JobDigest,
 		&sess.ProjectEnv, &sess.ProjectMCP, &responderEndpointValue, &responderTokenValue, &workspaceTaskValue, &sess.Mode, &sess.RepositoryReadOnly, &sess.Repository, &sess.Workspace, &sess.ForkName, &sess.ForkGeneration, &sess.BaseCommit, &companions, &repositoryFreshness,
 		&sourceBinding,
 		&sess.NetworkMode, &sess.NetworkFingerprint, &sess.NetworkQualification, &sess.NativeSessionID,
@@ -1412,7 +1410,6 @@ func scanSession(row rowScanner) (Session, error) {
 		}
 		sess.WorkspaceTask = &binding
 	}
-	sess.Mode = normalizedMode(sess.Mode)
 	sess.State = SessionState(state)
 	sess.Activity = ActivityState(activity)
 	sess.TurnTimeout = time.Duration(turnTimeout)

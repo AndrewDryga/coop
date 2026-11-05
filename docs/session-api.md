@@ -60,8 +60,8 @@ sends an enrollment token or accepts work.
 Your controller supplies one job, which sets the session's source, model targets, repository access,
 network access and resource limits. co:op checks and saves it before creating a workspace. Retries
 must use that same configuration, and restarts use the saved copy. Repository instructions and
-model output can't grant more access. You can still read old session history, but co:op won't
-resume model work for an old session whose authorization it can't verify.
+model output can't grant more access. co:op doesn't resume model work for a session whose
+authorization it can't verify.
 
 co:op saves a stable ID for each session store in `session.sqlite`. When it reserves a fork, it
 records which store and session own that specific instance of the fork, and moving the database
@@ -189,7 +189,7 @@ Before you restart or replace a worker, stop new submissions at the controller, 
 
 A new co:op build may need to convert the worker's session data when it first opens it, and the
 previous build can't read that data afterwards. Each build can perform only one upgrade step. If
-the data is too old, the build stops and tells you which session schema to upgrade through first.
+the data is older than schema 26, the build stops and names the build that converts it first.
 Before replacing the worker, check its data with the new build:
 
 1. Wait for the commands the worker is carrying out, then stop the worker.
@@ -726,9 +726,9 @@ state, prompts and credentials.
 | `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`. The job must turn on warm execution. |
 | `POST` | `/v1/sessions/{session_id}/workspace` | `expected_revision`, `task`. The session must be open, writable and unused. |
 
-You can still read a session created in `readonly` or `bare` mode, but its job doesn't pass
-validation and a new turn returns `invalid_session_state`. Close and discard such a session instead
-of trying to run it again.
+A session stored in `readonly` or `bare` mode is quarantined at startup and never runs; a new turn
+returns `invalid_session_state`. Retire its record as described under quarantine, or close and
+discard it with a co:op build at or before commit 29133b0e.
 
 #### Task binding
 
@@ -1420,7 +1420,9 @@ private ACP state, and saves a record that the session was discarded.
 
 At startup, the daemon blocks sessions whose workspace ownership it can't verify. This includes
 old session records without a store-owner binding, v1 reservations, and sessions whose fork record
-or workspace is missing. These sessions are quarantined: you can't create or apply a discard
+or workspace is missing. It also blocks a stored session this build no longer reads: one with no
+saved job, no execution or network mode, or one created in the removed `readonly` or `bare` mode.
+The log names the session. These sessions are quarantined: you can't create or apply a discard
 plan for them because co:op can't prove it owns the workspace. You can retire the session record
 instead:
 

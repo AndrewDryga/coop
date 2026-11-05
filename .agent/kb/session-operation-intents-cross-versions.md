@@ -3,7 +3,7 @@ name: session-operation-intents-cross-versions
 description: persisted operation intents survive upgrades; replay requires proven frozen job authority and never reconstructs it from retired local policies
 subsystem: session-api
 sources: [internal/sessionsvc/service.go, internal/sessionsvc/review.go, internal/sessionsvc/publication.go, internal/session/store.go, internal/workerproto/publication_retry.go, internal/workerconnector/publication.go]
-updated: 2026-10-30
+updated: 2026-11-04
 ---
 
 operations.result doubles as the write-ahead intent for a running cross-process operation.
@@ -50,6 +50,7 @@ replace a completed receipt, and completion clears the old diagnosis. A controll
 checks do not count actual worker executions: the operation may be waiting for a background slot.
 
 ## Changelog
+- 2026-11-04 — a stored session with no saved job or mode is quarantined at start instead of read as a historical row; the jobless-review test stays (task 2026-11-04-drop-the-old-session-store-row-readers).
 - 2026-10-30 — retain safe publication retry diagnostics without changing intent or replay custody.
 - 2026-10-18 — no durability barrier to repeat any more: an interrupted publication is retried (task 2026-10-15-drop-directory-fsyncs-and-sync-retry-ladders).
 - 2026-09-30 — rechecked replay against strict v2 JobSpec decoding; v1 has no complete

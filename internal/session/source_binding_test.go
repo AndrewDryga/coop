@@ -2,10 +2,8 @@ package session
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -179,118 +177,6 @@ func TestCreateReplayRefusesADifferentSourceBinding(t *testing.T) {
 	switched := repositoryBackedCreate("replayed", &other)
 	if _, err := store.CreateSession(ctx, "same-key", switched); CodeOf(err) != CodeIdempotencyConflict {
 		t.Fatalf("switched selector error = %v, want idempotency_conflict", err)
-	}
-}
-
-// Rule 10: migrate a persisted pull-request binding into the generic shape ONLY where the exact
-// old values prove it. A v22 row's own columns plus its immutable freshness receipts state the
-// remote, the default ref and head, the derived PR ref and head, and the merge base — so the
-// migrated binding is derived, never guessed. Its admitted tree is absent because no pre-selector
-// row ever recorded one.
-func TestMigrationDerivesGenericSourceBindingFromProvenPullRequestRows(t *testing.T) {
-	ctx := context.Background()
-	root := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, databaseName)
-	buildLegacyDatabase(t, path, 22)
-
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaultCommit, pullHead := strings.Repeat("a", 40), strings.Repeat("b", 40)
-	mergeBase := strings.Repeat("c", 40)
-	receipts := func(pull bool) string {
-		list := []RepositoryFreshnessReceipt{{
-			Version: 2, Name: "primary", RequestedRevision: "refs/heads/main",
-			ResolvedRevision: defaultCommit, WorkspaceBaseRevision: mergeBase,
-			FetchedAt: time.Unix(1700000000, 0).UTC(), RemoteIdentity: "origin",
-			StaleBaseStatus: "current", StaleBaseRevision: defaultCommit,
-		}}
-		if pull {
-			list = append(list, RepositoryFreshnessReceipt{
-				Version: 2, Name: "pull_request", RequestedRevision: "refs/pull/514/head",
-				ResolvedRevision: pullHead, FetchedAt: time.Unix(1700000100, 0).UTC(),
-				RemoteIdentity: "origin", StaleBaseStatus: "current", StaleBaseRevision: pullHead,
-			})
-		}
-		encoded, _ := json.Marshal(list)
-		return string(encoded)
-	}
-	insert := func(id, freshness string, number int, pullRef, head, base string) {
-		t.Helper()
-		if _, err := db.Exec(`INSERT INTO sessions
-			(id, target, revision, state, activity, max_turns, max_queued_turns, max_queued_bytes,
-			 created_at, updated_at, companions, policy, repository, workspace, fork_name, base_commit,
-			 repository_freshness, pull_request_number, pull_request_ref, pull_request_head_commit)
-			VALUES (?, ?, 1, 'open', 'parked', 100, 20, 1048576, 1000, 1000, '[]', 'responder', '/repo', ?, ?, ?, ?, ?, ?, ?)`,
-			id, "codex:legacy", "/work/"+id, "fork-"+id, base, freshness, number, pullRef, head,
-		); err != nil {
-			t.Fatalf("seed %s: %v", id, err)
-		}
-	}
-	insert("proven-pull", receipts(true), 514, "refs/pull/514/head", pullHead, mergeBase)
-	// No receipts at all: nothing proves the remote identity or the default head, so this row
-	// stays a historical already-bound session rather than acquiring a synthesized binding.
-	insert("unproven-pull", "", 515, "refs/pull/515/head", pullHead, mergeBase)
-	// Receipts that disagree with the columns prove nothing either.
-	insert("mismatched-pull", receipts(true), 516, "refs/pull/516/head", pullHead, mergeBase)
-	// An ordinary default-branch session was never labeled, so it must not be labeled now.
-	insert("legacy-default", receipts(false), 0, "", "", defaultCommit)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store := openTestStore(t, root)
-	defer store.Close()
-
-	proven, err := store.GetSession(ctx, "proven-pull")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if proven.Source == nil {
-		t.Fatal("proven pull-request row did not migrate to a generic source binding")
-	}
-	want := SourceBinding{
-		Version: SourceBindingVersion, Kind: SourcePullRequest,
-		Requested:      SourceSelector{Kind: SourcePullRequest, Number: 514, ExpectedHeadCommit: pullHead},
-		RemoteIdentity: "origin", DefaultRef: "refs/heads/main", DefaultCommit: defaultCommit,
-		SelectedRef: ref("refs/pull/514/head"), SelectedCommit: pullHead, BaseCommit: mergeBase,
-		ResolvedAt:        time.Unix(1700000100, 0).UTC(),
-		PullRequestNumber: 514, PullRequestExpectedHead: pullHead,
-	}
-	got, _ := json.Marshal(proven.Source)
-	expected, _ := json.Marshal(&want)
-	if string(got) != string(expected) {
-		t.Fatalf("migrated binding =\n%s\nwant\n%s", got, expected)
-	}
-
-	for _, id := range []string{"unproven-pull", "mismatched-pull", "legacy-default"} {
-		sess, err := store.GetSession(ctx, id)
-		if err != nil {
-			t.Fatalf("read %s: %v", id, err)
-		}
-		if sess.Source != nil {
-			t.Fatalf("%s acquired a synthesized binding %+v", id, sess.Source)
-		}
-		if sess.BaseCommit == "" || sess.Workspace == "" {
-			t.Fatalf("%s lost its historical bindings: %+v", id, sess)
-		}
-	}
-	// The historical pull-request identity is preserved on disk even where it could not be
-	// proven into the generic shape; removing the runtime field never deletes the record.
-	var number int
-	var pullRef, head string
-	if err := store.db.QueryRow(
-		`SELECT pull_request_number, pull_request_ref, pull_request_head_commit FROM sessions WHERE id = ?`,
-		"unproven-pull",
-	).Scan(&number, &pullRef, &head); err != nil {
-		t.Fatal(err)
-	}
-	if number != 515 || pullRef != "refs/pull/515/head" || head != pullHead {
-		t.Fatalf("historical pull columns = %d/%q/%q", number, pullRef, head)
 	}
 }
 

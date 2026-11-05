@@ -2,8 +2,8 @@
 name: session-cost-accounting
 description: logical-turn cost accumulates explicit native-session counter deltas across attempts and provider epochs
 subsystem: session
-sources: [internal/session/store.go, internal/session/turn_usage.go, internal/session/cost_migration.go, internal/session/cost_test.go, internal/session/cost_migration_test.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/cost_test.go]
-updated: 2026-10-28
+sources: [internal/session/store.go, internal/session/turn_usage.go, internal/session/cost_test.go, internal/sessionsvc/acp.go, internal/sessionsvc/service.go, internal/sessionsvc/cost_test.go]
+updated: 2026-11-04
 ---
 
 `Turn.Usage.CostUSD` is accumulated logical-turn spend, including pending validation.
@@ -19,11 +19,12 @@ for bounded retry or atomic failure settlement. If neither can persist it, the u
 error prevents generic cancellation/failure from falsely closing the turn. Reserved cancellation
 requests are replayed unchanged; accumulated cost is never resubmitted as a raw native counter.
 
-Schema 26 normalizes retained pending raw counters using the original baseline and reset-event
-ordering. A session-wide reset newer than every cost-bearing terminal event proves an idle cursor
-stale. Pending observations after that reset supply a new cursor; earlier candidates retain their
-old-epoch delta. Ambiguous terminal histories and immutable operation receipts remain unchanged:
-missing or overwritten historical provider observations cannot be reconstructed.
+Schema 26 normalized retained pending raw counters using the original baseline and reset-event
+ordering. That conversion is gone: a store below schema 26 is refused by name (build at or before
+29133b0e converts it), and a new store builds straight to 26 with no costs to convert. Historical
+operation receipts stay unchanged: missing or overwritten provider observations cannot be
+reconstructed.
 
 ## Changelog
+- 2026-11-04 — removed the schema 26 cost backfill (`cost_migration.go`); the schema floor is 26 (task 2026-11-04-drop-the-old-session-store-row-readers).
 - 2026-10-28 — recorded transactional attempt accounting, native epoch changes, persistence-failure settlement and conservative schema 26 migration; checked real SQLite and ACP regressions.

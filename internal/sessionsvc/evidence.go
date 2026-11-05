@@ -69,7 +69,7 @@ func (s *Service) SessionEvidence(ctx context.Context, id string) (workerproto.S
 }
 
 func (s *Service) sessionNetworkEvidence(bound session.Session, now time.Time) workerproto.NetworkEvidence {
-	mode := normalizedSessionNetworkMode(bound.NetworkMode)
+	mode := bound.NetworkMode
 	if mode != string(egress.Filtered) {
 		return networkEvidenceNotFiltered(mode)
 	}
@@ -104,7 +104,7 @@ func (s *Service) readSessionNetwork(bound session.Session, now time.Time) sessi
 		reads.inspection, reads.inspectErr = evidence.Inspect(newest.ID, now, reads.policy.ExportDestinations)
 	}
 	identity := networkview.SessionNetworkIdentity{
-		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: sessionNetworkAuthorityDigest(bound),
+		ID: bound.ID, PolicyFingerprint: bound.NetworkFingerprint, AuthorityDigest: bound.JobDigest,
 		Mode: egress.Filtered, StartedAt: bound.CreatedAt, RunsComplete: reads.complete,
 	}
 	if bound.State == session.SessionClosed || bound.State == session.SessionDiscarded {

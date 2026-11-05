@@ -69,7 +69,7 @@ names it.
 |---|---|---|---|---|---|
 | Primary snapshot receipt | `<state>/job-sources/<key>/repository-forks/<fork>/.git/coop-primary-snapshot.json` | 1 | 1 | none exist; independent forks have no receipt | none |
 | Companion snapshot receipt | `<state>/companion-snapshots/<key>/receipt.json` | 1 | 1 | none exist | none |
-| Session database schema | `<state>/session.sqlite` | 26 | 1 | converted when the service opens the store | builds using schema 26 |
+| Session database schema | `<state>/session.sqlite` | 26 | 26 | 1 to 25 are refused by name when the service opens the store, and `coop sessions check` exits 4; the file is left as it is | a build at or before commit 29133b0e (schema 26) |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | no older version, but a version 1 stream with no create origin can remain from before origins; kept as a dormant generation floor, and `coop sessions check` cannot tell it apart | none |
@@ -123,6 +123,16 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
   unknown, and is left as it is. Rows added for the custody record, the renewal journal and the
   start token. Left for later: the custody record's `Probes` field (four live records), the
   settings-folder run files and records (`~/.config/coop` still holds some).
+- 2026-11-04 — retired the session schema 1 to 25 conversion floor and the schema 26 cost backfill
+  (task 2026-11-04-drop-the-old-session-store-row-readers): `OldestSchemaVersion` is 26 and the row
+  above pins it. The v1 to v25 DDL ladder stays, because a new store is built by running it. Also
+  retired the readers for a stored session with no saved job, a blank or removed
+  (`readonly`, `bare`) execution mode or a blank network mode: such a session is quarantined at
+  start and named in the log, and only a `retire_quarantined` discard removes its record. A
+  read-only fork with no primary snapshot receipt is refused by name. Left: worker event streams
+  with no create origin and create receipts or origins with a session ID and no operation (the
+  Worker event streams and Worker create origins rows still describe them), because connector tests
+  and live generation replay lean on them.
 - 2026-11-04 — retired the network approval (1 to 3, keyed names), withdrawal (1) and execution (1)
   readers (task 2026-11-04-drop-the-old-network-record-readers). `networkstate.projectIdentity`
   refuses a project by name while the store holds such a record that could be its own, so a

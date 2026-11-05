@@ -39,7 +39,7 @@ func TestRemoteCreatePersistsPrivateJobAuthorityAndRejectsChangedReplay(t *testi
 	if bytes.Contains(public, document) || bytes.Contains(public, []byte(`"job_document"`)) {
 		t.Fatalf("public session leaked private job document: %s", public)
 	}
-	if stored.JobRef != "job:one" || stored.AuthorityDigest != "" {
+	if stored.JobRef != "job:one" {
 		t.Fatalf("new session did not use job-only authority: %+v", stored)
 	}
 	if _, err := store.CompleteCreateSessionOperation(ctx, op, req); err != nil {

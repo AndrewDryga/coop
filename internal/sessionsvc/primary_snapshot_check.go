@@ -11,8 +11,8 @@ import (
 )
 
 // CheckPrimarySnapshots inventories only the exact private fork namespaces a
-// controller source can own. Historical independent forks have no receipt; they
-// need no conversion, and unknown or damaged receipts are reported, never fixed.
+// controller source can own. Writable independent forks have no receipt; they
+// need no conversion, a read-only fork without one is refused when it is used, and unknown or damaged receipts are reported, never fixed.
 func CheckPrimarySnapshots(stateRoot string) (CompanionSnapshotCheck, error) {
 	result := CompanionSnapshotCheck{Version: primarySnapshotVersion}
 	canonical, err := filepath.EvalSymlinks(stateRoot)

@@ -1619,7 +1619,7 @@ func publicSession(value session.Session) SessionDTO {
 		ID: value.ID, ExternalRef: value.ExternalRef, Target: value.Target,
 		JobRef: value.JobRef, JobDigest: value.JobDigest,
 		ProjectEnv: value.ProjectEnv, ProjectMCP: value.ProjectMCP,
-		Mode:                      normalizedSessionMode(value.Mode),
+		Mode:                      value.Mode,
 		RepositoryReadOnly:        value.RepositoryReadOnly,
 		ControllerToolsDigest:     sessionControllerToolsDigest(value),
 		WorkspaceTask:             publicWorkspaceTask(value.WorkspaceTask),
@@ -1629,7 +1629,7 @@ func publicSession(value session.Session) SessionDTO {
 		Source:                    session.CloneSourceBinding(value.Source),
 		Companions:                companions,
 		Network: SessionNetworkSummaryDTO{
-			Mode: normalizedSessionNetworkMode(value.NetworkMode), Fingerprint: value.NetworkFingerprint,
+			Mode: value.NetworkMode, Fingerprint: value.NetworkFingerprint,
 		},
 		ForkName: value.ForkName,
 		Revision: value.Revision, State: value.State, Activity: value.Activity, MaxTurns: value.MaxTurns,

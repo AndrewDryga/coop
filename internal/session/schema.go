@@ -421,7 +421,7 @@ func (w schemaWindow) refusal(version int) error {
 			version, w.oldest, w.current)
 	case status == StoreTooOld:
 		return fmt.Errorf("session schema %d is older than this coop build supports (%d to %d); "+
-			"open it once with a coop build that uses session schema %d, then upgrade",
+			"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade",
 			version, w.oldest, w.current, w.oldest)
 	}
 	return nil
@@ -601,9 +601,8 @@ func migrate(db *sql.DB) error {
 		version = 25
 	}
 	if version < 26 {
-		if err := backfillTurnCosts(tx); err != nil {
-			return fmt.Errorf("migrate schema v26: %w", err)
-		}
+		// Schema 26 changed no table: it only rewrote pending turn costs, and a store that is
+		// still being built has none. Stores below 26 are refused before this point.
 		version = 26
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {

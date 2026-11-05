@@ -428,7 +428,7 @@ func TestPrimaryPhysicalAccountingAndDiscardKeepLivePayload(t *testing.T) {
 	discard(second, "second")
 }
 
-func TestPrimaryLastDiscardReleasesCacheAndOldIndependentForksStayIndependent(t *testing.T) {
+func TestPrimaryLastDiscardReleasesCacheAndOldIndependentForksAreRefusedAndKept(t *testing.T) {
 	ctx := context.Background()
 	repo := storageTestRepo(t)
 	svc := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
@@ -446,8 +446,10 @@ func TestPrimaryLastDiscardReleasesCacheAndOldIndependentForksStayIndependent(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ensureSessionWorkspaceForJobContext(ctx, nil, staged, "historical", p.source.Binding.SelectedCommit, testSessionStoreID, "old", p); err != nil {
-		t.Fatal(err)
+	// A read-only fork with no receipt is refused by name and left exactly as it was.
+	if _, err = ensureSessionWorkspaceForJobContext(ctx, nil, staged, "historical", p.source.Binding.SelectedCommit, testSessionStoreID, "old", p); err == nil ||
+		!strings.Contains(err.Error(), "has no primary snapshot receipt") {
+		t.Fatalf("old read-only fork without a receipt = %v", err)
 	}
 	after, err := os.Stat(filepath.Join(old.Path, "payload.bin"))
 	if err != nil || !os.SameFile(before, after) {
@@ -511,7 +513,7 @@ func TestMissingPrimaryReceiptCannotHydrateSharedPayload(t *testing.T) {
 	if err := os.Remove(filepath.Join(owner.Path, ".git", primarySnapshotMarker)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ensureSessionWorkspaceForJobContext(ctx, nil, repo, "missing-marker", p.source.Binding.SelectedCommit, testSessionStoreID, "owner", p); err == nil || !strings.Contains(err.Error(), "unproven shared primary") {
+	if _, err = ensureSessionWorkspaceForJobContext(ctx, nil, repo, "missing-marker", p.source.Binding.SelectedCommit, testSessionStoreID, "owner", p); err == nil || !strings.Contains(err.Error(), "has no primary snapshot receipt") {
 		t.Fatalf("lost receipt became mutable history: %v", err)
 	}
 	if !pathExists(filepath.Join(owner.Path, "payload.bin")) {

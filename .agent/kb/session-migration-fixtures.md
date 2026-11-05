@@ -2,8 +2,8 @@
 name: session-migration-fixtures
 description: historical SQLite fixtures own frozen DDL and rows, independent of current migrations; test clocks and IDs are private store state
 subsystem: session
-sources: [internal/session/legacy_schema_test.go, internal/session/migration_test.go, internal/session/schema.go, internal/session/store.go, internal/session/store_test.go, internal/session/compact.go, internal/session/cost_migration.go, internal/session/cost_migration_test.go]
-updated: 2026-10-28
+sources: [internal/session/legacy_schema_test.go, internal/session/migration_test.go, internal/session/schema.go, internal/session/store.go, internal/session/store_test.go, internal/session/compact.go, internal/session/check_test.go]
+updated: 2026-11-04
 ---
 
 Historical session databases are built from test-owned literal DDL increments 1–25,
@@ -15,8 +15,10 @@ that can make a broken migration redefine the database it is supposed to repair.
 When adding a schema version, capture the previous released shape independently,
 then deliberately update the frozen fixture and its digest.
 
-The real migration owner opens each legacy file, checks saved authority and defaults,
-then writes through today's store. Source-binding, compact/backup, rollback and
+Since 2026-11-04 the floor is schema 26, so the fixtures no longer feed a conversion. They build
+stopped stores below the floor: `TestOpenRefusesEveryOlderSchemaByNameAndLeavesTheStoreAlone`
+proves Open refuses each by name and changes no byte, and the check tests use them for
+`StoreTooOld`. The v1–v25 DDL ladder still builds a new store, so it stays. Rollback and
 newer-version refusal tests remain separate storage contracts.
 
 Production `Open(root)` has no public fixture options. Tests set the private clock and
@@ -24,6 +26,7 @@ ID generator only after a real open; compaction retains its private store option
 This does not replace SQLite, fsync, migration or lock behavior with test doubles.
 
 ## Changelog
+- 2026-11-04 — schema floor raised to 26: the historical-version conversion tests became refusal tests; the cost backfill tests went with the backfill.
 - 2026-10-28 — froze version 25 independently; schema 26 fixtures exercise pending cost normalization, proven idle epoch resets, ambiguous-history preservation and unchanged receipts.
 - 2026-10-17 — spacing in "increments 1–24" and "from 260ccd2" (and the same comment in
   legacy_schema_test.go).

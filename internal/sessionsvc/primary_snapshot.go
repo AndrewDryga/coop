@@ -6,12 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -110,7 +108,10 @@ func createReadOnlyPrimarySnapshot(ctx context.Context, p *primarySnapshotSource
 	})
 }
 
-// Old independent forks have no marker and retain their existing hydration
+var errNoPrimarySnapshotReceipt = errors.New("read-only fork has no primary snapshot receipt (it predates " +
+	"immutable primary payloads); discard it with a coop build at or before commit 29133b0e, then upgrade")
+
+// Writable independent forks have no marker and retain their existing hydration
 // path. A marked projection must prove exact ownership before a retry can use
 // it; it is verification-only even if a cache entry has since been evicted.
 func verifyPrimarySnapshotProjection(ctx context.Context, p *primarySnapshotSource, repo, workspace string) (bool, error) {
@@ -120,29 +121,11 @@ func verifyPrimarySnapshotProjection(ctx context.Context, p *primarySnapshotSour
 	}
 	if !present {
 		if p != nil {
-			// Missing provenance must not turn a linked projection into a mutable
-			// historical clone. Old independent readonly forks own every inode.
-			err = filepath.WalkDir(workspace, func(path string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return walkErr
-				}
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				info, err := entry.Info()
-				if err != nil {
-					return err
-				}
-				if info.Mode().IsRegular() && path != filepath.Join(workspace, forkspace.GenerationMarkerName) {
-					stat, ok := info.Sys().(*syscall.Stat_t)
-					if !ok || stat.Nlink > 1 {
-						return errors.New("unproven shared primary payload requires its ownership receipt")
-					}
-				}
-				return nil
-			})
+			// A read-only fork made before immutable primary payloads has no receipt, so nothing proves
+			// which of its files are shared: it is refused by name, never adopted or hydrated.
+			return false, errNoPrimarySnapshotReceipt
 		}
-		return false, err
+		return false, nil
 	}
 	if p == nil {
 		return true, errors.New("immutable primary cannot become writable")
