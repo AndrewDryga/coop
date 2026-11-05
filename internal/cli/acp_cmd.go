@@ -527,9 +527,10 @@ const leadAnswerGrace = 3 * time.Second
 // spawn is a switch, where the editor is not blocked on anything and re-centring immediately is what
 // keeps the next switch warm.
 type acpFanOut struct {
-	lead    func() string // the provider the session runs now
-	waiting func() bool   // the session's own box is not up yet (acpBoxWait.waitingNow)
-	fill    func(string)  // re-centre the pool on this provider
+	lead    func() string                             // the provider the session runs now
+	waiting func() bool                               // the session's own box is not up yet (acpBoxWait.waitingNow)
+	fill    func(string)                              // re-centre the pool on this provider
+	after   func(time.Duration, func()) (stop func()) // schedules the grace start; nil is time.AfterFunc
 	open    atomic.Bool
 	once    sync.Once
 }
@@ -561,6 +562,9 @@ func (f *acpFanOut) rebalance(active string) {
 func (f *acpFanOut) arm(hasServices bool, grace time.Duration) (stop func()) {
 	if hasServices {
 		return func() {}
+	}
+	if f.after != nil {
+		return f.after(grace, f.start)
 	}
 	timer := time.AfterFunc(grace, f.start)
 	return func() { timer.Stop() }

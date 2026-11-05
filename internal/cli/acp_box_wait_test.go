@@ -419,7 +419,8 @@ func TestBoxWaitStopsParkedBoxesWhenTheSessionsBoxNeedsTheLock(t *testing.T) {
 }
 
 // A connect in a project with services has no timer to start the fan-out while the lead still starts
-// them. Anywhere else the timer stays, so a lead that never answers leaves the others ready.
+// them. Anywhere else the timer stays, so a lead that never answers leaves the others ready. The test
+// fires the timer itself, so the outcome never depends on when a real one would run.
 func TestFanOutWaitsForTheLeadOnlyInAProjectWithServices(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -428,10 +429,28 @@ func TestFanOutWaitsForTheLeadOnlyInAProjectWithServices(t *testing.T) {
 	}{{"services", true, 0}, {"no services", false, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			fills := make(chan string, 4)
-			fanOut := &acpFanOut{lead: func() string { return "claude" }, waiting: func() bool { return false }, fill: func(active string) { fills <- active }}
-			defer fanOut.arm(tc.hasServices, time.Millisecond)()
+			var fire func()
+			fanOut := &acpFanOut{
+				lead: func() string { return "claude" }, waiting: func() bool { return false }, fill: func(active string) { fills <- active },
+				after: func(grace time.Duration, start func()) func() {
+					if grace != leadAnswerGrace {
+						t.Errorf("fan-out armed after %v, want %v", grace, leadAnswerGrace)
+					}
+					fire = start
+					return func() {}
+				},
+			}
+			defer fanOut.arm(tc.hasServices, leadAnswerGrace)()
 			fanOut.rebalance("claude") // the lead's own spawn
-			time.Sleep(50 * time.Millisecond)
+			if got := len(fills); got != 0 {
+				t.Fatalf("the lead's own spawn filled %d boxes, want none", got)
+			}
+			if (fire != nil) == tc.hasServices {
+				t.Fatalf("grace timer armed = %t in a project with services = %t", fire != nil, tc.hasServices)
+			}
+			if fire != nil {
+				fire()
+			}
 			if got := len(fills); got != tc.early {
 				t.Fatalf("%d fills before the lead answered, want %d", got, tc.early)
 			}
