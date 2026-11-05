@@ -22,13 +22,9 @@ import (
 
 func withdrawalRecord(id string) string { return "withdrawn-" + id + ".json" }
 
-// withdrawalVersion is a withdrawal filed under the project's id. Version 1 is one an older build
-// filed under the keyed id (legacyProjectKey); it is moved to version 2 the first time the project
-// is looked up.
-const (
-	withdrawalVersion       = 2
-	withdrawalLegacyVersion = 1
-)
+// withdrawalVersion is a withdrawal filed under the project's id. Version 1 was filed under a keyed
+// id by builds up to v11.3.0; old_records.go refuses a project that still has one.
+const withdrawalVersion = 2
 
 // Withdrawal is the persisted barrier. Version and ProjectID are checked on
 // read for exactly the reason an approval checks them: a record that does not
@@ -40,23 +36,9 @@ type Withdrawal struct {
 
 // withdrawn reports whether this project's approval was withdrawn on this host.
 // An unreadable or malformed marker is an ERROR, never a quiet false: a barrier
-// coop cannot read is not a barrier it may ignore. A withdrawal an older build
-// filed under the project's keyed id moves to its id the first time it is looked
-// up: a withdrawn project must never fall back to the built-in default because
-// its records were renamed.
-func (s *Store) withdrawn(id, canonical string) (bool, error) {
-	found, err := s.readWithdrawal(id, withdrawalVersion)
-	if found || err != nil {
-		return found, err
-	}
-	legacy := s.legacyProjectKey(canonical)
-	if legacy == "" {
-		return false, nil
-	}
-	if found, err := s.readWithdrawal(legacy, withdrawalLegacyVersion); !found || err != nil {
-		return found, err
-	}
-	return s.moveWithdrawal(legacy, id)
+// coop cannot read is not a barrier it may ignore.
+func (s *Store) withdrawn(id string) (bool, error) {
+	return s.readWithdrawal(id, withdrawalVersion)
 }
 
 func (s *Store) readWithdrawal(id string, version int) (bool, error) {
@@ -80,11 +62,11 @@ func (s *Store) readWithdrawal(id string, version int) (bool, error) {
 // Withdrawn reports whether this project's approval was withdrawn on this host and not approved
 // again since: a running editor session that is refused names the withdrawal, not a review.
 func (s *Store) Withdrawn(project string) (bool, error) {
-	id, canonical, _, err := s.projectIdentity(project)
+	id, err := s.projectID(project)
 	if err != nil {
 		return false, err
 	}
-	return s.withdrawn(id, canonical)
+	return s.withdrawn(id)
 }
 
 // recordWithdrawal persists the barrier and fsyncs it. It runs BEFORE the
@@ -99,18 +81,9 @@ func (s *Store) recordWithdrawal(id string) error {
 	return s.publish(withdrawalRecord(id), data, true)
 }
 
-// clearWithdrawal removes the barrier, under the project's id and the keyed one an
-// older build used, which would otherwise move back on the next lookup. Only
-// Approve calls it, inside the same lock that publishes the approval a human just
-// confirmed.
-func (s *Store) clearWithdrawal(id, canonical string) error {
-	if legacy := s.legacyProjectKey(canonical); legacy != "" {
-		if err := s.removeWithdrawal(legacy); err != nil {
-			return err
-		}
-	}
-	return s.removeWithdrawal(id)
-}
+// clearWithdrawal removes the barrier. Only Approve calls it, inside the same lock that publishes
+// the approval a human just confirmed.
+func (s *Store) clearWithdrawal(id string) error { return s.removeWithdrawal(id) }
 
 func (s *Store) removeWithdrawal(id string) error { return s.removeRecord(withdrawalRecord(id)) }
 

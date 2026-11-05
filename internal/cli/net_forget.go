@@ -71,7 +71,7 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	if review.Approval() == nil {
+	if review.Approval() == nil && len(oldForgetFiles(review)) == 0 {
 		if err := review.Close(); err != nil {
 			return 1, err
 		}
@@ -112,6 +112,7 @@ const (
 	netForgetCancelled = "Cancelled. Network approvals were kept."
 	netForgetNothing   = "No network approval is saved for this project."
 	netForgetRestore   = "To restore approval:"
+	netForgetOld       = "These records, filed by an older coop, are removed with it:"
 	netForgetGone      = "The project folder no longer exists."
 	netForgetEffect    = "This only resets the approvals; it does not change the settings in .agent/project.yaml."
 )
@@ -124,9 +125,17 @@ type netForgetReview interface {
 	Commit(context.Context) error
 }
 
+// oldForgetFiles are the records an older coop filed, which a review that has them also removes.
+func oldForgetFiles(review netForgetReview) []string {
+	if old, ok := review.(interface{ OldFiles() []string }); ok {
+		return old.OldFiles()
+	}
+	return nil
+}
+
 func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer, confirm func() bool) error {
-	approval := review.Approval()
-	if approval == nil {
+	old := oldForgetFiles(review)
+	if review.Approval() == nil && len(old) == 0 {
 		return errors.New("there is nothing to forget for this project")
 	}
 	var b strings.Builder
@@ -137,6 +146,12 @@ func confirmNetForget(ctx context.Context, review netForgetReview, out io.Writer
 	// apply to a project that no longer has one.
 	if review.Gone() {
 		fmt.Fprintf(&b, "\n%s\n", netForgetGone)
+	}
+	if len(old) > 0 {
+		fmt.Fprintf(&b, "\n%s\n", netForgetOld)
+		for _, name := range old {
+			fmt.Fprintf(&b, "  %s\n", name)
+		}
 	}
 	fmt.Fprintf(&b, "\n%s\n\n%s\n  %s\n", netForgetEffect, netForgetRestore, p.Cyan("coop approve"))
 	if _, err := io.WriteString(out, b.String()); err != nil {

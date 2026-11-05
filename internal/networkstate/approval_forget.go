@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+
+	"github.com/AndrewDryga/coop/internal/fsidentity"
 )
 
 // ApprovalRecord is one remembered approval and the id it is filed under. It is
@@ -16,10 +19,12 @@ type ApprovalRecord struct {
 	// derivation.
 	Path string
 	ID   string
-	// legacyID is the keyed id an older build filed Approval under, when the project was not
-	// approved since (legacy_records.go).
-	legacyID string
+	// old are the files an older coop filed for this project (old_records.go), which Forget removes.
+	old []string
 }
+
+// OldFiles are the records an older coop filed for this project that Forget also removes.
+func (r ApprovalRecord) OldFiles() []string { return slices.Clone(r.old) }
 
 // ApprovalAt reads what is remembered for a project path WITHOUT requiring the
 // directory to exist — the one case Approval cannot serve, and exactly the case
@@ -44,15 +49,18 @@ func (s *Store) ApprovalAt(project string) (ApprovalRecord, error) {
 		return ApprovalRecord{}, err
 	}
 	id := s.projectKey(canonical)
-	approval, err := s.approval(id)
+	record := ApprovalRecord{Path: canonical, ID: id}
+	found, err := s.oldRecordsFor(canonical)
 	if err != nil {
 		return ApprovalRecord{}, err
 	}
-	record := ApprovalRecord{Approval: approval, Path: canonical, ID: id}
-	if approval == nil {
-		if record.Approval, record.legacyID, err = s.legacyApproval(canonical); err != nil {
-			return ApprovalRecord{}, err
-		}
+	if found != nil {
+		record.old = append(found.Files, found.anchors...)
+	}
+	// An approval under this project's own id that an older coop wrote cannot be read, and is
+	// among the files Forget removes.
+	if record.Approval, err = s.approval(id); err != nil && !slices.Contains(record.old, approvalRecord(id)) {
+		return ApprovalRecord{}, err
 	}
 	return record, nil
 }
@@ -77,17 +85,13 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		// ApprovalAt is a review snapshot, not the object to clean up after this lock is acquired.
 		// A concurrent reapproval can replace its anchor while the operator is confirming. Re-read
 		// under the record lock so deleting the current grant cannot orphan the current anchor.
+		name := approvalRecord(record.ID)
 		current, err := s.approval(record.ID)
-		if err != nil {
+		if err != nil && !slices.Contains(record.old, name) {
 			return err
 		}
-		name := approvalRecord(record.ID)
-		if current == nil && record.legacyID != "" {
-			// An older build's approval goes like any other: the barrier under the project's id.
-			if current, err = s.approval(record.legacyID); err != nil {
-				return err
-			}
-			name = approvalRecord(record.legacyID)
+		if err != nil {
+			current = nil
 		}
 		// The barrier goes down FIRST. Removing the grant is what
 		// makes this project's mode fall back to coop's built-in default, so the
@@ -101,6 +105,20 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 		// cleanup. Removing the record first would turn this into an uncollectable private link.
 		if err := s.retireProjectAnchor(record.Path, current); err != nil {
 			return fmt.Errorf("retire project approval identity: %w", err)
+		}
+		if err := s.retireOldMarker(record.Path); err != nil {
+			return fmt.Errorf("retire project approval identity: %w", err)
+		}
+		// What an older coop filed for this project goes after the barrier, which replaced any old
+		// withdrawal under this project's own id: that one stays.
+		for _, old := range record.old {
+			if old == withdrawalRecord(record.ID) {
+				continue
+			}
+			if err := s.removeRecord(old); err != nil {
+				return err
+			}
+			removed = true
 		}
 		err = s.root.Remove(name)
 		if errors.Is(err, os.ErrNotExist) {
@@ -130,4 +148,26 @@ func (s *Store) Forget(ctx context.Context, record ApprovalRecord) (bool, error)
 	// After the withdrawal is in place, as in Approve: a running editor session admits again and
 	// finds this project withdrawn.
 	return true, s.announceApprovalChange(ctx)
+}
+
+// retireOldMarker removes the checkout's marker and private anchor when an older coop's approval
+// made them, while the anchor file still exists to prove the pair. Left behind, the marker would
+// name a checkout the next approval cannot re-enroll from.
+func (s *Store) retireOldMarker(project string) error {
+	keyed := s.keyedProjectID(project)
+	if keyed == "" {
+		return nil
+	}
+	body, err := fsidentity.ReadMarker(project, ProjectApprovalMarker)
+	if err != nil {
+		return nil
+	}
+	id, anchor, err := parseAnyProjectAnchorBody(body)
+	if err != nil || id != keyed {
+		return nil
+	}
+	if _, err := s.root.Lstat(projectAnchorName(id, anchor)); err != nil {
+		return nil
+	}
+	return fsidentity.Retire(s.projectAnchorBinding(project, id, anchor))
 }

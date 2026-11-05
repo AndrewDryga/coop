@@ -2,7 +2,6 @@ package networkstate
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -56,50 +55,6 @@ func TestAuthorizeLaunchChecksWithoutRecording(t *testing.T) {
 	}
 	if err := s.AuthorizeLaunch(ctx, record.ID, "unknown"); err == nil {
 		t.Fatal("an unknown role was authorized")
-	}
-}
-
-// A version 1 record journaled each create and start. It reads as version 2, with every resource
-// short of gone planned, and the next write stores version 2.
-func TestExecutionVersionOneReadsAsVersionTwo(t *testing.T) {
-	s, record := executionFixture(t)
-	path := filepath.Join(s.Path(), "execution-"+record.ID+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatal(err)
-	}
-	raw["version"] = 1
-	for i, state := range []string{"started", "created", "creating", "gone", "planned"} {
-		resource := raw["resources"].([]any)[i].(map[string]any)
-		resource["state"] = state
-		if state == "started" || state == "created" {
-			resource["id"] = strings.Repeat("c", 64)
-		}
-	}
-	if data, err = json.Marshal(raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Execution(record.ID)
-	if err != nil || got.Version != ExecutionVersion {
-		t.Fatalf("version 1 record = %+v, %v", got, err)
-	}
-	for i, want := range []string{"planned", "planned", "planned", "gone", "planned"} {
-		if got.Resources[i].State != want {
-			t.Fatalf("resource %s = %q, want %q", got.Resources[i].Role, got.Resources[i].State, want)
-		}
-	}
-	if _, err := s.RecordWorkloadStarted(context.Background(), got.ID, got.Revision); err != nil {
-		t.Fatal(err)
-	}
-	if data, err = os.ReadFile(path); err != nil || !strings.Contains(string(data), `"version":2`) || strings.Contains(string(data), `"id":"cccc`) {
-		t.Fatalf("the next write did not store version 2: %s, %v", data, err)
 	}
 }
 

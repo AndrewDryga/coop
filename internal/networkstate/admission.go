@@ -157,8 +157,7 @@ func sameRules(a, b []egress.Rule) bool {
 // PreviewAdmission performs no publication and returns no authority handle. It
 // lets ordinary launches inspect volume exposure before a first owner key is
 // created. The caller must still Admit, and refuse if preparation changes mode.
-// The one write it can make is moving an older build's withdrawal to its new
-// name (legacy_records.go), which only keeps a refusal in place.
+// It writes nothing.
 func PreviewAdmission(path, project string, exposed []string, input Admission) (AdmissionPreview, error) {
 	if err := CheckPathExposure(path, exposed); err != nil {
 		return AdmissionPreview{}, err
@@ -214,7 +213,7 @@ func (s *Store) admissionPreview(project string, input Admission) (AdmissionPrev
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
-	withdrawn, err := s.withdrawn(id, canonical)
+	withdrawn, err := s.withdrawn(id)
 	if err != nil {
 		return AdmissionPreview{}, err
 	}
@@ -279,7 +278,7 @@ func (s *Store) authorized(project string, input Admission) (string, egress.Mode
 	// The withdrawal barrier is enforced HERE too, not only in the preview: a
 	// caller that admits without previewing must not be the one path that walks
 	// through a withdrawal back into the built-in default.
-	withdrawn, err := s.withdrawn(id, canonical)
+	withdrawn, err := s.withdrawn(id)
 	if err != nil {
 		return "", "", nil, err
 	}

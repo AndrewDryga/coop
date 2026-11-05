@@ -7,6 +7,13 @@
 - **Network and file-protection errors say what went wrong.** Help and refusals no longer say a client,
   image or Docker setup is "qualified". They name what `coop net setup` checked or what Docker lacks.
 
+- **Network records an older Coop wrote are refused by name.** An approval or withdrawal filed under
+  the keyed project id (Coop v11.3.0 and earlier, approval versions 1 to 3, withdrawal version 1)
+  or a run record at version 1 is no longer read. A project that could own one is refused, the
+  file is named, and a withdrawal keeps its project closed as before. Open the project once with
+  Coop v12.1.0 to convert them, or run `coop net forget --project <path>`. Setup-check snapshots
+  from before admitted markers are no longer marked for removal and stay on disk.
+
 - **Workers refuse session companions and workdirs only old builds made.** A companion that is a
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.

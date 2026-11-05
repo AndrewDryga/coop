@@ -369,6 +369,9 @@ func (s *Store) projectIdentity(project string) (string, string, os.FileInfo, er
 	if err != nil || !info.IsDir() {
 		return "", "", nil, errors.New("network approval requires an existing project directory")
 	}
+	if err := s.refuseOldRecords(canonical); err != nil {
+		return "", "", nil, err
+	}
 	return s.projectKey(canonical), canonical, info, nil
 }
 
@@ -383,26 +386,15 @@ func (s *Store) projectKey(canonical string) string {
 
 func approvalRecord(id string) string { return "approval-" + id + ".json" }
 
-// networkApprovalVersion is an approval filed under the project's id. Versions 1 to 3 are what
-// builds up to v11.3.0 filed under the keyed id (legacy_records.go): none of them grants anything.
-const (
-	networkApprovalLegacyVersion   = 1
-	networkApprovalBirthVersion    = 2
-	networkApprovalAnchoredVersion = 3
-	networkApprovalVersion         = 4
-)
+// networkApprovalVersion is an approval filed under the project's id. Versions 1 to 3 were filed
+// under a keyed id by builds up to v11.3.0; old_records.go refuses a project that still has one.
+const networkApprovalVersion = 4
 
 type Approval struct {
 	Version   int           `json:"version"`
 	ProjectID string        `json:"project_id"`
 	Posture   egress.Mode   `json:"posture"`
 	Envelope  []egress.Rule `json:"envelope"`
-	// Device, Inode and Birth* are retained only to parse approvals written by
-	// older Coop builds. They are allocator metadata, not current authority.
-	Device    uint64 `json:"device,omitempty"`
-	Inode     uint64 `json:"inode,omitempty"`
-	BirthSec  int64  `json:"birth_sec,omitempty"`
-	BirthNsec uint32 `json:"birth_nsec,omitempty"`
 	// ProjectAnchor names the host-private half of a two-link filesystem anchor.
 	// The repository marker must still be that exact inode for a launch to use
 	// this approval.
@@ -421,9 +413,6 @@ type Approval struct {
 // pending reviews, not corruption: the remedy is the same `coop approve`.
 func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 	if a == nil {
-		if pending := s.legacyApprovalPending(canonical); pending != nil {
-			return pending
-		}
 		// A moved checkout changes its path-keyed project id. Even an empty policy would otherwise
 		// resolve to the fresh default and silently forget the old sticky posture. A marker with no
 		// approval for this path is an explicit re-enrollment, not a first-use project.
@@ -435,10 +424,6 @@ func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 				Cause: "Coop could not verify this checkout's network approval marker."}
 		}
 		return nil
-	}
-	if a.Version != networkApprovalVersion {
-		return &PendingApproval{Reason: "the network approval for " + canonical + " was made by an older coop",
-			Cause: "This project's network access was approved by an older Coop."}
 	}
 	if err := s.validateProjectAnchor(canonical, a); err != nil {
 		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
@@ -472,22 +457,8 @@ func (s *Store) approval(id string) (*Approval, error) {
 	if approval.ProjectID != id || len(approval.Features) > egress.MaxFeatureExpansions {
 		return nil, errors.New("network approval identity mismatch")
 	}
-	switch approval.Version {
-	case networkApprovalLegacyVersion:
-		if approval.Inode == 0 || approval.BirthSec != 0 || approval.BirthNsec != 0 || approval.ProjectAnchor != "" {
-			return nil, errors.New("invalid legacy network approval identity")
-		}
-	case networkApprovalBirthVersion:
-		if approval.Inode == 0 || approval.BirthSec == 0 || approval.ProjectAnchor != "" {
-			return nil, errors.New("invalid birth-time network approval identity")
-		}
-	case networkApprovalAnchoredVersion, networkApprovalVersion:
-		if approval.Device != 0 || approval.Inode != 0 || approval.BirthSec != 0 || approval.BirthNsec != 0 ||
-			!projectAnchorRE.MatchString(approval.ProjectAnchor) {
-			return nil, errors.New("invalid anchored network approval identity")
-		}
-	default:
-		return nil, errors.New("unsupported network approval version")
+	if approval.Version != networkApprovalVersion || !projectAnchorRE.MatchString(approval.ProjectAnchor) {
+		return nil, errors.New("invalid network approval identity")
 	}
 	if _, err := egress.ParseMode(string(approval.Posture)); err != nil {
 		return nil, err
@@ -646,9 +617,7 @@ func (s *Store) loadSnapshotScope(id, fingerprint string) (egress.Snapshot, erro
 	// Loading is using: a run about to start under a removable snapshot, from a
 	// process that admitted it long ago, restarts its retention window first, or
 	// finds it removed. One without a marker is never removed, so its load takes
-	// no lock and writes nothing. The exception, an earlier coop's setup check
-	// snapshot, is marked only after its check's run, the one run that loads it,
-	// ended 90 days ago.
+	// no lock and writes nothing.
 	if _, err := s.root.Lstat(admittedRecord(fingerprint)); err == nil {
 		if err := s.lockSnapshots(context.Background(), func() error { return s.touchAdmitted(fingerprint) }); err != nil {
 			return egress.Snapshot{}, err

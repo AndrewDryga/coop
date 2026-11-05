@@ -152,7 +152,7 @@ func (s *Store) validateProjectAnchor(project string, approval *Approval) error 
 }
 
 func (s *Store) retireProjectAnchor(project string, approval *Approval) error {
-	if approval == nil || (approval.Version != networkApprovalVersion && approval.Version != networkApprovalAnchoredVersion) ||
+	if approval == nil || approval.Version != networkApprovalVersion ||
 		!projectAnchorRE.MatchString(approval.ProjectAnchor) {
 		return nil
 	}

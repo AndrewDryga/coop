@@ -65,6 +65,9 @@ func ReviewProjectNetworkForget(project string) (_ *ProjectNetworkForget, err er
 // Approval is what would be removed, nil when nothing is remembered here.
 func (f *ProjectNetworkForget) Approval() *networkstate.Approval { return f.record.Approval }
 
+// OldFiles are the records an older coop filed for this project, which a commit also removes.
+func (f *ProjectNetworkForget) OldFiles() []string { return f.record.OldFiles() }
+
 // Gone reports that the project directory itself is no longer there, so the
 // remembered approval is all that is left to remove.
 func (f *ProjectNetworkForget) Gone() bool { return f.gone }
@@ -72,7 +75,7 @@ func (f *ProjectNetworkForget) Gone() bool { return f.gone }
 // Commit removes the approval. A record that could not be located is an error,
 // never a success: a forget that removed nothing must not read as one that did.
 func (f *ProjectNetworkForget) Commit(ctx context.Context) error {
-	if f == nil || f.store == nil || f.used || f.record.Approval == nil {
+	if f == nil || f.store == nil || f.used || f.record.Approval == nil && len(f.record.OldFiles()) == 0 {
 		return errors.New("there is no approval to forget for this project")
 	}
 	f.used = true

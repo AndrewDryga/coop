@@ -4,25 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 )
-
-func directoryIdentity(info os.FileInfo) (uint64, uint64, bool) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Ino == 0 {
-		return 0, 0, false
-	}
-	return uint64(stat.Dev), stat.Ino, true
-}
 
 // approve is the ordinary host sequence: review the diff, then commit exactly
 // the view that was reviewed.
@@ -306,54 +296,6 @@ func TestApprovalRefusesLostIdentityAndCancellation(t *testing.T) {
 				t.Fatal("refused approval left authority", err)
 			}
 		})
-	}
-}
-
-func TestLegacyApprovalRequiresExplicitReapproval(t *testing.T) {
-	s := openStore(t)
-	project := filepath.Join(t.TempDir(), "repo")
-	if err := os.Mkdir(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	requests := []egress.Rule{rule("example.com")}
-	id, err := s.projectID(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, inode, ok := directoryIdentity(info)
-	if !ok {
-		t.Fatal("project identity unavailable")
-	}
-	legacy := Approval{Version: networkApprovalLegacyVersion, ProjectID: id, Posture: egress.Filtered,
-		Envelope: requests, Device: device, Inode: inode}
-	data, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.publish(approvalRecord(id), data, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Admit(project, Admission{Requests: requests}); err == nil || !strings.Contains(err.Error(), "older coop") {
-		t.Fatalf("legacy allocator identity authorized a launch: %v", err)
-	}
-	if preview, err := s.admissionPreview(project, Admission{Requests: requests}); err != nil ||
-		preview.Pending == nil || !strings.Contains(preview.Pending.Error(), "older coop") {
-		t.Fatalf("legacy approval preview = %+v, %v", preview, err)
-	}
-	if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
-		t.Fatal(err)
-	}
-	current, err := s.Approval(project)
-	if err != nil || current.Version != networkApprovalVersion || current.ProjectAnchor == "" ||
-		current.Device != 0 || current.Inode != 0 {
-		t.Fatalf("reapproved authority = %+v, %v", current, err)
-	}
-	if _, err := s.Admit(project, Admission{Requests: requests}); err != nil {
-		t.Fatal("explicit reapproval did not authorize the anchored project", err)
 	}
 }
 

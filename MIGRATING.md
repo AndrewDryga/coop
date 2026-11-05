@@ -3,6 +3,26 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## Unreleased: old network records are refused by name
+
+Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
+earlier. If your network folder (`~/.local/state/coop/network`) still holds any, a project they
+could belong to stops with a message that names each file. A withdrawal still keeps its project
+closed.
+
+- For a project that still exists, run `coop net forget --project <path>`. It removes the old
+  approval and withdrawal files, keeps the project closed, and `coop approve` there opens it again.
+- If the project no longer exists, delete the files the message names from
+  `~/.local/state/coop/network`. Each name is `approval-<64 hex digits>.json` or
+  `withdrawn-<64 hex digits>.json`; a matching `project-<64 hex digits>-<32 hex digits>.anchor` can go
+  with them.
+- A named `execution-<32 hex digits>.json` run record is not cleaned up by this Coop. Open the
+  project once with Coop v12.1.0, which removes that run's leftovers, or delete the file if the run is
+  long gone.
+- Coop leaves these files on disk and changes none of them. A project they provably do not belong to
+  starts as usual.
+- Policy copies an old `coop net setup` check saved without a marker stay on disk, unused.
+
 ## Unreleased: `coop codex -p` runs one prompt
 
 `coop codex -p <name>` used to pick a Codex profile. It now runs `<name>` as a prompt, as `-p` does

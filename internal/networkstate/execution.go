@@ -30,11 +30,10 @@ const (
 	maxProtectedRanges = 256
 	// ExecutionVersion 2 records only whether each runtime resource is gone; whether one that is
 	// not exists is asked of the runtime by its fixed name and labels. Version 1 also journaled
-	// each create and start, and is read as version 2.
-	ExecutionVersion       = 2
-	executionLegacyVersion = 1
-	ExecutionPageSize      = 100
-	ExecutionLockTimeout   = 5 * time.Second
+	// each create and start; a version 1 record is refused by name (old_records.go).
+	ExecutionVersion     = 2
+	ExecutionPageSize    = 100
+	ExecutionLockTimeout = 5 * time.Second
 )
 
 var (
@@ -261,7 +260,9 @@ func (s *Store) execution(id string) (Execution, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return Execution{}, err
 	}
-	upgradeExecution(&record)
+	if record.Version < ExecutionVersion {
+		return Execution{}, fmt.Errorf("network run record %s was written by an older coop: open its project once with Coop v12.1.0, which cleans that run up", id)
+	}
 	if record.ID != id {
 		return Execution{}, errors.New("invalid network execution identity")
 	}
@@ -269,20 +270,6 @@ func (s *Store) execution(id string) (Execution, error) {
 		return Execution{}, err
 	}
 	return record, nil
-}
-
-// upgradeExecution reads a version 1 record as version 2: a resource its journal left anywhere
-// short of gone may exist, so it reads as planned. The next write stores version 2.
-func upgradeExecution(record *Execution) {
-	if record.Version != executionLegacyVersion {
-		return
-	}
-	record.Version = ExecutionVersion
-	for i := range record.Resources {
-		if record.Resources[i].State != "gone" {
-			record.Resources[i].State = "planned"
-		}
-	}
 }
 
 func validExecution(record Execution) error {

@@ -2,7 +2,7 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/legacy_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
 updated: 2026-11-04
 ---
@@ -75,10 +75,10 @@ Nothing has been retired under this rule yet, so every oldest version is still t
 | Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
 | Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 1 | read in place, never rewritten | none needed |
 | Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 1 | read without its commit IDs (one awaiting verification returns to signoff once; one whose commit predates its run base is anchored on load); the next write stores 2 | builds after v11.3.0 |
-| Network approval | `~/.local/state/coop/network/approval-<id>.json` | 4 | 1 | 1 to 3 are filed under the keyed `<id>` of v11.3.0 and earlier: never a grant, read only to show a review or to be forgotten, and one keeps its project's launches refused until `coop approve` or `coop net forget` retires it | `coop approve` (builds after v11.3.0) |
-| Network withdrawal | `~/.local/state/coop/network/withdrawn-<id>.json` | 2 | 1 | read under the keyed `<id>` of v11.3.0 and earlier, and moved to 2 the first time Coop looks the project up | builds after v11.3.0 |
+| Network approval | `~/.local/state/coop/network/approval-<id>.json` | 4 | 4 | 1 to 3 are filed under the keyed `<id>` of v11.3.0 and earlier: not read, and the project they could belong to is refused by name until `coop net forget --project <path>` removes them (or you delete the file, if the project is gone) | `coop approve` (builds after v11.3.0) |
+| Network withdrawal | `~/.local/state/coop/network/withdrawn-<id>.json` | 2 | 2 | version 1 (v11.3.0 and earlier, under the keyed `<id>`) is not read: the project it could belong to is refused by name, so the barrier holds, until `coop net forget --project <path>` removes it or you delete the file | Coop v12.1.0 |
 | Network setup record | `~/.local/state/coop/network/qualification-<id>.json` | 2 | 2 | refused by name: run `coop net setup` | `coop net setup` |
-| Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 1 | read; a resource the version 1 journal left short of gone reads as planned, and the next write stores 2 | builds after v11.3.0 |
+| Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 2 | version 1 is not read: the project it names is refused by name, and the run is not cleaned up | Coop v12.1.0 |
 | Isolated fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 4 | 4 | none exist | none |
 | Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | `<repo>-forks/.coop/` | copied in once, by the first open of the project or a box launch in it | builds after v11.3.0 |
 | Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | read | read, updated and ended; new records go to the project's own registry | builds after v11.3.0 |
@@ -91,9 +91,10 @@ job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. F
 `~/.local/state/coop/forks/<key>/`, where `<key>` is the SHA-256 of the project's real path in the
 spelling the disk stores. A network record's `<id>` for a project is the SHA-256 of its real path;
 up to v11.3.0 it was keyed with the store's `owner.key`, which a lost key could not recover. Retiring
-the keyed names (`internal/networkstate/legacy_records.go`) needs the store's own count of
-withdrawals below version 2 and approvals below version 4, since a project nobody looked up,
-approved or forgot since the upgrade still has one. The `check:` test
+the keyed names (`internal/networkstate/old_records.go`) was done without that count: the store
+itself finds any approval below version 4, withdrawal below 2 or execution below 2 that could belong
+to the project being used, and refuses that project by name (`OldRecordsError`); a file whose name
+provably belongs to another project (neither its plain nor its keyed id) is left alone. The `check:` test
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
 The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
@@ -103,6 +104,12 @@ retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLoca
 label then reads as unknown: reported, never removed.
 
 ## Changelog
+- 2026-11-04 — retired the network approval (1 to 3, keyed names), withdrawal (1) and execution (1)
+  readers (task 2026-11-04-drop-the-old-network-record-readers). `networkstate.projectIdentity`
+  refuses a project by name while the store holds such a record that could be its own, so a
+  withdrawal still bars its project; `coop net forget --project` removes the approval and withdrawal
+  files and files the current barrier first. Setup-check snapshots written without a marker are no
+  longer marked for removal and stay on disk.
 - 2026-11-04 — the isolated-fork source receipt no longer reads version 1: no commit wrote one, so a
   stray one is refused as invalid. It stays out of the table, having only one format.
 - 2026-11-04 — corrected three "Older versions today" cells against the code: event streams and create

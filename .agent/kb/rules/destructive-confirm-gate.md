@@ -82,11 +82,7 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
   check's own run names or loads it, nothing else admits a rule with `networkstate.SetupOrigin()`,
   and a crashed setup is rerun in a new scratch project, never resumed (`QualificationSmoke`), so
   nothing loads it once that run has ended. Setup also deletes the scratch project the snapshot is
-  scoped to when it returns, though not when it is killed. One from before the marker goes only on
-  this proof: the check's expiring run record (`execution-<id>.json`, purpose `qualification`)
-  names it; it has at least one grant; every grant's only origin is `networkstate.SetupOrigin()`;
-  and it names no provider (no dependencies). That record marks it just before it goes, dated to
-  the run's end, and the next pass removes it.
+  scoped to when it returns, though not when it is killed. One from before the marker is no longer marked and stays on disk.
 - Narrow exception: `<task>/tmp/` is lifecycle-declared disposable scratch, not retained user state.
   Reaching done may remove exactly that containment-checked child without a second prompt (the loop
   cannot prompt), but it must preserve `artifacts/` and every other task file, refuse path escape or
@@ -96,6 +92,8 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-11-04 — the snapshot of a setup check written before admitted markers is no longer proved and
+  marked for removal; it stays on disk (task 2026-11-04-drop-the-old-network-record-readers).
 - 2026-10-17 — the 2026-08-09 and 2026-08-10 sweep entries name each call site's function (as it
   was then) instead of file:line numbers, resolved against the files at those commits.
 - 2026-10-17 — the network-records exception now covers a `coop net setup` check's snapshot,

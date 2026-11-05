@@ -119,14 +119,9 @@ goes is a `coop net setup` check's: only the check's own run names or loads it, 
 a rule with `networkstate.SetupOrigin()`, and a crashed setup is rerun in a new scratch project,
 never resumed (`QualificationSmoke`); `SetupNetwork` also deletes that scratch project when it
 returns, though not when it is killed. The smoke admits its one rule with that origin
-(`box/network_setup.go`, `admitSetupSmoke`; marked like any admission), and before `RemoveExpired`
-removes the check's expiring run record (`execution-<id>.json`, purpose `qualification`) it marks
-that run's unmarked snapshot when it has at least one grant, every grant's only origin is that one
-and it carries no provider (`markSetupCheck`), dated to the run's `EndedAt`, so it goes one pass
-after the record. That costs one read per expiring check, where recognizing them in
-`RemoveUnusedSnapshots` would read every unmarked snapshot, job ones included, on every pass. A
-check snapshot whose record is already gone stays; one the mark fails to read keeps the record for
-the next pass, unless it is gone or a link. A marked snapshot stays while a
+(`box/network_setup.go`, `admitSetupSmoke`; marked like any admission), so it goes like any marked
+snapshot. A check snapshot an earlier coop wrote without a marker is no longer marked when its run
+record expires: it stays on disk, unused. A marked snapshot stays while a
 listed run names it (it goes one pass after its last record) or while its marker's mtime is inside
 the 90 days. The mtime is the last use: re-admitting an unchanged policy (`saveSnapshot`'s EEXIST
 branch) and loading a marked snapshot (`loadSnapshotScope`) refresh it under `snapshot-lock`, where
@@ -190,6 +185,10 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-04 — removed `markSetupCheck`: a setup-check snapshot written before markers existed is
+  left on disk (task 2026-11-04-drop-the-old-network-record-readers). A version 1 run record is no
+  longer read (`Store.execution` names it); the project it names is refused by
+  `networkstate.projectIdentity`.
 - 2026-11-04 — removed `networkstate.Store.Resolve` (see the 2026-09-10 entry below) and
   `Store.CheckRequests`, which nothing called. `Admit` and `PreviewAdmission` are the ways in, and the
   tests of those rules now run through them.
@@ -219,12 +218,6 @@ number — never Ctrl-C inferred from 130.
   The 2026-09-26 entry now names the functions it removed, which older entries still mention.
 - 2026-10-17 — the read-only and bare launches (`restricted.go`) are gone, so the ordinary launch
   narrates every section.
-- 2026-10-17 — a `coop net setup` check's snapshot from before markers is marked by the check's
-  expiring run record (`execution-<id>.json`, purpose `qualification`) when it has a grant, every
-  grant's only origin is `SetupOrigin` and it carries no provider, then removed by the next pass;
-  only the check's own run names or loads it, and a crashed setup is rerun, never resumed. A
-  snapshot the mark fails to read keeps the record unless it is gone or a link. Verified against
-  `RemoveExpired`, `markSetupCheck`, `SetupNetwork`, `QualificationSmoke` and their tests.
 - 2026-10-16 — policy snapshots nothing uses are removed by the same pass (paragraph under the
   `coop net` table): only admission-created snapshots carry the `admitted-` marker that makes them
   removable, the census needs every record read, and re-admission or a load of a marked snapshot

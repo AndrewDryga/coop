@@ -3,10 +3,17 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
@@ -121,5 +128,88 @@ func TestForgetSurfacesACommitFailure(t *testing.T) {
 	err := confirmNetForget(context.Background(), review, &bytes.Buffer{}, func() bool { return true })
 	if err == nil || !strings.Contains(err.Error(), "nothing was removed") {
 		t.Fatalf("commit failure = %v", err)
+	}
+}
+
+// An older build's network record is not read, and the commands name it and the fix instead:
+// `coop approve` refuses its project, and `coop net forget` lists the approval and withdrawal
+// files it will remove, takes them, and leaves the project needing a fresh approval.
+func TestNetCommandsRefuseOlderBuildsRecordsByName(t *testing.T) {
+	plant := func(t *testing.T, root, repo, kind string) string {
+		t.Helper()
+		key, err := os.ReadFile(filepath.Join(root, "owner.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write([]byte("project-v1\x00" + repo))
+		keyed := hex.EncodeToString(mac.Sum(nil))
+		var name string
+		var body any
+		switch kind {
+		case "keyed withdrawal":
+			name, body = "withdrawn-"+keyed+".json", map[string]any{"version": 1, "project_id": keyed}
+		case "keyed approval":
+			name, body = "approval-"+keyed+".json", map[string]any{"version": 3, "project_id": keyed, "posture": "filtered"}
+		case "run record":
+			name, body = "execution-"+strings.Repeat("ab", 16)+".json", map[string]any{"version": 1, "project": repo}
+		default:
+			t.Fatal(kind)
+		}
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return name
+	}
+	for _, kind := range []string{"keyed withdrawal", "keyed approval", "run record"} {
+		t.Run(kind, func(t *testing.T) {
+			a, repo := servicesProject(t, approveOtherRule, "")
+			if code, err := a.approveProject(t.Context(), repo, false, func(string) bool { return true }); code != 0 || err != nil {
+				t.Fatalf("first approval: %d, %v", code, err)
+			}
+			root, err := box.NetworkStatePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := plant(t, root, repo, kind)
+			code, err := a.approveProject(t.Context(), repo, false, func(string) bool {
+				t.Error("asked to approve a project whose records an older coop wrote")
+				return false
+			})
+			if code == 0 || err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("coop approve = %d, %v; want a refusal that names %s", code, err, name)
+			}
+			if kind == "run record" {
+				if !strings.Contains(err.Error(), "Coop v12.1.0") {
+					t.Fatalf("refusal names no fix: %v", err)
+				}
+				return
+			}
+			if !strings.Contains(err.Error(), "coop net forget --project "+repo) {
+				t.Fatalf("refusal names no fix: %v", err)
+			}
+			review, err := box.ReviewProjectNetworkForget(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer review.Close()
+			var out bytes.Buffer
+			if err := confirmNetForget(t.Context(), review, &out, func() bool { return true }); err != nil {
+				t.Fatalf("confirmNetForget: %v", err)
+			}
+			if !strings.Contains(out.String(), name) {
+				t.Fatalf("the forget did not list %s:\n%s", name, out.String())
+			}
+			if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s survived the forget: %v", name, err)
+			}
+			if code, err := a.approveProject(t.Context(), repo, false, func(string) bool { return true }); code != 0 || err != nil {
+				t.Fatalf("approving after the forget: %d, %v", code, err)
+			}
+		})
 	}
 }

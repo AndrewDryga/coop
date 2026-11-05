@@ -97,11 +97,6 @@ func (s *Store) reviewApproval(project string, mode egress.Mode, requests []egre
 	if data, err := json.Marshal(after); err != nil || len(data) > maxPrivateRecordBytes {
 		return ApprovalReview{}, nil, errors.New("network approval exceeds byte limit")
 	}
-	// A project an older build approved shows that approval as where the review starts, so a rule
-	// added since stands out. It is only shown: Approve publishes After alone.
-	if before == nil {
-		before = s.shownLegacyApproval(resolved)
-	}
 	digest, err := s.approvalReviewDigest(resolved, before, after)
 	if err != nil {
 		return ApprovalReview{}, nil, err
@@ -123,7 +118,7 @@ func (s *Store) DiscardUnapprovedReview(ctx context.Context, project string) err
 		return err
 	}
 	return s.lockRecord(ctx, "approval", id, func() error {
-		if approval, err := s.approval(id); err != nil || approval != nil || s.shownLegacyApproval(resolved) != nil {
+		if approval, err := s.approval(id); err != nil || approval != nil {
 			return err
 		}
 		body, err := fsidentity.ReadMarker(resolved, ProjectApprovalMarker)
@@ -186,7 +181,6 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 	if !hmac.Equal([]byte(review.Digest), []byte(digest)) {
 		return ErrApprovalChanged
 	}
-	var retireErr error
 	err = s.lockRecord(ctx, "approval", review.After.ProjectID, func() error {
 		current, _, err := s.reviewApproval(project, mode, requests, bundles, services, false)
 		if errors.Is(err, errProjectAnchorTransition) {
@@ -211,16 +205,9 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		// An explicit fresh approval is the ONE thing that lifts a withdrawal —
 		// including an approval of an unchanged or empty request, which is how a
 		// project with nothing left in its YAML gets moving again.
-		canonical, err := canonicalPath(project)
-		if err != nil {
-			return err
-		}
-		if err := s.clearWithdrawal(current.After.ProjectID, canonical); err != nil {
+		if err := s.clearWithdrawal(current.After.ProjectID); err != nil {
 			return fmt.Errorf("clear network withdrawal: %w", err)
 		}
-		// The fresh approval is in effect from here, so failing to tidy up the old one is reported
-		// once the change is announced, not instead of it.
-		retireErr = s.retireLegacyApproval(canonical)
 		return s.intactAuthority()
 	})
 	if err != nil {
@@ -230,9 +217,6 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 	// admits again and reads this approval.
 	if err := s.announceApprovalChange(ctx); err != nil {
 		return err
-	}
-	if retireErr != nil {
-		return fmt.Errorf("the approval is in effect, but coop could not remove the one an older coop filed: %w", retireErr)
 	}
 	return nil
 }
@@ -265,3 +249,7 @@ func approvedServices(rules []egress.Rule, digests map[string]string) (map[strin
 	}
 	return out, nil
 }
+
+// PriorApproval is the approval a review of this project starts from. It only decides what a review
+// proposes and shows; Approve publishes the reviewed After alone.
+func (s *Store) PriorApproval(project string) (*Approval, error) { return s.Approval(project) }

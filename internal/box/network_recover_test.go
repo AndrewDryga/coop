@@ -841,10 +841,9 @@ func TestRecoverNetworkRunsRemovesSnapshotsNoRetainedRunUses(t *testing.T) {
 	}
 }
 
-// A setup check's snapshot goes one pass after the record of the check's run, like a launch's. The
-// admission marks a current one; the record marks one an earlier coop wrote without a marker, which
-// the origin of its one rule proves was setup's. A launch's from before markers stays: a session
-// this host cannot see may still use it.
+// A setup check's snapshot goes one pass after the record of the check's run, like a launch's: the
+// admission marked it. One an earlier coop wrote without a marker is not marked any more and stays,
+// as does a launch's from before markers: a session this host cannot see may still use it.
 func TestRecoverNetworkRunsRemovesSetupCheckSnapshots(t *testing.T) {
 	f, d, evidence, connect := recoveryFixture(t)
 	ctx := context.Background()
@@ -892,15 +891,17 @@ func TestRecoverNetworkRunsRemovesSetupCheckSnapshots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !snapshotKept(t, f.store, current) || !snapshotKept(t, f.store, earlier) {
+	if !snapshotKept(t, f.store, current) {
 		t.Fatal("a setup check's snapshot went in the pass that removed its run's record")
 	}
 	if _, err := recoverNetworkRunsAt(ctx, evidence, "", connect, later); err != nil {
 		t.Fatal(err)
 	}
-	if snapshotKept(t, f.store, current) || snapshotKept(t, f.store, earlier) {
-		t.Fatalf("a setup check's snapshot outlived its run's record: current %v, earlier %v",
-			snapshotKept(t, f.store, current), snapshotKept(t, f.store, earlier))
+	if snapshotKept(t, f.store, current) {
+		t.Fatal("a setup check's snapshot outlived its run's record")
+	}
+	if !snapshotKept(t, f.store, earlier) {
+		t.Fatal("a setup check's snapshot from before markers was removed; nothing marks it any more")
 	}
 	if !snapshotKept(t, f.store, launch) {
 		t.Fatal("a launch's snapshot from before markers was removed")
