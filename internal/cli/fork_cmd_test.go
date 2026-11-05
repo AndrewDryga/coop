@@ -1732,12 +1732,56 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 	if err := forkspace.WritePid(repo, name, os.Getpid(), identity.Generation); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	appConfig := &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}
+	rt := recordingRuntime(t, filepath.Join(t.TempDir(), "runtime.log"))
+	a := &app{cfg: appConfig, rt: rt, rtSet: true}
 	if code, err := a.forkCreate([]string{name, "vanish", "--loop", "--_detached"}); code != 1 || err == nil || !strings.Contains(err.Error(), `Could not load preset "vanish"`) {
 		t.Fatalf("worker with a broken preset = (%d, %v), want the preset failure", code, err)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
 		t.Fatal("the failed worker left its own record behind")
+	}
+	listing := captureStdout(t, func() {
+		if code, err := a.forkctl().ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(listing, "perf · failed") || !strings.Contains(listing, `Could not load preset "vanish"`) {
+		t.Errorf("fork ls does not show the failed worker and preset reason:\n%s", listing)
+	}
+	jsonListing := captureStdout(t, func() {
+		if code, err := a.forkctl().ForkLs([]string{"--json"}); code != 0 || err != nil {
+			t.Fatalf("fork ls --json = (%d, %v)", code, err)
+		}
+	})
+	var payload struct {
+		Workspaces []struct {
+			Name   string          `json:"name"`
+			Status json.RawMessage `json:"status"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal([]byte(jsonListing), &payload); err != nil {
+		t.Fatalf("decode fork ls --json: %v\n%s", err, jsonListing)
+	}
+	foundFailed := false
+	for _, workspace := range payload.Workspaces {
+		if workspace.Name != name || len(workspace.Status) == 0 {
+			continue
+		}
+		var status struct {
+			State     string `json:"state"`
+			LoopError string `json:"loop_error"`
+		}
+		if err := json.Unmarshal(workspace.Status, &status); err != nil {
+			t.Fatalf("decode %s status: %v", name, err)
+		}
+		if status.State != "failed" || !strings.Contains(status.LoopError, `Could not load preset "vanish"`) {
+			t.Errorf("fork ls --json status = %s, want failed with the preset reason", workspace.Status)
+		}
+		foundFailed = true
+	}
+	if !foundFailed {
+		t.Errorf("fork ls --json omitted failed fork %q:\n%s", name, jsonListing)
 	}
 }
 

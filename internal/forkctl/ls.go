@@ -80,6 +80,9 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		if s.neverStarted() {
 			listing("    Start failed: %s", ui.SafeInline(s.StartError)) // the agent can write the note
 		}
+		if s.stateCell() == "failed" {
+			listing("    Loop failed: %s", ui.SafeInline(s.LoopError))
+		}
 		if s.Agent != "" && s.Agent != "?" {
 			listing("    Agent: %s", s.Agent)
 		}
@@ -203,6 +206,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		CleanupPending      bool             `json:"cleanup_pending"`
 		Legacy              bool             `json:"legacy_generation"`
 		Problems            []string         `json:"problems,omitempty"`
+		LoopError           string           `json:"loop_error,omitempty"`
 	}
 	type workspace struct {
 		Name     string            `json:"name"`
@@ -240,6 +244,9 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 			DetachedRunning:     s.Running, DetachedSystem: s.Elsewhere,
 			WorkspaceReserved: s.Reserved, Candidate: s.Ready,
 			Landing: s.Landing, CleanupPending: s.Cleanup, Legacy: s.Legacy, Problems: s.Problems,
+		}
+		if s.stateCell() == "failed" {
+			status.LoopError = s.LoopError
 		}
 		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws), Status: status})
 		for _, problem := range s.Problems {

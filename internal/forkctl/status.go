@@ -32,6 +32,7 @@ type forkStatus struct {
 	Problems                              []string
 	Cost                                  float64 // total loop spend across the fork's runs, 0 if it never ran
 	StartError                            string  // why the fork's first start stopped before its agent ran (see NoteForkStart)
+	LoopError                             string  // the current generation's last terminal loop failure
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
@@ -125,6 +126,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 		Problems:            problems,
 		Cost:                cost,
 		StartError:          ReadForkStartError(ws),
+		LoopError:           readForkLoopError(ws, identity.Generation),
 	}
 }
 
@@ -190,6 +192,9 @@ func (s forkStatus) stateCell() string {
 	}
 	if s.Ready {
 		return "ready"
+	}
+	if s.LoopError != "" {
+		return "failed"
 	}
 	if s.Legacy {
 		return "legacy"

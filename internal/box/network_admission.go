@@ -91,10 +91,10 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	return admitRebuildingApproved(options, func() (*CapturedEgress, error) {
 		if first {
 			first = false
-			return admitNetwork(cfg, rt, spec, options)
+			return admitNetwork(cfg, rt, spec, options, false)
 		}
 		again := unmarked.Clone()
-		capture, err := admitNetwork(again, rt, spec, options)
+		capture, err := admitNetwork(again, rt, spec, options, false)
 		if err == nil {
 			cfg.SetEgress(again.Egress)
 		}
@@ -117,7 +117,19 @@ func admitRebuildingApproved(options NetworkAdmission, admit func() (*CapturedEg
 	return admit()
 }
 
-func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) (*CapturedEgress, error) {
+// CheckNetworkApproval checks the same requests as launch without changing the configuration,
+// writing authority, qualifying the host or building images. A successful preview grants nothing:
+// the process that launches the box must still call AdmitNetwork with its complete provider scope.
+func CheckNetworkApproval(cfg *config.Config, spec RunSpec, options NetworkAdmission) error {
+	if cfg == nil {
+		return errors.New("restricted networking needs host configuration")
+	}
+	options.HoldPending = false
+	_, err := admitNetwork(cfg, runtime.Runtime{}, spec, options, true)
+	return err
+}
+
+func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission, approvalOnly bool) (*CapturedEgress, error) {
 	policyRepo := projectPolicyRepo(spec)
 	canonical, err := canonicalProjectDir(policyRepo)
 	if err != nil {
@@ -173,7 +185,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	mode := preview.Mode
-	if notice := ignoredHostEgress(input, mode); notice != "" {
+	if notice := ignoredHostEgress(input, mode); notice != "" && !approvalOnly {
 		ui.Warn("%s", notice)
 	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
@@ -192,6 +204,9 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		// hear about a broken file the refusal names just as well.
 		options.ExistingQualification = options.ExistingQualification || broken && mode != egress.Filtered
 		mode, input = egress.Filtered, holdingAdmission(input)
+	}
+	if approvalOnly {
+		return nil, nil
 	}
 	cfg.SetEgress(string(mode))
 	if mode != egress.Filtered {

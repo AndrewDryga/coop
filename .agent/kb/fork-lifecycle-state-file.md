@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-11-04
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+updated: 2026-11-05
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -73,6 +73,17 @@ and the listing shows `elsewhere` until the record goes. The task snapshot (`Rea
 `DetachedSystem` (`detached_system`), never `CleanupPending`, so `coop tasks watch` shows
 "background loop started on Linux" and its `--json` matches fork ls. Neither counts that loop as
 running, so it does not hold a drained board open.
+
+A terminal fork-loop result has a separate `<workspace>/.coop/loop-error` hint. `NoteForkLoopExit`
+tags the bounded reason with the current generation and records it under a nonblocking lifecycle
+lock before the worker releases its liveness record; `gatherForkStatus` reads it only for that same
+generation. Once the record is gone, `coop fork ls` reports `failed` and includes the optional
+`loop_error` JSON field and a human reason. A live worker, cleanup, unknown/unverifiable state, or
+another system's worker still outranks the old failure, as does a host-owned ready candidate. A
+confirmed new worker or foreground controller clears the old hint before running, so a stop cannot
+leave an earlier approval refusal behind. Queue outcomes (work remaining or blocked) and intentional
+interruptions are not failures. This file is a display diagnostic only: it does not create lifecycle
+or network-approval authority.
 
 ## Unsupported state never becomes an identity
 
@@ -212,6 +223,8 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-05 — terminal loop failures survive liveness-record cleanup as a generation-bound display
+  hint; live, cleanup and unknown status still take precedence, and the hint grants no authority.
 - 2026-11-04 — Linux start token v1 reads as unverifiable, and Linux writes no token when it cannot
   read its PID namespace (task 2026-11-04-drop-the-old-host-state-readers).
 - 2026-11-04 — retired the `owner-v1` parse (now `ErrOldWorkerState`, a guarded-recovery refusal in

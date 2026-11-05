@@ -415,6 +415,8 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return 1, fmt.Errorf("fork %s detached worker generation is stale: %w", fa.name, err)
 		}
 		forkIdentity = current
+		_ = forkctl.ClearForkLoopError(forkspace.Workspace(repo, fa.name))
+		defer func() { forkctl.NoteForkLoopExit(repo, forkIdentity, code, err) }()
 	}
 	// The fork's preset (named in the positional who slot): load + fail fast (pure local reads),
 	// then default the fork's agent, credentials, and model from the preset's lead — a positional
@@ -770,6 +772,13 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)
 		case fa.detach:
+			if err := box.CheckNetworkApproval(a.cfg, box.RunSpec{
+				Repo: ws, Image: img, Agent: fa.agent, Preset: a.preset, Peers: peers,
+				Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, NetworkAdmission: true,
+			}, fa.network.admission()); err != nil {
+				forkctl.NoteForkLoopExit(repo, forkIdentity, 1, err)
+				return 1, err
+			}
 			// The worker admits at its own loop start, exactly like a foreground
 			// loop, so it needs the flags themselves — not a capture the parent
 			// took and could not hand across a process boundary.
@@ -1272,7 +1281,7 @@ func forkLoopContinueCommand(name, presetName string, target agents.Target) stri
 // credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (int, error) {
+func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (code int, err error) {
 	name := identity.Name
 	controllerRole := forkspace.ExecutionRoleController
 	if detached {
@@ -1291,6 +1300,10 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				[2]string{"Retry:", "coop fork stop " + name})
 		}
 	}()
+	if !detached { // the worker records even failures before this function, before clearing its PID
+		_ = forkctl.ClearForkLoopError(ws)
+		defer func() { forkctl.NoteForkLoopExit(repo, identity, code, err) }()
+	}
 	authorityQueues, err := forkCanonicalQueues(repo, tasksPath)
 	if err != nil {
 		return -1, err
@@ -1328,7 +1341,18 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		presetName = a.preset.Name
 	}
 	continueCmd := forkLoopContinueCommand(name, presetName, continueTarget)
+	// Full admission marks its configuration's resolved mode explicit. Keep the original inputs
+	// for these read-only checks so an earlier run cannot hide a later project request.
+	networkCfg := a.cfg.Clone()
 	for {
+		// Check the fork's own policy before assigning canonical work, including in the worker:
+		// the file or approval may have changed since its parent's preview or the previous task.
+		if err := box.CheckNetworkApproval(networkCfg, box.RunSpec{
+			Repo: ws, Image: img, Agent: agent, Preset: a.preset, Peers: peers,
+			Homes: networkCfg.Homes, Network: networkCfg.Network, Cache: networkCfg.Cache, NetworkAdmission: true,
+		}, network.admission()); err != nil {
+			return 1, err
+		}
 		head := forkspace.GitOut(ws, "rev-parse", "HEAD")
 		tree := forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 		if head == "" || tree == "" {

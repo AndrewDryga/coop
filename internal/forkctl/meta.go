@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -52,9 +53,53 @@ func NoteForkStart(ws string, firstStart, agentRan bool, err error) {
 	switch {
 	case agentRan:
 		_ = ClearForkStartError(ws)
+		_ = ClearForkLoopError(ws)
 	case firstStart && err != nil:
 		_ = saveForkMeta(ws, forkStartErrorFile(ws), startFailure(err))
 	}
+}
+
+func forkLoopErrorFile(ws string) string { return filepath.Join(ws, ".coop", "loop-error") }
+
+// ClearForkLoopError starts a new result once this process owns the worker/controller, or an
+// interactive agent has run. Clear before a stop can hold the lock and prevent exit bookkeeping.
+func ClearForkLoopError(ws string) error { return removeForkMeta(ws, forkLoopErrorFile(ws)) }
+
+// NoteForkLoopExit preserves a terminal failure after liveness records disappear. Like start-error,
+// this is only a bounded, agent-writable display hint, never lifecycle or approval authority.
+// Record it before releasing the controller/PID; never wait on a stop that is waiting for us.
+func NoteForkLoopExit(repo string, identity forkspace.Identity, code int, err error) {
+	unlock, ok := forkspace.TryLockState(repo, identity.Name)
+	if !ok {
+		return
+	}
+	defer unlock()
+	if current, exists, readErr := forkspace.ReadGeneration(repo, identity.Name); readErr != nil || !exists || current != identity {
+		return
+	}
+	if forkspace.ValidateGenerationWorkspace(repo, identity) != nil {
+		return
+	}
+	// A second start's refusal must not overwrite the running worker's eventual result.
+	if worker, readErr := forkspace.ReadWorkerState(repo, identity.Name); readErr == nil && worker.Pid != os.Getpid() {
+		return
+	}
+	ws := forkspace.Workspace(repo, identity.Name)
+	// Nil-error outcomes include work remaining (1) and a human decision (3). A review can also
+	// return a reported interruption error; neither is a failed loop.
+	if err == nil || code == 130 || code == 143 {
+		_ = ClearForkLoopError(ws)
+		return
+	}
+	_ = saveForkMeta(ws, forkLoopErrorFile(ws), string(identity.Generation)+"\n"+startFailure(err))
+}
+
+func readForkLoopError(ws string, generation forkspace.Generation) string {
+	stored, reason, ok := strings.Cut(readForkMeta(ws, forkLoopErrorFile(ws)), "\n")
+	if !ok || !forkspace.ValidGeneration(generation) || stored != string(generation) {
+		return ""
+	}
+	return startFailure(errors.New(reason))
 }
 
 // startFailure is what the note keeps of a failed start: a refusal block's headline, else the
