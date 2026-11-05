@@ -68,7 +68,10 @@ func TestWorkspaceReservationIsExactIdempotentAndBlocksLifecycle(t *testing.T) {
 	}
 }
 
-func TestLegacyWorkspaceReservationIsVisibleButHasNoNewAuthority(t *testing.T) {
+// A version 1 reservation, from Coop v10.1.2 or earlier, is refused by name: every read of it fails,
+// so the fork name stays blocked and nothing may replace, relabel or remove it, and the file is
+// left exactly as it was.
+func TestVersion1WorkspaceReservationIsRefusedByName(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	makeGenerationWorkspace(t, repo, "old")
 	identity := ensureTestGeneration(t, repo, "old")
@@ -83,23 +86,30 @@ func TestLegacyWorkspaceReservationIsVisibleButHasNoNewAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(reservationDir(repo), reservationName(identity)), body, 0o600); err != nil {
+	path := filepath.Join(reservationDir(repo), reservationName(identity))
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if current, present, err := ReadWorkspaceReservation(repo, identity); err != nil || !present || current != legacy {
-		t.Fatalf("legacy reservation not readable: %+v present=%t err=%v", current, present, err)
+	if _, present, err := ReadWorkspaceReservation(repo, identity); err == nil || present || !strings.Contains(err.Error(), "version 1 fork workspace reservation") {
+		t.Fatalf("ReadWorkspaceReservation = present %t, %v; want a refusal naming version 1", present, err)
 	}
-	if err := RequireNoWorkspaceReservationLocked(repo, identity); err == nil || !strings.Contains(err.Error(), "recover it offline") {
-		t.Fatalf("legacy reservation did not give an actionable refusal: %v", err)
+	if err := RequireNoWorkspaceReservationLocked(repo, identity); err == nil || !strings.Contains(err.Error(), "v12.1.0") {
+		t.Fatalf("RequireNoWorkspaceReservationLocked = %v; want a refusal naming the converting build", err)
+	}
+	if err := RequireForkNameAvailable(repo, "old"); err == nil {
+		t.Fatal("a version 1 reservation stopped blocking its fork name")
 	}
 	if err := RemoveWorkspaceReservationIfMatchesLocked(repo, legacy); err == nil {
-		t.Fatal("legacy reservation gained automatic deletion authority")
+		t.Fatal("a version 1 reservation gained automatic deletion authority")
 	}
 	if err := ReserveWorkspaceLocked(repo, WorkspaceReservation{
 		Version: WorkspaceReservationVersion, Fork: identity, Kind: WorkspaceReservationRemoteSession,
 		OwnerStoreID: testReservationStoreID, OwnerID: legacy.OwnerID, CreatedAt: time.Now().UTC(),
 	}); err == nil {
-		t.Fatal("v1 reservation was silently relabeled as v2")
+		t.Fatal("a version 1 reservation was silently relabeled as version 2")
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(body) {
+		t.Fatalf("the version 1 reservation changed: %q, %v", after, err)
 	}
 }
 

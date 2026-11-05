@@ -38,6 +38,38 @@ longer imports history or editor thread bindings from the folders Coop before v1
 - History and editor threads never imported stay in the old folders. They are not read, and a thread
   from before v11 reopens by its editor id only.
 
+## Unreleased: old fork and task records are refused, not converted
+
+co:op no longer converts the fork and task records that builds up to v12.1.0 could. It refuses
+them by name and leaves them as they are. Coop v12.1.0 is the last release that converts them. If
+`coop fork ls` or `coop tasks` names one of these records, open the project once with v12.1.0, then
+come back. Check before you upgrade; most installations have none.
+
+- **Fork generation records of version 1 or 2.** The refusal says "version 1 generation record" or
+  "version 2". Run `coop fork stop <name>`, then start the fork once with v12.1.0
+  (`coop fork <name> <agent>`). It anchors the fork as version 3.
+- **Version 1 workspace reservations.** Every read of the project's reservations fails and the fork
+  name stays blocked. Recover it offline, or end the remote session that made it with v12.1.0.
+- **Version 1 review candidates, and lands that lost their candidate record.** Run the review or
+  `coop fork merge <name>` once with v12.1.0.
+- **Version 1 task owner records (a `coop tasks claim` from v8.1.0 or earlier).** Release the claim
+  with v12.1.0: `coop tasks release <id>`.
+- **Version 1 pending final reviews, completion fingerprints without `tree_format`, and a
+  completion window's `allowed_done_departure`.** Finish the loop or review that left them with
+  v12.1.0.
+- **`owner-v1` worker records** (`<name>.pid`, from v8.1.0 or earlier). `coop fork stop <name>`
+  prints the steps that stop the worker and remove the file. Coop never edits a worker record.
+- **A discard interrupted by a build that let the fork take new work.** The refusal says the fork
+  "holds an assignment its interrupted discard did not journal". Finish it with v12.1.0:
+  `coop fork rm <name> --force`.
+- **Execution records in `~/.local/state/coop/executions/v1/<key>/`.** Each is reported by path. If
+  its process is gone, remove the file. Otherwise stop that process first.
+- **Fork records still in `<project>-forks/.coop`.** Anything but lock files there is refused. Open
+  the project once with v12.1.0 (any fork command), which moves them to
+  `~/.local/state/coop/forks/<key>/`.
+
+Nothing the new version refuses is changed, so v12.1.0 reads it as it always did.
+
 ## Unreleased: `coop codex -p` runs one prompt
 
 `coop codex -p <name>` used to pick a Codex profile. It now runs `<name>` as a prompt, as `-p` does

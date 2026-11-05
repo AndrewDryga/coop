@@ -118,17 +118,16 @@ const executionFolder = "executions"
 
 func executionDir(repo string) string { return filepath.Join(StateDir(repo), executionFolder) }
 
-// openExecutionRegistry opens registry as a root. The project's own registry is in its fork
-// records, opened through OpenStateRoot like every record; the fallback is beside them in Coop's
-// per-user state.
-func openExecutionRegistry(repo, registry string, create bool) (*os.Root, error) {
-	if filepath.Clean(registry) == executionDir(repo) {
-		return OpenStateRoot(repo, executionFolder, create)
-	}
-	return os.OpenRoot(registry)
+// openExecutionRegistry opens the project's registry, which is in its fork records, through
+// OpenStateRoot like every record.
+func openExecutionRegistry(repo string, create bool) (*os.Root, error) {
+	return OpenStateRoot(repo, executionFolder, create)
 }
 
-func fallbackExecutionDir(repo string) (string, error) {
+// oldExecutionDir is where builds up to v12.1.0 could keep a project's execution records when its
+// own registry could not be made. Nothing writes or reads records there now; Executions reports
+// anything found there, and the service-launch locks beside it are unaffected.
+func oldExecutionDir(repo string) (string, error) {
 	canonical := filepath.Clean(repo)
 	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
 		canonical = resolved
@@ -145,7 +144,7 @@ func fallbackExecutionDir(repo string) (string, error) {
 	return filepath.Join(root, fmt.Sprintf("%x", sum)), nil
 }
 
-// executionRegistryRoot holds every project's fallback registry and the service-launch locks.
+// executionRegistryRoot holds the service-launch locks and every project's old execution folder.
 func executionRegistryRoot() (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
 		// Falling back to HOME let tests leave tens of thousands of service-launch locks in the
@@ -162,21 +161,50 @@ func executionRegistryRoot() (string, error) {
 	return filepath.Join(home, ".local", "state", "coop", "executions", executionRegistryV1), nil
 }
 
-func executionRegistryDirs(repo string) ([]string, error) {
-	fallback, err := fallbackExecutionDir(repo)
+// ExecutionRegistryDirs returns every host-private execution folder a project may have, the old
+// one included. Callers that expose arbitrary host mounts must protect these paths prospectively:
+// whatever is in the old folder is still refused by Executions, so a box may not write it.
+func ExecutionRegistryDirs(repo string) ([]string, error) {
+	old, err := oldExecutionDir(repo)
 	if err != nil {
 		return []string{executionDir(repo)}, err
 	}
-	if fallback == executionDir(repo) {
-		return []string{fallback}, nil
+	if old == executionDir(repo) {
+		return []string{old}, nil
 	}
-	return []string{executionDir(repo), fallback}, nil
+	return []string{executionDir(repo), old}, nil
 }
 
-// ExecutionRegistryDirs returns every host-private execution registry a project may use. Callers
-// that expose arbitrary host mounts must protect these paths prospectively: the service-launch
-// lock and fallback records remain authority even before their directories have been created.
-func ExecutionRegistryDirs(repo string) ([]string, error) { return executionRegistryDirs(repo) }
+// oldExecutionRecords reports each entry of the old execution folder, by path: Coop no longer reads
+// records there, and one may belong to a process still running, so none is ignored. The folder is
+// left as it is; whoever reads the problem removes a record once its process is gone.
+func oldExecutionRecords(repo string) []error {
+	dir, err := oldExecutionDir(repo)
+	if err != nil {
+		return []error{err}
+	}
+	folder, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return []error{fmt.Errorf("%s: %w", dir, err)}
+	}
+	entries, err := folder.ReadDir(executionRecordCount + 1)
+	closeErr := folder.Close()
+	if err != nil && !errors.Is(err, io.EOF) {
+		return []error{errors.Join(err, closeErr)}
+	}
+	var problems []error
+	for i, entry := range entries {
+		if i == executionRecordCount {
+			problems = append(problems, fmt.Errorf("%s: more than %d entries", dir, executionRecordCount))
+			break
+		}
+		problems = append(problems, fmt.Errorf("%s: an execution record of Coop v12.1.0 or earlier, which no longer reads this folder — Coop left it unchanged; if its process is gone remove the file, otherwise stop that process or use that build to end it", filepath.Join(dir, entry.Name())))
+	}
+	return problems
+}
 
 func validExecutionKind(kind ExecutionKind) bool {
 	switch kind {
@@ -263,7 +291,7 @@ func ensureExecutionDir(repo string) error {
 	return root.Close()
 }
 
-func ensureFallbackExecutionDir(dir string) error {
+func ensureServiceLockDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -272,7 +300,7 @@ func ensureFallbackExecutionDir(dir string) error {
 		return err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("fallback project execution registry is not a real directory")
+		return errors.New("service launch lock folder is not a real directory")
 	}
 	return os.Chmod(dir, 0o700)
 }
@@ -288,7 +316,7 @@ func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func()
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureFallbackExecutionDir(filepath.Dir(path)); err != nil {
+	if err := ensureServiceLockDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	recorded, err := filepath.EvalSymlinks(repo)
@@ -393,7 +421,7 @@ func flockWaiting(ctx context.Context, f *os.File, how int) error {
 // than its pathname. A moved checkout keeps the same mount barrier; a replacement at its old
 // pathname cannot borrow that barrier or accidentally wait on its old executions.
 func ServiceLaunchLockPath(repo string) (string, error) {
-	registry, err := fallbackExecutionDir(repo)
+	registry, err := oldExecutionDir(repo)
 	if err != nil {
 		return "", err
 	}
@@ -513,10 +541,8 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 			}
 		}
 	}
-	// Every new record goes to the project's own registry, in Coop's private fork records, which it
-	// can always make. The fallback beside it took records when that registry sat next to the
-	// project, where a read-only parent folder could stop it; records older builds left there are
-	// still read, updated and ended (executionRegistryDirs).
+	// Every record goes to the project's own registry, in Coop's private fork records, which it
+	// can always make.
 	registry := executionDir(repo)
 	if err := ensureExecutionDir(repo); err != nil {
 		return ExecutionRecord{}, err
@@ -536,7 +562,7 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 	if err != nil {
 		return ExecutionRecord{}, err
 	}
-	root, err := openExecutionRegistry(repo, registry, true)
+	root, err := openExecutionRegistry(repo, true)
 	if err != nil {
 		return ExecutionRecord{}, err
 	}
@@ -587,65 +613,36 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 	if !validExecutionID(expected.ID) {
 		return errors.New("invalid project execution identity")
 	}
-	registries := []string{expected.registry}
-	if expected.registry == "" {
-		var err error
-		registries, err = executionRegistryDirs(repo)
-		if err != nil {
-			return err
-		}
+	root, err := openExecutionRegistry(repo, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	for _, registry := range registries {
-		root, err := openExecutionRegistry(repo, registry, false)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		current, readErr := readExecutionFile(root, expected.ID+".json")
-		if errors.Is(readErr, os.ErrNotExist) {
-			_ = root.Close()
-			continue
-		}
-		if readErr != nil {
-			_ = root.Close()
-			return readErr
-		}
-		if !sameExecutionOwner(current, expected) {
-			_ = root.Close()
-			return errors.New("project execution record changed before cleanup")
-		}
-		removeErr := root.Remove(expected.ID + ".json")
-		closeErr := root.Close()
-		forgetServiceLaunchHeld(repo, expected.ID)
-		return errors.Join(removeErr, closeErr)
+	if err != nil {
+		return err
 	}
-	return nil
+	current, readErr := readExecutionFile(root, expected.ID+".json")
+	if errors.Is(readErr, os.ErrNotExist) {
+		return root.Close()
+	}
+	if readErr != nil {
+		_ = root.Close()
+		return readErr
+	}
+	if !sameExecutionOwner(current, expected) {
+		_ = root.Close()
+		return errors.New("project execution record changed before cleanup")
+	}
+	removeErr := root.Remove(expected.ID + ".json")
+	closeErr := root.Close()
+	forgetServiceLaunchHeld(repo, expected.ID)
+	return errors.Join(removeErr, closeErr)
 }
 
 // Executions returns valid records plus explicit per-file problems. A corrupt record never hides
 // healthy siblings and never becomes an authorization input.
 func Executions(repo string) ([]ExecutionObservation, []error) {
-	registries, registryErr := executionRegistryDirs(repo)
-	var observations []ExecutionObservation
-	var problems []error
-	if registryErr != nil {
-		problems = append(problems, registryErr)
-	}
-	seen := map[string]string{}
-	for _, registry := range registries {
-		found, foundProblems := executionsInRegistry(registry)
-		problems = append(problems, foundProblems...)
-		for _, observation := range found {
-			if previous, exists := seen[observation.Record.ID]; exists {
-				problems = append(problems, fmt.Errorf("%s: duplicate project execution identity also present in %s", registry, previous))
-				continue
-			}
-			seen[observation.Record.ID] = registry
-			observations = append(observations, observation)
-		}
-	}
+	observations, problems := executionsInRegistry(executionDir(repo))
+	problems = append(problems, oldExecutionRecords(repo)...)
 	if len(observations) > executionRecordCount {
 		problems = append(problems, fmt.Errorf("project execution registries exceed %d total records", executionRecordCount))
 	}
@@ -808,25 +805,7 @@ func UpdateExecutionRoleByPID(repo string, pid int, role ExecutionRole) error {
 }
 
 func replaceExecutionRole(repo string, expected ExecutionRecord, role ExecutionRole) error {
-	registry := expected.registry
-	if registry == "" {
-		registries, err := executionRegistryDirs(repo)
-		if err != nil {
-			return err
-		}
-		for _, candidate := range registries {
-			if _, err := os.Lstat(filepath.Join(candidate, expected.ID+".json")); err == nil {
-				registry = candidate
-				break
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		}
-		if registry == "" {
-			return os.ErrNotExist
-		}
-	}
-	root, err := openExecutionRegistry(repo, registry, false)
+	root, err := openExecutionRegistry(repo, false)
 	if err != nil {
 		return err
 	}

@@ -55,7 +55,6 @@ type forkCandidateManifest struct {
 }
 
 type forkCandidateState struct {
-	legacy   *ForkCandidate
 	manifest *forkCandidateManifest
 }
 
@@ -90,8 +89,7 @@ func ensureForkCandidateHistoryDir(repo string, identity forkspace.Identity) err
 	return root.Close()
 }
 
-// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
-// could write, move into Coop's private state once, as they are.
+// Stays bounded and no-follow, as every read of a record a box could once write.
 func readForkCandidateControlFile(path, kind string) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -266,14 +264,10 @@ func readForkCandidateState(repo string, identity forkspace.Identity) (forkCandi
 	}
 	switch header.Version {
 	case forkCandidateVersion:
-		candidate, err := decodeForkCandidate(data)
-		if err != nil {
-			return forkCandidateState{}, false, err
-		}
-		if candidate.Fork != identity {
-			return forkCandidateState{}, false, errors.New("fork candidate belongs to another generation")
-		}
-		return forkCandidateState{legacy: &candidate}, true, nil
+		// A bare version 1 candidate was adopted into round history by the next change of a build
+		// up to v12.1.0. Its file is not touched, and the fork has no candidate that may be
+		// published, merged or discarded until then.
+		return forkCandidateState{}, false, fmt.Errorf("fork %s has a version 1 review candidate from Coop v10.1.2 or earlier, which this Coop no longer adopts — Coop left %s unchanged; run the review or merge of the fork once with Coop v12.1.0 (coop fork merge %s), then retry", identity.Name, ForkCandidatePath(repo, identity), identity.Name)
 	case forkCandidateManifestVersion:
 		var manifest forkCandidateManifest
 		if err := decodeStrictTaskJSON(bytes.NewReader(data), &manifest, "fork candidate manifest"); err != nil {
@@ -412,9 +406,6 @@ func candidateFromManifest(repo string, manifest forkCandidateManifest) (ForkCan
 }
 
 func forkCandidateStateStatus(state forkCandidateState) ForkCandidateRoundStatus {
-	if state.legacy != nil {
-		return ForkCandidateRoundStatus{Phase: forkCandidateActive, CurrentRound: 1, CurrentID: state.legacy.ID}
-	}
 	manifest := *state.manifest
 	status := ForkCandidateRoundStatus{Phase: manifest.Phase, TerminalID: manifest.TerminalID}
 	if manifest.Current != nil {
@@ -441,7 +432,6 @@ func forkCandidateManifestActive(manifest forkCandidateManifest) bool {
 }
 
 type forkCandidateFingerprint struct {
-	Legacy   *ForkCandidate            `json:"legacy,omitempty"`
 	Manifest *forkCandidateManifest    `json:"manifest,omitempty"`
 	Current  *forkCandidateRoundRecord `json:"current,omitempty"`
 }
@@ -451,7 +441,7 @@ func forkCandidateFingerprintValue(repo string, identity forkspace.Identity) (fo
 	if err != nil || !exists {
 		return forkCandidateFingerprint{}, exists, err
 	}
-	value := forkCandidateFingerprint{Legacy: state.legacy, Manifest: state.manifest}
+	value := forkCandidateFingerprint{Manifest: state.manifest}
 	if state.manifest != nil && state.manifest.Current != nil {
 		record, err := readForkCandidateRound(repo, identity, *state.manifest.Current)
 		if err != nil {

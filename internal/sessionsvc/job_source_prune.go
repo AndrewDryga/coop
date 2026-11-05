@@ -170,13 +170,9 @@ func readStagedJobSource(directory string) (stagedJobSource, bool) {
 }
 
 // holdsForks reports whether a copy's fork home holds a fork, or a discard not yet finished.
-// Coop's own fork records live in its private state; records an older build left in the home's
-// .coop move first, and a .coop that had to stay (an anchor cannot cross disks) is no fork. One
-// that cannot be read counts as holding them.
+// Coop's own fork records live in its private state. A .coop in the home that holds records an
+// older build kept there, or that cannot be read, counts as holding forks and is never pruned.
 func holdsForks(repository string) bool {
-	if err := forkspace.MoveLegacyForkRecords(repository); err != nil {
-		return true
-	}
 	entries, err := os.ReadDir(forkspace.Home(repository))
 	if errors.Is(err, os.ErrNotExist) {
 		return false
@@ -185,7 +181,7 @@ func holdsForks(repository string) bool {
 		return true
 	}
 	for _, entry := range entries {
-		if entry.Name() != ".coop" {
+		if entry.Name() != ".coop" || forkspace.RequireNoOldForkRecords(repository) != nil {
 			return true
 		}
 	}

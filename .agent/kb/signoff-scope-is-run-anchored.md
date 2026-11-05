@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-10-18
+updated: 2026-11-04
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -99,9 +99,9 @@ Without this, a later attempt that amended an accepted commit and exited nonzero
 ran), a rewrite across a Ctrl-C, or a host completion during a review let verification clear code
 no reviewer saw (`TestPendingReviewRejectsArchiveAndHistoryMutation/history`, and end to end
 `TestProviderScriptedLoopPendingReviewReviewsAChangedAcceptedCommitAgain`).
-Version 1 records also pinned commit IDs; they are still read, and the next write stores version 2.
-A version 1 record awaiting verification has no `Reviewed`, so it goes back to signoff once, and
-one whose commit predates its run base is anchored on load, once, as a new enrollment would be.
+Version 1 records also pinned commit IDs. They are refused by name and left as they are (Coop
+v12.1.0 read one without them and stored version 2). So is a task completion fingerprint with no
+`tree_format`, from before the device left the tree digest.
 Clearing only removes the record: a crash before that reviews the subject again, and
 `coop loop --review-task <id>` on an already reviewed task asks for another review. Pre-ledger
 archives remain unknown unless the operator names an exact receipt-valid task with `--review-task`.
@@ -175,6 +175,8 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-11-04 — version 1 pending reviews and format-0 completion fingerprints are refused by name
+  instead of converted (task 2026-11-04-drop-the-old-fork-and-task-record-readers).
 - 2026-10-18 — a round reads its subjects, window and change set from one commit and the review
   must start there (task 2026-10-17-read-a-pending-review-s-subjects-and-window-from).
 - 2026-10-17 — the baseline is no longer a POST-review rescan: `reviewBaselineAfterVerdict` computes

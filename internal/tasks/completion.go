@@ -39,9 +39,8 @@ type CompletionFingerprint struct {
 	Receipt     string `json:"receipt,omitempty"`
 	ReceiptBusy bool   `json:"receipt_busy,omitempty"`
 	Tree        string `json:"tree"`
-	// TreeFormat 1 digests the tree without devices. Format 0 — every fingerprint recorded before
-	// it — hashed each entry's device; a live walk re-derives that digest with the device the
-	// fingerprint recorded, so a window or review opened before a reboot or an upgrade still holds.
+	// TreeFormat 1 digests the tree without devices. A fingerprint with none, from before it, is
+	// refused by name (refuseOldCompletionFingerprint).
 	TreeFormat int `json:"tree_format,omitempty"`
 
 	// walk is the live tree Tree was computed from; nil for a recorded fingerprint. Its presence
@@ -67,26 +66,25 @@ func (recorded CompletionFingerprint) Matches(live CompletionFingerprint) bool {
 }
 
 // sameArchive reports whether live shows the folder recorded showed — its inode, its change time
-// and every path below it — whatever device number the volume carries now. A format-0 tree on
-// either side is re-derived from the other side's walk, so the order of the operands never matters.
+// and every path below it — whatever device number the volume carries now.
 func (recorded CompletionFingerprint) sameArchive(live CompletionFingerprint) bool {
-	if recorded.Inode != live.Inode || recorded.ChangeSec != live.ChangeSec || recorded.ChangeNsec != live.ChangeNsec {
-		return false
+	return recorded.Inode == live.Inode && recorded.ChangeSec == live.ChangeSec && recorded.ChangeNsec == live.ChangeNsec &&
+		recorded.TreeFormat == live.TreeFormat && recorded.Tree == live.Tree
+}
+
+// refuseOldCompletionFingerprint names a fingerprint recorded before the device left the tree
+// digest (tree_format 0). A build up to v12.1.0 re-derived that digest and kept the window or
+// review valid; this one cannot compare it, so it stops instead of reading it as a changed task.
+func refuseOldCompletionFingerprint(fingerprint CompletionFingerprint, what string) error {
+	if fingerprint.TreeFormat == completionTreeFormat {
+		return nil
 	}
-	switch {
-	case recorded.TreeFormat == live.TreeFormat:
-		return recorded.Tree == live.Tree
-	case recorded.TreeFormat == 0 && live.walk != nil:
-		return recorded.Tree == legacyCompletionTreeDigest(live.walk, recorded.Device)
-	case live.TreeFormat == 0 && recorded.walk != nil:
-		return live.Tree == legacyCompletionTreeDigest(recorded.walk, live.Device)
-	}
-	return false
+	return fmt.Errorf("%s holds a task completion fingerprint without tree_format, from Coop v11.3.0 or earlier, which this Coop no longer compares — Coop left it unchanged; finish the run or review once with Coop v12.1.0, then retry", what)
 }
 
 type CompletionWindowRecord struct {
 	Baseline              map[string]CompletionFingerprint `json:"baseline"`
-	AllowedDoneDeparture  string                           `json:"allowed_done_departure,omitempty"`
+	AllowedDoneDeparture  string                           `json:"allowed_done_departure,omitempty"` // refused by name; the plural field replaced it
 	AllowedDoneDepartures []string                         `json:"allowed_done_departures,omitempty"`
 	ReviewWindow          bool                             `json:"review_window,omitempty"`
 	ReviewSubjects        []string                         `json:"review_subjects,omitempty"`
@@ -213,16 +211,6 @@ func completionTreeDigest(walk []completionTreeEntry) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-// legacyCompletionTreeDigest is the format-0 digest, which hashed each entry's device. Every entry
-// shared the task folder's volume, so the device that fingerprint recorded stands in for all of them.
-func legacyCompletionTreeDigest(walk []completionTreeEntry, device uint64) string {
-	hash := sha256.New()
-	for _, e := range walk {
-		fmt.Fprintf(hash, "%d:%s\x00%d:%d:%d:%d:%d:%d\x00", len(e.rel), e.rel, e.mode, e.size, device, e.inode, e.sec, e.nsec)
-	}
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
 func changedDoneCompletions(root string, baseline map[string]CompletionFingerprint) ([]QueuedTask, error) {
 	var changed []QueuedTask
 	items, err := ReadTaskTree(root)
@@ -330,7 +318,7 @@ func invalidateStaleCandidateReceipts(root string, baseline map[string]Completio
 }
 
 func completionWindowAllowsDoneDeparture(record CompletionWindowRecord, id string) bool {
-	return id == record.AllowedDoneDeparture || slices.Contains(record.AllowedDoneDepartures, id)
+	return slices.Contains(record.AllowedDoneDepartures, id)
 }
 
 func CompletionWindowIndexName(root string) (string, error) {
@@ -358,6 +346,14 @@ func ReadCompletionWindowIndex(root string) (completionWindowIndex, error) {
 		return completionWindowIndex{}, fmt.Errorf("completion window index %q is missing its windows map", name)
 	}
 	for id, record := range index.Windows {
+		if record.AllowedDoneDeparture != "" {
+			return completionWindowIndex{}, fmt.Errorf("completion window %q in %q holds a singular allowed_done_departure, from Coop v11.3.0 or earlier, which this Coop no longer reads — Coop left it unchanged; finish the run with Coop v12.1.0, then retry", id, name)
+		}
+		for task, fingerprint := range record.Baseline {
+			if err := refuseOldCompletionFingerprint(fingerprint, fmt.Sprintf("completion window %q in %q (task %s)", id, name, task)); err != nil {
+				return completionWindowIndex{}, err
+			}
+		}
 		if record.PendingReview != nil {
 			if !record.ReviewWindow {
 				return completionWindowIndex{}, fmt.Errorf("completion window %q has pending review outside a review stage", id)

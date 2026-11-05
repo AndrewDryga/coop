@@ -1,10 +1,8 @@
 package tasks
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,24 +64,10 @@ func ValidateForkCandidateRecord(candidate ForkCandidate) error {
 	return validateForkCandidate(candidate)
 }
 
-func decodeForkCandidate(data []byte) (ForkCandidate, error) {
-	var candidate ForkCandidate
-	if err := decodeStrictTaskJSON(io.LimitReader(bytes.NewReader(data), forkCandidateLimit+1), &candidate, "fork candidate"); err != nil {
-		return ForkCandidate{}, err
-	}
-	if err := validateForkCandidate(candidate); err != nil {
-		return ForkCandidate{}, err
-	}
-	return candidate, nil
-}
-
 func ReadForkCandidate(repo string, identity forkspace.Identity) (ForkCandidate, bool, error) {
 	state, exists, err := readForkCandidateState(repo, identity)
 	if err != nil || !exists {
 		return ForkCandidate{}, exists, err
-	}
-	if state.legacy != nil {
-		return *state.legacy, true, nil
 	}
 	if state.manifest.Phase != forkCandidateActive {
 		return ForkCandidate{}, false, nil
@@ -231,13 +215,6 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 	if err != nil {
 		return ForkCandidateReview{}, false, err
 	}
-	if exists && state.legacy != nil {
-		manifest, err := adoptLegacyForkCandidateLocked(repo, identity, *state.legacy, forkCandidateActive)
-		if err != nil {
-			return ForkCandidateReview{}, false, err
-		}
-		state = forkCandidateState{manifest: &manifest}
-	}
 	if exists && state.manifest.Phase == forkCandidateActive {
 		candidate, err := candidateFromManifest(repo, *state.manifest)
 		if err != nil {
@@ -383,13 +360,6 @@ func PublishForkCandidate(repo string, identity forkspace.Identity, head, tree s
 	state, exists, err := readForkCandidateState(repo, identity)
 	if err != nil {
 		return ForkCandidate{}, false, err
-	}
-	if exists && state.legacy != nil {
-		manifest, err := adoptLegacyForkCandidateLocked(repo, identity, *state.legacy, forkCandidateActive)
-		if err != nil {
-			return ForkCandidate{}, false, err
-		}
-		state = forkCandidateState{manifest: &manifest}
 	}
 	if !exists || state.manifest.Phase == forkCandidateReviewing || state.manifest.Phase == forkCandidateSuperseding {
 		return ForkCandidate{}, false, errors.New("fork candidate requires a fresh final review before publication")
@@ -538,13 +508,6 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 	if err != nil || !exists {
 		return ForkCandidateSupersession{}, err
 	}
-	if state.legacy != nil {
-		manifest, err := adoptLegacyForkCandidateLocked(repo, identity, *state.legacy, forkCandidateActive)
-		if err != nil {
-			return ForkCandidateSupersession{}, err
-		}
-		state = forkCandidateState{manifest: &manifest}
-	}
 	manifest := *state.manifest
 	if manifest.Phase == forkCandidateLanded || manifest.Phase == forkCandidateDiscarded {
 		return ForkCandidateSupersession{}, fmt.Errorf("fork candidate history is %s and cannot start another review", manifest.Phase)
@@ -580,50 +543,6 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 	return transition, nil
 }
 
-func adoptLegacyForkCandidateLocked(repo string, identity forkspace.Identity, candidate ForkCandidate, phase string) (forkCandidateManifest, error) {
-	if candidate.Fork != identity {
-		return forkCandidateManifest{}, errors.New("legacy fork candidate belongs to another generation")
-	}
-	if phase != forkCandidateActive && phase != forkCandidateLanded && phase != forkCandidateDiscarded {
-		return forkCandidateManifest{}, errors.New("invalid legacy fork candidate adoption phase")
-	}
-	if phase == forkCandidateActive {
-		current, err := candidateAssignments(repo, identity)
-		if err != nil {
-			return forkCandidateManifest{}, err
-		}
-		if !sameForkCandidateSnapshot(candidate, candidate.Head, candidate.Tree, current) {
-			return forkCandidateManifest{}, errors.New("legacy fork candidate disagrees with current assignments")
-		}
-		for _, assignment := range candidate.Assignments {
-			record, owned, err := ReadTaskOwnerRecord(assignment.Index.CanonicalRoot, assignment.Index.Task.Ref.ID)
-			if err != nil || !owned || record.Fork == nil || record.Fork.Phase != ForkAssignmentReady ||
-				record.Fork.CandidateID != candidate.ID {
-				return forkCandidateManifest{}, errors.Join(err, errors.New("legacy fork candidate owner state is inconsistent"))
-			}
-		}
-	}
-	record := forkCandidateRoundRecord{
-		Version: forkCandidateRoundVersion, Round: 1, Candidate: candidate, CreatedAt: candidate.CreatedAt,
-	}
-	if err := writeForkCandidateRound(repo, record); err != nil {
-		return forkCandidateManifest{}, err
-	}
-	ref := forkCandidateRef{Round: 1, ID: candidate.ID}
-	terminalID := ""
-	if phase == forkCandidateLanded || phase == forkCandidateDiscarded {
-		terminalID = candidate.ID
-	}
-	manifest := forkCandidateManifest{
-		Version: forkCandidateManifestVersion, Fork: identity, Phase: phase,
-		Current: &ref, TerminalID: terminalID, UpdatedAt: time.Now().UTC(),
-	}
-	if err := writeForkCandidateManifest(repo, manifest); err != nil {
-		return forkCandidateManifest{}, err
-	}
-	return manifest, nil
-}
-
 func markForkCandidateTerminalLocked(repo string, expected ForkCandidate, phase string) error {
 	if err := validateForkCandidate(expected); err != nil {
 		return err
@@ -638,17 +557,9 @@ func markForkCandidateTerminalLocked(repo string, expected ForkCandidate, phase 
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		// Compatibility recovery for an old v1 land transaction: the old order removed its only
-		// candidate pointer before deleting the still-authoritative land journal. That journal
-		// embeds the exact candidate, so it can be retained as round one without inventing state.
-		return writeLegacyTerminalCandidateLocked(repo, expected, phase)
-	}
-	if state.legacy != nil {
-		if !reflect.DeepEqual(*state.legacy, expected) {
-			return errors.New("fork candidate changed before finalization")
-		}
-		_, err := adoptLegacyForkCandidateLocked(repo, expected.Fork, *state.legacy, phase)
-		return err
+		// Only a land transaction of Coop v10.1.2 or earlier removed the candidate pointer before
+		// its land journal. That journal is the only record of the candidate, so it is left alone.
+		return fmt.Errorf("fork %s has no candidate record, which a land interrupted by Coop v10.1.2 or earlier leaves — Coop left its land journal unchanged; finish the merge with Coop v12.1.0 (coop fork merge %s)", expected.Fork.Name, expected.Fork.Name)
 	}
 	manifest := *state.manifest
 	if manifest.Phase == phase {
@@ -678,22 +589,6 @@ func markForkCandidateTerminalLocked(repo string, expected ForkCandidate, phase 
 	return writeForkCandidateManifest(repo, manifest)
 }
 
-func writeLegacyTerminalCandidateLocked(repo string, candidate ForkCandidate, phase string) error {
-	if phase != forkCandidateLanded && phase != forkCandidateDiscarded {
-		return errors.New("invalid terminal candidate phase")
-	}
-	if err := writeForkCandidateRound(repo, forkCandidateRoundRecord{
-		Version: forkCandidateRoundVersion, Round: 1, Candidate: candidate, CreatedAt: candidate.CreatedAt,
-	}); err != nil {
-		return err
-	}
-	ref := forkCandidateRef{Round: 1, ID: candidate.ID}
-	return writeForkCandidateManifest(repo, forkCandidateManifest{
-		Version: forkCandidateManifestVersion, Fork: candidate.Fork, Phase: phase,
-		Current: &ref, TerminalID: candidate.ID, UpdatedAt: time.Now().UTC(),
-	})
-}
-
 // MarkForkCandidateLandedLocked makes the live pointer passive while retaining immutable history.
 func MarkForkCandidateLandedLocked(repo string, expected ForkCandidate) error {
 	return markForkCandidateTerminalLocked(repo, expected, forkCandidateLanded)
@@ -705,10 +600,6 @@ func MarkForkCandidateLandedLocked(repo string, expected ForkCandidate) error {
 func DiscardForkCandidateStateLocked(repo string, identity forkspace.Identity) error {
 	state, exists, err := readForkCandidateState(repo, identity)
 	if err != nil || !exists {
-		return err
-	}
-	if state.legacy != nil {
-		_, err := adoptLegacyForkCandidateLocked(repo, identity, *state.legacy, forkCandidateDiscarded)
 		return err
 	}
 	manifest := *state.manifest

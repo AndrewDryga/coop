@@ -62,8 +62,7 @@ func validateLandIntent(intent landIntent) error {
 	return nil
 }
 
-// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
-// could write, move into Coop's private state once, as they are.
+// Stays bounded and no-follow, as every read of a record a box could once write.
 func readLandIntent(repo string, identity forkspace.Identity) (landIntent, bool, error) {
 	path := landIntentPath(repo, identity)
 	data, err := forkspace.ReadRecord(path, "fork land intent", landIntentLimit)

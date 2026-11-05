@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -620,7 +621,7 @@ func TestForkFreshConfirmsBeforeForcedStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -639,7 +640,11 @@ func TestForkFreshRefusesStateOnlyCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A crashed worker's record with no workspace: only `coop fork stop` may finish its cleanup.
-	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+	identity := bindTestFork(t, repo, "perf")
+	if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale(), Generation: identity.Generation}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(forkspace.Workspace(repo, "perf")); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}}
@@ -689,7 +694,7 @@ func TestForkFreshPrintsOneBlankLineBetweenSections(t *testing.T) {
 				typedAnswers(t, "y") // the terminal the question is answered at
 			}
 			if tc.running {
-				if err := forkspace.WriteWorkerState(cfg.RepoOverride, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+				if err := forkspace.WriteWorkerState(cfg.RepoOverride, "perf", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale(), Generation: bindTestFork(t, cfg.RepoOverride, "perf").Generation}); err != nil {
 					t.Fatal(err)
 				}
 				args = append(args, "--force")
@@ -727,10 +732,11 @@ func TestForkFreshRechecksLifecycleUnderLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: runtime.Runtime{Name: runtimeCLI}, rtSet: true}
+	raceGeneration := bindTestFork(t, repo, "race").Generation
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.forkCreate([]string{"race", "claude", "--fresh", "--yes"})
 	}, func() {
-		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "race", forkspace.WorkerState{Pid: 2147483646, Token: starttoken.Stale(), Generation: raceGeneration}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1735,8 +1741,9 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 	}
 }
 
-// Task authority hangs off the generation a worker's parent records, so a record with none refuses
-// before anything else runs, and goes with the worker.
+// Task authority hangs off the generation a worker's parent records. A worker record with none, an
+// owner-v1 record from Coop v8.1.0 or earlier, is refused by name before anything else runs, and is
+// left exactly as it was.
 func TestDetachedWorkerWithoutAGenerationRefuses(t *testing.T) {
 	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
 		t.Skip("kernel process identity unavailable")
@@ -1746,15 +1753,19 @@ func TestDetachedWorkerWithoutAGenerationRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	// This test process stands in for the child its parent recorded.
-	if err := forkspace.WritePid(repo, name, os.Getpid(), ""); err != nil {
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := "owner-v1\n" + strconv.Itoa(os.Getpid()) + "\n" + forkspace.ProcStartToken(os.Getpid()) + "\n"
+	if err := os.WriteFile(forkspace.PidPath(repo, name), []byte(record), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-	if code, err := a.forkCreate([]string{name, "claude", "--loop", "--_detached"}); code != 1 || err == nil || !strings.Contains(err.Error(), "has no generation") {
-		t.Fatalf("worker with no generation = (%d, %v), want the refusal", code, err)
+	if code, err := a.forkCreate([]string{name, "claude", "--loop", "--_detached"}); code != 1 || err == nil || !strings.Contains(err.Error(), "owner-v1") {
+		t.Fatalf("worker with no generation = (%d, %v), want the refusal naming owner-v1", code, err)
 	}
-	if pathExists(forkspace.PidPath(repo, name)) {
-		t.Fatal("the refused worker left its own record behind")
+	if got, err := os.ReadFile(forkspace.PidPath(repo, name)); err != nil || string(got) != record {
+		t.Fatalf("the refused worker changed its record: %q, %v", got, err)
 	}
 }
 
@@ -1988,3 +1999,25 @@ func TestInteractiveForkChecksItsLoginWhenFiltered(t *testing.T) {
 }
 
 func ptr[T any](value T) *T { return &value }
+
+// testWorkerGeneration stands for the generation a current worker record names.
+const testWorkerGeneration forkspace.Generation = "0123456789abcdef0123456789abcdef"
+
+// bindTestFork gives fork name the generation record `coop fork` makes before it starts a worker,
+// and returns it. A worker record must name that generation to be read as a worker.
+func bindTestFork(t *testing.T, repo, name string) forkspace.Identity {
+	t.Helper()
+	if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	identity, err := forkspace.EnsureGenerationLocked(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}

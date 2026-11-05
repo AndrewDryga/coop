@@ -1257,7 +1257,10 @@ func TestLandStateNeverWritesThroughACoopLink(t *testing.T) {
 			if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			// The first look at the records makes their empty folder; a link takes its place.
+			// Their folder is made, then a link takes its place.
+			if err := forkspace.EnsureStateDir(repo); err != nil {
+				t.Fatal(err)
+			}
 			records := forkspace.StateDir(repo)
 			if err := os.Remove(records); err != nil {
 				t.Fatal(err)
@@ -1294,7 +1297,7 @@ func TestForkMergeAllDispatchesMixedForksAndStopsAtRefusal(t *testing.T) {
 				workspaces[fork] = ws
 				heads[fork] = isolatedTestCommit(t, ws, fork+".txt", fork+" work\n")
 			}
-			if err := forkspace.WritePid(repo, "a-busy", os.Getpid(), ""); err != nil {
+			if err := forkspace.WritePid(repo, "a-busy", os.Getpid(), testWorkerGeneration); err != nil {
 				t.Fatal(err)
 			}
 			pidPath := forkspace.PidPath(repo, "a-busy")

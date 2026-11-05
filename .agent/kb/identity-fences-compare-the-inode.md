@@ -3,7 +3,7 @@ name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
 sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_probe.go]
-updated: 2026-11-01
+updated: 2026-11-04
 ---
 
 Coop often needs to answer “is this still the object I authorized?” Linux overlayfs disproved the
@@ -60,13 +60,12 @@ record; session rollback and discard likewise retire exact generation authority 
 workspace, and accept only exact prefix-completed retries.
 
 Migration is explicit. Allocator-based network approvals load only so the UI can request a fresh
-review; they never grant. A v1/v2 fork record migrates only while stopped, with no execution or
-land intent, after the branch and absolute canonical origin are verified. Ordinary forks require
-no reservation; a remote session with an old reservation is quarantined rather than being assigned
-a store owner it never proved. The record
-is atomically replaced only after the anchor exists. Its Git exclude write also proves the real
-project `.git` or linked-worktree backlink and refuses a repository-controlled `commondir` redirect.
-Active or ambiguous legacy state is left untouched. A network review reuses an intact binding
+review; they never grant. A v1/v2 fork generation record (inode, and inode plus birth time) is
+refused by name on every read and left as it is: the fork is neither unbound nor free, and Coop
+v12.1.0 anchored it when the stopped fork next started, after verifying the branch and absolute
+canonical origin and refusing a repository-controlled `commondir` redirect. Ordinary forks require
+no reservation; a version 1 reservation keeps its fork name blocked and every reservation read
+refused. A network review reuses an intact binding
 without interrupting boxes; creating, replacing, or moving one re-reads policy while holding the
 exclusive cross-box launch lock. Commit reuses only the reviewed exact binding.
 
@@ -76,6 +75,8 @@ from a malicious process already running as the host user: that actor can alter 
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-11-04 — the v1/v2 generation record migration is retired; they are refused by name (task
+  2026-11-04-drop-the-old-fork-and-task-record-readers). Verified against internal/forkspace/generation.go.
 - 2026-11-01 — moved the unchanged live-device boundary into the parallel inventory and updated
   its exact expression in the fence check; no persisted device comparison was added.
 - 2026-11-01 — filesystem admission compares live devices to reject nested filesystems during

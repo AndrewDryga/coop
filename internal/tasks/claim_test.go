@@ -274,15 +274,6 @@ func TestCmdTasksFolderClaimFlags(t *testing.T) {
 }
 
 func TestOwnerRecordRejectsMalformedActorIdentity(t *testing.T) {
-	base := TaskOwnerRecord{
-		Version: taskOwnerRecordVersion, TaskID: "x", Source: taskOwnerSourceInteractiveClaim,
-		User: "alice", Host: "h", ClaimedAt: time.Now(),
-	}
-	legacy := base
-	legacy.ActorPID = 12
-	if err := validateTaskOwnerRecord(legacy, "x"); err == nil {
-		t.Fatal("a legacy record must not carry an actor identity")
-	}
 	for name, mutate := range map[string]func(*TaskOwnerRecord){
 		"pid without a token": func(r *TaskOwnerRecord) { r.ActorPID = 12 },
 		"token without a pid": func(r *TaskOwnerRecord) { r.ActorStart = "darwin-kinfo-v1:1:1" },

@@ -496,41 +496,30 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 }
 
 // A pending final review that straddles a reboot recorded a device the volume no longer has. It must
-// find its completion — whether its tree was recorded in this build's format or the device-hashing
-// one before it — and still notice a real change to the archive.
+// find its completion and still notice a real change to the archive.
 func TestPendingReviewSurvivesADeviceRenumber(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
-			t.Fatal(err)
-		}
-		if err := assignment.Lease.Release(); err != nil {
-			t.Fatal(err)
-		}
-		record, ok, err := readPendingReviewRecord(root, done.ID)
-		if err != nil || !ok {
-			t.Fatalf("pending review record = %v, %v", ok, err)
-		}
-		record.Task.Generation.Device++
-		record.Fingerprint.Device = record.Task.Generation.Device
-		if legacy {
-			live, err := CompletionFingerprintFor(root, done)
-			if err != nil {
-				t.Fatal(err)
-			}
-			record.Fingerprint.TreeFormat = 0
-			record.Fingerprint.Tree = legacyCompletionTreeDigest(live.walk, record.Fingerprint.Device)
-		}
-		if err := writePendingReviewRecord(root, record); err != nil {
-			t.Fatal(err)
-		}
-		if cohort, err := LoadPendingReviews(repo, []string{root}); err != nil || len(cohort.Subjects) != 1 {
-			t.Fatalf("pending review after a reboot (legacy tree %v) = %+v, %v", legacy, cohort, err)
-		}
-		writeTaskFile(t, filepath.Join(done.Dir, "log.md"), "tampered after the reboot\n")
-		if _, err := LoadPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "archive changed") {
-			t.Fatalf("archive mutation after a reboot (legacy tree %v) = %v", legacy, err)
-		}
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	record, ok, err := readPendingReviewRecord(root, done.ID)
+	if err != nil || !ok {
+		t.Fatalf("pending review record = %v, %v", ok, err)
+	}
+	record.Task.Generation.Device++
+	record.Fingerprint.Device = record.Task.Generation.Device
+	if err := writePendingReviewRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	if cohort, err := LoadPendingReviews(repo, []string{root}); err != nil || len(cohort.Subjects) != 1 {
+		t.Fatalf("pending review after a reboot = %+v, %v", cohort, err)
+	}
+	writeTaskFile(t, filepath.Join(done.Dir, "log.md"), "tampered after the reboot\n")
+	if _, err := LoadPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "archive changed") {
+		t.Fatalf("archive mutation after a reboot = %v", err)
 	}
 }
 
@@ -757,9 +746,9 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 	})
 }
 
-// Version 1 records also pinned commit IDs. A build that drops them still resumes the review those
-// records describe, and its next write stores version 2.
-func TestPendingReviewReadsVersion1Records(t *testing.T) {
+// Version 1 records pinned commit IDs. Builds after v11.3.0 and up to v12.1.0 read one without them
+// and stored version 2; this build refuses it by name on every read, and leaves the file as it was.
+func TestPendingReviewRefusesVersion1Records(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
 	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
 		t.Fatal(err)
@@ -771,8 +760,6 @@ func TestPendingReviewReadsVersion1Records(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record.Prepared = true
-	record.Previous = &PendingReviewPrevious{Task: record.Task, Fingerprint: record.Fingerprint, Phase: PendingReviewReopened, Round: 1}
 	data, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)
@@ -781,9 +768,8 @@ func TestPendingReviewReadsVersion1Records(t *testing.T) {
 	if err := json.Unmarshal(data, &legacy); err != nil {
 		t.Fatal(err)
 	}
-	binding := map[string]any{"head": strings.Repeat("a", 40), "raw": []string{strings.Repeat("a", 40)}, "subject": map[string]any{}, "history": []any{}}
-	legacy["version"], legacy["binding"] = pendingReviewLegacyVersion, binding
-	legacy["previous"].(map[string]any)["binding"] = binding
+	legacy["version"] = 1
+	legacy["binding"] = map[string]any{"head": strings.Repeat("a", 40), "raw": []string{strings.Repeat("a", 40)}, "subject": map[string]any{}, "history": []any{}}
 	name, err := pendingReviewRecordName(root, done.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -801,73 +787,19 @@ func TestPendingReviewReadsVersion1Records(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := readPendingReviewRecord(root, done.ID)
-	if err != nil || !ok || got.Version != pendingReviewVersion || got.Previous == nil ||
-		got.Previous.Phase != PendingReviewReopened || !pendingReviewPlanEqual(got.Plan, plan) {
-		t.Fatalf("version 1 record = %+v, ok=%v, err=%v", got, ok, err)
+	refused := func(what string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "is version 1") || !strings.Contains(err.Error(), "v12.1.0") {
+			t.Fatalf("%s = %v; want a refusal naming version 1 and the converting build", what, err)
+		}
 	}
-	cohort, err := LoadPendingReviews(repo, []string{root})
-	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Prepared {
-		t.Fatalf("version 1 cohort = %+v, %v", cohort, err)
-	}
+	_, _, err = readPendingReviewRecord(root, done.ID)
+	refused("readPendingReviewRecord", err)
+	_, err = LoadPendingReviews(repo, []string{root})
+	refused("LoadPendingReviews", err)
 	stored, err := ReadTaskMetadataFile(registry, name)
-	if err != nil || !strings.Contains(string(stored), `"version":2`) || strings.Contains(string(stored), `"binding"`) {
-		t.Fatalf("promoted record kept the version 1 shape: %s, %v", stored, err)
-	}
-}
-
-// Version 1 pinned a task's commit wherever it was, so a host completion committed before its run
-// base was reviewable. After the upgrade its record has no Base; loading anchors it once, as a new
-// enrollment would, instead of refusing every start with "found 0" for a commit that exists.
-func TestPendingReviewAnchorsAVersion1RecordFromBeforeTheRun(t *testing.T) {
-	repo, root, host, plan := earlyHostTask(t, 1)
-	anchor := forkspace.GitOut(repo, "rev-parse", "HEAD~2")
-	if err := CompleteTrustedTask("", root, host); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{host.ID}, plan); err != nil {
-		t.Fatal(err)
-	}
-	record, _, err := readPendingReviewRecord(root, host.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	record.Base = ""
-	data, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var legacy map[string]any
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		t.Fatal(err)
-	}
-	legacy["version"] = pendingReviewLegacyVersion
-	legacy["binding"] = map[string]any{"head": strings.Repeat("a", 40), "raw": []string{strings.Repeat("a", 40)}, "subject": map[string]any{}, "history": []any{}}
-	if data, err = json.Marshal(legacy); err != nil {
-		t.Fatal(err)
-	}
-	name, err := pendingReviewRecordName(root, host.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := OpenLeaseAuthorityRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
-	if err := AtomicWriteTaskFile(registry, name, append(data, '\n')); err != nil {
-		t.Fatal(err)
-	}
-
-	cohort, err := LoadPendingReviews(repo, []string{root})
-	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Base != anchor {
-		t.Fatalf("version 1 record from before the run = %+v, %v; want it anchored at %s", cohort, err, anchor)
-	}
-	if stored, _, err := readPendingReviewRecord(root, host.ID); err != nil || stored.Base != anchor {
-		t.Fatalf("stored record after the load = %+v, %v; want the anchor saved", stored, err)
-	}
-	if again, err := LoadPendingReviews(repo, []string{root}); err != nil || len(again.Subjects) != 1 {
-		t.Fatalf("second load = %+v, %v", again, err)
+	if err != nil || string(stored) != string(append(data, '\n')) {
+		t.Fatalf("the version 1 record changed: %s, %v", stored, err)
 	}
 }
 

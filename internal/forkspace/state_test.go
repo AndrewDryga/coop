@@ -43,7 +43,7 @@ func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlock()
-	if err := WriteWorkerState(repo, "perf", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+	if err := WriteWorkerState(repo, "perf", WorkerState{Pid: 2147483646, Token: starttoken.Stale(), Generation: testWorkerGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	assertForkStatePerm(t, StateDir(repo), 0o700)
@@ -157,7 +157,7 @@ func TestForkRunningPid(t *testing.T) {
 	}
 	// A record with no start token holds the fork too, even though its pid is missing here: without
 	// the token nothing says which kernel that pid was read on.
-	tokenless := []byte(OwnerStateV1 + "2147483646\n")
+	tokenless := []byte(testOwnerHeader + "2147483646\n")
 	if err := os.WriteFile(PidPath(repo, "tokenless"), tokenless, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestForkRunningPid(t *testing.T) {
 		t.Fatalf("a record with no start token changed = %q, %v, or stopped needing stop; want exact %q", got, err, tokenless)
 	}
 	// A dead/out-of-range pid → 0, but its state remains until forkStop reaps any orphaned box.
-	if err := os.WriteFile(PidPath(repo, "dead"), []byte(OwnerStateV1+"2147483646\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "dead"), []byte(testOwnerHeader+"2147483646\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "dead"); got != 0 {
@@ -187,7 +187,7 @@ func TestForkRunningPid(t *testing.T) {
 		t.Error("dead worker state must remain as the exact-label reap handle")
 	}
 	// A record naming this live process: running, held, and still in need of stop.
-	if err := WritePid(repo, "live", os.Getpid(), ""); err != nil {
+	if err := WritePid(repo, "live", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "live"); got != os.Getpid() {
@@ -234,7 +234,7 @@ func TestWorkerStateReadersRefuseWhatIsNotARecord(t *testing.T) {
 		{name: "folder", found: "a folder", plant: func(path string) error { return os.Mkdir(path, 0o700) }},
 		{name: "socket", found: "a socket", plant: plantSocket},
 		{name: "oversized file", found: fmt.Sprintf("%d bytes, larger than any record", workerStateLimit+1), plant: func(path string) error {
-			record := OwnerStateV1 + "2147483646\nlinux-proc-v1:1:2\n"
+			record := testOwnerHeader + "2147483646\nlinux-proc-v1:1:2\n"
 			return os.WriteFile(path, []byte(record+strings.Repeat(" ", workerStateLimit+1-len(record))), 0o600)
 		}},
 	} {
@@ -269,7 +269,7 @@ func TestWorkerStateReadersRefuseWhatIsNotARecord(t *testing.T) {
 				if _, err := ConfirmWorker(repo, "perf"); !errors.Is(err, ErrNotAStateFile) {
 					t.Errorf("ConfirmWorker = %v, want %s is %s", err, path, tc.found)
 				}
-				ClearPidIfMine(repo, "perf", "")
+				ClearPidIfMine(repo, "perf", testWorkerGeneration)
 			}()
 			select {
 			case <-done:
@@ -507,21 +507,23 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		wantIs error
 		bad    bool
 	}{
-		{name: "owner scoped running", raw: OwnerStateV1 + "42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123"}},
+		// Written by Coop v8.1.0 and earlier for a worker that served no generation. It is refused by
+		// name, never read as no worker, so stop reports it unchanged.
+		{name: "owner-v1 record", raw: "owner-v1\n42\nlinux-proc-v1:boot:123\n", wantIs: ErrOldWorkerState},
+		{name: "owner-v1 header missing newline", raw: "owner-v1", wantIs: ErrOldWorkerState},
 		{name: "generation scoped running", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123", Generation: generation}},
 		{name: "headerless worker", raw: "42\nlinux-proc-v1:boot:123\n", bad: true},
 		// Earlier Coop builds also wrote start reservations and cleanup markers. Nothing writes
 		// them now, and they never become an identity: stop and start refuse them unchanged.
-		{name: "retired start reservation", raw: OwnerStateV1 + "start-claim\n42\nlinux-proc-v1:boot:123\n", bad: true},
+		{name: "retired start reservation", raw: testOwnerHeader + "start-claim\n42\nlinux-proc-v1:boot:123\n", bad: true},
 		{name: "retired launched reservation", raw: OwnerStateV2 + GenerationTag + string(generation) + "\nstart-launched\n42\nlinux-proc-v1:boot:123\n", bad: true},
 		{name: "retired cleanup marker", raw: OwnerStateV2 + GenerationTag + string(generation) + "\nreap-pending\n", bad: true},
 		{name: "unknown owner version", raw: "owner-v3\n42\ntoken\n", wantIs: ErrUnsupportedWorkerStateVersion},
-		{name: "known header missing newline", raw: "owner-v1", bad: true},
 		{name: "empty", bad: true},
-		{name: "pid one", raw: OwnerStateV1 + "1\ntoken\n", bad: true},
+		{name: "pid one", raw: testOwnerHeader + "1\ntoken\n", bad: true},
 		// Without a start token of a known shape no kernel can say the pid was the worker, or that
 		// it is gone, so stop could never act on the record.
-		{name: "no start token", raw: OwnerStateV1 + "42\n", bad: true},
+		{name: "no start token", raw: testOwnerHeader + "42\n", bad: true},
 		{name: "start token of no known shape", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\nhomemade-v9:1\n", bad: true},
 	}
 	for _, tc := range cases {
@@ -555,7 +557,7 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 	}
 	// Marshal refuses the same records, so no writer publishes one every reader refuses.
 	for _, token := range []string{"", "homemade-v9:1"} {
-		if data, err := (WorkerState{Pid: 42, Token: token}).Marshal(); err == nil {
+		if data, err := (WorkerState{Pid: 42, Token: token, Generation: testWorkerGeneration}).Marshal(); err == nil {
 			t.Errorf("Marshal(pid 42, token %q) = %q, want the refusal ParseWorkerState gives", token, data)
 		}
 	}
@@ -573,7 +575,7 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Our own (live) pid, but recorded with a start time from a different process → reused → 0.
-	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%s%d\n%s\n", OwnerStateV1, os.Getpid(), starttoken.Stale())), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "reused"), []byte(fmt.Sprintf("%s%d\n%s\n", testOwnerHeader, os.Getpid(), starttoken.Stale())), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "reused"); got != 0 {
@@ -583,7 +585,7 @@ func TestForkRunningPidReusedPid(t *testing.T) {
 		t.Error("reused-pid state must remain for exact-label cleanup")
 	}
 	// The same pid recorded with its real start time (WritePid round-trip) → genuinely running.
-	if err := WritePid(repo, "live", os.Getpid(), ""); err != nil {
+	if err := WritePid(repo, "live", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if got := RunningPid(repo, "live"); got != os.Getpid() {
@@ -608,7 +610,7 @@ func TestForkRecordFromAnotherSystemStaysHeld(t *testing.T) {
 	t.Cleanup(func() { SignalPID = oldSignal })
 	for _, pid := range []int{2147483646, os.Getpid()} {
 		name := "foreign-" + strconv.Itoa(pid)
-		state := WorkerState{Pid: pid, Token: starttoken.Foreign()}
+		state := WorkerState{Pid: pid, Token: starttoken.Foreign(), Generation: testWorkerGeneration}
 		if err := WriteWorkerState(repo, name, state); err != nil {
 			t.Fatal(err)
 		}
@@ -691,7 +693,7 @@ func TestWriteForkPidRejectsMissingStableToken(t *testing.T) {
 	ReadProcStartToken = func(int) string { return "" }
 	t.Cleanup(func() { ReadProcStartToken = oldRead })
 
-	if err := WritePid(repo, "live", os.Getpid(), ""); err == nil || !strings.Contains(err.Error(), "no stable process identity") {
+	if err := WritePid(repo, "live", os.Getpid(), testWorkerGeneration); err == nil || !strings.Contains(err.Error(), "no stable process identity") {
 		t.Fatalf("WritePid without a stable token = %v, want fail-closed error", err)
 	}
 	if pathExists(PidPath(repo, "live")) {
@@ -714,7 +716,7 @@ func TestConfirmWorkerAcceptsOnlyItsOwnRecord(t *testing.T) {
 		{name: "missing", wantErr: "no lifecycle record names this process"},
 		{name: "another pid", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n2147483646\nlinux-proc-v1:1:2\n", wantErr: "names another process"},
 		{name: "same pid different token", raw: fmt.Sprintf("%s%s%s\n%d\nlinux-proc-v1:replacement:1\n", OwnerStateV2, GenerationTag, generation, os.Getpid()), wantErr: "names another process"},
-		{name: "malformed", raw: OwnerStateV1 + "broken\n", wantErr: "invalid detached worker pid"},
+		{name: "malformed", raw: testOwnerHeader + "broken\n", wantErr: "invalid detached worker pid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := filepath.Join(t.TempDir(), "repo")
@@ -783,7 +785,7 @@ func TestConfirmWorkerWaitsForTheParentsRecord(t *testing.T) {
 		}
 		return false
 	})
-	if err := WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+	if err := WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	release.Do(unlock)
@@ -811,7 +813,7 @@ func TestProcStartTokenIgnoresCallerTimezoneAndLocale(t *testing.T) {
 
 func TestWorkerCleanupDoesNotWaitForStopLock(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "proj")
-	if err := WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+	if err := WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := LockState(repo, "perf")
@@ -820,7 +822,7 @@ func TestWorkerCleanupDoesNotWaitForStopLock(t *testing.T) {
 	}
 	cleared := make(chan struct{})
 	go func() {
-		ClearPidIfMine(repo, "perf", "")
+		ClearPidIfMine(repo, "perf", testWorkerGeneration)
 		close(cleared)
 	}()
 	select {
@@ -843,18 +845,18 @@ func TestClearForkPidIfMine(t *testing.T) {
 	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := WritePid(repo, "mine", os.Getpid(), ""); err != nil {
+	if err := WritePid(repo, "mine", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
-	ClearPidIfMine(repo, "mine", "")
+	ClearPidIfMine(repo, "mine", testWorkerGeneration)
 	if pathExists(PidPath(repo, "mine")) {
 		t.Error("ClearPidIfMine should remove a pidfile that names us")
 	}
 	// A pidfile owned by another pid must be left alone.
-	if err := os.WriteFile(PidPath(repo, "other"), []byte(OwnerStateV1+"424242\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(PidPath(repo, "other"), []byte(testOwnerHeader+"424242\n"+starttoken.Stale()+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ClearPidIfMine(repo, "other", "")
+	ClearPidIfMine(repo, "other", testWorkerGeneration)
 	if !pathExists(PidPath(repo, "other")) {
 		t.Error("ClearPidIfMine must NOT remove a pidfile owned by another process")
 	}
@@ -862,8 +864,8 @@ func TestClearForkPidIfMine(t *testing.T) {
 		name string
 		raw  []byte
 	}{
-		{name: "same pid different token", raw: []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:replacement:1\n", OwnerStateV1, os.Getpid()))},
-		{name: "malformed", raw: []byte(OwnerStateV1 + "broken\n")},
+		{name: "same pid different token", raw: []byte(fmt.Sprintf("%s%d\nlinux-proc-v1:replacement:1\n", testOwnerHeader, os.Getpid()))},
+		{name: "malformed", raw: []byte(testOwnerHeader + "broken\n")},
 		{name: "unsupported", raw: []byte("owner-v3\nfuture\n")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -957,3 +959,9 @@ func TestConcurrentStateFileCreationKeepsOneLockInode(t *testing.T) {
 		}
 	}
 }
+
+// testWorkerGeneration and testOwnerHeader stand for the generation a current worker record names.
+const (
+	testWorkerGeneration Generation = "0123456789abcdef0123456789abcdef"
+	testOwnerHeader                 = OwnerStateV2 + GenerationTag + string(testWorkerGeneration) + "\n"
+)

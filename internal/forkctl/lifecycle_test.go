@@ -223,7 +223,7 @@ func TestForkRmRefusesRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Mark it running by claiming the pidfile for THIS (live) process.
-	if err := forkspace.WritePid(repo, "busy", os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, "busy", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	code, err := a.ForkRm([]string{"busy"})
@@ -417,7 +417,7 @@ func TestForkRmPrintsOneBlankLineBetweenSections(t *testing.T) {
 				}
 			}
 			if tc.running {
-				if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
+				if err := forkspace.WriteWorkerState(repo, "a", deadWorkerOf(bindTestFork(t, repo, "a"))); err != nil {
 					t.Fatal(err)
 				}
 				args = append(args, "--force")
@@ -554,7 +554,7 @@ func TestForkRmConfirmsBeforeForcedStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
@@ -577,7 +577,7 @@ func TestForkRmRechecksLifecycleAfterConfirmation(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "race", func() (int, error) {
 		return a.ForkRm([]string{"race", "--yes"})
 	}, func() {
-		if err := forkspace.WritePid(repo, "race", os.Getpid(), ""); err != nil {
+		if err := forkspace.WritePid(repo, "race", os.Getpid(), testWorkerGeneration); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1260,7 +1260,7 @@ func TestStopBeforeDestroyGivesNoContinueHint(t *testing.T) {
 		if err := SaveForkAgent(ws, "claude"); err != nil {
 			t.Fatal(err)
 		}
-		if err := forkspace.WriteWorkerState(repo, "a", deadWorker); err != nil {
+		if err := forkspace.WriteWorkerState(repo, "a", deadWorkerOf(bindTestFork(t, repo, "a"))); err != nil {
 			t.Fatal(err)
 		}
 		runtimeCLI := filepath.Join(t.TempDir(), "runtime")

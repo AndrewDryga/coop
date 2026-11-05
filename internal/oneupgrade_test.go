@@ -19,10 +19,9 @@ const waypointCard = ".agent/kb/rules/one-upgrade-for-old-state.md"
 // current and oldest-read versions, as "<file under internal/>:<name>". An empty oldest means no
 // constant names it yet; the task that retires that reader adds one (it needs it for the refusal).
 // An empty current means the versions are not integer constants: the box supervisor label's are the
-// string prefixes "v2" and "v1" (box/sweep.go), and the fork records folder's are its two places
-// (forkspace.MoveLegacyForkRecords), the execution fallback registry's are "not written" and
-// "read", and the pre-v11 provider login and history have no version at all, so their rows are
-// listed but pin nothing.
+// string prefixes "v2" and "v1" (box/sweep.go), and the fork records folder, the execution fallback
+// registry, the detached worker record, and the pre-v11 provider login and history have no integer
+// version, so their rows are listed but pin nothing.
 var waypointConstants = map[string]struct{ current, oldest string }{
 	"Primary snapshot receipt":    {"forkspace/immutable_primary.go:ImmutablePrimaryVersion", "forkspace/immutable_primary.go:ImmutablePrimaryVersion"},
 	"Companion snapshot receipt":  {"sessionsvc/companion_snapshot.go:companionSnapshotVersion", "sessionsvc/companion_snapshot.go:companionSnapshotVersion"},
@@ -31,11 +30,13 @@ var waypointConstants = map[string]struct{ current, oldest string }{
 	"Worker command receipts":     {"workerconnector/journal.go:journalVersion", "workerconnector/journal.go:journalVersion"},
 	"Worker event streams":        {"workerconnector/event_streams.go:eventStreamVersion", "workerconnector/event_streams.go:eventStreamVersion"},
 	"Worker create origins":       {"workerconnector/create_origins.go:createOriginVersion", "workerconnector/create_origins.go:createOriginVersion"},
-	"Fork generation":             {"forkspace/generation.go:forkGenerationVersion", "forkspace/generation.go:forkGenerationLegacyVersion"},
-	"Fork reservation":            {"forkspace/reservation.go:workspaceReservationVersion", ""},
-	"Fork review candidate":       {"tasks/candidate_rounds.go:forkCandidateManifestVersion", "tasks/candidate.go:forkCandidateVersion"},
-	"Task owner record":           {"tasks/owner.go:taskOwnershipRecordVersion", "tasks/owner.go:taskOwnerRecordVersion"},
-	"Pending final review":        {"tasks/pending_review.go:pendingReviewVersion", "tasks/pending_review.go:pendingReviewLegacyVersion"},
+	"Fork generation":             {"forkspace/generation.go:forkGenerationVersion", "forkspace/generation.go:forkGenerationVersion"},
+	"Fork reservation":            {"forkspace/reservation.go:workspaceReservationVersion", "forkspace/reservation.go:workspaceReservationVersion"},
+	"Fork review candidate":       {"tasks/candidate_rounds.go:forkCandidateManifestVersion", "tasks/candidate_rounds.go:forkCandidateManifestVersion"},
+	"Task owner record":           {"tasks/owner.go:taskOwnershipRecordVersion", "tasks/owner.go:taskOwnershipRecordVersion"},
+	"Pending final review":        {"tasks/pending_review.go:pendingReviewVersion", "tasks/pending_review.go:pendingReviewVersion"},
+	"Completion fingerprint":      {"tasks/completion.go:completionTreeFormat", "tasks/completion.go:completionTreeFormat"},
+	"Detached worker record":      {"", ""},
 	"Network approval":            {"networkstate/authority.go:networkApprovalVersion", "networkstate/authority.go:networkApprovalVersion"},
 	"Network execution":           {"networkstate/execution.go:ExecutionVersion", "networkstate/execution.go:ExecutionVersion"},
 	"Network withdrawal":          {"networkstate/approval_withdrawal.go:withdrawalVersion", "networkstate/approval_withdrawal.go:withdrawalVersion"},

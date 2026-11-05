@@ -26,7 +26,6 @@ import (
 // The wire header stays line-oriented, so the file remains readable with `sed -n 1,4p` when an
 // operator has to recover one by hand.
 const (
-	OwnerStateV1  = "owner-v1\n"
 	OwnerStateV2  = "owner-v2\n"
 	GenerationTag = "generation="
 )
@@ -38,10 +37,13 @@ var (
 	// ErrUnsupportedWorkerStateVersion keeps a future writer's state fail-closed until that version
 	// can interpret its own lifecycle contract.
 	ErrUnsupportedWorkerStateVersion = errors.New("unsupported detached-worker state version")
+	// ErrOldWorkerState matches an owner-v1 record, written by Coop v8.1.0 and earlier for a worker
+	// that serves no fork generation. Coop no longer reads one, and never treats it as no worker.
+	ErrOldWorkerState = errors.New("detached-worker record owner-v1 from Coop v8.1.0 or earlier")
 	// ErrNotAStateFile matches an error that says what Coop found at a fork state file's name in place
 	// of a file it wrote: a link, a named pipe, a folder, a socket, a device, or a lifecycle record
-	// larger than any Coop writes. Records an older build kept where a box could write them move in
-	// once as they are, so one can be any of these, and reading one could wait forever or never end.
+	// larger than any Coop writes. The records folder is private, but a name in it can still hold
+	// anything, so reading one could wait forever or never end: the readers stay bounded and no-follow.
 	ErrNotAStateFile = errors.New("not a file Coop wrote")
 	// folderChecked, swapped only by tests, runs where Coop has checked a folder of the forks tree
 	// and is about to work in it: the moment a box could swap that folder for a link. The work after
@@ -98,13 +100,55 @@ var recordsKeys sync.Map
 
 // StateDir holds repo's fork records — lifecycle locks, pidfiles and logs, generations,
 // reservations, candidates, assignments, land journals, execution records — at
-// <private state>/forks/<key>. Fork workspaces stay in Home(repo). The records left it: a box whose
-// mount holds another project's forks folder could write that project's records there. Every
-// reader finds its path here, so this is also where records an older build left in the old place
-// move, once; a move that fails is reported by the next open of the folder.
+// <private state>/forks/<key>. Fork workspaces stay in Home(repo). The records left <repo>-forks/.coop
+// because a box whose mount holds another project's forks folder could write that project's records
+// there; RequireNoOldForkRecords refuses what a build before that move left behind.
 func StateDir(repo string) string {
-	_ = MoveLegacyForkRecords(repo)
 	return recordsPath(repo)
+}
+
+// oldForkRecordsScan bounds how many entries of the old records folder are looked at; a real one
+// held a few files per fork.
+const oldForkRecordsScan = 4096
+
+// RequireNoOldForkRecords refuses a project whose old records folder, <repo>-forks/.coop, still
+// holds anything but lock files. Builds up to v12.1.0 moved those records into Coop's private state
+// on first use and this build does not, so reading the private folder alone would show a fork whose
+// generation or reservation is still there as unbound or free. The folder is left exactly as it is.
+// A link or other special file at that place is never followed, and one that is not a folder holds
+// nothing an older build wrote.
+func RequireNoOldForkRecords(repo string) error {
+	// Builds up to v12.1.0 never touched the old folder again once this project's private records
+	// folder existed, so anything left there afterwards is a copy they set aside, not a record.
+	if _, err := os.Lstat(recordsPath(repo)); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	old := filepath.Join(Home(repo), ".coop")
+	dir, err := os.OpenFile(old, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the old fork records folder %s: %w", old, err)
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(oldForkRecordsScan + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read the old fork records folder %s: %w", old, err)
+	}
+	if len(entries) <= oldForkRecordsScan {
+		onlyLocks := true
+		for _, entry := range entries {
+			onlyLocks = onlyLocks && entry.Type().IsRegular() &&
+				(strings.HasSuffix(entry.Name(), ".lock") || entry.Name() == ".DS_Store")
+		}
+		if onlyLocks {
+			return nil
+		}
+	}
+	return fmt.Errorf("fork records from a Coop build up to v11.3.0 are still in %s, and Coop no longer moves them — it left them unchanged; open this project once with Coop v12.1.0, which moves them into %s, then retry; if those forks are gone, delete %s instead", old, recordsPath(repo), old)
 }
 
 func recordsPath(repo string) string {
@@ -148,7 +192,7 @@ func openForkRecords(repo string, create bool) (*os.File, error) {
 			return nil, err
 		}
 	}
-	if err := MoveLegacyForkRecords(repo); err != nil {
+	if err := RequireNoOldForkRecords(repo); err != nil {
 		return nil, err
 	}
 	base, err := safefile.OpenRoot(root)
@@ -365,31 +409,23 @@ type WorkerState struct {
 
 func ParseWorkerState(raw string) (WorkerState, error) {
 	first, _, _ := strings.Cut(raw, "\n")
-	version := 0
-	body := raw
-	switch {
-	case strings.HasPrefix(raw, OwnerStateV1):
-		version, body = 1, strings.TrimPrefix(raw, OwnerStateV1)
-	case strings.HasPrefix(raw, OwnerStateV2):
-		version, body = 2, strings.TrimPrefix(raw, OwnerStateV2)
+	if first == "owner-v1" {
+		return WorkerState{}, ErrOldWorkerState
 	}
-	if version == 0 {
+	if !strings.HasPrefix(raw, OwnerStateV2) {
 		if strings.HasPrefix(first, "owner-") {
 			return WorkerState{}, fmt.Errorf("%w %q", ErrUnsupportedWorkerStateVersion, first)
 		}
 		return WorkerState{}, errors.New("detached worker state is missing a supported owner header")
 	}
 	state := WorkerState{}
-	if version == 2 {
-		line, rest, ok := strings.Cut(body, "\n")
-		if !ok || !strings.HasPrefix(line, GenerationTag) {
-			return WorkerState{}, errors.New("detached worker state is missing its fork generation")
-		}
-		state.Generation = Generation(strings.TrimPrefix(line, GenerationTag))
-		if !ValidGeneration(state.Generation) {
-			return WorkerState{}, errors.New("detached worker state has an invalid fork generation")
-		}
-		body = rest
+	line, body, ok := strings.Cut(strings.TrimPrefix(raw, OwnerStateV2), "\n")
+	if !ok || !strings.HasPrefix(line, GenerationTag) {
+		return WorkerState{}, errors.New("detached worker state is missing its fork generation")
+	}
+	state.Generation = Generation(strings.TrimPrefix(line, GenerationTag))
+	if !ValidGeneration(state.Generation) {
+		return WorkerState{}, errors.New("detached worker state has an invalid fork generation")
 	}
 	state.Pid, state.Token = parsePidfile(body)
 	if err := state.validate(); err != nil {
@@ -399,17 +435,13 @@ func ParseWorkerState(raw string) (WorkerState, error) {
 }
 
 func (state WorkerState) Marshal() ([]byte, error) {
-	prefix := OwnerStateV1
-	if state.Generation != "" {
-		if !ValidGeneration(state.Generation) {
-			return nil, errors.New("invalid fork state: malformed generation")
-		}
-		prefix = OwnerStateV2 + GenerationTag + string(state.Generation) + "\n"
+	if !ValidGeneration(state.Generation) {
+		return nil, errors.New("invalid fork state: malformed generation")
 	}
 	if err := state.validate(); err != nil {
 		return nil, err
 	}
-	return []byte(fmt.Sprintf("%s%d\n%s\n", prefix, state.Pid, state.Token)), nil
+	return []byte(fmt.Sprintf("%s%s%s\n%d\n%s\n", OwnerStateV2, GenerationTag, state.Generation, state.Pid, state.Token)), nil
 }
 
 // validate refuses a record that names no process identity: a pid of 1 or below, or a start token
@@ -437,9 +469,8 @@ func ReadWorkerState(repo, name string) (WorkerState, error) {
 	return ParseWorkerState(string(data))
 }
 
-// OpenStateFile opens a file in a project's fork records for reading. Records an older build kept
-// where a box could write them move in as they are, so a name there can hold anything: the open
-// neither follows a link nor waits on a named pipe, and anything but a regular file is refused with
+// OpenStateFile opens a file in a project's fork records for reading. A name there can hold anything,
+// so the open neither follows a link nor waits on a named pipe, and anything but a regular file is refused with
 // an error that matches ErrNotAStateFile and says what is there. Any other failure, a missing file included, is an *os.PathError.
 func OpenStateFile(path string) (*os.File, error) {
 	return openStateFile(unix.AT_FDCWD, path, path, os.O_RDONLY)

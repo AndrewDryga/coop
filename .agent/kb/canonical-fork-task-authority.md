@@ -3,7 +3,7 @@ name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
 sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
-updated: 2026-10-17
+updated: 2026-11-04
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -36,10 +36,14 @@ labels and consistency checks only.
 assignment roots), typed owners, reverse indexes, generations, candidates, land intents, detached
 workers, sandbox executions, and remote-session reservations. Corrupt or unverifiable evidence is
 rendered as a problem and blocks mutation; copied queue folders are never state-ranked into truth.
-Execution records normally live beside fork state and fall back to project-keyed durable user state
-when an ordinary repository's parent is read-only.
+Execution records live beside fork state. The per-project fallback folder older builds could use
+(`~/.local/state/coop/executions/v1/<key>/`) is no longer read: anything in it is reported by path
+as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-04 — dropped the "fall back" sentence: the fallback registry reader is retired (task
+  2026-11-04-drop-the-old-fork-and-task-record-readers). A copied queue in a fork is no longer
+  refused: the snapshot never read one, and the fork loop takes its tasks from the canonical queue.
 - 2026-10-17 — the in-box task tools check the projection, and open the outbox, from the fork
   workspace: a box that swapped its assignment folder or a folder above it for a link to another
   project's .agent had them list, read and change that project's tasks. Verified against

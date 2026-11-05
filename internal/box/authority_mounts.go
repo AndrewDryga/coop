@@ -691,11 +691,8 @@ func appendProjectPrivateAuthority(private, forkHomes []string, repo string) ([]
 	if err != nil {
 		return nil, nil, fmt.Errorf("locate execution authority state: %w", err)
 	}
-	// Authority before it exists: ordinary boxes create the fallback registry and its
-	// service-launch lock on first use. Fork records need no entry: they live in Coop's private
-	// state folder, which is fenced whole. Records an older Coop left in <repo>-forks/.coop move
-	// there now, before this box could write them; one that cannot move says why on its next use.
-	_ = forkspace.MoveLegacyForkRecords(canonical)
+	// Authority before it exists: ordinary boxes create the service-launch lock on first use.
+	// Fork records need no entry: they live in Coop's private state folder, which is fenced whole.
 	for _, path := range registries {
 		if !slices.Contains(private, path) {
 			private = append(private, path)

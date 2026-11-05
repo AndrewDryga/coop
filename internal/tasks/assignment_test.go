@@ -1051,9 +1051,9 @@ func TestPendingForkDiscardFailsClosedAndReplayCoversCurrentAssignments(t *testi
 		t.Fatalf("crash-held after the replay = %+v", held)
 	}
 
-	// An assignment the journaled intent does not name (acquired after an interrupted discard by
-	// an older binary) is discarded by the replay too, so nothing stays fork-owned once the
-	// generation goes.
+	// An assignment the journaled intent does not name was acquired after an interrupted discard by
+	// a build up to v12.1.0, which replayed it too. This one refuses by name and changes nothing,
+	// rather than leave it fork-owned once the generation goes.
 	assignment, err = AssignForkTask([]string{root}, request)
 	if err != nil {
 		t.Fatal(err)
@@ -1067,17 +1067,17 @@ func TestPendingForkDiscardFailsClosedAndReplayCoversCurrentAssignments(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
-		t.Fatalf("replay with an unlisted assignment = %v", err)
+	if err := DiscardForkTaskStateLocked(repo, identity); err == nil || !strings.Contains(err.Error(), "did not journal") || !strings.Contains(err.Error(), "v12.1.0") {
+		t.Fatalf("replay with an unlisted assignment = %v; want a refusal naming the converting build", err)
 	}
-	if item, _ := mustCurrentTask(t, root, acquired); item.State != StateTodo {
-		t.Fatalf("%s stranded after the replay: %+v", acquired, item)
+	if item, _ := mustCurrentTask(t, root, acquired); item.State == StateTodo {
+		t.Fatalf("%s was released by a refused replay: %+v", acquired, item)
 	}
-	if _, owned, err := ReadTaskOwnerRecord(root, acquired); err != nil || owned {
-		t.Fatalf("%s still fork-owned after the replay: owned=%v err=%v", acquired, owned, err)
+	if _, pending, err := readForkDiscard(repo, identity); err != nil || !pending {
+		t.Fatalf("the interrupted discard intent after the refusal: pending=%v err=%v", pending, err)
 	}
-	if after, _ := IndexedForkAssignments(repo, identity); len(after) != 0 {
-		t.Fatalf("indexes after the union replay = %+v", after)
+	if after, _ := IndexedForkAssignments(repo, identity); len(after) != 1 {
+		t.Fatalf("indexes after the refused replay = %+v; want the assignment kept", after)
 	}
 }
 
@@ -1112,7 +1112,10 @@ func TestTaskRegistriesNeverWriteThroughACoopLink(t *testing.T) {
 			if err := os.MkdirAll(forkspace.Home(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			// The first look at the records makes their empty folder; a link takes its place.
+			// Their folder is made, then a link takes its place.
+			if err := forkspace.EnsureStateDir(repo); err != nil {
+				t.Fatal(err)
+			}
 			records := forkspace.StateDir(repo)
 			if err := os.Remove(records); err != nil {
 				t.Fatal(err)

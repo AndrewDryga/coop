@@ -310,7 +310,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 			}
 			state, stateErr := forkspace.ReadWorkerState(repo, identity.Name)
 			if stateErr == nil {
-				if state.Generation != "" && state.Generation != identity.Generation {
+				if state.Generation != identity.Generation {
 					appendSnapshotProblem(&snapshot, "fork "+identity.Name+" worker", errors.New("worker belongs to another generation"))
 				} else {
 					fork.DetachedRunning = forkspace.RunningPid(repo, identity.Name) != 0

@@ -14,36 +14,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// LegacyForkQueueWithWork detects the retired pre-projection design, where a fork carried a copied
-// task queue. Those folders are duplicate authority and must never be merged or scheduled as if
-// they were canonical. Empty scaffolds are harmless; any lifecycle task requires explicit human
-// migration before the fork may proceed.
-func LegacyForkQueueWithWork(workspace string) (string, error) {
-	candidates := []string{filepath.Join(workspace, TasksRoot)}
-	if rels, err := project.TaskDirs(workspace); err == nil {
-		for _, rel := range rels {
-			candidate := filepath.Join(workspace, rel)
-			if !slices.Contains(candidates, candidate) {
-				candidates = append(candidates, candidate)
-			}
-		}
-	}
-	for _, root := range candidates {
-		items, err := ReadTaskTree(root)
-		if err != nil {
-			return "", err
-		}
-		if len(items) == 0 {
-			continue
-		}
-		if rel, err := filepath.Rel(workspace, root); err == nil {
-			return rel, nil
-		}
-		return root, nil
-	}
-	return "", nil
-}
-
 // ExtractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path

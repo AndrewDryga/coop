@@ -2,6 +2,7 @@ package forkctl
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -162,7 +163,7 @@ func TestForkStopNeverRemovesARecordThroughASwappedStateFolder(t *testing.T) {
 	if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "perf", deadWorkerOf(bindTestFork(t, repo, "perf"))); err != nil {
 		t.Fatal(err)
 	}
 	record, err := os.ReadFile(forkspace.PidPath(repo, "perf"))
@@ -212,11 +213,14 @@ func TestForkStopRejectsInvalidStateWithoutSideEffects(t *testing.T) {
 		{name: "headerless worker", raw: stable, want: malformed, guarded: true},
 		// Start and cleanup records of Coop 11.3.0 and earlier never become an identity to signal.
 		// A cleanup record can name a worker that still runs, so the file goes only after a check.
-		{name: "retired cleanup marker", raw: forkspace.OwnerStateV1 + "reap-pending\n" + stable, want: malformed, guarded: true},
-		{name: "retired launch reservation", raw: forkspace.OwnerStateV1 + "start-launched\n" + stable, want: malformed, guarded: true},
+		{name: "retired cleanup marker", raw: testOwnerHeader + "reap-pending\n" + stable, want: malformed, guarded: true},
+		{name: "retired launch reservation", raw: testOwnerHeader + "start-launched\n" + stable, want: malformed, guarded: true},
 		// No start token: whether or not the pid answers, nothing proves it this fork's worker or
 		// proves it gone, so stop neither signals it nor reaps the fork's boxes on its word.
-		{name: "no start token", raw: forkspace.OwnerStateV1 + "2147483646\n", want: malformed, guarded: true},
+		{name: "no start token", raw: testOwnerHeader + "2147483646\n", want: malformed, guarded: true},
+		// Written by Coop v8.1.0 and earlier for a worker with no generation. Its worker may still run,
+		// so it is refused by name with the guarded recovery, never read as no worker.
+		{name: "owner-v1 record", raw: "owner-v1\n" + stable, want: []string{"owner-v1", "from Coop v8.1.0 or earlier", "left it unchanged"}, guarded: true},
 		{name: "future owner", raw: "owner-v3\nopaque\n", want: []string{"unsupported detached-worker state version", "use the Coop version that wrote it", "do not edit its header"}},
 	}
 	oldSignal := forkspace.SignalPID
@@ -410,7 +414,7 @@ func TestForkStopFindsALeftoverNameWithoutWorkspace(t *testing.T) {
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "stop", deadWorker); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "stop", deadWorkerOf(bindTestFork(t, repo, "stop"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -549,7 +553,7 @@ func TestForkStopAndLsRefuseStateThatIsNotARecord(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := forkspace.WriteWorkerState(repo, "other", deadWorker); err != nil {
+			if err := forkspace.WriteWorkerState(repo, "other", deadWorkerOf(bindTestFork(t, repo, "other"))); err != nil {
 				t.Fatal(err)
 			}
 			path := forkspace.PidPath(repo, "perf")
@@ -670,7 +674,7 @@ func TestForkStopRejectsPIDOneWithoutSignaling(t *testing.T) {
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte(forkspace.OwnerStateV1+"1\nlinux-proc-v1:fake:1\n"), 0o644); err != nil {
+	if err := os.WriteFile(forkspace.PidPath(repo, "perf"), []byte(testOwnerHeader+"1\nlinux-proc-v1:fake:1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	oldSignal := forkspace.SignalPID
@@ -700,7 +704,7 @@ func TestForkStopReportsCleanupStateRemovalFailure(t *testing.T) {
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "perf", deadWorkerOf(bindTestFork(t, repo, "perf"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
@@ -734,7 +738,7 @@ func TestForkStopReapsBoxAfterWorkerCrash(t *testing.T) {
 	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "perf", deadWorker); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "perf", deadWorkerOf(bindTestFork(t, repo, "perf"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(runtimeCLI, []byte(`#!/bin/sh
@@ -755,7 +759,7 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf", "") + "\nrm -f box-perf\n"
+	want := "ps -q -a " + reapFilters(repo, "perf", bindTestFork(t, repo, "perf").Generation) + "\nrm -f box-perf\n"
 	if got := string(data); got != want {
 		t.Errorf("crash cleanup calls = %q, want %q", got, want)
 	}
@@ -778,7 +782,7 @@ func TestForkStopKeepsARecordFromAnotherSystem(t *testing.T) {
 			if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: pid, Token: starttoken.Foreign()}); err != nil {
+			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: pid, Token: starttoken.Foreign(), Generation: bindTestFork(t, repo, "perf").Generation}); err != nil {
 				t.Fatal(err)
 			}
 			before, err := os.ReadFile(forkspace.PidPath(repo, "perf"))
@@ -1179,7 +1183,7 @@ while :; do sleep 10 & wait $!; done
 			if token == "" {
 				t.Fatal("could not read worker start identity")
 			}
-			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: pid, Token: token}); err != nil {
+			if err := forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: pid, Token: token, Generation: bindTestFork(t, repo, "perf").Generation}); err != nil {
 				t.Fatal(err)
 			}
 			a := &Control{
@@ -1201,7 +1205,7 @@ while :; do sleep 10 & wait $!; done
 			}
 			got := string(data)
 			termAt := strings.Index(got, "worker:term\n")
-			psCall := "runtime:ps -q -a --filter label=coop.fork-owner=" + ForkContainerOwner(repo, "perf", "") + "\n"
+			psCall := "runtime:ps -q -a " + reapFilters(repo, "perf", bindTestFork(t, repo, "perf").Generation) + "\n"
 			psAt := strings.Index(got, psCall)
 			if termAt < 0 || psAt < 0 || termAt >= psAt {
 				t.Errorf("worker TERM must precede the exact-fork reap:\n%s", got)
@@ -1267,10 +1271,10 @@ var deadWorker = forkspace.WorkerState{Pid: 2147483645, Token: starttoken.Stale(
 // record that may still own an orphaned box; only an absent one does not.
 func TestRunningForkNames(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "proj")
-	if err := forkspace.WritePid(repo, "live", os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, "live", os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WriteWorkerState(repo, "dead", deadWorker); err != nil {
+	if err := forkspace.WriteWorkerState(repo, "dead", deadWorkerOf(bindTestFork(t, repo, "dead"))); err != nil {
 		t.Fatal(err)
 	}
 	got := runningForkNames(repo, []string{"live", "dead", "absent"})
@@ -1329,16 +1333,16 @@ func TestDetachForkLoopRefusesAnExistingRecord(t *testing.T) {
 		want         string
 	}{
 		{name: "live worker", write: func(repo string) error {
-			return forkspace.WritePid(repo, "perf", os.Getpid(), "")
+			return forkspace.WritePid(repo, "perf", os.Getpid(), bindTestFork(t, repo, "perf").Generation)
 		}, want: fmt.Sprintf("already has a loop running (pid %d) — stop it first: coop fork stop perf", os.Getpid())},
 		{name: "leftover record", write: func(repo string) error {
-			return forkspace.WriteWorkerState(repo, "perf", deadWorker)
+			return forkspace.WriteWorkerState(repo, "perf", deadWorkerOf(bindTestFork(t, repo, "perf")))
 		}, want: "has a leftover record from an earlier background loop — clean it up first: coop fork stop perf"},
 		{name: "unverifiable record", write: func(repo string) error {
-			return forkspace.WritePid(repo, "perf", os.Getpid(), "")
+			return forkspace.WritePid(repo, "perf", os.Getpid(), bindTestFork(t, repo, "perf").Generation)
 		}, unverifiable: true, want: "still has a background loop record — clean it up first: coop fork stop perf"},
 		{name: "another system's record", write: func(repo string) error {
-			return forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: os.Getpid(), Token: starttoken.Foreign()})
+			return forkspace.WriteWorkerState(repo, "perf", forkspace.WorkerState{Pid: os.Getpid(), Token: starttoken.Foreign(), Generation: bindTestFork(t, repo, "perf").Generation})
 		}, want: "was started on " + forkspace.ProcTokenSystem(starttoken.Foreign()) + ", so Coop cannot tell from here whether it is still running and keeps its record"},
 		{name: "malformed record", write: func(repo string) error {
 			return os.WriteFile(forkspace.PidPath(repo, "perf"), []byte("garbage\n"), 0o600)
@@ -1401,7 +1405,7 @@ func TestDetachForkLoopChecksUnderTheLifecycleLock(t *testing.T) {
 	got := runForkCommandAcrossLockedMutation(t, repo, "perf", func() (int, error) {
 		return a.DetachForkLoop(repo, "perf", "claude", "", "", "", "", "", nil, nil, detachIdentity("perf"))
 	}, func() {
-		if err := forkspace.WritePid(repo, "perf", os.Getpid(), ""); err != nil {
+		if err := forkspace.WritePid(repo, "perf", os.Getpid(), testWorkerGeneration); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1674,5 +1678,142 @@ func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
 	path := forkspace.LogPath(repo, "broken")
 	if got, want := strings.Join(lines, "\n"), fmt.Sprintf("fork broken log: %s is a folder — remove it: rmdir -- %q", path, path); !strings.Contains(got, want) {
 		t.Fatalf("follow failure output = %q, want %q", got, want)
+	}
+}
+
+// testWorkerGeneration and testOwnerHeader stand for the generation a current worker record names.
+const (
+	testWorkerGeneration forkspace.Generation = "0123456789abcdef0123456789abcdef"
+	testOwnerHeader                           = forkspace.OwnerStateV2 + forkspace.GenerationTag + string(testWorkerGeneration) + "\n"
+)
+
+// bindTestFork gives fork name the generation record `coop fork` makes before it starts a worker,
+// and returns it. A worker record must name that generation for stop to act on it.
+func bindTestFork(t *testing.T, repo, name string) forkspace.Identity {
+	t.Helper()
+	if err := os.MkdirAll(forkspace.Workspace(repo, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	identity, err := forkspace.EnsureGenerationLocked(repo, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+// deadWorkerOf is deadWorker serving identity's generation.
+func deadWorkerOf(identity forkspace.Identity) forkspace.WorkerState {
+	worker := deadWorker
+	worker.Generation = identity.Generation
+	return worker
+}
+
+// reapFilters is the label filter stop gives the runtime to find a detached worker's boxes.
+func reapFilters(repo, name string, generation forkspace.Generation) string {
+	return "--filter label=" + box.LabelForkGeneration + "=" + string(generation) +
+		" --filter label=" + box.LabelForkOwner + "=" + ForkContainerOwner(repo, name, generation) +
+		" --filter label=" + box.LabelForkWorker + "=" + box.LabelOn
+}
+
+// A fork whose generation record is version 1 or 2 (Coop v10.1.2 and earlier) is refused by stop,
+// by name, with the way to convert it; stop neither signals, nor consults the runtime, nor changes
+// the record, and the fork does not read as unbound.
+func TestForkStopRefusesAnOldGenerationRecord(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.EnsureStateDir(repo); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"version":1,"name":"perf","generation":"0123456789abcdef0123456789abcdef","workspace_device":1,"workspace_inode":2,"created_at":"2026-01-02T03:04:05Z"}` + "\n"
+	if err := os.WriteFile(forkspace.GenerationPath(repo, "perf"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldSignal := forkspace.SignalPID
+	forkspace.SignalPID = func(int, syscall.Signal) error {
+		t.Error("stop signalled a process for a fork with an old generation record")
+		return nil
+	}
+	t.Cleanup(func() { forkspace.SignalPID = oldSignal })
+	c := &Control{
+		cfg: &config.Config{RepoOverride: repo},
+		host: Host{EnsureRuntime: func() (containerruntime.Runtime, error) {
+			t.Error("stop consulted the runtime for a fork with an old generation record")
+			return containerruntime.Runtime{}, errors.New("runtime must not be consulted")
+		}},
+	}
+	code, err := c.ForkStop([]string{"perf"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "version 1 generation record from Coop v10.1.2 or earlier") ||
+		!strings.Contains(err.Error(), "coop fork stop perf") || !strings.Contains(err.Error(), "Coop v12.1.0") {
+		t.Fatalf("ForkStop = (%d, %v); want a refusal naming the record and the way to convert it", code, err)
+	}
+	if got, readErr := os.ReadFile(forkspace.GenerationPath(repo, "perf")); readErr != nil || string(got) != record {
+		t.Fatalf("the generation record changed: %q, %v", got, readErr)
+	}
+}
+
+// An execution record an older build left in its fallback folder makes the activity registry
+// unreadable. Stop must refuse before it signals the worker: a stop that kills and then refuses
+// leaves the fork half stopped.
+func TestForkStopRefusesAnUnreadableRegistryBeforeSignaling(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(dir, "runtime")
+	events := filepath.Join(dir, "events")
+	if err := os.MkdirAll(forkspace.Workspace(repo, "perf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(forkspace.StateDir(repo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identity := bindTestFork(t, repo, "perf")
+	worker := exec.Command("sleep", "30")
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = worker.Process.Kill()
+		_ = worker.Wait()
+	})
+	if err := forkspace.WritePid(repo, "perf", worker.Process.Pid, identity.Generation); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := filepath.Join(os.Getenv(forkspace.TestExecutionRegistryRootEnv), fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))))
+	if err := os.MkdirAll(fallback, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fallback, "older.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COOP_TEST_EVENTS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_EVENTS", events)
+	a := &Control{cfg: &config.Config{RepoOverride: repo}, rt: containerruntime.Runtime{Name: runtimeCLI}}
+	code, err := a.ForkStop([]string{"perf"})
+	if code != 1 || err == nil || !strings.Contains(err.Error(), "nothing was stopped") {
+		t.Fatalf("ForkStop with an unreadable registry = (%d, %v), want a refusal before any signal", code, err)
+	}
+	if err := worker.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("the worker was signaled before the refusal: %v", err)
+	}
+	if data, _ := os.ReadFile(events); strings.Contains(string(data), "rm") {
+		t.Fatalf("boxes were removed before the refusal: %q", data)
+	}
+	if !pathExists(forkspace.PidPath(repo, "perf")) {
+		t.Fatal("the worker record was removed")
 	}
 }

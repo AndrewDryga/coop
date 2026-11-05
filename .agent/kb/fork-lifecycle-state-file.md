@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/forkspace/legacy_records.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-11-04
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
@@ -10,17 +10,19 @@ folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
 written only through `forkspace.WorkerState` (`internal/forkspace/state.go`). It has one shape:
 `owner-v2\ngeneration=<id>\n<pid>\n<token>\n` — the worker's pid, its kernel start token (a pid
 reused after a crash or a reboot belongs to another process) and the fork generation it serves.
-`owner-v1` (no generation) is still parsed so an old worker can be stopped. The file exists only
+`owner-v1` (no generation, Coop v8.1.0 and earlier) is refused by name (`ErrOldWorkerState`): stop
+and start print the guarded recovery below, and the file is never changed. The file exists only
 while a worker runs or after one died; there is no start or cleanup state, because the per-fork
 flock already covers both windows.
 
 ## Reading it
 
 Every read of its bytes goes through `ReadWorkerState`, forkctl's included; `ClearPidIfMine`
-compares the same bounded bytes, and `NeedsStop` only asks whether the name exists. Records an
-older build kept in `<repo>-forks/.coop`, where a box whose mount held that folder (another
-project's, through a nested repository or a non-git parent folder) could put anything at the name,
-move in as they are, so `OpenStateFile` opens it with `O_NOFOLLOW|O_NONBLOCK`: a
+compares the same bounded bytes, and `NeedsStop` only asks whether the name exists. Builds up to
+v11.3.0 kept these records in `<repo>-forks/.coop`, where a box whose mount held that folder
+(another project's, through a nested repository or a non-git parent folder) could put anything at
+the name. The private folder is not box-writable, but `OpenStateFile` still opens it with
+`O_NOFOLLOW|O_NONBLOCK`: a
 link fails with ELOOP, a socket with ENXIO (Linux) or EOPNOTSUPP (macOS), and fstat must say
 regular. The record read then stops past 4 KiB (a real record is about 150 bytes). Each refusal
 matches `ErrNotAStateFile` and names what Coop found ("… is a named pipe", "… is 1048576 bytes,
@@ -74,7 +76,7 @@ running, so it does not hold a drained board open.
 
 ## Unsupported state never becomes an identity
 
-`ParseWorkerState` accepts only `owner-v1`/`owner-v2` records naming a pid above 1 and a start
+`ParseWorkerState` accepts only `owner-v2` records naming a pid above 1 and a start
 token of a known shape (`processidentity.Stable`; another system's token passes and is judged
 Foreign). Headerless or malformed bytes fail for a missing supported owner header, a bad pid or a
 missing or unknown token, and `Marshal` refuses the same, so no writer publishes what the readers
@@ -141,20 +143,13 @@ to a process or a container, or prints, it is supervision.
   land, discard, lock and log records are `0600`; opening an existing lock or log also tightens its
   mode. A fork's anchor is a hard link, so a fork needs the forks folder and the private folder on
   one disk (`requireOneDisk` refuses otherwise, naming both).
-- Builds up to v11.3.0 kept the records in `<repo>-forks/.coop`, which a box could write. The first
-  open by a later build moves them (`MoveLegacyForkRecords`, internal/forkspace/legacy_records.go,
-  which every box launch also runs before the box starts): the one time Coop trusts the old place.
-  It opens the forks folder and `.coop` following no link (`openForkHome`), so a box cannot point it
-  at another project's records, and a link or other non-folder at either place is nothing to move:
-  the project gets its empty folder and its box launches go on, while fork commands in the forks
-  folder refuse it; copies each record into folders it makes in a staging folder, so a
-  box that held an old folder or file open keeps writing the old copy; moves generation anchors
-  (each must stay one file with its workspace marker) and logs; publishes with a no-replace rename;
-  then removes the old folder, unless anything had to stay in it (an entry past the bounds, a
-  special file), which keeps it whole. One move runs at a time (`forks/.moving.lock`). A project with
-  nothing to move gets an empty folder at once, so a `.coop` planted later is never read. On
-  another disk an anchor cannot move: it stays, and so does the whole old folder, for an older
-  build. Trap: a project nobody has opened since the upgrade still has its old place open to a box.
+- Builds up to v11.3.0 kept the records in `<repo>-forks/.coop`, which a box could write. Builds
+  from v12.0.0 to v12.1.0 moved them into the private folder on first use. This build does not move
+  them: `RequireNoOldForkRecords` (internal/forkspace/state.go) refuses the project, by name, when
+  `<repo>-forks/.coop` is a real folder holding anything but lock files, on every open of the
+  records folder and on a generation read that finds no record (so a fork whose records are still
+  there never reads as unbound), and leaves the folder as it is. A link or other non-folder there is
+  never followed and holds nothing. The job-source prune treats such a copy as holding forks.
 - `<repo>-forks` still matters: fork commands work in it by name. A writable mount that contains a
   project's own forks folder is refused (`checkAuthoritySource`, `forkHomes`), as it was while
   `.coop` lived there, and `Destroy` removes a fork through the folder's no-follow handle.
@@ -216,6 +211,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-04 — retired the `owner-v1` parse (now `ErrOldWorkerState`, a guarded-recovery refusal in
+  stop and start) and the move of `<repo>-forks/.coop` (now `RequireNoOldForkRecords`); the stop
+  label is always the generation-scoped `v2` owner. Task 2026-11-04-drop-the-old-fork-and-task-record-readers.
 - 2026-11-04 — dropped the clauses naming `confirmForkHomeEntry`, `syncIsolatedPath` and the folder
   syncs: they went with the directory fsyncs on 2026-10-18 (462c87be). Verified against
   `OpenFolder` and its callers in internal/forkspace/forkspace.go.

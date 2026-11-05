@@ -2,11 +2,9 @@ package forkspace
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -139,27 +137,6 @@ func TestForkGenerationRefusesNameWhilePriorSessionWorkspaceIsStaged(t *testing.
 	}
 }
 
-func writeLegacyGenerationRecord(t *testing.T, repo, name string, version int) generationRecord {
-	t.Helper()
-	device, inode, err := workspaceGeneration(repo, name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	record := generationRecord{Version: version, Name: name, Generation: Generation("0123456789abcdef0123456789abcdef"),
-		WorkspaceDevice: device, WorkspaceInode: inode, CreatedAt: time.Now().UTC()}
-	if version == forkGenerationBirthVersion {
-		record.WorkspaceBirthSec = 1
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
-		t.Fatal(err)
-	}
-	return record
-}
-
 func TestForkGenerationDoesNotPersistReusableAllocatorIdentity(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	makeGenerationWorkspace(t, repo, "perf")
@@ -168,10 +145,61 @@ func TestForkGenerationDoesNotPersistReusableAllocatorIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Version != forkGenerationVersion || record.WorkspaceAnchor == "" ||
-		record.WorkspaceDevice != 0 || record.WorkspaceInode != 0 ||
-		record.WorkspaceBirthSec != 0 || record.WorkspaceBirthNsec != 0 {
-		t.Fatalf("generation record retained reusable allocator identity: %+v", record)
+	if record.Version != forkGenerationVersion || record.WorkspaceAnchor == "" {
+		t.Fatalf("generation record is not anchored: %+v", record)
+	}
+	data, err := os.ReadFile(GenerationPath(repo, identity.Name))
+	if err != nil || strings.Contains(string(data), "workspace_inode") || strings.Contains(string(data), "workspace_device") {
+		t.Fatalf("generation record retained reusable allocator identity: %s, %v", data, err)
+	}
+}
+
+// Versions 1 and 2 (inode, and inode plus birth time) were converted by builds up to v12.1.0 when
+// the stopped fork next started. This one refuses them by name, never reads one as no generation,
+// and leaves the file as it is; fork stop and every read report the same refusal.
+func TestOldForkGenerationRecordsAreRefusedByName(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			repo := committedSetupRepo(t)
+			if _, err := Setup(repo, "old"); err != nil {
+				t.Fatal(err)
+			}
+			body := []byte(`{"version":` + string(rune('0'+version)) + `,"name":"old","generation":"0123456789abcdef0123456789abcdef",` +
+				`"workspace_device":1,"workspace_inode":2,"workspace_birth_sec":3,"created_at":"2026-01-02T03:04:05Z"}` + "\n")
+			if err := EnsureStateDir(repo); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(GenerationPath(repo, "old"), body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			check := func(what string, err error) {
+				t.Helper()
+				if err == nil || !strings.Contains(err.Error(), "generation record from Coop v10.1.2 or earlier") ||
+					!strings.Contains(err.Error(), "v12.1.0") || !strings.Contains(err.Error(), "coop fork stop old") {
+					t.Fatalf("%s = %v; want a refusal naming the version and the converting build", what, err)
+				}
+			}
+			_, present, err := ReadGeneration(repo, "old")
+			check("ReadGeneration", err)
+			if present {
+				t.Fatal("an old generation record read as present")
+			}
+			unlock, err := LockState(repo, "old")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = EnsureGenerationLocked(repo, "old")
+			unlock()
+			check("EnsureGenerationLocked", err)
+			_, problems := GenerationIdentities(repo)
+			if len(problems) != 1 {
+				t.Fatalf("GenerationIdentities problems = %v; want the old record reported", problems)
+			}
+			check("ValidateGenerationWorkspace", ValidateGenerationWorkspace(repo, Identity{Name: "old", Generation: "0123456789abcdef0123456789abcdef"}))
+			if after, err := os.ReadFile(GenerationPath(repo, "old")); err != nil || string(after) != string(body) {
+				t.Fatalf("the old generation record changed: %q, %v", after, err)
+			}
+		})
 	}
 }
 
@@ -249,160 +277,6 @@ func TestForkGenerationNormalizesInterruptedSetupExclusions(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("exclude pattern %q count = %d, want 1:\n%s", pattern, count, data)
 		}
-	}
-}
-
-func TestForkGenerationMigratesOnlyStoppedSemanticallyVerifiedLegacyRecords(t *testing.T) {
-	for _, version := range []int{forkGenerationLegacyVersion, forkGenerationBirthVersion} {
-		t.Run(string(rune('0'+version)), func(t *testing.T) {
-			repo := committedSetupRepo(t)
-			if _, err := Setup(repo, "legacy"); err != nil {
-				t.Fatal(err)
-			}
-			legacy := writeLegacyGenerationRecord(t, repo, "legacy", version)
-			if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
-				t.Fatal(err)
-			}
-			unlock, err := LockState(repo, "legacy")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := EnsureGenerationLocked(repo, "legacy"); err == nil {
-				unlock()
-				t.Fatal("active legacy generation was silently migrated")
-			}
-			if err := os.Remove(PidPath(repo, "legacy")); err != nil {
-				unlock()
-				t.Fatal(err)
-			}
-			identity, err := EnsureGenerationLocked(repo, "legacy")
-			unlock()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if identity.Generation != legacy.Generation {
-				t.Fatalf("migration changed logical generation: %s -> %s", legacy.Generation, identity.Generation)
-			}
-			record, err := readGenerationRecord(repo, "legacy")
-			if err != nil || record.Version != forkGenerationVersion || record.WorkspaceAnchor == "" {
-				t.Fatalf("migrated generation = %+v, %v", record, err)
-			}
-			if err := ValidateGenerationWorkspace(repo, identity); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestForkGenerationRefusesLegacyRepositorySemanticMismatch(t *testing.T) {
-	repo := committedSetupRepo(t)
-	ws, err := Setup(repo, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := writeLegacyGenerationRecord(t, repo, "legacy", forkGenerationLegacyVersion)
-	gitIn(t, ws, "config", "remote.origin.url", filepath.Join(t.TempDir(), "other"))
-	unlock, err := LockState(repo, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, migrateErr := EnsureGenerationLocked(repo, "legacy")
-	unlock()
-	if migrateErr == nil {
-		t.Fatal("legacy generation with a different origin was migrated")
-	}
-	record, err := readGenerationRecord(repo, "legacy")
-	if err != nil || record.Version != forkGenerationLegacyVersion || record.Generation != legacy.Generation {
-		t.Fatalf("failed migration changed legacy authority: %+v, %v", record, err)
-	}
-}
-
-func TestLegacyGenerationMigrationRetriesPrivateOnlyAnchor(t *testing.T) {
-	repo := committedSetupRepo(t)
-	if _, err := Setup(repo, "legacy"); err != nil {
-		t.Fatal(err)
-	}
-	legacy := writeLegacyGenerationRecord(t, repo, "legacy", forkGenerationLegacyVersion)
-	if err := EnsureStateDir(repo); err != nil {
-		t.Fatal(err)
-	}
-	state, err := os.OpenRoot(StateDir(repo))
-	if err != nil {
-		t.Fatal(err)
-	}
-	anchored := generationRecord{Version: forkGenerationVersion, Name: legacy.Name,
-		Generation: legacy.Generation, WorkspaceAnchor: forkGenerationAnchorName(legacy.Name, legacy.Generation)}
-	binding := forkGenerationBinding(repo, anchored, state)
-	marker, err := fsidentity.Create(binding)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := marker.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(Workspace(repo, "legacy"), GenerationMarkerName)); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Close(); err != nil {
-		t.Fatal(err)
-	}
-	unlock, err := LockState(repo, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, migrateErr := EnsureGenerationLocked(repo, "legacy")
-	unlock()
-	if migrateErr != nil || identity.Generation != legacy.Generation {
-		t.Fatalf("private-only interrupted migration = %+v, %v", identity, migrateErr)
-	}
-	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestForkGenerationMigrationRefusesPoisonedCommonGitDirectory(t *testing.T) {
-	repo := committedSetupRepo(t)
-	ws, err := Setup(repo, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := writeLegacyGenerationRecord(t, repo, "legacy", forkGenerationLegacyVersion)
-	victim := filepath.Join(t.TempDir(), "victim")
-	gitIn(t, filepath.Dir(victim), "clone", "-q", repo, victim)
-	gitIn(t, victim, "branch", "legacy")
-	victimExclude := filepath.Join(victim, ".git", "info", "exclude")
-	before, err := os.ReadFile(victimExclude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ws, ".git", "commondir"), []byte(filepath.Join(victim, ".git")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// The poisoned view still satisfies the old semantic checks: its HEAD names the expected
-	// branch and the sibling clone names the canonical project as its origin.
-	if branch, err := gitOutputContext(context.Background(), ws, "symbolic-ref", "--quiet", "--short", "HEAD"); err != nil || branch != "legacy" {
-		t.Fatalf("positive control branch = %q, %v", branch, err)
-	}
-	if origin, ok, err := gitConfigContext(context.Background(), ws, "remote.origin.url"); err != nil || !ok || filepath.Clean(origin) != filepath.Clean(repo) {
-		t.Fatalf("positive control origin = %q, ok=%v, err=%v", origin, ok, err)
-	}
-
-	unlock, err := LockState(repo, "legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, migrateErr := EnsureGenerationLocked(repo, "legacy")
-	unlock()
-	if migrateErr == nil {
-		t.Fatal("legacy migration followed a repository-controlled common Git directory")
-	}
-	after, err := os.ReadFile(victimExclude)
-	if err != nil || string(after) != string(before) {
-		t.Fatalf("legacy migration changed sibling exclude: %q, %v", after, err)
-	}
-	record, err := readGenerationRecord(repo, "legacy")
-	if err != nil || record.Version != forkGenerationLegacyVersion || record.Generation != legacy.Generation {
-		t.Fatalf("failed migration changed legacy authority: %+v, %v", record, err)
 	}
 }
 
@@ -515,7 +389,8 @@ func TestForkGenerationAdoptsOnlyStoppedLegacyWorkspace(t *testing.T) {
 	if err := os.MkdirAll(StateDir(repo), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteWorkerState(repo, "legacy", WorkerState{Pid: 2147483646, Token: starttoken.Stale()}); err != nil {
+	// A record of Coop v8.1.0 or earlier, written by hand: it names no generation.
+	if err := os.WriteFile(PidPath(repo, "legacy"), []byte("owner-v1\n2147483646\n"+starttoken.Stale()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := LockState(repo, "legacy")
@@ -601,55 +476,5 @@ func TestForkGenerationPublicationLeavesOneLinkAndNoTemporaryAuthority(t *testin
 	}
 	if len(matches) != 0 {
 		t.Fatalf("temporary generation authorities remain: %v", matches)
-	}
-}
-
-// A build before this one kept fork records in <repo>-forks/.coop. The first use moves them, once,
-// and the fork still validates: its anchor and marker are still one inode. A .coop planted
-// afterwards is never read, and a link in its place is never followed: nothing behind it moves.
-func TestForkRecordsMoveOnceFromTheForksFolder(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "project")
-	makeGenerationWorkspace(t, repo, "perf")
-	identity := ensureTestGeneration(t, repo, "perf")
-	legacy := filepath.Join(Home(repo), ".coop")
-	if err := os.Rename(recordsPath(repo), legacy); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
-		t.Fatalf("the moved records lost the fork: %v", err)
-	}
-	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the old records folder is still there: %v", err)
-	}
-	if err := os.MkdirAll(legacy, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "planted.pid"), []byte("owner-v2\npid=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	names, err := LifecycleNames(repo)
-	if err != nil || slices.Contains(names, "planted") {
-		t.Fatalf("lifecycle names = %v, %v; a .coop planted after the move was read", names, err)
-	}
-
-	other := filepath.Join(t.TempDir(), "other")
-	if err := os.MkdirAll(Home(other), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	behind := t.TempDir()
-	if err := os.WriteFile(filepath.Join(behind, "elsewhere.pid"), []byte("owner-v2\npid=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(behind, filepath.Join(Home(other), ".coop")); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureStateDir(other); err != nil {
-		t.Fatal(err)
-	}
-	if moved, err := os.ReadDir(recordsPath(other)); err != nil || len(moved) != 0 {
-		t.Fatalf("records after a linked old folder = %v, %v; want an empty folder", moved, err)
-	}
-	if _, err := os.Stat(filepath.Join(behind, "elsewhere.pid")); err != nil {
-		t.Fatalf("what the link led to was moved: %v", err)
 	}
 }

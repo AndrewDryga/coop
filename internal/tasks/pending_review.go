@@ -23,12 +23,11 @@ import (
 const (
 	// A version 1 record also pinned its subject's commit IDs. Version 2 finds the subject's commit by
 	// its Coop-Task trailer instead, so a signing pass leaves the record valid.
-	pendingReviewVersion       = 2
-	pendingReviewLegacyVersion = 1
-	pendingReviewPlanVersion   = 1
-	pendingReviewFileSuffix    = ".pending-review.json"
-	pendingReviewFileLimit     = 256 << 10
-	pendingReviewScanLimit     = 4096
+	pendingReviewVersion     = 2
+	pendingReviewPlanVersion = 1
+	pendingReviewFileSuffix  = ".pending-review.json"
+	pendingReviewFileLimit   = 256 << 10
+	pendingReviewScanLimit   = 4096
 )
 
 type PendingReviewPhase string
@@ -526,18 +525,22 @@ func backToSignoff(record *PendingReviewRecord) {
 	record.Reviewed = nil
 }
 
-// decodePendingReviewRecord reads a record, converting a version 1 one (legacy) to version 2. Its
-// bindings named commit IDs that a signing pass replaces, so reading drops them: the subject's commit
-// is found by trailer like a version 2 one.
-func decodePendingReviewRecord(data []byte) (record PendingReviewRecord, legacy bool, err error) {
+func decodePendingReviewRecord(data []byte) (PendingReviewRecord, error) {
+	var record PendingReviewRecord
 	if err := json.Unmarshal(data, &record); err != nil {
-		return PendingReviewRecord{}, false, err
+		return PendingReviewRecord{}, err
 	}
-	if record.Version == pendingReviewLegacyVersion {
-		record.Version = pendingReviewVersion
-		return record, true, nil
+	return record, nil
+}
+
+// refuseOldPendingReview names a version 1 record, which pinned its subject's commit IDs. Builds
+// after v11.3.0 and up to v12.1.0 read it without them and stored version 2; this one leaves the
+// file as it is and stops, so the review is neither dropped nor started over.
+func refuseOldPendingReview(record PendingReviewRecord, name string) error {
+	if record.Version != 1 {
+		return nil
 	}
-	return record, false, nil
+	return fmt.Errorf("pending final review record %q is version 1, from Coop v11.3.0 or earlier, which this Coop no longer reads — Coop left it unchanged; finish the review once with Coop v12.1.0, which stores it as version 2, then retry", name)
 }
 
 func validatePendingReviewPlan(plan PendingReviewPlan) error {
@@ -619,6 +622,9 @@ func validatePendingReviewRecord(record PendingReviewRecord) error {
 }
 
 func validatePendingReviewSubject(task TaskInstance, fingerprint CompletionFingerprint) error {
+	if err := refuseOldCompletionFingerprint(fingerprint, "pending final review of "+task.Ref.ID); err != nil {
+		return err
+	}
 	if task.Ref.ID == "" || !durableIdentityRE.MatchString(task.Ref.QueueID) ||
 		!durableIdentityRE.MatchString(task.Ref.TaskID) || task.Generation.Device == 0 ||
 		task.Generation.Inode == 0 || fingerprint.Device != task.Generation.Device ||
@@ -646,9 +652,12 @@ func readPendingReviewRecord(root, id string) (PendingReviewRecord, bool, error)
 	if err != nil {
 		return PendingReviewRecord{}, false, err
 	}
-	record, _, err := decodePendingReviewRecord(data)
+	record, err := decodePendingReviewRecord(data)
 	if err != nil {
 		return PendingReviewRecord{}, false, fmt.Errorf("decode pending-review record %q: %w", name, err)
+	}
+	if err := refuseOldPendingReview(record, name); err != nil {
+		return PendingReviewRecord{}, false, err
 	}
 	if err := validatePendingReviewRecord(record); err != nil {
 		return PendingReviewRecord{}, false, fmt.Errorf("validate pending-review record %q: %w", name, err)
@@ -939,12 +948,15 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if readErr != nil {
 			return PendingReviewCohort{}, readErr
 		}
-		record, legacy, decodeErr := decodePendingReviewRecord(data)
+		record, decodeErr := decodePendingReviewRecord(data)
 		if decodeErr != nil {
 			return PendingReviewCohort{}, fmt.Errorf("decode pending-review record %q: %w", entry.Name(), decodeErr)
 		}
 		if record.Plan.Workspace != workspace {
 			continue
+		}
+		if err := refuseOldPendingReview(record, entry.Name()); err != nil {
+			return PendingReviewCohort{}, err
 		}
 		if err := validatePendingReviewRecord(record); err != nil {
 			return PendingReviewCohort{}, fmt.Errorf("validate pending-review record %q: %w", entry.Name(), err)
@@ -965,20 +977,6 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		}
 		if err := pendingReviewPlanMatches(repo, hosts, record.Plan); err != nil {
 			return PendingReviewCohort{}, err
-		}
-		if legacy {
-			// Version 1 pinned the commit wherever it was, so one from before the run base gets the
-			// anchor a new enrollment would give it, once.
-			base, err := pendingReviewNewBase(repo, record)
-			if err != nil {
-				return PendingReviewCohort{}, err
-			}
-			if base != record.Base {
-				record.Base = base
-				if err := writePendingReviewRecord(root, record); err != nil {
-					return PendingReviewCohort{}, err
-				}
-			}
 		}
 		if len(cohort.Subjects) > 0 && !pendingReviewPlanEqual(cohort.Plan, record.Plan) {
 			return PendingReviewCohort{}, errors.New("pending final reviews have different stored review plans; finish the oldest cohort explicitly")
@@ -1258,9 +1256,14 @@ func workspacePendingReviews(workspace string) ([]PendingReviewRecord, error) {
 			if err != nil {
 				continue
 			}
-			record, _, err := decodePendingReviewRecord(data)
-			if err == nil && record.Plan.Workspace == workspace && validatePendingReviewRecord(record) == nil {
-				records = append(records, record)
+			record, err := decodePendingReviewRecord(data)
+			if err == nil && record.Plan.Workspace == workspace {
+				if err := refuseOldPendingReview(record, entry.Name()); err != nil {
+					return nil, err
+				}
+				if validatePendingReviewRecord(record) == nil {
+					records = append(records, record)
+				}
 			}
 		}
 		if errors.Is(readErr, io.EOF) {

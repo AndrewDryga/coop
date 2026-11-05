@@ -284,8 +284,8 @@ func TestInterruptedOldCreateCannotRelabelItsPublishedReservation(t *testing.T) 
 	if _, err := service.replayCreateOperation(t.Context(), op); session.CodeOf(err) != session.CodeOperationUncertain {
 		t.Fatalf("old create replay = %v, want uncertain", err)
 	}
-	if current, present, err := forkspace.ReadWorkspaceReservation(repo, identity); err != nil || !present || current.Version != 1 {
-		t.Fatalf("old reservation changed: %+v present=%t err=%v", current, present, err)
+	if current := readVersion1Reservation(t, repo, identity); current.Version != 1 {
+		t.Fatalf("old reservation changed: %+v", current)
 	}
 	if _, err := os.Stat(workspace); err != nil {
 		t.Fatalf("old workspace was changed: %v", err)
@@ -1093,9 +1093,8 @@ func TestLegacySessionForkAuthorityRejectsSameNameReplacement(t *testing.T) {
 	if persisted.ForkGeneration != "" {
 		t.Fatalf("replacement generation was adopted: %+v", persisted)
 	}
-	reservation, ok, err := forkspace.ReadWorkspaceReservation(repo, identity)
-	if err != nil || !ok || reservation.OwnerID != "foreign-session" {
-		t.Fatalf("foreign reservation changed: %+v, ok=%v, err=%v", reservation, ok, err)
+	if reservation := readVersion1Reservation(t, repo, identity); reservation.OwnerID != "foreign-session" {
+		t.Fatalf("foreign reservation changed: %+v", reservation)
 	}
 }
 
@@ -1113,9 +1112,8 @@ func TestLegacySessionForkAuthorityDoesNotRelabelExactReservation(t *testing.T) 
 	if err != nil || persisted.ForkGeneration != "" {
 		t.Fatalf("legacy session was relabeled: %+v, err=%v", persisted, err)
 	}
-	reservation, present, err := forkspace.ReadWorkspaceReservation(repo, identity)
-	if err != nil || !present || reservation.Version != 1 || reservation.OwnerStoreID != "" {
-		t.Fatalf("legacy reservation changed: %+v, present=%t, err=%v", reservation, present, err)
+	if reservation := readVersion1Reservation(t, repo, identity); reservation.Version != 1 || reservation.OwnerStoreID != "" {
+		t.Fatalf("legacy reservation changed: %+v", reservation)
 	}
 }
 
@@ -5619,4 +5617,23 @@ func selfContainedCompanionForTest(t *testing.T, source, workspace, commit strin
 		[]byte(sessionCompanionHistoryFull), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// readVersion1Reservation reads a version 1 workspace reservation's file as it is. Coop no longer
+// reads one: ReadWorkspaceReservation refuses it by name, so the tests that prove it was left
+// alone look at the bytes.
+func readVersion1Reservation(t *testing.T, repo string, identity forkspace.Identity) forkspace.WorkspaceReservation {
+	t.Helper()
+	if _, _, err := forkspace.ReadWorkspaceReservation(repo, identity); err == nil || !strings.Contains(err.Error(), "version 1 fork workspace reservation") {
+		t.Fatalf("ReadWorkspaceReservation = %v; want a refusal naming the version 1 reservation", err)
+	}
+	data, err := os.ReadFile(filepath.Join(forkspace.StateDir(repo), "reservations", identity.Name+"."+string(identity.Generation)+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record forkspace.WorkspaceReservation
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	return record
 }

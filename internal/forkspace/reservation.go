@@ -44,8 +44,7 @@ type WorkspaceReservation struct {
 	CreatedAt    time.Time                `json:"created_at"`
 }
 
-// MatchesSessionOwner is the only authorization comparison for a session reservation. A v1
-// record remains visible to fork guards but cannot gain a store owner by inference.
+// MatchesSessionOwner is the only authorization comparison for a session reservation.
 func (r WorkspaceReservation) MatchesSessionOwner(storeID, sessionID string) bool {
 	return r.Version == workspaceReservationVersion && r.Kind == WorkspaceReservationRemoteSession &&
 		storeID != "" && r.OwnerStoreID == storeID && r.OwnerID == sessionID
@@ -78,13 +77,17 @@ func validReservationOwner(value string) bool {
 }
 
 func validateWorkspaceReservation(record WorkspaceReservation) error {
-	if (record.Version != 1 && record.Version != workspaceReservationVersion) || !ValidExistingName(record.Fork.Name) ||
+	if record.Version == 1 {
+		// A version 1 record has no store owner, so no session may claim it; it keeps the fork name
+		// and every reservation read refused until a build that converts it has handled it.
+		return errors.New("a version 1 fork workspace reservation from Coop v10.1.2 or earlier, which this Coop no longer reads — Coop left it unchanged and the fork name stays blocked; inspect it, recover it offline, or end its session with Coop v12.1.0")
+	}
+	if record.Version != workspaceReservationVersion || !ValidExistingName(record.Fork.Name) ||
 		!ValidGeneration(record.Fork.Generation) || record.Kind != WorkspaceReservationRemoteSession ||
 		!validReservationOwner(record.OwnerID) || record.CreatedAt.IsZero() {
 		return errors.New("invalid fork workspace reservation")
 	}
-	if record.Version == 1 && record.OwnerStoreID != "" ||
-		record.Version == workspaceReservationVersion && !validReservationOwner(record.OwnerStoreID) {
+	if !validReservationOwner(record.OwnerStoreID) {
 		return errors.New("invalid fork workspace reservation owner store")
 	}
 	return nil
@@ -106,8 +109,7 @@ func decodeWorkspaceReservation(data []byte) (WorkspaceReservation, error) {
 	return record, validateWorkspaceReservation(record)
 }
 
-// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
-// could write, move into Coop's private state once, as they are.
+// Stays bounded and no-follow, as every read of a record a box could once write.
 func readWorkspaceReservationFile(root *os.Root, name string) (WorkspaceReservation, error) {
 	data, err := ReadRecordIn(root, name, "workspace reservation", workspaceReservationLimit)
 	if err != nil {
@@ -121,9 +123,6 @@ func readWorkspaceReservationFile(root *os.Root, name string) (WorkspaceReservat
 func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if err := validateWorkspaceReservation(record); err != nil {
 		return err
-	}
-	if record.Version != workspaceReservationVersion {
-		return errors.New("cannot publish an old-format workspace reservation")
 	}
 	if err := ValidateGenerationWorkspace(repo, record.Fork); err != nil {
 		return err
@@ -240,9 +239,6 @@ func RequireForkNameAvailable(repo, name string) error {
 }
 
 func reservationConflictError(name string, record WorkspaceReservation) error {
-	if record.Version == 1 {
-		return fmt.Errorf("fork %s has an old session reservation without a proven store owner — inspect and recover it offline", name)
-	}
 	return fmt.Errorf("fork %s is owned by %s %s — ask the owning session service to discard it",
 		name, record.Kind, record.OwnerID)
 }
@@ -250,9 +246,6 @@ func reservationConflictError(name string, record WorkspaceReservation) error {
 func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceReservation) error {
 	if err := validateWorkspaceReservation(expected); err != nil {
 		return err
-	}
-	if expected.Version != workspaceReservationVersion {
-		return errors.New("cannot remove an old-format workspace reservation")
 	}
 	root, err := OpenStateRoot(repo, reservationFolder, false)
 	if errors.Is(err, os.ErrNotExist) {

@@ -106,6 +106,7 @@
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
 <li><a href="#unreleased-logins-and-history-from-before-v11-are-not-converted">Unreleased: logins and history from before v11 are not converted</a></li>
+<li><a href="#unreleased-old-fork-and-task-records-are-refused-not-converted">Unreleased: old fork and task records are refused, not converted</a></li>
 <li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
 <li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
 <li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
@@ -159,6 +160,36 @@ same: open that project once with Coop v12.1.0 or earlier, then upgrade.</li>
 <li>History and editor threads never imported stay in the old folders. They are not read, and a thread
 from before v11 reopens by its editor id only.</li>
 </ul>
+</section><section class="doc-section reference-section" id="unreleased-old-fork-and-task-records-are-refused-not-converted"><h2>Unreleased: old fork and task records are refused, not converted</h2>
+<p>co:op no longer converts the fork and task records that builds up to v12.1.0 could. It refuses
+them by name and leaves them as they are. Coop v12.1.0 is the last release that converts them. If
+<code>coop fork ls</code> or <code>coop tasks</code> names one of these records, open the project once with v12.1.0, then
+come back. Check before you upgrade; most installations have none.</p>
+<ul>
+<li><strong>Fork generation records of version 1 or 2.</strong> The refusal says &#34;version 1 generation record&#34; or
+&#34;version 2&#34;. Run <code>coop fork stop &lt;name&gt;</code>, then start the fork once with v12.1.0
+(<code>coop fork &lt;name&gt; &lt;agent&gt;</code>). It anchors the fork as version 3.</li>
+<li><strong>Version 1 workspace reservations.</strong> Every read of the project&#39;s reservations fails and the fork
+name stays blocked. Recover it offline, or end the remote session that made it with v12.1.0.</li>
+<li><strong>Version 1 review candidates, and lands that lost their candidate record.</strong> Run the review or
+<code>coop fork merge &lt;name&gt;</code> once with v12.1.0.</li>
+<li><strong>Version 1 task owner records (a <code>coop tasks claim</code> from v8.1.0 or earlier).</strong> Release the claim
+with v12.1.0: <code>coop tasks release &lt;id&gt;</code>.</li>
+<li><strong>Version 1 pending final reviews, completion fingerprints without <code>tree_format</code>, and a
+completion window&#39;s <code>allowed_done_departure</code>.</strong> Finish the loop or review that left them with
+v12.1.0.</li>
+<li><strong><code>owner-v1</code> worker records</strong> (<code>&lt;name&gt;.pid</code>, from v8.1.0 or earlier). <code>coop fork stop &lt;name&gt;</code>
+prints the steps that stop the worker and remove the file. Coop never edits a worker record.</li>
+<li><strong>A discard interrupted by a build that let the fork take new work.</strong> The refusal says the fork
+&#34;holds an assignment its interrupted discard did not journal&#34;. Finish it with v12.1.0:
+<code>coop fork rm &lt;name&gt; --force</code>.</li>
+<li><strong>Execution records in <code>~/.local/state/coop/executions/v1/&lt;key&gt;/</code>.</strong> Each is reported by path. If
+its process is gone, remove the file. Otherwise stop that process first.</li>
+<li><strong>Fork records still in <code>&lt;project&gt;-forks/.coop</code>.</strong> Anything but lock files there is refused. Open
+the project once with v12.1.0 (any fork command), which moves them to
+<code>~/.local/state/coop/forks/&lt;key&gt;/</code>.</li>
+</ul>
+<p>Nothing the new version refuses is changed, so v12.1.0 reads it as it always did.</p>
 </section><section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
 <p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does
 on every other agent. To pick a profile, use <code>coop codex --profile &lt;name&gt;</code>.</p>

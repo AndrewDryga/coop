@@ -885,7 +885,6 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := index.Windows[windowID]
-	record.AllowedDoneDeparture = task.ID
 	record.AllowedDoneDepartures = []string{task.ID, "keep-other-task"}
 	record.BaselineMutations = []string{task.ID, "keep-other-task"}
 	record.RecoveredDepartures = []string{task.ID, "keep-other-task"}
@@ -924,8 +923,7 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	if _, ok := record.Baseline[task.ID]; ok {
 		t.Fatal("removed task survived in the stale completion-window baseline")
 	}
-	if record.AllowedDoneDeparture != "" ||
-		len(record.AllowedDoneDepartures) != 1 || record.AllowedDoneDepartures[0] != "keep-other-task" ||
+	if len(record.AllowedDoneDepartures) != 1 || record.AllowedDoneDepartures[0] != "keep-other-task" ||
 		len(record.BaselineMutations) != 1 || record.BaselineMutations[0] != "keep-other-task" ||
 		len(record.RecoveredDepartures) != 1 || record.RecoveredDepartures[0] != "keep-other-task" ||
 		len(record.ReviewSubjects) != 0 || !record.ReviewSubjectScoped || record.WorkSubject != "" {
@@ -1872,8 +1870,8 @@ func TestRunDecisionBrowserDelete(t *testing.T) {
 	}
 	index.Windows[windowID] = CompletionWindowRecord{
 		Baseline: map[string]CompletionFingerprint{
-			decisions[0].ID: {},
-			decisions[1].ID: {},
+			decisions[0].ID: {TreeFormat: completionTreeFormat},
+			decisions[1].ID: {TreeFormat: completionTreeFormat},
 		},
 		ReviewWindow:   true,
 		ReviewSubjects: []string{decisions[0].ID, decisions[1].ID},

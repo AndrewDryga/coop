@@ -3,15 +3,16 @@ name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
 sources: [internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go]
-updated: 2026-09-13
+updated: 2026-11-04
 ---
 
 A task fork's land authority is one exact candidate ID, HEAD, tree, assignment set and projection
 digest set. The mutable generation manifest at the historical candidate path points at immutable
 round records under `.coop/candidate-history/<name>.<generation>/`; normal reads follow the current
-reference and its direct predecessor rather than scanning history. A valid legacy v1 candidate
-adopts as round one under the fork lifecycle lock. Unknown, malformed, linked or inconsistent
-state refuses instead of falling back.
+reference and its direct predecessor rather than scanning history. A bare version 1 candidate file,
+which Coop v12.1.0 adopted as round one at the next change, is refused by name and left as it is, as
+is a land whose candidate pointer is gone (v10.1.2 and earlier removed it before the land journal).
+Unknown, malformed, linked or inconsistent state refuses instead of falling back.
 
 The live phases are `active`, `superseding`, `reviewing` and `publishing`. Supersession makes the
 old round non-landable before returning its exact owners to review. The loop then freezes a pending
@@ -28,5 +29,7 @@ merge, the zero-ahead decision happens under the same lifecycle lock after land-
 fork is skipped only when it has neither commits nor active candidate/task bookkeeping.
 
 ## Changelog
+- 2026-11-04 — the version 1 candidate adoption and the land recovery that rebuilt round one are
+  retired; both refuse by name (task 2026-11-04-drop-the-old-fork-and-task-record-readers).
 - 2026-09-13 — created from the iterative review-round implementation and its migration,
   interruption, mutation, discard and zero-ahead replay tests.

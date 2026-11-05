@@ -88,7 +88,8 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A copy whose forks folder holds only the records an older build kept there holds no fork.
+	// A copy whose forks folder holds records an older build kept there is not pruned: they are
+	// refused, not moved or read, so nothing says they hold no fork.
 	legacy := stage("legacy-records", 12, unused)
 	legacyRecords := filepath.Join(forkspace.Home(repository(legacy)), ".coop", "executions")
 	if err := os.MkdirAll(legacyRecords, 0o700); err != nil {
@@ -102,8 +103,7 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// An old .coop that stayed where it was, as one whose anchor could not cross disks does, holds
-	// no fork either.
+	// An old .coop with nothing in it holds no fork.
 	stayed := stage("stayed-records", 16, unused)
 	if err := forkspace.EnsureStateDir(repository(stayed)); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 		}
 	}
 	slices.Sort(gone)
-	if want := []string{"discarded", "legacy-records", "old-task", "older", "other-older", "stayed-records", "unused"}; !slices.Equal(gone, want) || removed != len(want) {
+	if want := []string{"discarded", "old-task", "older", "other-older", "stayed-records", "unused"}; !slices.Equal(gone, want) || removed != len(want) {
 		t.Fatalf("removed %d: %v, want %v", removed, gone, want)
 	}
 	entries, err := os.ReadDir(root)
@@ -163,7 +163,10 @@ func TestPruningRemovesOnlyStagedSourcesNoSessionCanStillUse(t *testing.T) {
 			t.Fatalf("a removed copy left %s behind", entry.Name())
 		}
 	}
-	for _, records := range []string{unusedRecords, forkspace.StateDir(repository(legacy))} {
+	if _, err := os.Stat(filepath.Join(forkspace.Home(repository(legacy)), ".coop", "executions", "run.json")); err != nil {
+		t.Fatalf("the old fork records of a kept copy changed: %v", err)
+	}
+	for _, records := range []string{unusedRecords} {
 		if entries, err := os.ReadDir(records); len(entries) != 0 {
 			t.Fatalf("a removed copy left its fork records behind in %s: %v %v", records, entries, err)
 		}

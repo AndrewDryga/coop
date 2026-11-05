@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-// readForkRegistryFile keeps migrated and current registry reads on the same
+// readForkRegistryFile gives every registry read the same
 // bounded, single-link policy. Typed decoding and record custody stay with callers.
 func readForkRegistryFile(root *os.Root, name, kind string, limit int64) ([]byte, error) {
 	info, err := root.Lstat(name)

@@ -467,10 +467,14 @@ func TestTrustedManualCompletionConsumesAuditReopenGeneration(t *testing.T) {
 func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 	t.Run("round trip", func(t *testing.T) {
 		root := t.TempDir()
-		want := TaskOwnerRecord{
-			Version: taskOwnerRecordVersion, TaskID: "round-trip", Source: taskOwnerSourceInteractiveClaim,
-			User: "ada", Host: "workstation", ClaimedAt: time.Now().Truncate(time.Second),
+		item := taskForLease(t, root, StateInProgress, "round-trip")
+		instance, err := EnsureTaskInstance(root, item)
+		if err != nil {
+			t.Fatal(err)
 		}
+		want := humanOwnerRecordForTest("round-trip")
+		want.Task = &instance
+		want.ClaimedAt = want.ClaimedAt.Truncate(time.Second)
 		if err := writeTaskOwnerRecord(root, want); err != nil {
 			t.Fatal(err)
 		}
@@ -502,10 +506,13 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 
 	t.Run("mismatched task id is rejected, not silently absent", func(t *testing.T) {
 		root := t.TempDir()
-		record := TaskOwnerRecord{
-			Version: taskOwnerRecordVersion, TaskID: "task-a", Source: taskOwnerSourceInteractiveClaim,
-			User: "ada", Host: "workstation", ClaimedAt: time.Now(),
+		item := taskForLease(t, root, StateInProgress, "task-a")
+		instance, err := EnsureTaskInstance(root, item)
+		if err != nil {
+			t.Fatal(err)
 		}
+		record := humanOwnerRecordForTest("task-a")
+		record.Task = &instance
 		if err := writeTaskOwnerRecord(root, record); err != nil {
 			t.Fatal(err)
 		}
@@ -552,7 +559,7 @@ func TestTaskOwnerRecordRoundTripsMismatchAndCorruption(t *testing.T) {
 
 	t.Run("write validates before touching disk", func(t *testing.T) {
 		root := t.TempDir()
-		bad := TaskOwnerRecord{Version: taskOwnerRecordVersion, TaskID: "bad", Source: ""} // no source/user/host/time
+		bad := TaskOwnerRecord{Version: taskOwnershipRecordVersion, TaskID: "bad", Kind: TaskOwnerHuman} // no task/source/user/host/time
 		if err := writeTaskOwnerRecord(root, bad); err == nil {
 			t.Fatal("write accepted an incomplete owner record")
 		}

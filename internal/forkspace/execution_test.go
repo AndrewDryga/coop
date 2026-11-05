@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -248,22 +249,25 @@ func TestExecutionRegistryReportsCorruptSiblingWithoutHidingHealthy(t *testing.T
 	}
 }
 
-// Builds whose project registry sat next to the project wrote to a fallback when it could not be
-// made. A record one left there is still read, updated and ended for one upgrade, and every new
-// record goes to the project's own registry.
-func TestExecutionRegistryReadsTheFallbackAnOlderBuildWrote(t *testing.T) {
+// Builds up to v12.1.0 wrote to a fallback registry when the project's own could not be made. This
+// one no longer reads it: a record left there is reported by path as a problem, which blocks every
+// fork mutation, and the file stays as it is. Every new record goes to the project's own registry.
+func TestExecutionRegistryRefusesTheFallbackAnOlderBuildWrote(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	workspace := filepath.Join(repo, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
-	fallback, err := fallbackExecutionDir(repo)
+	fallback, err := oldExecutionDir(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureFallbackExecutionDir(fallback); err != nil {
+	if err := os.MkdirAll(fallback, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if observations, problems := Executions(repo); len(observations) != 0 || len(problems) != 0 {
+		t.Fatalf("an empty old folder: observations = %#v, problems = %v", observations, problems)
 	}
 	old := ExecutionRecord{Version: executionRecordVersion, ID: newExecutionID(), Kind: ExecutionInteractive,
 		Role: ExecutionRoleActive, Workspace: workspace, SourceID: "older-build", PID: os.Getpid(),
@@ -272,23 +276,31 @@ func TestExecutionRegistryReadsTheFallbackAnOlderBuildWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fallback, old.ID+".json"), append(body, '\n'), 0o600); err != nil {
+	path := filepath.Join(fallback, old.ID+".json")
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	observations, problems := Executions(repo)
-	if len(problems) != 0 || len(observations) != 1 || observations[0].Record.ID != old.ID {
-		t.Fatalf("observations = %#v, problems=%v; want the older build's record", observations, problems)
+	if len(observations) != 0 || len(problems) != 1 || !strings.Contains(problems[0].Error(), path) ||
+		!strings.Contains(problems[0].Error(), "v12.1.0") {
+		t.Fatalf("observations = %#v, problems = %v; want the older build's record reported by path", observations, problems)
 	}
-	if err := UpdateExecutionRoleBySource(repo, "older-build", ExecutionRoleWarm); err != nil {
+	if err := UpdateExecutionRoleBySource(repo, "older-build", ExecutionRoleWarm); err == nil {
+		t.Fatal("the older build's record was updated")
+	}
+	if err := EndExecution(repo, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := EndExecution(repo, observations[0].Record); err != nil {
-		t.Fatal(err)
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(append(body, '\n')) {
+		t.Fatalf("the older build's record changed: %q, %v", after, err)
 	}
-	if _, err := os.Lstat(filepath.Join(fallback, old.ID+".json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the older build's record after its end: %v", err)
+	if registries, err := ExecutionRegistryDirs(repo); err != nil || !slices.Contains(registries, fallback) {
+		t.Fatalf("ExecutionRegistryDirs = %v, %v; want the old folder still fenced", registries, err)
 	}
 
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	record, err := BeginExecution(repo, ExecutionSpec{Kind: ExecutionInteractive, Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)

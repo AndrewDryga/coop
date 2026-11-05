@@ -479,7 +479,10 @@ func TestForkDiscardReplayRecognizesDroppedUnreviewedAttempt(t *testing.T) {
 	}
 }
 
-func TestForkCandidateLegacyAdoptionAndStrictStateRefusals(t *testing.T) {
+// A bare version 1 candidate, from Coop v10.1.2 or earlier, was adopted into round history by the
+// next change. It is refused by name on every read and change, left exactly as it was, and never read
+// as no candidate. The other states this reader refuses stay refused.
+func TestForkCandidateVersion1IsRefusedAndStrictStateRefusals(t *testing.T) {
 	f := newCandidateRoundFixture(t, "alpha")
 	if err := validateForkCandidateManifest(forkCandidateManifest{
 		Version: forkCandidateManifestVersion, Fork: f.identity, Phase: forkCandidateLanded, UpdatedAt: time.Now().UTC(),
@@ -504,21 +507,28 @@ func TestForkCandidateLegacyAdoptionAndStrictStateRefusals(t *testing.T) {
 	if err := os.WriteFile(ForkCandidatePath(f.repo, f.identity), append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(forkspace.LandIntentPath(f.repo, f.identity), []byte("malformed\n"), 0o600); err != nil {
-		t.Fatal(err)
+	refused := func(what string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "version 1 review candidate") || !strings.Contains(err.Error(), "v12.1.0") {
+			t.Fatalf("%s = %v; want a refusal naming version 1 and the converting build", what, err)
+		}
 	}
-	if _, _, err := BeginForkCandidateReview(f.repo, f.identity, head, tree); err == nil || !strings.Contains(err.Error(), "unfinished merge") {
-		t.Fatalf("legacy adoption crossed land intent: %v", err)
+	_, _, err = BeginForkCandidateReview(f.repo, f.identity, head, tree)
+	refused("BeginForkCandidateReview", err)
+	_, exists, err := ReadForkCandidate(f.repo, f.identity)
+	refused("ReadForkCandidate", err)
+	if exists {
+		t.Fatal("a version 1 candidate read as present")
 	}
-	if err := os.Remove(forkspace.LandIntentPath(f.repo, f.identity)); err != nil {
-		t.Fatal(err)
+	_, err = SupersedeStaleForkCandidate(f.repo, f.identity, head)
+	refused("SupersedeStaleForkCandidate", err)
+	refused("DiscardForkCandidateStateLocked", DiscardForkCandidateStateLocked(f.repo, f.identity))
+	refused("MarkForkCandidateLandedLocked", MarkForkCandidateLandedLocked(f.repo, candidate))
+	if after, err := os.ReadFile(ForkCandidatePath(f.repo, f.identity)); err != nil || string(after) != string(append(body, '\n')) {
+		t.Fatalf("the version 1 candidate changed: %q, %v", after, err)
 	}
-	review, exists, err := BeginForkCandidateReview(f.repo, f.identity, head, tree)
-	if err != nil || !exists || review.Required || review.Candidate.ID != candidate.ID || review.Round != 1 {
-		t.Fatalf("legacy adoption = %+v, exists=%v err=%v", review, exists, err)
-	}
-	if _, err := readForkCandidateRound(f.repo, f.identity, forkCandidateRef{Round: 1, ID: candidate.ID}); err != nil {
-		t.Fatalf("adopted history: %v", err)
+	if _, err := os.Lstat(forkCandidateHistoryDir(f.repo, f.identity)); err == nil {
+		t.Fatal("a refused version 1 candidate left round history behind")
 	}
 	if err := os.WriteFile(ForkCandidatePath(f.repo, f.identity), []byte("{\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -574,7 +584,9 @@ func TestForkCandidateLegacyAdoptionAndStrictStateRefusals(t *testing.T) {
 	}
 }
 
-func TestForkCandidateRecoversLegacyLandAfterCandidatePointerRemoval(t *testing.T) {
+// A land of Coop v10.1.2 or earlier removed the candidate pointer before its land journal. The
+// journal is then the only record, so marking the candidate landed refuses by name and writes nothing.
+func TestForkCandidateRefusesLandAfterCandidatePointerRemoval(t *testing.T) {
 	f := newCandidateRoundFixture(t, "alpha")
 	head, tree := f.headTree()
 	candidate, published, err := reviewAndPublishForkCandidate(t, f.repo, f.identity, head, tree)
@@ -587,12 +599,13 @@ func TestForkCandidateRecoversLegacyLandAfterCandidatePointerRemoval(t *testing.
 	if err := os.RemoveAll(forkCandidateHistoryDir(f.repo, f.identity)); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkForkCandidateLandedLocked(f.repo, candidate); err != nil {
-		t.Fatal(err)
+	if err := MarkForkCandidateLandedLocked(f.repo, candidate); err == nil || !strings.Contains(err.Error(), "no candidate record") || !strings.Contains(err.Error(), "v12.1.0") {
+		t.Fatalf("MarkForkCandidateLandedLocked = %v; want a refusal naming the converting build", err)
 	}
-	status, exists, err := ReadForkCandidateRoundStatus(f.repo, f.identity)
-	if err != nil || !exists || status.Phase != forkCandidateLanded || status.CurrentRound != 1 ||
-		status.CurrentID != candidate.ID || status.TerminalID != candidate.ID {
-		t.Fatalf("recovered terminal candidate = %+v, exists=%v err=%v", status, exists, err)
+	if _, exists, err := ReadForkCandidateRoundStatus(f.repo, f.identity); err != nil || exists {
+		t.Fatalf("a refused land wrote candidate state: exists=%v err=%v", exists, err)
+	}
+	if _, err := os.Lstat(forkCandidateHistoryDir(f.repo, f.identity)); err == nil {
+		t.Fatal("a refused land wrote round history")
 	}
 }

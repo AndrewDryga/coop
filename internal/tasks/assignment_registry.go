@@ -77,8 +77,7 @@ func decodeForkAssignmentIndex(data []byte) (ForkAssignmentIndex, error) {
 	return record, nil
 }
 
-// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
-// could write, move into Coop's private state once, as they are.
+// Stays bounded and no-follow, as every read of a record a box could once write.
 func readForkAssignmentIndexFile(root *os.Root, name string) (ForkAssignmentIndex, error) {
 	data, err := readForkRegistryFile(root, name, "fork assignment index", forkAssignmentIndexLimit)
 	if err != nil {

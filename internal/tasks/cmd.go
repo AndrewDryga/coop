@@ -2472,10 +2472,6 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 			delete(record.Baseline, task.ID)
 			changed = true
 		}
-		if record.AllowedDoneDeparture == task.ID {
-			record.AllowedDoneDeparture = ""
-			changed = true
-		}
 		if before := len(record.AllowedDoneDepartures); before > 0 {
 			record.AllowedDoneDepartures = slices.DeleteFunc(record.AllowedDoneDepartures, func(candidate string) bool {
 				return candidate == task.ID

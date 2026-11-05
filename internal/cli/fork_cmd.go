@@ -410,11 +410,6 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return 1, fmt.Errorf("fork %s detached worker will not start: %w", fa.name, confirmErr)
 		}
 		defer forkspace.ClearPidIfMine(repo, fa.name, worker.Generation)
-		// The parent records the generation it started this worker for, and task authority hangs off
-		// it, so a record without one stops here.
-		if worker.Generation == "" {
-			return 1, fmt.Errorf("fork %s detached worker has no generation — stop it and restart", fa.name)
-		}
 		current, ok, readErr := forkspace.ReadGeneration(repo, fa.name)
 		if readErr != nil || !ok || current.Name != fa.name || current.Generation != worker.Generation {
 			return 1, fmt.Errorf("fork %s detached worker generation no longer matches host authority", fa.name)
@@ -1302,13 +1297,6 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	authorityQueues, err := forkCanonicalQueues(repo, tasksPath)
 	if err != nil {
 		return -1, err
-	}
-	legacy, err := tasks.LegacyForkQueueWithWork(ws)
-	if err != nil {
-		return -1, err
-	}
-	if legacy != "" {
-		return 1, fmt.Errorf("fork %s contains a legacy copied task queue at %s; Coop will not guess between duplicate authorities — preserve any fork-only notes, then recreate this fork with --fresh (use --force only after reviewing its Git work)", name, legacy)
 	}
 	img := box.ImageForRepo(repo, a.cfg.BaseImage, a.cfg.ImageOverride)
 	var sink io.Writer

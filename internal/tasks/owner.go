@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	taskOwnerRecordVersion     = 1 // legacy human-only wire format; remains readable
 	taskOwnershipRecordVersion = 2
 
 	taskOwnerSourceInteractiveClaim = "interactive-claim"
@@ -55,9 +54,9 @@ type ForkTaskOwner struct {
 	UpdatedAt        time.Time           `json:"updated_at"`
 }
 
-// TaskOwnerRecord deliberately keeps the v1 human fields flat. Version 2 adds a typed owner and
-// exact task instance while preserving those fields for human claims; an older Coop sees version 2
-// at the same registry name and fails closed instead of adopting a sandbox-owned task.
+// TaskOwnerRecord keeps the human fields flat beside a typed owner and exact task instance. An older
+// Coop sees version 2 at the same registry name and fails closed instead of adopting a sandbox-owned
+// task; this Coop does the same for the version 1 human-only record before it.
 type TaskOwnerRecord struct {
 	Version int           `json:"version"`
 	TaskID  string        `json:"task_id"`
@@ -136,13 +135,10 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 		return errors.New("invalid task owner record")
 	}
 	switch record.Version {
-	case taskOwnerRecordVersion:
-		if record.Kind != "" || record.Task != nil || record.Fork != nil || record.Source == "" ||
-			strings.TrimSpace(record.User) == "" || strings.TrimSpace(record.Host) == "" || record.ClaimedAt.IsZero() ||
-			record.Actor != "" || record.ActorPID != 0 || record.ActorStart != "" {
-			return errors.New("invalid legacy task owner record")
-		}
-		return nil
+	case 1:
+		// A claim made by Coop v8.1.0 or earlier, never tied to the exact task folder. It stays a
+		// claim until released, so it is not read as no owner, and Coop leaves it unchanged.
+		return fmt.Errorf("task %s has a version 1 owner record from Coop v8.1.0 or earlier, which this Coop no longer reads — Coop left it unchanged; release the claim with Coop v12.1.0 (coop tasks release %s)", id, id)
 	case taskOwnershipRecordVersion:
 		if record.Task == nil || record.Task.Ref.ID != id ||
 			!durableIdentityRE.MatchString(record.Task.Ref.QueueID) ||
@@ -210,7 +206,7 @@ func readTaskOwnerRecordUnvalidated(root, id string) (TaskOwnerRecord, bool, err
 // it reused the slug.
 func ReadTaskOwnerRecord(root, id string) (TaskOwnerRecord, bool, error) {
 	record, ok, err := readTaskOwnerRecordUnvalidated(root, id)
-	if err != nil || !ok || record.Version == taskOwnerRecordVersion {
+	if err != nil || !ok {
 		return record, ok, err
 	}
 	item, exists, err := CurrentTask(root, id)

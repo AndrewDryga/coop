@@ -60,9 +60,10 @@ schemas, so the worker had no way back.
 Formats Ryker's controller keeps, such as workspace checkpoint bundles, need its inventory rather
 than a worker's `coop sessions check`, which never sees them.
 
-Only the pre-v11 provider login and history (the last two rows) have been retired under this rule;
-every other oldest version is still the first one. "Converting build" is the build that brings
-older data to the current version.
+A row whose oldest version is above its first has retired the older readers: Coop refuses that
+older state by name and leaves it as it is. "Converting build" is the build that brings older data
+to the current version; for a retired row it is the last build that still does, and the refusal
+names it.
 
 | State | Where | Current | Oldest read | Older versions today | Converting build |
 |---|---|---|---|---|---|
@@ -73,18 +74,20 @@ older data to the current version.
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | no older version, but a version 1 stream with no create origin can remain from before origins; kept as a dormant generation floor, and `coop sessions check` cannot tell it apart | none |
 | Worker create origins | `<state>/connector/create-origins/` | 1 | 1 | no older version, but a version 1 origin with an empty `operation_id` can remain from a receipt that proved only the session; read in place | none |
-| Fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 3 | 1 | read; converted when the stopped fork next starts (isolated forks write 4) | v10.1.2 and later |
-| Fork reservation | `~/.local/state/coop/forks/<key>/reservations/` | 2 | 1 | held: keeps the fork name blocked until recovered offline | none |
-| Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 1 | read; adopted into round history at the next change | v10.1.2 and later |
-| Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 1 | read in place, never rewritten | none needed |
-| Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 1 | read without its commit IDs (one awaiting verification returns to signoff once; one whose commit predates its run base is anchored on load); the next write stores 2 | builds after v11.3.0 |
+| Fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 3 | 3 | 1 and 2 are refused by name: the fork is neither unbound nor free, and `coop fork stop` reports the refusal | v12.1.0 (start the stopped fork once) |
+| Fork reservation | `~/.local/state/coop/forks/<key>/reservations/` | 2 | 2 | 1 is refused by name on every reservation read, so the fork name stays blocked | none: recover it offline |
+| Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 2 | a bare version 1 file is refused by name, and so is a land whose candidate pointer is gone | v12.1.0 (review or merge the fork once) |
+| Task owner record | `~/.local/state/coop/task-leases/v1/<key>.owner.json` | 2 | 2 | 1 is refused by name, so the task stays claimed | v12.1.0 (`coop tasks release`) |
+| Pending final review | `~/.local/state/coop/task-leases/v1/<queue>-<key>.pending-review.json` | 2 | 2 | 1 is refused by name | v12.1.0 |
+| Completion fingerprint | `tree_format` in the `*.windows.json` and `*.pending-review.json` records beside them | 1 | 1 | a fingerprint with none, and a window's singular `allowed_done_departure`, are refused by name | v12.1.0 |
+| Detached worker record | `~/.local/state/coop/forks/<key>/<name>.pid` | owner-v2 | owner-v2 | `owner-v1` (no generation) is refused by name; `coop fork stop` prints the steps that clear it | none: stop the worker by hand |
 | Network approval | `~/.local/state/coop/network/approval-<id>.json` | 4 | 4 | 1 to 3 are filed under the keyed `<id>` of v11.3.0 and earlier: not read, and the project they could belong to is refused by name until `coop net forget --project <path>` removes them (or you delete the file, if the project is gone) | `coop approve` (builds after v11.3.0) |
 | Network withdrawal | `~/.local/state/coop/network/withdrawn-<id>.json` | 2 | 2 | version 1 (v11.3.0 and earlier, under the keyed `<id>`) is not read: the project it could belong to is refused by name, so the barrier holds, until `coop net forget --project <path>` removes it or you delete the file | Coop v12.1.0 |
 | Network setup record | `~/.local/state/coop/network/qualification-<id>.json` | 2 | 2 | refused by name: run `coop net setup` | `coop net setup` |
 | Network execution | `~/.local/state/coop/network/execution-<id>.json` | 2 | 2 | version 1 is not read: the project it names is refused by name, and the run is not cleaned up | Coop v12.1.0 |
 | Isolated fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 4 | 4 | none exist | none |
-| Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | `<repo>-forks/.coop/` | copied in once, by the first open of the project or a box launch in it | builds after v11.3.0 |
-| Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | read | read, updated and ended; new records go to the project's own registry | builds after v11.3.0 |
+| Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | private folder | `<repo>-forks/.coop/` holding anything but lock files is refused by name and never moved or removed | v12.1.0 (first use of the project) |
+| Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | not read | every entry is reported by path and blocks fork mutation; the folder stays fenced from boxes, and the service-launch locks beside it are unaffected | v12.1.0 |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | decoded so restore can refuse it by name; only a checkpoint file in the worker's own state is still served | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
@@ -103,8 +106,8 @@ provably belongs to another project (neither its plain nor its keyed id) is left
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
 The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
-so its row pins neither, and the fork records folder's are its two places
-(`forkspace.MoveLegacyForkRecords`), so its row pins neither too. Its waypoint is every Coop that shares a Docker daemon, not a store:
+so its row pins neither, and the fork records folder, the execution fallback registry and the detached
+worker record have no integer version, so their rows pin neither too. The box label's waypoint is every Coop that shares a Docker daemon, not a store:
 retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLocal`, and a v1
 label then reads as unknown: reported, never removed.
 
@@ -119,6 +122,13 @@ label then reads as unknown: reported, never removed.
   2026-12-31 date was dropped): rows for both. A login only the old folders hold, and an unfinished
   import, are refused by name; the old folders stay untouched. Listed in `waypointConstants` with
   empty pins, since neither has a version.
+- 2026-11-04 — retired the readers for fork generations 1 and 2, fork reservation 1, review candidate 1
+  (and the land recovery that rebuilt one), task owner record 1, pending final review 1, completion
+  fingerprints without `tree_format`, a window's singular `allowed_done_departure`, `owner-v1` worker
+  records, the discard replay of assignments an interrupted discard did not journal, the execution
+  fallback registry, and the move of `<repo>-forks/.coop` (task
+  2026-11-04-drop-the-old-fork-and-task-record-readers). Each is refused by name and left as it is;
+  rows updated, and rows added for the completion fingerprint and the detached worker record.
 - 2026-11-04 — the isolated-fork source receipt no longer reads version 1: no commit wrote one, so a
   stray one is refused as invalid. It stays out of the table, having only one format.
 - 2026-11-04 — corrected three "Older versions today" cells against the code: event streams and create

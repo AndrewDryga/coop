@@ -348,8 +348,12 @@ func TestSessionWorkspaceRetryChecksOwnerBeforeHydration(t *testing.T) {
 			// If hydration runs first, this broken source HEAD produces a Git error
 			// instead of the ownership refusal.
 			git("symbolic-ref", "HEAD", "refs/heads/missing")
+			want := "another or unproven owner"
+			if version == 1 {
+				want = "version 1 fork workspace reservation" // refused by name, not read as unproven
+			}
 			if _, err := ensureSessionWorkspaceContext(t.Context(), nil, repo, created.Name, base, testSessionStoreID, owner); err == nil ||
-				!strings.Contains(err.Error(), "another or unproven owner") {
+				!strings.Contains(err.Error(), want) {
 				t.Fatalf("foreign reservation was checked after hydration: %v", err)
 			}
 			if body, err := os.ReadFile(marker); err != nil || string(body) != "keep\n" {
@@ -789,7 +793,7 @@ func TestSessionWorkspaceDiscardRefusesStaleHeadStatusReplacementAndRunning(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forkspace.WritePid(repo, created.Name, os.Getpid(), ""); err != nil {
+	if err := forkspace.WritePid(repo, created.Name, os.Getpid(), testWorkerGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if err := discardSessionWorkspace(plan); err == nil {
@@ -950,3 +954,6 @@ func planSessionWorkspaceDiscard(repo, workspace string, acceptDirty, acceptUnme
 	}
 	return planSessionWorkspaceDiscardAtParent(repo, workspace, parentHead, acceptDirty, acceptUnmerged)
 }
+
+// testWorkerGeneration stands for the generation a current worker record names.
+const testWorkerGeneration forkspace.Generation = "0123456789abcdef0123456789abcdef"

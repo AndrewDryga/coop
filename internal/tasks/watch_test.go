@@ -373,20 +373,18 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 // this folder with macOS, is recorded with a pid this kernel cannot check, whether that pid is
 // missing here or belongs to a process here, and coop fork stop refuses to clean it up from here.
 // The board called it cleanup-pending and --json set cleanup_pending, while coop fork ls named the
-// system. Both now name the system as fork ls does, generation or not; a record this system wrote
-// whose worker is gone or replaced is still left for cleanup.
+// system. Both now name the system as fork ls does; a record this system wrote whose worker is gone
+// or replaced is still left for cleanup.
 func TestTaskWatchNamesTheSystemThatStartedAForkLoop(t *testing.T) {
 	system := forkspace.ProcTokenSystem(starttoken.Foreign())
 	const gone = 2147483645 // above any pid_max, so no process here has it
 	for _, tc := range []struct {
-		name   string
-		pid    int
-		token  string
-		legacy bool // no fork generation: the snapshot finds the fork by its record's name alone
+		name  string
+		pid   int
+		token string
 	}{
 		{name: "another system's record, pid missing here", pid: gone, token: starttoken.Foreign()},
 		{name: "another system's record, pid alive here", pid: os.Getpid(), token: starttoken.Foreign()},
-		{name: "another system's record without a generation", pid: gone, token: starttoken.Foreign(), legacy: true},
 		{name: "this system's record, worker gone", pid: gone, token: starttoken.Stale()},
 		{name: "this system's record, pid reused", pid: os.Getpid(), token: starttoken.Stale()},
 	} {
@@ -401,13 +399,9 @@ func TestTaskWatchNamesTheSystemThatStartedAForkLoop(t *testing.T) {
 			if err := ScaffoldStateDirs(root); err != nil {
 				t.Fatal(err)
 			}
-			worker := forkspace.WorkerState{Pid: tc.pid, Token: tc.token}
-			wantFork := `{"name":"perf","workspace_valid":false,`
-			if !tc.legacy {
-				_, identity := testAssignmentFork(t, repo, "perf")
-				worker.Generation = identity.Generation
-				wantFork = `{"name":"perf","identity":{"name":"perf","generation":"` + string(identity.Generation) + `"},"workspace_valid":true,`
-			}
+			_, identity := testAssignmentFork(t, repo, "perf")
+			worker := forkspace.WorkerState{Pid: tc.pid, Token: tc.token, Generation: identity.Generation}
+			wantFork := `{"name":"perf","identity":{"name":"perf","generation":"` + string(identity.Generation) + `"},"workspace_valid":true,`
 			wantFork += status + `,"assignments":0,"candidate":false,"pending_land":false,"active_executions":0}`
 			if err := forkspace.WriteWorkerState(repo, "perf", worker); err != nil {
 				t.Fatal(err)

@@ -28,8 +28,7 @@ import (
 const forkStopReapTimeout = 30 * time.Second
 
 // ForkContainerOwner scopes runtime cleanup to one parent repo, fork name, and the immutable
-// workspace generation. An empty generation gives the label of a worker recorded without one, so
-// that worker can still be stopped; callers that can mutate a current fork always pass one.
+// workspace generation.
 func ForkContainerOwner(repo, name string, generation forkspace.Generation) string {
 	canonical := repo
 	if resolved, err := filepath.EvalSymlinks(repo); err == nil {
@@ -37,13 +36,8 @@ func ForkContainerOwner(repo, name string, generation forkspace.Generation) stri
 	} else if absolute, absErr := filepath.Abs(repo); absErr == nil {
 		canonical = absolute
 	}
-	version, material := "v1", canonical+"\x00"+name
-	if generation != "" {
-		version = "v2"
-		material += "\x00" + string(generation)
-	}
-	sum := sha256.Sum256([]byte(material))
-	return fmt.Sprintf("%s-%x", version, sum[:12])
+	sum := sha256.Sum256([]byte(canonical + "\x00" + name + "\x00" + string(generation)))
+	return fmt.Sprintf("v2-%x", sum[:12])
 }
 
 // forkLoopStopSteps tells a person how to stop fork name's background loop when Coop cannot. The
@@ -60,6 +54,10 @@ func workerStateFormatError(repo, name string, err error) error {
 	// its working directory.
 	recovery := fmt.Sprintf("To clear it, %s; then remove the file: %s; then run: coop fork stop %s", forkLoopStopSteps(name), removeCommand(path), name)
 	switch {
+	case errors.Is(err, forkspace.ErrOldWorkerState):
+		// Its worker may still run and hold boxes under the old owner label, which this Coop no longer
+		// derives, so it cannot be stopped here; the file is not touched until no loop for the fork remains.
+		return fmt.Errorf("fork %s has a detached-worker record from Coop v8.1.0 or earlier (owner-v1) at %q, which this Coop no longer reads — Coop left it unchanged. %s", name, path, recovery)
 	case errors.Is(err, forkspace.ErrUnsupportedWorkerStateVersion):
 		return fmt.Errorf("fork %s uses an unsupported detached-worker state version at %q — Coop left the exact file unchanged; use the Coop version that wrote it and do not edit its header", name, path)
 	case errors.Is(err, forkspace.ErrNotAStateFile):
@@ -546,12 +544,8 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	if err != nil {
 		return 1, workerStateFormatError(repo, name, err)
 	}
-	if state.Generation != "" {
-		if !hasGeneration || forkIdentity.Generation != state.Generation {
-			return 1, fmt.Errorf("fork %s worker state generation does not match host generation authority", name)
-		}
-	} else if hasGeneration {
-		return 1, fmt.Errorf("fork %s has legacy worker state beside generation authority — inspect both before cleanup", name)
+	if !hasGeneration || forkIdentity.Generation != state.Generation {
+		return 1, fmt.Errorf("fork %s worker state generation does not match host generation authority", name)
 	}
 	pid, token := state.Pid, state.Token
 	identity := forkspace.ProcessIdentityOf(pid, token)
@@ -587,6 +581,13 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 		}
 		return nil
 	}
+	// An unreadable activity registry stops the cleanup below, so refuse before any signal: a stop
+	// that kills the worker and then refuses leaves the fork half stopped.
+	if hasGeneration {
+		if _, problems := forkspace.Executions(repo); len(problems) > 0 {
+			return 1, fmt.Errorf("fork %s activity registry is unreadable: %w — nothing was stopped; resolve the reported registry error, then retry: coop fork stop %s", name, errors.Join(problems...), name)
+		}
+	}
 	if identity == forkspace.ProcessIdentityMatch {
 		if err := killGroup(syscall.SIGTERM); err != nil {
 			return 1, fmt.Errorf("fork %s was not signaled because %w — %s", name, err, forkWorkerRecovery(name, pid))
@@ -612,10 +613,10 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	// SIGKILL): the box has a repo-scoped owner label, so remove exactly this fork's container(s).
 	// rm -f (not just kill) so the orphan doesn't linger Exited — its run client is dead and won't.
 	reapCtx, cancelReap := context.WithTimeout(context.Background(), forkStopReapTimeout)
-	labels := map[string]string{box.LabelForkOwner: ForkContainerOwner(repo, name, state.Generation)}
-	if state.Generation != "" {
-		labels[box.LabelForkGeneration] = string(state.Generation)
-		labels[box.LabelForkWorker] = box.LabelOn
+	labels := map[string]string{
+		box.LabelForkOwner:      ForkContainerOwner(repo, name, state.Generation),
+		box.LabelForkGeneration: string(state.Generation),
+		box.LabelForkWorker:     box.LabelOn,
 	}
 	n, reapErr := c.rt.RemoveByLabels(reapCtx, labels)
 	cancelReap()

@@ -57,7 +57,7 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 	}
 	summary := ForkTaskStateSummary{Assignments: len(indexes), DiscardPending: hasDiscard}
 	if hasCandidateState {
-		state := forkCandidateState{legacy: candidateState.Legacy, manifest: candidateState.Manifest}
+		state := forkCandidateState{manifest: candidateState.Manifest}
 		status := forkCandidateStateStatus(state)
 		summary.CandidatePhase, summary.CandidateRound = status.Phase, status.CurrentRound
 		if status.PendingRound > 0 {
@@ -65,7 +65,7 @@ func ReadForkTaskStateSummary(repo string, identity forkspace.Identity) (ForkTas
 		} else if status.Phase == forkCandidateSuperseding {
 			summary.CandidateRound++
 		}
-		summary.Candidate = candidateState.Legacy != nil || forkCandidateManifestActive(*candidateState.Manifest)
+		summary.Candidate = forkCandidateManifestActive(*candidateState.Manifest)
 	}
 	hash := sha256.New()
 	write := func(kind string, value any) error {
@@ -184,8 +184,7 @@ func validateForkDiscard(intent forkDiscardIntent) error {
 	return nil
 }
 
-// Stays bounded and no-follow: records an older build kept in <repo>-forks/.coop, which a box
-// could write, move into Coop's private state once, as they are.
+// Stays bounded and no-follow, as every read of a record a box could once write.
 func readForkDiscard(repo string, identity forkspace.Identity) (forkDiscardIntent, bool, error) {
 	path := forkDiscardPath(repo, identity)
 	info, err := os.Lstat(path)
@@ -304,14 +303,16 @@ func DiscardForkTaskStateLocked(repo string, identity forkspace.Identity) error 
 		}
 	}
 	if exists {
-		// A replay covers every assignment the fork holds NOW as well as the journaled set: an
-		// assignment acquired after an interrupted discard (older binaries allowed that) must not
-		// be stranded fork-owned once the generation is removed.
+		// Builds up to v12.1.0 let a fork acquire an assignment after a discard was interrupted,
+		// and a replay then covered it. This one replays only the journaled set, so it refuses
+		// rather than leave such an assignment fork-owned once the generation is removed.
 		indexes, problems := IndexedForkAssignments(repo, identity)
 		if len(problems) > 0 {
 			return errors.Join(problems...)
 		}
-		intent.Assignments = unionForkAssignmentIndexes(intent.Assignments, indexes)
+		if len(unionForkAssignmentIndexes(intent.Assignments, indexes)) != len(intent.Assignments) {
+			return fmt.Errorf("fork %s holds an assignment its interrupted discard did not journal, which Coop v12.1.0 and earlier allowed — Coop left everything unchanged; finish the discard with Coop v12.1.0 (coop fork rm %s --force)", identity.Name, identity.Name)
+		}
 	}
 	if err := discardForkProposalsLocked(repo, identity); err != nil {
 		return err

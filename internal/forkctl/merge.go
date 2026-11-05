@@ -104,6 +104,13 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		if reason, automatic := hostsurface.Classify(change.Status, path); automatic {
 			warns = append(warns, label+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
+		// Tasks come from the host's queue, never from a fork: a task a box committed would land as
+		// ready work a later loop runs. The queue's README is ordinary project text.
+		if change.Status == "" || change.Status[0] != 'D' {
+			if queue := forkTaskQueuePath(repo, path); queue != "" {
+				warns = append(warns, label+" — the fork adds or changes a task in the "+queue+" queue; tasks come from the host, not a fork")
+			}
+		}
 		entry, err := forkspace.GitOutput(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
@@ -658,13 +665,6 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			pin.Close()
 		}
 	}()
-	legacy, err := tasks.LegacyForkQueueWithWork(ws)
-	if err != nil {
-		return mergeOutcome{}, err
-	}
-	if legacy != "" {
-		return mergeOutcome{}, fmt.Errorf("%s contains a legacy copied task queue at %s; refusing a Git-only merge because it could duplicate or lose canonical work — preserve any fork-only task notes, recreate the fork with --fresh, and rerun the canonical task loop", name, legacy)
-	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return mergeOutcome{}, fmt.Errorf("%s: git fetch: %w", name, err)
 	}
@@ -1251,4 +1251,21 @@ func remainingForks(names []string, skip map[string]bool, landed []string, faile
 		}
 	}
 	return out
+}
+
+// forkTaskQueuePath names the task queue a repository-relative path lies in, or "" when it lies in
+// none or is the queue's README.
+func forkTaskQueuePath(repo, path string) string {
+	rel := filepath.ToSlash(filepath.Clean(path))
+	roots := []string{tasks.TasksRoot}
+	if dirs, err := project.TaskDirs(repo); err == nil {
+		roots = append(roots, dirs...)
+	}
+	for _, root := range roots {
+		root = filepath.ToSlash(filepath.Clean(root))
+		if inside, ok := strings.CutPrefix(rel, root+"/"); ok && !strings.EqualFold(inside, "README.md") {
+			return root
+		}
+	}
+	return ""
 }

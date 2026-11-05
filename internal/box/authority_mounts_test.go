@@ -241,8 +241,9 @@ func TestAuthorityMountGuardTreatsCompanionsAsMutableProjectRoots(t *testing.T) 
 // Fork records live in Coop's private state, which no mount may reach, so a main-project run may
 // mount the folder that holds its forks folder read-only. A writable mount of it could swap the
 // forks folder, where fork commands work by name, for a link, so it is refused. Records an older
-// Coop left in <repo>-forks/.coop move to the private state first, before the box could write them.
-func TestAuthorityMountGuardMovesOldForkRecordsBeforeAMainProjectRun(t *testing.T) {
+// Coop left in <repo>-forks/.coop are no longer moved by a box launch: they stay exactly where they
+// are, and the fork commands refuse them by name.
+func TestAuthorityMountGuardLeavesOldForkRecordsAloneForAMainProjectRun(t *testing.T) {
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "project")
 	if err := os.Mkdir(repo, 0o700); err != nil {
@@ -264,11 +265,14 @@ func TestAuthorityMountGuardMovesOldForkRecordsBeforeAMainProjectRun(t *testing.
 		[]string{"-v", parent + ":/projects"}, "", nil, authorityMountAllowlist{}); err == nil || !strings.Contains(err.Error(), "forks folder") {
 		t.Fatalf("a writable mount of the folder holding the forks folder = %v; want it refused", err)
 	}
-	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("an older Coop's fork records stayed where the box could write them: %v", err)
+	if data, err := os.ReadFile(filepath.Join(legacy, "worker.log")); err != nil || string(data) != "an older Coop's log\n" {
+		t.Fatalf("the launch changed an older Coop's fork records: %q, %v", data, err)
 	}
-	if _, err := os.Stat(filepath.Join(forkspace.StateDir(repo), "worker.log")); err != nil {
-		t.Fatal("the old fork records did not reach Coop's private state:", err)
+	if _, err := os.Stat(filepath.Join(forkspace.StateDir(repo), "worker.log")); err == nil {
+		t.Fatal("a box launch moved the old fork records into Coop's private state")
+	}
+	if err := forkspace.EnsureStateDir(repo); err == nil || !strings.Contains(err.Error(), "still in "+legacy) {
+		t.Fatalf("the fork commands' open of the records = %v; want them refused by name", err)
 	}
 	if err := validateAuthorityMounts(context.Background(), spec,
 		[]string{"-v", forkspace.StateDir(repo) + ":/state:ro"}, "", nil, authorityMountAllowlist{}); err == nil {

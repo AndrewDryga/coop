@@ -22,6 +22,29 @@
   so. Coop never deletes the old folders. `coop usage` no longer reads a Gemini login through a
   container.
 
+- **Fork records older than Coop v12.1.0 are no longer converted.** Fork generation records of
+  version 1 and 2, version 1 workspace reservations, bare version 1 review candidates, interrupted
+  lands that lost their candidate record, `owner-v1` worker records, and a discard interrupted by a
+  build that let the fork take new work are now refused by name and left as they are. A fork with
+  an old generation record is neither unbound nor free, and `coop fork stop` reports it. Open
+  such a fork once with Coop v12.1.0 (see MIGRATING.md), then upgrade. Records still in
+  `<project>-forks/.coop` are refused the same way instead of moved.
+
+- **Task records older than Coop v12.1.0 are no longer converted.** A version 1 task owner record
+  (a claim made by v8.1.0 or earlier), a version 1 pending final review, a completion window or
+  review holding a fingerprint without `tree_format`, and a window's singular
+  `allowed_done_departure` are refused by name and left as they are. Finish the claim, run or
+  review with Coop v12.1.0 first.
+
+- **The execution fallback registry is no longer read.** Records Coop v12.1.0 or earlier left in
+  `~/.local/state/coop/executions/v1/<key>/` are reported by path and block fork changes until you
+  remove them. The service-launch locks beside them are unchanged.
+
+- **A fork that holds its own copy of the task queue is no longer refused.** `coop fork <name> --loop`
+  and `coop fork merge` stopped on a fork with tasks under its own `.agent/tasks`, which also
+  refused a project that commits its queue. Fork loops take their tasks from the project's queue
+  as before, and a fork's own copy is never read.
+
 - **Workers refuse session companions and workdirs only old builds made.** A companion that is a
   linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
   and every session runs at `/workspace`. Builds since September write none of these.
