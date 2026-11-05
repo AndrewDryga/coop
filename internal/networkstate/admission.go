@@ -194,7 +194,9 @@ func refuseOrphanedProjectMarker(project string) error {
 	if err != nil {
 		return fmt.Errorf("inspect project network approval marker: %w", err)
 	}
-	return errors.New("this project has a network approval marker but Coop's private authority store is missing — recover or reset the network approval before launching")
+	// The marker outlived the store it names, as after ~/.local/state/coop was deleted. Coop cannot
+	// tell that from a replaced checkout, so the person removes it, once they have looked.
+	return errors.New("this project has a network approval marker but Coop's private authority store is missing, as after its state folder was deleted; " + markerRecovery)
 }
 
 // admissionPreview is preparation only: it lets the host resolve posture before
