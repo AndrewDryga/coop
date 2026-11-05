@@ -295,23 +295,18 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if same.Err != nil || same.ExitCode != 1 || !strings.Contains(same.Stderr, "another interactive codex session is active") {
 			t.Fatalf("same-home contender = exit %d err %v\nstderr:\n%s", same.ExitCode, same.Err, same.Stderr)
 		}
-		// One prompt with -p is headless, so the session holding that lock does not refuse it.
-		promptScenario, err := json.Marshal(processScenario(provider, nil, 0, ""))
-		if err != nil {
-			t.Fatal(err)
-		}
-		promptScenarioPath := filepath.Join(override.layout.Plans, "fork-overlap-prompt.json")
-		if err := os.WriteFile(promptScenarioPath, append(promptScenario, '\n'), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		// One prompt with -p is headless, so the session lock does not refuse it; this suite runs
+		// offline, where the prompt is refused for having no network instead (the lock's headless
+		// reading is covered in internal/agent).
 		promptCtx, promptCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		promptResult := procharness.Run(promptCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target, "-p", "fixture prompt"},
-			Dir: override.layout.Repo, Env: replaceProcessEnv(override.env, "COOP_PROVIDER_FIXTURE_SCENARIO", promptScenarioPath),
-			MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+			Dir: override.layout.Repo, Env: override.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
 		promptCancel()
-		if promptResult.Err != nil || promptResult.ExitCode != 0 {
+		if promptResult.Err != nil || promptResult.ExitCode != 1 ||
+			!strings.Contains(promptResult.Stderr, "cannot answer a prompt offline") ||
+			strings.Contains(promptResult.Stderr, "another interactive") {
 			t.Fatalf("Codex -p beside a session = exit %d err %v\nstderr:\n%s", promptResult.ExitCode, promptResult.Err, promptResult.Stderr)
 		}
 
@@ -387,42 +382,29 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 
 		// Codex exec rollouts are source:"exec" and excluded from discovery, so a headless run
-		// remains concurrent instead of inheriting the interactive producer lock.
-		execScenarioPath := filepath.Join(override.layout.Plans, "fork-overlap-exec.json")
-		execScenario, err := json.Marshal(processScenario(provider, nil, 0, ""))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(execScenarioPath, append(execScenario, '\n'), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		execEnv := replaceProcessEnv(secondEnv, "COOP_PROVIDER_FIXTURE_SCENARIO", execScenarioPath)
+		// skips the interactive producer lock; offline, it is refused for having no network.
 		execCtx, execCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		execResult := procharness.Run(execCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target, "--", "exec", "fixture prompt"},
-			Dir: secondRepo, Env: execEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+			Dir: secondRepo, Env: secondEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
 		})
 		execCancel()
-		if execResult.Err != nil || execResult.ExitCode != 0 {
+		if execResult.Err != nil || execResult.ExitCode != 1 ||
+			!strings.Contains(execResult.Stderr, "cannot answer a prompt offline") ||
+			strings.Contains(execResult.Stderr, "another interactive") {
 			t.Fatalf("concurrent Codex exec = exit %d err %v\nstderr:\n%s", execResult.ExitCode, execResult.Err, execResult.Stderr)
 		}
-		var starts [][]string
-		peers := 0
+		starts, peers := 0, 0
 		for _, event := range readProcessTrace(t, override.layout.Trace) {
 			if event.Source == "provider" && event.Event == "start" {
-				starts = append(starts, event.Argv)
+				starts++
 			}
 			if event.Source == "peer" && event.Event == "start" {
 				peers++
 			}
 		}
-		if len(starts) != 5 || peers != 1 {
-			t.Fatalf("independent repository runs did not reach providers: %d starts/%d peers, want 5/1", len(starts), peers)
-		}
-		// The -p run is the same command as the exec run, with the prompt kept behind a separator.
-		execArgv, promptArgv := starts[4], starts[1]
-		if want := slices.Insert(slices.Clone(execArgv), len(execArgv)-1, "--"); !slices.Equal(promptArgv, want) {
-			t.Fatalf("coop %s -p ran %q, want %q", target, promptArgv, want)
+		if starts != 3 || peers != 1 {
+			t.Fatalf("independent repository runs did not reach providers: %d starts/%d peers, want 3/1", starts, peers)
 		}
 
 		// Signal the waiting provider directly so teardown proceeds child-to-parent. Group-wide
