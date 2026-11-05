@@ -150,7 +150,7 @@ func TestKernelPinPlanDeduplicatesAncestorsAndKeepsEveryGrantLast(t *testing.T) 
 
 func TestKernelPolicyRejectsBrokenUnicodeData(t *testing.T) {
 	for _, data := range [][]byte{nil, make([]byte, 47), make([]byte, 20001*48)} {
-		if err := WriteKernelPolicy(io.Discard, Policy{}, data); err == nil {
+		if err := WriteKernelPolicies(io.Discard, []Policy{{}}, data); err == nil {
 			t.Fatal("accepted malformed table")
 		}
 	}

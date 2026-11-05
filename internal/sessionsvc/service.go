@@ -24,6 +24,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -2075,7 +2076,7 @@ func (s *Service) operationalErrorDetail(err error) string {
 	}
 	lines := strings.Split(detail, "\n")
 	for index, line := range lines {
-		if len(box.ScanSecrets(line)) > 0 {
+		if len(secretscan.ScanSecrets(line)) > 0 {
 			lines[index] = "<redacted secret-bearing diagnostic line>"
 		}
 	}

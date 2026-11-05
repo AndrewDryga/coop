@@ -170,18 +170,6 @@ func sortedKeys(set map[string]bool) []string {
 	return keys
 }
 
-// CaseExposed names the hidden files this review's services could still read under another letter
-// case: on a disk that ignores case, the names too long to cover under every spelling
-// (serviceShadowPlan). coop up refuses them unless the owner accepted that risk.
-func (r *ServiceStartReview) CaseExposed() ([]string, error) {
-	abs, err := filepath.Abs(r.file)
-	if err != nil {
-		return nil, err
-	}
-	_, _, uncovered, err := serviceShadowPlan(r.workspace, abs, r.data)
-	return uncovered, err
-}
-
 // keepDecoysOutside drops the decoys whose source a human approved, and reports the sources still
 // hidden. An approval names exact files, so a secret that appears LATER under an approved
 // directory bind keeps its decoy — the human never saw it.

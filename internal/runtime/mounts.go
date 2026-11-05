@@ -101,23 +101,7 @@ func (r Runtime) MountSourcesByLabel(
 // RunningWritableBindSourcesByLabels inventories live Compose sidecars that can replace host
 // paths while Coop validates a new launch. Named-volume backing paths are not repository writes.
 func (r Runtime) RunningWritableBindSourcesByLabels(ctx context.Context, labels map[string]string) ([]string, error) {
-	return r.WritableBindSourcesByLabels(ctx, labels, false)
-}
-
-// WritableBindSourcesByLabels includes stopped/restartable containers when all
-// is true. Credential cutover cannot treat an exited writer as permanently gone.
-func (r Runtime) WritableBindSourcesByLabels(ctx context.Context, labels map[string]string, all bool) ([]string, error) {
-	return r.bindSourcesByLabels(ctx, labels, all, true)
-}
-
-// BindSourcesByLabels also includes read-only copies of credential authority:
-// possessing a refresh grant is enough to rotate it without filesystem writes.
-func (r Runtime) BindSourcesByLabels(ctx context.Context, labels map[string]string) ([]string, error) {
-	return r.bindSourcesByLabels(ctx, labels, true, false)
-}
-
-func (r Runtime) bindSourcesByLabels(ctx context.Context, labels map[string]string, all, writable bool) ([]string, error) {
-	mounts, err := r.BindMountsByLabels(ctx, labels, all, writable)
+	mounts, err := r.BindMountsByLabels(ctx, labels, false, true)
 	if err != nil {
 		return nil, err
 	}

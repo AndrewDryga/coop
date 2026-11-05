@@ -563,11 +563,6 @@ func TestCaptureRuntimeConnectionEnvUsesExactRuntimeAllowlist(t *testing.T) {
 			t.Errorf("Docker connection env retained %s", forbidden)
 		}
 	}
-	// Podman is retired: its ambient endpoint/storage authority is no longer captured at all, so a
-	// stray CONTAINER_HOST cannot travel into a live child as if Coop still drove it.
-	if got, err := captureRuntimeConnectionEnv("podman", lookup, func(string) bool { return false }, unexpectedQuery); err != nil || len(got) != 0 {
-		t.Errorf("retired Podman connection env = %v, %v, want empty", got, err)
-	}
 	if _, ok := docker["CONTAINER_HOST"]; ok {
 		t.Error("Docker connection env retained CONTAINER_HOST")
 	}

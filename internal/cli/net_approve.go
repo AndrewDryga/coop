@@ -248,7 +248,6 @@ func netTerminalOnly(command string) error {
 // netApprovalReview is what the confirmation needs from a review: the exact
 // before and after, and one commit that consumes it.
 type netApprovalReview interface {
-	Project() string
 	Before() *networkstate.Approval
 	After() *networkstate.Approval
 	Pending() *networkstate.PendingApproval

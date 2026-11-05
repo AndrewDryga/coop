@@ -485,25 +485,20 @@ func TestReapTempLeavesDockerClientConfigs(t *testing.T) {
 	}
 }
 
-// Earlier versions put each run's box files straight into the temp directory. None of them says
-// which daemon its box ran on, so no listing can prove one unused, and the sweep leaves them all;
-// what no box mounts, such as an audit's tree snapshot, it still removes.
-func TestReapTempKeepsEarlierVersionsBoxFiles(t *testing.T) {
+// A run folder in the temp directory does not say which daemon its box ran on, so no listing can
+// prove it unused and the sweep leaves it; what no box mounts, such as an audit's tree snapshot, it
+// still removes.
+func TestReapTempKeepsRunFolders(t *testing.T) {
 	dir := t.TempDir()
-	var boxFiles []string
-	for _, name := range []string{"coop-run-1", "coop-mcp-1", "coop-decoy-1", "coop-githooks-1", "coop-skills-claude-1"} {
-		boxFiles = append(boxFiles, writeDirEntry(t, dir, name, 72*time.Hour))
-	}
+	run := writeDirEntry(t, dir, "coop-run-1", 72*time.Hour)
 	audit := writeDirEntry(t, dir, "coop-audit-trees-1", 72*time.Hour)
 
 	removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{daemon: "daemon-a", sources: map[string]bool{}}, dir, time.Now())
 	if err != nil || removed != 1 || exists(audit) {
 		t.Fatalf("reap = %d, %v (audit snapshot left: %v); want only the audit snapshot removed", removed, err, exists(audit))
 	}
-	for _, path := range boxFiles {
-		if !exists(path) {
-			t.Errorf("an earlier version's box file %s was removed", filepath.Base(path))
-		}
+	if !exists(run) {
+		t.Errorf("the temp sweep removed the run folder %s", filepath.Base(run))
 	}
 }
 

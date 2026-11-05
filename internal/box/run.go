@@ -2574,34 +2574,9 @@ func resolvedRoleTargets(cfg *config.Config, role *preset.Role) []agents.Target 
 	return targets
 }
 
-// ensureAgentHomes pre-creates the credential-home dir for exactly
-// the agents this run MOUNTS (credentialScope: the launched agent plus named consult peers)
-// — not every agent. Pre-creating all three was a husk factory: every box
-// run materialized each agent's active-profile dir, so a profile the user deleted (an empty
-// "default" showing "not signed in" in `coop credentials`) kept reappearing, seeded with
-// EnsureDefaults' settings files, recreated by runs that never involved that agent. An
-// out-of-scope agent has no home mounted, so nothing in the box reads the dir anyway.
-// Provider defaults remain provider-owned and are written only after every required input has
-// validated. Their read/parse/write errors stop launch rather than treating broken user state as
-// empty. Host-owned ancestor permissions are mandatory and are established before any credential
-// read, mount, or runtime access.
-func ensureAgentHomes(cfg *config.Config, spec RunSpec) error {
-	for _, name := range credentialScope(cfg, spec) {
-		if err := EnsureProfilesDir(cfg, name); err != nil {
-			return fmt.Errorf("prepare %s credential root: %w", name, err)
-		}
-		profileRoot := filepath.Join(cfg.ConfigDir, name, "profiles")
-		profileDir := cfg.AgentDir(name)
-		if filepath.Dir(profileDir) != profileRoot {
-			return fmt.Errorf("prepare %s credential: selected name does not resolve inside %s", name, profileRoot)
-		}
-		if err := config.EnsurePrivateDir(profileDir); err != nil {
-			return fmt.Errorf("prepare %s credential: %w", name, err)
-		}
-	}
-	return nil
-}
-
+// ensureAgentDefaults writes provider-owned defaults only for the agents this run mounts, after every
+// required input has validated. A read, parse or write error stops the launch rather than treating
+// broken user state as empty.
 func ensureAgentDefaults(cfg *config.Config, spec RunSpec, workdir string) error {
 	for _, name := range credentialScope(cfg, spec) {
 		if ag, ok := agents.Get(name); ok {

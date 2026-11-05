@@ -26,7 +26,7 @@ const (
 // whether the session continued or started fresh, so the lead can tell when a --continue
 // fell back to fresh. The peer stays READ-ONLY throughout.
 //
-// The per-agent read-only flags come from each adapter's ConsultCmd family —
+// The per-agent read-only flags come from each adapter's ConsultFresh and ConsultResume.
 // The scripted consult matrix checks each executed fresh/resume argv independently.
 func ConsultWrapper() string { return renderConsult(registeredConsults()) }
 

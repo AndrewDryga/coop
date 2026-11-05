@@ -812,10 +812,10 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 			t.Errorf("fork acp %v = (%d, %v), want (2, %q refused with %q)", args, code, err, extra, wantUsage)
 		}
 	}
-	if got := a.cfg.ActiveModel("claude"); got != "" {
+	if got := a.cfg.ModelFor("claude"); got != "" {
 		t.Errorf("rejected fork ACP arguments selected claude model %q", got)
 	}
-	if got := a.cfg.ActiveModel("codex"); got != "" {
+	if got := a.cfg.ModelFor("codex"); got != "" {
 		t.Errorf("rejected fork ACP arguments selected codex model %q", got)
 	}
 }

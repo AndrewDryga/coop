@@ -27,13 +27,12 @@ import (
 const reapMinimumAge = time.Hour
 
 // tempPrefixes are the temp entries coop creates that no box mounts. Anything else in the temp
-// directory belongs to someone else and is never touched. Neither are the box files earlier
-// versions made there: none says which daemon its box ran on (see runDirPrefix).
+// directory belongs to someone else and is never touched. That includes a run folder there: it
+// does not say which daemon its box ran on, so no listing can prove it unused (see runDirPrefix).
 var tempPrefixes = []string{
 	"coop-audit-trees-",
-	// What killed test binaries leave: teststate's folder, and the lease and git-view folders that
-	// earlier builds' test binaries made for each process and nothing removed.
-	"coop-test-state-", "coop-test-task-leases-", "coop-gitview-",
+	// What a killed test binary leaves: teststate's folder.
+	"coop-test-state-",
 	// Earlier versions kept an open run's MCP credential broker folder, with the run's real
 	// credentials, here; a killed coop must not leave them behind. The helper that mounts it is not
 	// a box — the hour of grace, and the container holding the bind-mounted file open until it

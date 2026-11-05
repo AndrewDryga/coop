@@ -68,7 +68,11 @@ func TestVolumeExposureFixtureProcess(t *testing.T) {
 			d := fixture.Definition
 			data, _ = json.Marshal([]any{map[string]any{"id": d.Name, "configuration": map[string]any{"name": d.Name, "driver": d.Driver, "format": "ext4", "source": d.Mountpoint, "options": d.Options}}})
 		} else {
-			data, _ = json.Marshal(fixture.Definition)
+			d := fixture.Definition
+			if fixture.Mode == "wrong-name" {
+				d.Name += "-suffix"
+			}
+			data, _ = json.Marshal(d)
 		}
 		_, _ = os.Stdout.Write(data)
 	case "ls":
@@ -95,42 +99,9 @@ func TestVolumeExposureFixtureProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestNamedVolumeExposurePreservesColdAndWarmLocalVolumes(t *testing.T) {
-	for _, kind := range []string{"docker", "container"} {
-		for _, present := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/%t", kind, present), func(t *testing.T) {
-				definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/volumes/coop-cache/data"}
-				if kind == "container" {
-					definition.Options = map[string]string{"size": "10G", "journal": "ordered"}
-				}
-				rt, file := volumeExposureRuntime(t, volumeExposureFixture{Kind: kind, Present: present, Definition: definition})
-				paths, err := rt.NamedVolumeExposure(context.Background(), []string{"coop-cache", "coop-cache"}, true)
-				if err != nil || !slices.Equal(paths.Sources, []string{definition.Mountpoint}) || len(paths.BindSources) != 0 {
-					t.Fatal(paths, err)
-				}
-				if _, err := rt.NamedVolumeExposure(context.Background(), []string{"coop-cache"}, false); err != nil {
-					t.Fatal(err)
-				}
-				data, err := os.ReadFile(file)
-				var got volumeExposureFixture
-				if err != nil || json.Unmarshal(data, &got) != nil {
-					t.Fatal(err)
-				}
-				want := 0
-				if !present {
-					want = 1
-				}
-				if got.Creates != want {
-					t.Fatal("existing or duplicate volume recreated", got.Creates)
-				}
-			})
-		}
-	}
-}
-
 func TestNamedVolumePlainLocalMetadataDoesNotClaimSafeContents(t *testing.T) {
 	for _, options := range []map[string]string{nil, {"type": "tmpfs", "device": "tmpfs"}, {"type": "none", "device": "/outside/data", "o": "bind"}} {
-		definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/cache", CreatedAt: "2026-10-08T00:00:00Z", Options: options}
+		definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/cache", Options: options}
 		rt, _ := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker", Present: true, Definition: definition})
 		exposure, err := rt.ExistingNamedVolumeExposure(t.Context(), []string{definition.Name})
 		if err != nil {
@@ -140,33 +111,38 @@ func TestNamedVolumePlainLocalMetadataDoesNotClaimSafeContents(t *testing.T) {
 		if plain != (len(options) == 0) {
 			t.Fatalf("custom driver options received default-local provenance: %+v", exposure)
 		}
-		if plain && (proof.Mountpoint != definition.Mountpoint || proof.ExposureRoot != definition.Mountpoint || proof.CreatedAt != definition.CreatedAt) {
+		if plain && (proof.Mountpoint != definition.Mountpoint || proof.ExposureRoot != definition.Mountpoint) {
 			t.Fatal("inspected definition identity not preserved", proof)
 		}
 	}
 }
 
 func TestExistingNamedVolumeExposureNeverCreates(t *testing.T) {
-	for _, test := range []struct {
-		name, mode    string
-		present, fail bool
-	}{{name: "absent"}, {name: "present", present: true}, {name: "unavailable", mode: "unavailable", fail: true}} {
-		t.Run(test.name, func(t *testing.T) {
-			definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/cache"}
-			rt, file := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker", Present: test.present, Mode: test.mode, Definition: definition})
-			paths, err := rt.ExistingNamedVolumeExposure(context.Background(), []string{"coop-cache"})
-			if (err != nil) != test.fail {
-				t.Fatal(paths, err)
-			}
-			if !test.fail && ((test.present && !slices.Equal(paths.Sources, []string{definition.Mountpoint})) || (!test.present && len(paths.Sources) != 0)) {
-				t.Fatal("wrong exposure", paths)
-			}
-			data, err := os.ReadFile(file)
-			var got volumeExposureFixture
-			if err != nil || json.Unmarshal(data, &got) != nil || got.Creates != 0 || got.Present != test.present {
-				t.Fatal("read-only inventory mutated a volume", string(data), err)
-			}
-		})
+	for _, kind := range []string{"docker", "container"} {
+		for _, test := range []struct {
+			name, mode    string
+			present, fail bool
+		}{{name: "absent"}, {name: "present", present: true}, {name: "unavailable", mode: "unavailable", fail: true}} {
+			t.Run(kind+"/"+test.name, func(t *testing.T) {
+				definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/cache"}
+				if kind == "container" {
+					definition.Options = map[string]string{"size": "10G", "journal": "ordered"}
+				}
+				rt, file := volumeExposureRuntime(t, volumeExposureFixture{Kind: kind, Present: test.present, Mode: test.mode, Definition: definition})
+				paths, err := rt.ExistingNamedVolumeExposure(context.Background(), []string{"coop-cache", "coop-cache"})
+				if (err != nil) != test.fail {
+					t.Fatal(paths, err)
+				}
+				if !test.fail && ((test.present && !slices.Equal(paths.Sources, []string{definition.Mountpoint})) || (!test.present && len(paths.Sources) != 0) || len(paths.BindSources) != 0) {
+					t.Fatal("wrong exposure", paths)
+				}
+				data, err := os.ReadFile(file)
+				var got volumeExposureFixture
+				if err != nil || json.Unmarshal(data, &got) != nil || got.Creates != 0 || got.Present != test.present {
+					t.Fatal("read-only inventory mutated a volume", string(data), err)
+				}
+			})
+		}
 	}
 }
 
@@ -174,14 +150,11 @@ func TestNamedVolumeInspectionFailureNeverMeansAbsentOrSafe(t *testing.T) {
 	for _, mode := range []string{"unavailable", "oversized", "wrong-name", "plugin"} {
 		t.Run(mode, func(t *testing.T) {
 			definition := volumeDefinition{Name: "coop-cache", Driver: "local", Scope: "local", Mountpoint: "/runtime/data"}
-			if mode == "wrong-name" {
-				definition.Name = "coop-cache-suffix"
-			}
 			if mode == "plugin" {
 				definition.Driver = "remote"
 			}
 			rt, file := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker", Mode: mode, Present: true, Definition: definition})
-			if _, err := rt.NamedVolumeExposure(context.Background(), []string{"coop-cache"}, true); err == nil {
+			if _, err := rt.ExistingNamedVolumeExposure(context.Background(), []string{"coop-cache"}); err == nil {
 				t.Fatal("failed/partial inspection accepted")
 			}
 			data, err := os.ReadFile(file)
@@ -194,7 +167,7 @@ func TestNamedVolumeInspectionFailureNeverMeansAbsentOrSafe(t *testing.T) {
 	rt, _ := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker"})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := rt.NamedVolumeExposure(ctx, []string{"coop-cache"}, true); err == nil {
+	if _, err := rt.ExistingNamedVolumeExposure(ctx, []string{"coop-cache"}); err == nil {
 		t.Fatal("cancelled inspection accepted")
 	}
 }
@@ -255,7 +228,7 @@ func TestNamedVolumeProtectsWholeRootPrivateParent(t *testing.T) {
 			continue
 		}
 		rt, _ := volumeExposureRuntime(t, volumeExposureFixture{Kind: "docker", Present: true, Definition: volumeDefinition{Name: "cache", Driver: "local", Scope: "local", Mountpoint: path}})
-		exposure, err := rt.NamedVolumeExposure(context.Background(), []string{"cache"}, false)
+		exposure, err := rt.ExistingNamedVolumeExposure(context.Background(), []string{"cache"})
 		if err != nil || !slices.Equal(exposure.Sources, []string{parent}) || !slices.Equal(exposure.ManagedParents, []string{parent}) || len(exposure.BindSources) != 0 {
 			t.Fatal("managed subtree not conservatively exposed", exposure, err)
 		}

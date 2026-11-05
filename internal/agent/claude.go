@@ -753,10 +753,6 @@ func (claudeAgent) Login(*config.Config) []string { return []string{"claude", "a
 
 func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPConfig{}, nil }
 
-func (claudeAgent) ConsultCmd(question string) []string {
-	return []string{"claude", "-p", "--permission-mode", "plan", question}
-}
-
 // UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.285 updater checks, and a
 // manual `claude update` refuses under it too — read out of the binary and its ACP adapter's SDK.
 func (claudeAgent) UpdateControls() UpdateControls {

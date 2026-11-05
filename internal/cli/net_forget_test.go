@@ -18,7 +18,6 @@ type fakeForgetReview struct {
 	commitErr error
 }
 
-func (f *fakeForgetReview) Project() string                  { return "/private/tmp/project" }
 func (f *fakeForgetReview) Approval() *networkstate.Approval { return f.approval }
 func (f *fakeForgetReview) Gone() bool                       { return f.gone }
 func (f *fakeForgetReview) Commit(context.Context) error     { f.committed++; return f.commitErr }

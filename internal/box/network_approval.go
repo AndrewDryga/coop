@@ -30,9 +30,8 @@ const (
 // approval — so a host that never ran a filtered box reports that fact instead
 // of growing the state it would then describe.
 type NetworkAccess struct {
-	Project string
-	Mode    egress.Mode
-	Source  string
+	Mode   egress.Mode
+	Source string
 	// Approval is the remembered host-owned decision, nil when this project was
 	// never approved. Requested and RequestedMode are the repo's current ask —
 	// exactly what `coop approve` would write; Add and Remove are the rule
@@ -61,7 +60,7 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 	if err != nil {
 		return NetworkAccess{}, err
 	}
-	out := NetworkAccess{Project: canonical, Requested: p.Box.EgressRules, Source: AccessFromDefault}
+	out := NetworkAccess{Requested: p.Box.EgressRules, Source: AccessFromDefault}
 	preview, err := networkstate.PreviewAdmission(root, canonical, exposed, input)
 	if err != nil {
 		return NetworkAccess{}, err
@@ -265,8 +264,6 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 		services: inputs.admission.Services, review: review, pending: inputs.pending}, nil
 }
 
-func (a *ProjectNetworkApproval) Project() string                { return a.project }
-func (a *ProjectNetworkApproval) Mode() egress.Mode              { return a.mode }
 func (a *ProjectNetworkApproval) Before() *networkstate.Approval { return a.review.Before }
 func (a *ProjectNetworkApproval) After() *networkstate.Approval  { return a.review.After }
 func (a *ProjectNetworkApproval) Pending() *networkstate.PendingApproval {

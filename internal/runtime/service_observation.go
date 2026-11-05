@@ -19,7 +19,6 @@ type ServicePortBinding struct {
 // container environment, command, mounts and healthcheck logs.
 type ServiceContainerObservation struct {
 	ID          string
-	Labels      map[string]string
 	Status      string
 	Completed   bool // it exited with status 0: how a one-shot step ends, and also how a service shut down cleanly ends
 	Running     bool
@@ -109,7 +108,7 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 		networks[name] = true
 	}
 	observed := ServiceContainerObservation{
-		ID: *wire.ID, Labels: wire.Labels, Status: *wire.Status, Running: *wire.Running,
+		ID: *wire.ID, Status: *wire.Status, Running: *wire.Running,
 		Completed: *wire.Status == "exited" && wire.ExitCode != nil && *wire.ExitCode == 0,
 		Paused:    *wire.Paused, Healthcheck: *wire.Healthcheck, Health: *wire.Health,
 		Ports: *wire.Ports, Networks: networks,

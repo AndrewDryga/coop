@@ -519,9 +519,6 @@ type Agent interface {
 	// LoginConfig supplies only box-managed login settings, never shared MCP or project tools.
 	// User authentication state must remain writable in the selected account's home.
 	LoginConfig(cfg *config.Config) (MCPConfig, error)
-	// ConsultCmd is the read-only, non-interactive command to ask this agent a
-	// question as a consult peer — it returns analysis and never edits files.
-	ConsultCmd(question string) []string
 	// InstructionFile is the agent's native global instruction filename, e.g.
 	// "CLAUDE.md" — where coop writes the shared or consult-augmented instructions.
 	InstructionFile() string

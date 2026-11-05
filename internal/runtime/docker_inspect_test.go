@@ -238,7 +238,7 @@ func TestDockerInspectRetainsCompleteSecurityState(t *testing.T) {
 	c.Privileged, c.AutoRemove, c.ReadonlyRootfs, c.Tty, c.OpenStdin = true, true, true, true, true
 	c.Healthcheck = &DockerHealthcheck{Test: []string{"CMD", "health"}}
 	c.RestartCount, c.RestartPolicy = 3, "always"
-	c.State = DockerContainerState{Status: "paused", Running: true, Paused: true, OOMKilled: true, ExitCode: 42, StartedAt: time.Unix(100, 0).UTC(), FinishedAt: time.Unix(200, 0).UTC()}
+	c.State = DockerContainerState{Status: "paused", Running: true, Paused: true, ExitCode: 42, StartedAt: time.Unix(100, 0).UTC(), FinishedAt: time.Unix(200, 0).UTC()}
 	c.Tmpfs = map[string]string{"/tmp": "rw"}
 	c.Mounts = []DockerMount{{Type: "bind", Source: "/host", Destination: "/guest", RW: true}, {Type: "volume", Name: "volume", Source: "/vol", Destination: "/data"}}
 	rt, file := fixtureDocker(t, dockerFixture{Container: c})

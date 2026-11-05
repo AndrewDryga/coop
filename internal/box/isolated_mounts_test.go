@@ -285,7 +285,7 @@ func TestIsolatedSelectedSharedCacheTrustIsNotPrivateOwnership(t *testing.T) {
 	reader := func(_ context.Context, names []string) (runtime.VolumeExposure, error) {
 		proofs := map[string]runtime.PlainLocalVolume{}
 		for _, name := range names {
-			proofs[name] = runtime.PlainLocalVolume{Mountpoint: missing, ExposureRoot: missing, CreatedAt: "2026-10-08T00:00:00Z"}
+			proofs[name] = runtime.PlainLocalVolume{Mountpoint: missing, ExposureRoot: missing}
 		}
 		return runtime.VolumeExposure{Sources: []string{missing}, PlainLocalVolumes: proofs}, nil
 	}

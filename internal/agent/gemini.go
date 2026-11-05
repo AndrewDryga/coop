@@ -920,12 +920,6 @@ func (geminiAgent) LoginConfig(*config.Config) (MCPConfig, error) {
 	}, nil
 }
 
-func (geminiAgent) ConsultCmd(question string) []string {
-	// -p takes the prompt as its value, so it must come last (right before the
-	// question); otherwise -p swallows --approval-mode and gemini prints help.
-	return []string{"gemini", "--approval-mode", "plan", "-p", question}
-}
-
 // geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
 // is the pinned 0.62.0's system layer, which overrides both the user's and a workspace's settings
 // (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file
@@ -1318,6 +1312,8 @@ const geminiConsultUsage = `select(.[-1].type=="result" and .[-1].status=="succe
 // geminiThinkingWiring). Without one the call keeps the box's.
 const geminiEffortEnv = `env ${effort:+GEMINI_CLI_SYSTEM_SETTINGS_PATH="$` + geminiThinkingEnv + `/$effort.json"} `
 
+// ConsultFresh ends with -p, which takes the prompt as its value: anywhere earlier it swallows
+// --approval-mode and gemini prints help.
 func (geminiAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
 		`gemini_run ` + geminiEffortEnv + `gemini --approval-mode plan --session-id "$id" -o stream-json ${model:+--model "$model"} -p "$prompt"`

@@ -596,11 +596,6 @@ func (c *Config) SetActiveModel(agent, model string) {
 	c.activeModels[agent] = model
 }
 
-// ActiveModel returns the run's EXPLICIT top-tier model for agent ("" when none), so a caller
-// that temporarily overrides it (the loop swapping in a step's loop.yaml model for the review pass) can
-// snapshot and restore the prior value.
-func (c *Config) ActiveModel(agent string) string { return c.activeModels[agent] }
-
 // SetTargetModel selects the active rotation target's model — a loop applies it at start and
 // on every rotation, so an `opus@work` target runs opus until the rotation moves on. It
 // ranks below an explicit one-off target and above every static default. Empty clears it (a bare
@@ -665,10 +660,6 @@ func (c *Config) SetActiveEffort(agent, effort string) {
 	}
 	c.activeEfforts[agent] = effort
 }
-
-// ActiveEffort returns the run's EXPLICIT top-tier effort for agent ("" when none), so a
-// caller that temporarily overrides it (the review pass) can snapshot and restore it.
-func (c *Config) ActiveEffort(agent string) string { return c.activeEfforts[agent] }
 
 // SetTargetEffort selects the active rotation target's effort — applied at loop start and on
 // every rotation, below an explicit target /effort and above every static default. Empty

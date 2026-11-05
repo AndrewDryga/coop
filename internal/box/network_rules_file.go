@@ -78,13 +78,11 @@ func (f *networkRulesFile) apply(input networkstate.Admission) (networkstate.Adm
 	return input, nil
 }
 
-// hostFileSource is one resolved host input plus the proof trail the caller
-// needs: path is the canonical endpoint that may be reopened, trace is every
-// entry traversed on the way there, and overlap names the agent-exposed root
-// the source falls inside, if any.
+// hostFileSource is one resolved host input: path is the canonical endpoint that
+// may be reopened, and overlap names the agent-exposed root the source falls
+// inside, if any.
 type hostFileSource struct {
 	path    string
-	trace   []string
 	overlap *MCPSourceRoot
 }
 
@@ -111,7 +109,7 @@ func resolveHostFileSource(sourcePath, kind string, roots []MCPSourceRoot) (host
 	if err != nil {
 		return hostFileSource{}, err
 	}
-	result := hostFileSource{path: source, trace: candidates, overlap: overlap}
+	result := hostFileSource{path: source, overlap: overlap}
 	if info, err := os.Lstat(sourcePath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return result, fmt.Errorf("%s source %q is a symbolic link; replace it with a private regular file and retry", kind, sourcePath)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {

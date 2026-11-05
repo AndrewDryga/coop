@@ -62,10 +62,6 @@ func ReviewProjectNetworkForget(project string) (_ *ProjectNetworkForget, err er
 	return &ProjectNetworkForget{store: store, record: record, gone: gone}, nil
 }
 
-// Project is the path the record is keyed by, canonical where the filesystem
-// could still resolve it.
-func (f *ProjectNetworkForget) Project() string { return f.record.Path }
-
 // Approval is what would be removed, nil when nothing is remembered here.
 func (f *ProjectNetworkForget) Approval() *networkstate.Approval { return f.record.Approval }
 

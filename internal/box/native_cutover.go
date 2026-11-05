@@ -304,6 +304,9 @@ func dockerListingRefusal(timedOut bool) error {
 	return ui.CommandFailed("Docker could not list its containers", unchecked+"Try again when Docker is ready.")
 }
 
+// checkLegacyMountPaths lists stopped boxes too, since an exited writer can restart. A credential
+// check passes writable false, so read-only mounts count as well: holding a refresh grant is enough
+// to rotate it without writing a file.
 func checkLegacyMountPaths(ctx context.Context, rt runtime.Runtime, writable bool, paths ...string) error {
 	var sources []runtime.BindMount
 	err := listDockerPatiently(ctx, func(ctx context.Context) (err error) {

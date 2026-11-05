@@ -466,8 +466,8 @@ func TestReviewTakesTheModeFromTheProjectFileOnly(t *testing.T) {
 		t.Fatalf("ReviewProjectNetwork: %v", err)
 	}
 	defer review.Close()
-	if review.Unchanged() || review.Mode() != egress.Open || review.After().Posture != egress.Open {
-		t.Errorf("mode = %q unchanged=%v, want the file's open", review.Mode(), review.Unchanged())
+	if review.Unchanged() || review.mode != egress.Open || review.After().Posture != egress.Open {
+		t.Errorf("mode = %q unchanged=%v, want the file's open", review.mode, review.Unchanged())
 	}
 	if err := review.Commit(context.Background()); err != nil {
 		t.Fatalf("Commit: %v", err)

@@ -167,7 +167,7 @@ func TestCanonicalDecompositionDoesNotInsertStreamSafetyCharacters(t *testing.T)
 func TestKernelPolicyIsVersionedAndPropagatesWriteFailure(t *testing.T) {
 	var out bytes.Buffer
 	policy := Policy{Entries: []Entry{{"key", Secret}}}
-	if err := WriteKernelPolicy(&out, policy, testUnicodeData(t)); err != nil {
+	if err := WriteKernelPolicies(&out, []Policy{policy}, testUnicodeData(t)); err != nil {
 		t.Fatal(err)
 	}
 	if string(out.Bytes()[:8]) != "COOPFS03" {
@@ -180,7 +180,7 @@ func TestKernelPolicyIsVersionedAndPropagatesWriteFailure(t *testing.T) {
 	if !slices.Equal(counts[:2], []uint32{1, 1}) || counts[2] == 0 || counts[3] != 1 || counts[4] != 0 {
 		t.Fatalf("invalid section counts %v", counts)
 	}
-	if err := WriteKernelPolicy(failingWriter{}, policy, testUnicodeData(t)); !errors.Is(err, io.ErrClosedPipe) {
+	if err := WriteKernelPolicies(failingWriter{}, []Policy{policy}, testUnicodeData(t)); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("lost write failure: %v", err)
 	}
 }

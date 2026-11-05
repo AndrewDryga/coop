@@ -143,13 +143,13 @@ func TestDockerBindInventoryBatchesCompleteIDsAndFiltersMounts(t *testing.T) {
 	rt, recorder := mountInventoryFixture(t, ids, inspect)
 	labels := map[string]string{"z": "two", "a": ""}
 	for _, writable := range []bool{false, true} {
-		sources, err := rt.bindSourcesByLabels(t.Context(), labels, true, writable)
-		want := []string{"/a", "/z"}
+		mounts, err := rt.BindMountsByLabels(t.Context(), labels, true, writable)
+		want := []BindMount{{Source: "/a", Stopped: true}, {Source: "/z", Stopped: true}}
 		if writable {
-			want = []string{"/z"}
+			want = want[1:]
 		}
-		if err != nil || !reflect.DeepEqual(sources, want) {
-			t.Fatalf("writable=%v: %v, %v", writable, sources, err)
+		if err != nil || !reflect.DeepEqual(mounts, want) {
+			t.Fatalf("writable=%v: %v, %v", writable, mounts, err)
 		}
 	}
 	commands, err := os.ReadFile(recorder)
@@ -195,9 +195,9 @@ func TestDockerBindInventoryRefusesIncompleteObservation(t *testing.T) {
 			}
 			inspect := "printf '%b\\n' " + strconv.Quote(test.output) + "\nprintf '%s\\n' private-canary >&2\n" + test.command
 			rt, _ := mountInventoryFixture(t, ids, inspect)
-			sources, err := rt.BindSourcesByLabels(t.Context(), nil)
-			if err == nil || sources != nil || strings.Contains(err.Error(), "private-canary") {
-				t.Fatalf("unavailable inventory returned data or private diagnostics: %v, %v", sources, err)
+			mounts, err := rt.BindMountsByLabels(t.Context(), nil, true, false)
+			if err == nil || mounts != nil || strings.Contains(err.Error(), "private-canary") {
+				t.Fatalf("unavailable inventory returned data or private diagnostics: %v, %v", mounts, err)
 			}
 		})
 	}
@@ -206,8 +206,8 @@ func TestDockerBindInventoryRefusesIncompleteObservation(t *testing.T) {
 func TestDockerBindInventoryAllowsEmptyAndNullMounts(t *testing.T) {
 	for _, ids := range [][]string{nil, {strings.Repeat("a", 64)}} {
 		rt, _ := mountInventoryFixture(t, ids, `for id do printf '{"ID":"%s","Status":"exited","Mounts":null}\n' "$id"; done`)
-		if sources, err := rt.BindSourcesByLabels(t.Context(), nil); err != nil || len(sources) != 0 {
-			t.Fatalf("complete empty inventory = %v, %v", sources, err)
+		if mounts, err := rt.BindMountsByLabels(t.Context(), nil, true, false); err != nil || len(mounts) != 0 {
+			t.Fatalf("complete empty inventory = %v, %v", mounts, err)
 		}
 	}
 }
@@ -220,8 +220,8 @@ func TestDockerBindInventoryStreamsMultipleBoundedRecords(t *testing.T) {
 	// More than the control-call aggregate bound, but each discarded mount record is bounded.
 	format := `{"ID":"%s","Status":"exited","Mounts":[{"Type":"volume","Source":"` + strings.Repeat("x", 512<<10) + `"}]}\n`
 	rt, _ := mountInventoryFixture(t, ids, "for id do printf '"+format+"' \"$id\"; done")
-	if sources, err := rt.BindSourcesByLabels(t.Context(), nil); err != nil || len(sources) != 0 {
-		t.Fatalf("bounded records were incorrectly limited in aggregate: %v, %v", sources, err)
+	if mounts, err := rt.BindMountsByLabels(t.Context(), nil, true, false); err != nil || len(mounts) != 0 {
+		t.Fatalf("bounded records were incorrectly limited in aggregate: %v, %v", mounts, err)
 	}
 }
 
@@ -230,8 +230,8 @@ func TestDockerBindInventoryCancellationReturnsNoPartialSources(t *testing.T) {
 	rt, _ := mountInventoryFixture(t, []string{id}, "printf '%s\\n' '"+mountRecord(id, `[{"Type":"bind","Source":"/partial","RW":true}]`)+"'\nexec sleep 30")
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if sources, err := rt.BindSourcesByLabels(ctx, nil); err == nil || sources != nil {
-		t.Fatalf("cancelled inventory = %v, %v", sources, err)
+	if mounts, err := rt.BindMountsByLabels(ctx, nil, true, false); err == nil || mounts != nil {
+		t.Fatalf("cancelled inventory = %v, %v", mounts, err)
 	}
 }
 
@@ -263,8 +263,8 @@ func TestDockerBindInventoryRefusesDaemonReplacementDuringObservation(t *testing
 			if err := os.WriteFile(rt.Name, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if sources, err := rt.BindSourcesByLabels(t.Context(), nil); err == nil || sources != nil || !strings.Contains(err.Error(), "daemon identity changed") {
-				t.Fatalf("mixed-daemon inventory accepted: %v, %v", sources, err)
+			if mounts, err := rt.BindMountsByLabels(t.Context(), nil, true, false); err == nil || mounts != nil || !strings.Contains(err.Error(), "daemon identity changed") {
+				t.Fatalf("mixed-daemon inventory accepted: %v, %v", mounts, err)
 			}
 		})
 	}
@@ -297,7 +297,7 @@ func TestDockerBindInventoryLateBatchFailureReturnsNoSources(t *testing.T) {
 	}
 	inspect := `for id do [ "$id" != '` + ids[32] + `' ] || continue; printf '{"ID":"%s","Status":"exited","Mounts":[{"Type":"bind","Source":"/partial","RW":true}]}\n' "$id"; done`
 	rt, _ := mountInventoryFixture(t, ids, inspect)
-	if sources, err := rt.BindSourcesByLabels(t.Context(), nil); err == nil || sources != nil {
-		t.Fatalf("late incomplete batch returned partial authority: %v, %v", sources, err)
+	if mounts, err := rt.BindMountsByLabels(t.Context(), nil, true, false); err == nil || mounts != nil {
+		t.Fatalf("late incomplete batch returned partial authority: %v, %v", mounts, err)
 	}
 }

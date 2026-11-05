@@ -116,10 +116,9 @@ const (
 	netForgetEffect    = "This only resets the approvals; it does not change the settings in .agent/project.yaml."
 )
 
-// netForgetReview is what the confirmation needs: the project, the approval it
-// would remove, and one commit that consumes it.
+// netForgetReview is what the confirmation needs: the approval it would remove,
+// whether the project is gone, and one commit that consumes it.
 type netForgetReview interface {
-	Project() string
 	Approval() *networkstate.Approval
 	Gone() bool
 	Commit(context.Context) error

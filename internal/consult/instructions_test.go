@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -72,31 +71,6 @@ func shellcheckPath(t *testing.T) string {
 // disabled as SC2329) are version-specific noise — CI's older shellcheck emits them, local
 // 0.11.0 does not — so gate on real warnings and errors, not on style that varies by version.
 func shellcheckArgs(sc, f string) *exec.Cmd { return exec.Command(sc, "--severity=warning", f) }
-
-// Each adapter owns its read-only consult command; assert the exact flags — they're the
-// sandbox that keeps a consulted peer from editing files.
-func TestConsultCmds(t *testing.T) {
-	cases := map[string][]string{
-		"claude": {"claude", "-p", "--permission-mode", "plan", "Q"},
-		"gemini": {"gemini", "--approval-mode", "plan", "-p", "Q"},
-		"codex":  {"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", "Q"},
-		// grok locks read-only via a tool allowlist — NOT --permission-mode plan, which is a
-		// no-op in headless (only bypassPermissions takes effect via that flag).
-		"grok": {"grok", "--tools", "read_file,grep,list_dir", "-p", "Q"},
-	}
-	for tool, want := range cases {
-		ag, ok := agents.Get(tool)
-		if !ok {
-			t.Fatalf("agent %q not registered", tool)
-		}
-		if got := ag.ConsultCmd("Q"); !slices.Equal(got, want) {
-			t.Errorf("%s ConsultCmd = %v, want %v", tool, got, want)
-		}
-	}
-	if _, ok := agents.Get("gpt"); ok {
-		t.Error("an unknown tool should not resolve to an agent")
-	}
-}
 
 func TestConsultRoleDoesNotInheritAdHocPeerModel(t *testing.T) {
 	dir := t.TempDir()

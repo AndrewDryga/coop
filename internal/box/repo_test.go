@@ -91,13 +91,6 @@ func TestComposeFile(t *testing.T) {
 	if ComposeFile(dir, dir) != f {
 		t.Errorf("ComposeFile = %q, want %q", ComposeFile(dir, dir), f)
 	}
-	// A root compose.agent.yml is NOT picked up — only .agent/compose.yml is.
-	os.Remove(f)
-	os.WriteFile(filepath.Join(dir, "compose.agent.yml"), []byte("services: {}"), 0o644)
-	if ComposeFile(dir, dir) != "" {
-		t.Error("the retired root compose.agent.yml must not be recognized")
-	}
-	os.WriteFile(f, []byte("services: {}"), 0o644) // restore .agent/compose.yml for the zero-byte check
 	// A zero-byte file counts as none — it declares no services, so `compose up` would only error.
 	os.WriteFile(f, nil, 0o644)
 	if ComposeFile(dir, dir) != "" {

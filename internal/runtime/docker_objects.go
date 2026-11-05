@@ -64,7 +64,6 @@ type DockerContainer struct {
 type DockerContainerState struct {
 	Status                string
 	Running, Paused       bool
-	OOMKilled             bool
 	ExitCode              int
 	StartedAt, FinishedAt time.Time
 }

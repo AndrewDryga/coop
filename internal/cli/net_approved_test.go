@@ -52,22 +52,22 @@ func netApprovedRule(domain string) egress.Rule {
 // YAML selected the mode, every other source's own truthful cause, the approved
 // rules when there are any, and a pending request in place of all of it.
 func TestApprovedNetPosture(t *testing.T) {
-	filtered := box.NetworkAccess{Project: "/private/tmp/coop", Mode: egress.Filtered, Source: box.AccessFromProject,
+	filtered := box.NetworkAccess{Mode: egress.Filtered, Source: box.AccessFromProject,
 		Approval: &networkstate.Approval{Posture: egress.Filtered,
 			Envelope: []egress.Rule{netApprovedRule("github.com"), netApprovedRule("registry.npmjs.org")}},
 		RequestedMode: egress.Filtered}
-	open := box.NetworkAccess{Project: "/p", Mode: egress.Open, Source: box.AccessFromApproval,
+	open := box.NetworkAccess{Mode: egress.Open, Source: box.AccessFromApproval,
 		Approval: &networkstate.Approval{Posture: egress.Open}, RequestedMode: egress.Open}
-	offline := box.NetworkAccess{Project: "/p", Mode: egress.None, Source: box.AccessFromProject, RequestedMode: egress.None}
+	offline := box.NetworkAccess{Mode: egress.None, Source: box.AccessFromProject, RequestedMode: egress.None}
 
-	pending := box.NetworkAccess{Project: "/p", Mode: egress.Filtered, Source: box.AccessFromApproval,
+	pending := box.NetworkAccess{Mode: egress.Filtered, Source: box.AccessFromApproval,
 		Approval:      &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{netApprovedRule("github.com"), netApprovedRule("old.example.com")}},
 		RequestedMode: egress.Filtered,
 		Add:           []egress.Rule{netApprovedRule("registry.npmjs.org")},
 		Remove:        []egress.Rule{netApprovedRule("old.example.com")},
 		Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved",
 			Cause: ".agent/project.yaml requests changes to network access."}}
-	replaced := box.NetworkAccess{Project: "/p", Mode: egress.Filtered, Source: box.AccessFromApproval, RequestedMode: egress.Filtered,
+	replaced := box.NetworkAccess{Mode: egress.Filtered, Source: box.AccessFromApproval, RequestedMode: egress.Filtered,
 		Pending: &networkstate.PendingApproval{Reason: "the project directory at /p was replaced since it was approved",
 			Cause: "This project folder was replaced after its network access was approved."}}
 
@@ -89,7 +89,7 @@ func TestApprovedNetPosture(t *testing.T) {
 // A widening to open is never hidden: the access view shows the before/after
 // modes and the red warning, whatever the rule diff says.
 func TestNetPostureShowsAWideningToOpen(t *testing.T) {
-	widening := box.NetworkAccess{Project: "/p", Mode: egress.Filtered, Source: box.AccessFromApproval,
+	widening := box.NetworkAccess{Mode: egress.Filtered, Source: box.AccessFromApproval,
 		Approval:      &networkstate.Approval{Posture: egress.Filtered, Envelope: []egress.Rule{netApprovedRule("github.com")}},
 		RequestedMode: egress.Open, Remove: []egress.Rule{netApprovedRule("github.com")},
 		Pending: &networkstate.PendingApproval{Cause: ".agent/project.yaml requests unrestricted internet access."}}
@@ -469,7 +469,6 @@ type netForgetFixture struct {
 	gone     bool
 }
 
-func (f netForgetFixture) Project() string                  { return "/Users/example/Projects/coop-test" }
 func (f netForgetFixture) Approval() *networkstate.Approval { return f.approval }
 func (f netForgetFixture) Gone() bool                       { return f.gone }
 func (f netForgetFixture) Commit(context.Context) error     { return nil }

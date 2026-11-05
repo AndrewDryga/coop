@@ -37,35 +37,6 @@ type Ready struct {
 	Links       []Link         `json:"links"`
 }
 
-// Birth is durable before the first LSM attachment. Program identities are known
-// after load, so one immutable receipt also reconciles a partially attached run.
-type Birth struct {
-	Parent             string `json:"parent"`
-	BootID             string `json:"boot_id"`
-	CgroupInode        uint64 `json:"cgroup_inode"`
-	CgroupDevice       uint64 `json:"cgroup_device"`
-	PinDirectoryInode  uint64 `json:"pin_directory_inode"`
-	PinDirectoryDevice uint64 `json:"pin_directory_device"`
-	Programs           []Link `json:"programs"`
-}
-
-func (b Birth) Validate(parent string) error {
-	if b.Parent != "/"+parent || !ValidParent(parent) || !ValidBootID(b.BootID) || b.CgroupInode == 0 || b.CgroupDevice == 0 || b.PinDirectoryInode == 0 || b.PinDirectoryDevice == 0 || len(b.Programs) != len(hookNames) {
-		return errors.New("invalid filesystem birth receipt")
-	}
-	wanted := map[string]bool{}
-	for _, name := range hookNames {
-		wanted["guard_"+name] = true
-	}
-	for _, program := range b.Programs {
-		if !wanted[program.Name] || program.ID != 0 || program.Program == 0 {
-			return errors.New("invalid filesystem program receipt")
-		}
-		delete(wanted, program.Name)
-	}
-	return nil
-}
-
 var parentName = regexp.MustCompile(`^coop-fs-[0-9a-f]{32}$`)
 var bootID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 

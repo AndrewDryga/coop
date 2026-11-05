@@ -124,8 +124,8 @@ func TestForgetOnAHostThatRememberedNothing(t *testing.T) {
 	if review.Approval() != nil {
 		t.Errorf("a fresh host remembered %+v", review.Approval())
 	}
-	if review.Project() == "" || review.Gone() {
-		t.Errorf("project = %q gone = %v", review.Project(), review.Gone())
+	if review.record.Path == "" || review.Gone() {
+		t.Errorf("project = %q gone = %v", review.record.Path, review.Gone())
 	}
 	if err := review.Commit(context.Background()); err == nil {
 		t.Error("a forget with nothing to forget reported success")

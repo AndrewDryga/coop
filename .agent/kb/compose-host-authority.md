@@ -3,7 +3,7 @@ name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
 sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
-updated: 2026-10-19
+updated: 2026-11-04
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -69,7 +69,7 @@ box's mounts do: Linux keeps one entry per folder but one per file name, so a se
 whose own target is the secret needs none (no other spelling reaches the host through it). Covers
 stop at `serviceCoverLimit` per service; a name past it, or too long (`otherSpellings`), comes back
 as `uncovered`. A box launch has already refused those for the same repository; `coop up` refuses
-them through `ServiceStartReview.CaseExposed` unless `COOP_ALLOW_CASE_EXPOSED_SECRETS` is set. A
+them too unless `COOP_ALLOW_CASE_EXPOSED_SECRETS` is set. A
 `.coopignore`'s copies share one policy snapshot. Measured on OrbStack 2026-10-19: without the
 copies a service read the real `.env` as `.ENV` and appended to `.coopignore` as `.COOPIGNORE`;
 with them both read the decoy or failed read-only.
@@ -129,6 +129,8 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-11-04: removed `ServiceStartReview.CaseExposed`, which nothing called; `coop up` refuses
+  these names through `serviceShadowPlan`'s callers.
 - 2026-10-19: services get covers for every letter-case spelling of hidden files and `.coopignore`
   on a case-insensitive disk; `coop up` refuses names it cannot cover (task
   2026-10-18-cover-every-letter-case-spelling-of-hidden-files).

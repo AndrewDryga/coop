@@ -32,7 +32,7 @@ type VolumeExposure struct {
 }
 
 type PlainLocalVolume struct {
-	Mountpoint, ExposureRoot, CreatedAt string
+	Mountpoint, ExposureRoot string
 }
 
 // ExistingNamedVolumeExposure never creates a volume. A positively observed
@@ -110,18 +110,10 @@ func (r volumeReader) existing(ctx context.Context, names []string) (VolumeExpos
 			existing = append(existing, name)
 		}
 	}
-	return r.named(ctx, existing, false)
+	return r.named(ctx, existing)
 }
 
-// NamedVolumeExposure returns the backing paths of exactly the selected local
-// volumes. With prepare, confirmed missing volumes get the same default local
-// creation an ordinary run would perform, then inspection BEFORE owner-key
-// publication. Existing volumes are never replaced. Final checks pass false.
-func (r Runtime) NamedVolumeExposure(ctx context.Context, names []string, prepare bool) (VolumeExposure, error) {
-	return (volumeReader{r.kind(), r.volumeOutput}).named(ctx, names, prepare)
-}
-
-func (r volumeReader) named(ctx context.Context, names []string, prepare bool) (VolumeExposure, error) {
+func (r volumeReader) named(ctx context.Context, names []string) (VolumeExposure, error) {
 	if len(names) == 0 {
 		return VolumeExposure{}, nil
 	}
@@ -144,21 +136,6 @@ func (r volumeReader) named(ctx context.Context, names []string, prepare bool) (
 		}
 		seen = append(seen, name)
 		definition, err := r.readVolumeDefinition(ctx, name)
-		if err != nil && prepare {
-			absent, absenceErr := r.namedVolumeAbsent(ctx, name)
-			if absenceErr != nil || !absent {
-				return VolumeExposure{}, errors.New("selected runtime volume cannot be inspected")
-			}
-			args := []string{"volume", "create"}
-			if r.dialect != runtimeAppleContainer {
-				args = append(args, "--driver", "local")
-			}
-			args = append(args, name)
-			if _, err := r.output(ctx, 1024, args...); err != nil {
-				return VolumeExposure{}, err
-			}
-			definition, err = r.readVolumeDefinition(ctx, name)
-		}
 		if err != nil {
 			return VolumeExposure{}, err
 		}
@@ -187,7 +164,7 @@ func (e *VolumeExposure) add(definition volumeDefinition, apple bool) error {
 		if e.PlainLocalVolumes == nil {
 			e.PlainLocalVolumes = map[string]PlainLocalVolume{}
 		}
-		e.PlainLocalVolumes[definition.Name] = PlainLocalVolume{definition.Mountpoint, roots[0], definition.CreatedAt}
+		e.PlainLocalVolumes[definition.Name] = PlainLocalVolume{definition.Mountpoint, roots[0]}
 	}
 	if len(roots) > 1 {
 		e.BindSources = append(e.BindSources, roots[1:]...)

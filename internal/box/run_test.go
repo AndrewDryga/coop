@@ -2589,86 +2589,6 @@ func TestInstructionPlan(t *testing.T) {
 	}
 }
 
-// TestEnsureAgentHomesScoped: a run pre-creates home dirs ONLY for the agents it mounts
-// (credentialScope) — pre-creating every agent's active-profile dir was a husk factory: a
-// deleted profile dir (an empty "default") reappeared on every box run, even runs that
-// never involved that agent. A raw run (no agent) creates nothing.
-func TestEnsureAgentHomesScoped(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir}
-	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "claude"}); err != nil {
-		t.Fatal(err)
-	}
-	if !dirExists(filepath.Join(dir, "claude")) {
-		t.Error("the launched agent's home was not created")
-	}
-	for _, other := range []string{"codex", "gemini"} {
-		if dirExists(filepath.Join(dir, other)) {
-			t.Errorf("%s's home was created for a claude-only run — the husk-profile factory is back", other)
-		}
-	}
-	raw := t.TempDir()
-	if err := ensureAgentHomes(&config.Config{ConfigDir: raw}, RunSpec{Homes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if entries, _ := os.ReadDir(raw); len(entries) != 0 {
-		t.Errorf("a raw run (no agent) created agent homes: %v", entries)
-	}
-}
-
-func TestEnsureAgentHomesTightensSelectedProfileOnly(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &config.Config{ConfigDir: dir}
-	profile := cfg.AgentProfileDir("codex", "default")
-	if err := os.MkdirAll(profile, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles"), profile} {
-		if err := os.Chmod(path, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	providerFile := filepath.Join(profile, "provider-state.json")
-	if err := os.WriteFile(providerFile, []byte("keep\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(providerFile, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "codex"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{dir, filepath.Join(dir, "codex"), filepath.Join(dir, "codex", "profiles"), profile} {
-		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
-			t.Errorf("%s was not tightened to 0700: info=%v err=%v", path, info, err)
-		}
-	}
-	if info, err := os.Stat(providerFile); err != nil || info.Mode().Perm() != 0o644 {
-		t.Errorf("provider-owned descendant mode changed: info=%v err=%v", info, err)
-	}
-}
-
-func TestEnsureAgentHomesRefusesProfilePathEscape(t *testing.T) {
-	root := t.TempDir()
-	cfg := &config.Config{ConfigDir: filepath.Join(root, "agents")}
-	outside := filepath.Join(root, "outside")
-	if err := os.Mkdir(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfg.SetActiveProfile("codex", "../../../outside")
-
-	if err := ensureAgentHomes(cfg, RunSpec{Homes: true, Agent: "codex"}); err == nil {
-		t.Fatal("profile path escape was accepted")
-	}
-	if info, err := os.Stat(outside); err != nil || info.Mode().Perm() != 0o755 {
-		t.Fatalf("outside directory was changed: info=%v err=%v", info, err)
-	}
-}
-
 func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
 	repo := t.TempDir()
 	configDir := t.TempDir()
@@ -2690,6 +2610,39 @@ func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
 	}
 	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("unsafe profile reached runtime: %v", statErr)
+	}
+}
+
+// An account name becomes a folder name, so one that climbs out of the provider's folders stops the
+// launch before the runtime, and whatever it names stays as it was.
+func TestRunRefusesAnAccountNameOutsideItsFolderBeforeRuntime(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	cfg := &config.Config{ConfigDir: filepath.Join(root, "agents"), HomeInBox: "/home/node", Egress: "none"}
+	cfg.SetActiveProfile("codex", "../../../outside")
+	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
+		Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"true"},
+		Homes: true, Agent: "codex", Batch: true, Quiet: true,
+	})
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "invalid native account selection") {
+		t.Fatalf("Run = (%d, %v), want the account name refused", code, err)
+	}
+	if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("an account name outside its folder reached the runtime: %v", statErr)
+	}
+	info, err := os.Stat(outside)
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("the folder the name points at changed: info=%v err=%v", info, err)
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("the launch wrote into the folder the name points at: %v, %v", entries, err)
 	}
 }
 
@@ -4037,11 +3990,6 @@ func TestPresetRoleMountsExportsFallbackTargets(t *testing.T) {
 	} {
 		if !containsSeq(args, want) {
 			t.Errorf("role mount args missing %v: %v", want, args)
-		}
-	}
-	for _, retired := range []string{"COOP_CONSULT_CRITIC_AGENT", "COOP_CONSULT_CRITIC_MODEL", "COOP_DELEGATE_FAST_AGENT", "COOP_DELEGATE_FAST_MODEL"} {
-		if strings.Contains(strings.Join(args, "\n"), retired) {
-			t.Errorf("role mount still exports retired singleton env %s: %v", retired, args)
 		}
 	}
 }

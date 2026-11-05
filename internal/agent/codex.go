@@ -888,12 +888,6 @@ func (codexAgent) Login(*config.Config) []string {
 	return []string{"codex", "login", "--device-auth"}
 }
 
-func (codexAgent) ConsultCmd(question string) []string {
-	// Bubblewrap cannot create its namespace inside Coop's unprivileged box. Landlock keeps
-	// repository content read-only there; it may still allow recoverable file-mode changes.
-	return []string{"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", question}
-}
-
 // codexManagedConfig is the pinned 0.159.2's managed layer, which it loads after -c, the project
 // and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
 // default the user's overrides) — so what it sets holds whatever a home or project sets.
@@ -1678,6 +1672,9 @@ const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.complet
 		 | if (.read|token) then . else del(.read) end
 		 | .output=(.output + .reasoning) | select(.output<=1000000000)] | last // empty`
 
+// ConsultFresh enables Landlock because Bubblewrap cannot create its namespace inside Coop's
+// unprivileged box. Landlock keeps repository content read-only there; it may still allow
+// recoverable file-mode changes.
 func (codexAgent) ConsultFresh() string {
 	return `codex_run codex exec ${codex_eval_web_tools:-} --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
 	# Only record a thread id parsed from a bounded usable reply. The generic wrapper commits this

@@ -26,7 +26,6 @@ type fakeApprovalReview struct {
 	discarded     int
 }
 
-func (f *fakeApprovalReview) Project() string                { return "/private/tmp/project" }
 func (f *fakeApprovalReview) Before() *networkstate.Approval { return f.before }
 func (f *fakeApprovalReview) After() *networkstate.Approval  { return f.after }
 func (f *fakeApprovalReview) Pending() *networkstate.PendingApproval {

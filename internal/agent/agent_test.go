@@ -139,31 +139,26 @@ func TestCommands(t *testing.T) {
 	cleanCmdEnv(t)
 	cfg := &config.Config{} // box.Run applies any MCP command args after these base commands
 	cases := []struct {
-		name                              string
-		interactive, headless, acp, csult []string
+		name                       string
+		interactive, headless, acp []string
 	}{
 		{"claude",
 			[]string{"claude", "--dangerously-skip-permissions"},
 			[]string{"claude", "--dangerously-skip-permissions", "-p", "go"},
-			[]string{"claude-agent-acp"},
-			[]string{"claude", "-p", "--permission-mode", "plan", "q"}},
+			[]string{"claude-agent-acp"}},
 		{"codex",
 			[]string{"codex", "--dangerously-bypass-approvals-and-sandbox"},
 			[]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "go"},
-			[]string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"},
-			[]string{"codex", "exec", "--enable", "use_legacy_landlock", "-s", "read-only", "q"}},
+			[]string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}},
 		{"gemini",
 			[]string{"gemini", "--yolo"},
 			[]string{"gemini", "--yolo", "-p", "go"},
-			[]string{"gemini", "--acp"},
-			[]string{"gemini", "--approval-mode", "plan", "-p", "q"}},
+			[]string{"gemini", "--acp"}},
 		{"grok",
 			[]string{"grok", "--permission-mode", "bypassPermissions"},
 			// -p takes the prompt as its value, so the prompt is last, after the mode flags.
 			[]string{"grok", "--permission-mode", "bypassPermissions", "-p", "go"},
-			[]string{"grok", "agent", "stdio"},
-			// read-only via the tool allowlist, NOT --permission-mode plan (a no-op in headless).
-			[]string{"grok", "--tools", "read_file,grep,list_dir", "-p", "q"}},
+			[]string{"grok", "agent", "stdio"}},
 	}
 	for _, c := range cases {
 		a, _ := Get(c.name)
@@ -175,9 +170,6 @@ func TestCommands(t *testing.T) {
 		}
 		if got := a.ACP(cfg); !slices.Equal(got, c.acp) {
 			t.Errorf("%s ACP = %v", c.name, got)
-		}
-		if got := a.ConsultCmd("q"); !slices.Equal(got, c.csult) {
-			t.Errorf("%s ConsultCmd = %v", c.name, got)
 		}
 	}
 }

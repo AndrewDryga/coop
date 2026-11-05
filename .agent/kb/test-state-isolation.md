@@ -3,7 +3,7 @@ name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
 sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
-updated: 2026-10-18
+updated: 2026-11-04
 ---
 
 Coop's per-user state lives under the home folder: the execution registry with its
@@ -94,9 +94,8 @@ folder shares the parent's stubs, and the parent reports. The tagged suites buil
 (`hostclis_tagged_test.go`). The report names calls, not tests; narrow it with `-run`.
 
 **Leftovers.** A killed test binary leaves its folder. The daily temp sweep
-(`internal/box/reap.go`) removes `coop-test-state-*` entries older than an hour, and the
-`coop-test-task-leases-*` and `coop-gitview-*` folders that earlier builds' test binaries made for
-each process; a test binary that runs past an hour while a real coop sweeps could lose its folder.
+(`internal/box/reap.go`) removes `coop-test-state-*` entries older than an hour; a test binary that
+runs past an hour while a real coop sweeps could lose its folder.
 Registries report any non-record entry with its full path, and that refusal stops filtered launches,
 `coop up`, fork changes and ACP cleanup in the repository. That includes the `.service-launch.lock`
 that builds of September 15 to 23, 2026 kept in each `<sha256>` registry folder: 29,648 on one Mac
@@ -122,6 +121,8 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-11-04 — the temp sweep stopped looking for `coop-test-task-leases-*` and `coop-gitview-*`: no
+  build makes either folder, so old ones wait for the OS's own temp cleanup.
 - 2026-10-18 — Isolate runs the tests' git without the macOS stub, which cost a session review
   about 40% of its time (task 2026-10-06-internal-sessionsvc-s-race-run-takes-15-to-20-mi).
 - 2026-10-17 — Isolate moves HOME into the state folder and keeps the go command's and Docker's

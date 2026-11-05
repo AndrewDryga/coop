@@ -5,8 +5,6 @@ import (
 	"regexp"
 )
 
-const MaxAdmissions = 1024
-
 type KernelObject struct {
 	Name string `json:"name"`
 	ID   uint32 `json:"id"`

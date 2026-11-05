@@ -9,12 +9,8 @@ import (
 	"slices"
 )
 
-// WriteKernelPolicy is the private, versioned wire format consumed by the bundled
+// WriteKernelPolicies is the private, versioned wire format consumed by the bundled
 // libbpf helper. It contains policy metadata only, never protected file contents.
-func WriteKernelPolicy(w io.Writer, policy Policy, unicodeData []byte) error {
-	return WriteKernelPolicies(w, []Policy{policy}, unicodeData)
-}
-
 func WriteKernelPolicies(w io.Writer, policies []Policy, unicodeData []byte) error {
 	if len(policies) == 0 || len(policies) > 32 {
 		return errors.New("invalid filesystem policy roots")

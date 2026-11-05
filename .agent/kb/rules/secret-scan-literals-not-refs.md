@@ -2,14 +2,14 @@
 name: secret-scan-literals-not-refs
 description: "the scanner flags literal credentials and never references to them; precision is the product"
 scope: security
-sources: [internal/box/secretscan.go, internal/secretscan/secretscan.go]
-check: "go test ./internal/box -run TestScanSecrets"
-updated: 2026-09-05
+sources: [internal/secretscan/secretscan.go, internal/secretscan/secretscan_test.go]
+check: "go test ./internal/secretscan -run TestScanSecrets"
+updated: 2026-11-04
 ---
 
 # A secret scanner flags literal credentials, never references to them
 
-The fuzzy half of `box.ScanSecrets` (the entropy heuristic on a value assigned to a
+The fuzzy half of `secretscan.ScanSecrets` (the entropy heuristic on a value assigned to a
 secret-named key) exists to catch a *real token pasted into a file*. It must not fire on
 the far more common thing that looks superficially similar: **code and config that names
 or references a secret**. The user's bar — "the scanning gives a ton of false positives on
@@ -71,3 +71,4 @@ random token.
 - 2026-07-13 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-09-05 — the patterns and the reference heuristic moved to `internal/secretscan/secretscan.go` (137bde8); `internal/box/secretscan.go` is now a thin wrapper, so both are sources.
+- 2026-11-04 — the scanner's tests moved to `internal/secretscan/secretscan_test.go` beside the real `maxEntropyLineSlack`, so the check and sources point there; `box.ScanSecrets` stays a forward for forkctl.

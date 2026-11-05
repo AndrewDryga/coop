@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/secretscan"
@@ -320,7 +319,7 @@ func TestSecretExceptionsDoNotReachSharedScanners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shared := box.ScanSecrets(string(content)); len(shared) != 1 {
+	if shared := secretscan.ScanSecrets(string(content)); len(shared) != 1 {
 		t.Errorf("the shared detector returned %d findings; an exception must not reach it", len(shared))
 	}
 }

@@ -958,15 +958,9 @@ func (r Runtime) RunningContainerImages(ctx context.Context, key, value string, 
 	return containers, nil
 }
 
-// RemoveContainer force-removes a container by id (or name) — `rm -f`, which stops it first.
-// Used to tear down a supervised box by its deterministic --cidfile id even before its labels
-// are queryable. Reports whether removal succeeded; a no-op (empty id) returns false.
-func (r Runtime) RemoveContainer(id string) bool {
-	return id != "" && r.RemoveContainerContext(context.Background(), id) == nil
-}
-
-// RemoveContainerContext is the cancelable, diagnostic form for cleanup paths that must not hang
-// behind a wedged runtime. The caller owns the deadline.
+// RemoveContainerContext force-removes a container by id (or name) — `rm -f`, which stops it
+// first. It is cancelable and diagnostic for cleanup paths that must not hang behind a wedged
+// runtime. The caller owns the deadline.
 func (r Runtime) RemoveContainerContext(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("container id is empty")

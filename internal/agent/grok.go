@@ -627,13 +627,6 @@ func (grokAgent) Login(*config.Config) []string {
 	return []string{"grok", "login", "--device-auth"}
 }
 
-// ConsultCmd is the read-only peer command — locked read-only via the tool allowlist
-// (see grokReadOnlyTools), NOT --permission-mode plan (a no-op in headless). -p takes the
-// prompt as its value, so the question goes last.
-func (grokAgent) ConsultCmd(question string) []string {
-	return []string{"grok", "--tools", grokReadOnlyTools, "-p", question}
-}
-
 // UpdateControls: the pinned 1.0.44 checks for a CLI update on launch unless
 // GROK_DISABLE_AUTOUPDATER is set (its own documentation, embedded in the binary).
 func (grokAgent) UpdateControls() UpdateControls {
@@ -948,6 +941,8 @@ const grokConsultUsage = `select(.[-1].type=="end")
 		  else select(.reasoning|token) | .output=(.output + .reasoning) | select(.output<=1000000000) end
 		| if (.cost|type=="number" and isfinite and .>=0) then . else del(.cost) end`
 
+// ConsultFresh is read-only through the tool allowlist (see grokReadOnlyTools). -p takes the prompt
+// as its value, so the prompt goes last.
 func (grokAgent) ConsultFresh() string {
 	return "printf '%s' \"$id\" >\"$candidate_idfile\"\n" +
 		`grok_run grok ${grok_eval_web_tools:-} --tools "` + grokReadOnlyTools + `" --session-id "$id" --output-format streaming-json ${model:+--model "$model"} ${effort:+--reasoning-effort "$effort"} -p "$prompt"`
