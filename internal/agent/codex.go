@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -994,7 +993,6 @@ func (codexAgent) LiveCredentials() LiveCredentialSpec {
 		Artifacts: []CredentialArtifact{{
 			Name: "auth.json", Primary: true, Project: projectCodexCredential,
 		}},
-		Prepare:     renewCodexCredential,
 		Portability: codexCredentialPortability,
 		// Native workspace discovery and API-key inference use different 401 refusals.
 		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key",
@@ -1007,8 +1005,6 @@ const (
 	codexOAuthClientID   = "app_EMoamEEZ73f0CkXaXp7hrann"
 	codexCredentialLimit = 1 << 20
 )
-
-var errCodexCredentialChanged = fmt.Errorf("codex credential changed during refresh")
 
 type codexSourceCredential struct {
 	AuthMode     string             `json:"auth_mode"`
@@ -1087,133 +1083,6 @@ type codexRefreshResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// renewCodexCredential keeps refresh authority in the trusted source profile. The sandbox only
-// receives projectCodexCredential's access-only representation after this function returns.
-func renewCodexCredential(profileDir string, deadline time.Time) error {
-	path := filepath.Join(profileDir, "auth.json")
-	lock, err := os.OpenFile(path+".refresh.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return fmt.Errorf("open Codex credential refresh lock: %w", err)
-	}
-	defer lock.Close()
-	lockInfo, err := lock.Stat()
-	if err != nil || !lockInfo.Mode().IsRegular() {
-		return fmt.Errorf("codex credential refresh lock is unsafe")
-	}
-	if err := lock.Chmod(0o600); err != nil {
-		return fmt.Errorf("protect Codex credential refresh lock: %w", err)
-	}
-	if err := lockCredentialRefresh(lock, deadline); err != nil {
-		return fmt.Errorf("lock Codex credential refresh: %w", err)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-
-	for range 3 {
-		err := renewCodexCredentialLocked(path, deadline)
-		if err != errCodexCredentialChanged {
-			return err
-		}
-	}
-	return fmt.Errorf("codex credential changed repeatedly during refresh")
-}
-
-func renewCodexCredentialLocked(path string, deadline time.Time) error {
-	data, err := readCodexCredential(path)
-	if err != nil {
-		return fmt.Errorf("read Codex credential for refresh: %w", err)
-	}
-	var source codexSourceCredential
-	if err := json.Unmarshal(data, &source); err != nil {
-		return fmt.Errorf("decode Codex credential for refresh: %w", err)
-	}
-	mode := source.AuthMode
-	if mode == "" && source.Tokens != nil {
-		mode = "chatgpt"
-	}
-	if mode == "apikey" {
-		return nil
-	}
-	if mode != "chatgpt" || source.Tokens == nil {
-		return fmt.Errorf("codex credential needs sign-in")
-	}
-	if jwtExpiresAfter(source.Tokens.AccessToken, deadline) {
-		return nil
-	}
-	if source.Tokens.RefreshToken == "" {
-		return fmt.Errorf("codex credential needs sign-in")
-	}
-
-	response, err := requestCodexCredentialRefresh(source.Tokens.RefreshToken, deadline)
-	if err != nil {
-		return err
-	}
-	if response.AccessToken == "" || !jwtExpiresAfter(response.AccessToken, time.Now()) {
-		return fmt.Errorf("codex credential refresh returned an unusable access token")
-	}
-
-	var document map[string]json.RawMessage
-	var tokens map[string]json.RawMessage
-	if err := json.Unmarshal(data, &document); err != nil {
-		return fmt.Errorf("decode Codex credential document: %w", err)
-	}
-	if err := json.Unmarshal(document["tokens"], &tokens); err != nil {
-		return fmt.Errorf("decode Codex token document: %w", err)
-	}
-	setJSON := func(target map[string]json.RawMessage, key string, value any) error {
-		encoded, err := json.Marshal(value)
-		if err == nil {
-			target[key] = encoded
-		}
-		return err
-	}
-	if response.IDToken != "" {
-		if err := setJSON(tokens, "id_token", response.IDToken); err != nil {
-			return err
-		}
-	}
-	if err := setJSON(tokens, "access_token", response.AccessToken); err != nil {
-		return err
-	}
-	if response.RefreshToken != "" {
-		if err := setJSON(tokens, "refresh_token", response.RefreshToken); err != nil {
-			return err
-		}
-	}
-	encodedTokens, err := json.Marshal(tokens)
-	if err != nil {
-		return fmt.Errorf("encode refreshed Codex tokens: %w", err)
-	}
-	document["tokens"] = encodedTokens
-	if source.AuthMode != "" {
-		if err := setJSON(document, "auth_mode", "chatgpt"); err != nil {
-			return err
-		}
-	}
-	if err := setJSON(document, "last_refresh", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(document)
-	if err != nil {
-		return fmt.Errorf("encode refreshed Codex credential: %w", err)
-	}
-	current, err := readCodexCredential(path)
-	if err != nil {
-		return fmt.Errorf("re-read Codex credential before refresh persistence: %w", err)
-	}
-	if !bytes.Equal(current, data) {
-		return errCodexCredentialChanged
-	}
-	if err := config.WriteFileAtomic(path, append(encoded, '\n')); err != nil {
-		return fmt.Errorf("persist refreshed Codex credential: %w", err)
-	}
-	// Rotation has already happened upstream. A valid grant that is too short for this
-	// caller still replaces the old authority, or the next attempt reuses a spent token.
-	if !jwtExpiresAfter(response.AccessToken, deadline) {
-		return fmt.Errorf("codex credential refreshed; access does not cover the requested deadline")
-	}
-	return nil
-}
-
 func readCodexCredential(path string) ([]byte, error) {
 	return ReadCredentialArtifact(path, codexCredentialLimit)
 }
@@ -1233,53 +1102,6 @@ func codexRefreshEndpoint() (string, string, error) {
 		clientID = codexOAuthClientID
 	}
 	return endpoint, clientID, nil
-}
-
-func requestCodexCredentialRefresh(refreshToken string, deadline time.Time) (codexRefreshResponse, error) {
-	endpoint, clientID, err := codexRefreshEndpoint()
-	if err != nil {
-		return codexRefreshResponse{}, err
-	}
-	body, err := json.Marshal(codexRefreshRequest{
-		ClientID: clientID, GrantType: "refresh_token", RefreshToken: refreshToken,
-	})
-	if err != nil {
-		return codexRefreshResponse{}, fmt.Errorf("encode Codex credential refresh: %w", err)
-	}
-	requestDeadline := time.Now().Add(30 * time.Second)
-	if deadline.Before(requestDeadline) {
-		requestDeadline = deadline
-	}
-	ctx, cancel := context.WithDeadline(context.Background(), requestDeadline)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return codexRefreshResponse{}, fmt.Errorf("create Codex credential refresh: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return codexRefreshResponse{}, fmt.Errorf("refresh Codex credential: %w", err)
-	}
-	defer resp.Body.Close()
-	limited := io.LimitReader(resp.Body, 64<<10)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, limited)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest {
-			return codexRefreshResponse{}, fmt.Errorf("codex credential needs sign-in")
-		}
-		return codexRefreshResponse{}, fmt.Errorf("codex credential refresh failed with HTTP %d", resp.StatusCode)
-	}
-	var result codexRefreshResponse
-	if err := json.NewDecoder(limited).Decode(&result); err != nil {
-		return codexRefreshResponse{}, fmt.Errorf("decode Codex credential refresh: %w", err)
-	}
-	return result, nil
 }
 
 func isLoopbackHost(host string) bool {

@@ -409,9 +409,6 @@ type StoredAPIKeyDetector interface {
 // Portability inspects only the isolated projected profile, never the source credential.
 type LiveCredentialSpec struct {
 	Artifacts []CredentialArtifact
-	// Prepare runs against the trusted source profile before projection. It may renew an
-	// expiring access credential, but refresh authority must remain in the source profile.
-	Prepare     func(profileDir string, deadline time.Time) error
 	Portability func(profileDir string, deadline time.Time) CredentialPortability
 	AuthSignals []string
 }
@@ -548,8 +545,8 @@ type Agent interface {
 	// It never reads provider-wide env credentials; those retain their presence-based status.
 	StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus
 	// LiveCredentials declares the access-only credential projection and redacted compatibility
-	// diagnostics for this adapter. It is consumed only by opt-in live tests, but compiler-required
-	// so a registered provider cannot silently evade the registry-generated suite.
+	// diagnostics for this adapter. Filtered networking reads its Portability and the loop its
+	// AuthSignals; the opt-in live suite reads the rest, so a registered provider cannot evade it.
 	LiveCredentials() LiveCredentialSpec
 	// NativeCredentials owns credential-only canonical import, identity and host renewal.
 	NativeCredentials() NativeCredentialSpec

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,9 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -651,7 +648,6 @@ func (grokAgent) LiveCredentials() LiveCredentialSpec {
 			Name: "auth.json", Primary: true, Project: projectGrokCredential,
 		}},
 		Portability: grokCredentialPortability,
-		Prepare:     renewGrokCredential,
 		AuthSignals: []string{"not signed in", "authentication required", "unauthorized"},
 	}
 }
@@ -953,137 +949,6 @@ const (
 	grokCredentialLimit = 1 << 20
 )
 
-var errGrokCredentialChanged = errors.New("grok credential changed during refresh")
-
-// renewGrokCredential renews the stored login on the host before a session projects an access-only
-// copy of it, the way the pinned client does itself: under the client's own lock (a flock on
-// auth.json.lock, which the binary re-reads after waiting on — its "refresh adopted sibling" path),
-// with the same form fields, and the rotated pair written back in place. A login that already
-// outlives the deadline is left alone: refresh tokens rotate, so a needless refresh is a needless
-// chance to lose a working login.
-func renewGrokCredential(profileDir string, deadline time.Time) error {
-	return renewGrokCredentialScope(profileDir, deadline, "")
-}
-
-func renewGrokCredentialScope(profileDir string, deadline time.Time, scope string) error {
-	path := filepath.Join(profileDir, "auth.json")
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return fmt.Errorf("open Grok credential lock: %w", err)
-	}
-	defer lock.Close()
-	if info, err := lock.Stat(); err != nil || !info.Mode().IsRegular() {
-		return errors.New("grok credential lock is unsafe")
-	}
-	if err := lockCredentialRefresh(lock, deadline); err != nil {
-		return fmt.Errorf("lock Grok credential refresh: %w", err)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-
-	for range 3 {
-		err := renewGrokCredentialLocked(path, deadline, scope)
-		if !errors.Is(err, errGrokCredentialChanged) {
-			return err
-		}
-	}
-	return errors.New("grok credential changed repeatedly during refresh")
-}
-
-func renewGrokCredentialLocked(path string, deadline time.Time, scope string) error {
-	data, err := readGrokCredentialFile(path)
-	if err != nil {
-		return fmt.Errorf("read Grok credential for refresh: %w", err)
-	}
-	credentials, err := decodeGrokSourceCredential(data)
-	if err != nil {
-		return fmt.Errorf("decode Grok credential for refresh: %w", err)
-	}
-	if scope != "" {
-		if _, ok := credentials[scope]; !ok {
-			return errors.New("grok credential needs sign-in")
-		}
-	}
-	for key, credential := range credentials {
-		if scope != "" && key != scope {
-			continue
-		}
-		if expiresAt, err := time.Parse(time.RFC3339Nano, credential.ExpiresAt); err == nil && expiresAt.After(deadline) {
-			return nil // a sibling may have renewed it while this waited on the lock: adopt it
-		}
-	}
-	var renewable []string
-	foreign := false
-	for key, credential := range credentials {
-		if scope != "" && key != scope {
-			continue
-		}
-		switch {
-		case credential.RefreshToken == "":
-		case credential.OIDCIssuer != grokIssuer:
-			foreign = true // another issuer's login is not one coop may refresh
-		default:
-			renewable = append(renewable, key)
-		}
-	}
-	if len(renewable) == 0 && foreign {
-		// The stored issuer is box-writable, so it is not repeated back to the operator.
-		return errors.New("grok credential is from an issuer other than " + grokIssuer + " — sign in again")
-	}
-	if len(renewable) == 0 {
-		return errors.New("grok credential needs sign-in")
-	}
-	slices.Sort(renewable) // one order every time, not the map's
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(data, &document); err != nil {
-		return fmt.Errorf("decode Grok credential document: %w", err)
-	}
-	var expiries []time.Time
-	var refreshErr error
-	for _, key := range renewable {
-		response, err := requestGrokCredentialRefresh(credentials[key], deadline)
-		if err == nil {
-			var entry json.RawMessage
-			var expiresAt time.Time
-			if entry, expiresAt, err = mergeGrokCredentialRefresh(document[key], response, time.Now()); err == nil {
-				document[key] = entry
-				expiries = append(expiries, expiresAt)
-				continue
-			}
-		}
-		refreshErr = err
-		break
-	}
-	if len(expiries) == 0 {
-		return refreshErr // nothing rotated: the stored login is exactly as it was
-	}
-	renewed, err := json.Marshal(document)
-	if err != nil {
-		return fmt.Errorf("encode refreshed Grok credential: %w", err)
-	}
-	current, err := readGrokCredentialFile(path)
-	if err != nil {
-		return fmt.Errorf("re-read Grok credential before refresh persistence: %w", err)
-	}
-	if !bytes.Equal(current, data) {
-		return errGrokCredentialChanged
-	}
-	if err := config.WriteFileAtomic(path, renewed); err != nil {
-		return fmt.Errorf("persist refreshed Grok credential: %w", err)
-	}
-	// Persist first, judge second: a grant already rotated its refresh token upstream, so what came
-	// back is the only working login left — even when a later entry's refresh failed, and whether
-	// or not it covers this turn.
-	if refreshErr != nil {
-		return refreshErr
-	}
-	for _, expiresAt := range expiries {
-		if !expiresAt.After(deadline) {
-			return errors.New("renewed Grok credential expires before the turn deadline")
-		}
-	}
-	return nil
-}
-
 // mergeGrokCredentialRefresh edits the renewed fields into one stored entry, as the client writes
 // them — key, refresh_token, create_time and expires_at — and keeps every field coop does not model.
 func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResponse, issuedAt time.Time) (json.RawMessage, time.Time, error) {
@@ -1120,58 +985,6 @@ type grokRefreshResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
-}
-
-// requestGrokCredentialRefresh sends the form captured from the 1.0.25 client
-// against a logging issuer: grant_type, refresh_token, client_id, principal_type and principal_id.
-func requestGrokCredentialRefresh(credential grokSourceCredential, deadline time.Time) (grokRefreshResponse, error) {
-	endpoint := strings.TrimSpace(os.Getenv("GROK_REFRESH_TOKEN_URL_OVERRIDE"))
-	if endpoint == "" {
-		endpoint = grokTokenURL
-	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !isLoopbackHost(parsed.Hostname())) {
-		return grokRefreshResponse{}, errors.New("grok credential refresh endpoint is unsafe")
-	}
-	form := url.Values{
-		"grant_type": {"refresh_token"}, "refresh_token": {credential.RefreshToken}, "client_id": {credential.OIDCClientID},
-		"principal_type": {credential.PrincipalType}, "principal_id": {credential.PrincipalID},
-	}
-	requestDeadline := time.Now().Add(30 * time.Second)
-	if deadline.Before(requestDeadline) {
-		requestDeadline = deadline
-	}
-	ctx, cancel := context.WithDeadline(context.Background(), requestDeadline)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return grokRefreshResponse{}, fmt.Errorf("create Grok credential refresh: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Do(req)
-	if err != nil {
-		return grokRefreshResponse{}, fmt.Errorf("refresh Grok credential: %w", err)
-	}
-	defer resp.Body.Close()
-	limited := io.LimitReader(resp.Body, 64<<10)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, limited)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest {
-			return grokRefreshResponse{}, errors.New("grok credential needs sign-in")
-		}
-		return grokRefreshResponse{}, errors.New("grok credential refresh failed with HTTP " + strconv.Itoa(resp.StatusCode))
-	}
-	var result grokRefreshResponse
-	if err := json.NewDecoder(limited).Decode(&result); err != nil {
-		return grokRefreshResponse{}, fmt.Errorf("decode Grok credential refresh: %w", err)
-	}
-	return result, nil
-}
-
-// readGrokCredentialFile reads the stored login without following a link, bounded.
-func readGrokCredentialFile(path string) ([]byte, error) {
-	return ReadCredentialArtifact(path, grokCredentialLimit)
 }
 
 // grokCanRefresh reports whether the stored login carries refresh authority — its presence, never

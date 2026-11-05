@@ -2,8 +2,8 @@
 name: quality-tool-reviews
 description: measured complexity, duplication and mutation findings need coverage and ownership context
 subsystem: development
-sources: [internal/loop/loop.go, internal/loop/review.go, internal/loop/telemetry.go, internal/tasks/registry_file.go, internal/ladder/limit.go, internal/ladder/limit_test.go, internal/ladder/ladder_test.go, internal/agent/credential_file.go, internal/box/filtered_mounts.go, internal/testutil/nativedocker/fixture.go, internal/ui/tty_darwin.go, internal/ui/tty_linux.go]
-updated: 2026-10-28
+sources: [internal/loop/loop.go, internal/loop/review.go, internal/loop/telemetry.go, internal/tasks/registry_file.go, internal/ladder/limit.go, internal/ladder/limit_test.go, internal/ladder/ladder_test.go, internal/agent/credential_file.go, internal/box/account_renewal.go, internal/box/filtered_mounts.go, internal/testutil/nativedocker/fixture.go, internal/ui/tty_darwin.go, internal/ui/tty_linux.go]
+updated: 2026-11-05
 ---
 
 The October 2026 Crapper/Dryer/Mutator trial produced useful review inputs, not a new gate.
@@ -29,9 +29,8 @@ change observable behavior; realistic retry timing and classification mutants ca
 Dryer normalizes values and names, so exact structural matches include unrelated getters and
 platform ioctl implementations. The native-Docker fixture parser intentionally interprets emitted
 flags independently of production `networkMountPlan`; sharing those would weaken the test oracle.
-Credential renewal wrappers already share deadline/lock policy in `lockCredentialRefresh` and keep
-provider ownership; extracting the remaining wrappers adds callback/sentinel plumbing without
-fixing demonstrated drift.
+Credential renewal lives in native custody (`internal/box/account_renewal.go`) with provider-owned
+parsing; the profile-folder renewal wrappers the review weighed were removed on 2026-11-05.
 
 The adopted boundaries instead share actual policy: `readForkRegistryFile` owns bounded,
 no-follow, single-link bytes while callers retain typed validation; `readRunRecords` owns the
@@ -47,6 +46,7 @@ are not 60,726 executed tests or surviving bugs. Retain exact per-site execution
 remap recorded sites when source edits move their byte offsets; never reuse stale overlay hashes.
 
 ## Changelog
+- 2026-11-05 — the profile-folder renewal wrappers (`lockCredentialRefresh` and the per-adapter renew helpers) are gone; the live suite renews through native custody.
 - 2026-10-28 — extended review to the complete recorded inventory; adopted shared semantic policy, real behavioral repairs and missing boundary tests while retaining simple dispatch and independent oracles.
 - 2026-10-28 — recorded the measured tool limitations and deliberate retain/share decisions;
   adopted real rate-limit regressions and the three shared policy boundaries, preserving

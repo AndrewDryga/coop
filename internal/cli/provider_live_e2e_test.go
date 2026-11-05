@@ -213,12 +213,14 @@ func runProviderLiveCompatibility(
 	}
 	preflightDeadline := time.Now().Add(30 * time.Minute)
 	if workflow == liveWorkflowNetwork && target.Provider == "grok" {
-		// Admission needs a portable token for an hour after it starts. Renew the trusted
-		// source before Prepare snapshots and projects it, never the access-only copy.
+		// Admission needs a portable token for an hour after it starts. Renew the canonical
+		// record before Prepare snapshots and projects it, never the access-only copy. One that
+		// cannot be renewed is a sign-in to redo: a prerequisite skip, like an expired copy.
 		preflightDeadline = time.Now().Add(box.RestrictedCredentialHorizon + liveNetworkChildWindow + 2*time.Minute)
 		if !brokered {
 			if err := prepareProviderNetworkLiveCredential(realConfig, selection, preflightDeadline); err != nil {
-				return fail(false, liveprovider.ReasonUnsafeCredential, "credential_preparation")
+				return liveprovider.ProviderResult{Provider: target.Provider, Status: liveprovider.StatusSkipped,
+					ReasonCode: liveprovider.ReasonCredentialRefresh, DetailCode: "credential_preparation"}
 			}
 		}
 	}
@@ -330,29 +332,14 @@ func runProviderLiveCompatibility(
 	})
 }
 
+// prepareProviderNetworkLiveCredential renews the account's canonical record on the host when it would
+// not outlive deadline, as a launch does: the vault (liveprovider.Prepare) copies that record's access.
+// An account with no canonical record has nothing to renew.
 func prepareProviderNetworkLiveCredential(cfg *config.Config, selection liveprovider.Selection, deadline time.Time) error {
-	if !box.ProfileMarkerPresent(cfg, selection.Provider, selection.Account) {
-		return nil // An env-only account has no stored login to renew.
-	}
-	ag, ok := agents.Get(selection.Provider)
-	if !ok {
-		return fmt.Errorf("unknown live provider %q", selection.Provider)
-	}
-	selector, ok := ag.(agents.NetworkAuthSelector)
-	if !ok {
-		return fmt.Errorf("%s has no network authentication selector", selection.Provider)
-	}
-	networkAuth, err := selector.NetworkAuthSelection(cfg.AgentProfileDir(selection.Provider, selection.Account), true)
-	if err != nil {
-		return err
-	}
-	if networkAuth.RequirePortable {
-		return nil // No refresh authority: preserve the projected credential's prerequisite skip.
-	}
-	if prepare := ag.LiveCredentials().Prepare; prepare != nil {
-		return prepare(cfg.AgentProfileDir(selection.Provider, selection.Account), deadline)
-	}
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_, err := box.PrepareNativeAccount(ctx, cfg, selection.Provider, selection.Account, deadline)
+	return err
 }
 
 func verifyProviderLiveRepository(
