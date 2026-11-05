@@ -235,8 +235,8 @@ func TestEveryLoopLaunchCarriesTheRunsCapture(t *testing.T) {
 	}
 }
 
-// A run that never admitted (open egress) launches exactly as it does today:
-// a nil capture, and a hook that is safe to call.
+// A run that never admitted (open egress) launches with a nil capture and a hook that is safe to
+// call.
 func TestLoopWithoutFilteredEgressLaunchesUnchanged(t *testing.T) {
 	var spec box.RunSpec
 	c := &Control{cfg: &config.Config{}, reuseServices: true, boxRun: func(s box.RunSpec) (int, error) { spec = s; return 0, nil }}

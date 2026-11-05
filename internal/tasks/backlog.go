@@ -13,13 +13,13 @@ import (
 )
 
 // coop backlog — the staging drawer for unscheduled ideas, kept as task folders under
-// .agent/tasks/xx_backlog/. It replaces the old .agent/BACKLOG.md file: one system (task folders), so
-// an idea that's ready becomes live work with `coop backlog promote <id>` — a folder move to 00_todo/,
-// not a hand-rewrite. xx_backlog lives OUTSIDE the lifecycle states (taskstate.All), so the loop, the
-// Stop hook, and every counter ignore it; only the commands here read it (readBacklog/findBacklogTask).
-// Queue resolution and the monorepo roll-up mirror cmdTasks, so backlog behaves the same across queues.
+// .agent/tasks/xx_backlog/. An idea that's ready becomes live work with `coop backlog promote <id>` —
+// a folder move to 00_todo/, not a hand-rewrite. xx_backlog lives OUTSIDE the lifecycle states
+// (taskstate.All), so the loop, the Stop hook, and every counter ignore it; only the commands here
+// read it (ReadBacklog/findBacklogTask).
+// Queue resolution and the monorepo roll-up mirror CmdTasks, so backlog behaves the same across queues.
 
-// backlogVerbs are the canonical `coop backlog` subcommands — the source for the unknown-subcommand
+// BacklogVerbs are the canonical `coop backlog` subcommands — the source for the unknown-subcommand
 // suggester (a bare `coop backlog` lists the drawer, so it isn't a verb).
 var BacklogVerbs = []string{"ls", "add", "rm", "promote"}
 
@@ -102,7 +102,7 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 // verbs. The queue need not exist yet — `add` creates xx_backlog on demand, setting a new queue up in
 // project the way `coop tasks add` does.
 func cmdBacklogFolder(project, root string, rest []string) (int, error) {
-	// A leading flag is the default listing with that flag, same as cmdBacklog's own check —
+	// A leading flag is the default listing with that flag, same as CmdBacklog's own check —
 	// kept here too so this dispatcher is correct on its own, not just via that caller. See rule
 	// bare-flag-routes-to-default-view.
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
@@ -196,7 +196,7 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 
 // backlogFolderPromote moves a backlog item into 00_todo/ — the whole point of the drawer: an idea
 // that's ready becomes live work by a folder move (its id, log, and notes travel with it), not a
-// hand-rewrite. Reuses moveTaskDir, so a torn move / id collision in todo is caught the same way.
+// hand-rewrite. Reuses MoveTaskDir, so a torn move / id collision in todo is caught the same way.
 func backlogFolderPromote(root string, args []string) (int, error) {
 	if len(args) < 1 {
 		return 2, ui.MissingArgument("task ID", "coop backlog promote", "coop backlog promote <task-id>")

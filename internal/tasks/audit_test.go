@@ -130,8 +130,8 @@ func TestCompletionWindowDoesNotRedetectDuplicateArchives(t *testing.T) {
 
 func TestCompletionWindowDetectsNewArchiveAndReceiptClearedSamePath(t *testing.T) {
 	root := t.TempDir()
-	legacy := taskWithCompletedChecklist(t, root, StateDone, "legacy")
-	if err := CompleteTrustedTask("", root, legacy); err != nil {
+	archived := taskWithCompletedChecklist(t, root, StateDone, "archived")
+	if err := CompleteTrustedTask("", root, archived); err != nil {
 		t.Fatal(err)
 	}
 	windows, err := BeginCompletionWindows([]string{root})
@@ -144,13 +144,13 @@ func TestCompletionWindowDetectsNewArchiveAndReceiptClearedSamePath(t *testing.T
 	if err := MoveTaskDir(root, rogue, StateDone); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveTaskDir(root, legacy, StateInProgress); err != nil {
+	if err := MoveTaskDir(root, archived, StateInProgress); err != nil {
 		t.Fatal(err)
 	}
-	if err := clearTaskCompletionReceipt(root, legacy.ID); err != nil {
+	if err := clearTaskCompletionReceipt(root, archived.ID); err != nil {
 		t.Fatal(err)
 	}
-	returned := Item{ID: legacy.ID, Dir: filepath.Join(root, StateInProgress, legacy.ID), State: StateInProgress}
+	returned := Item{ID: archived.ID, Dir: filepath.Join(root, StateInProgress, archived.ID), State: StateInProgress}
 	if err := MoveTaskDir(root, returned, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestCompletionWindowDetectsNewArchiveAndReceiptClearedSamePath(t *testing.T
 	}
 	got := []string{candidates[0].Item.ID, candidates[1].Item.ID}
 	slices.Sort(got)
-	if want := []string{legacy.ID, rogue.ID}; !slices.Equal(got, want) {
+	if want := []string{archived.ID, rogue.ID}; !slices.Equal(got, want) {
 		t.Fatalf("completion window candidates = %v, want %v", got, want)
 	}
 }
@@ -383,7 +383,7 @@ func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *tes
 	}
 }
 
-// TestWorkCompletionWindowBaselineDoneIDs pins baselineDoneIDs' contract: every task already
+// TestWorkCompletionWindowBaselineDoneIDs pins BaselineDoneIDs' contract: every task already
 // archived when the window's baseline is captured is named, and nothing else is — this is the
 // host-side "already closed" authority surface internal/loop folds into unbindableTasks' touched set
 // (.agent/kb/loop-range-rejects-outside-commits.md), so a forged Coop-Task trailer for an already-done
@@ -413,8 +413,8 @@ func TestWorkCompletionWindowBaselineDoneIDs(t *testing.T) {
 	}
 }
 
-// A nil set's baselineDoneIDs is empty, not a nil-pointer panic — every other completionWindowSet
-// method (departures, candidates, close) is nil-safe the same way.
+// A nil set's BaselineDoneIDs is empty, not a nil-pointer panic — every other CompletionWindowSet
+// method (Departures, candidates, Close) is nil-safe the same way.
 func TestNilCompletionWindowSetBaselineDoneIDs(t *testing.T) {
 	var windows *CompletionWindowSet
 	if ids := windows.BaselineDoneIDs(); len(ids) != 0 {
@@ -1323,10 +1323,10 @@ func TestCompletionWindowReplayLeavesChangedBaselineArchivesDone(t *testing.T) {
 }
 
 // A completion window left open across a reboot records a device the volume no longer has. Startup
-// recovery used to see every baseline archive as changed, call it a protected mutation, clear its
-// receipt and send the user to repair task metadata by hand. Both baseline formats are covered: the
-// device-free tree this build records, and the device-hashing tree recorded before it, which is what
-// an upgrade meets. A real change made after the reboot is still caught.
+// recovery must not see every baseline archive as changed, call it a protected mutation and clear its
+// receipt. Both baseline formats are covered: the device-free tree this build records, and the
+// device-hashing tree recorded before it, which is what an upgrade meets. A real change made after
+// the reboot is still caught.
 func TestCompletionWindowSurvivesADeviceRenumber(t *testing.T) {
 	for _, format := range []struct {
 		name   string
@@ -2590,8 +2590,7 @@ func TestBoundTaskCommitIsHead(t *testing.T) {
 
 // The rejection guidance must never send an agent to rewrite a commit that is not HEAD: that
 // reparents every descendant, and the reparented ones carry OTHER tasks' trailers, so the result
-// trips the foreign-binding guard and can never pass. A 286-deep amend rewrote a whole branch
-// before this was forbidden by name.
+// trips the foreign-binding guard and can never pass.
 func TestTaskBindingRecoveryNeverPrescribesDeepRewrite(t *testing.T) {
 	r := taskBindingRecovery("my-task")
 	for _, forbidden := range []string{"replay its descendants", "reword that implementation commit", "--allow-empty"} {
@@ -2916,8 +2915,8 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 	t.Run("a claim that loses its move race leaves no orphan record", func(t *testing.T) {
 		root := t.TempDir()
 		id := "raced-task"
-		// A torn move or stray copy: the SAME id in both todo and in_progress. findTask resolves the
-		// lifecycle-earliest (todo), so tasksFolderMove writes the claim, then moveTaskDir refuses the
+		// A torn move or stray copy: the SAME id in both todo and in_progress. FindTask resolves the
+		// lifecycle-earliest (todo), so tasksFolderMove writes the claim, then MoveTaskDir refuses the
 		// move because in_progress/raced-task already exists — exactly what a lost race against a
 		// concurrent adopter (the loop, or a second claim) produces.
 		writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# Raced\n")
@@ -2935,7 +2934,7 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 
 // TestClaimWritesOwnerRecordLoopAdoptionDoesNot is spec step 2's own assertion, isolated from the
 // rest of the lifecycle: the interactive claim path writes the durable record, but
-// assignLoopTaskOnly's todo->in_progress adoption (the SAME folder move, moveTaskDir) never does —
+// AssignLoopTaskOnly's todo->in_progress adoption (the SAME folder move, MoveTaskDir) never does —
 // or the loop would lock itself out of every task it ever picks up.
 func TestClaimWritesOwnerRecordLoopAdoptionDoesNot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".agent", "tasks")
@@ -3169,26 +3168,20 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 // .agent/kb/loop-range-rejects-outside-commits.md: a foreign in-range Coop-Task trailer only rejects
 // the whole completion when it names a task this iteration's authority consumption could touch.
 // Outside that set it is tolerated (returned in `tolerated`; the completion proceeds) instead of
-// destroying an otherwise-valid one — the fix for the KB card's 32-minute-loss incident. unbindableTasks
-// itself only ever sees the resulting `touched` map — internal/loop is the one that builds it from the
-// finished set, the leased task id, the audit-reopen task, windows.candidates()/departures() (queue
-// state this window observed change), and windows.baselineDoneIDs() (every task already archived
-// before the box ran) — so each case below simulates exactly the touched membership the real caller
-// would produce for that scenario. The adversarial cases prove a boxed agent still cannot widen its
-// own authority by forging trailers: touching a foreign id (however that touch happened — the box's
-// own second completion, reopening an archived task, or a content-altering rewrite) still refuses
-// exactly as before this split existed, and a task that was ALREADY archived stays protected even
-// when the box never moves its folder at all.
+// destroying an otherwise-valid one. unbindableTasks itself only ever sees the resulting `touched`
+// map — internal/loop is the one that builds it from the finished set, the leased task id, the
+// audit-reopen task, windows.candidates()/Departures() (queue state this window observed change), and
+// windows.BaselineDoneIDs() (every task already archived before the box ran) — so each case below
+// simulates exactly the touched membership the real caller would produce for that scenario. The
+// adversarial cases prove a boxed agent still cannot widen its own authority by forging trailers:
+// touching a foreign id (however that touch happened — the box's own second completion, reopening an
+// archived task, or a content-altering rewrite) still refuses, and a task that was ALREADY archived
+// stays protected even when the box never moves its folder at all.
 func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
-	// regression: an untouched foreign binding for a task this queue never tracked at all — the exact
-	// 2026-08-01 incident shape (a host commit landing mid-iteration for a task this iteration never
-	// touched, never leased, and never archived) — no longer destroys the finished task's completion.
-	// This cannot pass against the pre-narrowing signature: `touched` and the tolerated return value
-	// did not exist before this change, so main both lacks the mechanism this test exercises and had
-	// no way to express "tolerate, don't reject" at all (confirmed by hand against the pre-fix
-	// unbindableTasks(repo, base, head, finished) before this change landed: it returned
-	// missing=[task-42], wrongly rejecting the clean completion).
-	t.Run("regression: untouched foreign binding is tolerated, not rejected (the 32-minute incident)", func(t *testing.T) {
+	// An untouched foreign binding for a task this queue never tracked at all (a host commit landing
+	// mid-iteration for a task this iteration never touched, never leased, and never archived) must
+	// not destroy the finished task's completion.
+	t.Run("untouched foreign binding is tolerated, not rejected", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
@@ -3268,12 +3261,12 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 
 	// adversarial: forged trailer for an ARCHIVED task, matching the real threat — the box never
 	// touches that task's folder at all (it stays in 99_done throughout). internal/loop's
-	// windows.baselineDoneIDs() puts every id already archived when the iteration's window baseline
+	// windows.BaselineDoneIDs() puts every id already archived when the iteration's window baseline
 	// was captured into touched, regardless of folder movement: an archived task's history is meant
 	// to be closed, so a forged extra commit corrupts that closed record without needing to move its
 	// folder. (TestProviderScriptedLoopReviewProcess/worker_cannot_forge_review_authority_for_an_
 	// archived_task exercises this exact scenario end to end, through the real internal/loop wiring.)
-	// Reopening that archived folder supplies the same touched identity via departures();
+	// Reopening that archived folder supplies the same touched identity via Departures();
 	// it is not a separate unbindableTasks input or a reason to duplicate this row.
 	t.Run("adversarial: forged trailer for an archived task, never touched, still rejects", func(t *testing.T) {
 		repo, git := gitRepo(t)
@@ -3283,7 +3276,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "forge a trailer for an untouched archived task\n\nCoop-Task: archived-task")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		touched := map[string]bool{"task-42": true, "archived-task": true} // baselineDoneIDs' doing, not a folder move
+		touched := map[string]bool{"task-42": true, "archived-task": true} // BaselineDoneIDs' doing, not a folder move
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("forged archived-task binding was not rejected: missing=%v", missing)

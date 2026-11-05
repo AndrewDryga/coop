@@ -84,9 +84,9 @@ func TestConsultWrapperStoppedCaptureLeavesNoReader(t *testing.T) {
 // The drain budget is not a deadline on the peer. By the time it starts counting, the peer has been
 // waited on and every writer Coop owns is closed, so a reader that has not finished is either
 // blocked on a writer nobody told us about or simply not being scheduled — and POSIX sh cannot tell
-// those apart. Five seconds decided that a reader which had not drained yet never would, and threw
-// away replies the peer had already produced. This pins the behavior rather than the number: the
-// readers are frozen for longer than the old budget and then released, and the reply still arrives.
+// those apart. A short budget would decide that a reader which has not drained yet never will, and
+// throw away replies the peer already produced. This pins the behavior rather than the number: the
+// readers are frozen for several seconds and then released, and the reply still arrives.
 func TestConsultWrapperSlowDrainKeepsTheReply(t *testing.T) {
 	const reply = "CAPTURE_SURVIVED_THE_FREEZE"
 	dir := consultStubDir(t)
@@ -122,7 +122,7 @@ printf '{"type":"result","status":"success"}\n'
 		t.Fatal(err)
 	}
 	wait.ForFile(t, filepath.Join(dir, "peer-produced"))
-	// Longer than the budget that used to give up, so a reinstated five seconds fails here.
+	// Long enough that a five-second budget fails here.
 	time.Sleep(8 * time.Second)
 	for _, pid := range frozen {
 		_ = syscall.Kill(pid, syscall.SIGCONT)

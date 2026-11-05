@@ -51,12 +51,8 @@ func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
 }
 
 // receiptFailureTail renders the last few non-empty lines of a rejected review output so the
-// failure can be diagnosed from the log alone.
-//
-// A verdict rejected as "malformed" used to say only that. When it happened on a real run the
-// receipt looked perfect in the rendered log, so there was no way to tell WHAT trailed it — the
-// captured output is not otherwise persisted, and reproducing a protected audit is expensive. That
-// left the choice between guessing at a fix and waiting for a recurrence with better luck.
+// failure can be diagnosed from the log alone: a malformed receipt can look perfect in the rendered
+// log, the captured output is not otherwise persisted, and reproducing a protected audit is expensive.
 //
 // Bounded on purpose: three lines, each clipped, quoted so trailing whitespace and stray control
 // bytes are visible rather than invisible — those are exactly the shapes that break a parser that
@@ -242,7 +238,7 @@ func lifecycleTaskSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 	return *found, nil
 }
 
-// applyReviewVerdict treats provider output as an untrusted proposal. Every id and finding is
+// applyReviewVerdictInRepo treats provider output as an untrusted proposal. Every id and finding is
 // validated before the first move; then the host completion authority serializes each exact-subject
 // reopen and its resume metadata. A malformed, missing, or out-of-scope verdict mutates nothing.
 func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output string) ([]string, error) {
@@ -424,9 +420,9 @@ func reopenVerdictLost(receipt reviewReceipt, haveReceipt bool, actual, subjects
 }
 
 // protectedAuditVerdict makes the exceptional between pass fail closed. Ordinary configured
-// audits keep their historical warn-and-continue behavior; a protected audit must run before
-// another task can trust the edited gate. Its receipt needs no second look: the host reopened
-// exactly the tasks it names, or refused it (errReviewVerdict) before this.
+// audits warn and continue; a protected audit must run before another task can trust the edited
+// gate. Its receipt needs no second look: the host reopened exactly the tasks it names, or refused it
+// (errReviewVerdict) before this.
 func protectedAuditVerdict(protected bool, reviewErr error) error {
 	if protected && reviewErr != nil {
 		return fmt.Errorf("could not run: %w", reviewErr)

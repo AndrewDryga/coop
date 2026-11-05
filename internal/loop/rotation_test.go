@@ -27,7 +27,7 @@ func TestAuthenticationDiagnosticsAreSanitizedAndWidthBounded(t *testing.T) {
 	target := agents.Target{
 		Provider: "claude",
 		Model:    strings.Repeat("very-long-model-", 8),
-		Accounts: []string{"legacy\x1b[31m\nprofile"},
+		Accounts: []string{"bad\x1b[31m\nname"},
 	}
 	headline := authHeadline(target)
 	for i, line := range strings.Split(headline, "\n") {

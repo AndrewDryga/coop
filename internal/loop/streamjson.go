@@ -462,7 +462,7 @@ func (d *ndjsonDecoder) streamBashToolLine(command, description string) string {
 
 // streamFailureLine preserves the failure marker and caller-supplied structural suffix. In live
 // output the label yields to that suffix and a share of the diagnostic; redirected
-// output preserves the old per-field caps (labelFallback=0 means the label was uncapped).
+// output caps each field on its own (labelFallback=0 leaves the label uncapped).
 func (d *ndjsonDecoder) streamFailureLine(label, suffix, diagnostic string, labelFallback int) string {
 	label = cleanDiagnosticLine(label)
 	diagnostic = cleanDiagnosticLine(diagnostic)

@@ -239,7 +239,7 @@ func appendFile(path string, data []byte) error {
 // Destroy removes a fork's workspace and its review/<name> ref, then prunes an empty forks home.
 // Best-effort on the ref so it works for partially-built forks.
 //
-// The fork's sibling SERVICES are the caller's job, before this (internal/cli's destroyFork):
+// The fork's sibling SERVICES are the caller's job, before this (forkctl.DestroyFork):
 // teardown is driven by the fork's own compose file, so once the workspace is deleted there is
 // nothing left to drive it.
 func Destroy(repo, name string) error {

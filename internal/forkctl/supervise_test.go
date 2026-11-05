@@ -765,9 +765,8 @@ if [ "$1" = ps ]; then printf '%s\n' box-perf; fi
 }
 
 // A record another operating system wrote names a pid this kernel cannot check, whether that pid is
-// missing here or belongs to a process here. Stop used to read either as a dead worker, reap the
-// fork's boxes and delete the record of a loop that may still run there; it now keeps both, touches
-// neither a process nor the runtime, and says where the loop can be stopped.
+// missing here or belongs to a process here. Either way a loop may still run there, so stop keeps
+// the record, touches neither a process nor the runtime, and says where the loop can be stopped.
 func TestForkStopKeepsARecordFromAnotherSystem(t *testing.T) {
 	system := forkspace.ProcTokenSystem(starttoken.Foreign())
 	for _, pid := range []int{deadWorker.Pid, os.Getpid()} {

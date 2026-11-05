@@ -253,7 +253,7 @@ func ReconcileCompletionWindows(hosts []string) error {
 	return err
 }
 
-// openLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
+// OpenLeaseAuthority opens a task's authority record WITHOUT locking it. Production code takes the
 // lock through lockLeaseAuthority instead, so that every held lock has been proved to be on the
 // inode the registry name still resolves to; an unlocked open carries no such guarantee.
 func OpenLeaseAuthority(root, id string, create bool) (*os.File, error) {

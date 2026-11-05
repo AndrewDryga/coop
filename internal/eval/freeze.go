@@ -21,7 +21,7 @@ import (
 // enough — two dirty builds carry the same version string — so the executable digest and the dirty
 // flag are part of it. A change to any of these is a real change to the system under test.
 type BuildIdentity struct {
-	Version  string // e.g. v9.0.0-391-g5017eb89 (or -dirty)
+	Version  string // e.g. v12.1.0-391-g5017eb89 (or -dirty)
 	Revision string // the commit, when known
 	Digest   string // sha256 of the executable, when computable
 	Dirty    bool   // built from an uncommitted tree

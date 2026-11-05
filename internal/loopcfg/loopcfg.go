@@ -1,10 +1,9 @@
 // Package loopcfg reads .agent/loop.yaml — coop's committed per-repo configuration for
 // `coop loop`: the preflight / work / between / signoff / verify steps, each with its own model
-// ladder and prompt, plus the signoff round cap. It supersedes the retired .agent/loop/*.md files
-// and the COOP_LOOP_* / COOP_REVIEW_* env vars.
+// ladder and prompt, plus the signoff round cap.
 //
 // A missing file — or any missing field — means "use coop's built-in default", so an absent
-// loop.yaml is exactly today's behavior. Prompts never OVERRIDE a built-in: signoff.prompt
+// loop.yaml runs the built-in loop. Prompts never OVERRIDE a built-in: signoff.prompt
 // APPENDS to its senior review; between.prompt and verify.prompt SET their pass (no built-ins);
 // preflight's built-in tidy runs host-side in coop, so preflight.prompt SETS the optional agent
 // cleanup on top.
@@ -39,8 +38,8 @@ const loopConfigFileLimit = 1 << 20
 type Config struct {
 	// MCP is loop-wide, not a stage: false runs EVERY stage's box without the shared MCP config —
 	// MCP tool schemas ride at the front of each model request, so a drain that doesn't need those
-	// tools shouldn't pay for them each iteration. Tri-state so an absent key stays today's
-	// behavior (mounted whenever mcp.json has servers).
+	// tools shouldn't pay for them each iteration. Tri-state so an absent key keeps the default
+	// (mounted whenever mcp.json has servers).
 	MCP       *bool     `yaml:"mcp"`
 	Preflight Preflight `yaml:"preflight"`
 	Work      Work      `yaml:"work"`

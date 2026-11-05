@@ -175,10 +175,10 @@ func TestForkGenerationDoesNotPersistReusableAllocatorIdentity(t *testing.T) {
 	}
 }
 
-func TestForkGenerationAnchorPreservesHistoricallyValidLongNames(t *testing.T) {
+func TestForkGenerationAnchorKeepsLongValidNames(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
-	// This fits the historical atomic .generation-* writer but would overflow the v3 anchor if that
-	// private filename repeated the human name.
+	// This fits the atomic .generation-* writer but would overflow the v3 anchor if that private
+	// filename repeated the human name.
 	name := strings.Repeat("a", 230)
 	if !ValidExistingName(name) {
 		t.Fatal("long path-safe fork name was unexpectedly invalid")

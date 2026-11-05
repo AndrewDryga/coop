@@ -1,10 +1,10 @@
 // Package forkspace is the fork ON-DISK CONTRACT: where a fork's workspace lives, what a fork may
-// be named, the sibling state directory that holds its log/pidfile/lock, the lifecycle lock itself,
+// be named, the private state folder that holds its log/pidfile/lock, the lifecycle lock itself,
 // the pidfile wire format that says who owns a fork right now, and the clone/destroy primitives
 // that create and remove a workspace. With them lives the GIT POLICY every repo-touching command
 // shares, because this leaf is the lowest thing in the tree that runs git: the hardening list, the
-// driver neutralizer that closes its one residual, and the signing policy that re-enables signing
-// on top of it with values read only from your trusted global config (git.go).
+// trusted git view that closes its one residual (gitview.go), and the signing policy that re-enables
+// signing on top of it with values read only from your trusted global config (git.go).
 //
 // Forks live in a sibling directory <repo>-forks/, one subdirectory per fork, with coop's own
 // per-fork records in its private state folder (StateDir).

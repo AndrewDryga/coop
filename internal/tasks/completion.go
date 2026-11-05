@@ -421,8 +421,8 @@ func duplicateReviewTaskIDs(hosts, ids []string) ([]string, error) {
 	return relevant, nil
 }
 
-// beginReviewCompletionWindows opens review-stage windows bound to the exact task ids under
-// review, persisting the subject set in the journal record so finishReview and crash replay
+// BeginReviewCompletionWindows opens review-stage windows bound to the exact task ids under
+// review, persisting the subject set in the journal record so FinishReview and crash replay
 // apply the same scope: subjects stay strict, other completions are classified by ownership.
 // ReviewWindow stays explicit because an empty unscoped subject list is strict for preflight/verify,
 // while ReviewSubjectScoped preserves concurrent-host semantics if authoritative deletion later
@@ -452,7 +452,7 @@ func beginReviewCompletionWindows(hosts, subjects []string, plan *PendingReviewP
 	return beginCompletionWindowsWithPolicy(hosts, nil, subjects, true, plan)
 }
 
-// beginWorkCompletionWindows journals the exact leased task. A work box cannot change its own
+// BeginWorkCompletionWindows journals the exact leased task. A work box cannot change its own
 // subject's completion state outside the normal finalization path, but a host-receipted move of a
 // different archived task is concurrent queue activity rather than box ownership churn.
 func BeginWorkCompletionWindows(hosts []string, subject string) (*CompletionWindowSet, error) {
@@ -622,8 +622,8 @@ func (s *CompletionWindowSet) Departures() ([]string, error) {
 	return slices.Compact(departed), nil
 }
 
-// baselineDoneIDs returns every task id that was already archived (in 99_done) when this window's
-// baseline snapshot was captured — for the work window (beginWorkCompletionWindows), that snapshot is
+// BaselineDoneIDs returns every task id that was already archived (in 99_done) when this window's
+// baseline snapshot was captured — for the work window (BeginWorkCompletionWindows), that snapshot is
 // taken before the box is even launched, so it is queue state the box could not have influenced.
 // internal/loop folds this into the foreign-binding touched set: a Coop-Task trailer naming an already
 // archived task is always authority-touching, even when that task's folder never moves during the
@@ -699,8 +699,8 @@ func (s *CompletionWindowSet) Close() error {
 	return errors.Join(errs...)
 }
 
-// abandon releases liveness while retaining the durable record. Startup can then replay the same
-// window; close is reserved for an audit whose every candidate was accepted or restored.
+// Abandon releases liveness while retaining the durable record. Startup can then replay the same
+// window; Close is reserved for an audit whose every candidate was accepted or restored.
 func (s *CompletionWindowSet) Abandon() error {
 	if s == nil {
 		return nil
@@ -819,7 +819,7 @@ func (s *CompletionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 	return concurrent, nil, errors.Join(changedErr, ownershipErr, duplicateErr, departureErr)
 }
 
-// finishReview closes a review-stage window, scoping strictness to the exact subjects the
+// FinishReview closes a review-stage window, scoping strictness to the exact subjects the
 // window recorded at begin. Any completion churn on a subject fails closed, as does a
 // completion no host authority finalized (rejected as unowned and restored). A non-subject
 // completion that survives ownership rejection was finalized by a parallel host controller —

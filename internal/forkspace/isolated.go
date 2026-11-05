@@ -42,8 +42,8 @@ func validateIsolatedGitAccess(workspace string) error {
 					return err
 				}
 			}
-			// Ordinary/legacy binding migration itself needs host Git. Do not
-			// apply strong admission to it or recursively demand a migrated anchor.
+			// Binding or converting an ordinary fork's record itself needs host Git. Do not
+			// apply strong admission to it or recursively demand a converted anchor.
 			if !isolated {
 				path = parent
 				continue

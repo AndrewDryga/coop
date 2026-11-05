@@ -19,7 +19,7 @@ func write(t *testing.T, body string) string {
 	return repo
 }
 
-// An absent file is not an error — it's "all built-in defaults" (today's behavior).
+// An absent file is not an error — it's "all built-in defaults".
 func TestLoadAbsent(t *testing.T) {
 	c, err := Load(t.TempDir())
 	if err != nil {
@@ -33,8 +33,8 @@ func TestLoadAbsent(t *testing.T) {
 	}
 }
 
-// mcp: is tri-state — only an explicit false disables; absent and explicit true keep today's
-// behavior (MCP mounts whenever mcp.json has servers).
+// mcp: is tri-state — only an explicit false disables; absent and explicit true keep the default
+// (MCP mounts whenever mcp.json has servers).
 func TestLoadMCP(t *testing.T) {
 	for body, wantDisabled := range map[string]bool{
 		"mcp: false\n":            true,

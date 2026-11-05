@@ -44,7 +44,7 @@ func LegacyForkQueueWithWork(workspace string) (string, error) {
 	return "", nil
 }
 
-// extractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
+// ExtractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
 // is an error, not a silently-dropped flag.
@@ -64,7 +64,7 @@ func ExtractTasksFlags(command string, args []string) (tasks []string, rest []st
 }
 
 // extractProjectFlag pulls the add-only `--project <name>` (or `--project=<name>`) out of args.
-// It is intentionally separate from extractTasksFlags: --tasks targets a raw queue path for every
+// It is intentionally separate from ExtractTasksFlags: --tasks targets a raw queue path for every
 // tasks command, while --project is the friendly umbrella-project selector for creation only.
 func extractProjectFlag(args []string) (projectName string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
@@ -226,7 +226,7 @@ func taskProjectAddError(name string, choices []taskProjectChoice) error {
 	return refusal
 }
 
-// taskQueues resolves the task-queue path(s) for a command — the repeated --tasks flags if
+// TaskQueues resolves the task-queue path(s) for a command — the repeated --tasks flags if
 // any, else COOP_TASKS (cfg.TasksFiles, default .agent/tasks) — into repo-relative paths. A
 // relative path is taken relative to the repo root (where the box runs); an absolute one must
 // live inside the repo. The repo-relative form is what the loop's prompt names and the host
@@ -538,7 +538,7 @@ func noProject(dir string) error {
 // per-project .agent/tasks each), printing every queue under its rel-path header. A queue that
 // doesn't exist yet is noted, not fatal — the mutating commands still require a single target.
 func tasksListAll(repo string, rels []string, args []string) (int, error) {
-	// Validate ls flags here too — the umbrella roll-up doesn't route through cmdTasksFolder, so
+	// Validate ls flags here too — the umbrella roll-up doesn't route through CmdTasksFolder, so
 	// without this an unknown flag (or a typo like --blockd) would be silently ignored.
 	if err := validateArgs("tasks ls", args, taskArgSpecs["ls"]); err != nil {
 		return 2, err
@@ -676,7 +676,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 }
 
 // queueOfTask finds which configured queue holds the task id — the multi-queue analog of
-// findTask, with the same precedence (an exact id match beats substring matches). It errors when
+// FindTask, with the same precedence (an exact id match beats substring matches). It errors when
 // the id is absent everywhere, or matches in more than one queue. Explicit or monorepo queues may
 // still contain duplicate ids, so acting on an arbitrary one would silently touch the wrong tree.
 func queueOfTask(repo string, rels []string, id string) (string, error) {
@@ -684,7 +684,7 @@ func queueOfTask(repo string, rels []string, id string) (string, error) {
 }
 
 // queueOfTaskWith is queueOfTask parametrized by the per-queue reader, so the lifecycle tree
-// (readTaskTree) and the backlog drawer (readBacklog) share one resolver. read maps a queue root to
+// (ReadTaskTree) and the backlog drawer (ReadBacklog) share one resolver. read maps a queue root to
 // its items; listCommand names the matching listing in missing-item guidance.
 func queueOfTaskWith(repo string, rels []string, id, listCommand string, read func(string) ([]Item, error)) (string, error) {
 	hit, err := findTaskAcrossQueuesWith(repo, rels, id, listCommand, read)

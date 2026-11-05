@@ -111,7 +111,7 @@ func TestReviewAttemptsNameTheirCause(t *testing.T) {
 		}
 	})
 	t.Run("refused launch", func(t *testing.T) {
-		refusal := &box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")}
+		refusal := &box.LaunchRefused{Err: errors.New("writer mount cannot be resolved")}
 		launches := 0
 		output, err := review(t, func(box.RunSpec) (int, error) { launches++; return -1, refusal })
 		if launches != 1 || !errors.Is(err, refusal) || strings.Contains(output, "Review attempt failed") {
@@ -344,9 +344,8 @@ func TestReviewVerdictCorrectionDropsControlBytes(t *testing.T) {
 }
 
 // TestReviewLadder: a review stage's ladder keeps each rung's PROVIDER, model, effort, and the
-// fallback rungs — the fix for stepModel, which kept only (model, effort) off the first rung and
-// dropped the provider, so a claude-led run's `codex:…` signoff resolved to `claude --model
-// <a-codex-model>` and the cross-vendor reviewer was never actually run.
+// fallback rungs. Without the provider, a claude-led run's `codex:…` signoff would resolve to
+// `claude --model <a-codex-model>` and the cross-vendor reviewer would never run.
 func TestReviewLadder(t *testing.T) {
 	ladder, err := reviewLadder([]string{"codex:gpt-5.6-sol/xhigh", "claude:claude-fable-5/xhigh"})
 	if err != nil {
@@ -359,7 +358,7 @@ func TestReviewLadder(t *testing.T) {
 	if ladder[0].Provider != "codex" || ladder[0].Model != "gpt-5.6-sol" || ladder[0].Effort != "xhigh" {
 		t.Errorf("rung 0 = %+v, want codex / gpt-5.6-sol / xhigh", ladder[0])
 	}
-	// Rung 1 (the fallback) survives with its own provider — stepModel dropped it entirely.
+	// Rung 1 (the fallback) survives with its own provider.
 	if ladder[1].Provider != "claude" || ladder[1].Model != "claude-fable-5" {
 		t.Errorf("rung 1 = %+v, want claude / claude-fable-5", ladder[1])
 	}

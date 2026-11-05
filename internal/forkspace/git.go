@@ -29,7 +29,7 @@ import (
 // The residual GitHardening alone can't blank (driver names are arbitrary: an in-tree
 // .gitattributes plus a filter/merge/diff driver in the repository's config) is closed by the
 // trusted git view (gitview.go): host git never reads the repository's config at all.
-// policyScan stays the human-facing backstop for the .gitattributes.
+// forkctl.PolicyScan stays the human-facing backstop for the .gitattributes.
 //
 // It lives here, with the clone that creates a fork, because this leaf is the lowest thing in the
 // tree that runs git — internal/cli's own helpers build on this ONE list, so there is exactly one

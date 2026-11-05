@@ -201,7 +201,7 @@ func TestRotationAuthFailureExhausted(t *testing.T) {
 	}
 }
 
-// A single-rung run has nothing to switch to and must keep failing fast, exactly as before.
+// A single-rung run has nothing to switch to and must keep failing fast.
 func TestRotationAuthFailureSingleRung(t *testing.T) {
 	r := rts("only")
 	if r.OnAuthFailure() {

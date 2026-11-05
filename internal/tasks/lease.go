@@ -59,7 +59,7 @@ type AuditReopenRecord struct {
 	UnblockPending bool                `json:"unblock_pending,omitempty"`
 }
 
-// taskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
+// TaskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
 // one of these fields, is the authority: run ids and PIDs exist for recovery evidence and UI only.
 type TaskLeaseOwner struct {
 	RunID    string
@@ -150,7 +150,7 @@ func (l *TaskLease) Quiesce() {
 	<-l.done
 }
 
-// markCompleted records host-only evidence on the already-persistent authority inode while its
+// MarkCompleted records host-only evidence on the already-persistent authority inode while its
 // flock is held. Task-local state is provider-writable and cannot distinguish a foreign controller
 // from an agent that moved an unleased folder.
 func (l *TaskLease) MarkCompleted(taskDir string) error {
@@ -809,7 +809,7 @@ func (o TaskLeaseObservation) label() string {
 }
 
 type TaskLeaseSummary struct {
-	Owned   int // a durable human claim (taskOwnerRecord) — never a lease state, so add() can't set it
+	Owned   int // a durable human claim (TaskOwnerRecord) — never a lease state, so add() can't set it
 	Busy    int
 	Stalled int
 }

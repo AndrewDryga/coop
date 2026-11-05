@@ -16,8 +16,7 @@ import (
 // SweepServiceLaunchLocks removes the service-launch locks whose repository is gone, looking at no
 // more than limit of them, and reports how many it removed. Every box launch takes the lock of its
 // repository's folder, so each throwaway repository, such as a doctor fixture, an eval trial or a
-// session's job source, used to leave one behind for good. A test binary sweeps only the root it
-// was pointed at.
+// session's job source, leaves one behind. A test binary sweeps only the root it was pointed at.
 func SweepServiceLaunchLocks(limit int) (int, error) {
 	root, err := executionRegistryRoot()
 	if err != nil {

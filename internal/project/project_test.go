@@ -353,8 +353,7 @@ func TestLoadReviewReadsOnlyTheReviewStack(t *testing.T) {
 
 // Members can nest, so a path under terraform/environments/va1/blitz-apps sits inside two declared
 // members. It belongs to the nearest one: scoping it to both would route the same work to two
-// queues, which is the overlap that discovery pruning used to prevent by not finding the nested
-// member at all.
+// queues.
 func TestNearestSubprojectWinsWhenMembersNest(t *testing.T) {
 	members := []string{"terraform/environments/va1", "terraform/environments/va1/blitz-apps", "portal"}
 	for _, tc := range []struct{ rel, want string }{

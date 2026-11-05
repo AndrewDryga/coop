@@ -337,9 +337,9 @@ func TestMergeOneNoGate(t *testing.T) {
 	}
 }
 
-// A legacy Coop-Task trailer is not canonical task authority. New fork assignments land only from
-// an exact generation candidate, so a Git-only fork remains a Git-only merge even if config points
-// at an unusable task path.
+// A Coop-Task trailer is not canonical task authority. Fork assignments land only from an exact
+// generation candidate, so a Git-only fork remains a Git-only merge even if config points at an
+// unusable task path.
 func TestMergeOneDoesNotInferTaskCompletionFromTrailer(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -747,9 +747,9 @@ func TestMergeOneConflictRollsBack(t *testing.T) {
 	}
 }
 
-// A coop killed mid-land (host crash, SIGKILL) leaves git's rebase state in the fork's clone, and
-// every later merge used to die on it. The next merge recovers it — but only when nobody could still
-// own that worktree, because `rebase --abort` resets it.
+// A coop killed mid-land (host crash, SIGKILL) leaves git's rebase state in the fork's clone. The next
+// merge recovers it — but only when nobody could still own that worktree, because `rebase --abort`
+// resets it.
 func TestMergeRecoversInterruptedRebase(t *testing.T) {
 	t.Run("abandoned worktree recovers and the fork lands", func(t *testing.T) {
 		repo, ws := forkWithInterruptedRebase(t)
@@ -1093,9 +1093,8 @@ func TestMergeOneIgnoresForkBooby(t *testing.T) {
 	if !pathExists(filepath.Join(repo, "feature.txt")) {
 		t.Error("merge did not land the fork's work")
 	}
-	// Positive control: the trap is live — a genuinely *raw* git command (bypassing coop's now-
-	// hardened helpers entirely) fires it, so the clean run above is the hardening working, not a
-	// no-op test. (gitDirty itself is hardened now, so it can't be the control any more.)
+	// Positive control: the trap is live — a genuinely *raw* git command (bypassing coop's hardened
+	// helpers entirely) fires it, so the clean run above is the hardening working, not a no-op test.
 	_ = exec.Command("git", "-C", ws, "status", "--porcelain").Run() // raw → runs the planted core.fsmonitor
 	if !pathExists(marker) {
 		t.Fatal("positive control failed: raw fork git did not trigger the booby trap, so the test proves nothing")
@@ -1758,8 +1757,6 @@ func TestMergeNeutralizesForkDrivers(t *testing.T) {
 	}
 }
 
-// `image inspect` fails the same way for a missing image and a dead daemon, so a merge gate blocked
-// by a stopped runtime used to demand a build that would not have helped. Name the daemon instead.
 // openConfig is cfg with COOP_EGRESS=open. These gates use the ordinary image an open project
 // runs; under the filtered default a gate uses the separately approved filtered image instead.
 func openConfig(cfg *config.Config) *config.Config {
@@ -1767,6 +1764,8 @@ func openConfig(cfg *config.Config) *config.Config {
 	return cfg
 }
 
+// `image inspect` fails the same way for a missing image and a dead daemon, and a build would not
+// help a merge gate blocked by a stopped runtime. Name the daemon instead.
 func TestMergeGateBlamesTheDaemonNotTheImage(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, tc := range []struct {

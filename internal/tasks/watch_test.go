@@ -601,7 +601,7 @@ func TestTaskWatchNamesHumanOwnerAndCanonicalQueue(t *testing.T) {
 }
 
 // The board shows TASKS. A box or session is execution data the snapshot still carries — activity
-// accounting, auto-exit and the JSON projection all read it — but it is no longer a second
+// accounting, auto-exit and the JSON projection all read it — but it is not a second
 // inventory painted under the queue. The fork/problem cues that DO belong to a task stay.
 func TestTaskWatchDropsTheStandaloneBoxInventory(t *testing.T) {
 	snapshot := ProjectSnapshot{

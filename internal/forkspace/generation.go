@@ -45,9 +45,9 @@ type Identity struct {
 }
 
 // generationRecord binds a fork's logical generation to one physical workspace. Versions 1 and 2
-// are the historical inode and inode+birth-time formats; supported overlay filesystems can reuse
-// both. Version 3 names a private hardlink anchor whose live inode is compared with the marker in
-// the workspace on every authoritative open.
+// are the inode and inode+birth-time formats; supported overlay filesystems can reuse both. Version
+// 3 names a private hardlink anchor whose live inode is compared with the marker in the workspace on
+// every authoritative open.
 type generationRecord struct {
 	Version            int        `json:"version"`
 	Name               string     `json:"name"`
@@ -79,8 +79,8 @@ func ValidGeneration(g Generation) bool { return forkGenerationRE.MatchString(st
 
 func forkGenerationAnchorName(_ string, generation Generation) string {
 	// The random generation is already unique within this repository. Keeping the human fork name
-	// out of the private filename preserves names that fit the historical .generation.json record
-	// at NAME_MAX; the authenticated marker body still binds both name and generation.
+	// out of the private filename means any name that fits its .generation.json record at NAME_MAX
+	// fits here too; the authenticated marker body still binds both name and generation.
 	return "generation-" + string(generation) + ".anchor"
 }
 

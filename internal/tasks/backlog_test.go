@@ -10,7 +10,7 @@ import (
 )
 
 // The backlog drawer (xx_backlog) must be INVISIBLE to the lifecycle machinery: `coop backlog add`
-// creates it, but readTaskTree (which the loop, counters, `coop tasks`, and the Stop hook all walk)
+// creates it, but ReadTaskTree (which the loop, counters, `coop tasks`, and the Stop hook all walk)
 // must never surface it — that's the whole point of keeping Backlog out of taskstate.All.
 func TestBacklogAddIsolatedFromQueue(t *testing.T) {
 	root := t.TempDir()
@@ -70,7 +70,7 @@ func TestBacklogPromote(t *testing.T) {
 	}
 }
 
-// The drawer is walled off from the active id-commands: a backlog id is invisible to findTask/claim
+// The drawer is walled off from the active id-commands: a backlog id is invisible to FindTask/claim
 // (so an un-promoted idea can't be accidentally worked), yet resolvable via findBacklogTask.
 func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 	root := t.TempDir()
@@ -162,7 +162,7 @@ func TestQueueOfBacklogTask(t *testing.T) {
 	}
 }
 
-// coop backlog through the app dispatcher (cmdBacklog), single queue: the default queue
+// coop backlog through the app dispatcher (CmdBacklog), single queue: the default queue
 // derives from the repo (no COOP_TASKS needed), add→ls→promote round-trips, and the
 // failure paths exit 2 with a usage/unknown error — the CLI surface, not just the helpers.
 func TestCmdBacklogDispatch(t *testing.T) {

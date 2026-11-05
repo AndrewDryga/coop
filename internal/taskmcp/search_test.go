@@ -161,7 +161,7 @@ func TestTaskSearchReusesExistingOwnerWithoutRewritingAcceptance(t *testing.T) {
 	}
 }
 
-func TestTaskSearchBoundsAndUnfilteredCompatibility(t *testing.T) {
+func TestTaskSearchBoundsAndUnfilteredList(t *testing.T) {
 	root := queue(t, nil)
 	sess := newSession(t, newServer(t, root, ""))
 	if got := searchTasks(t, sess, map[string]any{"query": "archive"}); got.Matched != 0 {
@@ -227,7 +227,7 @@ func TestTaskSearchKeepsDistinctQueuesForTheSameID(t *testing.T) {
 		t.Fatal("same ID in distinct authorized queues was merged or reordered")
 	}
 	if sess.mustCall("tasks_list", nil) != sess.mustCall("tasks_list", map[string]any{"state": ""}) {
-		t.Fatal("legacy all-state list changed")
+		t.Fatal("an empty state filter did not list every state")
 	}
 }
 

@@ -52,8 +52,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		return nil, nil
 	}
 	// Flag a credential-looking filename with the SAME decider that shadows secrets from the box,
-	// so the merge gate can't drift from the shadow denylist (it used to be a separate hand-rolled
-	// regex that missed kubeconfig/.npmrc/.netrc/service_account.json/*.kdbx/… that SecretGlobs covers).
+	// so the merge gate can't drift from the shadow denylist.
 	shadowed := box.NewShadowDecider(repo)
 	unreadable := map[string]bool{} // each .coopignore coop cannot read is one warning, not one per file
 	var warns []string
@@ -630,8 +629,8 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOut
 }
 
 // mergeOneMode keeps the batch-only empty decision inside the same lifecycle lock as land-journal
-// replay and task authority inspection. Single-fork merge retains its historical no-op landing
-// approval, which is also used by cleanup validation.
+// replay and task authority inspection. Single-fork merge gives an empty fork a no-op landing
+// approval, which cleanup validation also uses.
 func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (outcome mergeOutcome, retErr error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
@@ -772,20 +771,17 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	if err := c.FastForwardParent(repo, ws, name); err != nil {
 		return mergeOutcome{}, err
 	}
-	// Legacy/non-task forks land Git only. Canonical task completion is never inferred from a
-	// trailer; generation candidates above carry exact task and projection authority.
+	// A fork with no task candidate lands Git only. Canonical task completion is never inferred from
+	// a trailer; generation candidates above carry exact task and projection authority.
 	return finishLand(true, landedHead, nil)
 }
 
-// landFork rebases the fork's branch onto the parent's current HEAD — in the fork,
-// where that branch is checked out — then fast-forwards the parent onto the result.
-// Forks therefore land as a linear replay, never a merge commit. A rebase conflict
-// leaves the fork untouched and points at where to resolve.
 // rebaseForkOntoParent rebases the fork's branch onto the parent's current HEAD inside the fork's
-// OWN clone (ws), producing the landing candidate WITHOUT touching the parent. Box commits are
-// unsigned (the box holds no key); when you sign, the rebase re-signs the rewritten commits with
-// your host key (-f forces the rewrite so even a fast-forward land gets signed), the signing config
-// coming from the parent via forkspace.TrustedSignArgs, never the fork.
+// OWN clone (ws), producing the landing candidate WITHOUT touching the parent, so forks land as a
+// linear replay, never a merge commit. Box commits are unsigned (the box holds no key); when you
+// sign, the rebase re-signs the rewritten commits with your host key (-f forces the rewrite so even
+// a fast-forward land gets signed), the signing config coming from the parent via
+// forkspace.TrustedSignArgs, never the fork.
 func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	// A rebase that FAILS is aborted below, but a coop killed mid-rebase (a host crash, a SIGKILL)
 	// leaves git's state dir behind, and every later merge then dies on the leftover state instead of

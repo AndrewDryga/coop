@@ -46,7 +46,7 @@ func TestEnterRefAuthorityWindowFailsClosedOnHeadMismatch(t *testing.T) {
 	repo, run := gitRepo(t)
 	run("commit", "-q", "--allow-empty", "-m", "base")
 	validated := forkspace.GitOut(repo, "rev-parse", "HEAD")
-	// HEAD moves before the window is entered — exactly the old validation-to-consumption seam.
+	// HEAD moves before the window is entered — the validation-to-consumption seam it closes.
 	run("commit", "-q", "--allow-empty", "-m", "moved")
 	live := forkspace.GitOut(repo, "rev-parse", "HEAD")
 

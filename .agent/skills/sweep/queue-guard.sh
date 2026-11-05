@@ -8,7 +8,7 @@
 # task whose claimant is alive — so neither may a sweep finish it (it would overwrite that agent's
 # uncommitted work) nor block it (it would park someone else's in-flight task). A dead claimant, an
 # unbound claim, or a claim held by this very agent (the pid sits in this hook's own ancestry) stays
-# actionable. Without `coop` on PATH the hook counts everything, as it always did.
+# actionable. Without `coop` on PATH the hook counts everything.
 
 queue_paths() {
   if command -v coop >/dev/null 2>&1; then

@@ -40,7 +40,7 @@ func TestAggregateReleasePreservesSandboxOwner(t *testing.T) {
 	assertRemovalSnapshot(t, authority, authorityBefore)
 }
 
-// TestTaskQueuesMonorepo: with no --tasks/COOP_TASKS, taskQueues derives the queue set from
+// TestTaskQueuesMonorepo: with no --tasks/COOP_TASKS, TaskQueues derives the queue set from
 // .agent/project.yaml — a monorepo's subproject queues — while an explicit override still wins.
 func TestTaskQueuesMonorepo(t *testing.T) {
 	repo := t.TempDir()

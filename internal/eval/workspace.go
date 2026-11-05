@@ -23,8 +23,9 @@ import (
 // (the suite's overlap/symlink checks); the trial launcher adds the credential, network and mount
 // projections. Materialization writes only under dest and reads only the fixture and dest.
 
-// materializeIdentity is the fixed, synthetic author of a trial's initial commit — never the host's
-// git identity, so nothing about the developer travels into the trial.
+// materializeAuthorName and materializeAuthorEmail are the fixed, synthetic author of a trial's
+// initial commit — never the host's git identity, so nothing about the developer travels into the
+// trial.
 const (
 	materializeAuthorName  = "Coop Eval"
 	materializeAuthorEmail = "eval@coop.invalid"

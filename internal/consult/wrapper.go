@@ -211,11 +211,11 @@ terminate_pid() {
 }
 
 # Stop a drain — and the reader inside it. A capture is a shell wrapped around the cat (or dd) that
-# is blocked on the FIFO, so signalling the shell alone left that reader running: it survives the
-# signal its owner received, is reparented out of the tree, and stays in the box's process group,
-# which is how a scripted run ended with a process nobody owned. The child it is blocked in is named
-# the portable way, through ps; any short-lived helper caught alongside it is already on its way out.
-# Best effort where ps is missing: then this degrades to signalling the shell, as before.
+# is blocked on the FIFO, so signalling the shell alone leaves that reader running: it survives the
+# signal its owner received, is reparented out of the tree, and stays in the box's process group
+# with no owner. The child it is blocked in is named the portable way, through ps; any short-lived
+# helper caught alongside it is already on its way out. Best effort where ps is missing: then this
+# only signals the shell.
 terminate_capture() {
 	pid=$1
 	[ -n "$pid" ] || return 0
@@ -544,13 +544,11 @@ start_capture() {
 
 # By the time this is called the peer has been waited on and the wrapper has closed its own end of
 # the pipe, so every writer COOP owns is gone and the reader cannot block on our account — it has
-# EOF waiting for it. The old five-second budget was therefore not guarding against a stuck writer
-# at all; it was a deadline on a drain that was merely slow to be scheduled, and on a loaded machine
-# it threw away replies the peer had already produced ("failed to capture provider output safely"
-# after a peer exited 0). What remains worth bounding is a writer left OUTSIDE the peer's launch
-# group — a host with no setsid, or a child that detached itself — which run() has nothing to reap.
-# That is rare, and generous is the right size for it; a run that hits it can wait this out twice,
-# once per capture, before it gives up.
+# EOF waiting for it. A short budget would only be a deadline on a drain merely slow to be scheduled,
+# and on a loaded machine would throw away replies the peer already produced. What is worth bounding
+# is a writer left OUTSIDE the peer's launch group — a host with no setsid, or a child that detached
+# itself — which run() has nothing to reap. That is rare, and generous is the right size for it; a
+# run that hits it can wait this out twice, once per capture, before it gives up.
 capture_drain_limit=600 # tenths of a second: 60s
 await_capture() {
 	pid=$1

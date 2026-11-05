@@ -274,8 +274,8 @@ func TestOneForkName(t *testing.T) {
 	}
 }
 
-// rm/merge/stop/logs must reject a SECOND positional (they used to silently act on only the last and
-// report success). The check fires before any repo/clone work, so a bare app suffices.
+// rm/merge/stop/logs must reject a SECOND positional instead of acting on only one and reporting
+// success. The check fires before any repo/clone work, so a bare app suffices.
 func TestForkVerbsRejectSecondPositional(t *testing.T) {
 	a := &Control{cfg: &config.Config{RepoOverride: t.TempDir()}}
 	for verb, fn := range map[string]func([]string) (int, error){
@@ -1079,10 +1079,9 @@ func TestRecoverOrphanedGenerationAfterWorkspaceDestroy(t *testing.T) {
 }
 
 // A fork whose workspace vanished while it held an assignment (deleted by hand, or the agent ran
-// `git clean -fdx`) used to keep its canonical tasks fork-owned forever: the task-state summary
-// failed opening the missing proposal outbox, and the orphan branch never discarded anyway. Now a
-// missing workspace/outbox counts as no pending proposals, --force returns the tasks, and without
-// --force the refusal names the remedy.
+// `git clean -fdx`) must not keep its canonical tasks fork-owned forever: a missing workspace/outbox
+// counts as no pending proposals, --force returns the tasks, and without --force the refusal names
+// the remedy.
 func TestRecoverOrphanedGenerationReturnsHeldTasksOnlyWithForce(t *testing.T) {
 	repo := initRepo(t)
 	root := filepath.Join(repo, tasks.TasksRoot)

@@ -18,7 +18,7 @@ import (
 // host file from. Everything else in the agent-writable .git/config — every filter/diff/merge
 // driver, include, alias, credential helper, submodule setting, hook path, pager, editor — is
 // dropped, so the repository cannot name code for the host to run. Your global and system config
-// are read as before; that is where filter.lfs and your signing setup live.
+// are still read; that is where filter.lfs and your signing setup live.
 var trustedGitConfigKeys = []*regexp.Regexp{
 	regexp.MustCompile(`^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|eol|safecrlf)$`),
 	regexp.MustCompile(`^extensions\.[a-z0-9]+$`),

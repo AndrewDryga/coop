@@ -288,8 +288,8 @@ func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 	}
 }
 
-// An empty leftover skill directory used to make init report "kept existing skill" forever while
-// the skill stayed empty — and every .../skills symlink pointed at nothing.
+// An empty leftover skill directory is not a kept skill: left alone, the skill stays empty and every
+// .../skills symlink points at nothing.
 func TestInitRestoresEmptySkillDir(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent", "skills", "spec"), 0o755); err != nil {
@@ -422,8 +422,8 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The caller owns the result. Scaffolding says nothing at all — the per-file/symlink/skill/
-	// gitignore ledger it used to print is exactly the wall `coop init` no longer shows.
+	// The caller owns the result. Scaffolding says nothing at all, so `coop init` shows no wall of
+	// per-file, symlink, skill and gitignore lines.
 	if logged != "" {
 		t.Errorf("scaffold printed a progress ledger:\n%s", logged)
 	}
@@ -1376,7 +1376,7 @@ func runFIFOChild(t *testing.T, repo, what string) {
 }
 
 // The FIFO guard opens the parent as "<dir>/.", which still follows a parent link that stays
-// inside the repository: a scaffold file lands where it always did.
+// inside the repository, so a scaffold file lands through the link.
 func TestWriteNewRepoFileFollowsAnInRepoParentLink(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "config"), 0o755); err != nil {

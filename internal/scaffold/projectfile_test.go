@@ -123,8 +123,7 @@ func TestDetectSubprojectsWalksOnlyRealFolders(t *testing.T) {
 }
 
 // The blitz-infra shape: six terraform roots, three of them nested under another root. Discovery
-// used to stop at the first member on each path, so the three nested ones were hand-maintained
-// forever and every `coop init` printed a count that contradicted the config it would not fix.
+// must not stop at the first member on each path, or the three nested ones go unlisted.
 func TestDetectSubprojectsFindsMembersNestedInsideAMember(t *testing.T) {
 	repo := t.TempDir()
 	members := []string{
@@ -161,9 +160,8 @@ func TestDetectSubprojectsFindsMembersNestedInsideAMember(t *testing.T) {
 	}
 }
 
-// A member added after the first init used to be reported and left for you to type in by hand.
-// An unlisted member is a queue coop ignores, so init registers it — without destroying the
-// commented template around it.
+// An unlisted member is a queue coop ignores, so init registers one added after the first init —
+// without destroying the commented template around it.
 func TestRegisterSubprojectsEditsInPlace(t *testing.T) {
 	t.Run("replaces the placeholder", func(t *testing.T) {
 		repo := t.TempDir()

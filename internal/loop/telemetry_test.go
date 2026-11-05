@@ -22,7 +22,7 @@ func TestBuildStageRecord(t *testing.T) {
 	rec := buildStageRecord("run123", "work", "success", "v4.0.0", tgt, start, end, 0, 3, 2, "abc123", "def456", q, []string{"t-1"}, []string{".claude/settings.json"})
 
 	// The EFFECTIVE (post-rotation) target is flattened onto the record — provider included, so a
-	// row shows what RAN, the whole point of the fix behind this telemetry.
+	// row shows what RAN.
 	if rec.Provider != "codex" || rec.Model != "gpt-5.6-sol" || rec.Effort != "xhigh" || rec.Account != "work" {
 		t.Errorf("target not mapped: %+v", rec)
 	}

@@ -21,9 +21,9 @@ import (
 // Every repository coop runs git against is agent-writable, and git executes whatever the
 // repository's configuration names: clean/smudge/process filters and textconv drivers on status,
 // diff, checkout, rebase and apply; merge drivers on rebase. GitHardening blanks the fixed-name
-// knobs, but a driver's name is arbitrary, and enumerating the names first (the retired
-// DriverNeutralizer) missed included config and lost the race against an agent writing the config
-// between the enumeration and git's own read of it.
+// knobs, but a driver's name is arbitrary, and enumerating the names first misses included config
+// and loses the race against an agent writing the config between the enumeration and git's own read
+// of it.
 //
 // The trusted view closes the whole class: host git never reads the repository's configuration.
 // GIT_DIR points at a coop-owned directory whose config coop generated from an allowlist
@@ -195,8 +195,8 @@ func gitViewRoot() (string, error) {
 	switch {
 	case root != "":
 	case strings.HasSuffix(os.Args[0], ".test"):
-		// A per-process temporary root used to stand in here, and every test binary that never
-		// removed it left one behind in the temp directory, about 130 a day.
+		// A per-process temporary root could stand in here, but every test binary that never removed
+		// it would leave one behind in the temp directory.
 		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does)", GitViewRootEnv)
 	default:
 		home, err := os.UserHomeDir()

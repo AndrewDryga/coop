@@ -25,10 +25,8 @@ import (
 
 // Folder-mode `coop tasks` subcommands. A task's state is its parent directory, so every
 // transition is a folder move (atomic os.Rename) in gitignored local working state.
-// Dispatched from cmdTasks when the resolved source is a .agent/tasks directory.
+// Dispatched from CmdTasks when the resolved source is a .agent/tasks directory.
 
-// cmdTasksFolder routes `coop tasks <sub>` against a folder-mode tree rooted at root
-// (absolute path to .agent/tasks). No sub-command lists the tree.
 // taskArgSpec declares a structured subcommand's allowed flags and max positional count.
 type taskArgSpec struct {
 	flags  []string // the options this subcommand accepts, and the ones a correction may suggest
@@ -110,6 +108,8 @@ func validateArgs(cmd string, args []string, spec taskArgSpec) error {
 	return nil
 }
 
+// CmdTasksFolder routes `coop tasks <sub>` against a folder-mode tree rooted at root
+// (absolute path to .agent/tasks). No sub-command lists the tree.
 func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	sub := ""
 	var args []string
@@ -167,22 +167,21 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	}
 }
 
-// tasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
+// TasksVerbs are the canonical `coop tasks` subcommands (primary spellings, no aliases): the single
 // source for the unknown-subcommand suggester and isTasksSubcommand, so the two can't drift. `watch`
-// belongs here even though cmdTasks (not cmdTasksFolder) handles it — a mistype of it should suggest it.
+// belongs here even though CmdTasks (not CmdTasksFolder) handles it — a mistype of it should suggest it.
 var TasksVerbs = []string{"ls", "lint", "add", "claim", "release", "lease", "block", "unblock", "park", "done", "watch", "queues", "path", "rm", "decisions"}
 
-// isTasksSubcommand reports whether s names a `coop tasks` subcommand. cmdTasks uses it to catch
-// `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path. v3 keeps no
-// compat aliases (ls/rm are the only spellings), so this is plain tasksVerbs membership.
+// isTasksSubcommand reports whether s names a `coop tasks` subcommand. CmdTasks uses it to catch
+// `coop tasks --tasks <sub>`, where --tasks swallows the subcommand as a queue path.
 func isTasksSubcommand(s string) bool {
 	return slices.Contains(TasksVerbs, s)
 }
 
-// matchTask resolves id against a set of task items: an exact ID match wins, else a unique substring
+// MatchTask resolves id against a set of task items: an exact ID match wins, else a unique substring
 // match (so a slug fragment works). Ambiguous or absent is refused as rejected input (see
 // lookupExit). listCmd names the command that lists this set ("coop tasks" / "coop backlog"), so the
-// refusal points at the right listing. Shared by findTask (the lifecycle tree) and findBacklogTask
+// refusal points at the right listing. Shared by FindTask (the lifecycle tree) and findBacklogTask
 // (xx_backlog).
 func MatchTask(items []Item, id, listCmd string) (Item, error) {
 	if id == "" {
@@ -237,7 +236,7 @@ func lookupExit(err error) int {
 	return 1
 }
 
-// findTask locates a task by ID across the lifecycle state dirs — an exact ID match, else a unique
+// FindTask locates a task by ID across the lifecycle state dirs — an exact ID match, else a unique
 // substring match. Backlog (xx_backlog) is deliberately NOT searched: it's off to the side, so the
 // active id-commands (claim/done/…) can't accidentally act on an un-promoted idea. See findBacklogTask.
 func FindTask(root, id string) (Item, error) {
@@ -249,7 +248,7 @@ func FindTask(root, id string) (Item, error) {
 }
 
 // findBacklogTask locates a backlog item by ID under root's xx_backlog/ — the backlog analog of
-// findTask, so `coop backlog rm/promote` accept a slug fragment and error clearly on absent/ambiguous.
+// FindTask, so `coop backlog rm/promote` accept a slug fragment and error clearly on absent/ambiguous.
 func findBacklogTask(root, id string) (Item, error) {
 	items, err := ReadBacklog(root)
 	if err != nil {
@@ -395,9 +394,8 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 		if flag == "subtask" {
 			subtasks = append(subtasks, val)
 		} else if values[heading] != "" {
-			// Repeated section flag (e.g. several --acceptance): ACCUMULATE, don't overwrite.
-			// A silent last-wins dropped every earlier value — real data loss on a multi-clause
-			// paste. Join as paragraphs so each clause survives under its heading.
+			// Repeated section flag (e.g. several --acceptance): ACCUMULATE, don't overwrite. A silent
+			// last-wins would lose a multi-clause paste; paragraphs keep each clause under its heading.
 			values[heading] += "\n\n" + val
 		} else {
 			values[heading] = val
@@ -545,7 +543,7 @@ func createTaskFolderIn(queue *os.Root, state, slug, title string, values map[st
 	}
 	// An id is a stable, unique handle, so reject a collision in ANY state — the four lifecycle dirs
 	// AND xx_backlog — else a re-add (or a promote) would make two folders share an id, and
-	// findTask/findBacklogTask would silently shadow one.
+	// FindTask/findBacklogTask would silently shadow one.
 	for _, st := range append(slices.Clone(TaskStates), StateBacklog) {
 		dir, err := openRealSubroot(queue, st)
 		if errors.Is(err, os.ErrNotExist) {
@@ -565,8 +563,8 @@ func createTaskFolderIn(queue *os.Root, state, slug, title string, values map[st
 			return "", err
 		}
 	}
-	// Ensure all four state dirs exist (the queue may be fresh, or predate the four-state scaffold), so
-	// the move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
+	// Ensure all four state dirs exist (the queue may be fresh, or missing one), so the
+	// move-a-folder-between-states protocol always has a real dir to move into — same guarantee as
 	// `coop init`. Then the task's own state dir: xx_backlog is created on demand here (like a fresh
 	// secondary queue), so `coop init` never has to scaffold an empty backlog drawer.
 	for _, st := range TaskStates {
@@ -674,8 +672,8 @@ var errTaskClaimedByOther = errors.New("task is claimed by another live process"
 
 // competingClaim reports whether an existing claim blocks a new one: only a claim bound to a
 // process that is still alive and is not the claimer's own does. A person's claim (no process) or
-// a claim whose process is gone is taken over silently, as every re-claim was before claims
-// carried an identity — the point of binding is to tell "someone is on this" from "someone was".
+// a claim whose process is gone is taken over silently — the point of binding is to tell "someone
+// is on this" from "someone was".
 func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	if existing.Kind != TaskOwnerHuman || existing.ActorPID == 0 || !ownerProcessLive(existing) {
 		return false
@@ -684,9 +682,9 @@ func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 }
 
 // claimTaskOwnerRecord writes durable evidence that a HUMAN — not a loop-adopted process — owns
-// this task, so assignLoopTaskOnly refuses to adopt it even long after the `coop tasks claim`
+// this task, so AssignLoopTaskOnly refuses to adopt it even long after the `coop tasks claim`
 // process that called this has exited. Called ONLY from the interactive claim path below: the
-// loop's own todo->in_progress adoption (assignLoopTaskOnly -> moveTaskDir) must never call this, or
+// loop's own todo->in_progress adoption (AssignLoopTaskOnly -> MoveTaskDir) must never call this, or
 // the loop would lock itself out of its own resumed work. It returns the label of a previous owner
 // whose process was gone, so the caller can say the claim was a takeover.
 func claimTaskOwnerRecord(root, id string, opts claimOptions) (string, error) {
@@ -1131,7 +1129,7 @@ func checklistUsage(e *IncompleteChecklistError, t Item) *ui.UsageError {
 }
 
 // tasksFolderPath prints a task's resolved folder — the id-command companion to `coop fork path`,
-// so `cat "$(coop tasks path <id>)/task.md"` works for humans and hooks. Reuses findTask, so a slug
+// so `cat "$(coop tasks path <id>)/task.md"` works for humans and hooks. Reuses FindTask, so a slug
 // fragment resolves and an absent/ambiguous id errors exactly like claim/done.
 func tasksFolderPath(root string, args []string) (int, error) {
 	if len(args) < 1 {
@@ -1588,10 +1586,10 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 	return nil
 }
 
-// moveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
+// MoveTaskDir renames a task's folder into root/newState, creating the state dir if needed. If the
 // id already exists in newState (a torn move or a stray duplicate across states), it refuses with an
 // actionable message rather than letting os.Rename fail with a raw "file exists" and stranding the
-// task. (readTaskTree dedups such a duplicate on the READ side; this guards the WRITE side.) The
+// task. (ReadTaskTree dedups such a duplicate on the READ side; this guards the WRITE side.) The
 // queue is opened once and both state folders from it, each a real folder, and the rename goes
 // through their handles: a box that swaps a state folder for a link cannot send the task elsewhere.
 func MoveTaskDir(root string, t Item, newState string) error {
@@ -1614,7 +1612,7 @@ func MoveTaskDir(root string, t Item, newState string) error {
 		}
 	}
 	if _, err := queue.Lstat(filepath.Join(fromState, t.ID)); errors.Is(err, os.ErrNotExist) {
-		// The source vanished between findTask and now — a concurrent move to a DIFFERENT state
+		// The source vanished between FindTask and now — a concurrent move to a DIFFERENT state
 		// won the race. Report it as the actionable message this guard promises, not a raw ENOENT.
 		return fmt.Errorf("can't move %s: it changed state under us (a concurrent move won) — re-run 'coop tasks'", t.ID)
 	} else if err != nil || fromState == newState {
@@ -1710,7 +1708,7 @@ func normalizeCompletedTaskState(id, taskDir string) error {
 	return NormalizeTaskState(id, taskDir, "complete", "none", "—", "—")
 }
 
-// normalizeTaskState atomically replaces only Coop-owned lifecycle fields in a valid state.md.
+// NormalizeTaskState atomically replaces only Coop-owned lifecycle fields in a valid state.md.
 // Agent-authored summaries, traps, headings, and surrounding prose remain byte-for-byte apart
 // from those two lines. Missing or ambiguous snapshots retain unique Done/Traps values when safe.
 func NormalizeTaskState(id, taskDir, statusValue, nextValue, doneFallback, trapsFallback string) error {
@@ -1936,7 +1934,7 @@ var errTaskChangedBeforeBlock = errors.New("task changed before it could be bloc
 // stands down an own lease holder, takes the authority flock, and holds it together with the owner
 // lock through check, move, and owner-record removal, so an assignment cannot appear after a stale
 // precheck and become stranded in blocked. Shared by `coop tasks block` and the in-box task
-// channel; a task another controller leases is refused with errTaskLeasedElsewhere.
+// channel; a task another controller leases is refused with ErrTaskLeased.
 func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
 	return blockTrustedTask(root, t, actor, nil)
 }
@@ -2823,7 +2821,7 @@ func listMarkers(p ui.Palette, t Item) string {
 // inProgressMarker labels an in-progress task with the one fact that explains whether the loop will
 // touch it next: a durable human claim beats the lease-derived reservation, because a claimed task
 // with nobody actively holding its lease would otherwise read as free work (it never is: see
-// assignLoopTaskOnly). A claim whose process has died is the exception worth flagging on its own —
+// AssignLoopTaskOnly). A claim whose process has died is the exception worth flagging on its own —
 // nobody is on it, and the loop needs `coop loop --preflight` to take it back. An unclaimed,
 // unreserved task says nothing: that IS the ordinary in-progress row. A read error falls back to
 // the reservation: ls is a display, not the adoption gate, so it degrades instead of failing.
@@ -3281,8 +3279,8 @@ func tasksFolderLint(root string) (int, error) {
 	var findings []string
 	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
 	// Every queue needs all four state dirs, or the move-a-folder-between-states protocol renames a
-	// task into a missing dir and silently corrupts the queue (see scaffoldStateDirs). Flag any older
-	// tree that predates the fix.
+	// task into a missing dir and silently corrupts the queue (see ScaffoldStateDirs). Flag any queue
+	// that lacks one.
 	if fi, err := os.Stat(root); err == nil && fi.IsDir() {
 		for _, st := range TaskStates {
 			if s, e := os.Stat(filepath.Join(root, st)); e != nil || !s.IsDir() {

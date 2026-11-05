@@ -7,7 +7,7 @@ import "time"
 // suspend the same way, so the how lives here once, next to the limit types it waits on.
 
 // SleepOrWake waits up to d, returning early with false if wake fires (or is closed) — so the
-// loop's pauses end promptly when a stop is requested, now that the loop catches SIGINT instead
+// loop's pauses end promptly when a stop is requested, since the loop catches SIGINT instead
 // of dying on it. A nil wake never fires; true means it slept the full d.
 func SleepOrWake(d time.Duration, wake <-chan struct{}) bool {
 	if d <= 0 {

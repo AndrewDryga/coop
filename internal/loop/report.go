@@ -302,7 +302,7 @@ func humanTokenCount(n int) string {
 	return b.String()
 }
 
-// authHeadline names the exact failed target, keeps legacy profile names terminal-safe, and wraps
+// authHeadline names the exact failed target, keeps its account name terminal-safe, and wraps
 // before Alert adds its two-column mark. The continuation indent is part of the returned headline
 // because Alert colors the headline as one value.
 func authHeadline(t agents.Target) string {

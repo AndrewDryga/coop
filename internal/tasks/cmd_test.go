@@ -70,7 +70,7 @@ func TestFindTask(t *testing.T) {
 	}
 }
 
-// `coop tasks path <id>` prints the resolved folder (reusing findTask) so a hook or human can
+// `coop tasks path <id>` prints the resolved folder (reusing FindTask) so a hook or human can
 // `cat "$(coop tasks path <id>)/task.md"`; absent/ambiguous ids error like the other id commands.
 func TestTasksFolderPath(t *testing.T) {
 	root := t.TempDir()
@@ -337,7 +337,7 @@ func TestTasksFolderRelease(t *testing.T) {
 
 	t.Run("an unclaimed in-progress task still takes the guarded move", func(t *testing.T) {
 		root := t.TempDir()
-		// Simulate a loop adoption directly (moveTaskDir, never claim): in progress, no record —
+		// Simulate a loop adoption directly (MoveTaskDir, never claim): in progress, no record —
 		// exactly what the loop's own todo->in_progress move produces.
 		writeTaskFile(t, filepath.Join(root, StateInProgress, "loop-owned", "task.md"), "# Loop\n")
 		writeTaskFile(t, filepath.Join(root, StateInProgress, "loop-owned", "state.md"), "# State\nhandoff\n")
@@ -803,7 +803,7 @@ func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
 	}
 }
 
-// moveTaskDir reports an actionable error, not a raw ENOENT, when the task's source folder
+// MoveTaskDir reports an actionable error, not a raw ENOENT, when the task's source folder
 // vanished under it — a concurrent move to a different state won the race.
 func TestMoveTaskDirSourceVanished(t *testing.T) {
 	root := t.TempDir()
@@ -1247,13 +1247,13 @@ func TestTasksFolderLintReportsUnfilledTasksAndMissingFrontmatter(t *testing.T) 
 }
 
 // A queue missing any state dir is a corruption trap: the in-box "move a folder between states"
-// protocol would rename a task into the nonexistent dir (see scaffoldStateDirs). lint flags it (exit
+// protocol would rename a task into the nonexistent dir (see ScaffoldStateDirs). lint flags it (exit
 // 1); scaffolding the four makes it clean.
 func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "t1", "task.md"),
 		"---\ntitle: T\n---\n# T\n**Context:** c\n**Acceptance criteria:** the gate is green\n**Approach:** a\n")
-	// only 00_todo exists (a hand-made or pre-fix tree) — the other three are missing.
+	// only 00_todo exists (a hand-made tree) — the other three are missing.
 	if code, err := tasksFolderLint(root); err != nil || code != 1 {
 		t.Fatalf("lint of a queue missing state dirs: code=%d err=%v (want 1)", code, err)
 	}
@@ -1433,8 +1433,8 @@ func TestTasksFolderAddHeaderOnlyOnTheScaffold(t *testing.T) {
 	}
 }
 
-// A REPEATED section flag must accumulate, not silently last-wins — a paste with several
-// --acceptance clauses used to keep only the last, dropping the rest (real data loss).
+// A REPEATED section flag must accumulate, not silently last-wins, or a paste with several
+// --acceptance clauses would lose all but the last.
 func TestTasksFolderAddRepeatedSectionFlag(t *testing.T) {
 	root := t.TempDir()
 	code, err := tasksFolderAdd(root, []string{"harden", "the", "endpoint",

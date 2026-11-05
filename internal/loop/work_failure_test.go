@@ -195,7 +195,7 @@ func TestALaunchRefusalStopsTheRunAtItsFirstAttempt(t *testing.T) {
 	root := filepath.Join(repo, tasksRoot)
 	writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Create hello.txt\n- [ ] Write it\n")
 	c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
-	refusal := &box.LaunchRefused{Err: errors.New("legacy writer mount cannot be resolved")}
+	refusal := &box.LaunchRefused{Err: errors.New("writer mount cannot be resolved")}
 	attempts := 0
 	c.boxRun = func(box.RunSpec) (int, error) {
 		attempts++
@@ -218,7 +218,7 @@ func TestALaunchRefusalStopsTheRunAtItsFirstAttempt(t *testing.T) {
 		t.Fatalf("the stop lost the actionable task: %+v, %v, %v", current, ok, err)
 	}
 	log, err := os.ReadFile(filepath.Join(current.Dir, "log.md"))
-	if want := "\n- loop stopped before the agent started: legacy writer mount cannot be resolved\n"; err != nil || string(log) != want {
+	if want := "\n- loop stopped before the agent started: writer mount cannot be resolved\n"; err != nil || string(log) != want {
 		t.Errorf("log.md = %q, %v; want %q", log, err, want)
 	}
 	if index, err := tasks.ReadCompletionWindowIndex(root); err != nil || len(index.Windows) != 0 {

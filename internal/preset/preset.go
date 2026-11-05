@@ -152,7 +152,7 @@ type yamlRole struct {
 
 // roots returns the preset search roots in precedence order: the repo's
 // .agent/presets/ first, then the per-user global dir when non-empty. globalDir
-// == "" means repo-only, so every single-repo run is byte-identical to before.
+// == "" means repo-only.
 func roots(repo, globalDir string) []string {
 	rs := []string{filepath.Join(repo, filepath.FromSlash(Dir))}
 	if globalDir != "" {

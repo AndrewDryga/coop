@@ -20,7 +20,7 @@ import (
 // spec.md / log.md / state.md / decision.md / screenshots/ / artifacts/ / tmp/. A task's
 // workflow state is the parent directory it sits in — there is no status field, so
 // nothing can drift. Moving the folder between state dirs IS the state change.
-// The contract is in AGENTS.md; converting a legacy single-file queue is MIGRATING.md.
+// The contract is in AGENTS.md.
 
 // TasksRoot is the repo-relative task queue directory every reader works against.
 const TasksRoot = ".agent/tasks"
@@ -30,26 +30,26 @@ const TasksRoot = ".agent/tasks"
 // (todo → in_progress → blocked → done) instead of alphabetically; done uses "99_" so it always
 // sorts last. The names live in internal/taskstate — the one source the scaffold shares (cli
 // imports scaffold, so scaffold can't import back) — and these are local aliases so call sites
-// read unchanged. stateLabel strips the prefix for human-facing output; paths use the dir name.
+// read unchanged. StateLabel strips the prefix for human-facing output; paths use the dir name.
 const (
 	StateTodo       = taskstate.Todo
 	StateInProgress = taskstate.InProgress
 	StateBlocked    = taskstate.Blocked
 	StateDone       = taskstate.Done
-	// stateBacklog is the staging drawer for unscheduled ideas (`coop backlog`). It lives OUTSIDE
-	// taskStates on purpose, so readTaskTree/findTask/the loop/counters never see it — only the
-	// readBacklog-based `coop backlog` commands do. See taskstate.Backlog.
+	// StateBacklog is the staging drawer for unscheduled ideas (`coop backlog`). It lives OUTSIDE
+	// TaskStates on purpose, so ReadTaskTree/FindTask/the loop/counters never see it — only the
+	// ReadBacklog-based `coop backlog` commands do. See taskstate.Backlog.
 	StateBacklog = taskstate.Backlog
 )
 
-// taskStates is the canonical ordered set of state directories.
+// TaskStates is the canonical ordered set of state directories.
 var TaskStates = taskstate.All
 
-// taskItem is one parsed task folder.
+// Item is one parsed task folder.
 type Item struct {
 	ID            string   // = folder name; the stable handle (constant across moves)
 	Title         string   // frontmatter `title:`, else the body H1, else the ID
-	State         string   // one of taskStates — the parent directory
+	State         string   // one of TaskStates — the parent directory
 	Dir           string   // absolute path to the task folder
 	Subtasks      []bool   // one per body checkbox; true = checked/done
 	SubtaskLabels []string // SubtaskLabels[i] is the text of Subtasks[i]; empty for an Item built in memory
@@ -475,8 +475,8 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	return items, false, nil
 }
 
-// readBacklog enumerates the task folders under root's xx_backlog/, sorted by id. It reads ONE state
-// dir — unlike readTaskTree, which walks the four lifecycle states and deliberately skips backlog —
+// ReadBacklog enumerates the task folders under root's xx_backlog/, sorted by id. It reads ONE state
+// dir — unlike ReadTaskTree, which walks the four lifecycle states and deliberately skips backlog —
 // so it's the only path that surfaces backlog items (the `coop backlog` commands). A missing dir is
 // simply empty. No cross-state dedup is needed: a backlog item lives only here until it's promoted
 // (an atomic os.Rename out), so it can't be read in two states at once.
@@ -529,7 +529,7 @@ func ReadBacklog(root string) ([]Item, error) {
 	return items, nil
 }
 
-// scaffoldStateDirs creates the four task-state dirs (00_todo/10_in_progress/50_blocked/99_done)
+// ScaffoldStateDirs creates the four task-state dirs (00_todo/10_in_progress/50_blocked/99_done)
 // under root. The move-a-folder-between-states protocol relies on every target dir existing: a bare
 // `mv 00_todo/x 10_in_progress/` with no 10_in_progress/ *renames* the task folder to a file called
 // 10_in_progress, silently corrupting the queue. Canonical queue and one-task projection producers
@@ -544,7 +544,7 @@ func ScaffoldStateDirs(root string) error {
 	return nil
 }
 
-// stateOrder maps a state to its lifecycle index for sorting (unknown states sort last).
+// StateOrder maps a state to its lifecycle index for sorting (unknown states sort last).
 func StateOrder(state string) int {
 	for i, s := range TaskStates {
 		if s == state {
@@ -554,7 +554,7 @@ func StateOrder(state string) int {
 	return len(TaskStates)
 }
 
-// stateLabel is a state's human-readable name with the on-disk sort prefix stripped
+// StateLabel is a state's human-readable name with the on-disk sort prefix stripped
 // ("00_todo" → "todo", "99_done" → "done"). Output uses it; filesystem paths use the
 // dir name verbatim (so a path coop prints is one you can actually cd into).
 func StateLabel(state string) string {
@@ -564,7 +564,7 @@ func StateLabel(state string) string {
 	return state
 }
 
-// queueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
+// QueueCounts reads a task queue directory (.agent/tasks) and returns its counts and active
 // task — the one seam the status and loop readers funnel through. A missing/empty dir
 // reads as all-zero.
 func QueueCounts(dir string) (TaskCounts, string, error) {
@@ -576,8 +576,8 @@ func QueueCounts(dir string) (TaskCounts, string, error) {
 	return counts, active, nil
 }
 
-// LatestForkTaskLog reads reviewed execution projections through the generation registry. It
-// replaces review's old assumption that a fork owns a copied .agent/tasks tree.
+// LatestForkTaskLog reads reviewed execution projections through the generation registry, because
+// a fork owns no copy of the .agent/tasks tree.
 func LatestForkTaskLog(repo, name string, n int) (string, error) {
 	identity, ok, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
@@ -623,7 +623,7 @@ func LatestForkTaskLog(repo, name string, n int) (string, error) {
 	return lastLines(newest, n), nil
 }
 
-// taskTreeCounts tallies a task tree into the shared taskCounts and returns the "active"
+// TaskTreeCounts tallies a task tree into the shared TaskCounts and returns the "active"
 // task title — the first in_progress task, or failing that the first todo — so the
 // status and loop views agree on what a queue is "working on".
 func TaskTreeCounts(items []Item) (TaskCounts, string) {

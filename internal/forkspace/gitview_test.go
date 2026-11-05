@@ -445,8 +445,8 @@ func TestGitRefCommandNeverClimbsToTheHomeRepository(t *testing.T) {
 	}
 }
 
-// A test binary that names no view root must fail. The per-process temporary root that used to
-// stand in was left behind by every test binary that never removed it.
+// A test binary that names no view root must fail: a per-process temporary root would be left
+// behind by every test binary that never removed it.
 func TestGitViewRootRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
 	repo, _ := viewTestRepo(t)
 	home := t.TempDir()

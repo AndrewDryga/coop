@@ -110,7 +110,7 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 // Run works spec's task queues unattended until nothing actionable remains (todo/ and
 // in_progress/ both empty), then (unless a custom work.command is set) runs a signoff pass over the
 // results; if the review reopens anything, the loop drains and reviews again until a review reopens
-// nothing (accepted) or the round cap (config.MaxReviewRounds) is hit, which blocks the stuck task
+// nothing (accepted) or the round cap (signoffRoundCap) is hit, which blocks the stuck task
 // for a human. A model rate/usage limit is not a failure: the loop waits for the
 // reset — parsed from the agent's own output when possible — and retries, so a long run
 // survives the limit. A task left in in_progress/ by an interrupted iteration is continued (the
@@ -370,7 +370,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// and every box below launches under it (see runBox). Re-admitting per
 	// iteration would let an approval or a config edit landing at 3am change what
 	// an unattended run may reach — and a rotation would have to re-qualify
-	// mid-drain. An open or offline run gets a nil capture and proceeds as today.
+	// mid-drain. An open or offline run gets a nil capture.
 	c.net = newNetworkLog()
 	defer c.net.summary()
 	capture, err := box.AdmitNetwork(c.cfg, c.rt,
@@ -465,10 +465,10 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
 	// stops before the next; a second stops now (tears the box down). TERM and HUP are always hard.
 	// A redirected loop — a CI pipe, or a DETACHED fork worker stopped by `coop fork stop`
-	// (SIGTERM) — needs its own watcher now: every built-in attempt runs the box in its own
-	// cancelable process group for the provider watchdog, so a delivered signal no longer takes
-	// the box down with coop. One SIGINT/SIGTERM cancels the box context — the run tears down
-	// cleanly instead of exiting and orphaning it.
+	// (SIGTERM) — needs its own watcher: every built-in attempt runs the box in its own cancelable
+	// process group for the provider watchdog, so a delivered signal does not take the box down
+	// with coop. One SIGINT/SIGTERM cancels the box context — the run tears down cleanly instead of
+	// exiting and orphaning it.
 	var softStop atomic.Bool
 	wake := make(chan struct{}) // closed on the first stop signal so any in-progress wait returns at once
 	var wakeOnce sync.Once
@@ -966,7 +966,7 @@ reviewAgain:
 			// The touched set is host-side knowledge the box cannot influence — everything this
 			// attempt's authority consumption could affect: the leased task id, the audit-reopen
 			// record's task, every id whose queue state this completion window observed change
-			// (auditDoneCandidates' full candidate list, the finished set among them), and every id
+			// (AuditDoneCandidates' full candidate list, the finished set among them), and every id
 			// already archived when the window's baseline was captured — before the box ever ran, so
 			// an already-closed task stays protected even when its folder never moves; an archived
 			// task's history is meant to be closed, and a forged extra commit corrupts that closed
@@ -1153,10 +1153,10 @@ reviewAgain:
 			if cleanCredentialRetryCanReuseServices(repo, iterHead, headAfter, classification.outcome) {
 				reuseWorkServices[assigned.Item.ID] = true
 			}
-			// Ref authority: from here through consumeAuditReopen/windows.Close(), this worktree's
+			// Ref authority: from here through ConsumeAuditReopen/windows.Close(), this worktree's
 			// HEAD is exclusive to this controller. Everything below assumes HEAD == headAfter; an
 			// interactive coop run, a host signing rewrite, a fork land, or a human commit could move
-			// it during the several filesystem operations between this line and consumeAuditReopen,
+			// it during the several filesystem operations between this line and ConsumeAuditReopen,
 			// so the window closes that gap instead of trusting the value across it. The first action
 			// inside the lock re-reads HEAD and compares — see tasks.EnterRefAuthorityWindow.
 			refRelease, liveHead, refErr := tasks.EnterRefAuthorityWindow(c.cfg, repo, headAfter, nil)
@@ -1444,9 +1444,8 @@ reviewAgain:
 							loopBetweenPrompt(repo, queues, substituteLoopVars(setPrompt, stepChanges, health), finishedDirs, auditGateFiles),
 							stepChanges.reviewBlock(health), reviewPacket(repo, projectPolicy, finishedDirs, stepChanges),
 						)
-						// An ordinary configured audit preserves its historical warn-and-continue behavior.
-						// A protected audit is mandatory: failure stops before another task can trust
-						// the changed gate.
+						// An ordinary configured audit warns and continues. A protected audit is mandatory:
+						// failure stops before another task can trust the changed gate.
 						stage := "between audit"
 						if protectedAudit {
 							stage = "protected audit"
@@ -1617,8 +1616,8 @@ reviewAgain:
 				return 0, nil
 			}
 		}
-		// A custom work.command isn't the signoff-aware agent form, so it gets no signoff pass —
-		// today's behavior: drain the queue, then report.
+		// A custom work.command isn't the signoff-aware agent form, so it gets no signoff pass: drain
+		// the queue, then report.
 		if len(custom) > 0 {
 			break
 		}
@@ -2076,9 +2075,6 @@ func loopServiceFingerprint(workspace, policyRepo string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// closeWith prints the run's final banner, flushing the networking summary first
-// so the banner stays the LAST line however the run ended — drained, capped,
-// or interrupted. Every exit that has a banner goes through here.
 // proposalOutboxPath is the fork proposal outbox as an absolute path, or "" for a plain loop.
 func (c *Control) proposalOutboxPath(repo string) string {
 	if c.proposalOutbox == "" {
@@ -2087,6 +2083,9 @@ func (c *Control) proposalOutboxPath(repo string) string {
 	return filepath.Join(repo, c.proposalOutbox)
 }
 
+// closeWith prints the run's final banner, flushing the networking summary first
+// so the banner stays the LAST line however the run ended — drained, capped,
+// or interrupted. Every exit that has a banner goes through here.
 func (c *Control) closeWith(report func()) {
 	c.net.summary()
 	report()

@@ -241,7 +241,7 @@ const defaultProtectedBetweenPrompt = "Audit ONLY the protected gate change name
 
 // betweenAuditSetPrompt keeps ordinary between-task review opt-in, while making a completed task's
 // protected gate edit earn an immediate audit even when between.enabled is false. An unconfigured
-// protected audit uses the signoff target (betweenRot's existing fallback) and this built-in prompt.
+// protected audit uses the signoff target (the between rotation's fallback) and this built-in prompt.
 func betweenAuditSetPrompt(configured bool, setPrompt string, gateFiles []string) (string, bool) {
 	if configured {
 		return strings.TrimSpace(setPrompt), true
@@ -261,11 +261,6 @@ func loopPreflightPrompt(repo string, queues []string, customPrompt string) stri
 		filepath.Join(repo, "AGENTS.md"), absJoin(repo, queues), strings.TrimSpace(customPrompt))
 }
 
-// absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
-// absQueuePath renders one queue path as an absolute in-box path. The queue list is configured
-// relative to the repo, but a resolved queuedTask.Root is already absolute — and filepath.Join does
-// not detect that, so joining it to the repo again yields "<repo>/<repo>/...". Both callers exist,
-// so normalize here rather than at each site.
 // assignedProjectDir is the folder a task's source work belongs in: the folder holding the task's
 // .agent/tasks queue. A fork's task sits in a projection under .coop/task-executions instead, which
 // is Coop's private state and never project source, so its agent works from the fork's root.
@@ -277,6 +272,10 @@ func assignedProjectDir(repo, queue string) string {
 	return filepath.Dir(filepath.Dir(abs))
 }
 
+// absQueuePath renders one queue path as an absolute in-box path. The queue list is configured
+// relative to the repo, but a resolved QueuedTask.Root is already absolute — and filepath.Join does
+// not detect that, so joining it to the repo again yields "<repo>/<repo>/...". Both callers exist,
+// so normalize here rather than at each site.
 func absQueuePath(repo, queue string) string {
 	if filepath.IsAbs(queue) {
 		return filepath.Clean(queue)
@@ -284,6 +283,7 @@ func absQueuePath(repo, queue string) string {
 	return filepath.Join(repo, queue)
 }
 
+// absJoin renders queues (repo-relative) as a comma-separated list of absolute in-box paths.
 func absJoin(repo string, queues []string) string {
 	abs := make([]string, len(queues))
 	for i, q := range queues {

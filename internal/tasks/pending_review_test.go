@@ -256,7 +256,7 @@ func TestPendingAwareReviewWindowRecoveryEnrollsBeforeJournalRetirement(t *testi
 	if err := CompleteTrustedTask("", root, subject); err != nil {
 		t.Fatal(err)
 	}
-	foreign := taskWithCompletedChecklist(t, root, StateTodo, "legacy-concurrent")
+	foreign := taskWithCompletedChecklist(t, root, StateTodo, "concurrent")
 	assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), foreign.ID)
 	if err != nil || assignment.Lease == nil {
 		t.Fatalf("assign = %+v, %v", assignment, err)
@@ -268,9 +268,9 @@ func TestPendingAwareReviewWindowRecoveryEnrollsBeforeJournalRetirement(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTaskFile(t, filepath.Join(repo, "legacy.txt"), "completed by an older host path\n")
-	git(t, repo, "add", "legacy.txt")
-	git(t, repo, "commit", "-qm", "finish legacy concurrent task\n\nCoop-Task: "+foreign.ID)
+	writeTaskFile(t, filepath.Join(repo, "concurrent.txt"), "completed by another host path\n")
+	git(t, repo, "add", "concurrent.txt")
+	git(t, repo, "commit", "-qm", "finish concurrent task\n\nCoop-Task: "+foreign.ID)
 	if err := MoveTaskDir(root, assignment.Task.Item, StateDone); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestPendingAwareReviewWindowRecoveryEnrollsBeforeJournalRetirement(t *testi
 	if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 		t.Fatal(err)
 	}
-	// Model a receipt produced by a pre-feature host path: accepted, but not yet enrolled.
+	// Model a receipt from a host path that publishes no review debt: accepted, but not yet enrolled.
 	if err := writeLeaseCompletionReceipt(assignment.Lease.authority, done.Dir, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestPendingReviewAnchorsAHostCompletionFromBeforeTheRun(t *testing.T) {
 		if err := FinalizeQueuedCompletion(QueuedTask{Root: root, Item: done}); err != nil {
 			t.Fatal(err)
 		}
-		// A receipt from a host path that publishes no review debt, as an older build's did.
+		// A receipt from a host path that publishes no review debt.
 		if err := writeLeaseCompletionReceipt(assignment.Lease.authority, done.Dir, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -470,11 +470,11 @@ func TestPendingReviewRefusesAHostCompletionBesideAPlantedCommit(t *testing.T) {
 func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 	repo := initRepo(t)
 	root := filepath.Join(repo, TasksRoot)
-	item := taskWithCompletedChecklist(t, root, StateTodo, "legacy-import")
+	item := taskWithCompletedChecklist(t, root, StateTodo, "explicit-import")
 	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
-	writeTaskFile(t, filepath.Join(repo, "import.txt"), "legacy completion\n")
+	writeTaskFile(t, filepath.Join(repo, "import.txt"), "completed before the run\n")
 	git(t, repo, "add", "import.txt")
-	git(t, repo, "commit", "-qm", "finish legacy import\n\nCoop-Task: "+item.ID)
+	git(t, repo, "commit", "-qm", "finish explicit import\n\nCoop-Task: "+item.ID)
 	if err := CompleteTrustedTask("", root, item); err != nil {
 		t.Fatal(err)
 	}
@@ -495,10 +495,9 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 	}
 }
 
-// A pending final review that straddles a reboot recorded a device the volume no longer has. It
-// used to fail with "no matching completion receipt"; it must find its completion — whether its tree
-// was recorded in this build's format or the device-hashing one before it — and still notice a real
-// change to the archive.
+// A pending final review that straddles a reboot recorded a device the volume no longer has. It must
+// find its completion — whether its tree was recorded in this build's format or the device-hashing
+// one before it — and still notice a real change to the archive.
 func TestPendingReviewSurvivesADeviceRenumber(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)

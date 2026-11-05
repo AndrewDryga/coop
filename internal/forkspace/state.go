@@ -222,7 +222,7 @@ func LockState(repo, name string) (func(), error) {
 
 // LockStateContext acquires a lifecycle lock without making service shutdown
 // wait forever behind another process. The ordinary command path passes a
-// background context and retains the historical blocking behavior.
+// background context, so it blocks until the lock is free.
 func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 	f, err := createStateFile(repo, name+".lock", os.O_RDWR)
 	if err != nil {

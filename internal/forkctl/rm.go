@@ -138,10 +138,9 @@ func InvalidForkName(name, command string) *ui.UsageError {
 	}
 }
 
-// oneForkName returns the single fork name from the parsed positionals, rejecting a second one. The
-// rm/merge/stop/logs families used to let a later positional silently overwrite the first — acting on
-// only the last and printing success — a data-loss footgun (`fork rm a b` looks like it removed both).
-// Zero positionals returns "" so callers can apply their own "name required" usage error.
+// oneForkName returns the single fork name from the parsed positionals, rejecting a second one:
+// acting on only one and printing success is a data-loss footgun (`fork rm a b` looks like it removed
+// both). Zero positionals returns "" so callers can apply their own "name required" usage error.
 func oneForkName(verb string, pos []string) (string, error) {
 	if len(pos) > 1 {
 		return "", ui.UnexpectedArgument(pos[1], "coop fork "+verb, "coop fork "+verb+" <name>")
@@ -495,7 +494,6 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	return 0, nil
 }
 
-// forkOpen prints a fork's path (for `cd "$(coop fork open <name>)"`).
 // ForkPath prints a fork's filesystem path (for `cd "$(coop fork path <name>)"` and the
 // like). It's the plumbing companion to `coop fork open`, which opens it in your editor.
 func (c *Control) ForkPath(args []string) (int, error) {

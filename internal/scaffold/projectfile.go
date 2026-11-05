@@ -196,8 +196,7 @@ func subprojectEntries(names []string) ([]string, error) {
 
 // RegisterSubprojects adds any detected member missing from an EXISTING project.yaml's
 // subprojects: list, returning what it added. A repo grows members after its first init, and
-// leaving them unlisted means coop silently ignores their queues — the old behaviour was to print
-// "add these to subprojects:" and make you do it by hand, every init, forever.
+// leaving them unlisted means coop silently ignores their queues.
 //
 // The edit is surgical text, not a YAML re-marshal: project.yaml is a commented template that
 // documents every key, and round-tripping it through a YAML encoder would strip all of that.

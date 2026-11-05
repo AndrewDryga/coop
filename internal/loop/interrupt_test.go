@@ -92,7 +92,7 @@ func TestLoopInterruptInfoStartsFreshLine(t *testing.T) {
 
 // While the live bar is up, the notice must go through the sink alone: the region scrolls it
 // above the bar itself, and a raw stderr newline would move the cursor off the bar line and
-// desync the region's erase math (the very bug that used to leak stale bar frames on Ctrl-C).
+// desync the region's erase math, which leaks stale bar frames on Ctrl-C.
 func TestLoopInterruptInfoLiveBarNoRawNewline(t *testing.T) {
 	var got []string
 	ui.SetLiveSink(func(s string) { got = append(got, s) })

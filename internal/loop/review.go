@@ -20,10 +20,9 @@ import (
 
 // reviewLadder parses a review stage's raw .agent/loop.yaml agent: rungs into targets, PRESERVING
 // provider, model, effort, and account (and every fallback rung) — dropping only preset rungs, since
-// a once-per-stage review takes targets, not a rotation of presets. It replaces the old stepModel,
-// which kept only (model, effort) off the first rung and discarded the provider — so a claude-led
-// run's `codex:…` signoff resolved to `claude --model <a-codex-model>`, an invalid combination, and
-// the cross-vendor reviewer the config promised was never actually run.
+// a once-per-stage review takes targets, not a rotation of presets. Without the provider, a
+// claude-led run's `codex:…` signoff would resolve to `claude --model <a-codex-model>`, an invalid
+// combination, and the cross-vendor reviewer the config promises would never run.
 func reviewLadder(rungs []string) ([]agents.Target, error) {
 	rs, err := loopcfg.Rungs(rungs)
 	if err != nil {

@@ -404,8 +404,7 @@ func TestDestroyLandedForkPreservesPostLandWork(t *testing.T) {
 	}
 }
 
-// Decision B forbids re-running the live attack. This regression exercises only
-// the protected production path; the historical positive control is in task.md.
+// This regression exercises only the protected production path, never the live attack.
 func TestLandedCleanupNeverExecutesSubmoduleFilter(t *testing.T) {
 	t.Setenv("GIT_OPTIONAL_LOCKS", "0") // the child check must leave its stat-dirty index untouched
 	childSource, repo := initRepo(t), initRepo(t)

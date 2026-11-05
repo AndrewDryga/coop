@@ -142,8 +142,8 @@ func readQueueIdentity(root string) (queueIdentityRecord, error) {
 	return record, nil
 }
 
-// EnsureQueueIdentity returns the queue's durable identity, creating it atomically when this is a
-// legacy queue first entering an ownership transition. Read-only views never call this function.
+// EnsureQueueIdentity returns the queue's durable identity, creating it atomically when the queue
+// first enters an ownership transition. Read-only views never call this function.
 func EnsureQueueIdentity(root string) (string, error) {
 	canonical, err := canonicalTaskRoot(root)
 	if err != nil {
@@ -151,8 +151,8 @@ func EnsureQueueIdentity(root string) (string, error) {
 	}
 	// Atomic rename makes the file durable, but it does not make two different temporary
 	// identities agree: concurrent first claims could each return the value they wrote while only
-	// the last rename remains authoritative. Serialize the legacy-to-identified transition on the
-	// same host registry used for task authority, then re-read under that lock.
+	// the last rename remains authoritative. Serialize that first creation on the same host registry
+	// used for task authority, then re-read under that lock.
 	authority, err := lockLeaseAuthority(canonical, queueIdentityLockID, true, syscall.LOCK_EX)
 	if err != nil {
 		return "", err

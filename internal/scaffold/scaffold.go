@@ -148,7 +148,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 		return s.notices, err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
-	// project .claude/ adapter. A selected Claude adapter receives its project copy as before.
+	// project .claude/ adapter. A selected Claude adapter also receives its project copy.
 	if err := s.installGitHooks(gateLangs, agentDirs); err != nil {
 		return s.notices, err
 	}

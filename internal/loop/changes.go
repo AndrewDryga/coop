@@ -98,7 +98,7 @@ func compactAuditEvidence(s string) string {
 	return string(r[:auditEvidenceFieldLimit-1]) + "…"
 }
 
-// auditEvidenceFrom finds the structured audit summary closest to the terminal receipt. Blank
+// parseAuditEvidence finds the structured audit summary closest to the terminal receipt. Blank
 // separators are harmless, but any non-evidence prose ends the block. The summary intentionally
 // contains only a tested gate and unresolved findings: no free-form claim that a task met its
 // acceptance criteria crosses into final signoff.

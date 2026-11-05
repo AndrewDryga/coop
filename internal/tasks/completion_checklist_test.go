@@ -88,8 +88,8 @@ func TestDoneRefusalShowsOpenItemsAndWhereToTickThem(t *testing.T) {
 	}
 }
 
-// Authority and cleanup tests need otherwise-completable tasks; legacy and
-// unfinished checklist tests keep taskForLease or write their own metadata.
+// Authority and cleanup tests need otherwise-completable tasks; tests of a missing or
+// unfinished checklist keep taskForLease or write their own metadata.
 func taskWithCompletedChecklist(t *testing.T, root, state, id string) Item {
 	t.Helper()
 	item := taskForLease(t, root, state, id)
@@ -164,7 +164,7 @@ func TestTrustedCompletionRequiresCurrentChecklist(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "empty", body: "# Legacy task\n", want: "0/0"},
+		{name: "empty", body: "# Task with no checklist\n", want: "0/0"},
 		{name: "required host verification pending", body: "# Task\n" + strings.Repeat("- [x] verified work\n", 7) + "- [ ] required host test\n", want: "7/8"},
 		{name: "checked decision", body: "# Decision\n- [x] verified that no source change is required\n"},
 		{name: "fenced example is not a requirement", body: "# Task\n- [X] verified work\n\n\x60\x60\x60markdown\n- [ ] example only\n\x60\x60\x60\n"},
@@ -259,7 +259,7 @@ func TestForkChecklistCheckedAgainAtPublicationAndLanding(t *testing.T) {
 				t.Fatal(err)
 			}
 			if stage == "publication" {
-				// Simulate a projection accepted by an older binary. Matching
+				// Simulate a projection accepted with its checklist unfinished. Matching
 				// identity/digest alone must not authorize unfinished work.
 				result, err := ValidateForkProjection(repo, root, "assigned", assignment.Owner)
 				if err != nil {

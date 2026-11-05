@@ -58,7 +58,7 @@ const (
 )
 
 // ExecutionTaskRef is an optional task binding carried by a supervised sandbox. QueueID and TaskID
-// are durable authorities when known; local/legacy work may truthfully carry only the readable ID.
+// are durable authorities when known; local work may truthfully carry only the readable ID.
 type ExecutionTaskRef struct {
 	QueueID    string `json:"queue_id,omitempty"`
 	TaskID     string `json:"task_id,omitempty"`

@@ -453,9 +453,9 @@ func TestConsultWrapperRefusesUnlistedPeer(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "coop-consult")
 	writeConsultWrapper(t, f)
-	// A listed peer must reach provider dispatch without ever launching a real host credential.
-	// This test used to assume Claude was absent; on a development host it could start the real
-	// unlimited consult and hang until the package timeout.
+	// A listed peer must reach provider dispatch without ever launching a real host credential: on a
+	// development host the real Claude would start an unlimited consult and hang until the package
+	// timeout.
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\necho test-claude-invoked >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -956,8 +956,8 @@ func TestConsultWrapperBoundsProviderOutputAndContinuation(t *testing.T) {
 exec "$@"`
 	// A big answer is the DEFAULT case, not an error case. Discarding one cost the whole consult
 	// plus the narrowed retry that followed, so an unbounded run must hand back every byte.
-	t.Run("a reply past the old cap is delivered whole by default", func(t *testing.T) {
-		const size = 1 << 20 // the cap this used to die on, exactly
+	t.Run("a large reply is delivered whole by default", func(t *testing.T) {
+		const size = 1 << 20
 		body := fmt.Sprintf(`printf '{"type":"message","role":"assistant","content":"'
 dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X
 printf '"}\n{"type":"result","status":"success"}\n'`, size)
@@ -1147,7 +1147,7 @@ func TestConsultWrapperBoundsDefaultToUnlimited(t *testing.T) {
 	t.Run("stream limit behavior (capture path)", func(t *testing.T) {
 		const passTimeout = `shift 3
 exec "$@"`
-		const size = 1<<20 + 1 // one byte past the retired 1 MiB cap
+		const size = 1<<20 + 1
 		body := fmt.Sprintf(`printf '{"type":"message","role":"assistant","content":"'
 dd if=/dev/zero bs=%d count=1 2>/dev/null | tr '\000' X
 printf '"}\n{"type":"result","status":"success"}\n'`, size)

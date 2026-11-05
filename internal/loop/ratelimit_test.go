@@ -80,10 +80,10 @@ func TestDecideIteration(t *testing.T) {
 	}
 }
 
-// TestDecideIterationOutputLimitCapped: the output-limit path used to return actRetryNow forever,
-// respawning the box and burning quota with no give-up (introduced by eb36c66). Now a consecutive
-// RUN of output limits backs off after the first and stops at the cap, while a single one still
-// resumes at once and an intervening different outcome resets the run.
+// TestDecideIterationOutputLimitCapped: retrying an output limit forever would respawn the box and
+// burn quota with no give-up, so a consecutive RUN of output limits backs off after the first and
+// stops at the cap, while a single one still resumes at once and an intervening different outcome
+// resets the run.
 func TestDecideIterationOutputLimitCapped(t *testing.T) {
 	now := time.Unix(1_000_000_000, 0)
 	out := "finish_reason: length"

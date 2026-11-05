@@ -715,9 +715,9 @@ func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingR
 	if err := validatePendingReviewPlan(plan); err != nil {
 		return err
 	}
-	// Legacy loop tasks may not have entered a fork or interactive-claim path yet. Establish their
-	// durable identity here while this completion still owns the task authority lock; the record
-	// must never fall back to the readable folder slug as identity.
+	// A loop task may not have entered a fork or interactive-claim path yet. Establish its durable
+	// identity here while this completion still owns the task authority lock; the record must never
+	// fall back to the readable folder slug as identity.
 	instance, err := EnsureTaskInstance(l.root, task)
 	if err != nil {
 		return fmt.Errorf("read pending-review task identity: %w", err)
@@ -1273,7 +1273,7 @@ func workspacePendingReviews(workspace string) ([]PendingReviewRecord, error) {
 }
 
 // EnrollExistingPendingReviews binds receipt-valid host completions discovered by
-// completion-window recovery (and by the explicit legacy import path) to a review plan without
+// completion-window recovery (and by the explicit --review-task import) to a review plan without
 // manufacturing a new completion receipt. It is idempotent for the exact generation.
 func EnrollExistingPendingReviews(repo string, hosts, ids []string, plan PendingReviewPlan) error {
 	if err := validatePendingReviewPlan(plan); err != nil {
@@ -1287,7 +1287,7 @@ func EnrollExistingPendingReviews(repo string, hosts, ids []string, plan Pending
 		if task.Item.State != StateDone {
 			return fmt.Errorf("task %s is not archived and cannot enter pending final review", id)
 		}
-		// A legacy archive may never have created a task-authority inode. Creating the empty lock
+		// An archived task may never have created a task-authority inode. Creating the empty lock
 		// here grants no completion authority; it only lets the import inspect and clearly reject a
 		// missing receipt under the same serialized boundary.
 		authority, err := lockLeaseAuthority(task.Root, id, true, syscall.LOCK_EX|syscall.LOCK_NB)

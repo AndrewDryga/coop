@@ -35,7 +35,7 @@ func taskCompletionRecorded(root string, task Item) bool {
 
 // taskOwned reads a task's durable claim record for a test assertion, failing the test outright on
 // a read error (a corrupt/mismatched record must never be silently treated as "no owner" — see
-// readTaskOwnerRecord) rather than being mistaken for the common "never claimed" case.
+// ReadTaskOwnerRecord) rather than being mistaken for the common "never claimed" case.
 func taskOwned(t *testing.T, root, id string) (TaskOwnerRecord, bool) {
 	t.Helper()
 	rec, ok, err := ReadTaskOwnerRecord(root, id)

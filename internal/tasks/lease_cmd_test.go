@@ -496,7 +496,7 @@ func TestLeaseBindsToTheTasksClaimantWhenItsOwnAncestryIsGone(t *testing.T) {
 	}
 
 	// A claimant that is gone (its pid reused by another process here) binds nothing: the holder
-	// then holds until the task moves or it is stopped, exactly as before.
+	// then holds until the task moves or it is stopped.
 	inProgressTask(t, root, "stale")
 	stale := ClaimActor{Label: "codex", PID: me.PID, StartToken: processidentity.StartToken(1)}
 	if _, err := claimTaskOwnerRecord(root, "stale", claimOptions{actor: stale}); err != nil {

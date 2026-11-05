@@ -15,10 +15,10 @@ func stagedFixture(t *testing.T, name string) (string, string) {
 	return repo, workspace
 }
 
-// A workspace removal that dies halfway used to leave a half-deleted directory that no later pass
-// could identify: its .git was already gone, so planning refused it and the bytes stayed forever.
-// Renaming the exact pinned inode into coop's own control directory FIRST makes the remains
-// unambiguous garbage, and makes finishing the delete a directory listing instead of a judgement.
+// A half-deleted directory is one no later pass can identify: its .git is already gone, so planning
+// refuses it and the bytes stay forever. Renaming the exact pinned inode into coop's own control
+// directory FIRST makes the remains of a removal that dies halfway unambiguous garbage, and makes
+// finishing the delete a directory listing instead of a judgement.
 func TestStageWorkspaceDiscardMovesTheExactInodeOutOfTheForkRoot(t *testing.T) {
 	repo, workspace := stagedFixture(t, "session-1")
 	handle, info, err := Pin(workspace)

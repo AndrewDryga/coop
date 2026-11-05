@@ -227,9 +227,9 @@ esac
 	})
 }
 
-// A box without the language's toolchain used to pass every commit with no format check and no
-// word about it. The commit still goes through, since a missing tool is no formatting diff, but the
-// committer now reads why nothing was checked; a commit without that language's files says nothing.
+// A box without the language's toolchain cannot check a commit's format. The commit still goes
+// through, since a missing tool is no formatting diff, but the committer reads why nothing was
+// checked; a commit without that language's files says nothing.
 func TestGateWarnsWhenTheFormatterIsMissing(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {

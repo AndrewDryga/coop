@@ -172,10 +172,8 @@ func New(cfg *config.Config, rt runtime.Runtime, version string, host Host) *Con
 	return &Control{cfg: cfg, rt: rt, version: version, host: host}
 }
 
-// RunSpec is one loop run's inputs: what to work, who works it, and the caps. It replaces an
-// eleven-parameter call that two callers had to keep in the same order, and it is where a fork's
-// container owner arrives — previously a field the fork launcher set on the shared app struct and
-// restored with a defer.
+// RunSpec is one loop run's inputs: what to work, who works it, and the caps. It is also where a
+// fork's container owner arrives.
 type RunSpec struct {
 	Repo  string // the checkout the loop works (a fork loop passes its own worktree)
 	Image string // the box image, already resolved for Repo
@@ -183,7 +181,7 @@ type RunSpec struct {
 
 	ForkName       string // the fork's name, "" for a local loop
 	ForkOwner      string // repo-scoped runtime owner label for a fork's boxes, "" for a local loop
-	ForkGeneration string // immutable fork incarnation, "" for a local/legacy loop
+	ForkGeneration string // immutable fork incarnation, "" for a local loop
 	ForkWorker     bool   // true only in the detached fork worker process
 
 	// ActivityRepo remains the canonical project when Repo is an isolated fork checkout. The

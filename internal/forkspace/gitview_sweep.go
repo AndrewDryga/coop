@@ -13,9 +13,9 @@ import (
 var viewName = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // SweepGitViews removes the persistent git views whose repository is gone and reports how many it
-// removed. Every eval, session and temporary repository used to leave its view behind for good, and
-// a view is rebuilt on its next use, so dropping one costs nothing. A test binary sweeps only a root
-// it was pointed at, never the real one.
+// removed. Every eval, session and temporary repository leaves its view behind, and a view is
+// rebuilt on its next use, so dropping one costs nothing. A test binary sweeps only a root it was
+// pointed at, never the real one.
 func SweepGitViews() (int, error) {
 	path := os.Getenv(GitViewRootEnv)
 	if path == "" {

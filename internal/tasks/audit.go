@@ -35,12 +35,11 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// The Coop-Task trailer binds a commit to the task it completes. The agent writes it (loopWorkPrompt
-// instructs it); the HOST controller reads it to verify attempts, resume informed after a crash, and
-// bind reviewed fork candidates to exact assigned tasks. A trailer alone never authorizes queue
-// completion. Before this, nothing linked a commit to a task
-// (git log --grep <id> was 0 repo-wide), so "one task = one commit" was unobservable and a crash
-// between commit and folder-move was ambiguous.
+// The Coop-Task trailer binds a commit to the task it completes. The agent writes it
+// (loop.LoopWorkPrompt instructs it); the HOST controller reads it to verify attempts, resume informed
+// after a crash, and bind reviewed fork candidates to exact assigned tasks. A trailer alone never
+// authorizes queue completion. Without it nothing links a commit to a task, so "one task = one commit"
+// is unobservable and a crash between commit and folder-move is ambiguous.
 const (
 	CoopTaskTrailer             = "Coop-Task"
 	auditReopenHistoryLimit     = 4096
@@ -59,9 +58,9 @@ const (
 	auditMetadataOutputLimit    = 2 << 20
 )
 
-// CommitInfo is a commit's short sha and subject line — the same shape internal/cli's own
-// commitInfo (loopchanges.go) mirrors rather than shares; see ParseLoopCommits' caller for the
-// one-site conversion between the two.
+// CommitInfo is a commit's short sha and subject line — the same shape internal/loop's own
+// commitInfo mirrors rather than shares; see its parseLoopCommits for the one-site conversion between
+// the two.
 type CommitInfo struct{ SHA, Subject string }
 
 type TaskTrailerCommit struct {
@@ -75,7 +74,7 @@ type TaskTrailerCommit struct {
 	Malformed     bool
 }
 
-// taskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
+// TaskTrailerCommits uses one NUL-delimited Git stream, so a trailer value can never be confused
 // with the next commit record without paying one process launch per commit. Git's trailer parser
 // identifies the final trailer block; the explicit inner separator preserves empty and duplicate
 // Coop-Task occurrences so callers can fail closed. It returns an error rather than an ok-bool so a
@@ -148,7 +147,7 @@ func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-// commitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
+// CommitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
 // the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
 func CommitsForTask(repo, rangeExpr, id string) []string {
 	var shas []string
@@ -248,7 +247,7 @@ func ProtectedGateChanges(repo, base, head string, projectSources []string) ([]s
 	return ProtectedGateFiles(strings.Split(out, "\x00"), projectSources), nil
 }
 
-// queueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.
+// QueueSnapshot maps task id → state across the hosts for UI and audit bookkeeping.
 func QueueSnapshot(hosts []string) (map[string]string, error) {
 	m := map[string]string{}
 	for _, h := range hosts {
@@ -551,7 +550,7 @@ func moveTrustedTaskFromDoneWith(root string, task Item, newState string, afterM
 	}})
 }
 
-// moveTrustedTasksFromDoneWith holds every task authority lock before the first mutation. Review
+// MoveTrustedTasksFromDoneWith holds every task authority lock before the first mutation. Review
 // verdicts use this all-or-nothing boundary so a later lease or metadata failure cannot leave an
 // earlier subject reopened. Every declared metadata file and completion receipt is restored if any
 // callback or move fails.
@@ -872,7 +871,7 @@ func FinalizeQueuedCompletion(task QueuedTask) error {
 	return nil
 }
 
-// reconcileInterruptedCompletions closes the crash window around accepted completion. A matching
+// ReconcileInterruptedCompletions closes the crash window around accepted completion. A matching
 // host receipt means finalization finished and only stale lease metadata needs removal. Without a
 // receipt, the lease does not retain the iteration base, so the task is restored for a new
 // range-bound attempt; an older matching commit must never validate new unbound work.
@@ -1043,7 +1042,7 @@ func crashCompletionCandidate(root string, task Item) bool {
 	return leaseAuthorityMetadataExists(root, task.ID) || auditReopenRecordExists(root, task.ID)
 }
 
-// alreadyCommittedInProgress reports the in_progress tasks whose implementation commit is ALREADY
+// AlreadyCommittedInProgress reports the in_progress tasks whose implementation commit is ALREADY
 // reachable from HEAD, with that commit and how many commits sit on top of it. That state means the
 // run died between the commit and the folder move — a hard Ctrl-C, a crash, or a background-timeout
 // handoff un-completing finished work — and nothing else surfaces it: the loop just re-picks the
@@ -2467,7 +2466,7 @@ func finishInterruptedForkUnblock(root string, task Item) (bool, error) {
 	return committed, errors.Join(reconcileErr, unlockLeaseFile(authority))
 }
 
-// preserveBlockedAuditReopen rebases an accepted review rewrite without consuming its single-use
+// PreserveBlockedAuditReopen rebases an accepted review rewrite without consuming its single-use
 // generation when the worker parks the task for external acceptance. The same semantic replay
 // validation as completion prevents the provider from changing descendants, and the still-held
 // authority lock makes replacement of the host record fail closed.
@@ -2493,7 +2492,7 @@ func (l *TaskLease) PreserveBlockedAuditReopen(repo, base, head string) error {
 	return nil
 }
 
-// rebaseTimedOutAuditReopen keeps held audit authority truthful after a timed-out attempt.
+// RebaseTimedOutAuditReopen keeps held audit authority truthful after a timed-out attempt.
 // An unchanged tree leaves the recorded baseline valid. A tree-changing attempt is accepted
 // only when it is a complete, semantically valid rewrite of the reviewed subject — then the
 // authority rebases onto the new head without consuming its single-use generation. Anything
@@ -2514,7 +2513,7 @@ func (l *TaskLease) RebaseTimedOutAuditReopen(repo, base, head string) error {
 	return nil
 }
 
-// completionUnbindableTasks is unbindableTasks' entry point from the work loop. Under ordinary
+// CompletionUnbindableTasks is unbindableTasks' entry point from the work loop. Under ordinary
 // authority it defers straight to unbindableTasks, threading touched through unchanged. A lease
 // carrying host audit-reopen authority for exactly the finished task instead validates by semantic
 // replay (auditReopenCompletionValid): that authority already proves the descendant history is a
@@ -2549,12 +2548,12 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // authority, so task prose claiming a reopen can never buy one; crash recovery restores it for a
 // fresh range.
 //
-// A commit in range that binds a task OUTSIDE finished is foreign. It still fails the WHOLE
-// completion closed — unchanged from before this split — when it names a task this iteration's
-// authority consumption could touch: touched is host-side knowledge the box cannot influence (built
-// once per attempt by internal/loop from the leased task id, the audit-reopen record's task, every id
-// whose queue state this completion window observed change, and every id
-// windows.baselineDoneIDs() reports — every task already archived before the box ever ran).
+// A commit in range that binds a task OUTSIDE finished is foreign. It fails the WHOLE completion
+// closed when it names a task this iteration's authority consumption could touch: touched is
+// host-side knowledge the box cannot influence (built once per attempt by internal/loop from the
+// leased task id, the audit-reopen record's task, every id whose queue state this completion window
+// observed change, and every id windows.BaselineDoneIDs() reports — every task already archived
+// before the box ever ran).
 // That last member matters even when the archived task's folder never moves: its history is meant to
 // be closed, so a forged extra commit corrupts that closed record without needing to touch its
 // folder at all — unbindableTasks alone cannot tell "genuinely untracked" from "already closed" by
@@ -2688,13 +2687,13 @@ func scanTaskBindings(repo, base, head, runBase string, allowed, touched map[str
 	return scan, true
 }
 
-// reportToleratedForeignBindings surfaces every foreign Coop-Task trailer unbindableTasks tolerated
+// ReportToleratedForeignBindings surfaces every foreign Coop-Task trailer unbindableTasks tolerated
 // instead of rejecting (see its doc comment and .agent/kb/loop-range-rejects-outside-commits.md). It
 // never fails the iteration: a task id that no longer resolves to a folder on any host is skipped,
 // not treated as an error, since bookkeeping about a task this iteration never touched must never
 // block a legitimate completion. The operator sees one line naming all of them; each named task also
 // gets its own best-effort log.md entry, so a human who later resumes that task is pointed at the
-// truth by resumeLine's existing "read log.md" instruction — commitsForTask's unconditional history
+// truth by resumeLine's existing "read log.md" instruction — CommitsForTask's unconditional history
 // scan will already surface the stray commit and trigger that instruction once the task is picked up
 // — instead of mistaking it for that task's own completion. The mark is deliberately informational,
 // not mechanical: unbindableTasks' own reachable-binding count already refuses to let that task's
@@ -2753,7 +2752,7 @@ func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
 	return errors.Join(errs...)
 }
 
-// restoreBackgroundHandoffCompletion rejects a completion produced before the provider observed
+// RestoreBackgroundHandoffCompletion rejects a completion produced before the provider observed
 // its background gate/consult result. The next fresh provider gets a precise resume note instead
 // of treating an incomplete asynchronous attempt as success.
 func RestoreBackgroundHandoffCompletion(task QueuedTask) error {
@@ -2770,7 +2769,7 @@ func RestoreBackgroundHandoffCompletion(task QueuedTask) error {
 	)
 }
 
-// restoreProviderTimeoutCompletion rejects a completion produced by an attempt the watchdog
+// RestoreProviderTimeoutCompletion rejects a completion produced by an attempt the watchdog
 // killed for proven silence. The provider may have moved the folder and then wedged before the
 // host could observe a trustworthy finish, so the completion is restored for a fresh observed
 // attempt with the standard recovery contract for any commit it already landed.
@@ -2829,7 +2828,7 @@ func RestoreCompromisedCompletion(task QueuedTask, audit bool) error {
 	)
 }
 
-// restoreRefAuthorityFailure restores a completion the box already folder-moved when the ref
+// RestoreRefAuthorityFailure restores a completion the box already folder-moved when the ref
 // authority window could not be trusted through consumption — either the lock itself could not be
 // acquired, or the compare-and-swap proved HEAD moved since validation. Neither is a binding or
 // ownership problem, so it gets its own reason text instead of reusing unbindable/unowned wording.
@@ -2939,7 +2938,7 @@ func AuditCompletionError(id string, restoreErr error) error {
 	return errors.New(msg)
 }
 
-// refAuthorityFailureError reports why the ref-authority window refused to consume task authority
+// RefAuthorityFailureError reports why the ref-authority window refused to consume task authority
 // for id — either the lock itself could not be acquired (a stuck holder, named in reason) or the
 // compare-and-swap proved HEAD moved since validation (reason names the observed and expected SHAs).
 // Either way the task is restored, actionable, and nothing was consumed.
@@ -3118,7 +3117,7 @@ func StaleAuditReopenRecovery(id, baseline string) string {
 	)
 }
 
-// parkStaleAuditReopen removes a stale host authority from the unattended work queue without
+// ParkStaleAuditReopen removes a stale host authority from the unattended work queue without
 // discarding the rejected Git rewrite. The operator must restore the exact audited baseline before
 // explicit unblock can reactivate that generation. Metadata and the folder move roll back together
 // so a failed decision/state write never leaves a malformed blocked task.
@@ -3224,14 +3223,14 @@ type TaskAssignment struct {
 
 const maxLeaseRescans = 3
 
-// skipOwnedCandidate reports whether id carries a durable human-claim record (taskOwnerRecord) — if
+// skipOwnedCandidate reports whether id carries a durable human-claim record (TaskOwnerRecord) — if
 // so, the loop must not adopt it, lease or no lease: `coop tasks claim` holds no flock, so an
 // unheld lease proves nothing about whether a human still owns the work. Checked BEFORE
-// tryTaskLease, not after, for two reasons: it avoids taking (and then having to release) a flock on
+// TryTaskLease, not after, for two reasons: it avoids taking (and then having to release) a flock on
 // work the loop was never going to adopt anyway, and `coop tasks claim` writes this record BEFORE it
 // moves the task's folder (see claimTaskOwnerRecord), so the record protects an in-flight claim from
 // the instant it starts — before a concurrent scan could even see the folder move. noted dedupes the
-// human-facing notice per assignLoopTaskOnly call, so a candidate seen again on an internal rescan
+// human-facing notice per AssignLoopTaskOnly call, so a candidate seen again on an internal rescan
 // (maxLeaseRescans) is skipped again silently rather than re-announced.
 func skipOwnedCandidate(root, id string, noted map[string]bool) (bool, error) {
 	rec, ok, err := ReadTaskOwnerRecord(root, id)
@@ -3278,7 +3277,7 @@ func releaseClaimedLease(candidate QueuedTask, lease *TaskLease, noted map[strin
 	return true, lease.Release()
 }
 
-// assignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
+// AssignLoopTaskOnly scopes assignment to the current task in a limited run. Counts still cover the
 // whole queue for truthful banners, but another actionable task can never be claimed while the
 // selected task is retrying or has been reopened by its between-task audit.
 func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (TaskAssignment, error) {
@@ -3405,7 +3404,7 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 	return TaskAssignment{}, fmt.Errorf("task queue kept changing while leasing — retry the loop")
 }
 
-// unblockResolved is the loop's built-in preflight, run host-side (no box, no model): every
+// UnblockResolved is the loop's built-in preflight, run host-side (no box, no model): every
 // ordinary blocked task whose decision.md now carries a filled-in Resolution — the same bar
 // `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
 // Audit-reopened tasks require an explicit host `coop tasks unblock`: provider-writable prose can
@@ -3413,7 +3412,7 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 // A task with no decision.md or an unanswered one stays parked. An unreadable decision or queue
 // stops the pass before it can be mistaken for an unanswered/empty state; move failures still
 // warn and skip the affected task.
-// Returns the unblocked ids in readTaskTree order.
+// Returns the unblocked ids in ReadTaskTree order.
 func UnblockResolved(hosts []string) ([]string, error) {
 	var ids []string
 	for _, host := range hosts {
@@ -3456,7 +3455,7 @@ func UnblockResolved(hosts []string) ([]string, error) {
 // process is provably gone (a dead pid, or a reused pid with a different start token) is released
 // so the loop can resume the task from its state.md. A claim with no process identity — a person
 // at a keyboard — is never touched, and an identity that cannot be inspected counts as alive.
-// Returns the released ids in readTaskTree order.
+// Returns the released ids in ReadTaskTree order.
 func ReleaseGoneOwners(hosts []string) ([]string, error) {
 	var ids []string
 	for _, host := range hosts {
