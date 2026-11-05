@@ -369,7 +369,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		projectRepo = f.record.Project // trusted execution record; synthetic/recovery launches may omit RunSpec.Repo
 	}
 	if f.preparedServices != nil && !f.preparedServices.joined {
-		unlock, err := lockServiceStart(ctx, projectRepo, spec, f.sections)
+		unlock, err := lockServiceStart(ctx, serviceStartRepo(spec, projectRepo), spec, f.sections)
 		if err != nil {
 			return -1, err
 		}
@@ -392,7 +392,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	if revalidate == nil {
 		revalidate = func() error { return nil }
 	}
-	unlockMounts, err := enterAuthorityMountWindow(ctx, projectRepo, f.sections, revalidate)
+	unlockMounts, err := enterAuthorityMountWindow(ctx, projectRepo, spec.Repo, f.sections, revalidate)
 	if err != nil {
 		return -1, err
 	}

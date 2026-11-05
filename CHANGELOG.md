@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Forks no longer wait for each other to start their services.** A fork's service start waited
+  for every running box in the whole project, so parallel fork loops starved each other for hours.
+  A fork starts its own Compose project from its own folder, so its start now waits only for boxes
+  in that fork. Changes to the project's approvals still wait for every box.
+
 - **`coop tasks watch` shows what is moving and what needs you.** The header splits tasks in
   progress into working and paused, and counts what finished today instead of the whole archive,
   so the bar moves during a run. A task nothing is working on gets a still marker. A fork's task

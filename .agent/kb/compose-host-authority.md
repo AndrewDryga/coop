@@ -3,7 +3,7 @@ name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
 sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -35,7 +35,10 @@ Compose client, while host proxy injection rules never reach a sidecar. This fre
 configuration bytes, not bind-source filesystem identity. `LockServiceLaunch` uses
 the repository directory's filesystem identity (so moves retain the barrier) and holds its
 exclusive side from validation through Docker opening mounts. A writable sandbox holds the shared
-side while its agent can replace paths. Already-running Compose sidecars are outside that lock:
+side while its agent can replace paths. A service start is keyed by the workspace its Compose file
+and bind sources come from (`serviceStartRepo`: a fork's own workspace), and every box holds the
+shared side of both its project's lock and, in a fork, its workspace's lock. So a fork's start waits
+only for boxes in that fork, while project-wide approval changes still wait for every box. Already-running Compose sidecars are outside that lock:
 before every new start, `RunningWritableBindSourcesByLabels` inspects all live Compose containers
 on the same frozen daemon as the eventual `compose up`, even if the operator changes Docker context,
 and refuses any writable bind overlapping this repository. `coop down` or stopping the container
@@ -138,6 +141,10 @@ containers as users (`ps -a --filter network=`), because they reconnect on the n
   2026-10-18-cover-every-letter-case-spelling-of-hidden-files).
 - 2026-09-23: verified exact-image approval and private start override against service review,
   automatic and filtered start paths; only elevated consumers are pinned, and v4 grants fail closed.
+- 2026-11-05: service starts and session joins are keyed by the starting workspace, not the parent
+  project; a fork box also holds its workspace's lock. Four emisar forks had starved each other for
+  hours, each start waiting for every sibling's box. Swept every lock caller: starts, joins, editor
+  readiness and the mount window moved to the workspace key; approval transitions stay project-wide.
 - 2026-09-23: repository-anchored secret and external-volume approvals, terminal-only volume
   authority, immutable review/start bytes, live writable-sidecar quiescence, nested bind denial,
   durable policy sources, and inode-keyed service launch locks. Swept the service start paths and

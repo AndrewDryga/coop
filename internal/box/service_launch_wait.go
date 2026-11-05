@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -79,6 +80,19 @@ func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec Ru
 	}
 }
 
+// serviceStartRepo keys the service start barrier: the workspace a box's services start from, which its
+// agent can change. Compose opens bind sources only there, and a fork has its own workspace and Compose
+// project, so a fork's start waits only for boxes that can replace paths in that workspace, never for a
+// sibling fork's boxes. Keyed by the parent project, four emisar forks starved each other for hours
+// (2026-11-05). Approval changes still take the project's own lock, which every box also holds
+// (enterAuthorityMountWindow).
+func serviceStartRepo(spec RunSpec, projectRepo string) string {
+	if spec.Repo != "" {
+		return spec.Repo
+	}
+	return projectRepo
+}
+
 // lockServiceStart is lockServiceLaunch for a box about to start its services. A supervisor stops a box
 // that waits as the ordinary way to stop waiting, so that reads as a cancelled setup, not a failure.
 func lockServiceStart(ctx context.Context, repo string, spec RunSpec, sections *launchSections) (func(), error) {
@@ -128,9 +142,9 @@ func (e *ServiceLaunchBusy) Say() (title string, details []string) {
 		"Coop goes on by itself once they stop. Close them to go on sooner."}
 }
 
-// serviceLaunchHolders says who keeps a launch out of the lock, as far as the host's records can
+// serviceLaunchHolders says who keeps a launch out of repo's lock, as far as the host's records can
 // tell: a running box other than except and the boxes of the launch's own session (source) that said it
-// holds the lock. A record alone says nothing: a controller only supervises, a box may be waiting for the
+// holds the lock. A fork workspace's lock is held only by boxes working there, so only those count. A record alone says nothing: a controller only supervises, a box may be waiting for the
 // lock too, and a box may only hold prompts, in this session or any other. Counting those made two
 // sessions wait on each other. Of a session's own boxes only a parked one counts. own reports that parked
 // boxes of its own session are all there is. An unreadable record names nobody; the wait is still real.
@@ -143,10 +157,15 @@ func serviceLaunchHolders(repo, except, source string) (busy *ServiceLaunchBusy,
 	if err != nil {
 		return &ServiceLaunchBusy{}, false
 	}
+	workspace := ""
+	if filepath.Clean(repo) != filepath.Clean(authority) {
+		workspace = filepath.Clean(repo)
+	}
 	var others []forkspace.ExecutionObservation
 	for _, observation := range live {
 		switch record := observation.Record; {
 		case !forkspace.ServiceLaunchHeldBy(authority, record.ID):
+		case workspace != "" && record.Workspace != workspace:
 		case source != "" && record.SourceID == source:
 			own = own || record.Role == forkspace.ExecutionRoleWarm
 		default:
@@ -169,10 +188,11 @@ func EditorServiceLaunchBusy(spec RunSpec) error {
 // that launch out as well, so that wait is a real one. This is only a forecast: a box that turns out not to
 // join says it waits (RunSpec.OnServiceLaunchWait).
 func editorServiceLaunchBusy(spec RunSpec, joins func() bool) error {
-	repo, _, err := forkspace.ResolveProjectBinding(projectPolicyRepo(spec))
+	project, _, err := forkspace.ResolveProjectBinding(projectPolicyRepo(spec))
 	if err != nil {
 		return err
 	}
+	repo := serviceStartRepo(spec, project)
 	taken, err := forkspace.ServiceLaunchTaken(repo)
 	if err != nil || !taken {
 		return err

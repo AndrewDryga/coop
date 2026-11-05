@@ -391,7 +391,7 @@ func EditorBoxStamp(capture *CapturedEgress, spec RunSpec) string {
 	if err != nil {
 		authority = repo
 	}
-	lock := serviceLaunchStamp(authority, spec.SupervisorID)
+	lock := serviceLaunchStamp(serviceStartRepo(spec, authority), spec.SupervisorID)
 	if capture == nil {
 		return lock
 	}

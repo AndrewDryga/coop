@@ -132,7 +132,7 @@ func joinOpenSessionServices(ctx context.Context, rt runtime.Runtime, spec RunSp
 	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" || spec.Review {
 		return startedServices{}, false
 	}
-	unlock, err := lockServiceLaunch(ctx, projectRepo, false, RunSpec{}, sections)
+	unlock, err := lockServiceLaunch(ctx, serviceStartRepo(spec, projectRepo), false, RunSpec{}, sections)
 	if err != nil {
 		return startedServices{}, false
 	}

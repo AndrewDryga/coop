@@ -26,7 +26,7 @@ func TestAuthorityMountValidationRunsInsideTheSharedLaunchWindow(t *testing.T) {
 	finished := make(chan error, 1)
 	want := errors.New("validation stopped the launch")
 	go func() {
-		unlock, err := enterAuthorityMountWindow(context.Background(), repo, nil, func() error {
+		unlock, err := enterAuthorityMountWindow(context.Background(), repo, repo, nil, func() error {
 			close(validated)
 			return want
 		})

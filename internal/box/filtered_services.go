@@ -376,7 +376,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		}
 		return joined.network, bindings, clients, &preparedFilteredServices{joined: true, addresses: joined.addresses}, nil
 	}
-	unlockLaunch, err := lockServiceStart(ctx, projectRepo, spec, sections)
+	unlockLaunch, err := lockServiceStart(ctx, serviceStartRepo(spec, projectRepo), spec, sections)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -579,7 +579,7 @@ func joinSessionServices(ctx context.Context, docker filteredDocker, rt runtime.
 	if !sessionMayJoinServices(spec) {
 		return nil
 	}
-	unlock, err := lockServiceLaunch(ctx, projectRepo, false, RunSpec{}, sections)
+	unlock, err := lockServiceLaunch(ctx, serviceStartRepo(spec, projectRepo), false, RunSpec{}, sections)
 	if err != nil {
 		return nil
 	}

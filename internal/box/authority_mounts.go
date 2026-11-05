@@ -252,10 +252,24 @@ func appendUniqueAuthorityPath(paths []string, path string) []string {
 // enterAuthorityMountWindow makes validation and the following runtime lifetime one shared
 // interval. A first project anchor takes the matching exclusive lock, so a launch validated before
 // that transition cannot start afterwards with mount authority the anchored policy would refuse.
-func enterAuthorityMountWindow(ctx context.Context, repo string, sections *launchSections, validate func() error) (func(), error) {
+// The box also holds its own workspace's lock (serviceStartRepo) when that is a fork's, so a service
+// start there waits for it, while a start in a sibling fork does not.
+func enterAuthorityMountWindow(ctx context.Context, repo, workspace string, sections *launchSections, validate func() error) (func(), error) {
 	unlock, err := lockServiceLaunch(ctx, repo, false, RunSpec{}, sections)
 	if err != nil {
 		return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
+	}
+	if workspace != "" && !sameDirectory(repo, workspace) {
+		unlockProject := unlock
+		unlockWorkspace, err := lockServiceLaunch(ctx, workspace, false, RunSpec{}, sections)
+		if err != nil {
+			unlockProject()
+			return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
+		}
+		unlock = func() {
+			unlockWorkspace()
+			unlockProject()
+		}
 	}
 	if err := validate(); err != nil {
 		unlock()
@@ -986,4 +1000,15 @@ func addLongMount(plan *authorityMountPlan, value string) error {
 		return fmt.Errorf("anchored runtime mount type %q cannot be inspected", kind)
 	}
 	return nil
+}
+
+// sameDirectory reports whether two paths name one directory, by filesystem identity as the launch lock
+// keys it; paths that cannot be read compare by their cleaned names.
+func sameDirectory(a, b string) bool {
+	ai, aerr := os.Stat(a)
+	bi, berr := os.Stat(b)
+	if aerr != nil || berr != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return os.SameFile(ai, bi)
 }

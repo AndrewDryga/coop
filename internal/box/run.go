@@ -1726,7 +1726,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			var err error
 			started, joined := joinOpenSessionServices(serviceCtx, rt, spec, projectRepo, cf, serviceOwner, sections, privateRoots...)
 			if !joined {
-				unlock, lockErr := lockServiceStart(serviceCtx, projectRepo, spec, sections)
+				unlock, lockErr := lockServiceStart(serviceCtx, serviceStartRepo(spec, projectRepo), spec, sections)
 				if lockErr != nil {
 					return finish(-1, lockErr)
 				}
@@ -1941,7 +1941,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if activityRepo == "" {
 		activityRepo = spec.Repo
 	}
-	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, sections, func() error {
+	unlockMounts, err := enterAuthorityMountWindow(spec.Ctx, activityRepo, spec.Repo, sections, func() error {
 		return validateAuthorityMounts(spec.Ctx, spec, finalOptions, networkState, volumeReader, authorityAllow)
 	})
 	if err != nil {
