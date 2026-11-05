@@ -75,7 +75,7 @@ func Pin(path string) (*os.File, os.FileInfo, error) {
 	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
 		return nil, nil, errors.New("workspace is not a directory")
 	}
-	handle, err := OpenFolder(path, false)
+	handle, err := OpenFolder(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,18 +124,14 @@ func ValidName(name string) bool {
 // OpenFolder opens the folder at path without waiting: a box can plant a FIFO in a folder's place in
 // the forks tree, where a plain open would block until something writes to it, freezing coop fork
 // ls, stop, merge and coop tasks watch. O_DIRECTORY and O_NONBLOCK fail on anything that is not a
-// folder at once, and, unless follow, O_NOFOLLOW refuses a link in its place.
-func OpenFolder(path string, follow bool) (*os.File, error) {
-	flags := os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NONBLOCK
-	if !follow {
-		flags |= syscall.O_NOFOLLOW
-	}
-	return os.OpenFile(path, flags, 0)
+// folder at once, and O_NOFOLLOW refuses a link in its place.
+func OpenFolder(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 }
 
 // readFolder is os.ReadDir through OpenFolder, refusing a link: the entries in name order.
 func readFolder(path string) ([]os.DirEntry, error) {
-	dir, err := OpenFolder(path, false)
+	dir, err := OpenFolder(path)
 	if err != nil {
 		return nil, err
 	}

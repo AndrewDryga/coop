@@ -187,7 +187,7 @@ to a process or a container, or prints, it is supervision.
   not a regular file gets "remove it", not the permissions advice: a log only holds output.
 
 **Folders in the forks tree open without waiting.** `forkspace.OpenFolder` opens a folder with
-`O_DIRECTORY|O_NONBLOCK` and, unless told to follow, `O_NOFOLLOW`, so a FIFO or link where the
+`O_DIRECTORY|O_NONBLOCK|O_NOFOLLOW`, so a FIFO or link where the
 records folder, the forks folder or the staged-discard folder belongs fails at once; the listings
 (`Names`, `LifecycleNames`, `StagedDiscards`) use it.
 

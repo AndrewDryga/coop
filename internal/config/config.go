@@ -578,7 +578,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode, preserveMode bo
 }
 
 // SetActiveProfile selects which credential profile of agent AgentDir resolves to —
-// and therefore which one the box mounts and the adapters read. The loop calls this to
+// and therefore which account a launch signs in with; the box mounts that account's native home. The loop calls this to
 // rotate between subscriptions; an empty name resets to the default.
 func (c *Config) SetActiveProfile(agent, name string) {
 	if c.activeProfiles == nil {
