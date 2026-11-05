@@ -20,7 +20,7 @@ import (
 
 const filesystemLabel = "coop.filesystem.parent"
 
-var errFilesystemUnsupported = errors.New("filesystem runtime is not qualified")
+var errFilesystemUnsupported = errors.New("this Docker setup does not support kernel filesystem protection")
 var errFilesystemCustodyPending = errors.New("filesystem cleanup requires reconciliation")
 
 type filesystemRecord struct {

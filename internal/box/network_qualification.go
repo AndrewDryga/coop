@@ -48,7 +48,7 @@ func verifyNetworkCandidate(candidate networkstate.CandidateSpec, binding networ
 		return errors.New("runtime differs from the exact network setup; explicit setup is required")
 	}
 	if imageOverride != "" && imageOverride != candidate.ClientImage {
-		return errors.New("restricted networking cannot use an image override outside its qualified image pair")
+		return errors.New("restricted networking can only use the client image that coop net setup checked on this host")
 	}
 	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: candidate.Libc})
 	if err != nil {

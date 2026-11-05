@@ -219,7 +219,7 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 			continue
 		case "-v", "--mount", "--env-file":
 		default:
-			return errors.New("unqualified restricted workload option")
+			return errors.New("restricted workload option is not supported")
 		}
 		kind := options[i]
 		i++
@@ -458,7 +458,7 @@ func verifyNetworkMounts(actual []runtime.DockerMount, tmpfs map[string]string, 
 			}
 		case "tmpfs":
 		default:
-			return errors.New("restricted container mount type is unqualified")
+			return errors.New("restricted container mount type is not supported")
 		}
 	}
 	return nil

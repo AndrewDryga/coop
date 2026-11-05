@@ -113,11 +113,11 @@ func bindDocker(ctx context.Context, rt Runtime, endpoint, expectedID string, la
 		return nil, errors.New("Docker daemon identity changed; runtime custody remains pending")
 	}
 	if d.launchAllowed && (info.OSType != "linux" || !slices.Contains([]string{"aarch64", "arm64", "amd64", "x86_64"}, info.Architecture)) {
-		return nil, errors.New("Docker platform is not qualified for restricted networking")
+		return nil, errors.New("restricted networking needs Docker running Linux on amd64 or arm64")
 	}
 	for _, option := range info.SecurityOptions {
 		if d.launchAllowed && (strings.Contains(option, "rootless") || strings.Contains(option, "userns")) {
-			return nil, errors.New("Docker rootless/user-remapped networking is not qualified")
+			return nil, errors.New("restricted networking does not work with rootless or user-namespace-remapped Docker")
 		}
 	}
 	// Docker otherwise injects proxy URLs from the mutable host CLI config into

@@ -108,7 +108,7 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 	}
 	docker, err := runtime.BindDockerForSetup(ctx, rt, endpoint, daemon)
 	if err != nil {
-		reason = "Could not qualify Docker for kernel filesystem protection: " + cleanLaunchText(err.Error())
+		reason = "Could not check Docker for kernel filesystem protection: " + cleanLaunchText(err.Error())
 		return nil, nil
 	}
 	transferred := false

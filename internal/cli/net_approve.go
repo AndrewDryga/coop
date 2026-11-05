@@ -275,7 +275,7 @@ func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases
 		for _, path := range cases.Paths {
 			fmt.Fprintf(&b, "    %s\n", ui.SafeInline(path))
 		}
-		fmt.Fprintln(&b, "  Qualified eBPF runs still protect these files without this approval.")
+		fmt.Fprintln(&b, "  Runs with eBPF protection still keep these files hidden without this approval.")
 		fmt.Fprintln(&b, "  Approval remembers these paths, including future contents, for agents and services using mount protection.")
 		fmt.Fprintln(&b, "  New paths need approval. Already running boxes stay unchanged.")
 	}

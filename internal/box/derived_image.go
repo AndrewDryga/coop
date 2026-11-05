@@ -422,7 +422,7 @@ func pinnedClientFiles(closure agents.ClientClosure) []pinnedFile {
 func provePinnedClients(ctx context.Context, docker filteredDocker, store *networkstate.Store, locked, built string, closure agents.ClientClosure, dfRel string) error {
 	files := pinnedClientFiles(closure)
 	if len(files) == 0 {
-		return errors.New("this host's setup qualified no clients at all — run 'coop net setup'")
+		return errors.New("coop net setup recorded no clients on this host — run 'coop net setup'")
 	}
 	pinned, err := imageFileDigests(ctx, docker, store, locked, files)
 	if err != nil {
@@ -433,11 +433,11 @@ func provePinnedClients(ctx context.Context, docker filteredDocker, store *netwo
 	// here rather than on a digest that differs.
 	observed, err := imageFileDigests(ctx, docker, store, built, files)
 	if err != nil {
-		return fmt.Errorf("the image this project's %s built cannot be checked: %w — a filtered box runs the clients this host's setup qualified, so add your tools instead of changing them", dfRel, err)
+		return fmt.Errorf("the image this project's %s built cannot be checked: %w — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of changing them", dfRel, err)
 	}
 	for _, file := range files {
 		if observed[file.path] != pinned[file.path] {
-			return fmt.Errorf("this project's %s changes %s at %s — a filtered box runs the clients this host's setup qualified, so add your tools instead of replacing them", dfRel, file.owner, file.path)
+			return fmt.Errorf("this project's %s changes %s at %s — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of replacing them", dfRel, file.owner, file.path)
 		}
 	}
 	pinnedTree, err := imageTreeDigest(ctx, docker, store, locked, closure.ClientRoot)

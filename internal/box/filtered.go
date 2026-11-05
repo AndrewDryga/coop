@@ -488,7 +488,7 @@ func filteredProtectedAddresses(networks []runtime.DockerNetwork, hostAddresses 
 		}
 	}
 	if len(protected) == 0 || len(protected) > networkgateway.MaxProtectedRanges {
-		return nil, netip.Addr{}, errors.New("host topology exceeds the qualified protection envelope")
+		return nil, netip.Addr{}, fmt.Errorf("a filtered box can protect 1 to %d host and Docker network addresses, and this host has %d", networkgateway.MaxProtectedRanges, len(protected))
 	}
 	slices.SortFunc(protected, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
 	return protected, ingress, nil
@@ -512,7 +512,7 @@ func filteredHostAddresses() ([]netip.Prefix, error) {
 		}
 	}
 	if len(protected) == 0 || len(protected) > networkgateway.MaxProtectedRanges {
-		return nil, errors.New("host topology exceeds the qualified protection envelope")
+		return nil, fmt.Errorf("a filtered box can protect 1 to %d host addresses, and this host has %d", networkgateway.MaxProtectedRanges, len(protected))
 	}
 	slices.SortFunc(protected, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
 	return protected, nil

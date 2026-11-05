@@ -64,7 +64,7 @@ func (a *app) evalList(args []string) (int, error) {
 	}
 	starters := eval.Starters()
 	if len(starters) == 0 {
-		fmt.Println("No public starter suites are qualified yet.")
+		fmt.Println("No public starter suites are available yet.")
 		fmt.Println("Create a custom suite: coop eval init ./evals/my-suite")
 		return 0, nil
 	}

@@ -716,7 +716,7 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 		return err
 	}
 	if platform != "linux/amd64" && platform != "linux/arm64" {
-		return fmt.Errorf("the box image carries Coop's qualified clients, built for linux/amd64 and linux/arm64 — %s builds for %s", filepath.Base(rt.Name), platform)
+		return fmt.Errorf("the box image's clients are built only for linux/amd64 and linux/arm64 — %s builds for %s", filepath.Base(rt.Name), platform)
 	}
 	system, arch, _ := strings.Cut(platform, "/")
 	files, err := baseImageDefinition(agents.ClientPlatform{OS: system, Architecture: arch, Libc: "glibc"})

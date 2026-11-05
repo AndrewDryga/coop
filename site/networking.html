@@ -152,13 +152,13 @@ runs, and <code>coop net --help</code> lists the commands.</p>
     - to: {domain: &#34;api.github.com&#34;}
       protocol: tls
       ports: [443]
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>Then run <code>coop approve</code> on the host and answer <code>y</code>:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Allow one website code example" tabindex="0"><code>NETWORK RULES (+ new)
   + api.github.com:443 · TLS
 Approve this access for new runs and running editor sessions? [y/N] y
 ✓ Approved for new runs and running editor sessions
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p>New runs can reach that exact name over HTTPS, but not its subdomains or other ports. Everything
 else stays blocked:</p>
 <div class="reference-code-frame"><pre class="code" role="region" aria-label="Allow one website code example" tabindex="0"><code>$ coop run -- curl -sS -o /dev/null -w &#39;%{http_code}\n&#39; https://api.github.com/
@@ -166,7 +166,7 @@ else stays blocked:</p>
 $ coop run -- curl -sS -o /dev/null -w &#39;%{http_code}\n&#39; https://example.com/
 curl: (6) Could not resolve host: example.com
 000
-</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+</code></pre></div>
 <p><code>coop net check &lt;url&gt;</code> answers the same question without starting a box. To allow a site for a
 single run, see <a href="#access-for-one-run">access for one run</a>. <a href="#asking-for-access">Asking for access</a>
 explains how approval works.</p>
@@ -618,7 +618,7 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 </tr>
 <tr>
 <td>a project image that changes a pinned client</td>
-<td><code>this project&#39;s .agent/Dockerfile changes claude&#39;s cli client at /opt/coop/bin/claude — a filtered box runs the clients this host&#39;s setup qualified …</code></td>
+<td><code>this project&#39;s .agent/Dockerfile changes claude&#39;s cli client at /opt/coop/bin/claude — a filtered box runs only the clients that coop net setup checked on this host …</code></td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>IMAGE</code></td>
@@ -626,7 +626,7 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 </tr>
 <tr>
 <td>a runtime other than Docker, including a run with no mode set</td>
-<td><code>restricted networking needs docker; &lt;runtime&gt; cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_<wbr/>EGRESS, or set COOP_<wbr/>RUNTIME=docker</code></td>
+<td><code>restricted networking needs docker; &lt;runtime&gt; cannot run the network gateway — run this with --egress open or --egress offline, set COOP_<wbr/>EGRESS, or set COOP_<wbr/>RUNTIME=docker</code></td>
 </tr>
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> rule</td>

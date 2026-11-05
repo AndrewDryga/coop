@@ -433,9 +433,9 @@ base, gateway and client images, but those builds don't run instructions from yo
 | `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
 | a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
-| a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs the clients this host's setup qualified …` |
+| a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs only the clients that coop net setup checked on this host …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
-| a runtime other than Docker, including a run with no mode set | `restricted networking needs docker; <runtime> cannot serve the qualified gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker` |
+| a runtime other than Docker, including a run with no mode set | `restricted networking needs docker; <runtime> cannot run the network gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` rule | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service. In a terminal, `coop approve` offers to add them |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with an unapproved rule, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |

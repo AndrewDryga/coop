@@ -273,7 +273,7 @@ func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profil
 	if base := strings.TrimSpace(values[broker.BaseURLEnv]); base != "" && base != "https://"+broker.Upstream && base != "https://"+broker.Upstream+"/" {
 		defaultBase := "https://" + broker.Upstream + broker.ClientBasePath
 		if base != defaultBase && base != defaultBase+"/" {
-			return nil, fmt.Errorf("%s uses a custom %s; the filtered credential broker is qualified only for %s", agent.DisplayName(), broker.BaseURLEnv, defaultBase)
+			return nil, fmt.Errorf("%s uses a custom %s; the filtered credential broker only works with %s", agent.DisplayName(), broker.BaseURLEnv, defaultBase)
 		}
 	}
 	for _, key := range append(append([]string{}, agent.CredentialEnvKeys()...), broker.BaseURLEnv) {

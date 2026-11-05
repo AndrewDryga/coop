@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
@@ -61,7 +62,7 @@ func NetworkServers(snapshot []byte) ([]NetworkServer, error) {
 		}
 		for _, key := range []string{"headersHelper", "oauth"} {
 			if value, exists := definition[key]; exists && string(value) != "null" {
-				return nil, errors.New("restricted MCP authentication helpers require separate qualification")
+				return nil, fmt.Errorf("restricted networking does not support MCP servers that sign in through %s", key)
 			}
 		}
 		if shape.Definition, err = json.Marshal(definition); err != nil {

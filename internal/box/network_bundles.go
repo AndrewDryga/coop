@@ -173,7 +173,7 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		}
 		input.AuthMode = strings.TrimSpace(selection.AuthMode)
 		if input.AuthMode == "" {
-			return egress.Bundle{}, fmt.Errorf("%s account %q has no qualified authentication family", target.Provider, account)
+			return egress.Bundle{}, fmt.Errorf("%s account %q uses a sign-in method that restricted networking cannot use", target.Provider, account)
 		}
 	}
 	if client == egress.ClientACP {

@@ -14,7 +14,7 @@ import (
 
 func TestFilesystemFallbackRefusalRetainsQualification(t *testing.T) {
 	err := &box.FilesystemFallbackError{
-		Reason: "Could not qualify Docker for kernel filesystem protection: permission denied",
+		Reason: "Could not check Docker for kernel filesystem protection: permission denied",
 		Err:    &box.UncoveredSpellings{Paths: []string{"credentials.json"}},
 	}
 	out := usageBlock(t, err)
