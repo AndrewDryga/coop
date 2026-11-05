@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks watch` shows what is moving and what needs you.** The header splits tasks in
+  progress into working and paused, and counts what finished today instead of the whole archive,
+  so the bar moves during a run. A task nothing is working on gets a still marker. A fork's task
+  row says what the fork is doing, or gives the command that shows why it stopped. Blocked tasks
+  come first with their question underneath, and the board ends with `coop tasks decisions`. A
+  busy task shows how long its worker has had it. Subtask counts show only on work under way.
+
 - **An editor thread can build the project's box.** When a filtered session waits on build files
   nobody approved, send `/build` in the thread. Coop saves the files, shows where they are on this
   computer, and gives a code. `/build <code>` builds exactly the saved files, and the session moves

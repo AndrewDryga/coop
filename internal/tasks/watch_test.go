@@ -33,13 +33,14 @@ func TestSourceLineShowsBlocked(t *testing.T) {
 
 func TestTaskWatchBarsShowTinyActiveShare(t *testing.T) {
 	c := TaskCounts{Todo: 99, Doing: 1}
-	for _, line := range []string{tasksProgressLine(ui.Colored(), c), sourceLine(ui.Colored(), "api", 3, c)} {
+	b := boardCounts{TaskCounts: c}
+	for _, line := range []string{tasksProgressLine(ui.Colored(), b), sourceLine(ui.Colored(), "api", 3, c)} {
 		if !strings.Contains(line, "█") {
 			t.Errorf("task-watch overall and source bars should keep a visible active cell: %q", line)
 		}
 	}
 	// Without color every segment is the same block, so the counts carry the states alone.
-	for _, line := range []string{tasksProgressLine(ui.Palette{}, c), sourceLine(ui.Palette{}, "api", 3, c)} {
+	for _, line := range []string{tasksProgressLine(ui.Palette{}, b), sourceLine(ui.Palette{}, "api", 3, c)} {
 		if strings.ContainsAny(line, "█░[") {
 			t.Errorf("a colorless line draws a bar it cannot tell apart: %q", line)
 		}
@@ -66,9 +67,11 @@ func TestTasksWatchFrame(t *testing.T) {
 		{ID: "f", Title: "another done", State: StateDone},
 	}
 	c, _ := TaskTreeCounts(items)
-	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merge(items), 0, 80), "\n")
+	merged := merge(items)
+	merged[4].doneToday = true // finished today; the other done task is from the archive
+	joined := strings.Join(tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}}, merged, 0, 80), "\n")
 
-	for _, want := range []string{"2 todo", "1 in progress", "1 blocked", "2 done"} {
+	for _, want := range []string{"2 todo", "0 working", "1 paused", "1 blocked", "1 done today", "Answer decisions: coop tasks decisions"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("counter should show %q:\n%s", want, joined)
 		}
@@ -77,10 +80,21 @@ func TestTasksWatchFrame(t *testing.T) {
 	if strings.Contains(joined, ".agent/tasks") || strings.Contains(joined, "←") {
 		t.Errorf("a single source should show no label and no attribution:\n%s", joined)
 	}
-	for _, want := range []string{"Wire auth (1/3) · unleased", "Add retries (0/2)", "Bump deps\n", "Pick a queue backend (2/2)"} {
-		if !strings.Contains(joined, want) {
+	// Blocked (waiting on you) leads, then in progress, then todo; only work under way shows its
+	// subtask count.
+	order := []string{"Pick a queue backend\n", "Wire auth (1/3) · unleased", "Add retries\n", "Bump deps\n"}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(joined, want)
+		if at < 0 {
 			t.Errorf("frame missing %q:\n%s", want, joined)
+		} else if at < last {
+			t.Errorf("%q is out of order (blocked, in progress, todo):\n%s", want, joined)
 		}
+		last = at
+	}
+	if strings.Contains(joined, "(0/2)") || strings.Contains(joined, "(2/2)") {
+		t.Errorf("todo and blocked rows show subtask counts:\n%s", joined)
 	}
 	for _, gone := range []string{"shipped thing", "another done"} {
 		if strings.Contains(joined, gone) {
@@ -92,7 +106,7 @@ func TestTasksWatchFrame(t *testing.T) {
 func TestTaskWatchReadsUpdatedChecklistCounts(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, TasksRoot)
-	path := filepath.Join(root, StateTodo, "checklist", "task.md")
+	path := filepath.Join(root, StateInProgress, "checklist", "task.md")
 	for _, marker := range []string{" ", "x"} {
 		writeTaskFile(t, path, "# Checklist task\n\n## Subtasks\n- ["+marker+"] implement\n- [ ] verify\n```\n- [x] example only\n```\n")
 		out := captureStdout(t, func() {
@@ -131,15 +145,17 @@ func TestTaskWatchMarkersStayCompact(t *testing.T) {
 	}
 
 	line := mergedQueue(p, []mergedTask{{Item: Item{Title: "Task title", State: StateInProgress}}}, 0, 80)[0]
-	if line != "  ◰ Task title · unleased" {
-		t.Errorf("compact task row = %q, want %q", line, "  ◰ Task title · unleased")
+	// Nothing holds this task, so it is paused: a still marker, not the spinner.
+	if line != "  "+pausedMarker+" Task title · unleased" {
+		t.Errorf("compact task row = %q, want %q", line, "  "+pausedMarker+" Task title · unleased")
 	}
 	for _, tc := range []struct {
 		lease TaskLeaseObservation
 		want  string
 	}{
-		{TaskLeaseObservation{State: leaseBusy, Provider: "claude"}, "busy claude"},
-		{TaskLeaseObservation{State: leaseStalled, Provider: "codex"}, "stalled codex"},
+		{TaskLeaseObservation{State: leaseBusy, Provider: "claude"}, "  ◰ Task title · busy claude"},
+		{TaskLeaseObservation{State: leaseBusy, Provider: "claude", Held: 14*time.Minute + 30*time.Second}, "busy claude · 14m"},
+		{TaskLeaseObservation{State: leaseStalled, Provider: "codex", Held: 2*time.Hour + 5*time.Minute}, "  ◻ Task title · stalled codex · 2h 5m"},
 	} {
 		line := mergedQueue(p, []mergedTask{{
 			Item: Item{Title: "Task title", State: StateInProgress}, lease: tc.lease,
@@ -332,7 +348,7 @@ func TestReservedForkWithAssignmentRendersTaskActivity(t *testing.T) {
 		t.Fatal("a fork assignment was hidden by its session reservation")
 	}
 	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
-	if !strings.Contains(frame, "worker · 1 assignment(s)") {
+	if !strings.Contains(frame, "worker · 1 assigned task") {
 		t.Fatalf("assigned fork did not render its task activity:\n%s", frame)
 	}
 	for _, unwanted := range []string{"remote-session", "session-owner"} {
@@ -351,7 +367,7 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 		{name: "detached loop", fork: ProjectForkSnapshot{Name: "worker", DetachedRunning: true}, want: "detached loop running"},
 		{name: "loop another system started", fork: ProjectForkSnapshot{Name: "worker", DetachedSystem: "Linux"}, want: "background loop started on Linux"},
 		{name: "cleanup", fork: ProjectForkSnapshot{Name: "worker", CleanupPending: true}, want: "cleanup-pending"},
-		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assignment(s)"},
+		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assigned tasks"},
 		{name: "candidate", fork: ProjectForkSnapshot{Name: "worker", Candidate: true}, want: "ready"},
 		{name: "landing", fork: ProjectForkSnapshot{Name: "worker", PendingLand: true}, want: "landing"},
 	}
@@ -444,7 +460,7 @@ func TestForkAttributionRemainsVisibleOutsideInProgress(t *testing.T) {
 	line := mergedQueue(ui.Palette{}, []mergedTask{{
 		Item: Item{Title: "Needs a decision", State: StateBlocked}, fork: "worker", phase: ForkAssignmentBlocked,
 	}}, 0, 80)[0]
-	if !strings.Contains(line, "← worker (blocked)") {
+	if !strings.Contains(line, "← worker · blocked") {
 		t.Fatalf("blocked fork-owned row lost attribution: %q", line)
 	}
 }
@@ -555,9 +571,9 @@ func TestTaskWatchCompactQueueLabels(t *testing.T) {
 					lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude"},
 				}
 				line := mergedQueue(ui.Palette{}, []mergedTask{m}, 0, 100)[0]
-				want := "Apply schema (1/2)" + tt.suffix
+				want := "Apply schema" + tt.suffix
 				if state == StateInProgress {
-					want += " · busy claude"
+					want = "Apply schema (1/2)" + tt.suffix + " · busy claude"
 				}
 				if !strings.HasSuffix(line, " "+want) {
 					t.Errorf("%s row = %q, want title and suffix %q", state, line, want)
@@ -739,5 +755,172 @@ func TestBoardCacheRereadsOnlyWhenTheBoardCouldChange(t *testing.T) {
 	}
 	if settled > 3 {
 		t.Errorf("a new board took %d reads to settle", settled)
+	}
+}
+
+// A fork-held task says what the fork is doing, and when nothing is (its loop died or stopped, or its
+// work waits for review) the command that shows why or moves it on. Only a live fork in a working
+// phase counts as work in the header; on 2026-11-05 three forks that died at start read "(paused)"
+// like busy work, under "4 in progress" when one task was being worked.
+func TestTaskWatchSaysWhatAForkIsDoingWithItsTask(t *testing.T) {
+	task := func(phase ForkAssignmentPhase, live bool) mergedTask {
+		return mergedTask{Item: Item{ID: "t", Title: "Wire auth", State: StateInProgress}, fork: "sweep-a", phase: phase, live: live}
+	}
+	for _, tc := range []struct {
+		name    string
+		task    mergedTask
+		working bool
+		suffix  string
+	}{
+		{"working loop", task(ForkAssignmentWorking, true), true, "← sweep-a · working"},
+		{"loop died while working", task(ForkAssignmentWorking, false), false, "← sweep-a · stopped · coop fork logs sweep-a"},
+		{"paused", task(ForkAssignmentPaused, false), false, "← sweep-a · paused · coop fork logs sweep-a"},
+		{"waiting for review", task(ForkAssignmentReady, false), false, "← sweep-a · waiting for review · coop fork review sweep-a"},
+		{"finished, loop gone", task(ForkAssignmentReviewing, false), false, "← sweep-a · waiting for review · coop fork review sweep-a"},
+		{"final review running", task(ForkAssignmentReviewing, true), true, "← sweep-a · reviewing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := mergedQueue(ui.Palette{}, []mergedTask{tc.task}, 0, 120)[0]
+			if !strings.HasSuffix(line, tc.suffix) {
+				t.Errorf("row = %q, want it to end with %q", line, tc.suffix)
+			}
+			if paused := strings.HasPrefix(line, "  "+pausedMarker+" "); paused == tc.working {
+				t.Errorf("row = %q: working=%t but paused marker=%t", line, tc.working, paused)
+			}
+			want := 0
+			if tc.working {
+				want = 1
+			}
+			if b := countBoard([]mergedTask{tc.task}); b.Working != want || b.Doing != 1 {
+				t.Errorf("counts = %+v, want %d working of 1 in progress", b, want)
+			}
+		})
+	}
+}
+
+// A fork with a task on the board shows there, not again in a forks section; a fork with no task row
+// (landing, cleaning up, between tasks) keeps its own line.
+func TestTaskWatchListsAForkOnceOnItsTaskRow(t *testing.T) {
+	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{
+		{Name: "sweep-a", Assignments: 1},
+		{Name: "lander", PendingLand: true},
+	}}
+	merged := []mergedTask{{Item: Item{ID: "t", Title: "Wire auth", State: StateInProgress}, fork: "sweep-a", phase: ForkAssignmentPaused}}
+	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, merged, snapshot, 0, 120), "\n")
+	if strings.Contains(frame, "sweep-a · 1 assigned task") || strings.Count(frame, "sweep-a") != 2 { // the row's name and its logs hint
+		t.Errorf("a fork with a task row was listed again:\n%s", frame)
+	}
+	if !strings.Contains(frame, "\nforks\n  lander · landing") {
+		t.Errorf("a fork without a task row lost its line:\n%s", frame)
+	}
+}
+
+// A blocked task shows the question it waits on under its row, or why there is none to answer, and
+// the board ends with the command that answers it. A task moved into done today is today's work.
+func TestTaskWatchShowsDecisionsAndTodaysWork(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, TasksRoot)
+	for id, decision := range map[string]string{
+		"open":       "# Decision: Which database should uploads use?\n\n**Resolution:**\n",
+		"answered":   "# Decision: Which region?\n\n**Resolution:** us-east\n",
+		"unwritten":  "# Decision: x\n\n" + decisionScaffoldMarker + "\n",
+		"undecided2": "",
+	} {
+		dir := filepath.Join(root, StateBlocked, id)
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# Task "+id+"\n")
+		if decision != "" {
+			writeTaskFile(t, filepath.Join(dir, "decision.md"), decision)
+		}
+	}
+	// A real completion moves an old folder into done without writing inside it: only the move says
+	// when it finished.
+	moved := filepath.Join(root, StateInProgress, "today")
+	writeTaskFile(t, filepath.Join(moved, "task.md"), "# Shipped today\n")
+	yesterday := time.Now().Add(-30 * time.Hour)
+	if err := os.Chtimes(moved, yesterday, yesterday); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, StateDone), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(moved, filepath.Join(root, StateDone, "today")); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}) })
+	for _, want := range []string{
+		"Task open\n    Which database should uploads use?\n",
+		"Task answered\n    Answered, still blocked\n",
+		"Task unwritten\n    Decision not written yet\n",
+		"Task undecided2\n    Decision not written yet\n",
+		"1 done today",
+		"Answer decisions: coop tasks decisions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("watch is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestShortElapsed(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		30 * time.Second:              "<1m",
+		14 * time.Minute:              "14m",
+		2*time.Hour + 5*time.Minute:   "2h 5m",
+		26*time.Hour + 59*time.Minute: "26h 59m",
+	} {
+		if got := shortElapsed(d); got != want {
+			t.Errorf("shortElapsed(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// A person's claim with no process to check (coop tasks claim from a terminal) is someone working
+// the task; a claimant whose process stopped is not.
+func TestTaskWatchCountsAPersonsClaimAsWork(t *testing.T) {
+	claimed := mergedTask{Item: Item{ID: "t", Title: "Wire auth", State: StateInProgress}, owner: "claimed by alice", live: true}
+	stopped := claimed
+	stopped.live = false
+	if b := countBoard([]mergedTask{claimed, stopped}); b.Working != 1 || b.Doing != 2 {
+		t.Errorf("counts = %+v, want the live claim working and the stopped one paused", b)
+	}
+}
+
+// Only a running generation of a fork is live: a task held by an older generation of a recreated
+// fork must not borrow the new generation's loop.
+func TestLiveForkGenerations(t *testing.T) {
+	current := forkspace.Identity{Name: "sweep-a", Generation: "g2"}
+	live := liveForkGenerations([]ProjectForkSnapshot{
+		{Name: "sweep-a", Identity: &current, DetachedRunning: true},
+		{Name: "idle", Identity: &forkspace.Identity{Name: "idle", Generation: "g1"}},
+	})
+	if !live[current] || live[forkspace.Identity{Name: "sweep-a", Generation: "g1"}] || live[forkspace.Identity{Name: "idle", Generation: "g1"}] {
+		t.Errorf("live generations = %v, want only sweep-a g2", live)
+	}
+}
+
+// Moving a folder into done leaves its modification time alone and updates only its change time, so
+// "done today" must read the change time: an old task finished today otherwise counted as archive.
+func TestChangedSinceSeesAMoveIntoDone(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "doing"), filepath.Join(dir, "done")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yesterday := time.Now().Add(-30 * time.Hour)
+	if err := os.Chtimes(src, yesterday, yesterday); err != nil {
+		t.Fatal(err)
+	}
+	beforeMove := time.Now().Add(-time.Second)
+	if err := os.Rename(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dst); err != nil || !info.ModTime().Before(beforeMove) {
+		t.Fatalf("the move changed the folder's modification time (%v); this test no longer proves the change-time path", err)
+	}
+	if !changedSince(dst, beforeMove) {
+		t.Error("a folder moved in after the threshold did not count")
+	}
+	if changedSince(dst, time.Now().Add(time.Hour)) {
+		t.Error("a folder counted as changed after a threshold in the future")
 	}
 }

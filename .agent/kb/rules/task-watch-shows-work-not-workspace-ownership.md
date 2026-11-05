@@ -3,8 +3,8 @@ name: task-watch-shows-work-not-workspace-ownership
 description: tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 scope: cli-output
 sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go]
-check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels'
-updated: 2026-10-17
+check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork'
+updated: 2026-11-05
 ---
 
 # Show work in tasks watch, not idle workspace ownership
@@ -18,7 +18,10 @@ or execution, show the task-affecting state without exposing the session owner i
 A running box is not a second inventory either. The board carries no per-execution block: a box or
 session that belongs to a task shows on that task's own row (`← fork`), and one that does not has
 nothing to say to somebody reading the queue. The execution data stays in the snapshot, where
-activity accounting, auto-exit and `--json` read it.
+activity accounting, auto-exit and `--json` read it. A fork with a task on the board shows only on
+that row, with what it is doing or the command that shows why it stopped; the `forks` lines are for
+forks with no task row. Count an in-progress task as working only when something is on it (a live
+fork generation in a working phase, a busy lease, a live claimant); everything else is paused.
 
 TODO rows never show a claim or fork attribution. Watch labels omit process IDs; an active task
 still names its owner and reports when that owner's process has stopped. Keep diagnostic ownership
@@ -43,6 +46,13 @@ shared activity predicate that excludes reservation-only state. Do not render ex
 and keep standalone fork rows only for lifecycle states that affect task progress.
 
 ## Changelog
+
+- 2026-11-05 — the owner, looking at a board that said `4 in progress` when one task was being
+  worked and three forks had died at start, asked how to improve it. The header now splits working
+  from paused and counts today's finished tasks; fork rows carry their status and next command, so a
+  fork with a task row is no longer repeated under `forks` (`N assigned tasks` replaced
+  `N assignment(s)`); blocked tasks lead with their question. Swept every frame and row renderer in
+  watch.go; `coop tasks ls` and `coop prompt` keep their own counts.
 
 - 2026-10-17 — a fork loop another operating system started is task work, not cleanup: its row
   reads `background loop started on <system>`, as `coop fork ls` does, where it read

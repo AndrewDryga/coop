@@ -2899,10 +2899,10 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 			fmt.Printf("    %s\n", p.Faint(t.ID))
 			continue
 		}
+		if q := decisionQuestion(string(body)); q != "" {
+			question = q
+		}
 		for _, line := range strings.Split(string(body), "\n") {
-			if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
-				question = strings.TrimSpace(q)
-			}
 			if r, ok := strings.CutPrefix(line, "**Recommendation:**"); ok {
 				rec = strings.TrimSpace(r)
 			}
@@ -2919,6 +2919,17 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 	fmt.Print("Read and answer each: coop tasks decisions -i\n")
 	printAnsweredDecisions(p, answered, true)
 	return 0, nil
+}
+
+// decisionQuestion is the question a decision.md asks — its "# Decision:" heading — or "" without one.
+func decisionQuestion(body string) string {
+	question := ""
+	for _, line := range strings.Split(body, "\n") {
+		if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
+			question = strings.TrimSpace(q)
+		}
+	}
+	return question
 }
 
 // printAnsweredDecisions lists blocked tasks the human already answered — never a question to ask

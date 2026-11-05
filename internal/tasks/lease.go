@@ -791,6 +791,7 @@ const (
 type TaskLeaseObservation struct {
 	State    taskLeaseState
 	Provider string
+	Held     time.Duration // how long the current holder has had it; zero when unknown or unleased
 }
 
 // String names the holder the way `coop tasks` does ("busy claude", "stalled codex", "unleased"),
@@ -953,14 +954,17 @@ func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
 }
 
 func leaseObservationFromMetadata(meta taskLeaseMetadata, ok bool, now time.Time) TaskLeaseObservation {
-	provider := "unknown"
+	provider, held := "unknown", time.Duration(0)
 	if ok {
 		provider = leaseProvider(meta.Provider)
+		if !meta.AcquiredAt.IsZero() && now.After(meta.AcquiredAt) {
+			held = now.Sub(meta.AcquiredAt)
+		}
 		if now.Sub(meta.HeartbeatAt) > leaseStaleAfter {
-			return TaskLeaseObservation{State: leaseStalled, Provider: provider}
+			return TaskLeaseObservation{State: leaseStalled, Provider: provider, Held: held}
 		}
 	}
-	return TaskLeaseObservation{State: leaseBusy, Provider: provider}
+	return TaskLeaseObservation{State: leaseBusy, Provider: provider, Held: held}
 }
 
 func leaseProvider(provider string) string {
