@@ -221,17 +221,14 @@ func TestProviderScriptedPresetLeadRunsOnePrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(fmt.Sprintf("lead: {agent: [%s]}\n", lead.String())), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The suite runs offline, where a one-prompt run cannot reach its provider and every client waits
+	// for ever. The preset's -p reaches its lead as codex exec, so Coop refuses it before any box.
 	result, trace := suite.run(t, []string{name, "-p", "fixture prompt"}, processScenario(provider, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 0 {
-		t.Fatalf("preset -p = exit %d err %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "Codex cannot answer a prompt offline") {
+		t.Fatalf("offline preset -p = exit %d err %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
 	}
-	runs := processEvents(trace, "runtime", "run")
-	if len(runs) != 1 || runs[0].Run == nil || runs[0].Run.Provider != provider {
-		t.Fatalf("preset -p runtime runs = %#v, want only %s", runs, provider)
-	}
-	want := processTraceArgv(directExpectedArgv(directProviderContracts[provider], lead.Model, lead.Effort, []string{"exec", "--", "fixture prompt"}))
-	if !reflect.DeepEqual(runs[0].Run.ProviderArgv, want) {
-		t.Errorf("preset -p argv = %q, want %q", runs[0].Run.ProviderArgv, want)
+	if runs := processEvents(trace, "runtime", "run"); len(runs) != 0 {
+		t.Fatalf("offline preset -p started %d boxes, want none", len(runs))
 	}
 	assertProcessTraceGone(t, trace)
 }
