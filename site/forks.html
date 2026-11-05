@@ -348,7 +348,8 @@ git config --global difftool.zed.cmd &#39;zed --wait --diff &#34;$LOCAL&#34; &#3
 <code>git difftool --tool-help</code> lists the tools git already knows.</p>
 <p>Set <code>COOP_REVIEW_CMD</code> to run a TUI or review script. co:op runs it with <code>sh -c</code> and provides
 <code>$COOP_FORK_PATH</code>, <code>$COOP_FORK_NAME</code> and <code>$COOP_REVIEW_REF</code> in the environment. For an ordinary
-fork, the working directory is the parent repo.</p>
+fork, the working directory is the parent repo. With <code>--gate</code>, it is the temporary clone instead,
+and co:op removes the clone when the command exits.</p>
 <p>For an isolated fork, the working directory is a private copy of the parent commit, which keeps
 <code>HEAD...$COOP_REVIEW_REF</code> usable for comparisons, and <code>$COOP_FORK_PATH</code> points to a separate copy of
 the fork&#39;s committed changes. Neither path is your parent checkout or the agent&#39;s workspace. co:op

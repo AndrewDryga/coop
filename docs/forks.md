@@ -252,7 +252,8 @@ JetBrains, Meld, Beyond Compare, vimdiff and others work the same way.
 
 Set `COOP_REVIEW_CMD` to run a TUI or review script. co:op runs it with `sh -c` and provides
 `$COOP_FORK_PATH`, `$COOP_FORK_NAME` and `$COOP_REVIEW_REF` in the environment. For an ordinary
-fork, the working directory is the parent repo.
+fork, the working directory is the parent repo. With `--gate`, it is the temporary clone instead,
+and co:op removes the clone when the command exits.
 
 For an isolated fork, the working directory is a private copy of the parent commit, which keeps
 `HEAD...$COOP_REVIEW_REF` usable for comparisons, and `$COOP_FORK_PATH` points to a separate copy of

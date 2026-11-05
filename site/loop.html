@@ -185,18 +185,18 @@ and lists the task and commits.</p>
 one. <code>coop tasks watch</code> shows the task as <code>busy</code>, <code>stalled</code> or <code>unleased</code>, without run IDs or PIDs.</p>
 <p>A missing heartbeat can help you spot a stalled worker, but it doesn&#39;t release the task. The loop
 takes over as soon as the operating system&#39;s lock becomes available, never because a timeout has
-passed. It can also resume an in-progress task that no controller, such as a running <code>coop loop</code>,
-has locked.</p>
+passed. It can also resume an in-progress task that no co:op process, such as a running
+<code>coop loop</code>, has locked.</p>
 <p><code>coop tasks claim &lt;id&gt;</code> records you as the owner and exits, without keeping a lock open. The loop
 leaves your task alone and shows the owner and the <code>coop tasks release &lt;id&gt;</code> command. Your claim
 never expires: only an explicit <code>release</code>, <code>block</code>, <code>unblock</code> or <code>done</code> clears it.</p>
-<p>Stop every running co:op controller before a major-version upgrade. Controllers from different
-major versions can&#39;t share a task queue.</p>
+<p>Stop every running co:op process, such as <code>coop loop</code>, before a major-version upgrade. Processes
+from different major versions can&#39;t share a task queue.</p>
 <h3 id="completion-records">Completion records</h3>
 <p>When a task completes, co:op stores a small receipt on the host&#39;s persistent task lock file, so
 other loops can recognize the completed folder without trusting task metadata the agent can edit.</p>
 <p>Before starting a box that can write, including a review box, co:op also records a fingerprint of
-each done folder in a host-only journal. If the controller crashes, the next loop uses the journal
+each done folder in a host-only journal. If co:op crashes, the next loop uses the journal
 to undo any completion that had no authorized owner. Tasks completed outside a supervised box
 remain part of the ordinary task history.</p>
 <h3 id="sweeps-and-commit-hooks">Sweeps and commit hooks</h3>

@@ -360,7 +360,8 @@ co:op keeps trying.</li>
 <p>When the box can start, the session moves onto it and sends what was waiting. You can cancel a
 waiting message as usual. You don&#39;t need to reconnect, with one exception: a session started with
 filtered networking can&#39;t move to a project that ends up with unrestricted access or no network at
-all, so the thread asks you to reconnect.</p>
+all, so the thread asks you to reconnect. A message you sent is not delivered, so send it again
+after you reconnect.</p>
 <p>If even the waiting box can&#39;t start, as happens when Docker has stopped, the session ends and the
 thread says why. A session you start with <code>--egress offline</code> doesn&#39;t wait on a broken
 <code>.agent/project.yaml</code>, because the waiting box would have a network. The editor&#39;s log says what&#39;s

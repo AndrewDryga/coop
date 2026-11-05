@@ -236,7 +236,8 @@ never works without your project's tools.
 When the box can start, the session moves onto it and sends what was waiting. You can cancel a
 waiting message as usual. You don't need to reconnect, with one exception: a session started with
 filtered networking can't move to a project that ends up with unrestricted access or no network at
-all, so the thread asks you to reconnect.
+all, so the thread asks you to reconnect. A message you sent is not delivered, so send it again
+after you reconnect.
 
 If even the waiting box can't start, as happens when Docker has stopped, the session ends and the
 thread says why. A session you start with `--egress offline` doesn't wait on a broken

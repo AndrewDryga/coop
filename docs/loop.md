@@ -61,15 +61,15 @@ one. `coop tasks watch` shows the task as `busy`, `stalled` or `unleased`, witho
 
 A missing heartbeat can help you spot a stalled worker, but it doesn't release the task. The loop
 takes over as soon as the operating system's lock becomes available, never because a timeout has
-passed. It can also resume an in-progress task that no controller, such as a running `coop loop`,
-has locked.
+passed. It can also resume an in-progress task that no co:op process, such as a running
+`coop loop`, has locked.
 
 `coop tasks claim <id>` records you as the owner and exits, without keeping a lock open. The loop
 leaves your task alone and shows the owner and the `coop tasks release <id>` command. Your claim
 never expires: only an explicit `release`, `block`, `unblock` or `done` clears it.
 
-Stop every running co:op controller before a major-version upgrade. Controllers from different
-major versions can't share a task queue.
+Stop every running co:op process, such as `coop loop`, before a major-version upgrade. Processes
+from different major versions can't share a task queue.
 
 ### Completion records
 
@@ -77,7 +77,7 @@ When a task completes, co:op stores a small receipt on the host's persistent tas
 other loops can recognize the completed folder without trusting task metadata the agent can edit.
 
 Before starting a box that can write, including a review box, co:op also records a fingerprint of
-each done folder in a host-only journal. If the controller crashes, the next loop uses the journal
+each done folder in a host-only journal. If co:op crashes, the next loop uses the journal
 to undo any completion that had no authorized owner. Tasks completed outside a supervised box
 remain part of the ordinary task history.
 

@@ -617,10 +617,10 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 	return nil
 }
 
-// mergeOne fetches a fork's branch, merges it into the parent's HEAD, and — when a
-// gate is configured — revalidates the merged result, rolling back on failure.
-// "green" thus means green against the tree as it stands now, not the stale base the
-// fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
+// mergeOne rebases a fork's branch onto the parent's HEAD and, when a gate is
+// configured, checks that rebased fork before fast-forwarding the parent to it. A red
+// gate leaves the parent as it was, so there is nothing to roll back. "green" thus
+// means green against the tree as it stands now, not the stale base the fork was cut from. Reports whether the merge landed: landed=false with an error is a merge that
 // did NOT happen, while landed=true WITH an error means the commits are in the parent but exact
 // candidate bookkeeping or final validation failed — the caller reports it and stops, never rolls
 // the land back. Task landing resumes from its durable intent; trailers alone never complete tasks.
