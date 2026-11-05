@@ -81,7 +81,7 @@ func (w *acpBoxWait) offerBuild() string {
 	if err != nil {
 		w.log(err)
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not save this project's build files for review.",
-			Detail:  "The reason is in the agent log. Your messages wait here and go out once the box is ready.",
+			Detail:  "The reason is in the agent log. Your messages go out once the box is ready.",
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
 	}
 	dir, dockerfile := prepared.Directory(), prepared.Dockerfile()
@@ -144,19 +144,19 @@ func (w *acpBoxWait) buildOffered(code string) string {
 
 // acpBuildableWaitText is what a filtered session's threads hear while its build files wait for a review.
 func acpBuildableWaitText(failed bool) string {
-	const waits = "Your messages wait here and go out once it is ready."
+	const waits = "Your messages go out once it is ready."
 	if failed {
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not build this project's box.",
 			Detail: "The reason is in the agent log. Fix it, then send " + acpBuildCommand + " to review the files again and build them. " + waits})
 	}
 	return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
-		Detail: "You have not approved its build files as they are now, and a build runs them with open networking, so Coop waits for you. " + waits +
-			" To review the Dockerfile and the files it copies, then build them from here, send " + acpBuildCommand + ".",
+		Detail: "Nobody approved its build files as they are now, and a build runs them with open networking. " +
+			"To review the Dockerfile and the files it copies, then build them from here, send " + acpBuildCommand + ". " + waits,
 		Command: "coop build --egress filtered", Purpose: "in this project, on the host, to do it there instead"})
 }
 
 // acpReviewedBuildText is what threads hear while the box builds from files a person reviewed here.
-const acpReviewedBuildText = "**Building this project's box from the files you reviewed.**\n\nYour messages wait here and go out once it is ready."
+const acpReviewedBuildText = "**Building this project's box from the files you reviewed.**\n\nYour messages go out once it is ready."
 
 // runReviewedBuild builds one reviewed snapshot, like runRebuild does an approved one. The session
 // closing cancels it, and the snapshot is gone afterwards whatever happened.

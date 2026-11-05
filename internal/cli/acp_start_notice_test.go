@@ -149,7 +149,7 @@ func threadHTML(t *testing.T, text string) string {
 // their file. An editor does not wrap a code block, so only the command to run is one.
 func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	const want = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
-<p>Filtered boxes reach project services only through approved network rules. Your messages wait here and go out once it is ready.</p>
+<p>Filtered boxes reach project services only through approved network rules. Your messages go out once it is ready.</p>
 <p>Run this in this project, on the host. It lists the services and offers to add their rules:</p>
 <pre><code>coop approve
 </code></pre>
@@ -163,7 +163,7 @@ func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	}
 	// No port it can tell means nothing to offer, so the thread does not promise one.
 	const noPorts = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
-<p>Filtered boxes reach project services only through approved network rules. Your messages wait here and go out once it is ready.</p>
+<p>Filtered boxes reach project services only through approved network rules. Your messages go out once it is ready.</p>
 <p>Run this in this project, on the host, to see the rules to add:</p>
 <pre><code>coop approve
 </code></pre>
@@ -174,7 +174,7 @@ func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	}
 	// No approval settles a network no filtered box joins, so nothing here says to run one.
 	const noRules = `<p>⚠ <strong>This project's box cannot start yet.</strong></p>
-<p>A filtered box does not join the network COOP_SERVICES_NET names. Your messages wait here and go out once it is ready.</p>
+<p>A filtered box does not join the network COOP_SERVICES_NET names. Your messages go out once it is ready.</p>
 <p>Unset COOP_SERVICES_NET, or set box.network: false in .agent/project.yaml.</p>
 `
 	if got := threadHTML(t, acpBoxWaitText(servicesRefusal(t, "", "shared"), nil, false)); got != noRules {

@@ -271,13 +271,13 @@ func confirmProjectApproval(ctx context.Context, review netApprovalReview, cases
 	}
 	if cases != nil && len(cases.Pending) > 0 {
 		fmt.Fprintln(&b, "\nFILE ACCESS WITH MOUNT PROTECTION")
-		fmt.Fprintln(&b, "  With mount protection, these hidden files can be read under another letter case:")
+		fmt.Fprintln(&b, "  These hidden files can be read under another letter case:")
 		for _, path := range cases.Paths {
 			fmt.Fprintf(&b, "    %s\n", ui.SafeInline(path))
 		}
-		fmt.Fprintln(&b, "  Runs with eBPF protection still keep these files hidden without this approval.")
-		fmt.Fprintln(&b, "  Approval remembers these paths, including future contents, for agents and services using mount protection.")
-		fmt.Fprintln(&b, "  New paths need approval. Already running boxes stay unchanged.")
+		fmt.Fprintln(&b, "  eBPF protection keeps them hidden without this approval.")
+		fmt.Fprintln(&b, "  Approval covers these paths and their future contents for agents and services;")
+		fmt.Fprintln(&b, "  new paths need approval again. Running boxes are unchanged.")
 	}
 	if _, err := io.WriteString(out, b.String()); err != nil {
 		return err

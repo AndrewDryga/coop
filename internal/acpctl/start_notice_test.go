@@ -128,7 +128,7 @@ func TestStartNoticeText(t *testing.T) {
 			name:    "a long network list names three and counts the rest",
 			network: &NetworkLimit{Sites: []string{"a.example", "b.example", "c.example", "d.example", "e.example"}, Servers: []string{"emisar", "immersive", "ryker", "blitz", "docs", "grafana"}, Other: 1},
 			want: "**Internet is filtered.**\n\nAllowed:\n\n- the agent's provider\n- Sites: a\\.example, b\\.example, c\\.example and 2 more\n- MCP servers: emisar, immersive, ryker and 3 more\n- 1 other destination\n\n" +
-				"To see them all, run this on the host:\n\n```\ncoop net\n```\n\n" + limits,
+				"To see them all, run this on the host:\n\n```\ncoop net\n```\n\n" + strings.Replace(limits, "in this project, on the host", "in this project", 1),
 		},
 		{
 			name:     "a problem with its fix",

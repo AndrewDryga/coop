@@ -234,7 +234,7 @@ func TestBoxWaitLeavesChangedFilesToAPerson(t *testing.T) {
 		t.Fatal("a child spawned now would run the project's box")
 	}
 	said := h.lastSaid()
-	for _, want := range []string{"needs a build", "coop build --egress filtered", "wait here"} {
+	for _, want := range []string{"needs a build", "coop build --egress filtered", "go out once"} {
 		if !strings.Contains(said, want) {
 			t.Fatalf("the editor heard %q, want %q in it", said, want)
 		}
@@ -714,7 +714,7 @@ func TestBoxWaitLeavesPendingRulesToAPerson(t *testing.T) {
 		t.Fatalf("a pending request is an answer, not a failure to look: %v", err)
 	}
 	said := h.lastSaid()
-	if !h.w.blockedNow() || !strings.Contains(said, "coop approve") || !strings.Contains(said, "no agent runs here") || strings.Contains(said, "Compose") {
+	if !h.w.blockedNow() || !strings.Contains(said, "coop approve") || !strings.Contains(said, "No agent runs here") || strings.Contains(said, "Compose") {
 		t.Fatalf("blocked=%v said=%q", h.w.blockedNow(), said)
 	}
 	h.read(func() {
@@ -1326,7 +1326,7 @@ func TestBoxWaitSaysWhatIsWrongWithTheProjectFile(t *testing.T) {
 	}
 	said := h.lastSaid()
 	threadtext.Check(t, said)
-	for _, want := range []string{"project\\.yaml has a problem", "line 3: did not find expected key", "Fix the file", "no agent runs here", "wait here"} {
+	for _, want := range []string{"project\\.yaml has a problem", "line 3: did not find expected key", "Fix the file", "no agent runs here", "go out once"} {
 		if !strings.Contains(said, want) {
 			t.Fatalf("the thread heard %q, want %q in it", said, want)
 		}
@@ -1550,7 +1550,7 @@ func TestBoxWaitTellsEveryThreadAboutAnotherBox(t *testing.T) {
 		if len(h.told) != 1 || len(h.said) != 1 || len(h.logged) != 1 || h.rebuilds != 0 {
 			t.Fatalf("told=%q said=%q logged=%v rebuilds=%d", h.told, h.said, h.logged, h.rebuilds)
 		}
-		for _, want := range []string{"Waiting for another box in this project", "Running now: a loop.", "Close it to go on sooner", "wait here"} {
+		for _, want := range []string{"Waiting for another box in this project", "Running now: a loop.", "Close it to go on sooner", "go out once"} {
 			if !strings.Contains(h.told[0], want) {
 				t.Fatalf("the threads heard %q, want %q in it", h.told[0], want)
 			}

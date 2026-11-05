@@ -211,7 +211,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 				scope = append(scope, targets...)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "⚠ Could not restore the editor session\n\n      The saved session state could not be read.\n      %v\n\n  Starting a new session.\n", err)
+			fmt.Fprintf(os.Stderr, "⚠ Could not read the saved editor session\n\n      %v\n\n  Starting a new session.\n", err)
 		}
 	}
 	for _, provider := range agents.Names() {

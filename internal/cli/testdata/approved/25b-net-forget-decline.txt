@@ -1,8 +1,8 @@
-Reset this project's network approvals?
+This resets this project's network approvals.
 
 The project folder no longer exists.
 
-This only resets the approvals; it does not change the settings in .agent/project.yaml.
+It does not change .agent/project.yaml.
 
 To restore approval:
   coop approve

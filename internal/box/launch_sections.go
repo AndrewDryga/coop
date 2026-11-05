@@ -227,9 +227,9 @@ func (s *launchSections) accounts(rows []accountRow) {
 	}
 	ui.Note("")
 	if plural {
-		ui.Note("  Keys stay on this computer. Agents can use the accounts but never see the keys.")
+		ui.Note("  Agents can use these accounts; the keys never leave this computer.")
 	} else {
-		ui.Note("  The key stays on this computer. The agent can use the account but never see the key.")
+		ui.Note("  The agent can use this account; the key never leaves this computer.")
 	}
 }
 

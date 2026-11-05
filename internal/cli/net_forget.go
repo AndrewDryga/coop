@@ -106,7 +106,7 @@ var errNetDeclined = errors.New("declined")
 // The question and the answer carry what withdrawing costs — the next run waits
 // for a fresh approval — so the review above them can be the approval itself.
 const (
-	netForgetTitle     = "Reset this project's network approvals?"
+	netForgetTitle     = "This resets this project's network approvals."
 	netForgetPrompt    = "Reset approvals?"
 	netForgetForgotten = "Network approvals reset"
 	netForgetCancelled = "Cancelled. Network approvals were kept."
@@ -114,7 +114,7 @@ const (
 	netForgetRestore   = "To restore approval:"
 	netForgetOld       = "These records, filed by an older coop, are removed with it:"
 	netForgetGone      = "The project folder no longer exists."
-	netForgetEffect    = "This only resets the approvals; it does not change the settings in .agent/project.yaml."
+	netForgetEffect    = "It does not change .agent/project.yaml."
 )
 
 // netForgetReview is what the confirmation needs: the approval it would remove,

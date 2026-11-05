@@ -62,7 +62,7 @@ func TestForgetPreviewUsesTheShortResetExplanation(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{netForgetTitle,
-		"This only resets the approvals; it does not change the settings in .agent/project.yaml.", netForgetRestore} {
+		"It does not change .agent/project.yaml.", netForgetRestore} {
 		if !strings.Contains(text, want) {
 			t.Errorf("forget preview is missing %q:\n%s", want, text)
 		}
@@ -88,7 +88,7 @@ func TestForgetPreviewSaysWhenTheProjectItselfIsGone(t *testing.T) {
 	if err := confirmNetForget(context.Background(), review, &out, func() bool { return true }); err != nil {
 		t.Fatalf("confirmNetForget: %v", err)
 	}
-	for _, want := range []string{netForgetGone, "This only resets the approvals"} {
+	for _, want := range []string{netForgetGone, "It does not change .agent/project.yaml."} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("gone-project preview is missing %q:\n%s", want, out.String())
 		}

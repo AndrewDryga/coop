@@ -129,7 +129,7 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 	}
 	if !atTerminal {
 		return 1, reported("Services were not started",
-			"External or custom Docker volumes require approval in a terminal, even if previously approved.",
+			"External or custom Docker volumes need approval every time.",
 			"Run coop up at a terminal to review the volumes.")
 	}
 	if !review.VolumeApprovalNeeded {
@@ -190,7 +190,7 @@ func composeRefusal(headline, rel string, err error, retry string) error {
 				"Set TMPDIR to a directory outside those folders, then run "+retry+" again.")
 		}
 		return reported(headline, fmt.Sprintf("Coop's private folder %s is inside a folder exposed to an agent.", ui.SafeInline(exposed.Dir)),
-			"Keep that folder outside the folders the agent can see, then run "+retry+" again.")
+			"Move it out of the agent's view, then run "+retry+" again.")
 	}
 	return reported(headline, sentence(firstLine(err)),
 		fmt.Sprintf("Fix %s, then run %s again.", rel, retry))
@@ -264,7 +264,7 @@ func reportServiceSecretApprovalFailure(err error) error {
 	if errors.Is(err, syscall.EXDEV) {
 		return reported("Could not save secret-file approval",
 			"The project and Coop's host state are on different filesystems.",
-			"Put the project and Coop's service state on the same filesystem by moving the project, then run coop up again.",
+			"Move the project to that filesystem, then run coop up again.",
 			"Services were not started.")
 	}
 	return reported("Could not save secret-file approval",

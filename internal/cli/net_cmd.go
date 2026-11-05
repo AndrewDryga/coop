@@ -1410,7 +1410,7 @@ func netProject(override string) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", ui.CommandFailed("Not inside a project", "Run this inside a project, or list every recorded run.",
+		return "", ui.CommandFailed("Not inside a project", "Run this inside a project.",
 			[2]string{"Every run:", "coop net runs --all-projects"})
 	}
 	return repo, nil

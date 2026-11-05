@@ -824,7 +824,7 @@ func TestApprovalIncludesCaseOnlyAccessAndFreezesPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.Contains(out.String(), "FILE ACCESS WITH MOUNT PROTECTION") || !strings.Contains(out.String(), "credentials.json") ||
-				!strings.Contains(out.String(), "Runs with eBPF protection still keep these files hidden without this approval.") {
+				!strings.Contains(out.String(), "eBPF protection keeps them hidden without this approval.") {
 				t.Fatal(out.String())
 			}
 			if (network.committed == 1) != networkChange {

@@ -266,10 +266,13 @@ func networkText(n NetworkLimit) string {
 		text = "**Internet is filtered.**\n\nAllowed:\n\n- " + strings.Join(allowed, "\n- ")
 	}
 	// One section: its parts are paragraphs, and a rule only sets sections apart (startNoticeText).
+	// "On the host" is said once: by the first command that needs it.
+	where := "in this project, on the host"
 	if more {
 		text += "\n\nTo see them all, run this on the host:\n\n" + CodeBlock("coop net")
+		where = "in this project"
 	}
-	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this in this project, on the host:\n\n" +
+	return text + "\n\nTo allow another site, add it to " + codeSpan(".agent/project.yaml") + ", then run this " + where + ":\n\n" +
 		CodeBlock("coop approve")
 }
 

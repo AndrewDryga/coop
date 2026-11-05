@@ -19,7 +19,7 @@ func TestServiceSecretApprovalFailureGuidance(t *testing.T) {
 		want []string
 		omit []string
 	}{
-		{"cross-device", &os.LinkError{Op: "link", Old: "/project", New: "/state", Err: syscall.EXDEV}, []string{"different filesystems", "Put the project and Coop's service state on the same filesystem"}, []string{"Fix the permissions", "COOP_SERVICE_STATE_ROOT"}},
+		{"cross-device", &os.LinkError{Op: "link", Old: "/project", New: "/state", Err: syscall.EXDEV}, []string{"different filesystems", "Move the project to that filesystem"}, []string{"Fix the permissions", "COOP_SERVICE_STATE_ROOT"}},
 		{"permission", &os.PathError{Op: "open", Path: "/state", Err: os.ErrPermission}, []string{"Fix the permissions, then run coop up again"}, []string{"different filesystems"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

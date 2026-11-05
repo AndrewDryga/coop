@@ -171,13 +171,13 @@ func TestAccountSectionNamesEveryConnectedAccount(t *testing.T) {
 	}{
 		{"one protected key", []accountRow{{"gemini", "personal2", true}},
 			"Connecting account\n  ✓ Gemini (personal2) · API key protected\n\n" +
-				"  The key stays on this computer. The agent can use the account but never see the key.\n"},
+				"  The agent can use this account; the key never leaves this computer.\n"},
 		{"two protected keys", []accountRow{{"gemini", "personal2", true}, {"codex", "work", true}},
 			"Connecting accounts\n  ✓ Gemini (personal2) · API key protected\n  ✓ Codex (work) · API key protected\n\n" +
-				"  Keys stay on this computer. Agents can use the accounts but never see the keys.\n"},
+				"  Agents can use these accounts; the keys never leave this computer.\n"},
 		{"a protected key and a login", []accountRow{{"gemini", "personal2", true}, {"claude", "work", false}},
 			"Connecting accounts\n  ✓ Gemini (personal2) · API key protected\n  ✓ Claude (work) · Signed in\n\n" +
-				"  Keys stay on this computer. Agents can use the accounts but never see the keys.\n"},
+				"  Agents can use these accounts; the keys never leave this computer.\n"},
 		{"signed in only", []accountRow{{"claude", "work", false}}, "Connecting account\n  ✓ Claude (work) · Signed in\n"},
 		{"no account", nil, ""},
 	} {

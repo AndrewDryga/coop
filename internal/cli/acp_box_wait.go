@@ -269,29 +269,29 @@ func (w *acpBoxWait) childFailedHook() func(acpproxy.ChildFailure) {
 // wrote nothing, so the thread hears what Coop saw, and since such a try costs up to the time it waited,
 // no number of seconds between tries.
 func acpBoxFailedText(how acpproxy.ChildFailure) string {
-	const keepsTrying = "Coop keeps trying, and tries at once when the project changes. Your messages wait here and go out once it is ready."
+	const keepsTrying = "Coop keeps trying, and retries right away when the project changes. Your messages go out once it is ready."
 	switch how {
 	case acpproxy.ChildSilent:
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box did not answer.",
 			Detail: "It started, but the agent inside said nothing for a minute, so Coop stopped it. Anything it printed is in the agent log. " + keepsTrying})
 	case acpproxy.ChildNotReady:
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box took too long to start.",
-			Detail: "After 5 minutes it was still getting ready, so Coop stopped it. It may have been waiting for another box in this project, pulling images or starting services. " + keepsTrying})
+			Detail: "Coop stopped it after 5 minutes of getting ready. It may have been waiting for another box in this project, pulling images or starting services. " + keepsTrying})
 	}
 	return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not start this project's box.",
-		Detail: "The reason is in the agent log. Coop tries again every 30 seconds and whenever the project changes. Your messages wait here and go out once it is ready."})
+		Detail: "The reason is in the agent log. Coop tries again every 30 seconds and when the project changes. Your messages go out once it is ready."})
 }
 
 // acpBoxFailedLog is what the agent log hears the first time.
 func acpBoxFailedLog(how acpproxy.ChildFailure) error {
-	const waits = "This session waits on a box that only holds messages, and keeps trying"
+	const waits = "Messages are held while Coop keeps trying"
 	switch how {
 	case acpproxy.ChildSilent:
 		return errors.New("this project's box started, but the agent inside did not answer the editor for a minute, so it was stopped. " + waits)
 	case acpproxy.ChildNotReady:
 		return errors.New("this project's box was still getting ready after 5 minutes, so it was stopped. It may have been waiting for another box in this project, pulling images or starting services. " + waits)
 	}
-	return errors.New("this project's box exited as it started, and the reason should be above. This session waits on a box that only holds messages, and tries again every 30 seconds and when the project changes")
+	return errors.New("this project's box exited as it started; the reason should be above. Messages are held, and Coop tries again every 30 seconds and when the project changes")
 }
 
 // retryFailedStart lets the next spawn be a real box again, if nothing else stands in its way.
@@ -490,7 +490,7 @@ func (w *acpBoxWait) runRebuild(dfRel string) {
 // acpBoxWaitText is what a thread hears while its message waits. required is the miss when it is a
 // project build; a services refusal carries its own remedy.
 func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bool) string {
-	const waits = "Your messages wait here and go out once it is ready."
+	const waits = "Your messages go out once it is ready."
 	var broken *box.BrokenProjectFile
 	var pending *networkstate.PendingApproval
 	var services *box.ServicesNeedRules
@@ -506,10 +506,10 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 		return acpBoxFailedText(acpproxy.ChildExited)
 	case errors.As(blocked, &busy):
 		title, details := busy.Say()
-		return "**" + title + ".**\n\n" + strings.Join(details, "\n\n") + "\n\nYour messages wait here and go out once this session's box is ready."
+		return "**" + title + ".**\n\n" + strings.Join(details, "\n\n") + "\n\nYour messages go out once this session's box is ready."
 	case errors.As(blocked, &pending):
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's network access needs your approval.",
-			Detail:  "Nobody approved what it asks for as it is now, so no agent runs here yet. " + waits,
+			Detail:  "No agent runs here until you approve it. " + waits,
 			Command: "coop approve", Purpose: "in this project, on the host"})
 	case errors.Is(blocked, errACPNetworkModeChanged):
 		return acpctl.ProblemText(acpctl.Problem{Title: "Reconnect your editor.",
@@ -522,7 +522,7 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 		return acpRebuildingText
 	case required != nil:
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
-			Detail:  "You have not approved its build files as they are now, and a build runs them with open networking, so Coop waits for you. " + waits + " Review the Dockerfile and the files it copies.",
+			Detail:  "Nobody approved its build files as they are now, and a build runs them with open networking. Review the Dockerfile and the files it copies. " + waits,
 			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
 	case errors.As(blocked, &services):
 		return acpServicesWaitText(services, waits)
@@ -532,7 +532,7 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 }
 
 // acpRebuildingText is what threads hear while Coop rebuilds from build files a person approved before.
-const acpRebuildingText = "**Rebuilding this project's box.**\n\nYour approved build files did not change, so this needs nothing from you. Your messages wait here and go out once it is ready."
+const acpRebuildingText = "**Rebuilding this project's box.**\n\nYour approved build files did not change, so this needs nothing from you. Your messages go out once it is ready."
 
 // acpServicesWaitText shows a services refusal so that it reads whole at any panel width. An editor does
 // not wrap a code block, so a sentence in one runs off the panel's edge. Coop knows the rules and the
