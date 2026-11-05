@@ -11,6 +11,37 @@ accounts. It works behind the packet filter and doesn't replace it.
 `coop net` shows what a new run in this project can reach, and why. `coop net runs` lists recorded
 runs, and `coop net --help` lists the commands.
 
+## Allow one website
+
+Add a rule for the site under `box.egress_rules` in the project's `.agent/project.yaml`:
+
+    box:
+      egress: filtered
+      egress_rules:
+        - to: {domain: "api.github.com"}
+          protocol: tls
+          ports: [443]
+
+Then run `coop approve` on the host and answer `y`:
+
+    NETWORK RULES (+ new)
+      + api.github.com:443 · TLS
+    Approve this access for new runs and running editor sessions? [y/N] y
+    ✓ Approved for new runs and running editor sessions
+
+New runs can reach that exact name over HTTPS, but not its subdomains or other ports. Everything
+else stays blocked:
+
+    $ coop run -- curl -sS -o /dev/null -w '%{http_code}\n' https://api.github.com/
+    200
+    $ coop run -- curl -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+    curl: (6) Could not resolve host: example.com
+    000
+
+`coop net check <url>` answers the same question without starting a box. To allow a site for a
+single run, see [access for one run](#access-for-one-run). [Asking for access](#asking-for-access)
+explains how approval works.
+
 ## Network modes
 
 Every box uses filtered networking unless you or the project choose another mode, even outside a

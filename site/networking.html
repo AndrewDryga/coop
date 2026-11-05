@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#allow-one-website">Allow one website</a></li>
 <li><a href="#network-modes">Network modes</a></li>
 <li><a href="#setting-up-a-host">Setting up a host</a></li>
 <li class="reference-subsection"><a href="#fleet-workers-and-docker-in-docker">Fleet workers and Docker-in-Docker</a></li>
@@ -143,6 +144,32 @@ rules apply to every tool in the box: the provider CLI, <code>curl</code>, an SD
 accounts. It works behind the packet filter and doesn&#39;t replace it.</p>
 <p><code>coop net</code> shows what a new run in this project can reach, and why. <code>coop net runs</code> lists recorded
 runs, and <code>coop net --help</code> lists the commands.</p>
+</section><section class="doc-section reference-section" id="allow-one-website"><h2>Allow one website</h2>
+<p>Add a rule for the site under <code>box.egress_rules</code> in the project&#39;s <code>.agent/project.yaml</code>:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Allow one website code example" tabindex="0"><code>box:
+  egress: filtered
+  egress_rules:
+    - to: {domain: &#34;api.github.com&#34;}
+      protocol: tls
+      ports: [443]
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>Then run <code>coop approve</code> on the host and answer <code>y</code>:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Allow one website code example" tabindex="0"><code>NETWORK RULES (+ new)
+  + api.github.com:443 · TLS
+Approve this access for new runs and running editor sessions? [y/N] y
+✓ Approved for new runs and running editor sessions
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p>New runs can reach that exact name over HTTPS, but not its subdomains or other ports. Everything
+else stays blocked:</p>
+<div class="reference-code-frame"><pre class="code" role="region" aria-label="Allow one website code example" tabindex="0"><code>$ coop run -- curl -sS -o /dev/null -w &#39;%{http_code}\n&#39; https://api.github.com/
+200
+$ coop run -- curl -sS -o /dev/null -w &#39;%{http_code}\n&#39; https://example.com/
+curl: (6) Could not resolve host: example.com
+000
+</code></pre><p class="reference-scroll-hint">Scroll horizontally to see more →</p></div>
+<p><code>coop net check &lt;url&gt;</code> answers the same question without starting a box. To allow a site for a
+single run, see <a href="#access-for-one-run">access for one run</a>. <a href="#asking-for-access">Asking for access</a>
+explains how approval works.</p>
 </section><section class="doc-section reference-section" id="network-modes"><h2>Network modes</h2>
 <p>Every box uses filtered networking unless you or the project choose another mode, even outside a
 co:op project. An agent reaches its provider and the destinations you approved. A

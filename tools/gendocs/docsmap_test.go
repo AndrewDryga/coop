@@ -197,7 +197,7 @@ func TestSearchIndexCoversEveryDocsPage(t *testing.T) {
 		}
 	}
 	// the sections people search by name, each one a deep link
-	for _, want := range []string{"box.html#project-services", "install.html#verifying-a-download", "install.html#uninstall", "agents.html#presets", "docs.html#loop", "claude-code-sandbox.html#setup"} {
+	for _, want := range []string{"box.html#project-services", "networking.html#allow-one-website", "install.html#verifying-a-download", "install.html#uninstall", "agents.html#presets", "docs.html#loop", "claude-code-sandbox.html#setup"} {
 		if !slices.ContainsFunc(entries, func(e searchEntry) bool { return e.URL == want }) {
 			t.Errorf("the index has no entry for %s", want)
 		}
