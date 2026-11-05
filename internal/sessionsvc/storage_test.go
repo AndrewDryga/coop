@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -723,5 +724,24 @@ func TestStorageForkDirtyIncludesNestedWork(t *testing.T) {
 				t.Fatalf("inspection removed child: %v", err)
 			}
 		})
+	}
+}
+
+// A discarded session whose source GC took away is not measured, so it is no problem in the report.
+// A closed one keeps its fork, so a folder missing there still shows.
+func TestStorageRepositoriesSkipCollectedDiscardedSources(t *testing.T) {
+	root, present := t.TempDir(), t.TempDir()
+	gone := filepath.Join(root, "collected", "repository")
+	service := &Service{stateRoot: t.TempDir()}
+	repos, err := service.storageRepositories([]session.Session{
+		{Repository: gone, State: session.SessionDiscarded},
+		{Repository: present, State: session.SessionDiscarded},
+		{Repository: filepath.Join(root, "closed", "repository"), State: session.SessionClosed},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(repos, gone) || !slices.Contains(repos, present) || len(repos) != 2 {
+		t.Errorf("repositories = %q", repos)
 	}
 }

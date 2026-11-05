@@ -422,7 +422,7 @@ func pinnedClientFiles(closure agents.ClientClosure) []pinnedFile {
 func provePinnedClients(ctx context.Context, docker filteredDocker, store *networkstate.Store, locked, built string, closure agents.ClientClosure, dfRel string) error {
 	files := pinnedClientFiles(closure)
 	if len(files) == 0 {
-		return errors.New("coop net setup recorded no clients on this host — run 'coop net setup'")
+		return errors.New("this host has no clients recorded by coop net setup — run 'coop net setup'")
 	}
 	pinned, err := imageFileDigests(ctx, docker, store, locked, files)
 	if err != nil {

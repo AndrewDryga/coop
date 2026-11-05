@@ -344,6 +344,13 @@ func (s *Service) storageRepositories(sessions []session.Session) ([]string, err
 		repos = append(repos, repo)
 	}
 	for _, sess := range sessions {
+		// A discarded session's workspace is gone, and source GC may since have collected its job
+		// source. Nothing of it is left to measure, so a missing folder is no problem to report.
+		if sess.State == session.SessionDiscarded {
+			if _, err := os.Lstat(storageMeasurePath(sess.Repository)); errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+		}
 		add(sess.Repository)
 	}
 	root := filepath.Join(s.stateRoot, "job-sources")
