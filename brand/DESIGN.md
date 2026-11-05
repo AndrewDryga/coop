@@ -238,8 +238,10 @@ Use Emisar's easing, `cubic-bezier(0.16, 1, 0.3, 1)`, at co:op's quieter pace: 1
 hover, 200ms for state changes and at most 480ms for an optional first assembly.
 Transitions name their properties. Never use `transition: all`.
 
-No autoplay terminal typing, spinning logo, looping border light or scroll-jacking. An
-optional workflow playback starts only when the user starts it. It needs pause and replay
+No autoplay terminal typing, spinning logo, looping border light or scroll-jacking. The
+homepage's scroll cue may loop: an arrow that bobs a few pixels, fades over 400ms once you scroll
+and holds still under reduced motion. An optional workflow playback starts only when the user
+starts it. It needs pause and replay
 controls, an equivalent transcript and a static initial state. Nothing starts hidden unless
 an enhancement that initialized successfully can reveal it. Honor reduced motion in CSS and
 JavaScript. Under reduced motion, turn off smooth scrolling and automatic playback as well.

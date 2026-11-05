@@ -36,6 +36,9 @@ var (
 		`<path d="M7 8.25v7.5M17 10.25c0 4.5-10 2.5-10 5.5"/>`)
 	database = icon("icon", `<ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/>`)
 	layers   = icon("icon", `<path d="M12 4.5l8 4-8 4-8-4z"/><path d="M4 12.5l8 4 8-4M4 16.5l8 4 8-4"/>`)
+
+	// the arrow under the homepage hero's "Scroll down to see why"
+	scrollArrow = icon("icon", `<path d="M12 5v14M6 13l6 6 6-6"/>`)
 )
 
 // command is a command to copy, under a short label saying what it is for, with a small Copy button

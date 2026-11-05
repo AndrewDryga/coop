@@ -101,6 +101,18 @@ main:focus { outline: none; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
 .providers { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; margin-top: 48px; color: var(--muted); }
 .providers li { display: inline-flex; align-items: center; gap: 10px; font-size: 1rem; font-weight: 500; }
+/* The first step starts at the fold, so the first screen would look like the whole page. The hero
+   block is as wide as its title (the paragraph wraps inside it rather than widening it), so the cue
+   centers under the title. The arrow bobs gently; it fades once you scroll (site.js), holds still
+   under reduced motion, and steps aside on screens too short to fit it under the agents. */
+.story-lead { position: relative; width: fit-content; }
+.story-lead > .hero-lead { contain: inline-size; }
+.scroll-cue { position: absolute; bottom: 48px; left: 50%; translate: -50% 0; display: grid; justify-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 0.875rem; font-weight: 500; line-height: 1.5; text-decoration: none; transition: color 160ms var(--ease), opacity 200ms var(--ease); }
+.scroll-cue.is-gone { opacity: 0; visibility: hidden; transition: opacity 400ms ease-in-out, visibility 0s 400ms; }
+.scroll-cue .icon { width: 20px; height: 20px; animation: scroll-bob 2s ease-in-out infinite; }
+@keyframes scroll-bob { 50% { transform: translateY(4px); } }
+@media (hover: hover) { .scroll-cue:hover { color: var(--text); } }
+@media (max-height: 41.25em) { .scroll-cue { display: none; } }
 .logo { width: 20px; height: 20px; fill: currentColor; }
 .stage { grid-column: 2; grid-row: 1 / span 2; align-self: start; position: sticky; top: 0; display: grid; place-items: center; height: 100vh; margin: 0; }
 .story-steps { grid-column: 1; grid-row: 2; }
@@ -909,7 +921,8 @@ html:has(.docs-search[open]) { overflow: hidden; }
 @media (min-width: 1024px) { html:not(.js-story) .step-group + .step-group { margin-top: 96px; } }
 @media (max-width: 1023px) {
   .story { display: block; }
-  .story-lead { min-height: 0; padding-block: 32px 0; }
+  .story-lead { width: auto; min-height: 0; padding-block: 32px 0; }
+  .scroll-cue { display: none; }
   .stage { position: static; height: auto; margin-top: 48px; place-items: start; }
   .step, .step:last-child, .step-group { min-height: 0; padding-top: 64px; }
   .feature-row { grid-template-columns: minmax(0, 1fr); gap: 32px; }

@@ -122,6 +122,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [align-trailing-comments](align-trailing-comments.md) — trailing `#` comments in an example line up in one column
 - [docs-bold-sparingly](docs-bold-sparingly.md) — bold marks structure, never mid-sentence emphasis, never inline code
 - [docs-say-it-once](docs-say-it-once.md) — write for a capable reader; say each thing once in the sentence you would write to a colleague, with no over-explaining or twisted wording
+- [owner-copy-is-verbatim](owner-copy-is-verbatim.md) — build with the owner's exact words; suggest other wording as a question, and never swap it in because the owner said "go" to a bundle
 - [docs-layout-three-quiet-columns](docs-layout-three-quiet-columns.md) — docs pages use three columns across the whole page; the menu and the page's contents never share one, side columns stay quiet, the article keeps its width and type
 - [docs-pages-live-in-one-menu](docs-pages-live-in-one-menu.md) — every public docs page has one entry in the one menu, and published docs are linked on the site, never as a detour to GitHub
 - [docs-describe-the-current-product](docs-describe-the-current-product.md) — README and guides describe the product as it is today; what only older releases need stays in code, MIGRATING.md or CHANGELOG.md

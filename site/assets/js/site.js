@@ -309,6 +309,15 @@ if (stage && "IntersectionObserver" in window) {
   document.documentElement.classList.add("story-ready");
 }
 
+// The hero's scroll cue has done its job once you scroll, and comes back at the very top.
+// Without this script it simply scrolls away with the hero.
+const scrollCue = document.querySelector(".scroll-cue");
+if (scrollCue) {
+  const fade = () => scrollCue.classList.toggle("is-gone", scrollY > 0);
+  addEventListener("scroll", fade, { passive: true });
+  fade();
+}
+
 // The feature scenes are drawn finished. Where motion is allowed and a scene has room to show whole,
 // it steps back to where it started just before it scrolls into view, and replays the rest, once,
 // when it is on screen. A scene nobody scrolls to (or prints) stays finished.

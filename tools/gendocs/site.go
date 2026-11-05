@@ -54,7 +54,7 @@ func sitePages(root string, generated map[string]string) (map[string]string, err
 		{"fork", forkScene}, {"rotate", rotate}, {"team", team}, {"services", services}, {"integrations", integrations},
 		{"check", checkIcon}, {"providers", providers}, {"install", installCommand}, {"cmd_login", loginCommand},
 		{"cmd_init", initCommand}, {"cmd_run", command("Start", `<span data-cmd="run">coop claude</span>`, "start")},
-		{"mark", markPath},
+		{"mark", markPath}, {"scroll_arrow", scrollArrow},
 	})
 	if err != nil {
 		return nil, err

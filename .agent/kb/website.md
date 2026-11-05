@@ -112,6 +112,23 @@ Commands type out, a beat's lines arrive one at a time, and each beat dwells by 
 half a screen before it arrives and plays it once on view. Reduced motion, or a card too narrow for
 its `fits` check, leaves it finished.
 
+**The hero's scroll cue.** On wide screens the first story step starts exactly at the fold, so the
+hero ends with "Scroll down to see why" (the owner's words; see [[owner-copy-is-verbatim]]) over an
+arrow (`{{scroll_arrow}}` from `scenes.go`) that bobs 4px on a 2s loop. It sits inside
+`.story-lead`, absolutely positioned 48px above its bottom and centered on it. The block is
+`fit-content` and `.hero-lead` has `contain: inline-size`, so the block is as wide as the title and
+the paragraph wraps inside it; without the containment the paragraph's 34rem max-width set the
+width and the cue sat 13px right of the title's center. Between 1024px and about 1116px the title
+wraps, the block fills the column, and the cue centers on the agents row, the widest line there.
+The selectors stay plain, not `:has()`: without it, older browsers placed the cue against the
+whole screen. site.js sets `.is-gone` once `scrollY > 0`: the cue fades over 400ms (the owner found
+200ms abrupt and 700ms slow) with `visibility: hidden`, so a faded cue takes no click, and it comes
+back at the very top. It is hidden below 1024px, where the next card already shows, and on screens
+41.25em tall or less (660px at the default font size, so the limit grows with the reader's font),
+where it would overlap the agents. The owner's rounds on 2026-11-04: a plain text link was "just a
+link", and a hairline at the page's center gave way to this arrow under the text, centered on the
+hero.
+
 **Small screens play the story as a deck** (`.js-deck`, set by the head script and site.js below
 1024px when the window is at least 500px tall). The stage sticks to the top (`--frame`: 42svh on a
 phone, 50svh on a tablet, 36svh on a short screen), and every step, chapter opening (site.js wraps
@@ -222,6 +239,7 @@ Orchestrator board at morning (`og-orchestrator.png`). They and the icons, drawn
 nothing. A site test checks each landing page names its committed card.
 
 ## Changelog
+- 2026-11-04 — the hero's scroll cue (task 2026-11-04-add-a-quiet-how-it-works-cue-to-the-bottom-of-th).
 - 2026-11-04 — the docs test that pinned retired config names and starter-subagent wording is gone,
   so the pinned-wording trap names the two that remain.
 - 2026-10-30 — adopted the approved Contained entrance mark and outlined wordmark. Website
