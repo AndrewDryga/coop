@@ -159,3 +159,40 @@ func TestFilteredLoginRefusesServicePolicyBeforeProjectSetup(t *testing.T) {
 		t.Fatal("filtered login reached the runtime with a service-bearing policy")
 	}
 }
+
+// A sign-in writes fresh tokens into the provider's home, so the sign-in branch itself makes that
+// folder owner-only: a missing home is created private and one left wider is tightened.
+func TestLoginKeepsTheProviderHomePrivate(t *testing.T) {
+	for name, existing := range map[string]bool{"missing": false, "left wider": true} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none"}
+			home := cfg.AgentDir("codex")
+			if existing {
+				if err := os.MkdirAll(home, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(home, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recorder := filepath.Join(t.TempDir(), "runtime.log")
+			code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{
+				Image: "i", Repo: t.TempDir(), Agent: "codex", Cmd: []string{"codex", "login"}, Homes: true,
+				Login: true, AgentCommand: true, Quiet: true, Batch: true,
+			}, defaultCompositionArtifactOps())
+			if code != 0 || err != nil {
+				t.Fatalf("login = %d, %v", code, err)
+			}
+			if data, err := os.ReadFile(recorder); err != nil || !strings.Contains(string(data), "source="+home+",") {
+				t.Fatalf("sign-in did not mount its home %s: %s, %v", home, data, err)
+			}
+			info, err := os.Stat(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0o700 {
+				t.Fatalf("sign-in home mode = %o, want 700", got)
+			}
+		})
+	}
+}
