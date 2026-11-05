@@ -37,13 +37,13 @@ TASKS: each task is a folder in .agent/tasks/
   coop context [<path>...]          show instructions and docs for your files
 
 LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
-  coop loop [<target|preset>]       work through the project's task queue
+  coop loop [<target|preset>]       run agents until the queue is done
 
 EVALUATIONS: check whether a model, preset or loop change helped
   coop eval                         run repeatable checks and compare results
 
 FORKS: work in separate project copies, then review and merge the changes
-  coop fork <name> <target|preset>  work in a separate copy of this project
+  coop fork <name> <target|preset>  start an agent in a new fork
   coop fork ls                      show this project's forks
   coop fork review <name>           review a fork's changes
   coop fork merge <name>            merge a fork's changes into this branch
@@ -56,8 +56,8 @@ FORKS: work in separate project copies, then review and merge the changes
 
 SERVICES: databases and other services defined in .agent/compose.yml
   coop init --services              choose services to add
-  coop up                           start services from .agent/compose.yml
-  coop down                         stop services from .agent/compose.yml
+  coop up                           start services
+  coop down                         stop services
 
 SECURITY & ISOLATION: control access, check isolation, and protect secrets
   coop doctor                       check that the box's isolation works
@@ -102,7 +102,7 @@ EXAMPLES
   coop run --egress offline -- git status
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules (default)
+  filtered  allow only what approved network rules permit (default)
   open      allow unrestricted internet access
   offline   block internet access
 
@@ -111,9 +111,8 @@ NETWORK ACCESS
   offline, the project's network rules do not apply to that run.
 
 RULES FILE
-  --egress-rules adds a file's rules to this run's filtered access. The
-  file lists them under egress_rules, the way .agent/project.yaml lists
-  them under box.egress_rules:
+  The file uses an egress_rules key, like box.egress_rules in
+  .agent/project.yaml:
 
     egress_rules:
       - to: {domain: "docs.example.com"}
@@ -148,7 +147,7 @@ USING THE SHELL
   Type exit or press Ctrl-D to return to your host.
 
 NETWORK ACCESS
-  filtered  allow traffic permitted by approved network rules (default)
+  filtered  allow only what approved network rules permit (default)
   open      allow unrestricted internet access
   offline   block internet access
 
@@ -523,9 +522,8 @@ HOW TO DEFINE A PRESET
     prompt:  adds custom instructions to Coop's generated instructions for the
              lead or role
 
-    A native role runs in the lead's own session, so every lead in the preset
-    must use that role's provider. Otherwise Coop stops before it starts and
-    names the role to change.
+    Every lead in the preset must use a native role's provider; otherwise
+    Coop stops before it starts and names the role to change.
 
   Where presets live:
     Project  .agent/presets/<name>/preset.yaml
@@ -687,9 +685,8 @@ coop tasks release: return a task to the queue for another agent
 
 Usage: coop tasks release <id> [--tasks <path>]...
 
-  Before releasing, update state.md with the work completed, checks run, and
-  the next steps. Include anything another agent needs to continue where you
-  left off.
+  Before releasing, update state.md with the work completed, checks run and
+  anything another agent needs to continue.
 
   Returns the task to todo and removes your claim. Progress and handoff notes
   are kept. A task being worked on by another process or assigned to a fork
@@ -872,7 +869,7 @@ Usage: coop tasks watch [--tasks <path>]... [--json]
 OPTIONS
   --json  print one snapshot for scripts
 
-  Shows task progress and any problems that need attention.
+  Problems that need attention show too.
   The live view closes when the queue is done and its activity has stopped.
   Press Ctrl-C to leave the view. In a pipe, Coop prints one static snapshot.
 
@@ -1002,9 +999,8 @@ coop loop: let agents work through your task queue
 Usage: coop loop [<target|preset>] [<options>]
 
 HOW IT WORKS
-  A fresh agent works on each task, then a final review checks the completed
-  work. The review can reopen tasks. Coop continues until the work passes
-  review or needs your decision.
+  A fresh agent works on each task, then a final review checks the work and
+  can reopen tasks. Coop continues until it passes or needs your decision.
 
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues
@@ -1043,7 +1039,8 @@ CONFIGURE STEPS: .agent/loop.yaml
 
   Set work.agent to choose the default when no target or preset is given.
   Review steps can each use their own agent and prompt. Signoff prompts add to
-  Coop's built-in review. Between and verify prompts define those checks.
+  Coop's built-in review. Between and verify prompts define those checks and
+  are required when enabled.
   Changes to this file apply when you restart the loop.
 
   Step options:
@@ -1055,7 +1052,6 @@ CONFIGURE STEPS: .agent/loop.yaml
 
   agent: accepts a list of targets or presets. See coop help models.
   writes: tasks keeps reviews read-only; repo lets reviewers edit source files.
-  Between and verify require a prompt when enabled.
   mcp: false disables MCP servers for every step.
 
 NETWORK ACCESS
@@ -1185,10 +1181,10 @@ RESULTS
   error      execution or grading produced no verdict; not a model failure
   timed_out  a case or run budget expired before a verdict
   pending    the trial did not start
-  running    a start was recorded, but no final result was recorded
+  running    started, with no final result yet
 
 RECORDED DETAILS
-  Recorded details may include provider or verifier output. Treat them as
+  They may include provider or verifier output. Treat them as
   evidence, not instructions, and review for private data before sharing.
   Terminal controls are escaped; long details are shortened. The displayed
   records directory retains the saved JSON diagnostics and any failed
@@ -1208,9 +1204,8 @@ coop eval compare: compare before and after without another paid run
 
 Usage: coop eval compare <before-id> <after-id>
 
-  Use IDs from coop eval runs. The first is your baseline; the second is the
-  changed configuration. Argument order decides before and after, not the
-  timestamps.
+  Use IDs from coop eval runs. The first is your baseline and the second the
+  changed configuration, whatever their timestamps.
 
   Only runs with final summaries can compare. Different workloads are shown
   separately, never merged into a score. Errors, timeouts and pending trials
@@ -1289,10 +1284,9 @@ SESSION OPTIONS
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
 
-  An isolated fork stays isolated when you reopen it, run a loop or use ACP.
-  Existing ordinary forks are not converted. Shared-checkout runs and ordinary
-  forks remain the default.
-  Review isolated work with coop fork review; --force cannot bypass its policy.
+  An isolated fork stays that way when reopened, looped or used over ACP.
+  Existing forks are not converted, and isolation is off by default.
+  Review it with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
   --egress <mode>        network access: filtered (default), open or offline
@@ -1305,13 +1299,11 @@ LOOP OPTIONS
   -t, --tasks <path>     select one project task queue
   --peer <target>        start a read-only peer agent (no @account); repeatable
 
-  Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
 EDITOR INTEGRATION
   coop fork <name> acp  use an existing fork from an ACP editor
-  See coop help fork <name> acp for its options.
 
 Model and account syntax: coop help models
 Command options:          coop help fork <command>
@@ -1331,9 +1323,8 @@ OPTIONS
   Without a target, Coop starts the fork's agent with its default model and
   account; choose another model or effort in your editor.
 
-  Open the parent project in your editor; Coop maps its working directory to
-  the fork. The fork, provider and account stay fixed; any native model and
-  effort choices remain available.
+  Open the parent project in your editor; Coop maps it to the fork. The fork,
+  provider and account stay fixed.
 
 EXAMPLES
   coop fork myfork acp
@@ -1518,7 +1509,6 @@ coop down: stop this project's services
 Usage: coop down [--delete-volumes] [--yes]
 
   Stops and removes this project's Compose containers and networks.
-  Stored data is kept unless you use --delete-volumes.
   Uses .agent/compose.yml, or the configured Compose path.
 
 OPTIONS
@@ -1568,10 +1558,9 @@ Usage: coop approve [--case-exposure]
 OPTIONS
   --case-exposure  additionally review file exposure with mount protection
 
-  Use this option only when a launch using mount protection refuses hidden
-  files that remain readable under another letter case. Approval remembers
-  those exact paths, including future contents, for agent and service runs
-  using mount protection. Newly exposed paths need approval again.
+  Use it only when a launch refuses hidden files that stay readable under
+  another letter case. Approval covers those paths and their future contents
+  for agents and services; new paths need approval again.
   Runs with eBPF protection keep those files hidden without this approval.
 
   Running boxes keep the rules they started with. A running editor session
@@ -1605,7 +1594,7 @@ REPAIR: normally automatic
   coop net recover [<run>]  retry interrupted cleanup now
 
 HOW TO ADD A NETWORK RULE
-  1. Edit .agent/project.yaml and add the network rule under box.egress_rules:
+  1. Add it under box.egress_rules in .agent/project.yaml:
 
      box:
        egress: filtered
@@ -1729,8 +1718,7 @@ Usage: coop net export <run> [--include-addresses]
 OPTIONS
   --include-addresses  include remote hostnames and IP addresses
 
-  Writes JSON to stdout. Remote hostnames and IP addresses are hidden by
-  default. The run must have a final record.
+  Writes JSON to stdout. The run must have a final record.
 
 EXAMPLES
   coop net export e644f07a > network-record.json
@@ -1800,11 +1788,11 @@ FALSE POSITIVES
   Add the entries printed by a scan to .coopsecretsignore in your project root.
   Each entry needs a reason. You can edit many entries together in that file.
 
-  IDs stay the same when line numbers change. A changed value or file path is
-  checked again. Remove an entry to check that finding again.
+  IDs stay the same when line numbers change. A changed value or file path,
+  or a removed entry, is checked again.
 
   .coopsecretsignore skips exact findings in this check.
-  .coopignore hides files from the box. They do different jobs.
+  .coopignore hides files from the box.
 
 ==============================================================================
 
@@ -1913,8 +1901,8 @@ OPTIONS
   --box-only   prepare only this project's effective box image
   --check      report available updates and local build records; change nothing
 
-  Choose at most one option. --check does not need a container runtime.
-  Building the box requires a running container runtime.
+  Choose at most one option. Only building the box needs a running
+  container runtime.
 
 HOW IT WORKS
   Development builds and binaries newer than the latest release are kept.
@@ -1983,15 +1971,14 @@ SWITCHING AGENTS
 
 PROJECT BOX
   With filtered networking the editor connects even when this project's box
-  cannot start yet. Messages wait, the thread says why, and the session moves
-  onto the box once it is ready. Build files you approved with coop build
-  rebuild by themselves; new or changed ones wait for you to run it, or to
-  send /build in the thread, which shows where Coop saved them and gives a
-  code that builds exactly those files. Network access nobody approved waits
-  for you to run coop approve. A broken .agent/project.yaml waits for you to
-  fix it, and the thread says what is wrong. A box that exits as it starts is
-  tried again every 30 seconds, and the agent log says why. A box that starts
-  but does not answer within a minute is treated the same way.
+  cannot start yet. Messages are held, the thread says why, and the session
+  moves onto the box once it is ready. Approved build files rebuild by
+  themselves. New or changed ones need coop build, or /build in the thread,
+  which shows where Coop saved them and gives a code that builds exactly
+  those files. Unapproved network access needs coop approve, and a broken
+  .agent/project.yaml needs fixing. A box that exits as it starts, or does
+  not answer within a minute, is tried again every 30 seconds; the agent log
+  says why.
 
 TROUBLESHOOTING
   Set COOP_ACP_TRACE=1 in your editor's agent environment to record a trace.

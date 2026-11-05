@@ -119,9 +119,8 @@ If a check is missing, failed or outdated, the reviewer reopens the task and tel
 to check. Reviewers never edit an archived task in place. If they find that a task moved through
 the queue incorrectly, they reopen it and report it too.
 
-If the reviewer reopens a task, the loop works through the queue and reviews again, until a review
-finds nothing to reopen or reaches the round limit. At the limit, co:op blocks the repeatedly
-reopened task for your decision and doesn't report it as done.
+The loop then works the queue and reviews again, until nothing is reopened or the round limit is
+reached. At the limit, co:op blocks that task for your decision and doesn't report it as done.
 
 The loop allows half as many review rounds as tasks worked, rounded down, within the range
 `[3, signoff.rounds]`. `signoff.rounds` defaults to `5`, and setting it below three overrides the

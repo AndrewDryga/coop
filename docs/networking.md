@@ -45,8 +45,8 @@ explains how approval works.
 ## Network modes
 
 Every box uses filtered networking unless you or the project choose another mode, even outside a
-co:op project. An agent reaches its provider and the destinations you approved. A
-plain `coop run` or `coop shell` reaches only the destinations you approved. `coop init` writes
+co:op project. A plain `coop run` or `coop shell` reaches only the destinations you approved, and
+an agent also reaches its provider. `coop init` writes
 `box.egress: filtered` into new projects and leaves an existing project file unchanged.
 
 There are two other modes: `open` allows all network traffic, and `offline` turns networking off.

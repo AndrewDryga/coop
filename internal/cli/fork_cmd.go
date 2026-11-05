@@ -95,10 +95,9 @@ SESSION OPTIONS
   -f, --force     with --fresh, stop active work and discard unmerged changes
   -y, --yes       with --fresh, skip confirmation
 
-  An isolated fork stays isolated when you reopen it, run a loop or use ACP.
-  Existing ordinary forks are not converted. Shared-checkout runs and ordinary
-  forks remain the default.
-  Review isolated work with coop fork review; --force cannot bypass its policy.
+  An isolated fork stays that way when reopened, looped or used over ACP.
+  Existing forks are not converted, and isolation is off by default.
+  Review it with coop fork review; --force cannot bypass its policy.
 
 NETWORK OPTIONS
 ` + networkOptionRows + `
@@ -109,13 +108,11 @@ LOOP OPTIONS
   -t, --tasks <path>     select one project task queue
 ` + peerOptionRow + `
 
-  Task and peer options above apply to fork loops.
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.
 
 EDITOR INTEGRATION
   coop fork <name> acp  use an existing fork from an ACP editor
-  See coop help fork <name> acp for its options.
 
 Model and account syntax: coop help models
 Command options:          coop help fork <command>`)

@@ -30,13 +30,13 @@ TASKS: each task is a folder in .agent/tasks/
   coop context [<path>...]          show instructions and docs for your files
 
 LOOPS: work through tasks automatically; configure the steps in .agent/loop.yaml
-  coop loop [<target|preset>]       work through the project's task queue
+  coop loop [<target|preset>]       run agents until the queue is done
 
 EVALUATIONS: check whether a model, preset or loop change helped
   coop eval                         run repeatable checks and compare results
 
 FORKS: work in separate project copies, then review and merge the changes
-  coop fork <name> <target|preset>  work in a separate copy of this project
+  coop fork <name> <target|preset>  start an agent in a new fork
   coop fork ls                      show this project's forks
   coop fork review <name>           review a fork's changes
   coop fork merge <name>            merge a fork's changes into this branch
@@ -49,8 +49,8 @@ FORKS: work in separate project copies, then review and merge the changes
 
 SERVICES: databases and other services defined in .agent/compose.yml
   coop init --services              choose services to add
-  coop up                           start services from .agent/compose.yml
-  coop down                         stop services from .agent/compose.yml
+  coop up                           start services
+  coop down                         stop services
 
 SECURITY & ISOLATION: control access, check isolation, and protect secrets
   coop doctor                       check that the box's isolation works

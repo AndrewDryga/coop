@@ -600,7 +600,7 @@ func TestHelpSpellsTheNoNetworkModeOffline(t *testing.T) {
 func TestRunAndShellHelpStateTheFilteredDefault(t *testing.T) {
 	for name, page := range map[string]string{"run": runHelp, "shell": manualPage("shell")} {
 		for _, want := range []string{
-			"filtered  allow traffic permitted by approved network rules (default)",
+			"filtered  allow only what approved network rules permit (default)",
 			"Without --egress, the box is filtered unless the project's network",
 			"coop " + name + " --egress open",
 		} {
