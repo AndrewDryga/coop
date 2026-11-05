@@ -13,18 +13,11 @@ import (
 func TestActivityPathsFollowTheACPWorkingDirectory(t *testing.T) {
 	// Production agents read /workspace, but recording against the host checkout
 	// falsely called those reads outside. Host identity must still stay private.
-	for _, mode := range []string{"fresh", "resumed", "legacy"} {
+	for _, mode := range []string{"fresh", "resumed"} {
 		t.Run(mode, func(t *testing.T) {
 			fixture := newSessionACPFixture(t, "activity-paths")
 			wantRoot := StableWorkdir
-			if mode == "legacy" {
-				bound, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "native-1")
-				if err != nil {
-					t.Fatal(err)
-				}
-				fixture.session = bound
-				wantRoot = bound.Workspace
-			} else if fixture.session.Workspace == wantRoot {
+			if fixture.session.Workspace == wantRoot {
 				t.Fatal("fixture must distinguish the host checkout from the in-box cwd")
 			}
 			turns := 1

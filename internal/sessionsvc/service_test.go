@@ -2350,7 +2350,7 @@ func TestSessionServicePinsPersistsAndDiscardsCompanionRepositories(t *testing.T
 	}
 }
 
-func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
+func TestDiscardSessionCompanionRemovesTheSameDirectoryAfterARenumberedVolume(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	companion, companionGit := gitrepo.New(t)
@@ -2361,7 +2361,7 @@ func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace, err := sessionCompanionWorkspace(
-		stateRoot, "remote_00000000000000000000000000000000", "legacy",
+		stateRoot, "remote_00000000000000000000000000000000", "companion",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2369,12 +2369,12 @@ func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGitTest(
-		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
-	)
 	binding := session.CompanionRepository{
-		Name: "legacy", Repository: companion,
+		Name: "companion", Repository: companion,
 		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if err := createSessionCompanionContext(context.Background(), binding); err != nil {
+		t.Fatal(err)
 	}
 	plan, err := planSessionCompanionDiscard(binding)
 	if err != nil {
@@ -2386,10 +2386,50 @@ func TestDiscardSessionCompanionRemovesLegacyLinkedWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pathExists(workspace) {
-		t.Fatal("legacy linked companion survived discard")
+		t.Fatal("companion survived discard")
 	}
-	if worktrees := gitOut(companion, "worktree", "list", "--porcelain"); strings.Contains(worktrees, workspace) {
-		t.Fatalf("legacy companion remains registered:\n%s", worktrees)
+}
+
+// A companion whose .git is a file points into another repository. Coop only creates
+// self-contained companions, so it refuses one and leaves it and its source untouched.
+func TestDiscardSessionCompanionRefusesALinkedWorktree(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	companion, companionGit := gitrepo.New(t)
+	companionGit("commit", "-q", "--allow-empty", "-m", "companion base")
+	baseCommit := gitOut(companion, "rev-parse", "HEAD")
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := sessionCompanionWorkspace(
+		stateRoot, "remote_00000000000000000000000000000000", "linked",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(
+		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
+	)
+	binding := session.CompanionRepository{
+		Name: "linked", Repository: companion,
+		Workspace: workspace, BaseCommit: baseCommit,
+	}
+	if _, err := planSessionCompanionDiscard(binding); err == nil ||
+		!strings.Contains(err.Error(), "not self-contained") {
+		t.Fatalf("plan for a linked companion = %v, want a refusal", err)
+	}
+	if err := removeSessionCompanion(binding); err == nil {
+		t.Fatal("removeSessionCompanion removed a linked companion")
+	}
+	if !pathExists(workspace) {
+		t.Fatal("refused linked companion was removed")
+	}
+	if worktrees := gitOut(companion, "worktree", "list", "--porcelain"); !strings.Contains(worktrees, workspace) {
+		t.Fatalf("source repository lost its worktree registration:\n%s", worktrees)
 	}
 }
 
@@ -2537,7 +2577,7 @@ func TestEnsureSessionCompanionIgnoresAmbientGitOverrides(t *testing.T) {
 	}
 }
 
-func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) {
+func TestDiscardSessionCompanionNeutralizesEffectiveFilters(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	companion, companionGit := gitrepo.New(t)
@@ -2563,7 +2603,7 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 		t.Fatal(err)
 	}
 	workspace, err := sessionCompanionWorkspace(
-		stateRoot, "remote_00000000000000000000000000000000", "legacy-filter",
+		stateRoot, "remote_00000000000000000000000000000000", "filter",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2571,9 +2611,7 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGitTest(
-		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
-	)
+	selfContainedCompanionForTest(t, companion, workspace, baseCommit)
 	filterScripts := map[string]string{}
 	filterMarkers := map[string]string{}
 	for _, name := range []string{"local", "included", "worktree", "equals"} {
@@ -2588,10 +2626,10 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 		filterScripts[name] = script
 		filterMarkers[name] = script + ".invoked"
 	}
-	companionGit("config", "filter.local.clean", strconv.Quote(filterScripts["local"]))
-	companionGit("config", "filter.local.required", "true")
-	companionGit("config", "filter.x=y.clean", strconv.Quote(filterScripts["equals"]))
-	companionGit("config", "filter.x=y.required", "true")
+	runGitTest(t, workspace, "config", "filter.local.clean", strconv.Quote(filterScripts["local"]))
+	runGitTest(t, workspace, "config", "filter.local.required", "true")
+	runGitTest(t, workspace, "config", "filter.x=y.clean", strconv.Quote(filterScripts["equals"]))
+	runGitTest(t, workspace, "config", "filter.x=y.required", "true")
 	includedConfig := filepath.Join(t.TempDir(), "included.gitconfig")
 	runGitTest(
 		t, "", "config", "--file", includedConfig,
@@ -2601,8 +2639,8 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 		t, "", "config", "--file", includedConfig,
 		"filter.included.required", "true",
 	)
-	companionGit("config", "--add", "include.path", includedConfig)
-	companionGit("config", "extensions.worktreeConfig", "true")
+	runGitTest(t, workspace, "config", "--add", "include.path", includedConfig)
+	runGitTest(t, workspace, "config", "extensions.worktreeConfig", "true")
 	runGitTest(
 		t, workspace, "config", "--worktree",
 		"filter.worktree.clean", strconv.Quote(filterScripts["worktree"]),
@@ -2629,11 +2667,11 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	)
 	positiveControl.Env = sessionCompanionGitEnv()
 	if out, err := positiveControl.CombinedOutput(); err != nil {
-		t.Fatalf("exercise legacy local filter: %v: %s", err, out)
+		t.Fatalf("exercise local filter: %v: %s", err, out)
 	}
 	for name, marker := range filterMarkers {
 		if !pathExists(marker) {
-			t.Fatalf("legacy %s filter fixture did not execute its positive control", name)
+			t.Fatalf("%s filter fixture did not execute its positive control", name)
 		}
 		if err := os.Remove(marker); err != nil {
 			t.Fatal(err)
@@ -2645,7 +2683,7 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	t.Setenv("GIT_DIR", filepath.Join(poison, ".git"))
 
 	binding := session.CompanionRepository{
-		Name: "legacy-filter", Repository: companion,
+		Name: "filter", Repository: companion,
 		Workspace: workspace, BaseCommit: baseCommit,
 	}
 	plan, err := planSessionCompanionDiscard(binding)
@@ -2654,7 +2692,7 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	}
 	for name, marker := range filterMarkers {
 		if pathExists(marker) {
-			t.Fatalf("legacy companion verification invoked its %s Git filter", name)
+			t.Fatalf("companion verification invoked its %s Git filter", name)
 		}
 	}
 	poisonStats()
@@ -2663,16 +2701,15 @@ func TestDiscardSessionCompanionNeutralizesLegacyEffectiveFilters(t *testing.T) 
 	}
 	for name, marker := range filterMarkers {
 		if pathExists(marker) {
-			t.Fatalf("legacy companion discard invoked its %s Git filter", name)
+			t.Fatalf("companion discard invoked its %s Git filter", name)
 		}
 	}
 }
 
-// An expired Responder session retried cleanup thirteen times because its
-// legacy blitz-flutter companion held normal smudged LFS binaries. Ordinary
-// Git correctly called the checkout clean, but Coop's filter-free safety index
-// compared the bytes with their LFS pointers and parked the cleanup on a 500.
-func TestLegacySmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
+// A companion holding normal smudged LFS binaries is clean, as ordinary Git says. Coop's
+// filter-free safety index compares those bytes with their LFS pointers, not the pointers
+// themselves, or cleanup would never finish.
+func TestSmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	companion, companionGit := gitrepo.New(t)
@@ -2702,14 +2739,12 @@ func TestLegacySmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
 	companionGit("add", ".gitattributes", "asset.bin", "malformed.bin", "ordinary.pointer")
 	companionGit("commit", "--quiet", "-m", "LFS pointer")
 	baseCommit := gitOut(companion, "rev-parse", "HEAD")
-	legacyRoot, err := filepath.EvalSymlinks(t.TempDir())
+	companionRoot, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace := filepath.Join(legacyRoot, "legacy-lfs")
-	runGitTest(
-		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
-	)
+	workspace := filepath.Join(companionRoot, "lfs")
+	selfContainedCompanionForTest(t, companion, workspace, baseCommit)
 	if err := os.WriteFile(filepath.Join(workspace, "asset.bin"), payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2723,10 +2758,10 @@ func TestLegacySmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	companionGit("config", "filter.lfs.clean", strconv.Quote(filterScript))
-	companionGit("config", "filter.lfs.required", "true")
+	runGitTest(t, workspace, "config", "filter.lfs.clean", strconv.Quote(filterScript))
+	runGitTest(t, workspace, "config", "filter.lfs.required", "true")
 	binding := session.CompanionRepository{
-		Name: "legacy-lfs", Repository: companion,
+		Name: "lfs", Repository: companion,
 		Workspace: workspace, BaseCommit: baseCommit,
 	}
 	status, truncated, err := sessionCompanionStatus(binding)
@@ -2780,13 +2815,13 @@ func TestLegacySmudgedLFSCompanionIsCleanOnlyWhenPointerMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalBlob := gitOut(companion, "rev-parse", baseCommit+":asset.bin")
-	forgedBlob := gitOut(companion, "hash-object", "-w", "--", forgedPath)
-	companionGit("replace", originalBlob, forgedBlob)
+	forgedBlob := gitOut(workspace, "hash-object", "-w", "--", forgedPath)
+	runGitTest(t, workspace, "replace", originalBlob, forgedBlob)
 	status, truncated, err = sessionCompanionStatus(binding)
 	if err != nil || truncated || !bytes.Contains(status, []byte("asset.bin")) {
 		t.Fatalf("replacement-forged LFS object status = %q, truncated=%v, err=%v", status, truncated, err)
 	}
-	companionGit("replace", "-d", originalBlob)
+	runGitTest(t, workspace, "replace", "-d", originalBlob)
 	if err := os.WriteFile(filepath.Join(workspace, "asset.bin"), payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2874,7 +2909,7 @@ func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace, err := sessionCompanionWorkspace(
-		stateRoot, "remote_00000000000000000000000000000000", "legacy-race",
+		stateRoot, "remote_00000000000000000000000000000000", "race",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2882,11 +2917,9 @@ func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGitTest(
-		t, companion, "worktree", "add", "--quiet", "--detach", "--", workspace, baseCommit,
-	)
+	selfContainedCompanionForTest(t, companion, workspace, baseCommit)
 	binding := session.CompanionRepository{
-		Name: "legacy-race", Repository: companion,
+		Name: "race", Repository: companion,
 		Workspace: workspace, BaseCommit: baseCommit,
 	}
 	filterScript := filepath.Join(t.TempDir(), "info-clean")
@@ -2898,10 +2931,13 @@ func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	companionGit("config", "filter.info.clean", strconv.Quote(filterScript))
-	companionGit("config", "filter.info.required", "true")
+	runGitTest(t, workspace, "config", "filter.info.clean", strconv.Quote(filterScript))
+	runGitTest(t, workspace, "config", "filter.info.required", "true")
+	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(
-		filepath.Join(companion, ".git", "info", "attributes"),
+		filepath.Join(workspace, ".git", "info", "attributes"),
 		[]byte("asset.bin filter=info\n"), 0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -2934,7 +2970,7 @@ func TestSessionCompanionStatusIgnoresMutableInfoAttributes(t *testing.T) {
 	poisonStat()
 	status, truncated, err := sessionCompanionStatus(binding)
 	if err != nil || truncated || len(status) != 0 {
-		t.Fatalf("protected legacy status = %q, truncated=%v, err=%v", status, truncated, err)
+		t.Fatalf("protected status = %q, truncated=%v, err=%v", status, truncated, err)
 	}
 	if pathExists(filterMarker) {
 		t.Fatal("mutable info-attribute filter executed during isolated status")
@@ -3156,7 +3192,7 @@ func TestEnsureSessionCompanionDoesNotLazyFetchPinnedTree(t *testing.T) {
 	}
 }
 
-func TestCreateSessionCompanionKeepsFullHistoryAndReadsHistoricalShallowMarkers(t *testing.T) {
+func TestCreateSessionCompanionKeepsFullHistoryAndRefusesOtherMarkers(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
 	source, sourceGit := gitrepo.New(t)
@@ -3201,30 +3237,35 @@ func TestCreateSessionCompanionKeepsFullHistoryAndReadsHistoricalShallowMarkers(
 	if err := ancestorCmd.Run(); err != nil {
 		t.Fatalf("companion lost ancestor %s: %v", ancestorCommit, err)
 	}
-	// New creation never truncates history, but old shallow companions remain
-	// inspectable and discardable with their original marker semantics.
-	if err := os.WriteFile(filepath.Join(workspace, ".git", "shallow"), []byte(baseCommit+"\n"), 0600); err != nil {
+	// Creation always records full history; any other marker, or none, is refused.
+	historyPath := filepath.Join(workspace, ".git", sessionCompanionHistoryFile)
+	for marker, want := range map[string]string{"shallow\n": "history marker is invalid", "bounded\n": "history marker is invalid", "": "history marker is unavailable"} {
+		if marker == "" {
+			if err := os.Remove(historyPath); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(historyPath, []byte(marker), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := planSessionCompanionDiscard(binding); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("plan with history marker %q = %v, want %q", marker, err, want)
+		}
+	}
+	if err := os.WriteFile(historyPath, []byte(sessionCompanionHistoryFull), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, ".git", sessionCompanionHistoryFile), []byte(sessionCompanionHistoryShallow), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(workspace, ".git", "shallow"), []byte(baseCommit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planSessionCompanionDiscard(binding); err == nil ||
+		!strings.Contains(err.Error(), "full history is marked shallow") {
+		t.Fatalf("plan with a shallow full companion = %v", err)
+	}
+	if err := os.Remove(filepath.Join(workspace, ".git", "shallow")); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := planSessionCompanionDiscard(binding)
 	if err != nil {
-		t.Fatal(err)
-	}
-	historyPath := filepath.Join(workspace, ".git", sessionCompanionHistoryFile)
-	if err := os.WriteFile(historyPath, []byte(sessionCompanionHistoryFull), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := discardSessionCompanion(plan); err == nil ||
-		!strings.Contains(err.Error(), "full history is marked shallow") {
-		t.Fatalf("discard with replaced history marker error = %v", err)
-	}
-	if !pathExists(workspace) {
-		t.Fatal("discard removed companion with a replaced history marker")
-	}
-	if err := os.WriteFile(historyPath, []byte(sessionCompanionHistoryShallow), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := discardSessionCompanion(plan); err != nil {
@@ -5545,5 +5586,37 @@ func TestRetireQuarantinedSessionTombstonesWithoutTouchingTheWorkspace(t *testin
 	}
 	if _, err := service.Discard(context.Background(), "retire-healthy", DiscardRequest{RetireQuarantined: true, SessionID: healthy.ID, ExpectedRevision: healthy.Revision}); session.CodeOf(err) != session.CodeInvalidSessionState {
 		t.Fatalf("retire of a healthy session = %v, want invalid_session_state", err)
+	}
+}
+
+// selfContainedCompanionForTest builds a companion the way createSessionCompanionContext does,
+// without filling in submodules or LFS objects, so a test can stage content creation would refuse.
+func selfContainedCompanionForTest(t *testing.T, source, workspace, commit string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.GitCopyPinnedHistoryContext(ctx, source, workspace, commit); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.GitRefCommand(ctx, workspace, "update-ref", "--no-deref", "HEAD", commit).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, sessionWorkspaceGitOutputLimit,
+		sessionCompanionCheckoutGitEnv(), "reset", "--hard", "--quiet", commit); err != nil {
+		t.Fatal(err)
+	}
+	metadata := filepath.Join(workspace, ".git")
+	if err := os.RemoveAll(filepath.Join(metadata, "logs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metadata, sessionCompanionMarkerFile),
+		[]byte(sessionCompanionMarker+commit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metadata, sessionCompanionHistoryFile),
+		[]byte(sessionCompanionHistoryFull), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

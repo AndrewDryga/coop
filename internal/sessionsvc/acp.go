@@ -2108,10 +2108,10 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	if !validSessionRunID(runID) {
 		return nil, acpFailure(sessionACPProcessError, "session run identity is invalid")
 	}
-	workdir, err := prepareSessionWorkdir(privateRoot, bound.Workspace, bound.NativeSessionID)
-	if err != nil {
-		return nil, errors.Join(acpFailure(sessionACPProcessError, "session workdir state is unsafe"), err)
+	if err := ensurePrivateDirectory(privateRoot); err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session private state is unsafe"), err)
 	}
+	workdir := StableWorkdir
 	// A read-only session mounts a writable output root beside its read-only fork.
 	outputRoot := ""
 	if bound.RepositoryReadOnly {
@@ -2121,6 +2121,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 				err,
 			)
 		}
+		var err error
 		outputRoot, err = preparePrivateSessionOutputRoot(r.stateRoot, bound.ID)
 		if err != nil {
 			return nil, errors.Join(

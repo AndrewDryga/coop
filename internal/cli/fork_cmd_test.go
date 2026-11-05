@@ -1012,9 +1012,6 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(privateRoot, ".stable-workdir"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
 	t.Setenv("COOP_SESSION_STORE_ID", testForkSessionStoreID)
@@ -1069,7 +1066,7 @@ func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
 	if err := os.Mkdir(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for i, name := range []string{"first", "second", "legacy"} {
+	for i, name := range []string{"first", "second"} {
 		workspace := forkspace.Workspace(repo, name)
 		if err := os.MkdirAll(workspace, 0o755); err != nil {
 			t.Fatal(err)
@@ -1096,11 +1093,6 @@ func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
 		if err := os.MkdirAll(configDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if name != "legacy" {
-			if err := os.WriteFile(filepath.Join(configDir, ".stable-workdir"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
 		a := &app{
 			cfg: &config.Config{
 				RepoOverride: repo, ConfigDir: configDir,
@@ -1117,15 +1109,12 @@ func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantWorkdir := sessionsvc.StableWorkdir
-		if name == "legacy" {
-			wantWorkdir = workspace
-		}
 		for _, want := range []string{workspace + ":" + wantWorkdir, "-w " + wantWorkdir} {
 			if !strings.Contains(string(args), want) {
 				t.Errorf("remote fork %s lacks %q:\n%s", name, want, args)
 			}
 		}
-		if name != "legacy" && strings.Contains(string(args), "-w "+workspace) {
+		if strings.Contains(string(args), "-w "+workspace) {
 			t.Errorf("remote fork %s exposed unique host cwd:\n%s", name, args)
 		}
 	}

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Workers refuse session companions and workdirs only old builds made.** A companion that is a
+  linked worktree of its source, or has no `full` history marker, is refused at verify and discard,
+  and every session runs at `/workspace`. Builds since September write none of these.
+
 - **`coop net approve` is gone.** It has only pointed at `coop approve` since 10.1.2, and now gets
   the usual unknown-command error.
 

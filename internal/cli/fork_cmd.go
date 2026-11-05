@@ -1069,12 +1069,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	workdir := ws
 	if sessionsvc.RunIDFromEnv() != "" {
-		// Old native histories remain keyed by their host cwd; new sessions share only
-		// an in-box name, never a fork or container namespace.
-		workdir, err = sessionsvc.SessionWorkdir(a.cfg.ConfigDir, ws)
-		if err != nil {
-			return 1, err
-		}
+		// A session's box sees one in-box name, never a fork or host path.
+		workdir = sessionsvc.StableWorkdir
 	}
 	var sessionOutputArgs []string
 	var sessionOutputRoot string

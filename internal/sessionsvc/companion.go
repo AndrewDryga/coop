@@ -17,13 +17,11 @@ import (
 )
 
 const (
-	sessionCompanionBoxRoot        = "/coop/repositories"
-	sessionCompanionMarker         = "coop-session-companion-v1\n"
-	sessionCompanionMarkerFile     = "coop-session-companion"
-	sessionCompanionHistoryFile    = "coop-session-companion-history"
-	sessionCompanionHistoryFull    = "full\n"
-	sessionCompanionHistoryBounded = "bounded\n"
-	sessionCompanionHistoryShallow = "shallow\n"
+	sessionCompanionBoxRoot     = "/coop/repositories"
+	sessionCompanionMarker      = "coop-session-companion-v1\n"
+	sessionCompanionMarkerFile  = "coop-session-companion"
+	sessionCompanionHistoryFile = "coop-session-companion-history"
+	sessionCompanionHistoryFull = "full\n"
 )
 
 // companionPrepareParallelism bounds how many companion repositories one
@@ -341,9 +339,8 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 	}
 	metadataPath := filepath.Join(binding.Workspace, ".git")
 	metadata, err := os.Lstat(metadataPath)
-	if err != nil || metadata.Mode()&os.ModeSymlink != 0 ||
-		(!metadata.IsDir() && !metadata.Mode().IsRegular()) {
-		return errors.New("companion workspace has invalid Git metadata")
+	if err != nil || metadata.Mode()&os.ModeSymlink != 0 || !metadata.IsDir() {
+		return errors.New("companion workspace Git metadata is not self-contained")
 	}
 	root, err := realSessionCompanionRepositoryContext(ctx, binding.Workspace)
 	if err != nil {
@@ -356,22 +353,13 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 	if err != nil {
 		return err
 	}
-	if metadata.IsDir() {
-		metadataPath, err = filepath.EvalSymlinks(metadataPath)
-		if err != nil || workspaceCommon != metadataPath {
-			return errors.New("companion workspace Git metadata is not self-contained")
-		}
-		marker, err := os.ReadFile(filepath.Join(metadataPath, sessionCompanionMarkerFile))
-		if err != nil || string(marker) != sessionCompanionMarker+binding.BaseCommit+"\n" {
-			return errors.New("companion workspace ownership marker does not match")
-		}
-	} else {
-		// Sessions created before self-contained companions used linked worktrees. Verify source
-		// ownership before any command (such as status) that can consult its local driver config.
-		sourceCommon, err := sessionCompanionGitCommonDirContext(ctx, binding.Repository)
-		if err != nil || workspaceCommon != sourceCommon {
-			return errors.New("companion workspace belongs to another repository")
-		}
+	metadataPath, err = filepath.EvalSymlinks(metadataPath)
+	if err != nil || workspaceCommon != metadataPath {
+		return errors.New("companion workspace Git metadata is not self-contained")
+	}
+	marker, err := os.ReadFile(filepath.Join(metadataPath, sessionCompanionMarkerFile))
+	if err != nil || string(marker) != sessionCompanionMarker+binding.BaseCommit+"\n" {
+		return errors.New("companion workspace ownership marker does not match")
 	}
 	head, err := sessionCompanionCommitContext(ctx, binding.Workspace, "HEAD")
 	if err != nil || head != binding.BaseCommit {
@@ -387,89 +375,62 @@ func verifySessionCompanionContext(ctx context.Context, binding session.Companio
 	if err != nil || truncated || len(status) != 0 {
 		return errors.New("companion workspace is not clean")
 	}
-	if metadata.IsDir() {
-		formatBytes, err := sessionCompanionGitTextContext(ctx,
-			binding.Workspace, 16, "rev-parse", "--show-object-format",
-		)
-		objectFormat := strings.TrimSpace(string(formatBytes))
-		if err != nil || (objectFormat != "sha1" || len(binding.BaseCommit) != 40) &&
-			(objectFormat != "sha256" || len(binding.BaseCommit) != 64) {
-			return errors.New("companion workspace object format does not match")
-		}
-		remotes, err := sessionCompanionGitTextContext(ctx,
-			binding.Workspace, sessionWorkspaceGitOutputLimit, "remote",
-		)
-		if err != nil || len(strings.TrimSpace(string(remotes))) != 0 {
-			return errors.New("companion workspace exposes a source remote")
-		}
-		refs, err := sessionCompanionGitTextContext(ctx,
-			binding.Workspace, sessionWorkspaceGitOutputLimit,
-			"for-each-ref", "--format=%(refname)",
-		)
-		if err != nil || len(strings.TrimSpace(string(refs))) != 0 {
-			return errors.New("companion workspace exposes non-pinned refs")
-		}
-		alternatesPath := filepath.Join(metadataPath, "objects", "info", "alternates")
-		if _, err := os.Lstat(alternatesPath); !errors.Is(err, os.ErrNotExist) {
-			return errors.New("companion workspace depends on an object alternate")
-		}
-		if _, err := os.Lstat(filepath.Join(metadataPath, "logs")); !errors.Is(err, os.ErrNotExist) {
-			return errors.New("companion workspace exposes reflogs")
-		}
-		shallow, err := sessionCompanionGitTextContext(ctx,
-			binding.Workspace, 16, "rev-parse", "--is-shallow-repository",
-		)
-		if err != nil {
-			return errors.New("companion workspace history mode is unavailable")
-		}
-		shallowState := strings.TrimSpace(string(shallow))
-		if shallowState != "true" && shallowState != "false" {
-			return errors.New("companion workspace history mode is invalid")
-		}
-		isShallow := shallowState == "true"
-		historyMode, historyErr := os.ReadFile(
-			filepath.Join(metadataPath, sessionCompanionHistoryFile),
-		)
-		if errors.Is(historyErr, os.ErrNotExist) {
-			historyMode = []byte(sessionCompanionHistoryFull)
-		} else if historyErr != nil {
-			return errors.New("companion workspace history marker is unavailable")
-		}
-		if _, _, err := runSessionCompanionGitContext(ctx,
-			binding.Workspace, sessionWorkspaceGitOutputLimit,
-			"fsck", "--connectivity-only", "--no-dangling",
-		); err != nil {
-			return errors.New("companion workspace history is incomplete")
-		}
-		switch string(historyMode) {
-		case sessionCompanionHistoryShallow:
-			commits, err := sessionCompanionGitTextContext(ctx,
-				binding.Workspace, 16, "rev-list", "--count", "HEAD",
-			)
-			if err != nil || !isShallow || strings.TrimSpace(string(commits)) != "1" {
-				return errors.New("companion workspace shallow history does not match")
-			}
-		case sessionCompanionHistoryBounded:
-			// The exact commit count depends on when the companion was built,
-			// so what is checked is the shape the marker promises: history
-			// that is present and truncated.
-			commits, err := sessionCompanionGitTextContext(ctx,
-				binding.Workspace, 16, "rev-list", "--count", "HEAD",
-			)
-			if err != nil || !isShallow {
-				return errors.New("companion workspace bounded history does not match")
-			}
-			if count, convErr := strconv.Atoi(strings.TrimSpace(string(commits))); convErr != nil || count < 1 {
-				return errors.New("companion workspace bounded history is empty")
-			}
-		case sessionCompanionHistoryFull:
-			if isShallow {
-				return errors.New("companion workspace full history is marked shallow")
-			}
-		default:
-			return errors.New("companion workspace history marker is invalid")
-		}
-		return nil
+	formatBytes, err := sessionCompanionGitTextContext(ctx,
+		binding.Workspace, 16, "rev-parse", "--show-object-format",
+	)
+	objectFormat := strings.TrimSpace(string(formatBytes))
+	if err != nil || (objectFormat != "sha1" || len(binding.BaseCommit) != 40) &&
+		(objectFormat != "sha256" || len(binding.BaseCommit) != 64) {
+		return errors.New("companion workspace object format does not match")
+	}
+	remotes, err := sessionCompanionGitTextContext(ctx,
+		binding.Workspace, sessionWorkspaceGitOutputLimit, "remote",
+	)
+	if err != nil || len(strings.TrimSpace(string(remotes))) != 0 {
+		return errors.New("companion workspace exposes a source remote")
+	}
+	refs, err := sessionCompanionGitTextContext(ctx,
+		binding.Workspace, sessionWorkspaceGitOutputLimit,
+		"for-each-ref", "--format=%(refname)",
+	)
+	if err != nil || len(strings.TrimSpace(string(refs))) != 0 {
+		return errors.New("companion workspace exposes non-pinned refs")
+	}
+	alternatesPath := filepath.Join(metadataPath, "objects", "info", "alternates")
+	if _, err := os.Lstat(alternatesPath); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("companion workspace depends on an object alternate")
+	}
+	if _, err := os.Lstat(filepath.Join(metadataPath, "logs")); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("companion workspace exposes reflogs")
+	}
+	shallow, err := sessionCompanionGitTextContext(ctx,
+		binding.Workspace, 16, "rev-parse", "--is-shallow-repository",
+	)
+	if err != nil {
+		return errors.New("companion workspace history mode is unavailable")
+	}
+	shallowState := strings.TrimSpace(string(shallow))
+	if shallowState != "true" && shallowState != "false" {
+		return errors.New("companion workspace history mode is invalid")
+	}
+	isShallow := shallowState == "true"
+	historyMode, historyErr := os.ReadFile(
+		filepath.Join(metadataPath, sessionCompanionHistoryFile),
+	)
+	if historyErr != nil {
+		return errors.New("companion workspace history marker is unavailable")
+	}
+	if _, _, err := runSessionCompanionGitContext(ctx,
+		binding.Workspace, sessionWorkspaceGitOutputLimit,
+		"fsck", "--connectivity-only", "--no-dangling",
+	); err != nil {
+		return errors.New("companion workspace history is incomplete")
+	}
+	if string(historyMode) != sessionCompanionHistoryFull {
+		return errors.New("companion workspace history marker is invalid")
+	}
+	if isShallow {
+		return errors.New("companion workspace full history is marked shallow")
 	}
 	return nil
 }
@@ -756,22 +717,11 @@ func removeSessionCompanion(binding session.CompanionRepository) error {
 	if err != nil {
 		return fmt.Errorf("inspect companion Git metadata: %w", err)
 	}
-	if metadata.IsDir() && metadata.Mode()&os.ModeSymlink == 0 {
-		if err := os.RemoveAll(binding.Workspace); err != nil {
-			return fmt.Errorf("remove companion workspace: %w", err)
-		}
-		_ = os.Remove(filepath.Dir(binding.Workspace))
-		return nil
+	if !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 {
+		return errors.New("remove companion workspace: its Git metadata is not self-contained")
 	}
-
-	// Legacy linked companions must be unregistered from the source repository.
-	cmd := forkspace.GitRefCommand(context.Background(), binding.Repository, "worktree", "remove", "--force", "--", binding.Workspace)
-	cmd.Env = sessionCompanionGitEnv()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf(
-			"remove companion workspace: %w: %s",
-			err, strings.TrimSpace(string(out)),
-		)
+	if err := os.RemoveAll(binding.Workspace); err != nil {
+		return fmt.Errorf("remove companion workspace: %w", err)
 	}
 	_ = os.Remove(filepath.Dir(binding.Workspace))
 	return nil

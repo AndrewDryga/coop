@@ -163,8 +163,7 @@ The traps the code does not make obvious:
   root replaced (`activity_narration.go`). Only the daemon knows that root: it writes
   `checkout_root` on every narrated event (`sessionsvc/activity.go` `narratedActivity`). It retains
   the host workspace for privacy independently of the finalized ACP child cwd used to classify
-  paths. New and resumed marker-backed sessions run at `/workspace`; legacy native histories
-  retain their original host cwd. Comparing in-box paths against the host workspace falsely
+  paths. Every session runs at `/workspace`. Comparing in-box paths against the host workspace falsely
   classified reads as outside. The worker reads `checkout_root` and never copies it out. It once read the root from
   `path_context.root`, which the daemon never wrote, so every absolute path reached the
   controller; `sessionsvc/testdata/narrated_activity.json` now pins the daemon's real events and
@@ -175,6 +174,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-04 — sessions no longer read a `.stable-workdir` marker: every session runs at `/workspace`.
 - 2026-11-04 — `poll:` is the normal shape for any ID up to 230 bytes, not a legacy one.
 - 2026-10-28 — bounded failed origin lookups without rewriting pending custody or starving new activity.
 - 2026-10-27 — kept acknowledged create conflicts from starving activity; bounded exact-operation

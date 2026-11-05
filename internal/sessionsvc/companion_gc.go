@@ -119,7 +119,6 @@ func (s *Service) reclaimClosedCompanion(ctx context.Context, id string, binding
 	if err != nil || expected != binding.Workspace {
 		return errors.New("companion path is not owned by this session")
 	}
-	// Historical linked worktrees retain their existing explicit discard path.
 	metadata, err := os.Lstat(filepath.Join(binding.Workspace, ".git"))
 	if err != nil || !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 {
 		return errors.New("companion does not own self-contained Git metadata")

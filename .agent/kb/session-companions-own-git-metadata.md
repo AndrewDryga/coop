@@ -37,8 +37,8 @@ The non-local clone it replaced searched objects for deltas again across the cac
 re-hashed every object on receipt. On a tenant worker one 6.2 GB, two-pack history took 293 s of a
 337 s companion preparation (`pack-objects` alone 167 s, `index-pack` alone 134 s); the copy
 takes 34 s there, checkout 4.5 s. Git never retries a delta between two objects stored whole in
-the same pack, so the regression fixture puts near-identical blobs in two packs. The former 1 GiB pack planner and shallow-creation fallback are gone;
-historical bounded/shallow markers remain readable for safe inspection and discard.
+the same pack, so the regression fixture puts near-identical blobs in two packs. The former 1 GiB pack planner and shallow-creation fallback are gone, and verification accepts
+only a `full` history marker.
 
 Checkout and verification ignore host attribute files and executable Git drivers. Recursive
 submodules come from the controller's exact authorized graph, never repository-supplied URLs.
@@ -53,9 +53,9 @@ commit-bound ownership marker before discard. Cleanliness
 is computed with a private temporary Git directory, config, and index that reads only the verified
 companion object database and worktree. It ignores submodule recursion but separately streams the
 pinned index's gitlinks and independently verifies populated children's exact HEAD and cleanliness.
-Empty placeholders remain recognized only for historical cleanup. The check still accepts a linked
-snapshot, but no discard reaches one: discard needs an owner binding, and linked companions stopped
-before bindings began.
+An empty submodule folder still counts as clean, because an agent can empty one in a running box.
+A companion whose `.git` is a file, a linked worktree, is refused by verify and by
+`removeSessionCompanion`, which never runs `git worktree remove` on a source repository.
 New workspaces receive full LFS payloads and independently owned object storage at every recursive
 level; clean companion replay rehydrates any pointers before exposing the workspace again.
 The isolated check never enables repository filters; it treats a worktree
@@ -111,6 +111,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-04 — linked companions and bounded, shallow or missing history markers are refused now; the owner accepted a code proof and every store on this Mac had none. The empty-submodule check stays, since a running box can produce one.
 - 2026-11-04 — corrected the linked-snapshot line: nothing reaches one, so it is not a rollout path.
 - 2026-11-03 — extend immutable payload sharing to frozen read-only primaries; close unreserved native-launch and unknown-receipt cleanup gaps.
 - 2026-11-03 — share verified immutable companion payloads while keeping per-session metadata, mounts and custody; bounded cache reclamation uses durable filesystem references.

@@ -109,26 +109,6 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	}
 }
 
-func TestLegacyBoundSessionLoadsAtItsOriginalHostCWD(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
-	bound, err := fixture.store.BindNativeSession(context.Background(), fixture.session.ID, "native-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture.session = bound
-	turn := fixture.submit(t, "continue this conversation")
-	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
-	if err != nil || result.State != session.TurnCompleted {
-		t.Fatalf("legacy load = %+v, %v", result, err)
-	}
-	if got := sessionNewParamsForMethod(t, fixture.childLog, "session/load")["cwd"]; got != fixture.session.Workspace {
-		t.Fatalf("legacy session/load cwd = %v, want %s", got, fixture.session.Workspace)
-	}
-	if _, err := os.Lstat(filepath.Join(fixture.private, stableWorkdirMarker)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("legacy session gained a stable-workdir marker: %v", err)
-	}
-}
-
 func TestInvalidStructuredResultIsRepairedBeforeTheTurnCompletes(t *testing.T) {
 	// A production conversation emitted one extra closing brace three times. Coop
 	// marked every attempt complete, so Responder spent its correction budget and
