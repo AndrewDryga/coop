@@ -38,10 +38,14 @@ func TestRuntimeComposeControllerProjectCanTestAndRetainItsOwnData(t *testing.T)
     environment:
       POSTGRES_PASSWORD: test
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
+      # TCP, not the socket: while initdb runs, PostgreSQL serves a temporary server on its socket
+      # only, and a check that accepted it would call the database ready before it restarts. A cold
+      # start took 9.7 s beside a concurrent image build, so it gets a start period.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
       interval: 200ms
       timeout: 2s
       retries: 50
+      start_period: 60s
     volumes: ["data:/var/lib/postgresql"]
     networks:
       default:
@@ -67,6 +71,19 @@ volumes:
 			defer cancel()
 			if err := StopControllerServices(ctx, rt, repo, true); err != nil {
 				t.Errorf("cleanup: %v", err)
+			}
+		})
+		// Runs before the cleanup above: a failed setup keeps its services' own words.
+		t.Cleanup(func() {
+			if !t.Failed() {
+				return
+			}
+			var ids bytes.Buffer
+			_, _ = rt.Run(nil, &ids, os.Stderr, "ps", "-aq", "--filter", "label="+composeProjectLabel+"="+ComposeProject(repo))
+			for _, id := range strings.Fields(ids.String()) {
+				var logs bytes.Buffer
+				_, _ = rt.Run(nil, &logs, &logs, "logs", "--tail", "80", id)
+				t.Logf("service %s logs:\n%s", id, logs.String())
 			}
 		})
 		return repo
