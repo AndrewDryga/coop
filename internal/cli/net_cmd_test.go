@@ -151,8 +151,14 @@ func netRecordRun(t *testing.T, store *networkstate.Store, project string) netwo
 	if err != nil {
 		t.Fatal(err)
 	}
+	// This host's identity, as a launch records it: recovery inside a container refuses to judge a
+	// run that names no host.
+	host, err := box.ThisHost()
+	if err != nil {
+		t.Fatal(err)
+	}
 	record, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
-		Project: project, PolicyFingerprint: policy.Fingerprint, Runtime: "docker",
+		Host: host, Project: project, PolicyFingerprint: policy.Fingerprint, Runtime: "docker",
 		DaemonID: netTestCandidate.Runtime.DaemonID, Endpoint: netTestCandidate.Runtime.Endpoint,
 		GatewayImage: netTestCandidate.GatewayImage, ClientImage: netTestCandidate.ClientImage})
 	if err != nil {

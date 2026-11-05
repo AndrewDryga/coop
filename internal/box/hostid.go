@@ -75,6 +75,10 @@ var thisHost = sync.OnceValues(func() (string, error) {
 	return hostField(id, namespace), nil
 })
 
+// ThisHost is thisHost for callers outside this package: the host a filtered run started here
+// records for its supervisor, and the one recovery requires before it judges that pid.
+func ThisHost() (string, error) { return thisHost() }
+
 // hostField is a label's host field: 24 hex digits, like the workspace scope beside it.
 func hostField(id, namespace string) string {
 	sum := sha256.Sum256([]byte(id + "\n" + namespace))

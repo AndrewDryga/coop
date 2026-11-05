@@ -326,7 +326,8 @@ func TestRecoverNetworkRunsLeavesAnotherSystemsRunAlone(t *testing.T) {
 // A run records the host its supervisor ran on, and recovery judges the supervisor only where that
 // pid means something: a run from this host whose supervisor is gone is settled; one recorded on
 // another host is left alone however its pid looks from here, and said to be another host's; one
-// recorded before runs named their host is judged as before by a coop on the host itself.
+// recorded before runs named their host is judged as before by a coop on the host itself, and left
+// alone by one in a container, which cannot tell its own from another container's.
 func TestRecoverNetworkRunsJudgesOnlyThisHostsSupervisors(t *testing.T) {
 	host, err := thisHost()
 	if err != nil {
@@ -335,13 +336,19 @@ func TestRecoverNetworkRunsJudgesOnlyThisHostsSupervisors(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		recorded string // "" removes the field
+		onHost   bool   // whether this coop runs on the host itself, outside any container
 		settled  bool
 	}{
-		{"this host", host, true},
-		{"another host", strings.Repeat("a", 24), false},
-		{"no host recorded", "", legacyLabelsAreLocal()},
+		{"this host, from a container", host, false, true},
+		{"another host", strings.Repeat("a", 24), true, false},
+		{"no host recorded, on the host itself", "", true, true},
+		{"no host recorded, from a container", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Both answers run on every machine, so a container's refusal is proven on a Mac too.
+			saved := legacyLabelsAreLocal
+			legacyLabelsAreLocal = func() bool { return tc.onHost }
+			t.Cleanup(func() { legacyLabelsAreLocal = saved })
 			f, d, evidence, connect := recoveryFixture(t)
 			if f.record.Supervisor.Host != host {
 				t.Fatalf("run recorded host %q, want this host's %q", f.record.Supervisor.Host, host)
@@ -604,8 +611,8 @@ func TestRecoverNetworkRunsSettlesOnlyTheRunItWasGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
-		Project: f.record.Project, PolicyFingerprint: f.policy.Fingerprint, Runtime: "docker",
-		DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+		Host: f.record.Supervisor.Host, Project: f.record.Project, PolicyFingerprint: f.policy.Fingerprint,
+		Runtime: "docker", DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
 		GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
 	if err != nil {
 		t.Fatal(err)
@@ -867,8 +874,8 @@ func TestRecoverNetworkRunsRemovesSetupCheckSnapshots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
-			Runtime: "docker", DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+		run, err := smoke.CreateExecution(ctx, networkstate.ExecutionSpec{Host: f.record.Supervisor.Host, Project: project,
+			PolicyFingerprint: policy.Fingerprint, Runtime: "docker", DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
 			GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
 		if err != nil {
 			t.Fatal(err)
