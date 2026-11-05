@@ -76,12 +76,10 @@ func serviceStateRoot(name string) (string, error) {
 
 func serviceApprovalRoot() (string, error) { return serviceStateRoot("service-approvals") }
 
-// serviceApprovalVersion is the approval format coop writes; serviceApprovalLegacyVersion is the
-// oldest it still reads (.agent/kb/rules/one-upgrade-for-old-state.md).
-const (
-	serviceApprovalVersion       = 5
-	serviceApprovalLegacyVersion = 4
-)
+// serviceApprovalVersion is the approval format coop writes and the only one it reads. An older
+// approval (version 4 and below) grants nothing and labels nothing: the files it covered stay hidden
+// until `coop up` shows the review again (.agent/kb/rules/one-upgrade-for-old-state.md).
+const serviceApprovalVersion = 5
 
 func composeDigest(data []byte) string {
 	sum := sha256.Sum256(data)
@@ -104,7 +102,7 @@ func ApprovedServiceSecrets(workspace, file string, data []byte) (ServiceApprova
 		return ServiceApproval{}, false
 	}
 	var approval ServiceApproval
-	if err := json.Unmarshal(raw, &approval); err != nil || approval.Version != 5 || approval.Anchor != anchor ||
+	if err := json.Unmarshal(raw, &approval); err != nil || approval.Version != serviceApprovalVersion || approval.Anchor != anchor ||
 		approval.File != rel || approval.Digest != composeDigest(data) {
 		return ServiceApproval{}, false
 	}
@@ -287,7 +285,7 @@ func lastApprovalFor(workspace, file string) ([]string, bool) {
 			continue
 		}
 		var approval ServiceApproval
-		if json.Unmarshal(raw, &approval) != nil || (approval.Version != serviceApprovalLegacyVersion && approval.Version != serviceApprovalVersion) || approval.Anchor != anchor || approval.File != file {
+		if json.Unmarshal(raw, &approval) != nil || approval.Version != serviceApprovalVersion || approval.Anchor != anchor || approval.File != file {
 			continue
 		}
 		if !found || approval.ApprovedAt.After(newest.ApprovedAt) {

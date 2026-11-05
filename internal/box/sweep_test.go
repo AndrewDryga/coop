@@ -295,19 +295,9 @@ func supervisorLabelOn(host, workspace string, pid int) string {
 	return supervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + host + ":" + strconv.Itoa(pid) + ":" + starttoken.Stale()
 }
 
-// judgeLegacyLabels makes the test run as a coop on a host (true) or inside a container (false),
-// whatever PID namespace the test binary itself runs in: a loop box or a dev container is not the
-// host's.
-func judgeLegacyLabels(t *testing.T, onHost bool) {
-	t.Helper()
-	saved := legacyLabelsAreLocal
-	legacyLabelsAreLocal = func() bool { return onHost }
-	t.Cleanup(func() { legacyLabelsAreLocal = saved })
-}
-
 // legacySupervisorLabel is a v1 label, as coop wrote it before labels named their host.
 func legacySupervisorLabel(workspace string, pid int, token string) string {
-	return legacySupervisorLabelVersion + ":" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":" + token
+	return "v1:" + workspaceScope(workspace) + ":" + strconv.Itoa(pid) + ":" + token
 }
 
 // otherHost is the host field of a coop on another host, or in another PID namespace.
@@ -320,7 +310,6 @@ const otherHost = "0123456789abcdef01234567"
 // workspace's containers that another host supervises, services included, which nobody else would
 // ever report.
 func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
-	judgeLegacyLabels(t, true)
 	rt, boxes := fakeRuntime(t)
 	workspace, foreign := t.TempDir(), t.TempDir()
 	dead := deadSupervisorLabel(workspace)
@@ -334,8 +323,7 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 		LabelHost: deadSupervisorLabel(filepath.Join(foreign, "-forks", "perf")), LabelForkOwner: "v1-someone-else",
 	})
 	// Another host's pids, or another PID namespace's, mean nothing here: someone else's box, not an
-	// unreadable one. A v1 label has no host field and is judged as it always was, unless its token is
-	// another platform's.
+	// unreadable one. A v1 label names no host, so it reads as unknown: reported, never removed.
 	addFakeBox(t, boxes, "gone-other-host", map[string]string{LabelHost: supervisorLabelOn(otherHost, workspace, gonePID(t))})
 	addFakeBox(t, boxes, "gone-other-host-other-repo", map[string]string{LabelHost: supervisorLabelOn(otherHost, foreign, gonePID(t))})
 	addFakeBox(t, boxes, "gone-in-scope-v1", map[string]string{LabelHost: legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale())})
@@ -377,7 +365,7 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 	}
 	otherHosts := append([]string(nil), survey.OtherHost...)
 	slices.Sort(otherHosts)
-	if want := []string{"broker-gone-other-host", "gone-other-host", "gone-other-platform-v1", "service-other-host"}; !slices.Equal(otherHosts, want) {
+	if want := []string{"broker-gone-other-host", "gone-other-host", "service-other-host"}; !slices.Equal(otherHosts, want) {
 		t.Errorf("another host's containers = %v, want %v", otherHosts, want)
 	}
 	if want := []string{theirRun}; !slices.Equal(survey.OtherHostProjects, want) {
@@ -401,12 +389,12 @@ func TestSurveyOrphanBoxesDecisionTable(t *testing.T) {
 		}
 	}
 	slices.Sort(orphans)
-	if want := []string{"dead-in-scope", "gone-in-scope", "gone-in-scope-v1"}; !slices.Equal(orphans, want) {
+	if want := []string{"dead-in-scope", "gone-in-scope"}; !slices.Equal(orphans, want) {
 		t.Errorf("orphans = %v, want %v", orphans, want)
 	}
 	unattributed := append([]string(nil), survey.Unattributed...)
 	slices.Sort(unattributed)
-	want := []string{"malformed-host", "malformed-pid", "malformed-token", "malformed-version", "planted-dev-service", "unlabeled"}
+	want := []string{"gone-in-scope-v1", "gone-other-platform-v1", "malformed-host", "malformed-pid", "malformed-token", "malformed-version", "planted-dev-service", "unlabeled"}
 	if !slices.Equal(unattributed, want) {
 		t.Errorf("unattributed = %v, want %v", unattributed, want)
 	}
@@ -511,11 +499,9 @@ func TestReapOrphanBoxesRemovesADeadSessionRunsContainersFromAnyWorkspace(t *tes
 
 // One Docker daemon can serve two hosts, or a host and a container, at the same repository path, and
 // a pid recorded on one of them is gone or another process on the other. So both sweeps remove only
-// what this host's own label names, or a v1 label, which has no host field and keeps its old meaning;
-// another host's boxes, brokers and services stay, and so does a v1 label carrying another platform's
-// start token.
+// what this host's own label names; another host's boxes, brokers and services stay. A v1 label
+// names no host, so it reads as unknown: reported, never removed, and nothing on disk changes.
 func TestSweepsJudgeOnlyThisHostsSupervisors(t *testing.T) {
-	judgeLegacyLabels(t, true)
 	workspace := t.TempDir()
 	labels := map[string]string{
 		"this-host":             supervisorLabel(workspace, gonePID(t)),
@@ -530,18 +516,22 @@ func TestSweepsJudgeOnlyThisHostsSupervisors(t *testing.T) {
 			addFakeContainer(t, boxes, name+"-broker", LabelBroker, map[string]string{LabelHost: label})
 		}
 		survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
-		if err != nil || len(survey.Unattributed) != 0 {
-			t.Fatalf("survey = %+v, %v: another host's box is someone else's, not an unreadable one", survey, err)
+		if err != nil {
+			t.Fatal(err)
 		}
-		want := []string{"old-v1-other-platform", "old-v1-other-platform-broker", "other-host", "other-host-broker"}
+		slices.Sort(survey.Unattributed)
+		if want := []string{"old-v1", "old-v1-other-platform"}; !slices.Equal(survey.Unattributed, want) {
+			t.Fatalf("unattributed = %v, want the v1 boxes %v", survey.Unattributed, want)
+		}
 		reported := append([]string(nil), survey.OtherHost...)
 		slices.Sort(reported)
-		if !slices.Equal(reported, want) {
+		if want := []string{"other-host", "other-host-broker"}; !slices.Equal(reported, want) {
 			t.Fatalf("survey reports %v as another host's, want %v", reported, want)
 		}
-		if n, err := ReapOrphanBoxes(context.Background(), rt, workspace); err != nil || n != 2 {
-			t.Fatalf("ReapOrphanBoxes = (%d, %v), want this host's and the v1 box", n, err)
+		if n, err := ReapOrphanBoxes(context.Background(), rt, workspace); err != nil || n != 1 {
+			t.Fatalf("ReapOrphanBoxes = (%d, %v), want only this host's box", n, err)
 		}
+		want := []string{"old-v1", "old-v1-broker", "old-v1-other-platform", "old-v1-other-platform-broker", "other-host", "other-host-broker"}
 		if got := remainingFakeEntries(t, boxes); !slices.Equal(got, want) {
 			t.Fatalf("containers left = %v, want %v", got, want)
 		}
@@ -554,29 +544,25 @@ func TestSweepsJudgeOnlyThisHostsSupervisors(t *testing.T) {
 			addFakeVolume(t, name+"_pgdata", project)
 		}
 		survey, err := SurveyOrphanBoxes(context.Background(), rt, workspace)
-		reported := append([]string(nil), survey.OtherHost...)
-		slices.Sort(reported)
-		if err != nil || !slices.Equal(reported, []string{"old-v1-other-platform-db", "other-host-db"}) || len(survey.OtherHostProjects) != 2 {
-			t.Fatalf("survey = %+v, %v; want another host's two run services and their projects", survey, err)
+		if err != nil || !slices.Equal(survey.OtherHost, []string{"other-host-db"}) || len(survey.OtherHostProjects) != 1 {
+			t.Fatalf("survey = %+v, %v; want another host's one run service and its project", survey, err)
 		}
-		if n, err := ReapOrphanServices(context.Background(), rt, workspace); err != nil || n != 2 {
-			t.Fatalf("ReapOrphanServices = (%d, %v), want this host's and the v1 run", n, err)
+		if n, err := ReapOrphanServices(context.Background(), rt, workspace); err != nil || n != 1 {
+			t.Fatalf("ReapOrphanServices = (%d, %v), want only this host's run", n, err)
 		}
-		if got, want := remainingFakeEntries(t, boxes), []string{"old-v1-other-platform-db", "other-host-db"}; !slices.Equal(got, want) {
+		if got, want := remainingFakeEntries(t, boxes), []string{"old-v1-db", "old-v1-other-platform-db", "other-host-db"}; !slices.Equal(got, want) {
 			t.Fatalf("services left = %v, want %v", got, want)
 		}
-		if got, want := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")), []string{"old-v1-other-platform_pgdata", "other-host_pgdata"}; !slices.Equal(got, want) {
+		if got, want := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")), []string{"old-v1-other-platform_pgdata", "old-v1_pgdata", "other-host_pgdata"}; !slices.Equal(got, want) {
 			t.Fatalf("volumes left = %v, want %v", got, want)
 		}
 	})
 }
 
 // A coop that cannot name its host (thisHost failed) writes an empty label, and cannot tell its own
-// v2 labels from another host's: it removes none of them and reports their boxes as unattributed.
-// A v1 label has no host field and is judged as before, and one with another platform's start
-// token is still provably another host's.
-func TestSweepsWithoutAHostJudgeOnlyV1Labels(t *testing.T) {
-	judgeLegacyLabels(t, true)
+// v2 labels from another host's: it removes none of them and reports their boxes as unattributed. A
+// v1 label names no host either, so it is reported the same way.
+func TestSweepsWithoutAHostJudgeNothing(t *testing.T) {
 	workspace := t.TempDir()
 	if label := supervisorLabelFor(workspaceScope(workspace), "", os.Getpid()); label != "" {
 		t.Fatalf("supervisorLabelFor with no host = %q, want no label", label)
@@ -586,13 +572,6 @@ func TestSweepsWithoutAHostJudgeOnlyV1Labels(t *testing.T) {
 		"v2-other-host":         supervisorLabelOn(otherHost, workspace, gonePID(t)),
 		"old-v1":                legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale()),
 		"old-v1-other-platform": legacySupervisorLabel(workspace, gonePID(t), starttoken.Foreign()),
-	}
-	ids := func(orphans []OrphanBox) []string {
-		var ids []string
-		for _, orphan := range orphans {
-			ids = append(ids, orphan.ID)
-		}
-		return ids
 	}
 	t.Run("boxes", func(t *testing.T) {
 		rt, boxes := fakeRuntime(t)
@@ -605,19 +584,9 @@ func TestSweepsWithoutAHostJudgeOnlyV1Labels(t *testing.T) {
 			t.Fatal(err)
 		}
 		slices.Sort(survey.Unattributed)
-		slices.Sort(survey.OtherHost)
-		for _, check := range []struct {
-			group     string
-			got, want []string
-		}{
-			{"orphans", ids(survey.Orphans), []string{"old-v1"}},
-			{"brokers", ids(survey.Brokers), []string{"old-v1-broker"}},
-			{"unattributed", survey.Unattributed, []string{"v2-other-host", "v2-this-host"}},
-			{"another host's", survey.OtherHost, []string{"old-v1-other-platform", "old-v1-other-platform-broker"}},
-		} {
-			if !slices.Equal(check.got, check.want) {
-				t.Errorf("%s = %v, want %v", check.group, check.got, check.want)
-			}
+		if len(survey.Orphans) != 0 || len(survey.Brokers) != 0 || len(survey.OtherHost) != 0 ||
+			!slices.Equal(survey.Unattributed, []string{"old-v1", "old-v1-other-platform", "v2-other-host", "v2-this-host"}) {
+			t.Errorf("survey = %+v, want nothing judged and all four boxes unattributed", survey)
 		}
 	})
 	t.Run("services", func(t *testing.T) {
@@ -627,67 +596,15 @@ func TestSweepsWithoutAHostJudgeOnlyV1Labels(t *testing.T) {
 			addFakeService(t, boxes, name+"-db", project, label)
 			addFakeVolume(t, name+"_pgdata", project)
 		}
-		if n, err := reapOrphanServices(context.Background(), rt, workspace, ""); err != nil || n != 1 {
-			t.Fatalf("reapOrphanServices with no host = (%d, %v), want only the v1 run", n, err)
+		if n, err := reapOrphanServices(context.Background(), rt, workspace, ""); err != nil || n != 0 {
+			t.Fatalf("reapOrphanServices with no host = (%d, %v), want none", n, err)
 		}
-		want := []string{"old-v1-other-platform-db", "v2-other-host-db", "v2-this-host-db"}
+		want := []string{"old-v1-db", "old-v1-other-platform-db", "v2-other-host-db", "v2-this-host-db"}
 		if got := remainingFakeEntries(t, boxes); !slices.Equal(got, want) {
 			t.Fatalf("services left = %v, want %v", got, want)
 		}
-		want = []string{"old-v1-other-platform_pgdata", "v2-other-host_pgdata", "v2-this-host_pgdata"}
+		want = []string{"old-v1-other-platform_pgdata", "old-v1_pgdata", "v2-other-host_pgdata", "v2-this-host_pgdata"}
 		if got := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")); !slices.Equal(got, want) {
-			t.Fatalf("volumes left = %v, want %v", got, want)
-		}
-	})
-}
-
-// Inside a container, a v1 label could be another container's: it names no PID namespace, and a
-// live supervisor there looks gone from here. So a containerized coop removes no v1 box, broker or
-// run service, and lists them as another host's; a v2 label of its own is still judged.
-func TestAContainerJudgesNoV1Label(t *testing.T) {
-	judgeLegacyLabels(t, false)
-	workspace := t.TempDir()
-	labels := map[string]string{
-		"own-v2": supervisorLabel(workspace, gonePID(t)),
-		"old-v1": legacySupervisorLabel(workspace, gonePID(t), starttoken.Stale()),
-	}
-	t.Run("boxes", func(t *testing.T) {
-		rt, boxes := fakeRuntime(t)
-		for name, label := range labels {
-			addFakeBox(t, boxes, name, map[string]string{LabelHost: label})
-			addFakeContainer(t, boxes, name+"-broker", LabelBroker, map[string]string{LabelHost: label})
-		}
-		survey, err := surveyOrphanBoxes(context.Background(), rt, workspace, localHost())
-		if err != nil {
-			t.Fatal(err)
-		}
-		slices.Sort(survey.OtherHost)
-		var orphans, brokers []string
-		for _, orphan := range survey.Orphans {
-			orphans = append(orphans, orphan.ID)
-		}
-		for _, broker := range survey.Brokers {
-			brokers = append(brokers, broker.ID)
-		}
-		if !slices.Equal(orphans, []string{"own-v2"}) || !slices.Equal(brokers, []string{"own-v2-broker"}) ||
-			!slices.Equal(survey.OtherHost, []string{"old-v1", "old-v1-broker"}) {
-			t.Fatalf("orphans %v, brokers %v, another host's %v; want only own-v2 judged and old-v1 listed", orphans, brokers, survey.OtherHost)
-		}
-	})
-	t.Run("services", func(t *testing.T) {
-		rt, boxes := fakeRuntime(t)
-		for name, label := range labels {
-			project := ComposeProjectFor(workspace, name)
-			addFakeService(t, boxes, name+"-db", project, label)
-			addFakeVolume(t, name+"_pgdata", project)
-		}
-		if n, err := reapOrphanServices(context.Background(), rt, workspace, localHost()); err != nil || n != 1 {
-			t.Fatalf("reapOrphanServices in a container = (%d, %v), want only its own v2 run", n, err)
-		}
-		if got, want := remainingFakeEntries(t, boxes), []string{"old-v1-db"}; !slices.Equal(got, want) {
-			t.Fatalf("services left = %v, want %v", got, want)
-		}
-		if got, want := remainingFakeEntries(t, os.Getenv("COOP_TEST_VOLUMES")), []string{"old-v1_pgdata"}; !slices.Equal(got, want) {
 			t.Fatalf("volumes left = %v, want %v", got, want)
 		}
 	})

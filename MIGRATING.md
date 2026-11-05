@@ -3,6 +3,27 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## Unreleased: old host state is refused or read as unknown
+
+Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.
+
+- **A box left behind with a version 1 `coop.host` label.** `coop doctor` lists it as a box coop
+  cannot attribute. Remove it by hand: `docker rm -f <name>` (and `docker volume rm` for a run's
+  volumes) once you know its coop is gone.
+- **A record with a `linux-proc-v1:` start token** (a fork `.pid` file, a task claim, a network run
+  record or a label written by a Linux Coop that could not read its PID namespace). It counts as
+  unverifiable, so the record stays and its owner is never judged gone. Remove it by hand if you
+  know the process is gone.
+- **A filesystem custody record in `~/.local/state/coop/filesystem/coop-fs-*` that has an `Image`
+  and no `Controller`.** Written only by main builds of 2026-11-01 and 2026-11-02. The message
+  "filesystem custody record from before the shared filesystem controller" names it. Its protection
+  keeps holding. Run Coop v12.1.0 in the project: its daily sweep retires a record whose owner is
+  gone. Then come back.
+- **A credential renewal journal without `received_at`** (`credentials/<account>/renewal.json`, kept
+  by Coop v11.3.0 or earlier). The message says it was kept without an arrival time. Open the
+  account once with Coop v12.1.0 to finish it, or run `coop login <agent>@<account>`.
+- **Version 4 service approvals** grant nothing and are not read. `coop up` shows the review again.
+
 ## Unreleased: old network records are refused by name
 
 Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and

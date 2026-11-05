@@ -2,12 +2,16 @@
 // process, or another operating system's, without one existing.
 package starttoken
 
-import "github.com/AndrewDryga/coop/internal/processidentity"
+import (
+	"strings"
+
+	"github.com/AndrewDryga/coop/internal/processidentity"
+)
 
 // No process here has either token: no Linux boot is named "0", and nothing on macOS started at
-// the epoch.
+// the epoch. The Linux one names a namespace no coop here reads pids in.
 const (
-	linux  = "linux-proc-v1:0:1"
+	linux  = "linux-proc-v2:1:0:1"
 	darwin = "darwin-kinfo-v1:0:1"
 )
 
@@ -15,7 +19,10 @@ const (
 // as gone, and beside a live pid as a reused one.
 func Stale() string {
 	if processidentity.Native(linux) {
-		return linux
+		// The token of this namespace, or Inspect would call it another namespace's.
+		namespace, _ := processidentity.PIDNamespace()
+		inode := strings.TrimSuffix(strings.TrimPrefix(namespace, "pid:["), "]")
+		return "linux-proc-v2:" + inode + ":0:1"
 	}
 	return darwin
 }

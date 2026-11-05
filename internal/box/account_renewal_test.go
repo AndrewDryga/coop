@@ -162,18 +162,30 @@ func TestAccountRenewalCompletesAKeptAnswerWithoutTheProvider(t *testing.T) {
 	}
 }
 
-// An answer kept before arrival times were recorded dates its grant as long expired, so the next
-// renewal spends the grant it carries rather than trusting its access token.
-func TestAccountRenewalDatesAnUndatedKeptAnswerAsExpired(t *testing.T) {
-	cfg, _ := newRenewalAuthority(t)
-	var arrived time.Time
-	spec := completingSpec(t, &arrived)
-	writeKeptAnswer(t, cfg, spec, `{"grant":"inert-kept-grant"}`, time.Time{})
-	if _, _, err := transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) { return nil, nil }); err != nil {
-		t.Fatal(err)
-	}
-	if !arrived.Equal(time.Unix(0, 0)) {
-		t.Fatalf("an undated answer was dated %v", arrived)
+// An answer kept without an arrival time (Coop v11.3.0 and earlier) is refused by name, a grant or an
+// error answer alike, and the journal stays as it is.
+func TestAccountRenewalRefusesAnUndatedKeptAnswer(t *testing.T) {
+	for _, received := range []string{`{"grant":"inert-kept-grant"}`, `{"error":"temporarily_unavailable"}`} {
+		cfg, _ := newRenewalAuthority(t)
+		var arrived time.Time
+		spec := completingSpec(t, &arrived)
+		writeKeptAnswer(t, cfg, spec, received, time.Time{})
+		journal := filepath.Join(filepath.Dir(authorityTestPath(cfg)), accountRenewalName)
+		before, err := os.ReadFile(journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		called := false
+		_, _, err = transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) {
+			called = true
+			return nil, nil
+		})
+		if !errors.Is(err, errAccountRenewalUndated) || !errors.Is(err, errAccountRenewalUncertain) || called || !arrived.IsZero() {
+			t.Fatalf("read past an undated kept answer %s = %v (called %v)", received, err, called)
+		}
+		if after, err := os.ReadFile(journal); err != nil || string(after) != string(before) {
+			t.Fatalf("the journal changed or went: %v", err)
+		}
 	}
 }
 
@@ -200,27 +212,6 @@ func TestAccountRenewalCompletesAKeptAnswerOnce(t *testing.T) {
 	root.close()
 	if current.Revision != 2 {
 		t.Fatalf("revision = %d after two readers, want one completion", current.Revision)
-	}
-}
-
-// An earlier version kept every answer, error answers included, with no arrival time. Such an
-// answer issued nothing, so it is cleared and the next renewal tries again instead of asking for a
-// sign-in.
-func TestAccountRenewalClearsAnErrorAnswerAnEarlierVersionKept(t *testing.T) {
-	cfg, _ := newRenewalAuthority(t)
-	var arrived time.Time
-	spec := completingSpec(t, &arrived)
-	writeKeptAnswer(t, cfg, spec, `{"error":"temporarily_unavailable"}`, time.Time{})
-	called := false
-	_, _, err := transactAccountAuthority(context.Background(), cfg, spec, "work", func(*accountAuthority) (*accountAuthority, error) {
-		called = true
-		return nil, nil
-	})
-	if err != nil || !called || !arrived.IsZero() {
-		t.Fatalf("read past an old kept error answer = %v (called %v)", err, called)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(authorityTestPath(cfg)), accountRenewalName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("an old error answer was kept")
 	}
 }
 

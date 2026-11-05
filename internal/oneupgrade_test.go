@@ -19,9 +19,10 @@ const waypointCard = ".agent/kb/rules/one-upgrade-for-old-state.md"
 // current and oldest-read versions, as "<file under internal/>:<name>". An empty oldest means no
 // constant names it yet; the task that retires that reader adds one (it needs it for the refusal).
 // An empty current means the versions are not integer constants: the box supervisor label's are the
-// string prefixes "v2" and "v1" (box/sweep.go), and the fork records folder, the execution fallback
-// registry, the detached worker record, and the pre-v11 provider login and history have no integer
-// version, so their rows are listed but pin nothing.
+// string prefix "v2" (box/sweep.go), and the fork records folder, the execution fallback
+// registry, the detached worker record, the filesystem custody record, the renewal journal, the
+// Linux start token, and the pre-v11 provider login and history have no integer version, so their
+// rows are listed but pin nothing.
 var waypointConstants = map[string]struct{ current, oldest string }{
 	"Primary snapshot receipt":    {"forkspace/immutable_primary.go:ImmutablePrimaryVersion", "forkspace/immutable_primary.go:ImmutablePrimaryVersion"},
 	"Companion snapshot receipt":  {"sessionsvc/companion_snapshot.go:companionSnapshotVersion", "sessionsvc/companion_snapshot.go:companionSnapshotVersion"},
@@ -42,9 +43,12 @@ var waypointConstants = map[string]struct{ current, oldest string }{
 	"Network withdrawal":          {"networkstate/approval_withdrawal.go:withdrawalVersion", "networkstate/approval_withdrawal.go:withdrawalVersion"},
 	"Network setup record":        {"networkstate/qualification.go:qualificationVersion", "networkstate/qualification.go:qualificationVersion"},
 	"Isolated fork generation":    {"forkspace/generation.go:forkGenerationIsolatedVersion", ""},
-	"Service approval":            {"box/serviceapproval.go:serviceApprovalVersion", "box/serviceapproval.go:serviceApprovalLegacyVersion"},
+	"Service approval":            {"box/serviceapproval.go:serviceApprovalVersion", "box/serviceapproval.go:serviceApprovalVersion"},
 	"Workspace checkpoint bundle": {"workerproto/checkpoint.go:WorkspaceCheckpointVersion", "workerproto/checkpoint.go:WorkspaceCheckpointLegacyVersion"},
 	"Box supervisor label":        {"", ""},
+	"Filesystem custody record":   {"", ""},
+	"Account renewal journal":     {"", ""},
+	"Linux process start token":   {"", ""},
 	"Fork records folder":         {"", ""},
 	"Execution fallback registry": {"", ""},
 	"Pre-v11 provider login":      {"", ""},

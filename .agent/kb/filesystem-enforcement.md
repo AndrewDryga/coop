@@ -236,6 +236,12 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-04 — a custody record with a helper image and no controller (written 2026-11-01 and
+  2026-11-02, before the shared controller) is refused by name (`errFilesystemRecordBeforeController`,
+  from `record.validate`) and left as it is; its protection keeps holding, and until a v12.1.0 build
+  retires it, controller recovery fails closed on it too. `matchesController` matches nothing
+  without a controller. The `Probes` field and its cleanup stay: four live records on the owner's Mac
+  still carry it (task 2026-11-04-drop-the-old-host-state-readers).
 - 2026-11-04 — retired tools/fsprobe and its card; its one lasting trap, the stale link count, is above.
 - 2026-11-04 — xattr/ACL reads on a hidden non-directory answer ENODATA/EOPNOTSUPP so `ls -l` exits 0; live suite asserts it.
 - 2026-11-04 — ran `ls -l`, `readlink`, `stat`, `find` and `cat` beside a hidden file and symlink in a real box

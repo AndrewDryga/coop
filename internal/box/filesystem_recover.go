@@ -111,6 +111,9 @@ func (r filesystemRecord) validate() error {
 			return errors.New("invalid filesystem probe record")
 		}
 	}
+	if r.Image != "" && r.Controller == nil {
+		return errFilesystemRecordBeforeController
+	}
 	if r.Controller != nil {
 		if err := r.Controller.validate(); err != nil {
 			return err

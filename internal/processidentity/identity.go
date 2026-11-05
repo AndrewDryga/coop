@@ -36,18 +36,20 @@ func StartToken(pid int) string { return platformStartToken(pid) }
 // Stable reports whether token has a supported, versioned kernel identity shape.
 func Stable(token string) bool { return System(token) != "" }
 
-// The Linux token shapes: v1 is "<boot id>:<start ticks>", v2 puts the inode of the PID namespace
-// the pid was read in first, "<namespace>:<boot id>:<start ticks>".
-const (
-	linuxTokenV1 = "linux-proc-v1:"
-	linuxTokenV2 = "linux-proc-v2:"
-)
+// The Linux token shape: the inode of the PID namespace the pid was read in, then "<boot id>:<start
+// ticks>". The earlier shape, "linux-proc-v1:", named no namespace; it reads as no known shape, so
+// a record holding one is unverifiable: never a match, never proof the process is gone.
+const linuxTokenV2 = "linux-proc-v2:"
+
+// OldLinuxToken reports a token in the earlier Linux shape, so a record holding one can be refused
+// by name instead of as malformed.
+func OldLinuxToken(token string) bool { return strings.HasPrefix(token, "linux-proc-v1:") }
 
 // System names the operating system whose kernel wrote token, "Linux" or "macOS", or returns ""
 // for a shape it does not know.
 func System(token string) string {
 	switch {
-	case strings.HasPrefix(token, linuxTokenV1), strings.HasPrefix(token, linuxTokenV2):
+	case strings.HasPrefix(token, linuxTokenV2):
 		return "Linux"
 	case strings.HasPrefix(token, "darwin-kinfo-v1:"):
 		return "macOS"
@@ -55,8 +57,7 @@ func System(token string) string {
 	return ""
 }
 
-// Native reports whether token has a shape this platform's StartToken writes, or an earlier coop
-// on it wrote. A stable token that is not native was written on another operating system, whose
+// Native reports whether token has a shape this platform's StartToken writes. A stable token that is not native was written on another operating system, whose
 // pids this kernel cannot check.
 func Native(token string) bool {
 	for _, prefix := range nativePrefixes {
@@ -81,17 +82,16 @@ func Origin(token string) string {
 	return System(token)
 }
 
-// Same reports whether two tokens name one process, however each was written: a v2 Linux token and
-// the v1 token an earlier coop wrote for the same process name it alike, unless the v2 one names
-// another PID namespace.
+// Same reports whether two tokens name one process. A token of no known shape names none, so two
+// equal ones are not the same.
 func Same(a, b string) bool {
 	identityA, namespaceA := kernelIdentity(a)
 	identityB, namespaceB := kernelIdentity(b)
-	return identityA != "" && identityA == identityB && (namespaceA == "" || namespaceB == "" || namespaceA == namespaceB)
+	return Stable(a) && Stable(b) && identityA == identityB && namespaceA == namespaceB
 }
 
-// kernelIdentity splits a token into what stays the same for one process however its token was
-// written, and the PID namespace a v2 Linux token names ("" for any other token).
+// kernelIdentity splits a token into what names the process within its PID namespace, and the PID
+// namespace a Linux token names ("" for any other token).
 func kernelIdentity(token string) (identity, namespace string) {
 	rest, v2 := strings.CutPrefix(token, linuxTokenV2)
 	if !v2 {
@@ -101,7 +101,7 @@ func kernelIdentity(token string) (identity, namespace string) {
 	if !ok || namespace == "" {
 		return token, ""
 	}
-	return linuxTokenV1 + identity, namespace
+	return linuxTokenV2 + identity, namespace
 }
 
 // namespaceInode is the number in a PIDNamespace answer, "pid:[<inode>]".

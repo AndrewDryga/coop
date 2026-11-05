@@ -88,9 +88,12 @@ names it.
 | Isolated fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 4 | 4 | none exist | none |
 | Fork records folder | `~/.local/state/coop/forks/<key>/` | private folder | private folder | `<repo>-forks/.coop/` holding anything but lock files is refused by name and never moved or removed | v12.1.0 (first use of the project) |
 | Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | not read | every entry is reported by path and blocks fork mutation; the folder stays fenced from boxes, and the service-launch locks beside it are unaffected | v12.1.0 |
-| Service approval | `~/.local/state/coop/service-approvals/` | 5 | 4 | read; a new approval writes 5 | `coop up` re-approves |
+| Service approval | `~/.local/state/coop/service-approvals/` | 5 | 5 | 4 and below grant nothing and label nothing; the files they covered stay hidden until `coop up` shows the review | `coop up` re-approves |
+| Filesystem custody record | `~/.local/state/coop/filesystem/coop-fs-*/record.json` | 1 | 1 | a record with a helper image and no controller (builds of 2026-11-01 and 2026-11-02) is refused by name and left as it is, so its protection holds; the share-check `Probes` field is still read | v12.1.0 (retires it) |
+| Account renewal journal | `~/.config/coop/credentials/<account>/renewal.json` | 1 | 1 | a kept answer with no `received_at` (Coop v11.3.0 and earlier) is refused by name and left as it is | v12.1.0, or `coop login` |
+| Linux process start token | pid files, labels, records | `linux-proc-v2:` | `linux-proc-v2:` | `linux-proc-v1:` has no PID namespace and reads as no known shape: Unknown, never a match and never proof of death | none: the record stays |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | decoded so restore can refuse it by name; only a checkpoint file in the worker's own state is still served | none needed |
-| Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 1 | judged as before by a Coop on a host, by none inside a container; an older Coop sharing the Docker daemon still writes them | none: labels are never rewritten |
+| Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 2 | a v1 label reads as unknown: reported, never removed | none: labels are never rewritten |
 | Pre-v11 provider login | `~/.config/coop/<provider>/profiles/<account>/` and `host-credentials/<account>/` | `credentials/<account>/authority.json` | refused | refused by name for an account with no `credentials/<account>/` folder: run `coop login <provider>@<account>`; the old folders are never read or deleted | v12.1.0 and earlier |
 | Pre-v11 provider history | `~/.config/coop/<provider>/profiles/<account>/`, `acp-sessions/` and flat `acp-threads/*.json` | per-repository `native-homes/` and `acp-homes/` | not imported | an import an older build started and never finished is refused by name at launch; history and thread bindings never imported stay in the old folders unread | v12.1.0 and earlier |
 
@@ -106,12 +109,20 @@ provably belongs to another project (neither its plain nor its keyed id) is left
 pins each row's Current and Oldest read to the constants named in `waypointConstants` in
 `internal/oneupgrade_test.go`. A row whose oldest version has no constant yet pins only Current.
 The box supervisor label's versions are the string prefixes `v2` and `v1` (`internal/box/sweep.go`),
-so its row pins neither, and the fork records folder, the execution fallback registry and the detached
-worker record have no integer version, so their rows pin neither too. The box label's waypoint is every Coop that shares a Docker daemon, not a store:
-retire v1 once those all write v2. Retiring it also removes `legacyLabelsAreLocal`, and a v1
-label then reads as unknown: reported, never removed.
+so its row pins neither, and the fork records folder, the execution fallback registry, the detached
+worker record, the filesystem custody record, the renewal journal and the start token have no
+integer version, so their rows pin neither too. The box label's waypoint was every Coop that shares
+a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (image
+`ryker-coop:70e1ded2-065f1a07`, which has d01e1ca7) and this Mac's Coop all wrote v2.
+`legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-04 — retired the v1 box supervisor label, the version 4 service approval hint, the Linux
+  start token v1, the renewal journal's undated kept answer, and the custody record written before
+  the shared filesystem controller (task 2026-11-04-drop-the-old-host-state-readers). Each is refused by name or reads as
+  unknown, and is left as it is. Rows added for the custody record, the renewal journal and the
+  start token. Left for later: the custody record's `Probes` field (four live records), the
+  settings-folder run files and records (`~/.config/coop` still holds some).
 - 2026-11-04 — retired the network approval (1 to 3, keyed names), withdrawal (1) and execution (1)
   readers (task 2026-11-04-drop-the-old-network-record-readers). `networkstate.projectIdentity`
   refuses a project by name while the store holds such a record that could be its own, so a

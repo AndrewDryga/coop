@@ -21,15 +21,10 @@ import (
 // so the shape it was written in has to be readable from the value itself. An unrecognized version
 // reads as unattributable — reported, never reaped.
 //
-// v2 added the host field (thisHost). v1 labels, written before it, are still read, and a coop on a
-// host judges them as it always did, so what a run killed before an upgrade left behind is still
-// removed; a coop inside a container judges none (legacyLabelsAreLocal). The v1 reader retires on
-// the schedule of .agent/kb/rules/one-upgrade-for-old-state.md (row "Box supervisor label"), and
-// legacyLabelsAreLocal goes with it.
-const (
-	supervisorLabelVersion       = "v2"
-	legacySupervisorLabelVersion = "v1"
-)
+// v2 added the host field (thisHost). A v1 label, written before it and naming no host, reads as
+// unknown: reported, never removed (row "Box supervisor label" of
+// .agent/kb/rules/one-upgrade-for-old-state.md).
+const supervisorLabelVersion = "v2"
 
 // OrphanBox is one coop box, or a box's broker helper, whose supervising host process is provably
 // gone: the pid it recorded is dead, or that pid now belongs to a different process than the one
@@ -228,7 +223,7 @@ func supervisorLabelFor(scope, host string, pid int) string {
 // supervisorRef is a parsed LabelHost value.
 type supervisorRef struct {
 	scope string
-	host  string // the writer's thisHost; "" in a v1 label, which has no host field
+	host  string // the writer's thisHost
 	pid   int
 	token string
 }
@@ -238,23 +233,17 @@ type supervisorRef struct {
 // does not recognize — and every such box is reported rather than reaped. The token itself contains
 // colons, so it takes the whole remainder of the value.
 func parseSupervisorLabel(value string) (supervisorRef, bool) {
-	var ref supervisorRef
-	var pid string
-	if rest, ok := strings.CutPrefix(value, supervisorLabelVersion+":"); ok {
-		parts := strings.SplitN(rest, ":", 4)
-		if len(parts) != 4 || !isHostField(parts[1]) {
-			return supervisorRef{}, false
-		}
-		ref.scope, ref.host, pid, ref.token = parts[0], parts[1], parts[2], parts[3]
-	} else if rest, ok := strings.CutPrefix(value, legacySupervisorLabelVersion+":"); ok {
-		parts := strings.SplitN(rest, ":", 3)
-		if len(parts) != 3 {
-			return supervisorRef{}, false
-		}
-		ref.scope, pid, ref.token = parts[0], parts[1], parts[2]
-	} else {
+	rest, ok := strings.CutPrefix(value, supervisorLabelVersion+":")
+	if !ok {
 		return supervisorRef{}, false
 	}
+	parts := strings.SplitN(rest, ":", 4)
+	if len(parts) != 4 || !isHostField(parts[1]) {
+		return supervisorRef{}, false
+	}
+	var ref supervisorRef
+	pid := parts[2]
+	ref.scope, ref.host, ref.token = parts[0], parts[1], parts[3]
 	var err error
 	ref.pid, err = strconv.Atoi(pid)
 	if ref.scope == "" || err != nil || ref.pid <= 1 || !processidentity.Stable(ref.token) {
@@ -269,22 +258,18 @@ type labelOrigin uint8
 const (
 	originHere      labelOrigin = iota // this host and PID namespace: the pid can be checked
 	originElsewhere                    // another host or PID namespace: the pid means nothing here
-	originUnknown                      // a v2 label, while this coop cannot name its own host
+	originUnknown                      // a label, while this coop cannot name its own host
 )
 
 // origin says whether ref's pid names a process a coop on host can check at all. A v2 label must
 // come from this host and PID namespace; from any other, a live supervisor's pid would look gone or
-// reused. A v1 label has no host field: a coop on a host gives it the meaning it always had, a coop
-// inside a container reads it as another host's (legacyLabelsAreLocal), and so does anyone when its
-// start token is another platform's, which no coop on this host could have written. A coop with no
-// host of its own (host "") cannot tell whose a v2 label is.
+// reused. A label whose start token is another platform's is another host's too. A coop with no host
+// of its own (host "") cannot tell whose label is.
 func (ref supervisorRef) origin(host string) labelOrigin {
 	switch {
 	case !processidentity.Native(ref.token):
 		return originElsewhere
-	case ref.host == "" && !legacyLabelsAreLocal():
-		return originElsewhere
-	case ref.host == "" || ref.host == host:
+	case ref.host == host:
 		return originHere
 	case host == "":
 		return originUnknown
@@ -293,11 +278,10 @@ func (ref supervisorRef) origin(host string) labelOrigin {
 	}
 }
 
-// legacyLabelsAreLocal reports whether this coop may judge a v1 label's pid. A v1 label names no host
-// or PID namespace, and coop on a host (macOS, or Linux in the host's own PID namespace) judges it as
-// it always did. A coop inside a container cannot tell its own v1 labels from those of another
-// container sharing the Docker daemon, and that one's live pids look gone from here, so it judges
-// none of them: they are listed as another host's.
+// legacyLabelsAreLocal reports whether this coop may judge a record that names no host. Only the
+// network recovery still has such records (supervisorRecordedHere); no label does. Coop on a host
+// (macOS, or Linux in the host's own PID namespace) judges it as it always did; a coop inside a
+// container cannot tell its own from another container's sharing the Docker daemon.
 var legacyLabelsAreLocal = sync.OnceValue(func() bool {
 	namespace, ok := processidentity.PIDNamespace()
 	return ok && (namespace == "" || namespace == processidentity.InitialPIDNamespace)

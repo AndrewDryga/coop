@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-old-host-state-is-refused-or-read-as-unknown">Unreleased: old host state is refused or read as unknown</a></li>
 <li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
 <li><a href="#unreleased-logins-and-history-from-before-v11-are-not-converted">Unreleased: logins and history from before v11 are not converted</a></li>
 <li><a href="#unreleased-old-fork-and-task-records-are-refused-not-converted">Unreleased: old fork and task records are refused, not converted</a></li>
@@ -127,6 +128,26 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-old-host-state-is-refused-or-read-as-unknown"><h2>Unreleased: old host state is refused or read as unknown</h2>
+<p>Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.</p>
+<ul>
+<li><strong>A box left behind with a version 1 <code>coop.host</code> label.</strong> <code>coop doctor</code> lists it as a box coop
+cannot attribute. Remove it by hand: <code>docker rm -f &lt;name&gt;</code> (and <code>docker volume rm</code> for a run&#39;s
+volumes) once you know its coop is gone.</li>
+<li><strong>A record with a <code>linux-proc-v1:</code> start token</strong> (a fork <code>.pid</code> file, a task claim, a network run
+record or a label written by a Linux Coop that could not read its PID namespace). It counts as
+unverifiable, so the record stays and its owner is never judged gone. Remove it by hand if you
+know the process is gone.</li>
+<li><strong>A filesystem custody record in <code>~/.local/state/coop/filesystem/coop-fs-*</code> that has an <code>Image</code>
+and no <code>Controller</code>.</strong> Written only by main builds of 2026-11-01 and 2026-11-02. The message
+&#34;filesystem custody record from before the shared filesystem controller&#34; names it. Its protection
+keeps holding. Run Coop v12.1.0 in the project: its daily sweep retires a record whose owner is
+gone. Then come back.</li>
+<li><strong>A credential renewal journal without <code>received_at</code></strong> (<code>credentials/&lt;account&gt;/renewal.json</code>, kept
+by Coop v11.3.0 or earlier). The message says it was kept without an arrival time. Open the
+account once with Coop v12.1.0 to finish it, or run <code>coop login &lt;agent&gt;@&lt;account&gt;</code>.</li>
+<li><strong>Version 4 service approvals</strong> grant nothing and are not read. <code>coop up</code> shows the review again.</li>
+</ul>
 </section><section class="doc-section reference-section" id="unreleased-old-network-records-are-refused-by-name"><h2>Unreleased: old network records are refused by name</h2>
 <p>Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
 earlier. If your network folder (<code>~/.local/state/coop/network</code>) still holds any, a project they

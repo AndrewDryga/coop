@@ -367,3 +367,15 @@ func TestExecutionRegistryReportsEveryStrayEntryByPath(t *testing.T) {
 		}
 	}
 }
+
+// A record an older Linux build wrote names its process in a token shape this Coop no longer reads:
+// it is refused by name, never read as malformed.
+func TestExecutionRecordWithAnOldLinuxTokenIsRefusedByName(t *testing.T) {
+	record := ExecutionRecord{Version: executionRecordVersion, ID: newExecutionID(), Kind: ExecutionInteractive,
+		Role: ExecutionRoleActive, Workspace: "/work/project", PID: 4242, Token: "linux-proc-v1:boot:123",
+		StartedAt: time.Now().UTC()}
+	if err := validateExecutionRecord(record); err == nil || !strings.Contains(err.Error(), "Linux format") ||
+		!strings.Contains(err.Error(), record.ID) {
+		t.Fatalf("validateExecutionRecord = %v; want a refusal naming the old Linux format and the record", err)
+	}
+}

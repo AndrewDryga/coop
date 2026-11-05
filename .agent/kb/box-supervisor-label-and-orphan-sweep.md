@@ -40,14 +40,12 @@ container's labels said who would have removed it.
 broker takes only the owner labels with a value (`nativeBrokerLabels`): an exact `DockerRef` refuses
 an empty one, and coop builds that image itself.
 
-A v1 label (`v1:<scope>:<pid>:<token>`, written by builds before this change) is still read. A coop
-on a host (macOS, or Linux in the initial PID namespace, `processidentity.InitialPIDNamespace`)
-judges it as before, since it has no host field, unless its token is another platform's
-(`processidentity.Native`), which only another host could have written. A coop inside a container
-judges none (`legacyLabelsAreLocal`): it cannot tell its own v1 labels from another container's on
-the same daemon, whose live pids look gone from its namespace, so it lists them as another host's.
-The reader retires on the "Box supervisor label" row of [[one-upgrade-for-old-state]], taking
-`legacyLabelsAreLocal` with it.
+A v1 label (`v1:<scope>:<pid>:<token>`, written before labels named their host) is no longer read.
+It names no host, so it parses as no label: REPORTED as unattributed, never reaped, and never
+rewritten. Every Coop that shared this Mac's and mac-server's Docker daemons wrote v2 (checked
+2026-11-04), which is what the "Box supervisor label" row of [[one-upgrade-for-old-state]] waited
+for. `legacyLabelsAreLocal` stays: network recovery still judges a run record that names no host
+with it (`supervisorRecordedHere`).
 
 The decision table (`box.SurveyOrphanBoxes`), applied per container:
 
@@ -57,9 +55,9 @@ The decision table (`box.SurveyOrphanBoxes`), applied per container:
 | alive and matching                              | untouched                  |
 | unreadable identity (`Inspect` → Unknown)       | untouched (fails closed)   |
 | another workspace's scope                       | untouched, unless a session-service run's (`coop.run=session-*`): judged like this workspace's |
-| another host or PID namespace: a v2 host field, another OS's start token, or a v1 label seen by a coop inside a container | untouched; doctor lists it under "Boxes from other computers" |
+| another host or PID namespace: a v2 host field, or another OS's start token | untouched; doctor lists it under "Boxes from other computers" |
 | a v2 label while this coop cannot name its host (`thisHost` failed) | REPORTED, never reaped |
-| no label (pre-upgrade), or a value this version can't parse | REPORTED, never reaped |
+| no label (pre-upgrade), a v1 label, or a value this version can't parse | REPORTED, never reaped |
 | any value on a container carrying a Compose project label | REPORTED, never reaped |
 
 This is the fork lifecycle's `OwnerProvablyDead` doctrine (`internal/forkspace/state.go`) applied to an
@@ -265,6 +263,9 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-04 — retired the v1 label reader (task 2026-11-04-drop-the-old-host-state-readers): a v1 label is unattributed, reported
+  and never reaped, and `parseSupervisorLabel` reads only v2, so its `host` is never empty.
+  `legacyLabelsAreLocal` stays for network recovery.
 - 2026-11-04 — `coop acp` and `coop fork <name> acp` now sweep too. They ran no sweep, so a person who
   only works in an editor kept a killed session's services for as long as the project stayed open: 8
   hours of Postgres and Keycloak on 2026-11-03, reproduced by SIGKILLing a real supervisor. See

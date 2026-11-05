@@ -930,3 +930,42 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	}
 	return reviewServiceSecretsData(workspace, file, data, false)
 }
+
+// A version 4 approval labels nothing on the review prompt and grants nothing: it is not read, and
+// its file stays as it is.
+func TestVersionFourServiceApprovalIsNotRead(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	body := []byte("services:\n  app:\n    image: example/app:1\n    volumes: [\"./tls.key:/key:ro\"]\n")
+	if err := os.WriteFile(compose, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonical, rel, anchor, key, err := serviceApprovalScope(repo, compose, body, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeServiceApproval(root, key, ServiceApproval{Version: 4, Anchor: anchor, Digest: composeDigest(body), File: rel, Workspace: canonical, Paths: []string{"tls.key"}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(root, key+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths, ok := lastApprovalFor(repo, rel); ok || len(paths) != 0 {
+		t.Fatalf("lastApprovalFor read a version 4 approval: %v", paths)
+	}
+	if _, ok := ApprovedServiceSecrets(repo, compose, body); ok {
+		t.Fatal("a version 4 approval granted access")
+	}
+	if after, err := os.ReadFile(filepath.Join(root, key+".json")); err != nil || string(after) != string(before) {
+		t.Fatalf("the approval changed or went: %v", err)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/randid"
 )
 
@@ -239,6 +240,9 @@ func validExecutionID(id string) bool {
 }
 
 func validateExecutionRecord(record ExecutionRecord) error {
+	if processidentity.OldLinuxToken(record.Token) {
+		return fmt.Errorf("project execution record %s names its process in a Linux format from an older Coop, which this Coop no longer reads — it is left as it is; delete it from the project's execution folder once that process is gone", record.ID)
+	}
 	if record.Version != executionRecordVersion || !validExecutionID(record.ID) ||
 		!validExecutionKind(record.Kind) || !validExecutionRole(record.Role) || !filepath.IsAbs(record.Workspace) ||
 		filepath.Clean(record.Workspace) != record.Workspace || record.PID <= 1 ||

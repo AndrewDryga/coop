@@ -7,6 +7,16 @@
 - **Network and file-protection errors say what went wrong.** Help and refusals no longer say a client,
   image or Docker setup is "qualified". They name what `coop net setup` checked or what Docker lacks.
 
+- **Host state older than Coop v12.1.0 is no longer converted or judged.** A box supervisor label
+  of version 1 (`coop.host`) reads as unknown: it is reported and never removed. A Linux start token
+  `linux-proc-v1:` is unverifiable, never a match and never proof that a process is gone; a record
+  holding one stays until you remove it by hand. A filesystem custody record written between
+  2026-11-01 and 2026-11-02 (a helper image and no controller) is refused by name, its protection
+  keeps holding, and a Coop v12.1.0 build retires it. A credential renewal kept by Coop v11.3.0 or
+  earlier (no `received_at`) is refused by name: open the account once with v12.1.0, or run
+  `coop login`. A version 4 service approval no longer labels files "added since your last
+  approval"; it never granted access.
+
 - **Network records an older Coop wrote are refused by name.** An approval or withdrawal filed under
   the keyed project id (Coop v11.3.0 and earlier, approval versions 1 to 3, withdrawal version 1)
   or a run record at version 1 is no longer read. A project that could own one is refused, the

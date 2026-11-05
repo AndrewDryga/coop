@@ -105,8 +105,9 @@ and a token of the other platform's shape (Foreign, decided before any pid is pr
 means nothing to macOS's kernel, nor the reverse; `processidentity.Native`) are all unproven and
 fail closed. A Linux token names the PID namespace its pid was read in (`linux-proc-v2:<inode>:`),
 and one from another namespace, a container's sharing the folder with the host or the reverse, is
-Foreign too, refused as "started on another container or host"; a v1 token an earlier coop wrote
-names none and is judged as before (`processidentity.Same` compares the two shapes). `ProcessIdentityOf` is `processidentity.Inspect` asked through this package's
+Foreign too, refused as "started on another container or host". A v1 token (`linux-proc-v1:`) an
+earlier coop wrote names no namespace and has no known shape: Unknown, never a match
+(`processidentity.Same` is false for it, even beside itself). `ProcessIdentityOf` is `processidentity.Inspect` asked through this package's
 `SignalPID` and `ReadProcStartToken` (`processidentity.Kernel`), so fork tests can stub liveness
 and the fork lifecycle, claims, leases, network records and the box sweep share one answer: a pid
 of 1 or below, or a token of no known shape, is Unknown before any pid is asked, never Gone. There
@@ -211,6 +212,8 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-04 — Linux start token v1 reads as unverifiable, and Linux writes no token when it cannot
+  read its PID namespace (task 2026-11-04-drop-the-old-host-state-readers).
 - 2026-11-04 — retired the `owner-v1` parse (now `ErrOldWorkerState`, a guarded-recovery refusal in
   stop and start) and the move of `<repo>-forks/.coop` (now `RequireNoOldForkRecords`); the stop
   label is always the generation-scoped `v2` owner. Task 2026-11-04-drop-the-old-fork-and-task-record-readers.

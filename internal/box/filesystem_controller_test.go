@@ -77,8 +77,8 @@ func TestFilesystemControllerBindingKeepsAdmissionNameSeparate(t *testing.T) {
 	controller := "coop-fs-controller-" + strings.Repeat("b", 32)
 	boot := "01234567-89ab-cdef-0123-456789abcdef"
 	r := filesystemRecord{Parent: parent}
-	if r.cgroupParent() != "/"+parent || !r.matchesController(fsfilter.Ready{}) {
-		t.Fatal("old recorded admission changed")
+	if r.cgroupParent() != "/"+parent || r.matchesController(fsfilter.Ready{}) {
+		t.Fatal("an admission with no controller changed, or matched a ready receipt")
 	}
 	r.Controller = &filesystemControllerRecord{Name: controller, Ready: &fsfilter.ControllerReady{Birth: fsfilter.ControllerBirth{BootID: boot}}}
 	if r.cgroupParent() != "/"+controller+"/"+parent || r.Parent != parent {

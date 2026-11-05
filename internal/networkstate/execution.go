@@ -273,6 +273,9 @@ func (s *Store) execution(id string) (Execution, error) {
 }
 
 func validExecution(record Execution) error {
+	if processidentity.OldLinuxToken(record.Supervisor.StartToken) {
+		return fmt.Errorf("network run record %s names its supervisor in a Linux format from an older Coop, which this Coop no longer reads — it is left as it is; open its project once with Coop v12.1.0 to clean the run up, or delete execution-%s.json from the network folder if the run is long gone", record.ID, record.ID)
+	}
 	if record.Version != ExecutionVersion || !lowerHex(record.ID, 32) || !lowerHex(record.Epoch, 32) || record.Revision == 0 ||
 		!lowerHex(record.Scope, 64) || !filepath.IsAbs(record.Project) || filepath.Clean(record.Project) != record.Project ||
 		record.Supervisor.PID <= 1 || !processidentity.Stable(record.Supervisor.StartToken) || record.StartedAt.IsZero() || record.Runtime != "docker" ||

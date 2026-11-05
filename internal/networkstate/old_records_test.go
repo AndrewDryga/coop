@@ -242,3 +242,32 @@ func TestOldRecordsWithoutTheKeyRefuseEveryProject(t *testing.T) {
 		t.Fatalf("without the key = %+v, %v; want the old withdrawal named", found, err)
 	}
 }
+
+// A run record an older Linux build wrote names its supervisor in a token shape this Coop no longer
+// reads: reading it gives a named refusal with the fixes, and the record is left as it is.
+func TestExecutionWithAnOldLinuxSupervisorTokenIsRefusedByName(t *testing.T) {
+	s, record := executionFixture(t)
+	path := filepath.Join(s.Path(), "execution-"+record.ID+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored Execution
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Supervisor.StartToken = "linux-proc-v1:boot:123"
+	if data, err = json.Marshal(stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execution(record.ID); err == nil || !strings.Contains(err.Error(), "Linux format") ||
+		!strings.Contains(err.Error(), "v12.1.0") {
+		t.Fatalf("Execution = %v; want a refusal naming the old Linux format and the converting build", err)
+	}
+	if after, err := os.ReadFile(path); err != nil || string(after) != string(data) {
+		t.Fatalf("the refusal changed the run record: %v", err)
+	}
+}

@@ -153,6 +153,9 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 				record.ClaimedAt.IsZero() {
 				return errors.New("invalid human task owner record")
 			}
+			if processidentity.OldLinuxToken(record.ActorStart) {
+				return fmt.Errorf("task %s was claimed by a Coop build that recorded the claiming process in a Linux format this Coop no longer reads — Coop left the claim as it is; release it with Coop v12.1.0 (coop tasks release %s), or, if no agent still works on it, delete its owner record from ~/.local/state/coop/task-leases/v1", id, id)
+			}
 			if record.Actor != claimActorLabel(record.Actor) ||
 				(record.ActorPID != 0) != (record.ActorStart != "") ||
 				(record.ActorPID != 0 && (record.ActorPID <= 1 || !processidentity.Stable(record.ActorStart))) {

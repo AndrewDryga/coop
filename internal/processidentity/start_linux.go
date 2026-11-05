@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// A token names the PID namespace its pid was read in (v2), since a pid means something only there.
-// One without (v1), from an earlier coop, is read as before.
+// A token names the PID namespace its pid was read in, since a pid means something only there. With
+// no readable namespace there is no token.
 const platformTokenPrefix = linuxTokenV2
 
-var nativePrefixes = []string{linuxTokenV2, linuxTokenV1}
+var nativePrefixes = []string{linuxTokenV2}
 
 func platformStartToken(pid int) string {
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
@@ -32,7 +32,7 @@ func platformStartToken(pid int) string {
 	identity := strings.TrimSpace(string(boot)) + ":" + start
 	namespace, ok := namespaceInode(platformPIDNamespace())
 	if !ok {
-		return linuxTokenV1 + identity
+		return ""
 	}
 	return linuxTokenV2 + namespace + ":" + identity
 }

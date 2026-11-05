@@ -24,6 +24,11 @@ const (
 
 var errAccountRenewalUncertain = errors.New("an interrupted credential renewal could not be finished; run coop login")
 
+// errAccountRenewalUndated names a kept answer without an arrival time, as Coop v11.3.0 and earlier
+// kept them. It is left as it is, and refuses like any renewal that cannot be finished.
+var errAccountRenewalUndated = errors.Join(errAccountRenewalUncertain,
+	errors.New("the interrupted renewal was kept by Coop v11.3.0 or earlier, which recorded no arrival time; open this account once with Coop v12.1.0, or run coop login to replace it"))
+
 // accountRefusal is the provider refusing the saved grant of one record (agents.ErrRenewalRefused),
 // which only a new sign-in fixes. Every command reads it to say so without asking the provider, and
 // renewal reads it to stop sending that grant. It names the record it was written for, so any
@@ -225,21 +230,15 @@ func (root *accountAuthorityRoot) settleRenewal(spec accountAuthoritySpec, accou
 		return current, root.clearRenewal()
 	case current.Revoked || current.Revision != pending.Revision:
 		return current, errAccountRenewalUncertain
-	case len(pending.Received) == 0 || pending.ReceivedAt == 0 && keptErrorAnswer(pending.Received):
-		// Nothing kept, or an error answer an earlier version kept (it kept every answer): no grant
-		// was issued, so the old one may be sent again.
+	case len(pending.Received) == 0:
 		return current, root.clearRenewal()
+	case pending.ReceivedAt == 0:
+		return current, errAccountRenewalUndated
 	case spec.Complete == nil:
 		return current, errAccountRenewalUncertain
 	}
-	// An answer kept before arrival times were recorded dates its grant as long expired, so the next
-	// renewal spends the grant it carries instead of trusting its access token.
-	at := time.Unix(0, 0)
-	if pending.ReceivedAt > 0 {
-		at = time.UnixMilli(pending.ReceivedAt)
-	}
 	next := cloneAccountAuthority(current)
-	files, err := spec.Complete(next.Artifacts, pending.Received, at)
+	files, err := spec.Complete(next.Artifacts, pending.Received, time.UnixMilli(pending.ReceivedAt))
 	if files == nil {
 		return current, errors.Join(errAccountRenewalUncertain, err)
 	}
@@ -253,17 +252,6 @@ func (root *accountAuthorityRoot) settleRenewal(spec accountAuthoritySpec, accou
 		return published, err
 	}
 	return published, root.clearRenewal()
-}
-
-// keptErrorAnswer reports a kept answer that is an error document rather than issued credentials.
-func keptErrorAnswer(received []byte) bool {
-	var answer map[string]json.RawMessage
-	if json.Unmarshal(received, &answer) != nil {
-		return false
-	}
-	_, refused := answer["error"]
-	_, issued := answer["access_token"]
-	return refused && !issued
 }
 
 // beginRenewal records a renewal's intent before any provider I/O. It creates the journal

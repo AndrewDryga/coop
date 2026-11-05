@@ -42,8 +42,7 @@ func TestATokenFromAnotherPIDNamespaceIsForeign(t *testing.T) {
 	if !ok || !strings.HasPrefix(token, linuxTokenV2+inode+":") {
 		t.Fatalf("StartToken = %q, want a v2 token naming namespace %s", token, inode)
 	}
-	identity, _ := kernelIdentity(token)
-	old := identity // the v1 shape an earlier coop wrote for this process
+	old := "linux-proc-v1:" + strings.TrimPrefix(token, linuxTokenV2+inode+":") // the shape an earlier coop wrote
 	other := linuxTokenV2 + "1" + strings.TrimPrefix(token, linuxTokenV2+inode)
 	for _, tc := range []struct {
 		name  string
@@ -51,7 +50,7 @@ func TestATokenFromAnotherPIDNamespaceIsForeign(t *testing.T) {
 		want  State
 	}{
 		{"this namespace", token, Match},
-		{"an earlier coop's token", old, Match},
+		{"an earlier coop's token", old, Unknown},
 		{"another namespace", other, Foreign},
 	} {
 		if got := Inspect(pid, tc.token); got != tc.want {
@@ -65,7 +64,7 @@ func TestATokenFromAnotherPIDNamespaceIsForeign(t *testing.T) {
 	if Origin(other) != "another container or host" || Origin(token) != "Linux" {
 		t.Errorf("Origin(other namespace) = %q, Origin(own) = %q", Origin(other), Origin(token))
 	}
-	if !Same(token, old) || Same(token, other) {
-		t.Errorf("Same(v2, v1) = %v, Same(v2, other namespace) = %v; want true, false", Same(token, old), Same(token, other))
+	if Same(token, old) || Same(old, old) || Same(token, other) {
+		t.Errorf("Same(v2, v1) = %v, Same(v1, v1) = %v, Same(v2, other namespace) = %v; want false for all", Same(token, old), Same(old, old), Same(token, other))
 	}
 }

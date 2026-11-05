@@ -100,6 +100,7 @@ secret reachable through a writable bind cannot be approved. `project.Services.R
 grant — it is committed and agent-writable, so it only labels the prompt (`ReviewFile.Requested`),
 and unrequested/new files sort to the top where a human cannot miss them. `lastApprovalFor` scans
 the same repository anchor and Compose path so "new since your last yes" survives a Compose edit.
+It reads version 5 approvals only; a version 4 approval labels nothing and grants nothing.
 
 External or custom-named volumes are a separate, mandatory capability in the same scoped record:
 the terminal review names actual Docker volume names, aggregate RO/RW access, consumers, selected
@@ -129,6 +130,7 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-11-04: `lastApprovalFor` no longer reads version 4 service approvals (task 2026-11-04-drop-the-old-host-state-readers).
 - 2026-11-04: removed `ServiceStartReview.CaseExposed`, which nothing called; `coop up` refuses
   these names through `serviceShadowPlan`'s callers.
 - 2026-10-19: services get covers for every letter-case spelling of hidden files and `.coopignore`

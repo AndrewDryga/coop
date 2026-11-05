@@ -23,6 +23,11 @@ const filesystemLabel = "coop.filesystem.parent"
 var errFilesystemUnsupported = errors.New("this Docker setup does not support kernel filesystem protection")
 var errFilesystemCustodyPending = errors.New("filesystem cleanup requires reconciliation")
 
+// errFilesystemRecordBeforeController names a custody record written on 2026-11-01 and 2026-11-02,
+// when the protection helper ran its own image and no shared controller. It is neither read nor
+// retired here: it stays on disk and its protection keeps holding.
+var errFilesystemRecordBeforeController = errors.New("filesystem custody record from before the shared filesystem controller (builds of 2026-11-01 and 2026-11-02); it is left as it is and its protection keeps holding; let a Coop v12.1.0 build retire it, then use this one")
+
 type filesystemRecord struct {
 	Controller                            *filesystemControllerRecord `json:",omitempty"`
 	Version                               int                         `json:"version"`
@@ -435,32 +440,13 @@ func (a *filesystemAdmission) closeContext(ctx context.Context) error {
 	if err := a.remove(ctx, a.record.Helper); err != nil {
 		return err
 	}
-	if a.record.Image != "" && a.record.Controller != nil {
+	if a.record.Image != "" {
+		// Never reached for a record read from disk (validate refuses it first); this keeps the
+		// record, and so the protection, if a record built in memory ever gets here.
+		if a.record.Controller == nil {
+			return errFilesystemRecordBeforeController
+		}
 		if err := a.retireSharedPolicy(ctx); err != nil {
-			return err
-		}
-	} else if a.record.Image != "" {
-		ref := filesystemRef(a.record.Parent, "recovery")
-		if err := a.remove(ctx, ref); err != nil {
-			return err
-		}
-		command := []string{"abandon", a.record.Parent}
-		if _, err := os.Lstat(filepath.Join(a.dir, "birth.json")); err == nil {
-			command = []string{"release", "/state/birth.json"}
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: a.helperOptions(true), Command: command})
-		ref.ID = id
-		if err != nil {
-			return err
-		}
-		var output bytes.Buffer
-		code, err := a.docker.StartAttached(ctx, ref, nil, &output, &output, nil)
-		if code != 0 || err != nil {
-			return errors.Join(fmt.Errorf("filesystem cleanup failed: %s", output.String()), err)
-		}
-		if err := a.docker.RemoveContainer(ctx, ref); err != nil {
 			return err
 		}
 	}

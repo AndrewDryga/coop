@@ -44,7 +44,7 @@ func TestCurrentProcessIdentity(t *testing.T) {
 // read on is Unknown, never Gone. Only this kernel's own answer makes a pid Gone or Mismatch.
 func TestInspectEveryInputClass(t *testing.T) {
 	native := map[string]string{"linux-proc-v2:": "linux-proc-v2:7:boot:7", "darwin-kinfo-v1:": "darwin-kinfo-v1:7:7"}[platformTokenPrefix]
-	foreign := map[string]string{"linux-proc-v2:": "darwin-kinfo-v1:7:7", "darwin-kinfo-v1:": "linux-proc-v1:boot:7"}[platformTokenPrefix]
+	foreign := map[string]string{"linux-proc-v2:": "darwin-kinfo-v1:7:7", "darwin-kinfo-v1:": "linux-proc-v2:1:boot:7"}[platformTokenPrefix]
 	missing, refused := syscall.ESRCH, syscall.EPERM
 	for _, tc := range []struct {
 		name    string
@@ -100,7 +100,7 @@ func TestInspectEveryInputClass(t *testing.T) {
 // whether that pid is live here or missing: never Gone, Mismatch or Match.
 func TestAnotherSystemsTokenIsForeign(t *testing.T) {
 	own := StartToken(os.Getpid())
-	foreign := map[string]string{"linux-proc-v2:": "darwin-kinfo-v1:1:1", "darwin-kinfo-v1:": "linux-proc-v1:boot:1"}[platformTokenPrefix]
+	foreign := map[string]string{"linux-proc-v2:": "darwin-kinfo-v1:1:1", "darwin-kinfo-v1:": "linux-proc-v2:1:boot:1"}[platformTokenPrefix]
 	if !Native(own) || Native(foreign) || !Stable(foreign) || Native("homemade-v9:1") {
 		t.Fatalf("native: own %q = %v, other platform's %q = %v", own, Native(own), foreign, Native(foreign))
 	}
@@ -112,7 +112,7 @@ func TestAnotherSystemsTokenIsForeign(t *testing.T) {
 	if got := Inspect(1<<30, own); got != Gone {
 		t.Errorf("Inspect(impossible pid, own token) = %v, want gone", got)
 	}
-	for token, want := range map[string]string{"linux-proc-v1:b:1": "Linux", "darwin-kinfo-v1:1:1": "macOS", "homemade-v9:1": ""} {
+	for token, want := range map[string]string{"linux-proc-v1:b:1": "", "linux-proc-v2:1:b:1": "Linux", "darwin-kinfo-v1:1:1": "macOS", "homemade-v9:1": ""} {
 		if got := System(token); got != want {
 			t.Errorf("System(%q) = %q, want %q", token, got, want)
 		}
@@ -166,14 +166,15 @@ func TestOnlyGoneAndMismatchProveGone(t *testing.T) {
 	}
 }
 
-// Two tokens name one process when what the kernel says about it matches, whichever shape wrote
-// each: a v2 Linux token and its earlier v1 form match, two namespaces never do.
-func TestSameComparesTheProcessNotTheShape(t *testing.T) {
+// Two tokens name one process when what the kernel says about it matches; two namespaces never do,
+// and a token of no known shape, a v1 Linux token included, names none, even beside itself.
+func TestSameComparesTheProcess(t *testing.T) {
 	for _, tc := range []struct {
 		a, b string
 		want bool
 	}{
-		{"linux-proc-v2:4026531836:boot:42", "linux-proc-v1:boot:42", true},
+		{"linux-proc-v2:4026531836:boot:42", "linux-proc-v1:boot:42", false},
+		{"linux-proc-v1:boot:42", "linux-proc-v1:boot:42", false},
 		{"linux-proc-v2:4026531836:boot:42", "linux-proc-v2:4026531836:boot:42", true},
 		{"linux-proc-v2:4026531836:boot:42", "linux-proc-v2:4026532000:boot:42", false},
 		{"linux-proc-v1:boot:42", "linux-proc-v1:boot:43", false},
@@ -186,5 +187,19 @@ func TestSameComparesTheProcessNotTheShape(t *testing.T) {
 	}
 	if System("linux-proc-v2:1:boot:42") != "Linux" || !Stable("linux-proc-v2:1:boot:42") {
 		t.Error("a v2 Linux token is not a stable Linux token")
+	}
+}
+
+// A Linux v1 token names no PID namespace. It is unverifiable on every platform: Unknown for a live
+// pid and for a missing one, never a match and never proof the process is gone.
+func TestLinuxV1TokenIsUnverifiable(t *testing.T) {
+	v1 := "linux-proc-v1:boot:42"
+	if Stable(v1) || Native(v1) || System(v1) != "" || Same(v1, v1) {
+		t.Fatalf("v1 token: stable %v, native %v, system %q, same as itself %v; want none", Stable(v1), Native(v1), System(v1), Same(v1, v1))
+	}
+	for _, pid := range []int{os.Getpid(), 1 << 30} {
+		if got := Inspect(pid, v1); got != Unknown || got.ProvesGone() {
+			t.Errorf("Inspect(%d, %q) = %v, want unknown", pid, v1, got)
+		}
 	}
 }

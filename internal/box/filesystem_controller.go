@@ -343,10 +343,7 @@ func (r filesystemRecord) cgroupParent() string {
 	return "/" + r.Parent
 }
 func (r filesystemRecord) matchesController(ready fsfilter.Ready) bool {
-	if r.Controller == nil {
-		return ready.Controller == ""
-	}
-	return r.Controller.Ready != nil && ready.Controller == r.Controller.Name && ready.BootID == r.Controller.Ready.Birth.BootID
+	return r.Controller != nil && r.Controller.Ready != nil && ready.Controller == r.Controller.Name && ready.BootID == r.Controller.Ready.Birth.BootID
 }
 
 // The owner has already exited and all consumers are absent. The warm

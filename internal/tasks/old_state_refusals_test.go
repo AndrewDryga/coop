@@ -156,3 +156,14 @@ func TestTaskOwnerRecordVersion1IsRefusedByName(t *testing.T) {
 		t.Fatalf("the version 1 owner record changed: %s", after)
 	}
 }
+
+// A claim an older Linux build recorded names its process in a token shape this Coop no longer
+// reads. It is refused by name with the command that clears it, never as a malformed record.
+func TestTaskOwnerRecordWithAnOldLinuxTokenIsRefusedByName(t *testing.T) {
+	record := humanOwnerRecordForTest("claimed-on-linux")
+	record.Actor, record.ActorPID, record.ActorStart = "codex", 4242, "linux-proc-v1:boot:123"
+	err := validateTaskOwnerRecord(record, "claimed-on-linux")
+	if err == nil || !strings.Contains(err.Error(), "Linux format") || !strings.Contains(err.Error(), "coop tasks release claimed-on-linux") {
+		t.Fatalf("validateTaskOwnerRecord = %v; want a refusal naming the old Linux format and the release command", err)
+	}
+}

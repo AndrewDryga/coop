@@ -511,7 +511,7 @@ func TestForkWorkerStateWireFormat(t *testing.T) {
 		// name, never read as no worker, so stop reports it unchanged.
 		{name: "owner-v1 record", raw: "owner-v1\n42\nlinux-proc-v1:boot:123\n", wantIs: ErrOldWorkerState},
 		{name: "owner-v1 header missing newline", raw: "owner-v1", wantIs: ErrOldWorkerState},
-		{name: "generation scoped running", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\nlinux-proc-v1:boot:123\n", want: WorkerState{Pid: 42, Token: "linux-proc-v1:boot:123", Generation: generation}},
+		{name: "generation scoped running", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n42\n" + starttoken.Stale() + "\n", want: WorkerState{Pid: 42, Token: starttoken.Stale(), Generation: generation}},
 		{name: "headerless worker", raw: "42\nlinux-proc-v1:boot:123\n", bad: true},
 		// Earlier Coop builds also wrote start reservations and cleanup markers. Nothing writes
 		// them now, and they never become an identity: stop and start refuse them unchanged.
@@ -714,8 +714,8 @@ func TestConfirmWorkerAcceptsOnlyItsOwnRecord(t *testing.T) {
 	}{
 		{name: "own record"},
 		{name: "missing", wantErr: "no lifecycle record names this process"},
-		{name: "another pid", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n2147483646\nlinux-proc-v1:1:2\n", wantErr: "names another process"},
-		{name: "same pid different token", raw: fmt.Sprintf("%s%s%s\n%d\nlinux-proc-v1:replacement:1\n", OwnerStateV2, GenerationTag, generation, os.Getpid()), wantErr: "names another process"},
+		{name: "another pid", raw: OwnerStateV2 + GenerationTag + string(generation) + "\n2147483646\n" + starttoken.Stale() + "\n", wantErr: "names another process"},
+		{name: "same pid different token", raw: fmt.Sprintf("%s%s%s\n%d\n%s\n", OwnerStateV2, GenerationTag, generation, os.Getpid(), starttoken.Stale()), wantErr: "names another process"},
 		{name: "malformed", raw: testOwnerHeader + "broken\n", wantErr: "invalid detached worker pid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

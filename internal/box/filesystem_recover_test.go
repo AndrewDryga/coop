@@ -246,6 +246,32 @@ func TestFilesystemRecordRejectsUnownedResources(t *testing.T) {
 	}
 }
 
+// A custody record from before the shared controller (a helper image, no controller) is refused by
+// name, by the reader and by recovery, and left exactly as it is, so its protection keeps holding.
+func TestFilesystemRecordBeforeTheControllerIsRefusedByName(t *testing.T) {
+	dir := t.TempDir()
+	parent := "coop-fs-" + strings.Repeat("a", 32)
+	repo := t.TempDir()
+	record := filesystemRecord{Version: 1, Parent: parent, Endpoint: "unix:///runtime.sock", DaemonID: "daemon", Workspace: repo, Supervisor: supervisorLabelValue(workspaceScope(repo), os.Getpid()), Helper: filesystemRef(parent, "owner"), Image: "sha256:" + strings.Repeat("b", 64)}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "record.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFilesystemRecord(dir); !errors.Is(err, errFilesystemRecordBeforeController) {
+		t.Fatalf("readFilesystemRecord = %v, want the refusal by name", err)
+	}
+	if removed, err := recoverFilesystemAdmission(t.Context(), runtime.Runtime{Name: "docker"}, dir, nil, repo, "host"); removed || !errors.Is(err, errFilesystemRecordBeforeController) {
+		t.Fatalf("recovery = (%t, %v), want the refusal by name and nothing removed", removed, err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "record.json"))
+	if err != nil || string(after) != string(data) {
+		t.Fatalf("the record changed or went: %v", err)
+	}
+}
+
 func TestFilesystemOverlappingRootsRefused(t *testing.T) {
 	for _, roots := range [][]string{{"/repo", "/repo"}, {"/repo", "/repo/sub"}, {"/repo/sub", "/repo"}} {
 		if nonoverlappingFilesystemRoots(roots) == nil {
