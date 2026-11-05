@@ -421,6 +421,11 @@ func (h *Helper) Close() error {
 // already assembled command, shared with the exact-owned Docker adapter.
 func runInterruptibleCommand(ctx context.Context, cmd *exec.Cmd) (int, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// A canceled caller must not launch anything: killing right after Start still lets the child
+	// act (a `compose up` can create containers) before SIGTERM lands.
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("%s: %w", cmd.Path, err)
 	}

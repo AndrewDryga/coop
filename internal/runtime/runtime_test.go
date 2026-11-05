@@ -273,6 +273,18 @@ func TestRunInterruptible(t *testing.T) {
 	}
 }
 
+// A canceled caller must not launch the process at all; a kill right after Start lost the race
+// to a fake `compose up` that recorded itself. A missing binary makes "never started" observable:
+// had Start run, the error would name the binary instead of the cancellation.
+func TestRunInterruptibleRefusesToStartWhenAlreadyCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	code, err := (Runtime{Name: filepath.Join(t.TempDir(), "missing")}).RunInterruptible(ctx, nil, nil, nil)
+	if code != -1 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled RunInterruptible -> code=%d err=%v, want -1 and context.Canceled before Start", code, err)
+	}
+}
+
 func TestRunInterruptibleCancelKillsGroup(t *testing.T) {
 	// Canceling the context must tear down the WHOLE process group, not just the direct child:
 	// sh backgrounds `sleep 30` (a grandchild), records its pid, then waits. A child-only kill
