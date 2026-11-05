@@ -848,3 +848,17 @@ func TestNativeMountCannotWriteUnreservedImmutablePrimary(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthorityPathMissingTailDoesNotHideDanglingAlias(t *testing.T) {
+	root := t.TempDir()
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(filepath.Join(root, "removed"), alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{alias, filepath.Join(alias, "nested")} {
+		if _, err := resolveAuthorityPath(source); err == nil {
+			t.Fatal("dangling alias reconstructed as an unrelated missing tail")
+		}
+	}
+}
+
