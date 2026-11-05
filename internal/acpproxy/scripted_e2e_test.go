@@ -290,7 +290,8 @@ func TestScriptedACPProviderSwitchIsServedWarm(t *testing.T) {
   "providers": {
     "claude": [[
       {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}},
-      {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}}
+      {"method":"session/new","result":{"sessionId":"S1","configOptions":[]}},
+      {"method":"session/set_config_option","result":{"configOptions":[]}}
     ], [
       {"method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}
     ]],
@@ -331,6 +332,13 @@ func TestScriptedACPProviderSwitchIsServedWarm(t *testing.T) {
 	}
 	if !strings.Contains(text, "replay: codex@default is live on codex-acp fixture") {
 		t.Fatalf("the trace does not name the adapter the switch now runs on:\n%s", text)
+	}
+	// Coop sets Claude's mode right after session/new, so the lead's script answers it. When it did not,
+	// the lead died on every run and the test passed only while the switch beat the crash-loop limit.
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "exited after") && strings.Contains(line, ": unexpected") {
+			t.Fatalf("a box died during the switch: %s\nstderr:\n%s", line, proc.stderr.String())
+		}
 	}
 }
 
