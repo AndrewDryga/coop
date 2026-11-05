@@ -35,6 +35,11 @@ func PrepareNativeHome(ctx context.Context, cfg *config.Config, rt runtime.Runti
 	if acp {
 		source = acpSharedDir(cfg, provider)
 	} else {
+		// The lock sits beside the account's folder, so a name that leaves it would write the lock
+		// wherever it points. Refuse it first.
+		if name := account; name != "" && !accountNameValid(name) {
+			return "", fmt.Errorf("invalid native account selection")
+		}
 		release, err := lockAccountHomes(ctx, HistoryAccountRoot(cfg, provider, account), false)
 		if err != nil {
 			return "", err

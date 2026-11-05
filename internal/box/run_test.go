@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -2616,6 +2617,13 @@ func TestRunRefusesUnsafeCredentialProfileBeforeRuntime(t *testing.T) {
 // An account name becomes a folder name, so one that climbs out of the provider's folders stops the
 // launch before the runtime, and whatever it names stays as it was.
 func TestRunRefusesAnAccountNameOutsideItsFolderBeforeRuntime(t *testing.T) {
+	for _, name := range []string{"../../../outside", "../../../fresh/deep/dir"} {
+		t.Run(name, func(t *testing.T) { refusesAccountNameOutsideItsFolder(t, name) })
+	}
+}
+
+// A refused name writes nothing anywhere: not in the folder it names, and no lock beside it.
+func refusesAccountNameOutsideItsFolder(t *testing.T, name string) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside")
 	if err := os.Mkdir(outside, 0o755); err != nil {
@@ -2626,7 +2634,7 @@ func TestRunRefusesAnAccountNameOutsideItsFolderBeforeRuntime(t *testing.T) {
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime-args")
 	cfg := &config.Config{ConfigDir: filepath.Join(root, "agents"), HomeInBox: "/home/node", Egress: "none"}
-	cfg.SetActiveProfile("codex", "../../../outside")
+	cfg.SetActiveProfile("codex", name)
 	code, err := Run(cfg, recorderRuntime(t, recorder), RunSpec{
 		Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"true"},
 		Homes: true, Agent: "codex", Batch: true, Quiet: true,
@@ -2643,6 +2651,16 @@ func TestRunRefusesAnAccountNameOutsideItsFolderBeforeRuntime(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
 		t.Fatalf("the launch wrote into the folder the name points at: %v, %v", entries, err)
+	}
+	var made []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && path != root && path != outside && !strings.HasPrefix(path, filepath.Join(root, "agents")+string(filepath.Separator)) && path != filepath.Join(root, "agents") {
+			made = append(made, path)
+		}
+		return nil
+	})
+	if len(made) != 0 {
+		t.Fatalf("a refused name wrote outside the settings folder: %q", made)
 	}
 }
 
