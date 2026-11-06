@@ -243,6 +243,30 @@ owned_jobs() {
   done
 } 2>/dev/null
 
+# Background work that never exits by itself: a daemon the provider left behind, such as the epmd an
+# Erlang test starts. Either it left the provider's session and pointed stdin, stdout and stderr at
+# /dev/null, as a daemon does when it detaches, or it is a server known to run until stopped. Waiting
+# the drain window for epmd left a fork idle 15 minutes and then handed off a finished task
+# (2026-11-05). Work the agent started keeps its window: it stays in the provider's session, or it
+# still writes somewhere. Names are the provider's to choose, so a name only ever stops a job sooner.
+known_daemons="epmd ssh-agent gpg-agent dbus-daemon"
+daemon_jobs() {
+  for pid in $1; do
+    IFS= read -r comm < "/proc/$pid/comm" || continue
+    case " $known_daemons " in *" $comm "*) echo "$pid"; continue ;; esac
+    IFS= read -r stat < "/proc/$pid/stat" || continue
+    fields=${stat##*) }
+    [ "$fields" != "$stat" ] || continue
+    set -- $fields
+    [ "$#" -ge 4 ] && [ "$4" != "$provider" ] || continue
+    quiet=1
+    for fd in 0 1 2; do
+      [ "$(readlink "/proc/$pid/fd/$fd")" = /dev/null ] || quiet=
+    done
+    [ -z "$quiet" ] || echo "$pid"
+  done
+} 2>/dev/null
+
 # Reap ONLY the listed pids. terminate_jobs deliberately KILLs everything still live after its
 # grace period, which is right at shutdown but wrong here — genuine agent background work must
 # keep its full drain window.
@@ -300,6 +324,10 @@ handoff_wait=${COOP_DESCENDANT_TIMEOUT:-900}
 case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=900;; esac
 IFS=. read -r now _ < /proc/uptime
 deadline=$(( now + handoff_wait ))
+# A daemon gets a few seconds to exit by itself before it is stopped, and earns no handoff: it is
+# not work the task waits for, so the provider's result stands.
+daemon_grace=10
+daemon_deadline=
 saw_live_job=
 quiescence_rescan=
 reaped_consult=
@@ -317,6 +345,22 @@ while :; do
     reaped_pids="$reaped_pids $owned"
   fi
   jobs=$(without_pids "$jobs" "$reaped_pids")
+  daemons=$(daemon_jobs "$jobs")
+  jobs=$(without_pids "$jobs" "$daemons")
+  # A daemon stays while other work runs, since that work may use it, as a test run uses its epmd.
+  # Once only daemons are left, they get a few seconds to exit and are then stopped.
+  if [ -z "$jobs" ] && [ -n "$daemons" ]; then
+    IFS=. read -r now _ < /proc/uptime
+    [ -n "$daemon_deadline" ] || daemon_deadline=$(( now + daemon_grace ))
+    if [ "$now" -lt "$daemon_deadline" ]; then
+      sleep 1
+      continue
+    fi
+    echo "The provider left a daemon running, which never exits by itself — stopping: $(job_names "$daemons")" >&2
+    reap_jobs "$daemons"
+    reaped_pids="$reaped_pids $daemons"
+    continue
+  fi
   if [ -n "$jobs" ]; then
     # Announce the wait ONCE. Without this the box is silent for the whole window, which reads as a
     # hung loop rather than a drain, and the operator cannot tell what is holding it open.

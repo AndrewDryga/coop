@@ -141,6 +141,18 @@
   with the finding recorded. A fork run that fails after parking a task for a decision now leaves
   it parked instead of reopening it.
 
+- **A loop no longer sits 15 minutes on a daemon a test left behind.** When the agent's test
+  started a daemon such as `epmd -daemon`, the box waited the whole 15-minute window for it after the
+  provider exited, then re-ran a task that was already finished. A daemon left behind now gets 10
+  seconds once nothing else is running, is then stopped, and the log names it. Real background work,
+  such as a test run still going, keeps its full wait.
+
+- **`coop fork ls` shows a fork whose box is waiting to start its services.** Such a fork read as
+  "background loop running" for as long as its box waited for other boxes, and only the fork's log
+  said why nothing happened. It now reads "waiting to start services", with the boxes it waits for
+  beneath it, and goes back to running when the wait ends. `coop fork ls --json` reports the state
+  `launch-wait` and the boxes in `launch_wait`.
+
 - **Forks started at the same moment no longer break each other's services.** Every start removes
   the Coop networks no container uses, and it missed containers that were created but not started
   yet. So one fork's start could remove the services network another fork had just prepared, and

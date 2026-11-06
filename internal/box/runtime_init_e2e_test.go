@@ -92,6 +92,46 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 		}
 	})
 
+	// A daemon the provider leaves behind, as an Erlang test's `epmd -daemon` does, never exits by
+	// itself: it is stopped a few seconds after the provider exits instead of held for the whole drain
+	// window, the log names it, and nothing is handed off, so the provider's result stands. A fork
+	// idled 15 minutes on epmd and then re-ran a finished task (2026-11-05).
+	daemon := "setsid setsid sh -c 'exec </dev/null >/dev/null 2>&1; while :; do sleep 1; done' & "
+	const stopped = "The provider left a daemon running, which never exits by itself — stopping: "
+	supervised := func(t *testing.T, command string) (int, string, time.Duration) {
+		t.Helper()
+		var stderr strings.Builder
+		code, err := Run(cfg, rt, RunSpec{
+			Image: image, Repo: repo, Workdir: "/workspace", Batch: true, Quiet: true, Stderr: &stderr,
+			Cmd: []string{"sh", "-c", command + "date +%s.%N > /workspace/provider-exit"}, SuperviseDescendants: true,
+			ExtraArgs: []string{"-e", "COOP_DESCENDANT_TIMEOUT=120"},
+		})
+		finished := time.Now()
+		if err != nil {
+			t.Fatalf("supervised run: %v\nstderr:\n%s", err, stderr.String())
+		}
+		return code, stderr.String(), runtimeInitPhaseSince(t, filepath.Join(repo, "provider-exit"), finished)
+	}
+
+	t.Run("detached daemon is stopped instead of drained", func(t *testing.T) {
+		code, stderr, supervision := supervised(t, daemon)
+		if code != 0 || !strings.Contains(stderr, stopped) {
+			t.Fatalf("a daemon left behind = exit %d, stderr:\n%s\nwant exit 0 and %q", code, stderr, stopped)
+		}
+		// The grace is 10s, then TERM → 1s → KILL and one rescan: well inside the 120s window.
+		if supervision > 40*time.Second {
+			t.Fatalf("a daemon held the box %s after the provider exited; want it stopped after its grace", supervision)
+		}
+	})
+
+	t.Run("a daemon stays while real work drains", func(t *testing.T) {
+		code, stderr, _ := supervised(t, daemon+"setsid setsid sh -c 'sleep 3; echo worked > /workspace/worked' & ")
+		if code != DescendantsDrainedExit || !strings.Contains(stderr, stopped) {
+			t.Fatalf("a daemon beside real work = exit %d, stderr:\n%s\nwant exit %d and %q", code, stderr, DescendantsDrainedExit, stopped)
+		}
+		awaitRuntimeInitMarker(t, filepath.Join(repo, "worked"), "worked\n")
+	})
+
 	t.Run("forwarder does not delay a failed provider", func(t *testing.T) {
 		start := time.Now()
 		code, err := run("exit 7", "-e", "COOP_FORWARD=45678:missing:45678", "-e", "COOP_DESCENDANT_TIMEOUT=1")
