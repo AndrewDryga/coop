@@ -206,6 +206,10 @@ func alreadyCommittedCause(title, commit string) string {
 	return wrappedLoopText(fmt.Sprintf("%s is linked to %s in this branch. Check its work before marking it done.", title, commit), 6)
 }
 
+func extraBindingsCause(e *tasks.ExtraBindingsError) string {
+	return wrappedLoopText(e.Cause()+" A final review cannot reopen it, or any task committed before it, until only one commit carries that trailer. "+e.Remedy()+".", 6)
+}
+
 // printTaskCompleted marks an accepted completion. It says the task finished, not that it passed
 // the final review — that verdict is the run's, at the end.
 func printTaskCompleted(task taskLine) {

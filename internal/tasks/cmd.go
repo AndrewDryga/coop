@@ -1062,6 +1062,11 @@ func trustedCompletionError(err error, t Item, forceClose bool) error {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), commits.Cause(),
 			[2]string{"", commits.Remedy() + ", then retry: " + retry})
 	}
+	var extra *ExtraBindingsError
+	if errors.As(err, &extra) {
+		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), extra.Cause(),
+			[2]string{"", extra.Remedy() + ", then retry: " + retry})
+	}
 	var checklist *IncompleteChecklistError
 	if errors.As(err, &checklist) {
 		return &checklistRefusalError{usage: checklistUsage(checklist, t), checklist: checklist}

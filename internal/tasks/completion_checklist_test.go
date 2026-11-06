@@ -88,6 +88,55 @@ func TestDoneRefusalShowsOpenItemsAndWhereToTickThem(t *testing.T) {
 	}
 }
 
+// A follow-up commit carrying the task's own trailer is refused when the task is closed, not later,
+// when a final review's reopen of it (or of an older task) fails on the second binding. Dropping the
+// follow-up's trailer lets the same close through, and the loop's startup names the task too.
+func TestDoneRefusesASecondBinding(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, git := gitRepo(t)
+	root := t.TempDir()
+	id := "fix-login-retries"
+	git("commit", "-q", "--allow-empty", "-m", "Fix login retries\n\nCoop-Task: "+id)
+	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap\n\nCoop-Task: "+id)
+	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	taskWithCompletedChecklist(t, root, StateInProgress, id)
+	taskWithCompletedChecklist(t, root, StateInProgress, "bound-once")
+	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
+
+	extra, err := ExtraBindings(repo, []string{root})
+	if err != nil || len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 2 {
+		t.Fatalf("startup report = %+v, %v; want only %s with 2 commits", extra, err, id)
+	}
+	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", "done", claimOptions{project: repo})
+	var usage *ui.UsageError
+	if code == 0 || !errors.As(err, &usage) {
+		t.Fatalf("done = %d, %v; want the drawn refusal", code, err)
+	}
+	got := usage.Render(ui.Palette{})
+	for _, want := range []string{"Could not complete " + id, "has 2 commits carrying \"Coop-Task: " + id + "\"",
+		second + " by ", first + " by ", "Make the follow-up unbound by dropping its trailer, or file a new task for that work, then retry: coop tasks done " + id} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal omitted %q:\n%s", want, got)
+		}
+	}
+	if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateInProgress {
+		t.Fatal("refused task moved")
+	}
+	// A box's tasks_complete on another task takes the same path.
+	box, _ := mustCurrentTask(t, root, id)
+	if err := CompleteBoxTask(repo, root, box, ClaimActor{}); !errors.As(err, new(*ExtraBindingsError)) {
+		t.Fatalf("box completion = %v; want the second binding refused", err)
+	}
+
+	git("reset", "-q", "--soft", "HEAD~2")
+	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap")
+	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("done after the follow-up was unbound = %d, %v", code, err)
+	}
+}
+
 // Authority and cleanup tests need otherwise-completable tasks; tests of a missing or
 // unfinished checklist keep taskForLease or write their own metadata.
 func taskWithCompletedChecklist(t *testing.T, root, state, id string) Item {

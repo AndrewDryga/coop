@@ -90,6 +90,13 @@ because the pending subject was archived before it ran.
 `TestProviderScriptedLoopPendingReviewRejectsAForgedSubjectCommit` proves both halves end to end:
 the forging iteration is rejected, and the next loop counts two commits and starts no reviewer.
 
+**One binding per task is checked when a task closes, not when a review fails on it.** A review
+reopen (`CaptureAuditReopen`) needs exactly one reachable binding for its subject and for every task
+committed after it, so a second binding silently accepted at close loses a later review's verdict.
+`completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) refuses a
+task with more than one with `ExtraBindingsError`, and the loop's startup names every queued task
+that already has more (`tasks.ExtraBindings`) before any review runs.
+
 The single-writer rule for a loop's checkout still covers **commits**, not just file edits — for two
 narrower reasons now instead of one. A commit that touches a task this iteration also leases,
 finishes, reopens, or moves still destroys that iteration's completion exactly as before. And even a
@@ -164,6 +171,8 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-11-05 — host completion refuses a second binding and loop startup lists multi-bound tasks
+  (task 2026-11-05-refuse-a-second-coop-task-binding-when-it-is-mad).
 - 2026-11-05 — the refusal names each offending commit, task id and reason, and the retry command
   (task 2026-11-05-name-the-foreign-commit-when-a-loop-rejects-a-co). Kept rejecting host-closed
   tasks' bindings: a box's `tasks_complete` on another task writes the same receipt `coop tasks done`

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -413,6 +414,11 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	if current.State == StateDone {
 		_, alreadyAccepted = readLeaseCompletionReceipt(authority, current.Dir)
 	}
+	if !alreadyAccepted {
+		if err := refuseExtraBindings(project, current.ID); err != nil {
+			return nil, err
+		}
+	}
 	// A loop's final review running now would enroll this close, and its reviewer reopens a task with
 	// skipped items, silently undoing the person's decision. So the person waits for it to end.
 	if waived != nil && !alreadyAccepted {
@@ -506,6 +512,77 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		return waived, fmt.Errorf("task %s is done, but its log.md could not record the forced close: %w", current.ID, err)
 	}
 	return waived, nil
+}
+
+// ExtraBindingsError refuses to close a task whose history already holds more than one commit with
+// its Coop-Task trailer. A final review can reopen a task only while it, and every task committed
+// after it, has exactly one, so a second binding accepted now loses a later review's verdict.
+type ExtraBindingsError struct {
+	TaskID  string
+	Found   int
+	Commits []string // "<short id> by <author>", the first few
+}
+
+func (e *ExtraBindingsError) facts(task string) string {
+	return fmt.Sprintf("%s %s has %d commits carrying %q: %s", task,
+		bindingLabel(e.TaskID), e.Found, CoopTaskTrailer+": "+e.TaskID, strings.Join(e.Commits, ", "))
+}
+
+func (e *ExtraBindingsError) Error() string {
+	return e.facts("task") + "; a task binds one commit, so make the follow-up unbound by dropping its trailer, or file a new task for that work"
+}
+
+// Cause is the refusal as a sentence.
+func (e *ExtraBindingsError) Cause() string { return e.facts("Task") + ". A task binds one commit." }
+
+// Remedy keeps the follow-up's work and drops only the binding it should not carry.
+func (e *ExtraBindingsError) Remedy() string {
+	return "Make the follow-up unbound by dropping its trailer, or file a new task for that work"
+}
+
+// refuseExtraBindings is the binding count a review reopen requires, checked when a task is closed
+// rather than when a review later fails on it. No repository, or no commit yet, has nothing to
+// count; a history Coop cannot walk is left to the checks that need it, which fail closed.
+func refuseExtraBindings(project, id string) error {
+	repo, head := auditHistory(project)
+	if repo == "" || head == "" {
+		return nil
+	}
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok || len(bindings[id]) < 2 {
+		return nil
+	}
+	return extraBindings(repo, id, bindings[id])
+}
+
+func extraBindings(repo, id string, shas []string) *ExtraBindingsError {
+	return &ExtraBindingsError{TaskID: id, Found: len(shas), Commits: describeTaskCommits(repo, shas)}
+}
+
+// ExtraBindings lists, sorted, the queued tasks with more than one commit reachable from HEAD
+// carrying their Coop-Task trailer — the refusal each would get at completion. The loop names them
+// before a final review spends a run on a verdict the host could not apply. A history Coop cannot
+// walk lists nothing here; the checks that need it fail closed on their own.
+func ExtraBindings(repo string, hosts []string) ([]*ExtraBindingsError, error) {
+	snapshot, err := QueueSnapshot(hosts)
+	if err != nil {
+		return nil, err
+	}
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	if head == "" {
+		return nil, nil
+	}
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok {
+		return nil, nil
+	}
+	var extra []*ExtraBindingsError
+	for _, id := range slices.Sorted(maps.Keys(snapshot)) {
+		if shas := bindings[id]; len(shas) > 1 {
+			extra = append(extra, extraBindings(repo, id, shas))
+		}
+	}
+	return extra, nil
 }
 
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before

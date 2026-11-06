@@ -10,6 +10,12 @@
   `coop tasks ls` lists todo tasks in that order and marks high and low ones, and
   `coop tasks lint` names any other value. A task without the field is normal and keeps its place.
 
+- **`coop tasks done` refuses a task with two commits carrying its `Coop-Task` trailer.** A
+  follow-up commit with the same trailer used to be accepted, and the problem only surfaced when a
+  later final review tried to reopen that task or an older one: the host refused the verdict and the
+  review was lost. Closing such a task now names both commits and says to drop the trailer from the
+  follow-up or file a new task for that work. `coop loop` also lists every queued task that already
+  has more than one such commit when it starts, before any review runs.
 - **A rejected loop completion says which commit broke it.** "Task completion rejected" used to say
   only that the commit range did not verify one task binding. It now names each commit and task id
   that broke it and why that task counts (for example, it moved to done during this attempt, or one

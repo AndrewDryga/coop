@@ -610,6 +610,42 @@ func TestLoopRejectionNamesTheForeignCommit(t *testing.T) {
 	}
 }
 
+// The loop names a task with a second binding when it starts, before any review: a final review
+// cannot reopen that task, or any task committed before it, so its verdict would be lost.
+func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	git("commit", "--allow-empty", "-m", "Ship it\n\nCoop-Task: shipped")
+	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	git("commit", "--allow-empty", "-m", "Follow up\n\nCoop-Task: shipped")
+	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "shipped", "task.md"), "# Shipped\n- [x] verified\n")
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "next", "task.md"), "# Next\n- [ ] work\n")
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	refusal := &box.LaunchRefused{Err: errors.New("stop after startup")}
+	c.boxRun = func(box.RunSpec) (int, error) { return -1, refusal }
+	var err error
+	output := captureStderr(t, func() {
+		_, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+	})
+	if !errors.Is(err, refusal) {
+		t.Fatalf("loop = %v; want it stopped at the first launch\n%s", err, output)
+	}
+	flat := strings.Join(strings.Fields(output), " ")
+	for _, want := range []string{"This task has more than one commit", `Task shipped has 2 commits carrying "Coop-Task: shipped": ` + second + " by ", first + " by ",
+		"A final review cannot reopen it", "Make the follow-up unbound by dropping its trailer", "coop tasks path shipped"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("startup omitted %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestAssignedCompletionFeedbackRejectsInvalidBindings(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

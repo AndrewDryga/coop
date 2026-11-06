@@ -637,6 +637,16 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			alreadyCommittedCause(taskTitle(hosts, t.ID), t.Commit),
 			[2]string{"Task:", "coop tasks path " + t.ID})
 	}
+	// A final review can reopen a task only while it and every task committed after it have one
+	// binding, so a second one is named now, not after a review's verdict is lost to it.
+	extra, err := tasks.ExtraBindings(repo, hosts)
+	if err != nil {
+		return 1, err
+	}
+	for _, e := range extra {
+		ui.Alert("This task has more than one commit", extraBindingsCause(e),
+			[2]string{"Task:", "coop tasks path " + e.TaskID})
+	}
 	fails, waits, retries, handoffs, timeouts, stalls := 0, 0, 0, 0, 0, 0
 	completionRepairs := map[string]int{}
 	// Automatic retries must not reclassify an earlier attempt's edits as inherited work.
