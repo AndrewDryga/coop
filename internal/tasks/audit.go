@@ -844,8 +844,9 @@ func restoreTaskMetadata(taskDir string, snapshots map[string]taskMetadataSnapsh
 // rejectUnownedCompletions restores folders this iteration moved without owning their lease. A
 // foreign-held folder belongs to another live controller and is ignored. After both locks are
 // acquired, only a matching host-only completion receipt proves a released foreign controller
-// finalized the folder; provider-writable task metadata is never ownership evidence.
-func rejectUnownedCompletions(tasks []QueuedTask, assigned QueuedTask) ([]string, error) {
+// finalized the folder; provider-writable task metadata is never ownership evidence. A review's
+// own subjects are restored the same way, under a note that names the archive change instead.
+func rejectUnownedCompletions(tasks []QueuedTask, assigned QueuedTask, subjects []string) ([]string, error) {
 	var rejected []string
 	var errs []error
 	for _, task := range tasks {
@@ -865,7 +866,11 @@ func rejectUnownedCompletions(tasks []QueuedTask, assigned QueuedTask) ([]string
 			continue
 		}
 		rejected = append(rejected, task.Item.ID)
-		errs = append(errs, restoreUnownedCompletion(QueuedTask{Root: task.Root, Item: current}), lock.clearCompleted(), lock.release())
+		restore := restoreUnownedCompletion
+		if slices.Contains(subjects, task.Item.ID) {
+			restore = restoreChangedReviewSubject
+		}
+		errs = append(errs, restore(QueuedTask{Root: task.Root, Item: current}), lock.clearCompleted(), lock.release())
 	}
 	slices.Sort(rejected)
 	return rejected, errors.Join(errs...)
@@ -2839,6 +2844,24 @@ func restoreUnownedCompletion(task QueuedTask) error {
 	return errors.Join(
 		AppendTaskLogStrict(dir, note),
 		NormalizeTaskState(id, dir, "in progress — completion rejected", "work this task only when it is assigned", "completion was rejected as unowned", "another iteration moved this task without its lease"),
+	)
+}
+
+// restoreChangedReviewSubject restores a final-review subject whose archived folder changed while
+// the review ran. The review's verdict no longer covers what is in the folder, but nobody needs to
+// have moved it, so the note names the change. The next loop start returns it to todo.
+func restoreChangedReviewSubject(task QueuedTask) error {
+	id := task.Item.ID
+	if task.Item.State == StateDone {
+		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
+			return fmt.Errorf("restore review subject %s: %w", id, err)
+		}
+	}
+	dir := filepath.Join(task.Root, StateInProgress, id)
+	note := "completion restored: this task's archived folder changed while a final review was running, so the review could not keep its verdict; the next `coop loop` works and reviews it again"
+	return errors.Join(
+		AppendTaskLogStrict(dir, note),
+		NormalizeTaskState(id, dir, "in progress — archive changed during review", "re-run `coop loop`; it works and reviews this task again", "its archived folder changed during a final review", "—"),
 	)
 }
 

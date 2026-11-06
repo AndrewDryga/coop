@@ -174,6 +174,24 @@ func announcePendingFinalReview(ids []string, continueCommand string) {
 	}
 }
 
+// noteDroppedFinalReviews names the tasks whose earlier final review could not resume because
+// they left 99_done/ without host review authority. Loading already dropped that review and
+// returned each task to the queue, so they are worked and reviewed like any other task.
+func noteDroppedFinalReviews(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	cause := "This task left 99_done/ before its review finished. Coop dropped that review and returned it to the queue to be worked and reviewed again."
+	if len(ids) > 1 {
+		cause = "These tasks left 99_done/ before their review finished. Coop dropped those reviews and returned them to the queue to be worked and reviewed again."
+	}
+	rows := make([][2]string, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, [2]string{"Task:", cleanDiagnosticLine(id)})
+	}
+	ui.Alert(fmt.Sprintf("Final review could not resume for %s", ui.Count(len(ids), "task")), cause, rows...)
+}
+
 func notePendingFinalReview(ids []string) {
 	if len(ids) > 0 {
 		ui.Note("Final review remains pending for %s; the next loop will resume it.", ui.Count(len(ids), "accepted task"))

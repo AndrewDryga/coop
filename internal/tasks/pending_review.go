@@ -112,10 +112,13 @@ type PendingReviewPrevious struct {
 // review round cap parked. Their records keep the debt, but they are outside the cohort: no review
 // can run on them until a human unblocks the task, so they never hold up the rest of the queue or
 // conflict with a newer cohort's plan. Unblocking returns the task to the cohort as a reopened subject.
+// Dropped names the subjects RecoverPendingReviews retired because they left the archive without
+// host review authority.
 type PendingReviewCohort struct {
 	Plan     PendingReviewPlan
 	Subjects []PendingReviewRecord
 	Parked   []PendingReviewRecord
+	Dropped  []string
 }
 
 // PendingReviewContent fingerprints what a signoff round reviewed: every commit in the subject's
@@ -720,6 +723,70 @@ func removePendingReviewRecord(root, id string) error {
 	return err
 }
 
+// dropDepartedPendingReview retires the review debt of a subject that left the archive without
+// host review authority, then hands an unclaimed in-progress task back to todo the way `coop tasks
+// release` does. A task someone holds, or one already in todo or 50_blocked/, keeps its place.
+func dropDepartedPendingReview(root string, expected PendingReviewRecord) error {
+	id := expected.Task.Ref.ID
+	current, err := retireDepartedPendingReview(root, expected)
+	if err != nil {
+		return err
+	}
+	note := "final review could not resume: this task left 99_done/ before its review finished, without host review authority, so Coop dropped that review"
+	if current.State == StateInProgress {
+		err := releaseUnderAuthority(root, current, func(TaskOwnerRecord) error { return errTaskClaimedByOther })
+		switch {
+		case err == nil:
+			dir := filepath.Join(root, StateTodo, id)
+			return errors.Join(
+				AppendTaskLogStrict(dir, note+" and returned the task to todo to be worked and reviewed again"),
+				NormalizeTaskState(id, dir, "returned to todo — its final review could not resume", "verify the work against the acceptance criteria and complete it again", "—", "—"),
+			)
+		case errors.Is(err, errTaskClaimedByOther), errors.Is(err, ErrTaskSandboxOwned), errors.Is(err, ErrTaskLeased), errors.Is(err, errTaskChangedBeforeRelease):
+			// Someone holds the task, or just moved it: it stays theirs.
+			moved, ok, readErr := CurrentTask(root, id)
+			if readErr != nil || !ok {
+				return readErr
+			}
+			current = moved
+		default:
+			return err
+		}
+	}
+	return AppendTaskLogStrict(current.Dir, note)
+}
+
+// retireDepartedPendingReview removes the record of a subject that is still outside the archive
+// with no live review authority. Everything is re-checked under the task's lease authority, so a
+// reopen or a completion that lands first keeps its record.
+func retireDepartedPendingReview(root string, expected PendingReviewRecord) (task Item, err error) {
+	id := expected.Task.Ref.ID
+	authority, err := lockLeaseAuthority(root, id, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return Item{}, fmt.Errorf("task %s is %w; run `coop loop` again once it is free", id, ErrTaskLeased)
+		}
+		return Item{}, err
+	}
+	defer func() { err = errors.Join(err, unlockLeaseFile(authority)) }()
+	current, ok, err := CurrentTask(root, id)
+	if err != nil || !ok || current.State == StateDone {
+		return Item{}, errors.Join(err, fmt.Errorf("task %s changed before its final review could be dropped", id))
+	}
+	instance, err := ReadTaskInstance(root, current)
+	if err != nil || !sameTaskInstance(instance, expected.Task) {
+		return Item{}, errors.Join(err, fmt.Errorf("task %s changed identity before its final review could be dropped", id))
+	}
+	prior, ok, err := readPendingReviewRecord(root, id)
+	if err != nil || !ok || !pendingReviewRecordMatchesExpected(prior, expected) {
+		return Item{}, errors.Join(err, fmt.Errorf("task %s final review changed before it could be dropped", id))
+	}
+	if _, active, err := ReadAuditReopenRecord(root, id); err != nil || active {
+		return Item{}, errors.Join(err, fmt.Errorf("task %s gained review authority before its final review could be dropped", id))
+	}
+	return current, removePendingReviewRecord(root, id)
+}
+
 func pendingReviewRecordMatchesExpected(current, expected PendingReviewRecord) bool {
 	return current.Version == expected.Version && pendingReviewPlanEqual(current.Plan, expected.Plan) &&
 		sameTaskInstance(current.Task, expected.Task) && current.Fingerprint.Matches(expected.Fingerprint) &&
@@ -912,6 +979,19 @@ func pendingReviewPlanMatches(repo string, hosts []string, plan PendingReviewPla
 // LoadPendingReviews discovers host-private records, validates their exact accepted generations,
 // and returns at most one coherent cohort. Multiple review contracts never get silently mixed.
 func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error) {
+	return loadPendingReviews(repo, hosts, false)
+}
+
+// RecoverPendingReviews is LoadPendingReviews for a loop start. A subject that left the archive
+// without host review authority (restored after its folder changed during a review, or moved out
+// by hand) can never match its record again, because the completion fingerprint binds ctime. So
+// instead of refusing this and every later loop, it drops that subject's record, returns the task
+// to todo with a log line saying why, and names it in Dropped. The other subjects load as usual.
+func RecoverPendingReviews(repo string, hosts []string) (PendingReviewCohort, error) {
+	return loadPendingReviews(repo, hosts, true)
+}
+
+func loadPendingReviews(repo string, hosts []string, dropDeparted bool) (PendingReviewCohort, error) {
 	workspace, err := canonicalPendingReviewWorkspace(repo)
 	if err != nil {
 		return PendingReviewCohort{}, err
@@ -1055,7 +1135,18 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 				return PendingReviewCohort{}, auditErr
 			}
 			if !active || !auditReopenRecordActive(audit) {
-				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID)
+				switch {
+				case active:
+					// An unblock that stopped partway holds the authority until it is finished.
+					return PendingReviewCohort{}, fmt.Errorf("pending-review task %s has an unfinished unblock; finish it with: coop tasks unblock %s", current.ID, current.ID)
+				case !dropDeparted:
+					return PendingReviewCohort{}, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID)
+				}
+				if err := dropDepartedPendingReview(root, record); err != nil {
+					return PendingReviewCohort{}, fmt.Errorf("drop the final review of task %s, which left the archive: %w", current.ID, err)
+				}
+				cohort.Dropped = append(cohort.Dropped, current.ID)
+				continue
 			}
 			if current.State == StateBlocked && audit.DisputedReceipt == record.Fingerprint.Receipt {
 				if err := retireDisputedReview(root, record, audit); err != nil {
@@ -1103,6 +1194,7 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 	byID := func(a, b PendingReviewRecord) int { return strings.Compare(a.Task.Ref.ID, b.Task.Ref.ID) }
 	slices.SortFunc(cohort.Subjects, byID)
 	slices.SortFunc(cohort.Parked, byID)
+	slices.Sort(cohort.Dropped)
 	// Carry the other reopened tasks across a recovered rework now: once its authority moved, a
 	// later load no longer sees the rework, and those tasks would be parked as stale.
 	for _, record := range reworked {

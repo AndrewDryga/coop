@@ -2,6 +2,7 @@ package loop
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/loopcfg"
@@ -115,5 +116,23 @@ func TestRequeuedTasksKeepCountingTowardTheRoundCap(t *testing.T) {
 	}
 	if got := nextRoundAfterPending(5, []string{"host", "t3"}, []string{"t3"}); got != 1 {
 		t.Fatalf("round after another session's completion = %d, want a new count at 1", got)
+	}
+}
+
+// A loop start that dropped a review says so once, naming each task, and says nothing otherwise.
+func TestNoteDroppedFinalReviewsNamesEachTask(t *testing.T) {
+	if out := captureStderr(t, func() { noteDroppedFinalReviews(nil) }); out != "" {
+		t.Fatalf("nothing dropped printed %q", out)
+	}
+	one := captureStderr(t, func() { noteDroppedFinalReviews([]string{"left-task"}) })
+	for _, want := range []string{"Final review could not resume for 1 task", "This task left 99_done/ before its review finished.", "returned it to the queue", "Task: left-task"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("notice for one task lacks %q:\n%s", want, one)
+		}
+	}
+	two := captureStderr(t, func() { noteDroppedFinalReviews([]string{"a-task", "b-task"}) })
+	if strings.Count(two, "Final review could not resume") != 1 || !strings.Contains(two, "for 2 tasks") ||
+		!strings.Contains(two, "Task: a-task") || !strings.Contains(two, "Task: b-task") || !strings.Contains(two, "returned them") {
+		t.Errorf("notice for two tasks:\n%s", two)
 	}
 }

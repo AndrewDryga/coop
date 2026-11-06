@@ -206,7 +206,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			last.concurrent = concurrent
 		}
 		if completionErr != nil {
-			return last, fmt.Errorf("%w: review stage changed task completion ownership: %v", tasks.ErrCompletionWindowAudit, completionErr)
+			return last, fmt.Errorf("%w: task completion changed during the review stage: %v", tasks.ErrCompletionWindowAudit, completionErr)
 		}
 		if ctx != nil && ctx.Err() != nil {
 			return interruptedReviewResult(last, totalRetries), errReviewInterrupted
@@ -470,7 +470,7 @@ func (c *Control) runReviewCorrection(ctx context.Context, repo, img string, rev
 	observed, completionErr := windows.FinishReview()
 	result.concurrent = slices.Compact(slices.Sorted(slices.Values(append(result.concurrent, observed...))))
 	if completionErr != nil {
-		return result, fmt.Errorf("%w: review correction changed task completion ownership: %v", tasks.ErrCompletionWindowAudit, completionErr)
+		return result, fmt.Errorf("%w: task completion changed during the review correction: %v", tasks.ErrCompletionWindowAudit, completionErr)
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return interruptedReviewResult(result, result.retries), errReviewInterrupted

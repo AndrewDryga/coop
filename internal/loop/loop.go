@@ -229,10 +229,18 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return 1, fmt.Errorf("recover interrupted completion window: %w", err)
 		}
 	}
-	pendingReview, err := tasks.LoadPendingReviews(repo, hosts)
+	// A subject that left the archive without host review authority can never resume its review:
+	// the loop start drops that review and returns the task to the queue instead of refusing here.
+	// A fork's candidate review only reads, so it keeps the strict load.
+	loadCohort := tasks.RecoverPendingReviews
+	if spec.CandidateReview != nil {
+		loadCohort = tasks.LoadPendingReviews
+	}
+	pendingReview, err := loadCohort(repo, hosts)
 	if err != nil {
 		return 1, fmt.Errorf("recover pending final review: %w", err)
 	}
+	noteDroppedFinalReviews(pendingReview.Dropped)
 	duplicates, err := tasks.NonArchivedDuplicateTaskIDs(hosts)
 	if err != nil {
 		return 1, err

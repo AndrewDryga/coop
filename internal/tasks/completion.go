@@ -528,6 +528,13 @@ func beginCompletionWindowsWithPolicy(hosts, allowedDoneDepartures, reviewSubjec
 }
 
 func (s *CompletionWindowSet) AuditDoneCandidates(assigned QueuedTask) ([]QueuedTask, []string, error) {
+	return s.auditDoneCandidates(assigned, nil)
+}
+
+// auditDoneCandidates is AuditDoneCandidates for a window whose review subjects are known: a
+// subject restored here had its archived folder change while the review ran, and nobody needs to
+// have moved it, so its log says that instead of blaming the iteration.
+func (s *CompletionWindowSet) auditDoneCandidates(assigned QueuedTask, subjects []string) ([]QueuedTask, []string, error) {
 	candidates, err := s.candidates()
 	if err != nil {
 		return nil, nil, err
@@ -537,7 +544,7 @@ func (s *CompletionWindowSet) AuditDoneCandidates(assigned QueuedTask) ([]Queued
 			return candidates, nil, err
 		}
 	}
-	rejected, err := rejectUnownedCompletions(candidates, assigned)
+	rejected, err := rejectUnownedCompletions(candidates, assigned, subjects)
 	return candidates, rejected, err
 }
 
@@ -783,18 +790,35 @@ func (s *CompletionWindowSet) pendingReviewPlan() (PendingReviewPlan, bool, erro
 // comparison itself could not be trusted and the live window must be abandoned for replay;
 // reviewErr is a completed comparison that found lifecycle or ownership churn.
 func (s *CompletionWindowSet) auditReview(hosts, subjectIDs []string, subjectScoped bool) (concurrent []string, scanErr, reviewErr error) {
-	candidates, rejected, err := s.AuditDoneCandidates(QueuedTask{})
+	candidates, rejected, err := s.auditDoneCandidates(QueuedTask{}, subjectIDs)
 	if err != nil {
 		return nil, err, nil
 	}
 	changed, concurrent := classifyReviewCompletionCandidates(candidates, rejected, subjectIDs, subjectScoped)
+	// A subject restored here had its archived folder change while the review ran: a host note
+	// appended to its log.md is enough, since the completion fingerprint binds ctime. Nobody needs
+	// to have moved it, so it is reported once as the archive change it is, not also as an unleased
+	// completion and a lifecycle change.
+	var restored, folders []string
+	for _, candidate := range candidates {
+		if id := candidate.Item.ID; slices.Contains(subjectIDs, id) && slices.Contains(rejected, id) {
+			restored, folders = append(restored, id), append(folders, candidate.Item.Dir)
+		}
+	}
+	others := func(ids []string) []string {
+		return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return slices.Contains(restored, id) })
+	}
+	var archiveErr error
+	if len(folders) > 0 {
+		archiveErr = fmt.Errorf("the archive changed during the review: task folder(s) %s changed after it started, so their completions were restored to in_progress; the next `coop loop` works and reviews them again", strings.Join(folders, ", "))
+	}
 	var changedErr error
-	if len(changed) > 0 {
+	if changed := others(changed); len(changed) > 0 {
 		changedErr = fmt.Errorf("review completion set changed for %s", strings.Join(changed, ", "))
 	}
 	var ownershipErr error
-	if len(rejected) > 0 {
-		ownershipErr = UnownedCompletionError(rejected, nil)
+	if unowned := others(rejected); len(unowned) > 0 {
+		ownershipErr = UnownedCompletionError(unowned, nil)
 	}
 	relevant := slices.Clone(subjectIDs)
 	for _, candidate := range candidates {
@@ -809,10 +833,10 @@ func (s *CompletionWindowSet) auditReview(hosts, subjectIDs []string, subjectSco
 		duplicateErr = fmt.Errorf("review task id(s) %s became ambiguous across task queues", strings.Join(duplicates, ", "))
 	}
 	departed, departureErr := s.Departures()
-	if departureErr == nil && len(departed) > 0 {
+	if departed = others(departed); departureErr == nil && len(departed) > 0 {
 		departureErr = fmt.Errorf("review task lifecycle changed for %s; reviews must report verdicts for host application", strings.Join(departed, ", "))
 	}
-	return concurrent, nil, errors.Join(changedErr, ownershipErr, duplicateErr, departureErr)
+	return concurrent, nil, errors.Join(archiveErr, changedErr, ownershipErr, duplicateErr, departureErr)
 }
 
 // FinishReview closes a review-stage window, scoping strictness to the exact subjects the

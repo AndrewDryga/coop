@@ -1507,7 +1507,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
-		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") || strings.Contains(result.Stderr, "completion ownership") {
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") || strings.Contains(result.Stderr, "completion ownership") || strings.Contains(result.Stderr, tasks.ErrCompletionWindowAudit.Error()) {
 			t.Fatalf("hard stop after reopen = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 		}
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||

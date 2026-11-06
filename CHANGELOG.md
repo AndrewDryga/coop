@@ -40,6 +40,14 @@
   and fork workers now forbid stash and say how to check a baseline instead: save the committed
   version of a file with `git show HEAD:<path>` and test against that copy.
 
+- **A task that left the archive no longer stops every later loop.** When a task waiting for its
+  final review was moved out of `99_done/`, or its archived folder changed while the review ran
+  (a note appended to its `log.md` is enough), every later `coop loop` stopped with "left the
+  archive without host review authority" until someone deleted a file under
+  `~/.local/state/coop` by hand. The loop now drops that review, puts the task back in todo with a
+  note in its log, says so once, and goes on to review the other tasks. A review that finds a
+  task's archived folder changed now names the folder and no longer says the agent moved a task it
+  did not lease.
 - **A background `coop loop` can stop after its current attempt.** Without a terminal, the first
   SIGINT threw away the attempt in progress. It now works like Ctrl-C: the attempt and its required
   review finish, no new task starts, and the summary prints the command that continues. A second

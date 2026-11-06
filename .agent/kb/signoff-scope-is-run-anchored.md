@@ -141,6 +141,18 @@ reopened subject of its own plan. Authority carries (`PendingReviewCohort.IDs`) 
 subjects, so their audit authority follows rewrites while they wait
 (`TestProviderScriptedLoopPendingReviewParkedAtTheCapLeavesTheQueueRunning`).
 
+A subject that left the archive with NO active review authority can never resume: the completion
+fingerprint binds ctime, so even a host note appended to its archived log.md breaks the match, and
+the review audit restores such a subject to in_progress ("the archive changed during the review",
+naming the folder). Mid-run loads (`LoadPendingReviews`) still refuse it. The loop start uses
+`RecoverPendingReviews` instead: under the task's lease authority it drops that record, returns an
+unclaimed in-progress task to todo with a log line (a claimed, todo or blocked task keeps its place)
+and lists it in `Dropped`, which the loop prints as one "Final review could not resume" notice
+before resuming the rest of the cohort. A fork's candidate review keeps the strict load
+(`TestProviderScriptedLoopPendingReviewDropsASubjectThatLeftTheArchive`). An unblock that stopped
+partway (a pending, non-authorizing audit record) is not "no authority": its debt stays and the
+refusal names `coop tasks unblock <id>`, the host command that finishes it.
+
 Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
 receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
 task. The receipt verdict is host-bound; gate and finding text is reviewer-reported context only, so
@@ -187,6 +199,10 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-11-05 — a subject that left the archive without review authority no longer stops every loop
+  start: the start drops its record and returns it to the queue; the review audit names a changed
+  archive folder instead of calling it an unleased move (task
+  2026-11-05-keep-the-loop-running-when-a-review-subject-left).
 - 2026-11-05 — blocked subjects are parked outside the cohort; a resumed review that parked its
   last subjects goes on with the queue; the cap decision counts the other actionable tasks (task
   2026-11-05-keep-working-the-queue-after-a-resumed-final-rev).

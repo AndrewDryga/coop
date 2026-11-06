@@ -150,6 +150,113 @@ func TestPendingReviewParksABlockedSubjectOutsideTheCohort(t *testing.T) {
 	}
 }
 
+// The 2026-11-05 emisar incident: review subjects left the archive without host review authority,
+// and every later loop stopped on them until their records were deleted by hand. A loop start now
+// drops that review, returns the task to todo with a note, and keeps the other subjects.
+func TestRecoverPendingReviewsDropsASubjectThatLeftTheArchive(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	kept := taskWithCompletedChecklist(t, root, StateDone, "z-kept")
+	writeTaskFile(t, filepath.Join(repo, "kept.txt"), "kept\n")
+	git(t, repo, "add", "kept.txt")
+	git(t, repo, "commit", "-qm", "kept work\n\nCoop-Task: z-kept")
+	if err := CompleteTrustedTask("", root, kept); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{kept.ID}, plan); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := mustCurrentTask(t, root, done.ID)
+	if err := MoveTaskDir(root, left, StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mid-run loads stay strict; only a loop start drops review debt.
+	if _, err := LoadPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "left the archive without host review authority") {
+		t.Fatalf("strict load = %v, want the refusal", err)
+	}
+	cohort, err := RecoverPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != kept.ID ||
+		len(cohort.Dropped) != 1 || cohort.Dropped[0] != done.ID {
+		t.Fatalf("recovered cohort = %+v, %v; want %s kept and %s dropped", cohort, err, kept.ID, done.ID)
+	}
+	if _, ok, err := readPendingReviewRecord(root, done.ID); err != nil || ok {
+		t.Fatalf("dropped subject's record = %v, %v; want it gone", ok, err)
+	}
+	returned, _ := mustCurrentTask(t, root, done.ID)
+	if returned.State != StateTodo {
+		t.Fatalf("dropped subject is in %s, want todo", returned.State)
+	}
+	log, err := os.ReadFile(filepath.Join(returned.Dir, "log.md"))
+	if err != nil || !strings.Contains(string(log), "final review could not resume") || !strings.Contains(string(log), "returned the task to todo") {
+		t.Fatalf("dropped subject log = %q, %v", log, err)
+	}
+	// Nothing needs a manual edit: the next start, and every load after it, sees only the kept subject.
+	for _, load := range []func(string, []string) (PendingReviewCohort, error){RecoverPendingReviews, LoadPendingReviews} {
+		cohort, err = load(repo, []string{root})
+		if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != kept.ID || len(cohort.Dropped) != 0 {
+			t.Fatalf("cohort after the drop = %+v, %v", cohort, err)
+		}
+	}
+}
+
+// An unblock that stopped partway still holds the review authority, so its debt stays and the
+// refusal names the command that finishes it.
+func TestRecoverPendingReviewsKeepsTheDebtOfAnUnfinishedUnblock(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	pending := reopenForRework(t, repo, root, done)
+	pending.Version, pending.UnblockPending = auditReopenPendingVersion, true
+	if err := WriteAuditReopenRecord(root, pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverPendingReviews(repo, []string{root}); err == nil || !strings.Contains(err.Error(), "finish it with: coop tasks unblock "+done.ID) {
+		t.Fatalf("recover with an unfinished unblock = %v, want the unblock command", err)
+	}
+	if _, ok, err := readPendingReviewRecord(root, done.ID); err != nil || !ok {
+		t.Fatalf("unfinished unblock's record = %v, %v; want it kept", ok, err)
+	}
+}
+
+// A dropped subject someone has claimed stays theirs: only its review debt goes.
+func TestRecoverPendingReviewsLeavesAClaimedSubjectInPlace(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := mustCurrentTask(t, root, done.ID)
+	if err := MoveTaskDir(root, left, StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	claimed, _ := mustCurrentTask(t, root, done.ID)
+	if _, err := ClaimSessionTask(root, claimed, selfActor(t, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	cohort, err := RecoverPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 0 || len(cohort.Dropped) != 1 {
+		t.Fatalf("recovered cohort = %+v, %v", cohort, err)
+	}
+	if current, _ := mustCurrentTask(t, root, done.ID); current.State != StateInProgress {
+		t.Fatalf("claimed subject moved to %s", current.State)
+	}
+	if _, owned, err := ReadTaskOwnerRecord(root, done.ID); err != nil || !owned {
+		t.Fatalf("claim = %v, %v; want it kept", owned, err)
+	}
+}
+
 func TestPendingReviewBranchReadErrorsAreNotBranchLoss(t *testing.T) {
 	repo, root, base, assignment, _, plan := pendingReviewTestCompletion(t)
 	t.Cleanup(func() { _ = assignment.Lease.Release() })

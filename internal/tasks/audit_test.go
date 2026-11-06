@@ -85,7 +85,7 @@ func TestCompletionWindowAndRestoreRespectForeignLease(t *testing.T) {
 	if want := []string{"assigned", "finalized", "foreign", "rogue", "spoofed"}; !slices.Equal(gotIDs, want) {
 		t.Fatalf("window completions = %v, want %v", gotIDs, want)
 	}
-	rejected, err := rejectUnownedCompletions(completed, QueuedTask{Root: root, Item: assigned})
+	rejected, err := rejectUnownedCompletions(completed, QueuedTask{Root: root, Item: assigned}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,6 +524,52 @@ func TestReviewCompletionWindowRejectsInPlaceArchiveMutation(t *testing.T) {
 	}
 	if !pathExists(filepath.Join(root, StateInProgress, archived.ID)) {
 		t.Fatal("in-place review mutation was not restored for inspection")
+	}
+}
+
+// The 2026-11-05 emisar incident: the supervisor appended gate evidence to an archived subject's
+// log.md while the final review ran. The audit says the archive changed and names the folder, and
+// the task's log says the same; only a task the stage really moved is called unleased.
+func TestReviewCompletionWindowNamesAnArchiveThatChangedDuringTheReview(t *testing.T) {
+	root := t.TempDir()
+	archived := taskWithCompletedChecklist(t, root, StateDone, "evidence-added-during-review")
+	if err := CompleteTrustedTask("", root, archived); err != nil {
+		t.Fatal(err)
+	}
+	archived, _ = mustCurrentTask(t, root, archived.ID)
+	rogue := taskWithCompletedChecklist(t, root, StateInProgress, "rogue-during-review")
+	windows, err := BeginReviewCompletionWindows([]string{root}, []string{archived.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendTaskLogStrict(archived.Dir, "host gate: make check passed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveTaskDir(root, rogue, StateDone); err != nil {
+		t.Fatal(err)
+	}
+	_, err = windows.FinishReview()
+	if err == nil || !strings.Contains(err.Error(), "the archive changed during the review: task folder(s) /") ||
+		!strings.Contains(err.Error(), string(filepath.Separator)+filepath.Join(StateDone, archived.ID)+" changed after it started") {
+		t.Fatalf("archive change audit = %v, want the changed folder named", err)
+	}
+	for _, blame := range []string{"unleased task(s) " + archived.ID, "lifecycle changed for " + archived.ID, "completion set changed for " + archived.ID} {
+		if strings.Contains(err.Error(), blame) {
+			t.Errorf("archive change audit reports %q: %v", blame, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "completion rejected for unleased task(s) "+rogue.ID) {
+		t.Errorf("the task the stage moved is not reported as unleased: %v", err)
+	}
+	logs := map[string]string{
+		archived.ID: "archived folder changed while a final review was running",
+		rogue.ID:    "this provider iteration moved a task it did not lease",
+	}
+	for id, want := range logs {
+		log, readErr := os.ReadFile(filepath.Join(root, StateInProgress, id, "log.md"))
+		if readErr != nil || !strings.Contains(string(log), want) {
+			t.Errorf("restored %s log = %q, %v; want %q", id, log, readErr, want)
+		}
 	}
 }
 

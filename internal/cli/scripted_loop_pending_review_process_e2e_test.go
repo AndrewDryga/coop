@@ -720,3 +720,79 @@ func TestProviderScriptedLoopPendingReviewParkedAtTheCapLeavesTheQueueRunning(t 
 		t.Fatal("the restart did not work the queue beside the parked task and its debt")
 	}
 }
+
+// The 2026-11-05 emisar incident: a review subject left 99_done/ without host review authority,
+// and every later `coop loop` stopped on "left the archive without host review authority" until
+// its record was deleted by hand. The next loop now names the task, returns it to the queue, works
+// and reviews it again, and still resumes the review of the subject that stayed archived.
+func TestProviderScriptedLoopPendingReviewDropsASubjectThatLeftTheArchive(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	resetLoopProcessRepo(t, suite)
+	t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+
+	keptID, leftID := "a-stays-archived", "b-leaves-the-archive"
+	seedLoopProcessTask(t, suite.layout.Repo, keptID)
+	seedLoopProcessTask(t, suite.layout.Repo, leftID)
+	work := loopRecoveryTarget("claude", "work-model", "work")
+	signoff := loopRecoveryTarget("claude", "signoff-model", "work")
+	writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 3)
+	// The kept task needs no source change, so only the leaving task writes the fixture's file, and
+	// its bound commit stays HEAD for the informed resume below.
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: keptID, Attempts: []loopProcessAttempt{
+			{TaskID: keptID, Target: work, Stage: "work", Result: "decision-complete"},
+			{TaskID: leftID, Target: work, Stage: "work", Result: "complete"},
+		}},
+	})
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
+	first := procharness.Run(firstCtx, procharness.Command{
+		Path: suite.coopBin, Args: []string{"loop", work, "--max-tasks", "2", "--no-preflight", "--no-mcp"},
+		Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+	})
+	firstCancel()
+	if first.Err != nil || first.ExitCode != 0 || !strings.Contains(first.Stderr, "Final review remains pending for 2 accepted tasks") {
+		t.Fatalf("bounded first process = exit %d err %v\nstdout:\n%s\nstderr:\n%s", first.ExitCode, first.Err, first.Stdout, first.Stderr)
+	}
+	// Leave the archive as a review's restore leaves it: in progress, with no review authority.
+	if err := os.Rename(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, leftID),
+		filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, leftID)); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts := []loopProcessAttempt{
+		{TaskID: keptID, Target: signoff, Stage: "signoff", Result: "pass"},
+		{TaskID: leftID, Target: work, Stage: "work", Result: "repair-binding"},
+		{TaskID: leftID, Target: signoff, Stage: "signoff", Result: "pass"},
+	}
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: keptID, Attempts: attempts},
+	})
+	second := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+	output := visibleProcessText(second.Stdout + second.Stderr)
+	if second.Err != nil || second.ExitCode != 0 ||
+		!strings.Contains(output, "Final review could not resume for 1 task") || !strings.Contains(output, "Task: "+leftID) ||
+		!strings.Contains(output, "Resuming final review for 1 task completed in an earlier loop") ||
+		!strings.Contains(output, "All tasks passed final review") {
+		t.Fatalf("restart after a subject left the archive = exit %d err %v\nstdout:\n%s\nstderr:\n%s", second.ExitCode, second.Err, second.Stdout, second.Stderr)
+	}
+	for _, id := range []string{keptID, leftID} {
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, id)) {
+			t.Fatalf("task %s did not finish reviewed", id)
+		}
+	}
+	log, err := os.ReadFile(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, leftID, "log.md"))
+	if err != nil || !strings.Contains(string(log), "final review could not resume") {
+		t.Fatalf("returned task log = %q, %v", log, err)
+	}
+	entries, err := os.ReadDir(processLeaseAuthorityRoot(suite.layout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".pending-review.json") {
+			t.Fatalf("pending review record %s survived the reviewed run", entry.Name())
+		}
+	}
+}
