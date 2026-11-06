@@ -533,12 +533,13 @@ func TestAdmitNetworkOpenLaunchIgnoresFilteredMCPRules(t *testing.T) {
 
 	// The rule still holds where it applies: a filtered launch with the same file is refused for it —
 	// and refused BEFORE the authority store is opened, so asking leaves no owner key behind. Named
-	// docker so the MCP refusal is the one under test; nothing here reaches a runtime command.
+	// docker so the MCP refusal is the one under test; nothing here reaches a runtime command. The
+	// refusal names the server and the header, so a file with several servers says which to change.
 	filtered := egress.Filtered
 	_, err := AdmitNetwork(cfg, runtime.Runtime{Name: "docker"}, spec,
 		NetworkAdmission{InvocationMode: &filtered})
-	if err == nil || !strings.Contains(err.Error(), "restricted MCP requires literal configuration") {
-		t.Fatalf("a filtered launch accepted a non-literal MCP definition: %v", err)
+	if err == nil || !strings.Contains(err.Error(), `MCP server "tenant"`) || !strings.Contains(err.Error(), `header "X-Token"`) {
+		t.Fatalf("a filtered launch did not refuse the non-literal MCP header by its server and header: %v", err)
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("a refused filtered launch created authority state", err)

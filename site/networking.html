@@ -915,8 +915,10 @@ paths exist.</li>
 checkout and name its path explicitly so co:op can inspect it.</li>
 </ul>
 <h3 id="forgetting-an-approval">Forgetting an approval</h3>
-<p><code>coop net forget</code> removes a project&#39;s approval. It shows the saved access, asks you to confirm in
-the terminal, then removes only that approval record. Run it in the project, or pass
+<p><code>coop net forget</code> removes a project&#39;s approval. It says that it resets the project&#39;s network
+approvals, that <code>.agent/project.yaml</code> stays as it is, and that <code>coop approve</code> restores approval. It
+never lists the saved access, so run <code>coop net</code> first if you want to see the mode and rules. When
+you confirm in the terminal, it removes only that approval record. Run it in the project, or pass
 <code>--project &lt;path&gt;</code> if the checkout is already gone. Run records, their receipts and this host&#39;s
 setup results stay. Until you approve again, only offline runs of that project start.</p>
 <p>If the approved path was a symlink, the approval belongs to the directory it pointed to. Once both

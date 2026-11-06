@@ -505,7 +505,7 @@ generated config. Codex can&#39;t represent a mixed value such as <code>Bearer $
 <h4 id="filtered-runs">Filtered runs</h4>
 <p>With <code>--egress filtered</code>, header values must be literal for every agent. co:op builds the
 approved network policy from those literal values, so it rejects environment references such
-as <code>${…}</code> before launch.</p>
+as <code>${…}</code> before launch. The refusal names the server and the header.</p>
 <p>In a filtered run, co:op&#39;s credential broker keeps the <code>bearer_token_env_var</code> token outside the
 box and sends it to the server. The box gets a modified config that points to a loopback
 listener and uses a replacement variable, <code>COOP_MCP_TOKEN_&lt;n&gt;</code>. That replacement works only for

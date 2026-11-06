@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 )
@@ -49,80 +48,122 @@ func NetworkServers(snapshot []byte) ([]NetworkServer, error) {
 	}
 	var result []NetworkServer
 	for _, name := range sortedKeys(servers) {
-		server := servers[name]
-		shape := NetworkServer{Name: name, Transport: server.Type, Auth: "none"}
-		// Bind the raw object, including routing headers and local command
-		// extensions, not the smaller typed view that would discard them.
-		var definition map[string]json.RawMessage
-		if err := json.Unmarshal(definitions[name], &definition); err != nil {
-			return nil, err
-		}
-		if err := literalNetworkDefinition(definitions[name]); err != nil {
-			return nil, err
-		}
-		for _, key := range []string{"headersHelper", "oauth"} {
-			if value, exists := definition[key]; exists && string(value) != "null" {
-				return nil, fmt.Errorf("restricted networking does not support MCP servers that sign in through %s", key)
-			}
-		}
-		if shape.Definition, err = json.Marshal(definition); err != nil {
-			return nil, err
-		}
-		switch {
-		case server.URL != "":
-			parsed, err := url.Parse(server.URL)
-			if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
-				parsed.RawQuery != "" || parsed.Opaque != "" || parsed.Port() != "" && parsed.Port() != "443" || strings.ContainsAny(server.URL, "${\x00\r\n") {
-				return nil, errors.New("restricted MCP requires a literal HTTPS origin without embedded credentials or query routing")
-			}
-			if shape.Transport == "" {
-				shape.Transport = "http"
-			}
-			if shape.Transport != "http" && shape.Transport != "sse" || server.Command != "" {
-				return nil, errors.New("unsupported or ambiguous restricted MCP transport")
-			}
-			shape.URL = server.URL
-			if server.BearerTokenEnvVar != "" {
-				if !validBearerReference(server.BearerTokenEnvVar) {
-					return nil, errors.New("unsupported restricted MCP bearer reference")
-				}
-				shape.Auth, shape.BearerReference = "bearer-env", server.BearerTokenEnvVar
-			}
-			shape.Headers = sortedKeys(server.Headers)
-			if len(shape.Headers) > 0 && shape.Auth == "none" {
-				shape.Auth = "headers"
-			}
-		case server.Command != "":
-			if shape.Transport != "" && shape.Transport != "stdio" {
-				return nil, errors.New("unsupported restricted MCP local transport")
-			}
-			shape.Transport = "stdio"
-		default:
-			return nil, errors.New("restricted MCP server has no usable transport")
+		shape, err := networkServer(name, servers[name], definitions[name])
+		if err != nil {
+			// A person with several servers needs to know which one to change.
+			return nil, fmt.Errorf("MCP server %q: %w", name, err)
 		}
 		result = append(result, shape)
 	}
 	return result, nil
 }
 
-// Native interpolation can change routing without changing configuration bytes.
-// The qualified subset is literal configuration plus an explicit bearer
-// reference, whose value each consumer resolves from its own environment.
-func literalNetworkDefinition(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return errors.New("invalid restricted MCP definition")
-		}
-		if value, ok := token.(string); ok && strings.Contains(value, "${") {
-			return errors.New("restricted MCP requires literal configuration; use bearer_token_env_var for rotating authentication")
+// networkServer is one server's routing shape, or why a restricted run cannot take it. Its errors
+// leave out the server's name: NetworkServers adds it to every one.
+func networkServer(name string, server server, raw json.RawMessage) (NetworkServer, error) {
+	shape := NetworkServer{Name: name, Transport: server.Type, Auth: "none"}
+	// Bind the raw object, including routing headers and local command
+	// extensions, not the smaller typed view that would discard them.
+	var definition map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &definition); err != nil {
+		return NetworkServer{}, err
+	}
+	if err := literalNetworkDefinition(raw); err != nil {
+		return NetworkServer{}, err
+	}
+	for _, key := range []string{"headersHelper", "oauth"} {
+		if value, exists := definition[key]; exists && string(value) != "null" {
+			return NetworkServer{}, fmt.Errorf("restricted networking does not support signing in through %s", key)
 		}
 	}
+	var err error
+	if shape.Definition, err = json.Marshal(definition); err != nil {
+		return NetworkServer{}, err
+	}
+	switch {
+	case server.URL != "":
+		parsed, err := url.Parse(server.URL)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
+			parsed.RawQuery != "" || parsed.Opaque != "" || parsed.Port() != "" && parsed.Port() != "443" || strings.ContainsAny(server.URL, "${\x00\r\n") {
+			return NetworkServer{}, errors.New("restricted MCP requires a literal HTTPS origin without embedded credentials or query routing")
+		}
+		if shape.Transport == "" {
+			shape.Transport = "http"
+		}
+		if shape.Transport != "http" && shape.Transport != "sse" || server.Command != "" {
+			return NetworkServer{}, errors.New("unsupported or ambiguous restricted MCP transport")
+		}
+		shape.URL = server.URL
+		if server.BearerTokenEnvVar != "" {
+			if !validBearerReference(server.BearerTokenEnvVar) {
+				return NetworkServer{}, errors.New("unsupported restricted MCP bearer reference")
+			}
+			shape.Auth, shape.BearerReference = "bearer-env", server.BearerTokenEnvVar
+		}
+		shape.Headers = sortedKeys(server.Headers)
+		if len(shape.Headers) > 0 && shape.Auth == "none" {
+			shape.Auth = "headers"
+		}
+	case server.Command != "":
+		if shape.Transport != "" && shape.Transport != "stdio" {
+			return NetworkServer{}, errors.New("unsupported restricted MCP local transport")
+		}
+		shape.Transport = "stdio"
+	default:
+		return NetworkServer{}, errors.New("restricted MCP server has no usable transport")
+	}
+	return shape, nil
+}
+
+// Native interpolation can change routing without changing configuration bytes.
+// The qualified subset is literal configuration plus an explicit bearer
+// reference, whose value each consumer resolves from its own environment. The
+// refusal names the setting, never what it holds: a header can carry a secret.
+func literalNetworkDefinition(data []byte) error {
+	var definition any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&definition); err != nil {
+		return errors.New("invalid restricted MCP definition")
+	}
+	at, found := interpolatedAt(definition, "")
+	if !found {
+		return nil
+	}
+	if header, isHeader := strings.CutPrefix(at, "headers."); isHeader {
+		return fmt.Errorf("header %q uses ${…}, but a filtered box needs literal MCP configuration; use bearer_token_env_var for rotating authentication", header)
+	}
+	return fmt.Errorf("%q uses ${…}, but a filtered box needs literal MCP configuration", at)
+}
+
+// interpolatedAt finds the first string, or object key, of a decoded JSON value that holds ${. It
+// answers with the keys that lead there joined by dots, and array positions in brackets. Keys are
+// read in sorted order, so one file always gets the same answer.
+func interpolatedAt(value any, at string) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return at, strings.Contains(v, "${")
+	case []any:
+		for i, item := range v {
+			if found, ok := interpolatedAt(item, fmt.Sprintf("%s[%d]", at, i)); ok {
+				return found, true
+			}
+		}
+	case map[string]any:
+		for _, key := range sortedKeys(v) {
+			child := key
+			if at != "" {
+				child = at + "." + key
+			}
+			if strings.Contains(key, "${") {
+				return child, true
+			}
+			if found, ok := interpolatedAt(v[key], child); ok {
+				return found, true
+			}
+		}
+	}
+	return "", false
 }
 
 func validBearerReference(name string) bool {

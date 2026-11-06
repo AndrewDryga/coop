@@ -720,8 +720,10 @@ The box can see the marker, so co:op also checks the paths in runtime mount argu
 
 ### Forgetting an approval
 
-`coop net forget` removes a project's approval. It shows the saved access, asks you to confirm in
-the terminal, then removes only that approval record. Run it in the project, or pass
+`coop net forget` removes a project's approval. It says that it resets the project's network
+approvals, that `.agent/project.yaml` stays as it is, and that `coop approve` restores approval. It
+never lists the saved access, so run `coop net` first if you want to see the mode and rules. When
+you confirm in the terminal, it removes only that approval record. Run it in the project, or pass
 `--project <path>` if the checkout is already gone. Run records, their receipts and this host's
 setup results stay. Until you approve again, only offline runs of that project start.
 

@@ -33,7 +33,7 @@ func TestNetworkShapeBindsConsumedConfiguration(t *testing.T) {
 		`{"mcpServers":{"tool":{"url":"https://mcp.example.com","headersHelper":"helper"}}}`,
 		`{"mcpServers":{"tool":{"url":"https://mcp.example.com","oauth":{"clientId":"other"}}}}`,
 		`{"mcpServers":{"tool":{"url":"https://mcp.example.com","headers":{"X-Tenant":"${TENANT}"}}}}`,
-		`{"mcpServers":{"tool":{"url":"https://mcp.example.com","headers":{"X-Tenant":"${TENANT}"}}}}`,
+		`{"mcpServers":{"tool":{"url":"https://mcp.example.com","headers":{"${TENANT}":"first"}}}}`,
 		`{"mcpServers":{"tool":{"command":"tool","args":["${ROUTE}"]}}}`,
 		`{"mcpServers":{"tool":{"url":"http://mcp.example.com"}}}`,
 		`{"mcpServers":{"tool":{"url":"https://user:secret@mcp.example.com"}}}`,
@@ -43,6 +43,82 @@ func TestNetworkShapeBindsConsumedConfiguration(t *testing.T) {
 		if _, err := NetworkServers([]byte(snapshot)); err == nil {
 			t.Fatal("unqualified MCP routing accepted:", snapshot)
 		}
+	}
+}
+
+// A person with several servers needs a refusal to say which one to change, and for a setting
+// which setting. It never repeats what the setting holds: a header can carry a secret.
+func TestNetworkServersRefuseByServerName(t *testing.T) {
+	good := func(name string) string { return `"` + name + `":{"url":"https://mcp.example.com"}` }
+	for name, tc := range map[string]struct {
+		server string
+		want   []string
+		never  []string
+	}{
+		"a header that uses a variable": {
+			`"qa-hdr":{"url":"https://mcp.example.com","headers":{"X-Api-Key":"${QA_MCP_TOKEN}"}}`,
+			[]string{`MCP server "qa-hdr"`, `header "X-Api-Key"`, "bearer_token_env_var"},
+			[]string{"QA_MCP_TOKEN"},
+		},
+		"a header with a secret beside its variable": {
+			`"qa-hdr":{"url":"https://mcp.example.com","headers":{"Authorization":"Bearer sk-live-4242${SUFFIX}"}}`,
+			[]string{`MCP server "qa-hdr"`, `header "Authorization"`},
+			[]string{"sk-live-4242", "SUFFIX"},
+		},
+		"a url that uses a variable": {
+			`"qa-url":{"url":"https://${HOST}/mcp"}`,
+			[]string{`MCP server "qa-url"`, `"url"`},
+			[]string{"HOST", "bearer_token_env_var"}, // a header's remedy does not fit a url
+		},
+		"an argument that uses a variable": {
+			`"qa-args":{"command":"tool","args":["--quiet","${ROUTE}"]}`,
+			[]string{`MCP server "qa-args"`, `"args[1]"`},
+			[]string{"ROUTE"},
+		},
+		"an environment value that uses a variable": {
+			`"qa-env":{"command":"tool","env":{"TENANT":"${TENANT}"}}`,
+			[]string{`MCP server "qa-env"`, `"env.TENANT"`},
+			nil,
+		},
+		"a url that is not https": {
+			`"qa-http":{"url":"http://mcp.example.com"}`,
+			[]string{`MCP server "qa-http"`, "literal HTTPS origin"},
+			nil,
+		},
+		"a helper that signs in": {
+			`"qa-helper":{"url":"https://mcp.example.com","headersHelper":"helper"}`,
+			[]string{`MCP server "qa-helper"`, "headersHelper"},
+			nil,
+		},
+		"a transport it cannot route": {
+			`"qa-ws":{"type":"websocket","url":"https://mcp.example.com"}`,
+			[]string{`MCP server "qa-ws"`, "transport"},
+			nil,
+		},
+		"a server with nothing to start": {
+			`"qa-empty":{"type":"http"}`,
+			[]string{`MCP server "qa-empty"`, "no usable transport"},
+			nil,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Good servers on both sides of the bad one, so the answer cannot be the first or the last.
+			snapshot := `{"mcpServers":{` + good("a-good") + `,` + tc.server + `,` + good("z-good") + `}}`
+			_, err := NetworkServers([]byte(snapshot))
+			if err == nil {
+				t.Fatalf("a filtered box took %s", snapshot)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q does not say %q", err, want)
+				}
+			}
+			for _, never := range append([]string{`"a-good"`, `"z-good"`}, tc.never...) {
+				if strings.Contains(err.Error(), never) {
+					t.Errorf("refusal %q says %q", err, never)
+				}
+			}
+		})
 	}
 }
 

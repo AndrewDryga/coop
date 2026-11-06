@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A filtered launch's MCP refusal names the server and the setting.** A header such as
+  `"X-Api-Key": "${QA_MCP_TOKEN}"` was refused with "restricted MCP requires literal
+  configuration" and no server name, so a file with several servers gave no way to tell which to
+  fix. It now reads `MCP server "qa-hdr": header "X-Api-Key" uses ${…}, but a filtered box needs
+  literal MCP configuration`, and names `url`, `args` or `env` when `${…}` sits there. The other
+  refusals of a server's setup (an `http://` URL, a sign-in helper, an unsupported transport) name
+  their server too. The networking page also said `coop net forget` "shows the saved access". It
+  lists no rules, by design: it says what it resets and how to restore approval, and `coop net`
+  lists the rules, so the page now says that.
+
 - **A fork kept after a merge shows no changes, and a fork loop with nothing to do says so.** `coop
   fork ls` counted a fork's changes from the parent commit it was cut from, so a kept fork showed the
   parent's own later commits and the work already merged (`Changes: +10 −0` beside a review of `0

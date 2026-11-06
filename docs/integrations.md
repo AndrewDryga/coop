@@ -383,7 +383,7 @@ The Codex refusal applies wherever Codex takes part, including as a `--peer` of 
 
 With `--egress filtered`, header values must be literal for every agent. co:op builds the
 approved network policy from those literal values, so it rejects environment references such
-as `${…}` before launch.
+as `${…}` before launch. The refusal names the server and the header.
 
 In a filtered run, co:op's credential broker keeps the `bearer_token_env_var` token outside the
 box and sends it to the server. The box gets a modified config that points to a loopback
