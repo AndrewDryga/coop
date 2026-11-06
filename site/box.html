@@ -170,11 +170,11 @@ read the contents, and extended attributes read as empty. A hidden symlink shows
 shows that directory&#39;s entry with an error.</p>
 <p>For tools that scan the repository, co:op sets <code>COOP_BOX=1</code> inside the box. When it is set,
 skip paths that return a permission error (<code>EPERM</code> or <code>EACCES</code>) during metadata lookup,
-directory traversal or file reads; skip a denied directory&#39;s subtree. Report skipped paths so
+directory traversal or file reads. Skip a denied directory&#39;s subtree. Report skipped paths so
 the result makes clear which files were checked, and keep reporting other errors normally.
 A denied path is unreadable, not an empty file. Don&#39;t rely on a successful <code>stat</code> or a list of
 tracked files to mean that their contents can be read. co:op does not expose a hidden-path list
-inside the box; handle the filesystem error rather than trying to reproduce its hiding rules.</p>
+inside the box. Handle the filesystem error rather than trying to reproduce its hiding rules.</p>
 <p>co:op builds the eBPF helper inside Docker, so you don&#39;t need any host packages, filesystem changes
 or kernel settings.</p>
 <p>Launches don&#39;t test the protection itself, so run <code>coop doctor</code> after you update Docker or OrbStack.

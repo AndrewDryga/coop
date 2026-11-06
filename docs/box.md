@@ -48,11 +48,11 @@ shows that directory's entry with an error.
 
 For tools that scan the repository, co:op sets `COOP_BOX=1` inside the box. When it is set,
 skip paths that return a permission error (`EPERM` or `EACCES`) during metadata lookup,
-directory traversal or file reads; skip a denied directory's subtree. Report skipped paths so
+directory traversal or file reads. Skip a denied directory's subtree. Report skipped paths so
 the result makes clear which files were checked, and keep reporting other errors normally.
 A denied path is unreadable, not an empty file. Don't rely on a successful `stat` or a list of
 tracked files to mean that their contents can be read. co:op does not expose a hidden-path list
-inside the box; handle the filesystem error rather than trying to reproduce its hiding rules.
+inside the box. Handle the filesystem error rather than trying to reproduce its hiding rules.
 
 co:op builds the eBPF helper inside Docker, so you don't need any host packages, filesystem changes
 or kernel settings.
