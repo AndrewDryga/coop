@@ -1015,24 +1015,65 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 		return err
 	}
 
-	sChanged := false
-	if _, ok := sm["theme"]; !ok {
-		sm["theme"] = "dark"
-		sChanged = true
-	}
-	if ensureTrue(sm, "skipDangerousModePermissionPrompt") {
-		sChanged = true
-	}
-	if ensureSandboxOff(sm) {
-		sChanged = true
-	}
-	if sChanged {
+	if ensureClaudeSettingsDefaults(sm) {
 		if err := writeJSONFile(settings, sm, 0o644); err != nil {
 			return err
 		}
 	}
 	// .claude.json: accept onboarding/bypass and trust the workdir, merged so the
 	// account/onboarding state survives the disposable box.
+	if ensureClaudeAccountDefaults(m, workdir) {
+		if err := writeJSONFile(cj, m, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RefreshDefaults fills the answers Claude drops from the native home's .claude.json as it runs, and
+// the ones a new folder never had. Claude moves bypassPermissionsModeAccepted into its settings.json
+// and deletes it here on its first start, and a fork is a new folder in the shared home of its
+// project, so seeding only a new home left every later launch, and every new fork, facing the bypass
+// warning or the trust prompt, both of which exit by default. It touches .claude.json alone: the
+// settings.json the box reads can be the project's own (see HomeFallbacks). It writes only when
+// something is missing.
+func (a claudeAgent) RefreshDefaults(cfg *config.Config, workdir string) error {
+	dir, err := cfg.AgentSettingsDir(a.Name())
+	if err != nil {
+		return err
+	}
+	cj := filepath.Join(dir, ".claude.json")
+	m, _, err := readJSONDefaults(cj)
+	if err != nil {
+		return err
+	}
+	if !ensureClaudeAccountDefaults(m, workdir) {
+		return nil
+	}
+	return writeJSONFile(cj, m, 0o600)
+}
+
+// ensureClaudeSettingsDefaults fills the settings.json answers: a default theme (kept if already
+// chosen), the flag that skips the bypass warning, and the bash sandbox pinned off. It reports
+// whether it added any.
+func ensureClaudeSettingsDefaults(m map[string]any) bool {
+	changed := false
+	if _, ok := m["theme"]; !ok {
+		m["theme"] = "dark"
+		changed = true
+	}
+	if ensureTrue(m, "skipDangerousModePermissionPrompt") {
+		changed = true
+	}
+	if ensureSandboxOff(m) {
+		changed = true
+	}
+	return changed
+}
+
+// ensureClaudeAccountDefaults fills the .claude.json answers: onboarding done, the bypass warning
+// accepted, and workdir trusted. It reports whether it added any.
+func ensureClaudeAccountDefaults(m map[string]any, workdir string) bool {
 	changed := ensureTrue(m, "hasCompletedOnboarding")
 	if ensureTrue(m, "bypassPermissionsModeAccepted") {
 		changed = true
@@ -1040,12 +1081,23 @@ func (a claudeAgent) EnsureDefaults(cfg *config.Config, workdir string) error {
 	if ensureWorkdirTrusted(m, workdir) {
 		changed = true
 	}
-	if changed {
-		if err := writeJSONFile(cj, m, 0o600); err != nil {
-			return err
-		}
+	return changed
+}
+
+// fillClaudeSettings adds the settings.json answers to a project's committed fallback copy, which the
+// box reads in place of the home's own settings.json: without them the warning that file's absence of
+// skipDangerousModePermissionPrompt leaves comes back at every launch. Every value the file sets stays.
+// A file that is not a JSON object is returned as it was, for Claude to refuse in its own words.
+func fillClaudeSettings(data []byte) []byte {
+	m, _, err := parseJSONDefaults(data)
+	if err != nil || !ensureClaudeSettingsDefaults(m) {
+		return data
 	}
-	return nil
+	filled, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return data
+	}
+	return append(filled, '\n')
 }
 
 func (a claudeAgent) DefaultsPublication(cfg *config.Config) ([]ConfigPublication, error) {
@@ -1142,7 +1194,7 @@ func (a claudeAgent) BoxEnv(homeInBox string) []string {
 
 func (claudeAgent) HomeFallbacks() []HomeFallback {
 	return []HomeFallback{
-		{Source: ".agent/claude/settings.json", Project: ".claude/settings.json", Target: ".claude/settings.json"},
+		{Source: ".agent/claude/settings.json", Project: ".claude/settings.json", Target: ".claude/settings.json", Fill: fillClaudeSettings},
 		{Source: ".agent/claude/hooks", Project: ".claude/hooks", Target: ".claude/hooks", Dir: true},
 	}
 }

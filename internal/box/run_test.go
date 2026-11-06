@@ -2,11 +2,13 @@ package box
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -4274,8 +4276,15 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		if len(dirs) != 2 {
 			t.Fatalf("cleanup dirs = %v, want settings + hooks temp dirs", dirs)
 		}
-		if got, err := os.ReadFile(settingsHost); err != nil || string(got) != settingsBody {
-			t.Fatalf("settings copy = %q, %v; want exact source bytes", got, err)
+		// The copy stands in for the home's settings.json, which skips Claude's bypass warning: it holds
+		// the project's own settings, unchanged, and that answer, which the source does not set.
+		var copied, source map[string]any
+		got, err := os.ReadFile(settingsHost)
+		if err != nil || json.Unmarshal(got, &copied) != nil || json.Unmarshal([]byte(settingsBody), &source) != nil {
+			t.Fatalf("settings copy = %q, %v; want the source's JSON", got, err)
+		}
+		if !reflect.DeepEqual(copied["hooks"], source["hooks"]) || copied["skipDangerousModePermissionPrompt"] != true {
+			t.Fatalf("settings copy = %q; want the project's hooks unchanged and the bypass warning skipped", got)
 		}
 		if dirExists(filepath.Join(filepath.Dir(settingsHost), "hooks")) {
 			t.Fatal("settings temp copy must contain only settings.json, not the hooks tree")
@@ -4341,6 +4350,30 @@ func TestSynthHomeFallbackMounts(t *testing.T) {
 		}
 		if _, ok := byTarget[home+"/.claude/settings.json"]; !ok {
 			t.Fatalf("project hooks alone must not suppress settings synthesis: %v", got)
+		}
+	})
+
+	// The box reads the copy as the home's settings.json. A source that already skips the warning, and
+	// one Claude would refuse as JSON, are copied as they are: only a missing answer is filled in.
+	t.Run("only a missing answer is filled into the settings copy", func(t *testing.T) {
+		for name, body := range map[string]string{
+			"already answers": `{"skipDangerousModePermissionPrompt":true,"theme":"light","sandbox":{"enabled":true,"failIfUnavailable":true}}`,
+			"not JSON":        `{"hooks":`,
+		} {
+			repo := t.TempDir()
+			write(t, repo, ".agent/claude/settings.json", body, 0o644)
+			mounts, dirs, err := synthHomeFallbackMounts(repo, home, copies, []string{"claude"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanup(t, dirs)
+			host, ok := targets(mounts)[home+"/.claude/settings.json"]
+			if !ok {
+				t.Fatalf("%s: missing settings mount in %v", name, mounts)
+			}
+			if got, err := os.ReadFile(host); err != nil || string(got) != body {
+				t.Errorf("%s: settings copy = %q, %v; want the source's exact bytes", name, got, err)
+			}
 		}
 	})
 

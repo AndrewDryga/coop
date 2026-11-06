@@ -70,6 +70,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [box-time-is-utc](box-time-is-utc.md) — boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 - [box-base-image-tags](box-base-image-tags.md) — the shared base is `coop-box:<definition>` so two Coop versions keep their own; no :latest alias, an upgrade is built on launch, project images stay shared
 - [box-home-nested-mounts](box-home-nested-mounts.md) — avoid bind targets that make Docker create missing application-owned home parents as root
+- [claude-first-run-answers](claude-first-run-answers.md) — Claude drops the bypass acceptance from .claude.json on its first start and never knew a new fork's folder, so Coop refills both before every launch and into the project's settings fallback
 - [box-entrypoint-descendant-handoff](box-entrypoint-descendant-handoff.md) — supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 - [box-orphans-survive-pdeathsig](box-orphans-survive-pdeathsig.md) — Pdeathsig is not inherited across fork, so a forking worker orphans into the box and holds it open for the whole drain
 - [box-supervisor-label-and-orphan-sweep](box-supervisor-label-and-orphan-sweep.md) — every box records the host process supervising it; only a provably dead one authorizes a reap, scoped to the workspace that launched it

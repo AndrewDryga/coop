@@ -22,7 +22,7 @@ func TestNativeHomeOwnsACompleteRepositoryAccountDomain(t *testing.T) {
 			calls++
 			return os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"theme":"initial"}`), 0o600)
 		}
-		home, err := prepareNativeHome(context.Background(), cfg, provider, "work", a, false, seed)
+		home, err := prepareNativeHome(context.Background(), cfg, provider, "work", a, false, seed, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,7 +32,7 @@ func TestNativeHomeOwnsACompleteRepositoryAccountDomain(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"theme":"native-edit"}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		again, err := prepareNativeHome(context.Background(), cfg, provider, "work", a, false, seed)
+		again, err := prepareNativeHome(context.Background(), cfg, provider, "work", a, false, seed, nil)
 		if err != nil || again != home || calls != 1 {
 			t.Fatalf("reuse=%q seed calls=%d err=%v", again, calls, err)
 		}
@@ -41,7 +41,7 @@ func TestNativeHomeOwnsACompleteRepositoryAccountDomain(t *testing.T) {
 			t.Fatal("host defaults overwrote native settings")
 		}
 		for _, selection := range []struct{ account, repo string }{{"work", b}, {"personal", a}} {
-			other, err := prepareNativeHome(context.Background(), cfg, provider, selection.account, selection.repo, false, seed)
+			other, err := prepareNativeHome(context.Background(), cfg, provider, selection.account, selection.repo, false, seed, nil)
 			if err != nil || other == home {
 				t.Fatalf("selection mixed: %v", err)
 			}
@@ -58,15 +58,15 @@ func TestNativeHomeOwnsACompleteRepositoryAccountDomain(t *testing.T) {
 func TestNativeHomeACPIsRepositoryScopedAndCredentialIndependent(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	repo := t.TempDir()
-	first, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, true, nil)
+	first, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, true, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherAccount, err := prepareNativeHome(context.Background(), cfg, "codex", "personal", repo, true, nil)
+	otherAccount, err := prepareNativeHome(context.Background(), cfg, "codex", "personal", repo, true, nil, nil)
 	if err != nil || first != otherAccount {
 		t.Fatal("ACP account switch loses the native home")
 	}
-	otherRepo, err := prepareNativeHome(context.Background(), cfg, "codex", "work", t.TempDir(), true, nil)
+	otherRepo, err := prepareNativeHome(context.Background(), cfg, "codex", "work", t.TempDir(), true, nil, nil)
 	if err != nil || first == otherRepo {
 		t.Fatal("ACP home crosses repositories")
 	}
@@ -80,7 +80,7 @@ func TestNativeHomeConcurrentCreationSeedsOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { calls.Add(1); return nil })
+			_, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { calls.Add(1); return nil }, nil)
 			if err != nil {
 				t.Error(err)
 			}
@@ -98,7 +98,7 @@ func TestNativeHomeSeedCannotPublishNonprivateDirectory(t *testing.T) {
 	_, err := prepareNativeHome(context.Background(), cfg, "codex", "work", t.TempDir(), false, func(home string) error {
 		seeded = home
 		return os.Chmod(home, 0o755)
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("nonprivate home was published")
 	}
@@ -122,7 +122,7 @@ func TestNativeHomeSetsAsideAnInterruptedSetup(t *testing.T) {
 					t.Fatal(err)
 				}
 				return errors.New("inert seed failure")
-			}); err == nil {
+			}, nil); err == nil {
 				t.Fatal("interrupted initialization succeeded")
 			}
 			if used != "" {
@@ -131,7 +131,7 @@ func TestNativeHomeSetsAsideAnInterruptedSetup(t *testing.T) {
 				}
 			}
 			seeded := false
-			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { seeded = true; return nil })
+			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { seeded = true; return nil }, nil)
 			if used != "" {
 				if err == nil || seeded {
 					t.Fatal("a home something used was set aside")
@@ -154,7 +154,7 @@ func TestNativeHomeSetsAsideAnInterruptedSetup(t *testing.T) {
 
 func TestNativeHomeRefusesAnotherOwnersHome(t *testing.T) {
 	cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
-	home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { return nil })
+	home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { return nil }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestNativeHomeRefusesAnotherOwnersHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	if _, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { called = true; return nil }); err == nil || called {
+	if _, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, func(string) error { called = true; return nil }, nil); err == nil || called {
 		t.Fatal("another owner's home was replaced or admitted")
 	}
 }
@@ -174,14 +174,14 @@ func TestPublishedNativeHomeRestoredReadableIsTightened(t *testing.T) {
 	for mode, served := range map[os.FileMode]bool{0o755: true, 0o750: true, 0o775: false, 0o757: false} {
 		t.Run(mode.String(), func(t *testing.T) {
 			cfg, repo := &config.Config{ConfigDir: t.TempDir()}, t.TempDir()
-			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil)
+			home, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Chmod(home, mode); err != nil {
 				t.Fatal(err)
 			}
-			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil)
+			again, err := prepareNativeHome(context.Background(), cfg, "codex", "work", repo, false, nil, nil)
 			info, statErr := os.Stat(home)
 			if statErr != nil {
 				t.Fatal(statErr)

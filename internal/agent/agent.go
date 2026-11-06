@@ -102,6 +102,15 @@ type CachePrivateDirs interface {
 	CachePrivateDirs() []string
 }
 
+// DefaultsRefresher is the optional capability for an adapter whose first-run answers the agent
+// itself drops or rewrites as it runs, or that a new folder in a shared native home never had: the
+// seed made when the home was created is not enough, so Coop fills what is missing again before every
+// launch, under the home's lock. It reads and changes only what the answers live in, keeps every value
+// in place, and writes only when something is missing.
+type DefaultsRefresher interface {
+	RefreshDefaults(cfg *config.Config, workdir string) error
+}
+
 // SessionDiscoverer is the optional capability for an adapter that cannot choose its new
 // session ID but can discover the native ID after a run. Forks persist it and resume exactly it.
 type SessionDiscoverer interface {
@@ -971,6 +980,10 @@ type HomeFallback struct {
 	Project string
 	Target  string
 	Dir     bool
+	// Fill, for a file fallback, adds the answers the adapter gives for the agent's first-run prompts
+	// to the bytes copied into the box, which keep every value the file sets. The copy belongs to the
+	// box alone; the committed source is never written. A file Fill cannot read comes back as it was.
+	Fill func(data []byte) []byte
 }
 
 // ACPSignal is one structured rate-limit marker in an ACP adapter's JSON-RPC errors: a

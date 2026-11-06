@@ -2915,7 +2915,9 @@ func synthSkillsMounts(repo, homeInBox, artifactParent string, agentNames []stri
 
 // synthHomeFallbackMounts copies each active adapter's declared fallback artifacts into
 // ephemeral user-level mounts. Project artifacts suppress matching fallbacks independently;
-// writable copies keep both the committed source and host credential profile untouched.
+// writable copies keep both the committed source and host credential profile untouched. A file the
+// adapter fills (HomeFallback.Fill) is copied with the agent's first-run answers added: the copy
+// stands in for the agent's own settings.json, which held them.
 func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames []string, exposedRoots ...string) (mounts []extraMount, tmpdirs []string, retErr error) {
 	sources, err := openRepositorySources(repo)
 	if err != nil {
@@ -2973,6 +2975,9 @@ func synthHomeFallbackMounts(repo, homeInBox, artifactParent string, agentNames 
 				host = filepath.Join(dst, filepath.Base(source))
 				var data []byte
 				data, err = sources.readFile(source)
+				if err == nil && artifact.Fill != nil {
+					data = artifact.Fill(data) // the copy only: the committed file is never written
+				}
 				if err == nil {
 					err = os.WriteFile(host, data, 0o600)
 				}

@@ -106,6 +106,121 @@ func TestEnsureClaudeDefaultsPreservesAndIdempotent(t *testing.T) {
 	}
 }
 
+// Claude moves bypassPermissionsModeAccepted out of .claude.json on its first start, and a fork is a
+// new folder in its project's shared home: the answers seeded when the home was made are gone, or never
+// covered the folder, at the next launch. The refresh puts back what is missing, keeps everything else
+// the file holds, touches nothing but .claude.json, and writes only when something was missing.
+func TestClaudeRefreshDefaultsRestoresWhatClaudeDropped(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	cdir := cfg.AgentDir("claude")
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cj, settings := filepath.Join(cdir, ".claude.json"), filepath.Join(cdir, "settings.json")
+	// What Claude leaves after its first launch: onboarding and the first folder's trust stay, the
+	// bypass acceptance is gone, and the account's own state and a later setting are in it.
+	rewritten := `{"hasCompletedOnboarding":true,"migrationVersion":14,"numStartups":7,"oauthAccount":{"u":"x"},` +
+		`"projects":{"/work/app":{"hasTrustDialogAccepted":true,"allowedTools":["Bash"]}}}`
+	if err := os.WriteFile(cj, []byte(rewritten), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"theme":"light"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refresher, ok := Agent(claudeAgent{}).(DefaultsRefresher)
+	if !ok {
+		t.Fatal("Claude does not refresh its defaults at launch")
+	}
+
+	// A new folder in the same home: its trust and the dropped acceptance come back.
+	if err := refresher.RefreshDefaults(cfg, "/work/app-forks/qa1"); err != nil {
+		t.Fatal(err)
+	}
+	c := readJSONMap(t, cj)
+	if c["bypassPermissionsModeAccepted"] != true || c["hasCompletedOnboarding"] != true {
+		t.Errorf("the acceptance Claude dropped did not come back: %v", c)
+	}
+	projects, _ := c["projects"].(map[string]any)
+	fork, _ := projects["/work/app-forks/qa1"].(map[string]any)
+	app, _ := projects["/work/app"].(map[string]any)
+	if fork["hasTrustDialogAccepted"] != true {
+		t.Errorf("the new fork's folder is not trusted: %v", projects)
+	}
+	if app["hasTrustDialogAccepted"] != true || app["allowedTools"] == nil {
+		t.Errorf("the first folder's own entry changed: %v", app)
+	}
+	if c["numStartups"] != float64(7) || c["migrationVersion"] != float64(14) || c["oauthAccount"] == nil {
+		t.Errorf("the account's own state changed: %v", c)
+	}
+	if got := readFile(t, settings); got != `{"theme":"light"}` {
+		t.Errorf("settings.json was touched by the refresh: %q", got)
+	}
+
+	// Nothing missing: the file is not rewritten.
+	before, err := os.Stat(cj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytesBefore := readFile(t, cj)
+	if err := refresher.RefreshDefaults(cfg, "/work/app-forks/qa1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(cj)
+	if err != nil || !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) || readFile(t, cj) != bytesBefore {
+		t.Errorf("a refresh with nothing missing rewrote .claude.json (%v)", err)
+	}
+
+	// A file Claude's reader cannot parse is refused, as it is at every launch, never replaced.
+	if err := os.WriteFile(cj, []byte(`{"projects":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := refresher.RefreshDefaults(cfg, "/work/app-forks/qa1"); err == nil || !strings.Contains(err.Error(), "parse") {
+		t.Errorf("RefreshDefaults over broken JSON = %v, want a parse refusal", err)
+	}
+	if got := readFile(t, cj); got != `{"projects":` {
+		t.Errorf("a broken .claude.json was replaced: %q", got)
+	}
+}
+
+// A project's committed .agent/claude/settings.json stands in for the home's settings.json inside the
+// box, so the skip flag the home held is not there: the copy the box gets has it added, and every value
+// the file sets stays. A file with every answer is copied byte for byte, and one that is no JSON object
+// as it was.
+func TestFillClaudeSettingsAddsTheAnswersAndKeepsTheFilesValues(t *testing.T) {
+	person := `{"hooks":{"PreToolUse":[{"matcher":"Bash"}]},"theme":"light","sandbox":{"enabled":true},"limit":12345678901234567890}`
+	var filled map[string]any
+	if err := json.Unmarshal(fillClaudeSettings([]byte(person)), &filled); err != nil {
+		t.Fatalf("the filled settings are not JSON: %v", err)
+	}
+	if filled["skipDangerousModePermissionPrompt"] != true {
+		t.Errorf("the bypass warning is not skipped in the copy: %v", filled)
+	}
+	sandbox, _ := filled["sandbox"].(map[string]any)
+	if filled["theme"] != "light" || sandbox["enabled"] != true || sandbox["failIfUnavailable"] != false || filled["hooks"] == nil {
+		t.Errorf("a value the file sets changed, or the missing sandbox answer is absent: %v", filled)
+	}
+	if !strings.Contains(string(fillClaudeSettings([]byte(person))), "12345678901234567890") {
+		t.Error("a number too large for a float64 did not survive")
+	}
+	full := `{"skipDangerousModePermissionPrompt":true,"theme":"light","sandbox":{"enabled":true,"failIfUnavailable":true}}`
+	if got := string(fillClaudeSettings([]byte(full))); got != full {
+		t.Errorf("a file with every answer was changed: %q", got)
+	}
+	for _, other := range []string{"", "not json", `["hooks"]`, `{"hooks":`, `{"a":1} {"b":2}`} {
+		got := fillClaudeSettings([]byte(other))
+		if string(got) != other && strings.TrimSpace(other) != "" {
+			t.Errorf("a file that is no JSON object, %q, came back as %q", other, got)
+		}
+	}
+	if !strings.Contains(string(fillClaudeSettings(nil)), "skipDangerousModePermissionPrompt") {
+		t.Error("an empty settings file did not get the answers, as a missing home settings.json does")
+	}
+	files := (claudeAgent{}).HomeFallbacks()
+	if files[0].Target != ".claude/settings.json" || files[0].Fill == nil || files[1].Fill != nil {
+		t.Errorf("only Claude's settings.json fallback is filled: %+v", files)
+	}
+}
+
 func TestEnsureCodexDefaults(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{ConfigDir: dir}

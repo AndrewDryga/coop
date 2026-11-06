@@ -48,9 +48,14 @@ func PrepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 		}
 		defer release()
 	}
+	inHome := func(home string) *config.Config { return cfg.WithNativeHomes(map[string]string{provider: home}) }
+	var refresh func(string) error
+	if refresher, ok := ag.(agents.DefaultsRefresher); ok {
+		refresh = func(home string) error { return refresher.RefreshDefaults(inHome(home), Workdir(cfg, repo)) }
+	}
 	return prepareNativeHome(ctx, cfg, provider, account, repo, acp, func(home string) error {
-		return ag.EnsureDefaults(cfg.WithNativeHomes(map[string]string{provider: home}), Workdir(cfg, repo))
-	})
+		return ag.EnsureDefaults(inHome(home), Workdir(cfg, repo))
+	}, refresh)
 }
 
 // setAsideUnpublishedHome moves a home whose setup never published to a unique name beside it. A
@@ -66,9 +71,11 @@ func setAsideUnpublishedHome(root *accountAuthorityRoot) error {
 
 // prepareNativeHome creates one complete native rename domain. The seed callback
 // runs only for a new home, before publication; existing native settings are never
-// re-seeded. A home whose setup never published is set aside and seeded again.
+// re-seeded. A home whose setup never published is set aside and seeded again. The
+// refresh callback, when there is one, runs for a published home at every launch, under the
+// same lock: it fills what the agent itself dropped or a new folder never had, and never re-seeds.
 func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, account, repo string, acp bool,
-	seed func(string) error) (string, error) {
+	seed, refresh func(string) error) (string, error) {
 	if cfg == nil || !accountNameValid(provider) {
 		return "", errors.New("invalid native home selection")
 	}
@@ -119,6 +126,11 @@ func prepareNativeHome(ctx context.Context, cfg *config.Config, provider, accoun
 		}
 		if err := privateAccountDirectory(child); err != nil {
 			return "", err
+		}
+		if refresh != nil {
+			if err := refresh(home); err != nil {
+				return "", fmt.Errorf("refresh native home defaults at %s: %w", home, err)
+			}
 		}
 		return home, nil
 	}

@@ -14,6 +14,15 @@
   refusal names `COOP_REPO=<fork path> coop approve`, and every fork command on a missing fork prints
   one block and exits 2.
 
+- **Claude's bypass warning and trust prompt no longer come back after the first launch.** In a
+  project set up with `coop init`, every Claude launch after the first stopped on "WARNING: Claude
+  Code running in Bypass Permissions mode", and each new fork on "Is this a project you trust?";
+  both exit by default, and answering did not stick. Claude drops its bypass acceptance from
+  `.claude.json` on its first start, the project's `.agent/claude/settings.json` hid the one coop
+  put in the home's settings, and a new fork's folder was never trusted. Coop now fills what is
+  missing in the home's `.claude.json` before every launch, and adds the bypass answer to the copy
+  of the project's settings the box reads. Your values and your files are left as they are.
+
 - **A fork keeps its model and account when you reopen it or restart its loop.** After
   `coop fork perf claude:haiku@work`, `coop fork perf` and a resumed `coop fork perf --loop -d` ran
   Claude's default model on the default account, and the loop quietly cost more on every restart.

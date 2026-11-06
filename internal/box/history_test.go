@@ -48,7 +48,7 @@ func TestHistoryKeyFollowsTheCanonicalRepository(t *testing.T) {
 
 func TestHistoryStoresListOnlyCompleteNativeHomes(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	home, err := prepareNativeHome(context.Background(), cfg, "claude", "work", t.TempDir(), false, nil)
+	home, err := prepareNativeHome(context.Background(), cfg, "claude", "work", t.TempDir(), false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
