@@ -2,8 +2,8 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go]
-updated: 2026-11-05
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go]
+updated: 2026-11-06
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -191,6 +191,9 @@ fully read. A box of an older build holds without saying so, so it reads as "ano
 A box that has to wait before it starts its services says so the same way in `launch-waiters/`
 (`NoteServiceLaunchWaiting`, from `lockServiceLaunch`'s first wait until it returns); `Executions` reports it as
 `WaitingForServices` on a running record, and `coop tasks watch` reads it as `waiting to start its services`.
+A fork's box also says so for `coop fork ls` (`noteLaunchWait`): a note in `fork-launch-waits/` naming its fork, its
+process and the boxes it waits for, since a filtered box waits while it prepares its services, before it has a
+record. `forkspace.LaunchWaits` reads only notes of live processes, and the listing shows `launch-wait`.
 
 Readiness asks what the launch will ask. A cold box that would join needs only the shared side, so
 `editorServiceLaunchBusy` runs the join's own check (`openSessionServicesRunning`, `sessionServicesRunning`) when the
@@ -225,6 +228,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-06 — a fork box that waits for the launch lock leaves a `fork-launch-waits/` note, so `coop fork ls` shows
+  the fork as waiting, with what for, instead of a running loop.
 - 2026-11-05 — a waiting box notes its wait in `launch-waiters/` for `coop tasks watch`; `EndExecution`
   removes both notes with the record.
 - 2026-11-05 — the launch-wait reporter stopped wrapping its inherited descriptor in an `*os.File`; its

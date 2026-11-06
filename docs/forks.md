@@ -55,9 +55,11 @@ coop fork api codex --loop -d   # loops the repo's task queue(s); -d detaches â€
 
 [The loop](loop.md) explains how iterations work. [Parallel forks](loop.md#parallel-forks) shows
 how to run several at once.
-A refused loop appears as stopped in `coop fork ls`, with the reason beneath it. When a task needs
-your decision, it waits in `coop tasks decisions` while the fork goes on with its other tasks. The
-fork stops for the decision only when nothing else is left.
+A refused loop appears as stopped in `coop fork ls`, with the reason beneath it. A fork whose box
+must wait for other boxes before it can start its services appears as waiting to start services,
+with the boxes it waits for beneath it. When a task needs your decision, it waits in
+`coop tasks decisions` while the fork goes on with its other tasks. The fork stops for the decision
+only when nothing else is left.
 
 ## Isolated-write forks
 

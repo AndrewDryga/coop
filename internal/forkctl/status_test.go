@@ -59,18 +59,19 @@ func TestChangesLine(t *testing.T) {
 // is never rewritten (see forkLsJSON).
 func TestStateWordsCoversEveryState(t *testing.T) {
 	for state, want := range map[string]string{
-		"running":   "background loop running",
-		"elsewhere": "background loop started on Linux",
-		"active":    "agent running",
-		"session":   "reserved for a session",
-		"parked":    "waiting",
-		"landing":   "merging",
-		"ready":     "ready to merge",
-		"failed":    "stopped",
-		"legacy":    "older fork format",
-		"cleanup":   "cleanup needed",
-		"unknown":   "status unavailable",
-		"idle":      "idle",
+		"running":     "background loop running",
+		"launch-wait": "waiting to start services",
+		"elsewhere":   "background loop started on Linux",
+		"active":      "agent running",
+		"session":     "reserved for a session",
+		"parked":      "waiting",
+		"landing":     "merging",
+		"ready":       "ready to merge",
+		"failed":      "stopped",
+		"legacy":      "older fork format",
+		"cleanup":     "cleanup needed",
+		"unknown":     "status unavailable",
+		"idle":        "idle",
 	} {
 		if got := stateWords(state, "Linux"); got != want {
 			t.Errorf("stateWords(%q) = %q, want %q", state, got, want)
@@ -225,6 +226,56 @@ func TestForkLsShowsAForkThatNeverStarted(t *testing.T) {
 	NoteForkStart(workspace, false, false, fmt.Errorf("account refused"))
 	if note := ReadForkStartError(workspace); note != "" {
 		t.Errorf("a fork whose agent ran still has the start note %q", note)
+	}
+}
+
+// A fork whose box waits to start its services reads as waiting, naming what it waits for as the wait
+// does in the fork's log, and as running again once the wait ends. Shown only in the log, the wait left
+// the fork reading "background loop running" for as long as it lasted (2026-11-05).
+func TestForkLsShowsAForkWaitingToStartItsServices(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	workspace := forkspace.Workspace(repo, "perf")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "perf")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := forkspace.WorkerState{Pid: os.Getpid(), Token: forkspace.ProcStartToken(os.Getpid()), Generation: identity.Generation}
+	if err := forkspace.WriteWorkerState(repo, "perf", worker); err != nil {
+		t.Fatal(err)
+	}
+	lastWeek := time.Now().Add(-7*24*time.Hour - time.Hour)
+	if err := os.Chtimes(workspace, lastWeek, lastWeek); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	const running = "Forks\n\n  perf · background loop running · updated 7 days ago\n\nReview a fork: coop fork review <name>\n"
+	if text, stderr, _ := listForkStatus(t, c, "perf"); text != running || stderr != "" {
+		t.Fatalf("fork ls before the wait printed:\n%s\n%s\nwant:\n%s", text, stderr, running)
+	}
+
+	forget := forkspace.NoteLaunchWait(repo, "perf", []string{"a loop in fork perf"})
+	text, stderr, status := listForkStatus(t, c, "perf")
+	want := "Forks\n\n  perf · waiting to start services · updated 7 days ago\n" +
+		"    Waiting for another box in this project. Running now: a loop in fork perf.\n\nReview a fork: coop fork review <name>\n"
+	if text != want || stderr != "" {
+		t.Errorf("fork ls while its box waits printed:\n%s\n%s\nwant:\n%s", text, stderr, want)
+	}
+	if !strings.Contains(status, `"state":"launch-wait"`) || !strings.Contains(status, `"launch_wait":["a loop in fork perf"]`) {
+		t.Errorf("fork ls --json while its box waits: %s", status)
+	}
+
+	forget()
+	text, _, status = listForkStatus(t, c, "perf")
+	if text != running || !strings.Contains(status, `"state":"running"`) || strings.Contains(status, "launch_wait") {
+		t.Errorf("fork ls once the wait ended printed:\n%s\n%s", text, status)
 	}
 }
 

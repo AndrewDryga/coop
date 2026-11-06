@@ -802,3 +802,53 @@ func TestAForkBoxStartingServicesIsNamedByAWaitThere(t *testing.T) {
 		t.Errorf("a wait in fork a names %v once its box let go", busy.Boxes)
 	}
 }
+
+// A fork's box that waits to start its services says so where `coop fork ls` looks, naming what it
+// waits for as its own log does, and stops saying so once the wait ends. Shown only in the log, the
+// wait left the fork reading as a running loop (2026-11-05).
+func TestAForkBoxWaitingToStartServicesShowsInTheForkListing(t *testing.T) {
+	noticeLaunchWaitAfter(t, 10*time.Millisecond)
+	repo := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, identity := newForkWorkspace(t, repo, "a")
+	holder, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionForkInteractive, Workspace: a, Fork: &identity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, holder) })
+	t.Cleanup(forkspace.NoteServiceLaunchHeld(repo, holder.ID))
+	release := holdLaunchLock(t, a)
+	spec := RunSpec{Repo: a, ActivityRepo: repo, ForkName: "a"}
+	started := make(chan error, 1)
+	captureStderr(t, func() {
+		go func() {
+			unlock, err := lockServiceStart(t.Context(), a, spec, nil)
+			if err == nil {
+				unlock()
+			}
+			started <- err
+		}()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if boxes, waiting := forkspace.LaunchWaits(repo, "a"); waiting {
+				if !slices.Equal(boxes, []string{"a box in a terminal in fork a"}) {
+					t.Errorf("the waiting fork waits for %v", boxes)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("a fork box waiting to start its services never said so")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		release()
+		if err := <-started; err != nil {
+			t.Fatal(err)
+		}
+	})
+	if boxes, waiting := forkspace.LaunchWaits(repo, "a"); waiting {
+		t.Fatalf("the fork still shows a wait for %v after it ended", boxes)
+	}
+}

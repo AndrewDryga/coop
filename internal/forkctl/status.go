@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -33,6 +34,10 @@ type forkStatus struct {
 	Cost                                  float64 // total loop spend across the fork's runs, 0 if it never ran
 	StartError                            string  // why the fork's first start stopped before its agent ran (see NoteForkStart)
 	LoopError                             string  // the current generation's last terminal loop failure
+	// LaunchWaiting is a box of the fork waiting for a service launch lock now; LaunchWait names what it
+	// waits for, in the words the wait itself prints (box.ServiceLaunchBusy).
+	LaunchWaiting bool
+	LaunchWait    []string
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
@@ -100,6 +105,7 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
 	}
 	cost, _ := c.host.forkCost(ws)
+	launchWait, launchWaiting := forkspace.LaunchWaits(repo, name)
 	return forkStatus{
 		Name:                name,
 		Agent:               agent,
@@ -125,6 +131,8 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		ReadyTasks:          readyTasks,
 		Blocked:             blockedTasks,
 		Problems:            problems,
+		LaunchWaiting:       launchWaiting,
+		LaunchWait:          launchWait,
 		Cost:                cost,
 		StartError:          ReadForkStartError(ws),
 		LoopError:           readForkLoopError(ws, identity.Generation),
@@ -176,6 +184,11 @@ func (s forkStatus) stateCell() string {
 	if len(s.Problems) > 0 {
 		return "unknown"
 	}
+	// A box waiting to start its services is the fork's news while it lasts: its loop runs, and does
+	// nothing until the boxes holding the lock stop.
+	if s.LaunchWaiting {
+		return "launch-wait"
+	}
 	if s.Running {
 		return "running"
 	}
@@ -210,6 +223,8 @@ func stateWords(state, system string) string {
 	switch state {
 	case "running":
 		return "background loop running"
+	case "launch-wait":
+		return "waiting to start services"
 	case "elsewhere":
 		return "background loop started on " + system
 	case "active":
@@ -262,6 +277,16 @@ func (s forkStatus) changesLine() string {
 		cell += " · uncommitted changes"
 	}
 	return cell
+}
+
+// launchWaitLine is what a fork's waiting box waits for, as that wait says it in the fork's own log:
+// the same title and the boxes running now.
+func (s forkStatus) launchWaitLine() string {
+	title, details := (&box.ServiceLaunchBusy{Boxes: s.LaunchWait}).Say()
+	if len(s.LaunchWait) == 0 {
+		return title + "."
+	}
+	return title + ". " + details[0]
 }
 
 // costLine is the fork's reported loop spend, or "" when nothing was reported — never $0.00,

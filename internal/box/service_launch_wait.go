@@ -68,8 +68,11 @@ func waitForLaunchLock(ctx context.Context, repo string, project, exclusive bool
 	}
 	var said *ServiceLaunchBusy
 	var told, own bool
-	waitOver := func() {}
-	defer func() { waitOver() }()
+	waitOver, forgetWait := func() {}, func() {}
+	defer func() {
+		waitOver()
+		forgetWait()
+	}()
 	for {
 		step, cancel := context.WithTimeout(ctx, serviceLaunchWaitNotice)
 		unlock, err := take(step, repo, exclusive)
@@ -100,6 +103,8 @@ func waitForLaunchLock(ctx context.Context, repo string, project, exclusive bool
 		// box takes the lock first, or the other way around. So it asks again for as long as it lasts.
 		if said == nil || !slices.Equal(said.Boxes, busy.Boxes) {
 			sections.serviceLaunchWait(busy, exclusive)
+			forgetWait()
+			forgetWait = spec.noteLaunchWait(busy)
 		}
 		first := said == nil
 		said = busy
@@ -161,6 +166,16 @@ func (spec RunSpec) noteLaunchHeld(repo string, unlock func()) func() {
 		forget()
 		unlock()
 	}
+}
+
+// noteLaunchWait says where `coop fork ls` looks that this fork's box waits, and for what, until the
+// returned call. A wait shown only in the fork's log left the fork reading as a running loop for as long
+// as it lasted (2026-11-05). A box outside a fork has no fork listing to tell.
+func (spec RunSpec) noteLaunchWait(busy *ServiceLaunchBusy) func() {
+	if spec.ForkName == "" || spec.ActivityRepo == "" {
+		return func() {}
+	}
+	return forkspace.NoteLaunchWait(spec.ActivityRepo, spec.ForkName, busy.Boxes)
 }
 
 // ServiceLaunchBusy is a box that would have to wait for the service launch lock: Boxes are what run

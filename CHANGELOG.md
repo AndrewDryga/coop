@@ -12,6 +12,11 @@
   HEAD, no amend or rebase of the reviewed commits, or no commit at all when only evidence was
   missing.
 
+- **`coop fork ls` shows a fork whose box is waiting to start its services.** Such a fork read as
+  "background loop running" for as long as its box waited for other boxes, and only the fork's log
+  said why nothing happened. It now reads "waiting to start services", with the boxes it waits for
+  beneath it, and goes back to running when the wait ends. `coop fork ls --json` reports the state
+  `launch-wait` and the boxes in `launch_wait`.
 - **Give a task a priority.** Add `priority: high` or `priority: low` to a task.md's frontmatter
   and the loop takes high tasks first and low tasks last, in folder order within each. Before, the
   loop always went by folder name, so among tasks filed on the same day it went alphabetically.

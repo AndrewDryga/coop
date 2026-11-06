@@ -83,6 +83,9 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		if s.stateCell() == "failed" {
 			listing("    Loop failed: %s", ui.SafeInline(s.LoopError))
 		}
+		if s.stateCell() == "launch-wait" {
+			listing("    %s", ui.SafeInline(s.launchWaitLine()))
+		}
 		if s.Agent != "" && s.Agent != "?" {
 			listing("    Agent: %s", s.Agent)
 		}
@@ -207,6 +210,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		Legacy              bool             `json:"legacy_generation"`
 		Problems            []string         `json:"problems,omitempty"`
 		LoopError           string           `json:"loop_error,omitempty"`
+		LaunchWait          []string         `json:"launch_wait,omitempty"` // what a "launch-wait" fork's box waits for
 	}
 	type workspace struct {
 		Name     string            `json:"name"`
@@ -247,6 +251,9 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		}
 		if s.stateCell() == "failed" {
 			status.LoopError = s.LoopError
+		}
+		if s.stateCell() == "launch-wait" {
+			status.LaunchWait = s.LaunchWait
 		}
 		out = append(out, workspace{Name: n, Path: ws, Serve: serveURLs(ws), Services: svcURLs(ws), Status: status})
 		for _, problem := range s.Problems {
