@@ -96,8 +96,8 @@ func (a *app) cmdModels(args []string) (int, error) {
 		}
 		if issue != "" {
 			fmt.Println(modelIndent + p.Yellow("⚠ "+issue))
-			if why != "" { // the reason in the shared cause block, six spaces in, on its own
-				fmt.Printf("\n      %s\n", why)
+			if why != "" { // the reason in the shared cause block, every line six spaces in, on its own
+				fmt.Printf("\n      %s\n", strings.ReplaceAll(why, "\n", "\n      "))
 			}
 		}
 		fmt.Println()
@@ -270,6 +270,12 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 		}
 	}
 	cause := modelFetchCause(agent, err)
+	// A refusal is about this folder and its settings, but the cache is the agent's and every folder
+	// reads it. No provider was asked, so there is nothing to back off from either.
+	var refusal modelFetchError
+	if errors.As(err, &refusal) && refusal.refused {
+		return cause, true
+	}
 	_ = recordModelsFetchFailure(a.cfg, agent, cause) // best-effort: a lost note costs one refetch
 	return cause, true
 }
@@ -294,10 +300,12 @@ func (a *app) probeBoxRuntime() error {
 }
 
 // modelFetchError carries a fetch failure the menu can explain in a few words. The wrapped error
-// keeps the full detail for anything that logs it.
+// keeps the full detail for anything that logs it. refused marks a fetch Coop's own checks stopped
+// before any provider ran (modelProbeRefusal).
 type modelFetchError struct {
-	cause string
-	err   error
+	cause   string
+	err     error
+	refused bool
 }
 
 func (e modelFetchError) Error() string {

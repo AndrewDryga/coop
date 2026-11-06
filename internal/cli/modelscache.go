@@ -197,7 +197,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		return nil, err
+		return nil, modelProbeRefusal(agents.Target{Provider: agent, Accounts: []string{a.cfg.ActiveProfile(agent)}}, err, "")
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -209,7 +209,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	stderr := &tailBuffer{max: 16 << 10}
 	probe, target, err := a.admitModelProbe(launchCtx, agent, repo, stderr)
 	if err != nil {
-		return nil, modelProbeFailure(target, err, stderr.String())
+		return nil, modelProbeRefusal(target, err, stderr.String())
 	}
 	defer probe.acpCapture.Close()
 	ctx, cancel := context.WithCancel(launchCtx)
@@ -307,13 +307,34 @@ func (w *modelSetupOutput) Write(p []byte) (int, error) {
 // Only fixed remedies leave the private stderr collector. Provider output and RPC payloads can
 // contain credentials, even when wrapped in an otherwise useful setup error.
 func modelProbeFailure(target agents.Target, err error, stderr string) error {
-	cause := safeModelProbeCause(target, err.Error()+"\n"+stderr)
-	if errors.Is(err, box.ErrNetworkSetupFailed) {
-		cause = "Filtered networking setup failed; run coop net setup for details."
-	} else if cause == "" {
+	cause := fixedModelProbeCause(target, err, stderr)
+	if cause == "" {
 		cause = modelFetchCause(target.Provider, err)
 	}
 	return modelFetchError{cause: cause, err: err}
+}
+
+// modelProbeRefusal is a probe that Coop's own checks stopped before any provider process ran, so
+// the error holds Coop's words alone, and the menu shows them, escaped like every Coop error, where
+// no fixed remedy says it shorter. A failed host setup did bounded work that a retry would repeat,
+// and a stopped one refused nothing, so both stay failures the cache backs off from.
+func modelProbeRefusal(target agents.Target, err error, stderr string) error {
+	if errors.Is(err, box.ErrNetworkSetupFailed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return modelProbeFailure(target, err, stderr)
+	}
+	cause := fixedModelProbeCause(target, err, stderr)
+	if cause == "" {
+		cause = safeErrorText(err)
+	}
+	return modelFetchError{cause: cause, err: err, refused: true}
+}
+
+// fixedModelProbeCause is the fixed remedy for a probe's failure, or "" when none applies.
+func fixedModelProbeCause(target agents.Target, err error, stderr string) string {
+	if errors.Is(err, box.ErrNetworkSetupFailed) {
+		return "Filtered networking setup failed; run coop net setup for details."
+	}
+	return safeModelProbeCause(target, err.Error()+"\n"+stderr)
 }
 
 func safeModelProbeCause(target agents.Target, text string) string {

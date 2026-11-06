@@ -75,6 +75,12 @@
   relative one, and an unset `HOME` no longer puts Coop's settings in `.config` under the current
   folder. An empty `COOP_MCP_FILE` or `COOP_PRESETS_DIR` still means none.
 
+- **`coop models` says why it could not refresh when Coop itself stopped the refresh.** With
+  `COOP_MCP_FILE` inside the current folder, or in the home folder, a refresh printed only "The model
+  request failed." and saved that failure for every folder. It now prints Coop's own message, as
+  `coop run` does there, and saves nothing. The account view of `coop usage` now writes credit
+  balances as the summary does (`56,411.56 remaining`, with no "reset unknown") and names each
+  reported reset once.
 - **The first account you sign in to becomes the default, even when you name it.** After
   `coop login gemini@work` on a new setup, `coop gemini` said Gemini needed a sign-in and offered
   another `coop login`, because only an account named "default" counted as the default. Now an

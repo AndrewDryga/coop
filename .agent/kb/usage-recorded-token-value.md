@@ -3,7 +3,7 @@ name: usage-recorded-token-value
 description: Usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 subsystem: usage
 sources: [internal/agent/usage.go, internal/agent/usage_report.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/usage.go, internal/box/native_selection.go, internal/box/run.go, internal/cli/usage.go, internal/cli/usage_reports.go, internal/session/usage.go]
-updated: 2026-10-15
+updated: 2026-11-06
 ---
 
 `coop usage [<provider>[@credential]]` never starts a model run. Local recorded value is not billing;
@@ -39,7 +39,9 @@ omits aggregate rows. Timing is a separately measured dim gray suffix with two s
 Sign-ins without
 provider limits (API key, setup token, Vertex) report `UsageQuota.Auth` and render as one line
 beside their total. Exact-account selection adds plan, coverage, pricing and retained-record
-details without a blanket disclaimer footer.
+details without a blanket disclaimer footer. It writes credit balances as the summary does and
+gives a balance no reset unless one is reported; the summary names the earliest reset expiry
+beside the count, the account view lists each reported expiry once, on a line of its own.
 Shared editor ACP roots have no historical account binding; copies shared by two named credentials
 become unattributed instead of being charged to today's default or displayed as account zero.
 The view calls that shared row `Unassigned editor usage`; this does not change its account binding.
@@ -74,6 +76,8 @@ discards ordinary quota. Only positive remaining grants contribute reported `end
 This is inspection only: no organization reset route, grant IDs, event properties or redemption.
 
 ## Changelog
+- 2026-11-06 — the account view now formats credit balances like the summary and lists each
+  reported reset expiry once; verified against renderUsage and usageBucketText.
 - 2026-11-04 — removed the Gemini quota container helper (`ReadUsageQuotaNative`, the pinned bundle
   module and its tarball tripwire) and the Claude, Codex and Grok profile-folder quota renewals:
   they served only accounts never cut over, which are refused by name now.

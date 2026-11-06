@@ -222,6 +222,90 @@ func TestModelProbeRPCFailureNeverCachesPayload(t *testing.T) {
 	}
 }
 
+// A refresh that Coop's own launch check stops, as an mcp.json inside the folder does, says what
+// coop run says there and leaves the cache as it was: no provider was asked, and every folder reads
+// the agent's cache.
+func TestModelsRefreshShowsTheLaunchRefusalAndKeepsTheCache(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	folder := t.TempDir() // not a Git repository, as in the report
+	source := filepath.Join(folder, "mcp.json")
+	if err := os.WriteFile(source, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: folder, MCPFile: source, Homes: true, Egress: "filtered"}
+	seedNativeFixture(t, cfg, "claude", config.DefaultProfile)
+	if err := writeModelsCache(cfg, "claude", []agents.Model{{ID: "last-good"}}); err != nil {
+		t.Fatal(err)
+	}
+	before := readFileString(modelsCachePath(cfg, "claude"))
+	a := &app{cfg: cfg, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdModels([]string{"claude", "--refresh"}); code != 0 || err != nil {
+			t.Fatalf("cmdModels = (%d, %v)", code, err)
+		}
+	})
+	repo, err := box.ResolveRepo(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("  ⚠ Could not refresh. Showing the list saved just now\n\n"+
+		"      mcp.json source %q is inside mounted repository %q; move the file and set COOP_MCP_FILE to a path outside directories exposed to agents\n", source, repo)
+	if !strings.Contains(out, want) || !strings.Contains(out, "last-good") {
+		t.Errorf("menu does not show the launch refusal under the saved list; want %q in:\n%s", want, out)
+	}
+	if after := readFileString(modelsCachePath(cfg, "claude")); after != before {
+		t.Errorf("a launch refusal changed the cache:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// Coop's own refusal is shown escaped, as any Coop error is, and never recorded. A fixed remedy
+// still says it shorter. A failed host setup and a provider failure keep their lines and the
+// backoff, since a retry would pay for them again.
+func TestModelProbeRefusalIsShownAndNeverRecorded(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name     string
+		admit    error // what the probe's admission returns; nil fails in the provider instead
+		want     string
+		recorded bool
+	}{
+		{"coop check", errors.New("project file \x1b[31mbroken\n  line 3: unknown key"), "project file \\u001B[31mbroken\n  line 3: unknown key", false},
+		{"fixed remedy", errors.New("coop claude cannot start because a request is pending\n\n  Review it: coop approve /repo"), "Project access needs review: coop approve", false},
+		{"host setup", fmt.Errorf("coop claude cannot start — %w: smoke failed", box.ErrNetworkSetupFailed), "Filtered networking setup failed; run coop net setup for details.", true},
+		{"stopped", fmt.Errorf("admission: %w", context.Canceled), "The model request was cancelled.", true},
+		{"provider", nil, "The model request failed.", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+			seedNativeFixture(t, cfg, "claude", config.DefaultProfile)
+			a := &app{cfg: cfg, rt: runtime.Runtime{Name: "must-not-execute"}, rtSet: true,
+				admitNetwork: func(*config.Config, runtime.Runtime, box.RunSpec, box.NetworkAdmission) (*box.CapturedEgress, error) {
+					return nil, tc.admit
+				}}
+			if tc.admit == nil {
+				a.acpModels = func(string) ([]agents.Model, error) { return nil, errors.New("provider said SECRET-CANARY") }
+			}
+			cause, failed := a.refreshCatalog("claude", nil)
+			cache, _ := loadModelsCache(cfg, "claude")
+			if !failed || cause != tc.want {
+				t.Errorf("refresh = (%q, %v), want (%q, true)", cause, failed, tc.want)
+			}
+			if recorded := !cache.AttemptedAt.IsZero(); recorded != tc.recorded || recorded && cache.AttemptError != tc.want {
+				t.Errorf("recorded %+v, want recorded=%v", cache, tc.recorded)
+			}
+		})
+	}
+	// The menu keeps every line of a refusal in the cause block.
+	a := modelsApp(t)
+	a.acpModels = func(string) ([]agents.Model, error) {
+		return nil, modelProbeRefusal(claudeWork, errors.New("first line\nsecond line"), "")
+	}
+	out := captureStdout(t, func() { _, _ = a.cmdModels([]string{"claude", "--refresh"}) })
+	if !strings.Contains(out, "\n      first line\n      second line\n") {
+		t.Errorf("a refusal's second line left the cause block:\n%s", out)
+	}
+}
+
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }

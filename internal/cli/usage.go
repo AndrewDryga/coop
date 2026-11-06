@@ -595,7 +595,10 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				label := agents.DisplayTarget(bucket.Name)
 				text := usageBucketText(bucket, details)
 				reset := ""
-				if details || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
+				// Account details name every limit's reset, even an unknown one. A balance is no
+				// limit, so it shows a reset only when the provider reports one, as in the summary.
+				limit := bucket.Used != nil || !bucket.Reset.IsZero()
+				if details && limit || !bucket.Reset.IsZero() && !(bucket.Used != nil && *bucket.Used == 0 && shownResets[bucket.Reset.Unix()]) {
 					reset = usageResetLabel(bucket.Reset, now)
 					shownResets[bucket.Reset.Unix()] = true
 				}
@@ -617,10 +620,18 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 				if resets.Available != nil {
 					text = fmt.Sprintf("%d available", *resets.Available)
 				}
-				columns("Resets", "", "", text, usageResetExpiry(resets, now))
-				if details {
+				// The summary names the earliest expiry beside the count. Account details list every
+				// reported expiry on a line of its own instead, each once.
+				if !details {
+					columns("Resets", "", "", text, usageResetExpiry(resets, now))
+				} else {
+					fact("Resets", text)
+					shownExpiries := make(map[string]bool)
 					for _, expiry := range resets.Expirations {
-						fact("Reported reset expiry", usageExpiryLabel(expiry, now))
+						if label := usageExpiryLabel(expiry, now); !shownExpiries[label] {
+							shownExpiries[label] = true
+							fact("Reported reset expiry", label)
+						}
 					}
 				}
 			}
@@ -823,11 +834,9 @@ func usageBucketText(bucket agents.UsageBucket, details bool) string {
 	}
 	if bucket.Remaining != "" {
 		remaining := bucket.Remaining
-		if !details {
-			if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
-				remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
-				remaining = usageGroupedNumber(remaining)
-			}
+		if number, err := strconv.ParseFloat(remaining, 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
+			remaining = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", number), "0"), ".")
+			remaining = usageGroupedNumber(remaining)
 		}
 		if text != "" {
 			text += " · "

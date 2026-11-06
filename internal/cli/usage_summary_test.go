@@ -156,6 +156,53 @@ func TestUsageClaudeResetCountAndExpiry(t *testing.T) {
 	}
 }
 
+// The account view writes a credit balance as the summary does, and names each reported reset
+// once: the summary beside the count, the account view on a line of its own.
+func TestUsageAccountViewFormatsCreditsAndNamesEachResetOnce(t *testing.T) {
+	now := time.Date(2026, time.November, 6, 10, 20, 0, 0, time.UTC)
+	used, count := 14.0, int64(3)
+	soon, later := now.Add(13*time.Hour+13*time.Minute), now.Add(50*time.Hour)
+	row := usageCredential{provider: "codex", account: "personal", quota: agents.UsageQuota{
+		Buckets: []agents.UsageBucket{
+			{Name: "Weekly", Used: &used}, // a limit whose reset the provider did not report
+			{Name: "Credits", Remaining: "56411.5578710000"},
+		},
+		// Two credits granted together expire together.
+		Resets: &agents.UsageResetCredits{Available: &count, Expirations: []time.Time{soon, soon, later}},
+	}}
+	lineOf := func(text, label string) string {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), label) {
+				return strings.Join(strings.Fields(line), " ")
+			}
+		}
+		return ""
+	}
+	soonLabel := "in 13h 13m (Nov 6, 23:33 UTC)"
+	for _, details := range []bool{false, true} {
+		var out bytes.Buffer
+		renderUsage(&out, ui.Palette{}, 120, now, []string{"codex"}, []usageCredential{row}, usageUnlisted{}, details)
+		text := out.String()
+		if got := lineOf(text, "Credits"); got != "Credits 56,411.56 remaining" {
+			t.Errorf("details=%v credits line = %q, want the summary's format:\n%s", details, got, text)
+		}
+		if strings.Count(text, soonLabel) != 1 {
+			t.Errorf("details=%v names the first reset %d times, want once:\n%s", details, strings.Count(text, soonLabel), text)
+		}
+		resets := lineOf(text, "Resets")
+		if details {
+			if resets != "Resets 3 available" || strings.Count(text, "Reported reset expiry") != 2 || !strings.Contains(text, "in 2d 2h (Nov 8, 12:20 UTC)") {
+				t.Errorf("account view does not list each reported reset once:\n%s", text)
+			}
+			if !strings.Contains(lineOf(text, "Weekly"), "reset unknown") {
+				t.Errorf("account view stopped naming a limit's unknown reset:\n%s", text)
+			}
+		} else if resets != "Resets 3 available reported expiry "+soonLabel {
+			t.Errorf("summary resets line = %q:\n%s", resets, text)
+		}
+	}
+}
+
 func TestUsageGrandTotalFiltersProvidersAndMarksUnknownCoverage(t *testing.T) {
 	rows := []usageCredential{
 		{provider: "codex", value: agents.UsageValue{Available: true, Priced: 1, USD: 3}},
