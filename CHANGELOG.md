@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A custom `work.command` that leaves its task unfinished is retried.** An attempt that exited 0
+  with the task still in progress stopped the loop at once with "Task terminal correction
+  stopped", a step that resumes an agent's session, which a custom command does not have. It now
+  counts toward the stall limit like any attempt without progress, and after five the loop stops
+  with "The loop stopped making progress" and a `Continue:` line. A first SIGINT during such an
+  attempt now ends with "Stopped before final review" and exit 130, as it does at a terminal.
+
 - **`coop loop` closes with what really happened.** A queue with nothing to work on now ends
   "No tasks ready to work on." without a review checkmark, with or without `--max-tasks`. The stop
   after 5 failed attempts prints the `Continue:` command. The `--debug-on-fail` shell is announced as

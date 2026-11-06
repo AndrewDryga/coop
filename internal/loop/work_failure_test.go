@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
@@ -179,6 +181,116 @@ func TestFailedTaskAttemptsNameTheirCause(t *testing.T) {
 				t.Errorf("log.md = %q, %v; want %q", log, err, want)
 			}
 		})
+	}
+}
+
+// customWorkerRepo is a committed repository with one todo task and a custom work.command, for the
+// attempts below that exit 0 and leave the task in progress.
+func customWorkerRepo(t *testing.T, id string) (repo, root string) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("TERM", "dumb")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	root = filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# Add hello.txt\n- [ ] Write it\n")
+	writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), "mcp: false\nwork:\n  command: [\"sh\", \"-c\", \"sleep 60\"]\n")
+	return repo, root
+}
+
+// A custom work.command has no provider session to correct. An attempt that exits 0 and leaves its
+// task in progress did not finish it, so it counts toward the stall limit like any attempt without
+// progress, and the stop after the limit names the task and how to continue.
+func TestCustomWorkerThatLeavesItsTaskInProgressStalls(t *testing.T) {
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	const id = "add-hello"
+	repo, root := customWorkerRepo(t, id)
+	c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
+	attempts := 0
+	c.boxRun = func(spec box.RunSpec) (int, error) {
+		if attempts++; attempts > maxStalls || spec.AgentCommand || strings.Join(spec.Cmd, " ") != "sh -c sleep 60" {
+			t.Fatalf("unexpected attempt %d: agent command=%v argv=%q", attempts, spec.AgentCommand, spec.Cmd)
+		}
+		return 0, nil
+	}
+	var code int
+	var runErr error
+	output := captureStderr(t, func() {
+		code, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+			Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}}), Continue: "coop loop claude"})
+	})
+	if code != 1 || !errors.Is(runErr, ui.ErrReported) || attempts != maxStalls {
+		t.Fatalf("run = (%d, %v) after %d attempts, want exit 1 after %d\n%s", code, runErr, attempts, maxStalls, output)
+	}
+	stop := fmt.Sprintf("\n✗ The loop stopped making progress\n\n      No task finished, became blocked or produced a commit in %d attempts.\n"+
+		"      Current task: Add hello.txt.\n\n  Task:     coop tasks path %s\n  Continue: coop loop claude\n", maxStalls, id)
+	if !strings.Contains(output, stop) {
+		t.Errorf("the stall stop is not the usual one; want\n%s\ngot\n%s", stop, output)
+	}
+	for _, wrong := range []string{"terminal correction", "Completion was not accepted", "still cannot be completed"} {
+		if strings.Contains(output, wrong) {
+			t.Errorf("an unfinished custom attempt was treated as a completion to repair (%q):\n%s", wrong, output)
+		}
+	}
+	if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != stateInProgress {
+		t.Fatalf("the stop lost the actionable task: %+v, %v, %v", current, ok, err)
+	}
+	if records := readStageRecords(repo, c.runID); len(records) != maxStalls {
+		t.Fatalf("stage records = %d, want %d", len(records), maxStalls)
+	}
+}
+
+// A first SIGINT without a terminal lets a custom command's attempt finish. When that attempt exits 0
+// with the task still in progress, the run ends as every soft stop does: before final review, with
+// the command that continues it, and exit 130.
+func TestCustomWorkerSoftStopEndsBeforeFinalReview(t *testing.T) {
+	authority := t.TempDir()
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, authority)
+	const id = "add-hello"
+	repo, root := customWorkerRepo(t, id)
+	key, err := tasks.LeaseAuthorityKey(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(authority, key+".loop.json")
+	c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
+	attempts := 0
+	c.boxRun = func(spec box.RunSpec) (int, error) {
+		if attempts++; attempts > 1 {
+			t.Fatalf("a soft stop started attempt %d", attempts)
+		}
+		// The loop holds SIGINT for its two-stage stop, so this reaches its handler, not the test.
+		if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if data, err := os.ReadFile(note); err == nil && strings.Contains(string(data), "stopped_at") {
+				break // the stop is recorded after the loop took it
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the loop did not take the soft stop")
+			}
+		}
+		return 0, nil
+	}
+	var code int
+	var runErr error
+	output := captureStderr(t, func() {
+		code, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+			Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}}), Continue: "coop loop claude"})
+	})
+	if code != LoopInterruptedExitCode || runErr != nil || attempts != 1 {
+		t.Fatalf("soft stop = (%d, %v) after %d attempts, want exit %d after one\n%s", code, runErr, attempts, LoopInterruptedExitCode, output)
+	}
+	if !strings.Contains(output, "Stopped before final review · 0/1 tasks done\n\n  Continue: coop loop claude\n") || strings.Contains(output, "terminal correction") {
+		t.Errorf("soft stop did not end as one:\n%s", output)
+	}
+	if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != stateInProgress {
+		t.Fatalf("the soft stop lost the actionable task: %+v, %v, %v", current, ok, err)
 	}
 }
 

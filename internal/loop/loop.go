@@ -936,8 +936,9 @@ reviewAgain:
 			// rejected terminal tool call, not a reason to discard its context and start another
 			// worker. Return the precise refusal to that native session, at most twice. The task
 			// lease, completion window, source boundary, and already-started services stay in place.
+			// A custom work.command has no provider session to return it to.
 			var terminalCorrectionErr error
-			if runErr == nil && code == 0 && classification.outcome == "success" && lease.Reopen == nil {
+			if agentCommand && runErr == nil && code == 0 && classification.outcome == "success" && lease.Reopen == nil {
 				current, ok, currentErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
 				if currentErr != nil {
 					terminalCorrectionErr = currentErr
@@ -1333,9 +1334,15 @@ reviewAgain:
 						}
 						return 1, stopErr
 					}
-					candidate := tasks.QueuedTask{Root: assigned.Root, Item: current}
-					completionCandidate = &candidate
-					missing = []string{assigned.Item.ID}
+					// A custom work.command that neither asked to complete its task nor bound a commit
+					// to it simply did not finish it this time. That is no rejected completion to
+					// repair: like any attempt without progress, it counts toward the stall limit.
+					_, refused := taskTools.LatestAssignedTerminalRefusal()
+					if agentCommand || refused || completionClaim.Load() != nil {
+						candidate := tasks.QueuedTask{Root: assigned.Root, Item: current}
+						completionCandidate = &candidate
+						missing = []string{assigned.Item.ID}
+					}
 				}
 			}
 			noChangeAccepted := false
@@ -1639,7 +1646,8 @@ reviewAgain:
 				prevHead, settledBaseline, stalls, stop = c.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
 				if stop != nil {
 					headline, cause := stallNotice(stop, active)
-					ui.Failure(headline, cause, [2]string{"Task:", "coop tasks path " + assigned.Item.ID})
+					ui.Failure(headline, cause, [2]string{"Task:", "coop tasks path " + assigned.Item.ID},
+						[2]string{"Continue:", continueCmd})
 					// The stalled attempts exited 0, but the run did not finish its work.
 					return 1, ui.Reported(stop)
 				}
