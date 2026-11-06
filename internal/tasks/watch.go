@@ -138,6 +138,9 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				if record.Actor != "" {
 					m.agent = record.Actor
 				}
+				if target := knownTarget(record.ActorTarget, ""); target != "" { // an agent session's claim
+					m.agent = target
+				}
 				if claimantElsewhere(record) {
 					m.system = processidentity.System(record.ActorStart)
 				}

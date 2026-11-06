@@ -69,6 +69,10 @@
   nothing else is left. A task answered and then blocked again in the same fork now shows its new
   question there too; the fork used to put it back in progress.
 
+- **`coop tasks watch` names the agent of an editor session's claim.** A task an agent claims
+  through its session's task tools records the full target the session runs, such as
+  `claude:opus/high@work`, and the board names the claim by it, as it names a loop's worker. A
+  claim you make at a terminal still shows your name, and `--as` still shows its label.
 - **`coop tasks watch --json` says why a stopped fork's loop ended.** A fork whose loop is not
   running carries `loop_error`, the failure its loop recorded, on one line as `coop fork ls` shows
   it. A fork whose loop runs again has none, so an old failure never reads as the current one.

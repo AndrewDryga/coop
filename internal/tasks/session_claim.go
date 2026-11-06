@@ -241,16 +241,17 @@ func humanClaimRecord(root string, item Item, actor ClaimActor) (TaskOwnerRecord
 	}
 	user, host := taskOwnerIdentity()
 	return TaskOwnerRecord{
-		Version:    taskOwnershipRecordVersion,
-		TaskID:     item.ID,
-		Kind:       TaskOwnerHuman,
-		Task:       &instance,
-		Source:     taskOwnerSourceInteractiveClaim,
-		User:       user,
-		Host:       host,
-		ClaimedAt:  time.Now(),
-		Actor:      actor.Label,
-		ActorPID:   actor.PID,
-		ActorStart: actor.StartToken,
+		Version:     taskOwnershipRecordVersion,
+		TaskID:      item.ID,
+		Kind:        TaskOwnerHuman,
+		Task:        &instance,
+		Source:      taskOwnerSourceInteractiveClaim,
+		User:        user,
+		Host:        host,
+		ClaimedAt:   time.Now(),
+		Actor:       actor.Label,
+		ActorPID:    actor.PID,
+		ActorStart:  actor.StartToken,
+		ActorTarget: knownTarget(actor.Target, ""),
 	}, nil
 }

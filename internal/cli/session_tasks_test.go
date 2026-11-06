@@ -35,6 +35,17 @@ func TestSessionTaskToolsServeAProjectWithAQueue(t *testing.T) {
 		authority.Workspace != repo || authority.Assigned != "" || authority.ProposalOutbox != "" {
 		t.Fatalf("session authority = %+v", authority)
 	}
+	// Its claims and leases name the target the session's box runs, as a loop's leases do.
+	cfg.SetActiveProfile("claude", "work")
+	cfg.SetTargetModel("claude", "opus")
+	cfg.SetTargetEffort("claude", "high")
+	server, err = newSessionTaskTools(cfg, repo, "claude", os.Getpid())
+	if err != nil || server == nil {
+		t.Fatalf("a session with a target = %v, %v", server, err)
+	}
+	if authority := server.(*taskmcp.Server).Authority(); authority.Session.Target != "claude:opus/high@work" || authority.Owner.Target != "claude:opus/high@work" {
+		t.Fatalf("session target = %q, lease target = %q, want claude:opus/high@work", authority.Session.Target, authority.Owner.Target)
+	}
 	if _, err := newSessionTaskTools(cfg, repo, "claude", 0); err == nil {
 		t.Fatal("a claimant with no process identity must fail setup, not bind claims to nothing")
 	}

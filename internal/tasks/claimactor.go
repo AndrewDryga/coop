@@ -12,6 +12,9 @@ type ClaimActor struct {
 	Label      string
 	PID        int
 	StartToken string
+	// Target is the full target (provider:model/effort@account) of the agent session the claim is
+	// made for, when Coop runs that session and so knows it; empty for any other claim.
+	Target string
 }
 
 // claimActorProbe is the process-tree reader captureClaimActor walks; tests inject a fake tree.

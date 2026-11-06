@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/taskmcp"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -64,9 +66,12 @@ func newSessionTaskTools(cfg *config.Config, repo, provider string, claimant int
 	if err != nil {
 		return nil, err
 	}
+	// What the session's box runs, as a loop's lease records it, so coop tasks watch names the
+	// session's claims and leases by it: cfg is set up for this session's provider and account.
+	actor.Target = loop.RecordedTarget(cfg, agents.Target{Provider: provider, Accounts: []string{cfg.ActiveProfile(provider)}})
 	server, err := taskmcp.New(taskmcp.Authority{
 		Workspace: repo, QueueRoots: roots, Session: &actor,
-		Owner: tasks.TaskLeaseOwner{PID: os.Getpid(), Provider: provider, Target: provider},
+		Owner: tasks.TaskLeaseOwner{PID: os.Getpid(), Provider: provider, Target: actor.Target},
 	})
 	if err != nil {
 		return nil, err

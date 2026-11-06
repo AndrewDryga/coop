@@ -25,6 +25,40 @@ func TestSessionClaimActorBindsOnlyToAReadableProcess(t *testing.T) {
 
 // A session claim moves a todo task to in progress under a human-kind claim bound to the session's
 // process, so the loop's adoption skips it; claiming it again is idempotent.
+// A claim an agent session makes records the full target the session runs, and coop tasks watch
+// names the claim by it, as it names a lease. A target that does not read as one is not recorded,
+// and a person's claim at a terminal records none: the board names the person.
+func TestASessionClaimNamesTheSessionsTarget(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	root := filepath.Join(repo, ".agent", "tasks")
+	for id, target := range map[string]string{"by-session": "claude:opus/high@work", "garbled": "claude\x1b[2J; rm -rf"} {
+		actor, err := SessionClaimActor("claude", os.Getpid())
+		if err != nil {
+			t.Fatal(err)
+		}
+		actor.Target = target
+		if _, err := ClaimSessionTask(root, taskForLease(t, root, StateTodo, id), actor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	taskForLease(t, root, StateTodo, "by-person")
+	if code, err := tasksFolderMoveWith(root, []string{"by-person"}, StateInProgress, "claim", "claimed", claimOptions{}); code != 0 || err != nil {
+		t.Fatalf("claim at a terminal = %d, %v", code, err)
+	}
+	for id, want := range map[string]string{"by-session": "claude:opus/high@work", "garbled": "", "by-person": ""} {
+		if record, ok := taskOwned(t, root, id); !ok || record.ActorTarget != want {
+			t.Errorf("%s: claim target = %q, want %q", id, record.ActorTarget, want)
+		}
+	}
+	user, _ := taskOwnerIdentity()
+	out := captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}) })
+	for _, want := range []string{" by-session\n    claude:opus/high@work · working", " garbled\n    claude · working", " by-person\n    " + user + " · working"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("watch is missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSessionClaimMovesATodoTaskAndBindsItToTheSession(t *testing.T) {
 	root := t.TempDir()
 	item := taskForLease(t, root, StateTodo, "work")

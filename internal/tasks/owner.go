@@ -76,6 +76,9 @@ type TaskOwnerRecord struct {
 	Actor      string `json:"actor,omitempty"`
 	ActorPID   int    `json:"actor_pid,omitempty"`
 	ActorStart string `json:"actor_start,omitempty"`
+	// ActorTarget is the full target of the agent session the claim was made for (ClaimActor.Target),
+	// which coop tasks watch names the claim by. Display only; empty for a claim Coop has no session for.
+	ActorTarget string `json:"actor_target,omitempty"`
 
 	Fork *ForkTaskOwner `json:"fork,omitempty"`
 }
