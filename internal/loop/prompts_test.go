@@ -165,6 +165,20 @@ func TestLoopWorkPromptFolderWorkflow(t *testing.T) {
 	}
 }
 
+func TestLoopWorkPromptCommitRationaleAndCheckResults(t *testing.T) {
+	for _, auditReopen := range []bool{false, true} {
+		work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, auditReopen)
+		for _, want := range []string{
+			"When a commit is needed, include a body of one to three sentences explaining why the change was needed, unless the project's prompt specifies otherwise.",
+			"Before completion, record the checks run and their results in state.md, unless the project's prompt specifies otherwise.",
+		} {
+			if !strings.Contains(work, want) {
+				t.Errorf("auditReopen=%v: work prompt missing %q", auditReopen, want)
+			}
+		}
+	}
+}
+
 func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 	work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, true)
 	for _, want := range []string{
