@@ -3966,31 +3966,6 @@ func TestOwnAgentFilesRefuseAnOversizedDirectoryListing(t *testing.T) {
 	}
 }
 
-// A preset box gets the loop's run id as -e COOP_RUN_ID (so a consult peer can log its usage); an
-// empty RunID (outside a loop) injects nothing.
-func TestPresetRoleMountsRunID(t *testing.T) {
-	cfg := &config.Config{HomeInBox: "/home/node"}
-	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{
-		{Name: "thinker", Mode: preset.ModeNative, Targets: []agents.Target{{Provider: "claude", Model: "claude-opus-4-8"}}},
-	}}
-	args := func(id string) []string {
-		_, a, _, dirs, err := presetRoleMounts(cfg, RunSpec{Homes: true, Preset: p, ConsultLead: "claude", Repo: t.TempDir(), RunID: id}, defaultCompositionArtifactOps())
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, d := range dirs {
-			os.RemoveAll(d)
-		}
-		return a
-	}
-	if !containsSeq(args("abc123"), []string{"-e", "COOP_RUN_ID=abc123"}) {
-		t.Error("a set RunID should inject -e COOP_RUN_ID")
-	}
-	if containsSeq(args(""), []string{"-e", "COOP_RUN_ID="}) {
-		t.Error("an empty RunID must inject no COOP_RUN_ID")
-	}
-}
-
 func TestPresetRoleMountsExportsFallbackTargets(t *testing.T) {
 	cfg := &config.Config{HomeInBox: "/home/node"}
 	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "claude"}}, Roles: []preset.Role{

@@ -2,8 +2,8 @@
 name: provider-consult-e2e
 description: Verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 subsystem: testing
-sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/consult/capture_ownership_test.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/preset/wrapper_test.go, internal/loop/telemetry.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
-updated: 2026-10-17
+sources: [Makefile, internal/box/image.go, internal/consult/wrapper.go, internal/consult/instructions.go, internal/preset/contract.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/consult_shell.go, internal/consult/capture_ownership_test.go, internal/agent/role_health.go, internal/agent/testdata/login-failures/README.md, internal/preset/wrapper.go, internal/preset/wrapper_test.go, internal/loop/telemetry.go, internal/loop/iteration.go, internal/loop/streamjson_providers.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/cleanup.go, docs/agents.md]
+updated: 2026-11-06
 ---
 
 `make provider-scripted-e2e` is the blocking consult contract. A strict external Coop binary mounts
@@ -84,6 +84,13 @@ false: jq 1.6 can exit zero for `jq -e select(...)` over an empty stream, which 
 every advisor look already quarantined before its first call. `coop_role_quarantined` slurps the
 bounded ledger and tests the explicit boolean returned by `any(...)` instead.
 
+The loop names that ledger in `COOP_RUN_ID` only for a box that can consult (peers or a preset) and
+only after it created the file. Plain runs and remote sessions get no variable, so its absence means
+nothing to record. With it set, a ledger the box cannot use (no `.agent/runs`, wrong mode, a swapped
+path) is reported once per box on stderr, `[codex: usage not recorded: …]`, using a marker in
+`TMPDIR`. Usage the provider did not report stays quiet. Before 2026-11-06 only preset boxes got the
+variable, so a `--peer` loop recorded no consult at all and no test noticed.
+
 A failed command is read through `coop_client_errors <provider> <stderr> [<stdout>]`: the client's own
 error text as the loop's decoders see it — plain stderr lines, bare stdout lines, and the terminal
 errors of its well-formed stdout events decoded by the adapter's `<provider>_errors` (jq mirrors of the
@@ -132,6 +139,8 @@ in final/state/log. Wrapper fixtures preserve a partial reply at exit0; they do 
 native lead carries its caveats through synthesis. No prose-to-verdict parser is involved.
 
 ## Changelog
+- 2026-11-06 — the loop, not the preset wiring, passes `COOP_RUN_ID` to every consult box with a
+  ledger; an unusable ledger is reported once per box instead of skipped silently.
 - 2026-10-17 — link follows the credentials card's rename to sign-in-again-is-actionable.
 - 2026-10-16 — the saved-report recorder that read each ring's summary line is gone; each suite
   still emits its own.

@@ -1648,9 +1648,13 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 	for _, tc := range []struct {
 		name, preset, want string
 		tasks              []string
+		peers              []agents.Target
 		network            networkFlags
 	}{
 		{name: "api-fix", want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop"},
+		// A resumed fork loop that dropped its peer would run without it.
+		{name: "api-fix", peers: []agents.Target{{Provider: "claude"}, {Provider: "gemini", Model: "gemini-3-pro"}},
+			want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop --peer claude --peer gemini:gemini-3-pro"},
 		{name: "api-fix", preset: "frontier", want: "coop fork api-fix frontier --loop"},
 		{name: "api-fix", network: networkFlags{Mode: &filtered, Domains: []string{"proxy.golang.org", "sum.golang.org"}},
 			want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop --egress filtered --allow-domain proxy.golang.org --allow-domain sum.golang.org"},
@@ -1659,7 +1663,7 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 		{name: "api-fix", preset: "frontier", tasks: []string{"/repo/apps/customer portal/.agent/tasks", "/repo/.agent/tasks"}, network: networkFlags{Mode: &filtered},
 			want: "coop fork api-fix frontier --loop --tasks '/repo/apps/customer portal/.agent/tasks' --tasks /repo/.agent/tasks --egress filtered"},
 	} {
-		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.network); err != nil || got != tc.want {
+		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.peers, tc.network); err != nil || got != tc.want {
 			t.Errorf("forkLoopContinueCommand(%q, %q, %q) = %q (%v), want %q", tc.name, tc.preset, tc.tasks, got, err, tc.want)
 		}
 	}

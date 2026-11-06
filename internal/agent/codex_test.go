@@ -109,7 +109,8 @@ func TestCodexModelsMenu(t *testing.T) {
 // TestCodexPeerRowShell runs the ACTUAL generated codex_peer_row (from ShellPrelude) against a
 // real-shaped `codex exec --json` turn.completed event and asserts it appends one peer-usage row:
 // input_tokens as "in", output_tokens+reasoning_output_tokens as "out". With no COOP_RUN_ID (not a
-// loop) it must write nothing. Skipped where jq is absent (the box always has it).
+// loop) it must write and say nothing. A named ledger it cannot use is reported once per box, and
+// the shell still succeeds. Skipped where jq is absent (the box always has it).
 func TestCodexPeerRowShell(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
@@ -118,9 +119,12 @@ func TestCodexPeerRowShell(t *testing.T) {
 	}
 	// The turn.completed shape verified against a live `codex exec --json` run (2026-07-13).
 	stream := `{"type":"turn.completed","usage":{"input_tokens":15880,"cached_input_tokens":9984,"output_tokens":5,"reasoning_output_tokens":0}}`
-	script := codexAgent{}.ShellPrelude() + "\nprintf '%s\\n' \"$1\" | codex_peer_row thinker gpt-5.6-terra\n"
+	row := "printf '%s\\n' \"$1\" | codex_peer_row thinker gpt-5.6-terra\n"
+	script := codexAgent{}.ShellPrelude() + "\n" + row
 
-	run := func(runID string, setup ...func(string, string)) string {
+	// run returns the ledger's content and everything the shell printed. calls repeats the append in
+	// one box (one TMPDIR), as several consultations in one task attempt do.
+	run := func(runID string, calls int, setup ...func(string, string)) (string, string) {
 		dir := t.TempDir()
 		if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
 			t.Fatalf("init fixture repo: %v\n%s", err, out)
@@ -140,9 +144,9 @@ func TestCodexPeerRowShell(t *testing.T) {
 		if err := os.Mkdir(nested, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command("sh", "-c", script, "sh", stream)
+		cmd := exec.Command("sh", "-c", script+strings.Repeat(row, calls-1), "sh", stream)
 		cmd.Dir = nested
-		cmd.Env = os.Environ()
+		cmd.Env = append(os.Environ(), "TMPDIR="+t.TempDir())
 		if runID != "" {
 			cmd.Env = append(cmd.Env, "COOP_RUN_ID="+runID)
 		}
@@ -151,37 +155,48 @@ func TestCodexPeerRowShell(t *testing.T) {
 			t.Fatalf("shell failed: %v\n%s", err, out)
 		}
 		b, _ := os.ReadFile(filepath.Join(dir, ".agent", "runs", runID+".peers.jsonl"))
-		return strings.TrimSpace(string(b))
+		return strings.TrimSpace(string(b)), string(out)
 	}
 
-	row := run("r1")
+	got, out := run("r1", 1)
 	for _, want := range []string{`"run":"r1"`, `"role":"thinker"`, `"provider":"codex"`, `"model":"gpt-5.6-terra"`, `"in":15880`, `"out":5`} {
-		if !strings.Contains(row, want) {
-			t.Errorf("peer row missing %q: %q", want, row)
+		if !strings.Contains(got, want) {
+			t.Errorf("peer row missing %q: %q", want, got)
 		}
 	}
-	if row := run(""); row != "" {
-		t.Errorf("no COOP_RUN_ID must write no row, got %q", row)
+	if out != "" {
+		t.Errorf("a recorded row printed %q", out)
 	}
-	unsafe := map[string]func(string, string){
-		"missing": func(_, _ string) {},
-		"permissive mode": func(_, path string) {
+	if got, out := run("", 1); got != "" || out != "" {
+		t.Errorf("no COOP_RUN_ID must write and say nothing, got row %q and output %q", got, out)
+	}
+	unsafe := map[string]struct {
+		setup func(string, string)
+		cause string
+	}{
+		"not mounted": {func(dir, _ string) {
+			if err := os.RemoveAll(filepath.Join(dir, ".agent", "runs")); err != nil {
+				t.Fatal(err)
+			}
+		}, ".agent/runs is not a folder in this box"},
+		"missing": {func(_, _ string) {}, ".agent/runs/unsafe.peers.jsonl is not a file in this box"},
+		"permissive mode": {func(_, path string) {
 			if err := os.WriteFile(path, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Chmod(path, 0o644); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"hardlink": func(_, path string) {
+		}, ".agent/runs/unsafe.peers.jsonl is not a private file"},
+		"hardlink": {func(_, path string) {
 			if err := os.WriteFile(path, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Link(path, path+".other"); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"symlink": func(dir, path string) {
+		}, ".agent/runs/unsafe.peers.jsonl is not a private file"},
+		"symlink": {func(dir, path string) {
 			target := filepath.Join(dir, "outside")
 			if err := os.WriteFile(target, nil, 0o600); err != nil {
 				t.Fatal(err)
@@ -189,12 +204,17 @@ func TestCodexPeerRowShell(t *testing.T) {
 			if err := os.Symlink(target, path); err != nil {
 				t.Fatal(err)
 			}
-		},
+		}, ".agent/runs/unsafe.peers.jsonl is not a file in this box"},
 	}
-	for name, setup := range unsafe {
+	for name, tc := range unsafe {
 		t.Run(name, func(t *testing.T) {
-			if row := run("unsafe", setup); row != "" {
+			// Three consultations in one box: the reason is said once, never once per call.
+			row, out := run("unsafe", 3, tc.setup)
+			if row != "" {
 				t.Errorf("unsafe peer telemetry target was appended: %q", row)
+			}
+			if want := "[codex: usage not recorded: " + tc.cause + "]\n"; out != want {
+				t.Errorf("output = %q, want the one notice %q", out, want)
 			}
 		})
 	}
@@ -222,7 +242,8 @@ func TestCodexPeerRowShell(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Swap immediately after the successful pre-open permission check. The shell then opens the
-		// symlink, but its descriptor/path identity recheck must reject it before appending.
+		// symlink, but its descriptor/path identity recheck must reject it before appending. Like the
+		// real stat, a failed call prints nothing: the shell falls back from GNU to BSD flags.
 		statShim := `#!/bin/sh
 out=$($REAL_STAT "$@")
 status=$?
@@ -236,8 +257,8 @@ if [ "$status" -eq 0 ]; then
     fi
     ;;
   esac
+  printf '%s\n' "$out"
 fi
-printf '%s\n' "$out"
 exit "$status"
 `
 		if err := os.WriteFile(filepath.Join(bin, "stat"), []byte(statShim), 0o755); err != nil {
@@ -247,9 +268,10 @@ exit "$status"
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"PATH="+bin+":"+os.Getenv("PATH"), "COOP_RUN_ID=swap", "REAL_STAT="+realStat,
-			"PEER_FILE="+peerFile, "OUTSIDE="+outside, "SWAPPED="+filepath.Join(dir, "swapped"),
+			"PEER_FILE="+peerFile, "OUTSIDE="+outside, "SWAPPED="+filepath.Join(dir, "swapped"), "TMPDIR="+t.TempDir(),
 		)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("shell failed: %v\n%s", err, out)
 		}
 		got, err := os.ReadFile(outside)
@@ -258,6 +280,9 @@ exit "$status"
 		}
 		if string(got) != "DO_NOT_APPEND\n" {
 			t.Fatalf("path swap redirected telemetry into another file: %q", got)
+		}
+		if want := "[codex: usage not recorded: .agent/runs/swap.peers.jsonl changed while it was opened]\n"; string(out) != want {
+			t.Fatalf("output = %q, want %q", out, want)
 		}
 	})
 }

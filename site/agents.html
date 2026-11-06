@@ -518,7 +518,9 @@ can&#39;t safely acquire that lock.</p>
 <h3 id="token-usage-in-loops">Token usage in loops</h3>
 <p>Inside <code>coop loop</code>, co:op records each provider&#39;s consultation usage in the active run&#39;s private,
 Git-ignored <code>.agent/runs/&lt;run&gt;.peers.jsonl</code>. Each successful consultation adds at most one row with
-the token counts and cost reported by the provider, and failed consultations add nothing.</p>
+the token counts and cost reported by the provider, and failed consultations add nothing. If the box
+can&#39;t write that file, the first consultation says why its usage wasn&#39;t recorded; the reply is
+unaffected.</p>
 </section><section class="doc-section reference-section" id="the-orchestrator-pattern"><h2>The orchestrator pattern</h2>
 <p>Use your strongest model to plan the work, break it into tasks and combine the results. Subagents
 use the models you assign to them, so routine implementation can run on cheaper models. Peers

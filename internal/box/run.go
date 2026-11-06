@@ -173,7 +173,7 @@ type RunSpec struct {
 	ActivityReservationOwner string
 	SessionStoreID           string // authenticated session daemon's stable owner namespace
 	activityID               string
-	RunID                    string // the loop run's id; when set, injected as COOP_RUN_ID so a consult peer can append its usage to .agent/runs/<id>.peers.jsonl
+	RunID                    string // the loop run's or remote session turn's id: labels the containers and owns the run's services
 	Batch                    bool   // loop/doctor: no tty, stdin from /dev/null
 	// LoopPresentation opts a batch loop attempt into the loop-owned grouped setup narration.
 	// Batch keeps its execution meaning; other batch/quiet/ACP callers remain silent.
@@ -2510,11 +2510,6 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 	}()
 	if !spec.Homes || spec.Preset == nil {
 		return
-	}
-	// The loop's run id, so a consult/delegate peer can append its token usage to
-	// .agent/runs/<id>.peers.jsonl for the closing cost digest. Empty outside a loop.
-	if spec.RunID != "" {
-		extraArgs = append(extraArgs, "-e", "COOP_RUN_ID="+spec.RunID)
 	}
 	// coop-delegate: a preset with a write-capable delegate role mounts the wrapper (on
 	// PATH), one generated contract file per delegate role, and the COOP_DELEGATE_<ROLE>_*

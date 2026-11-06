@@ -262,15 +262,15 @@ func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
 		".agent/tasks",
 		"apps/customer portal/.agent/tasks",
 		"queue'; touch nope; '",
-	}, networkFlags{})
+	}, nil, nil, networkFlags{})
 	want := "coop loop claude:opus@personal --tasks .agent/tasks --tasks 'apps/customer portal/.agent/tasks' --tasks 'queue'\"'\"'; touch nope; '\"'\"''"
 	if err != nil || got != want {
 		t.Fatalf("continue command = %q (%v), want %q", got, err, want)
 	}
-	if got, err := loopContinueCommand(agents.Target{}, false, "frontier", []string{"api/.agent/tasks"}, networkFlags{}); err != nil || got != "coop loop frontier --tasks api/.agent/tasks" {
+	if got, err := loopContinueCommand(agents.Target{}, false, "frontier", []string{"api/.agent/tasks"}, nil, nil, networkFlags{}); err != nil || got != "coop loop frontier --tasks api/.agent/tasks" {
 		t.Fatalf("preset continuation = %q (%v)", got, err)
 	}
-	if got, err := loopContinueCommand(agents.Target{}, false, "", nil, networkFlags{}); err != nil || got != "coop loop" {
+	if got, err := loopContinueCommand(agents.Target{}, false, "", nil, nil, nil, networkFlags{}); err != nil || got != "coop loop" {
 		t.Fatalf("default continuation = %q (%v)", got, err)
 	}
 }
@@ -292,7 +292,7 @@ func TestLoopContinueCommandRepeatsTheNetworkFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, network)
+	got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, nil, nil, network)
 	want := "coop loop claude --tasks .agent/tasks --egress filtered --allow-domain proxy.golang.org --allow-domain repo.hex.pm --egress-rules " + shellWord(rules)
 	if err != nil || got != want {
 		t.Fatalf("continue command = %q (%v), want %q", got, err, want)
@@ -305,8 +305,46 @@ func TestLoopContinueCommandRepeatsTheNetworkFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, network); err != nil || got != "coop loop claude --tasks .agent/tasks" {
+	if got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, nil, nil, network); err != nil || got != "coop loop claude --tasks .agent/tasks" {
 		t.Fatalf("continue command without network flags = %q (%v)", got, err)
+	}
+}
+
+// A pasted Continue line keeps every option that changes what the loop does. Before, it dropped
+// --peer, so the resumed loop ran without its peer and the cost digest lost every consult.
+func TestLoopContinueCommandKeepsPeersAndLoopOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		args             []string
+		preflightDefault bool
+		want             string
+	}{
+		{"peers and options", []string{"claude:haiku@personal", "--peer", "codex", "--peer", "gemini:gemini-2.5-pro/high",
+			"--no-mcp", "--no-preflight", "--debug-on-fail", "--max-tasks", "1"}, true,
+			"coop loop claude:haiku@personal --peer codex --peer gemini:gemini-2.5-pro/high --no-mcp --no-preflight --debug-on-fail"},
+		{"preflight that loop.yaml leaves off", []string{"claude", "--preflight"}, false, "coop loop claude --preflight"},
+		// The next run reads loop.yaml's preflight again, so repeating the same choice adds nothing.
+		{"preflight loop.yaml already enables", []string{"claude", "--preflight"}, true, "coop loop claude"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			peerVals, rest, err := extractPeer(loopCommand, tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			peers, err := resolvePeerTargets(loopCommand, peerVals, agents.Names())
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, hasTarget, presetName, debugOnFail, preflight, noMCP, _, err := parseLoopArgs(rest, tc.preflightDefault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := loopContinueCommand(target, hasTarget, presetName, nil, peers,
+				continueOptions(noMCP, preflight, tc.preflightDefault, debugOnFail), networkFlags{})
+			if err != nil || got != tc.want {
+				t.Fatalf("continue command = %q (%v), want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 

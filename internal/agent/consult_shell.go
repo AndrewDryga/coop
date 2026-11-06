@@ -4,6 +4,10 @@ import "strings"
 
 // The provider owns the usage filter; the private append boundary is identical for every
 // adapter. Filters produce {input, output, cost?} from a slurped native JSON capture.
+//
+// The loop names the run's ledger in COOP_RUN_ID only after it created that file, so a box
+// without the variable has nothing to record. With it, a ledger the box cannot use is reported
+// once on stderr; usage the provider did not report is not a ledger problem and stays quiet.
 func consultPeerRowShell(provider, usageFilter string) string {
 	return strings.NewReplacer("__PROVIDER__", provider, "__USAGE_FILTER__", usageFilter).Replace(`__PROVIDER___peer_row() {
 	[ -n "${COOP_RUN_ID:-}" ] || return 0
@@ -11,26 +15,27 @@ func consultPeerRowShell(provider, usageFilter string) string {
 	peer_repo=$(git rev-parse --show-toplevel 2>/dev/null || printf '.')
 	peer_dir=$peer_repo/.agent/runs
 	peer_file=$peer_dir/$COOP_RUN_ID.peers.jsonl
-	[ ! -L "$peer_dir" ] && [ -d "$peer_dir" ] || return 0
-	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || return 0
+	peer_name=.agent/runs/$COOP_RUN_ID.peers.jsonl
+	[ ! -L "$peer_dir" ] && [ -d "$peer_dir" ] || { __PROVIDER___peer_unrecorded ".agent/runs is not a folder in this box"; return 0; }
+	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || { __PROVIDER___peer_unrecorded "$peer_name is not a file in this box"; return 0; }
 	peer_links=$(stat -c %h "$peer_file" 2>/dev/null || stat -f %l "$peer_file" 2>/dev/null || :)
 	peer_permissions=$(stat -c %a "$peer_file" 2>/dev/null || stat -f %Lp "$peer_file" 2>/dev/null || :)
-	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || return 0
+	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || { __PROVIDER___peer_unrecorded "$peer_name is not a private file"; return 0; }
 	# Open once, then prove the descriptor still names the private regular file just checked.
 	# All later size checks and the append use this descriptor, never a reopened pathname.
-	eval 'exec 9>>"$peer_file"' 2>/dev/null || return 0
-	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || { exec 9>&-; return 0; }
+	eval 'exec 9>>"$peer_file"' 2>/dev/null || { __PROVIDER___peer_unrecorded "$peer_name is not writable"; return 0; }
+	[ ! -L "$peer_file" ] && [ -f "$peer_file" ] || { exec 9>&-; __PROVIDER___peer_unrecorded "$peer_name changed while it was opened"; return 0; }
 	peer_links=$(stat -c %h "$peer_file" 2>/dev/null || stat -f %l "$peer_file" 2>/dev/null || :)
 	peer_permissions=$(stat -c %a "$peer_file" 2>/dev/null || stat -f %Lp "$peer_file" 2>/dev/null || :)
-	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || { exec 9>&-; return 0; }
+	[ "$peer_links" = 1 ] && [ "$peer_permissions" = 600 ] || { exec 9>&-; __PROVIDER___peer_unrecorded "$peer_name changed while it was opened"; return 0; }
 	# fstat on the descriptor, never a /dev/fd lookup, which macOS fails now and then under load.
 	peer_path_identity=$(stat -c 'gnu:%d:%i' "$peer_file" 2>/dev/null || stat -f 'bsd:%i' "$peer_file" 2>/dev/null || :)
 	peer_fd_identity=$(stat -c 'gnu:%d:%i' - <&9 2>/dev/null || stat -f 'bsd:%i' <&9 2>/dev/null || :)
-	[ -n "$peer_path_identity" ] && [ "$peer_path_identity" = "$peer_fd_identity" ] && [ ! -L "$peer_file" ] || { exec 9>&-; return 0; }
+	[ -n "$peer_path_identity" ] && [ "$peer_path_identity" = "$peer_fd_identity" ] && [ ! -L "$peer_file" ] || { exec 9>&-; __PROVIDER___peer_unrecorded "$peer_name changed while it was opened"; return 0; }
 	peer_bytes=$(stat -c %s - <&9 2>/dev/null || stat -f %z <&9 2>/dev/null || :)
-	case "$peer_bytes" in '' | *[!0-9]*) exec 9>&-; return 0 ;; esac
+	case "$peer_bytes" in '' | *[!0-9]*) exec 9>&-; __PROVIDER___peer_unrecorded "the size of $peer_name is unknown"; return 0 ;; esac
 	peer_usage_limit=1048576
-	[ "$peer_bytes" -le $((peer_usage_limit - 4096)) ] || { exec 9>&-; return 0; }
+	[ "$peer_bytes" -le $((peer_usage_limit - 4096)) ] || { exec 9>&-; __PROVIDER___peer_unrecorded "$peer_name is full"; return 0; }
 	row=$(jq -sc --arg run "$COOP_RUN_ID" --arg role "$1" --arg model "$2" --arg mode "${3:-}" --arg target "${4:-}" '
 		def token: type=="number" and isfinite and floor==. and .>=0 and .<=1000000000;
 		__USAGE_FILTER__
@@ -44,8 +49,13 @@ func consultPeerRowShell(provider, usageFilter string) string {
 		  + (if has("cost") then {cost:.cost,reported_cost:.cost} else {} end)' 2>/dev/null) || { exec 9>&-; return 0; }
 	[ -n "$row" ] || { exec 9>&-; return 0; }
 	[ "$(printf '%s' "$row" | wc -c | tr -d '[:space:]')" -le 4096 ] || { exec 9>&-; return 0; }
-	printf '%s\n' "$row" >&9 2>/dev/null || true
+	printf '%s\n' "$row" >&9 2>/dev/null || __PROVIDER___peer_unrecorded "$peer_name is not writable"
 	exec 9>&-
+}
+__PROVIDER___peer_unrecorded() {
+	# Once per box: every later call would only repeat it. The reply itself is unaffected.
+	(set -C; : >"${TMPDIR:-/tmp}/coop-peer-usage-unrecorded") 2>/dev/null || return 0
+	echo "[__PROVIDER__: usage not recorded: $1]" >&2
 }
 `)
 }

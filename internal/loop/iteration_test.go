@@ -102,6 +102,43 @@ func TestLoopIterationOptsIntoNarrationButNotProjectPortPublication(t *testing.T
 	}
 }
 
+// A box that can consult names the run's peer ledger in COOP_RUN_ID, so each consult's usage reaches
+// the closing cost digest. Before, only a preset box got it, and a --peer loop recorded nothing. A box
+// with no peer to ask, or a run whose ledger could not be created, gets none.
+func TestConsultBoxesNameTheRunsPeerLedger(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		peers  []agents.Target
+		ledger bool
+		want   bool
+	}{
+		{"peer with a ledger", []agents.Target{{Provider: "codex"}}, true, true},
+		{"no peer", nil, true, false},
+		{"ledger not created", []agents.Target{{Provider: "codex"}}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var launched box.RunSpec
+			c := &Control{
+				cfg: &config.Config{}, net: newNetworkLog(), runID: "0123456789abcdef", peerLedger: tc.ledger,
+				boxRun: func(spec box.RunSpec) (int, error) { launched = spec; return 0, nil },
+			}
+			_, _, _, _, windows, err := c.runIteration(
+				context.Background(), t.TempDir(), "image", "claude", "", []string{"true"},
+				false, false, []string{t.TempDir()}, completionWindowWork, []string{"assigned"}, nil, true, io.Discard, tc.peers, "test", "", nil,
+			)
+			if windows != nil {
+				_ = windows.Close()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := slices.Contains(launched.ExtraArgs, "COOP_RUN_ID=0123456789abcdef"); got != tc.want {
+				t.Fatalf("box environment %q names the ledger = %t, want %t", launched.ExtraArgs, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoopIdentityIsCapturedButRawTraceStaysRaw(t *testing.T) {
 	repo, root := t.TempDir(), t.TempDir()
 	events := "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-5\"}\n" +

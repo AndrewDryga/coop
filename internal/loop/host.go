@@ -107,7 +107,8 @@ type Control struct {
 	activityTask   *forkspace.ExecutionTaskRef
 	forkWorker     bool
 	proposalOutbox string
-	runID          string // COOP_RUN_ID, so a consult peer's usage lands in this run's cost digest
+	runID          string // names the run's telemetry files under .agent/runs
+	peerLedger     bool   // Run created .agent/runs/<runID>.peers.jsonl, so consult boxes get COOP_RUN_ID
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
 	reuseServices  bool   // the current work box may inspect the unchanged run-owned stack without another Compose up

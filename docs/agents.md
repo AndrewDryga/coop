@@ -361,7 +361,9 @@ can't safely acquire that lock.
 
 Inside `coop loop`, co:op records each provider's consultation usage in the active run's private,
 Git-ignored `.agent/runs/<run>.peers.jsonl`. Each successful consultation adds at most one row with
-the token counts and cost reported by the provider, and failed consultations add nothing.
+the token counts and cost reported by the provider, and failed consultations add nothing. If the box
+can't write that file, the first consultation says why its usage wasn't recorded; the reply is
+unaffected.
 
 ## The orchestrator pattern
 

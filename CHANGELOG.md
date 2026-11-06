@@ -47,6 +47,12 @@
   Git alone. Only a record an unblock had moved past other work was checked for this. Starting the
   rework, completing it, `coop tasks done` and the signing pass now refuse such a commit for every
   reopened task, and name the commits Git reads.
+
+- **`coop loop --peer` counts each consultation and keeps the peer when you continue.** A loop with
+  `--peer` recorded no peer usage, so the closing cost summary missed every consultation; only
+  preset loops recorded it. Each consultation now adds its row, and one the box cannot record says
+  why once. The printed `Continue:` command, for `coop loop` and fork loops, also keeps `--peer`,
+  `--no-mcp`, `--debug-on-fail` and a `--preflight` choice that differs from `.agent/loop.yaml`.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

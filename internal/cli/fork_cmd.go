@@ -820,7 +820,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 				return 2, argErr
 			}
 			// coop fork stop repeats this when it stops the worker, which nothing else could tell it.
-			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, fa.network)
+			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, peers, fa.network)
 			if argErr != nil {
 				return 2, argErr
 			}
@@ -1304,9 +1304,9 @@ func pathsOverlap(left, right string) bool {
 
 // forkLoopContinueCommand is the command that resumes this fork loop. It repeats the who-runs
 // positional, each queue --tasks chose, in order (absolute, as the loop runs on them, so they mean the
-// same queues from any folder), and the network flags; without --tasks the fork takes every project
-// queue.
-func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, network networkFlags) (string, error) {
+// same queues from any folder), the peers and the network flags; without --tasks the fork takes every
+// project queue.
+func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, peers []agents.Target, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
@@ -1315,12 +1315,15 @@ func forkLoopContinueCommand(name, presetName string, target agents.Target, queu
 	for _, queue := range queues {
 		command += " --tasks " + shellWord(queue)
 	}
+	for _, peer := range peers {
+		command += " --peer " + shellWord(peer.String())
+	}
 	return withNetworkArgs(command, network)
 }
 
 // forkLoopContinue is forkLoopContinueCommand for this fork loop: led by the preset it runs under,
 // else by its target with the one-off model, effort and account.
-func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, network networkFlags) (string, error) {
+func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, peers []agents.Target, network networkFlags) (string, error) {
 	target := agents.Target{Provider: agent, Model: model, Effort: effort}
 	if credential != "" {
 		target.Accounts = []string{credential}
@@ -1329,7 +1332,7 @@ func (a *app) forkLoopContinue(name, agent, model, effort, credential string, qu
 	if a.preset != nil {
 		presetName = a.preset.Name
 	}
-	return forkLoopContinueCommand(name, presetName, target, queues, network)
+	return forkLoopContinueCommand(name, presetName, target, queues, peers, network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
@@ -1392,7 +1395,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, network)
+	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, peers, network)
 	if err != nil {
 		return 2, err
 	}

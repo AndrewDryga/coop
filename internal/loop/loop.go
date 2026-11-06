@@ -416,7 +416,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// record per stage, so the harness's own behavior (which target ran, reopen/retry counts) is
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
 	runid := randid.Hex(8)
-	c.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
+	c.runID = runid
 	c.loopNote = nil
 	if spec.CandidateReview == nil { // a candidate review holds no task, so it leaves the last run's note
 		c.loopNote = tasks.NoteLoopRun(hosts, runid)
@@ -439,11 +439,13 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		}
 	}
 	defer cleanupServices()
+	c.peerLedger = false
 	if len(peers) > 0 || c.preset != nil {
 		peerPath, peerErr := preparePeerRecordFile(repo, runid)
 		if peerErr != nil {
 			ui.Warn("telemetry: could not prepare peer usage for this run: %v", peerErr)
 		} else {
+			c.peerLedger = true
 			defer removeEmptyPeerRecordFile(peerPath)
 		}
 	}

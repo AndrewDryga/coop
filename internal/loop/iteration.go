@@ -298,6 +298,11 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	if recovery.reviewBase != "" {
 		extraArgs = []string{"-e", "COOP_REVIEW_BASE=" + recovery.reviewBase}
 	}
+	// A box that can consult names the run's ledger, so each consult or delegate call appends
+	// its usage to .agent/runs/<run>.peers.jsonl for the closing cost digest.
+	if lead != "" && c.peerLedger {
+		extraArgs = append(extraArgs, "-e", "COOP_RUN_ID="+c.runID)
+	}
 	code, err = c.runBox(box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: !recovery.reuseServices, Quiet: recovery.reuseServices, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: attemptPeers, Preset: attemptPreset, RunID: c.runID, AssignedTask: stampedTask, TaskTools: taskTools, FormatCorrection: recovery.formatCorrection, ReuseServices: recovery.reuseServices,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,

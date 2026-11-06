@@ -193,7 +193,8 @@ func (a *app) cmdLoop(args []string) (int, error) {
 			return 1, err
 		}
 	}
-	continueCmd, err := loopContinueCommand(t, hasTarget, presetName, flags, a.network)
+	options := continueOptions(noMCP, preflight, lc.Preflight.Enabled, debugOnFail)
+	continueCmd, err := loopContinueCommand(t, hasTarget, presetName, flags, peers, options, a.network)
 	if err != nil {
 		return 2, err
 	}
@@ -256,10 +257,11 @@ func resolveReviewTasks(repo string, queues, ids, taskFlags []string) (int, erro
 }
 
 // loopContinueCommand is the command that resumes this run, for the reports that tell the reader
-// how to carry on. It repeats the who-runs positional, explicit queue scope and network flags the
-// user typed; options like --max-tasks describe THIS invocation, and repeating them would suggest
-// continuing means pausing again.
-func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, taskFlags []string, network networkFlags) (string, error) {
+// how to carry on. It repeats the who-runs positional and every option the user typed that changes
+// what the loop does: queues, peers, the given options and the network flags. --max-tasks describes
+// THIS invocation, and repeating it would suggest continuing means pausing again; a --review-task
+// import is already part of the pending final review the next loop resumes.
+func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, taskFlags []string, peers []agents.Target, options []string, network networkFlags) (string, error) {
 	command := "coop loop"
 	switch {
 	case hasTarget:
@@ -270,7 +272,33 @@ func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, tas
 	for _, queue := range taskFlags {
 		command += " --tasks " + shellWord(queue)
 	}
+	for _, peer := range peers {
+		command += " --peer " + shellWord(peer.String())
+	}
+	for _, option := range options {
+		command += " " + option
+	}
 	return withNetworkArgs(command, network)
+}
+
+// continueOptions are the typed options a Continue line repeats besides queues, peers and network
+// flags. Preflight is repeated only when it overrides loop.yaml, the default the next run reads again.
+func continueOptions(noMCP, preflight, preflightDefault, debugOnFail bool) []string {
+	var options []string
+	if noMCP {
+		options = append(options, "--no-mcp")
+	}
+	if preflight != preflightDefault {
+		if preflight {
+			options = append(options, "--preflight")
+		} else {
+			options = append(options, "--no-preflight")
+		}
+	}
+	if debugOnFail {
+		options = append(options, "--debug-on-fail")
+	}
+	return options
 }
 
 // withNetworkArgs appends a launch's --egress, --allow-domain and --egress-rules to its Continue
