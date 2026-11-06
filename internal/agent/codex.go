@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -682,10 +683,10 @@ var codexValueFlags = []string{"--add-dir", "--ask-for-approval", "-a", "--cd", 
 func codexFirstWord(args []string) int {
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--" || !strings.HasPrefix(args[i], "-"):
+		case args[i] == "--" || codexWord(args[i]):
 			return i
 		case args[i] == "-i" || args[i] == "--image":
-			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			for i+1 < len(args) && codexWord(args[i+1]) {
 				i++
 			}
 		case slices.Contains(codexValueFlags, args[i]):
@@ -693,6 +694,12 @@ func codexFirstWord(args []string) int {
 		}
 	}
 	return len(args)
+}
+
+// codexWord reports whether arg is a word rather than an option. A dash followed by a space starts a
+// prompt such as a markdown bullet ("- fix this bug"), never an option; a lone "-" stays as it is.
+func codexWord(arg string) bool {
+	return !strings.HasPrefix(arg, "-") || len(arg) > 1 && unicode.IsSpace(rune(arg[1]))
 }
 
 // LaunchArgs gives `coop codex -p "…"` the meaning -p has on every other agent. Codex runs one prompt

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
+  such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
+  that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.
+
 - **A service can bind a Unix socket again.** The start check added for required real files refused
   every bind source that was neither a file nor a folder, so a socket Compose validation accepts no
   longer started. Sockets bind again; a path listed in `services.require_real_files` must still be a

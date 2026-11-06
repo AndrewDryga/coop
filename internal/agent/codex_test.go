@@ -40,6 +40,9 @@ func TestCodexLaunchArgs(t *testing.T) {
 		{name: "-p after resume still picks a profile", typed: []string{"resume", "--last", "-p", "work"}, wants: []string{"resume", "--last", "-p", "work"}},
 		{name: "-p inside another subcommand", typed: []string{"sandbox", "mkdir", "-p", "d"}, wants: []string{"sandbox", "mkdir", "-p", "d"}},
 		{name: "a prompt mentioning -p", typed: []string{"explain -p"}, wants: []string{"explain -p"}},
+		{name: "a bullet-list prompt after -p", typed: []string{"-p", "- fix this bug"}, wants: []string{"exec", "--", "- fix this bug"}},
+		{name: "a bullet-list prompt after flags", typed: []string{"-p", "--json", "- fix this bug\n- and this"}, wants: []string{"exec", "--json", "--", "- fix this bug\n- and this"}},
+		{name: "a lone - stays codex's stdin", typed: []string{"-p", "-"}, wants: []string{"exec", "-"}},
 	} {
 		if got := (codexAgent{}).LaunchArgs(c.typed, c.native); !slices.Equal(got, c.wants) {
 			t.Errorf("%s: LaunchArgs(%q, %q) = %q, want %q", c.name, c.typed, c.native, got, c.wants)
