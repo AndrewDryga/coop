@@ -350,7 +350,7 @@ func (c *Control) forkBrief(repo, name, ref string, gateOutcome forkReviewGateOu
 func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
-	ins, del := parseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
+	ins, del := forkspace.ParseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	changes, err := readForkChanges(repo, ref)
 	if err != nil {
 		return err

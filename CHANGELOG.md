@@ -19,13 +19,18 @@
   in that fork. Changes to the project's approvals still wait for every box.
 
 - **`coop tasks watch` shows what is moving, what stopped and what needs you.** The board has four
-  sections: Now, Stopped, Needs you and Up next. Each task being worked or stopped has a second line
-  with its subtasks, its agent, the fork it runs in and what it is doing, so a worker that is gone,
-  a heartbeat that went quiet, a claim left by a closed session or a fork loop that ended reads in
-  plain words. Under a stopped task is the full command that moves it on, such as `coop approve,
-  then coop fork sweep-b --loop -d`, found from the fork's recorded failure or its log. Blocked
-  tasks are one line each with how long they have waited, under `coop tasks decisions -i`. The
-  header counts working and stopped tasks and what finished today.
+  sections: Now, Stopped, Needs you and Up next, each with its count. Each task above Up next has a
+  second line with its queue, its subtasks, its agent's full target such as `codex:gpt-6-astra/xhigh@personal`,
+  the fork it runs in and what it is doing and for how long, so a worker that is gone, a heartbeat
+  that went quiet, a claim left by a closed session or a fork loop that ended reads in plain words.
+  Under a stopped task is the full command that moves it on, such as `coop approve, then coop fork
+  sweep-b --loop -d`, found from the fork's recorded failure or its log. A command is never cut: one
+  that does not fit gets a line of its own. A fork's finished work is one row with its task count,
+  its changes and `coop fork merge <name>`, under Now while the merge runs. With several queues
+  every row names its queue, and the project's own queue goes by the project's folder name. Needs
+  you and Up next fill the terminal's height, task titles are links to the task's folder or
+  decision, and a narrow terminal gets a shorter header instead of a cut one. The header counts
+  working and stopped tasks and what finished today.
 
 - **An editor thread can build the project's box.** When a filtered session waits on build files
   nobody approved, send `/build` in the thread. Coop saves the files, shows where they are on this

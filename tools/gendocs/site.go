@@ -412,10 +412,11 @@ var terminalSources = map[string]terminalSource{
 	"watch": {goFiles: []string{"internal/tasks/watch.go", "internal/ui/live.go"},
 		shapes: []lineShape{
 			shape("[{}]  {} todo · {} working · {} stopped · {} blocked · {} done today",
-				`"%d todo"`, `"%d working"`, `"%d stopped"`, `"%d blocked"`, `"%d done today"`, `"░"`),
-			shape("Now", `"Now"`), shape("◰ {}", `"◰"`), shape("{}/{} · claude · working for {}", `"%d/%d"`, `"working for "`, `"%dm"`),
-			shape("Needs you · answer them: coop tasks decisions -i", `"Needs you"`, `" · answer them: coop tasks decisions -i"`),
-			shape("⚑ {} · {}h", `"⚑"`, `"%dh"`), shape("Up next · {}", `"Up next"`, `" · %d"`), shape("○ {}", `"○"`),
+				`"%d todo"`, `"working", "stopped", "blocked", "done today"`, `"░"`),
+			shape("Now ({})", `"Now (%d)"`), shape("◰ {}", `"◰"`), shape("{}/{} · claude · working for {}", `"%d/%d"`, `"working for "`, `"%dm"`),
+			shape("Needs you ({}) · answer them: coop tasks decisions -i", `"Needs you (%d)"`, `" · answer them: coop tasks decisions -i"`),
+			shape("⚑ {}", `"⚑"`), shape("decision pending for {}h", `"decision pending"`, `{" for ", p.Faint}`, `"%dh"`),
+			shape("Up next ({})", `"Up next (%d)"`), shape("○ {}", `"○"`),
 			shape("+ {} more", `"  + %d more"`)}},
 }
 

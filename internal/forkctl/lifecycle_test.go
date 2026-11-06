@@ -749,12 +749,12 @@ func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
 }
 
 func TestParseShortstat(t *testing.T) {
-	ins, del := parseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
+	ins, del := forkspace.ParseShortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)")
 	if ins != 42 || del != 7 {
-		t.Errorf("parseShortstat = (%d, %d), want (42, 7)", ins, del)
+		t.Errorf("ParseShortstat = (%d, %d), want (42, 7)", ins, del)
 	}
-	if ins, del := parseShortstat(""); ins != 0 || del != 0 {
-		t.Errorf("parseShortstat(empty) = (%d, %d), want (0, 0)", ins, del)
+	if ins, del := forkspace.ParseShortstat(""); ins != 0 || del != 0 {
+		t.Errorf("ParseShortstat(empty) = (%d, %d), want (0, 0)", ins, del)
 	}
 }
 

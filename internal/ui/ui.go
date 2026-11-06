@@ -129,6 +129,15 @@ func TermWidth(f *os.File) int {
 	return 80
 }
 
+// TermHeight returns f's terminal row count, or 0 when it can't be determined. Unlike a width,
+// a height has no safe default: a caller that cannot know it shows a fixed amount instead.
+func TermHeight(f *os.File) int {
+	if f == nil {
+		return 0
+	}
+	return termHeightFd(f.Fd())
+}
+
 // liveSink, when set, receives each ui status line (trailing newline trimmed) instead of os.Stderr,
 // so a live region — the loop's bottom bar — can scroll it cleanly into the history above itself
 // rather than have it overprint the bar. The owner sets it while the region is up, clears it after.

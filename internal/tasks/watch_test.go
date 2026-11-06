@@ -35,17 +35,33 @@ func TestSourceLineShowsBlocked(t *testing.T) {
 func TestTaskWatchBarsShowTinyActiveShare(t *testing.T) {
 	c := TaskCounts{Todo: 99, Doing: 1}
 	b := boardCounts{TaskCounts: c}
-	for _, line := range []string{tasksProgressLine(ui.Colored(), b), sourceLine(ui.Colored(), "api", 3, c)} {
+	for _, line := range []string{tasksProgressLine(ui.Colored(), b, 120), sourceLine(ui.Colored(), "api", 3, c)} {
 		if !strings.Contains(line, "█") {
 			t.Errorf("task-watch overall and source bars should keep a visible active cell: %q", line)
 		}
 	}
 	// Without color every segment is the same block, so the counts carry the states alone.
-	for _, line := range []string{tasksProgressLine(ui.Palette{}, b), sourceLine(ui.Palette{}, "api", 3, c)} {
+	for _, line := range []string{tasksProgressLine(ui.Palette{}, b, 120), sourceLine(ui.Palette{}, "api", 3, c)} {
 		if strings.ContainsAny(line, "█░[") {
 			t.Errorf("a colorless line draws a bar it cannot tell apart: %q", line)
 		}
 	}
+}
+
+// renderSections is each section the board shows for merged, as a pipe shows it.
+func renderSections(p ui.Palette, merged []mergedTask, spin, width int) [][]string {
+	return renderBoardSections(p, merged, nil, spin, width)
+}
+
+func renderBoardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, width int) [][]string {
+	var out [][]string
+	for _, section := range boardSections(p, merged, merges, spin, width) {
+		out = append(out, section.lines(p, min(listMin, len(section.rows))))
+		if !section.list {
+			out[len(out)-1] = section.lines(p, len(section.rows))
+		}
+	}
+	return out
 }
 
 func merge(items []Item) []mergedTask {
@@ -72,15 +88,16 @@ func inProgress(id, title string, done, total int) Item {
 	return Item{ID: id, Title: title, State: StateInProgress, Subtasks: subtasks(done, total)}
 }
 
-// The board the owner approved on 2026-11-05 (the task's spec.md), line for line: Now, Stopped,
-// Needs you and Up next; a detail line under every task being worked or stopped and a fix line
-// under every stopped one; one line for each task waiting in a list.
+// The board the owner approved on 2026-11-05, line for line, on a project with one queue: Now,
+// Stopped, Needs you and Up next, each with its count; a detail line under every task that is not a
+// plain list entry and a fix line under every stopped one; the full target of a worker that recorded
+// one; and no row names a queue.
 func TestTaskWatchBoardMatchesTheApprovedLayout(t *testing.T) {
 	t.Setenv("COOP_SPINNER", "1")
 	network := "Codex cannot start because this project asks for network access that has not been approved"
 	merged := []mergedTask{
 		{Item: inProgress("a", "Hand a task to a human when the worker re-closes the same unmet finding", 1, 3),
-			lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Held: 6*time.Minute + 30*time.Second}},
+			lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Target: "codex:gpt-6-astra/xhigh@personal", Held: 6*time.Minute + 30*time.Second}},
 		{Item: inProgress("b", "Accept a JSON-string options list in tasks_block", 1, 3),
 			fork: "sweep-a", phase: ForkAssignmentReviewing, live: true, agent: "codex"},
 		{Item: inProgress("c", "Ask loop workers for a why-body in commits", 0, 2),
@@ -105,13 +122,13 @@ func TestTaskWatchBoardMatchesTheApprovedLayout(t *testing.T) {
 	want := []string{
 		"32 todo · 2 working · 3 stopped · 3 blocked · 22 done today",
 		"",
-		"Now",
+		"Now (2)",
 		"  ◳ Hand a task to a human when the worker re-closes the same unmet finding",
-		"    1/3 · codex · working for 6m",
+		"    1/3 · codex:gpt-6-astra/xhigh@personal · working for 6m",
 		"  ◳ Accept a JSON-string options list in tasks_block",
 		"    1/3 · codex in fork sweep-a · final review",
 		"",
-		"Stopped",
+		"Stopped (3)",
 		"  ✕ Ask loop workers for a why-body in commits",
 		"    0/2 · codex in fork sweep-b · network access not approved",
 		"    to fix, run: coop approve, then coop fork sweep-b --loop -d",
@@ -124,19 +141,95 @@ func TestTaskWatchBoardMatchesTheApprovedLayout(t *testing.T) {
 		"    0/3 · codex · worker gone 25m ago",
 		"    to resume, run: coop loop",
 		"",
-		"Needs you · answer them: coop tasks decisions -i",
-		"  ⚑ Run the provider guides on Linux with real agents in Cloud Shell · 5h",
-		"  ⚑ Move co-op to coop.emisar.dev · 16h",
-		"  ⚑ Prepare Protectorate repository and website migration · 19h",
+		"Needs you (3) · answer them: coop tasks decisions -i",
+		"  ⚑ Run the provider guides on Linux with real agents in Cloud Shell",
+		"    decision pending for 5h",
+		"  ⚑ Move co-op to coop.emisar.dev",
+		"    decision pending for 16h",
+		"  ⚑ Prepare Protectorate repository and website migration",
+		"    decision pending for 19h",
 		"",
-		"Up next · 32",
+		"Up next (32)",
 		"  ○ Keep template placeholders out of a completed task's state.md and log.md",
 		"  ○ Keep the loop running when a review subject left the archive",
-		"  + 30 more",
+		"  ○ Later work",
+		"  + 29 more",
 	}
-	got := tasksWatchFrame([]watchSource{{label: ".agent/tasks"}}, merged, 1, 120)
+	got := tasksWatchFrame(boardRead{sources: []watchSource{{label: ".agent/tasks"}}, merged: merged}, 1, 120, 0)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("board =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The second board the owner approved on 2026-11-05 (task 2026-11-05-show-fork-merges-once-name-
+// every-row-s-queue-siz, spec.md), from real emisar data: several queues, so every row names its
+// queue first, the project's own queue by the project's folder name; a fork's finished tasks are one
+// merge row, under Now while the merge runs; a command too long for its line gets a line of its own.
+func TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout(t *testing.T) {
+	t.Setenv("COOP_SPINNER", "1")
+	release := "2026-11-05-fall-back-to-the-live-debian-archives-wh"
+	merged := []mergedTask{
+		{Item: inProgress("a", "Drain only this node's runner sockets on shutdown", 4, 4), queue: "portal",
+			fork: "portal-a", phase: ForkAssignmentReviewing, live: true, agent: "claude", since: ago(12 * time.Minute)},
+		{Item: inProgress("b", "Accept other Emisar server tables in Codex and Grok configs", 0, 0), queue: "mcp",
+			fork: "mcp", phase: ForkAssignmentReviewing, live: true, agent: "claude", since: ago(8 * time.Minute)},
+		{Item: inProgress(release, "Fall back to the live Debian archives when the snapshot fails", 0, 1), queue: "infra",
+			owner: "claimed by claude", agent: "claude", since: ago(40 * time.Minute)},
+		{Item: Item{ID: "d", Title: "Decide whether install-mcp.ps1 keeps -ConnectAll", State: StateBlocked}, queue: "mcp", since: ago(6 * time.Hour)},
+		{Item: Item{ID: "e", Title: "Submit Emisar to the Claude Connectors Directory", State: StateBlocked}, queue: "emisar", since: ago(50 * time.Hour)},
+		{Item: Item{ID: "f", Title: "Accept any Redis database index the server has", State: StateTodo}, queue: "packs"},
+	}
+	for i := range 3 {
+		merged = append(merged, mergedTask{Item: inProgress(fmt.Sprintf("merged-%d", i), "Merged", 1, 1), queue: "portal/tasks-b",
+			fork: "portal-b", phase: ForkAssignmentReady, folded: true})
+	}
+	merges := []forkMerge{{fork: "portal-b", queue: "portal/tasks-b", tasks: 3, landing: true, since: ago(2 * time.Minute), ins: 80, del: 14}}
+	want := []string{
+		"1 todo · 3 working · 1 stopped · 2 blocked · 0 done today",
+		"",
+		"Now (3)",
+		"  ◳ Drain only this node's runner sockets on shutdown",
+		"    portal · 4/4 · claude in fork portal-a · final review for 12m",
+		"  ◳ Accept other Emisar server tables in Codex and Grok configs",
+		"    mcp · claude in fork mcp · final review for 8m",
+		"  ◳ Merge fork portal-b (3 tasks)",
+		"    portal/tasks-b · fork portal-b merging for 2m",
+		"    +80 −14",
+		"",
+		"Stopped (1)",
+		"  ✕ Fall back to the live Debian archives when the snapshot fails",
+		"    infra · 0/1 · claude · claim held by a session that ended 40m ago",
+		"    to free it, run:",
+		"    coop tasks release " + release,
+		"",
+		"Needs you (2) · answer them: coop tasks decisions -i",
+		"  ⚑ Decide whether install-mcp.ps1 keeps -ConnectAll",
+		"    mcp · decision pending for 6h",
+		"  ⚑ Submit Emisar to the Claude Connectors Directory",
+		"    emisar · decision pending for 2d",
+		"",
+		"Up next (1)",
+		"  ○ Accept any Redis database index the server has · packs",
+	}
+	got := tasksWatchFrame(boardRead{merged: merged, merges: merges}, 1, 80, 0)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("board =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	// Before its merge starts, the fork's finished work waits on a person, with the command that merges it.
+	merges[0].landing, merges[0].since = false, ago(23*time.Minute)
+	sections := renderBoardSections(ui.Palette{}, nil, merges, 0, 80)
+	if want := []string{
+		"Needs you (1)",
+		"  ⚑ Merge fork portal-b (3 tasks)",
+		"    portal/tasks-b · fork portal-b ready for 23m",
+		"    +80 −14 · to merge, run: coop fork merge portal-b",
+	}; len(sections) != 1 || !reflect.DeepEqual(sections[0], want) {
+		t.Errorf("ready merge =\n%q\nwant\n%q", sections, want)
+	}
+	// Its tasks are that one row, never a row each, and a merge waiting on a person is not work.
+	if b := countBoard(merged[len(merged)-3:], merges); b.Working != 0 || b.Stopped != 0 {
+		t.Errorf("folded tasks counted as rows: %+v", b)
 	}
 }
 
@@ -152,48 +245,64 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 		section string
 		lines   []string
 	}{
-		{"worker gone", mergedTask{Item: task, agent: "codex", since: ago(25 * time.Minute)}, "Stopped",
+		{"worker gone", mergedTask{Item: task, agent: "codex", since: ago(25 * time.Minute)}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex · worker gone 25m ago", "    to resume, run: coop loop"}},
-		{"worker gone, never seen", mergedTask{Item: task}, "Stopped",
+		{"worker gone, never seen", mergedTask{Item: task}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · worker gone", "    to resume, run: coop loop"}},
 		{"no heartbeat while the process exists",
-			mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseStalled, Provider: "codex", Held: time.Hour, Quiet: 6*time.Minute + 10*time.Second}}, "Now",
+			mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseStalled, Provider: "codex", Held: time.Hour, Quiet: 6*time.Minute + 10*time.Second}}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · codex · no heartbeat for 6m"}},
-		{"held lease", mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude", Held: 2*time.Hour + 5*time.Minute}}, "Now",
+		{"held lease", mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude", Held: 2*time.Hour + 5*time.Minute}}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · claude · working for 2h 5m"}},
-		{"live claim", mergedTask{Item: task, owner: "claimed by alice", live: true, agent: "alice", since: ago(6 * time.Minute)}, "Now",
+		{"held lease with a full target",
+			mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Target: "codex:gpt-6-astra/xhigh@personal", Held: 6 * time.Minute}}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex:gpt-6-astra/xhigh@personal · working for 6m"}},
+		{"held lease with a target that is not one",
+			mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Target: "codex\x1b[2J; rm -rf", Held: 6 * time.Minute}}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex · working for 6m"}},
+		{"live claim", mergedTask{Item: task, owner: "claimed by alice", live: true, agent: "alice", since: ago(6 * time.Minute)}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · alice · working for 6m"}},
-		{"claim left by a closed session", mergedTask{Item: task, owner: "claimed by codex", agent: "codex"}, "Stopped",
-			[]string{"  ✕ " + title, "    0/3 · codex · claimed by a session that has ended", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
-		{"claimant on another system", mergedTask{Item: task, owner: "claimed by codex", agent: "codex", system: "Linux"}, "Now",
+		{"claim left by a closed session", mergedTask{Item: task, owner: "claimed by codex", agent: "codex", since: ago(40 * time.Minute)}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex · claim held by a session that ended 40m ago", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
+		{"claim left by a closed session, never touched", mergedTask{Item: task, owner: "claimed by codex", agent: "codex"}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex · claim held by a session that has ended", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
+		{"claimant on another system", mergedTask{Item: task, owner: "claimed by codex", agent: "codex", system: "Linux"}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · codex · running on Linux"}},
-		{"fork working", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, agent: "codex", since: ago(6 * time.Minute)}, "Now",
+		{"fork working", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, agent: "codex", since: ago(6 * time.Minute)}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · codex in fork sweep-a · working for 6m"}},
-		{"fork final review", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReviewing, live: true, agent: "codex"}, "Now",
-			[]string{"  ◳ " + title, "    0/3 · codex in fork sweep-a · final review"}},
-		{"fork loop on another system", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, system: "Linux"}, "Now",
+		{"fork final review", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReviewing, live: true, agent: "codex", since: ago(12 * time.Minute)}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex in fork sweep-a · final review for 12m"}},
+		{"fork loop between iterations, its lease held",
+			mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentPaused, live: true, agent: "codex@personal", since: ago(time.Hour),
+				lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Held: 14 * time.Minute}}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex@personal in fork sweep-a · working for 14m"}},
+		{"fork loop on another system", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, system: "Linux"}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · in fork sweep-a · running on Linux"}},
 		{"fork loop refused, reason recorded",
-			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPaused, agent: "codex", stopReason: "this project asks for unrestricted internet access, which has not been approved"}, "Stopped",
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPaused, agent: "codex", stopReason: "this project asks for unrestricted internet access, which has not been approved"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · network access not approved", "    to fix, run: coop approve, then coop fork sweep-b --loop -d"}},
 		{"fork loop lost its sign-in",
-			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "the provider no longer accepts this account's saved sign-in; run coop login"}, "Stopped",
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "the provider no longer accepts this account's saved sign-in; run coop login"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · sign-in no longer accepted", "    to fix, run: coop login, then coop fork sweep-b --loop -d"}},
 		{"fork loop ended, reason only in its log",
-			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "Codex cannot start because the box image is missing"}, "Stopped",
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "Codex cannot start because the box image is missing"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · the box image is missing", "    to resume, run: coop fork sweep-b --loop -d"}},
-		{"fork loop ended, no reason anywhere", mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPreparing, agent: "codex"}, "Stopped",
+		{"fork loop ended, no reason anywhere", mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPreparing, agent: "codex"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · loop ended unexpectedly", "    to resume, run: coop fork sweep-b --loop -d"}},
-		{"fork finished, waiting for merge", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReady, since: ago(2 * time.Hour)}, "Needs you · answer them: coop tasks decisions -i",
-			[]string{"  ⚑ " + title + " · ready to merge · 2h"}},
-		{"fork final review with its loop gone", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReviewing}, "Needs you · answer them: coop tasks decisions -i",
-			[]string{"  ⚑ " + title + " · ready to merge"}},
-		{"blocked a day ago", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, since: ago(50 * time.Hour)}, "Needs you · answer them: coop tasks decisions -i",
-			[]string{"  ⚑ " + title + " · 2d"}},
+		{"fork finished, nothing published, loop gone", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReady, agent: "codex", since: ago(2 * time.Hour)}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-a · loop ended unexpectedly", "    to resume, run: coop fork sweep-a --loop -d"}},
+		{"fork final review with its loop gone", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReviewing, agent: "codex", stopReason: "task x projection changed after review"}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-a · task x projection changed after review", "    to resume, run: coop fork sweep-a --loop -d"}},
+		{"blocked a day ago", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, since: ago(50 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
+			[]string{"  ⚑ " + title, "    decision pending for 2d"}},
+		{"answered, not resumed", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, answered: true, since: ago(3 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
+			[]string{"  ⚑ " + title, "    answered, not yet resumed for 3h"}},
+		{"blocked in a fork", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentBlocked, agent: "codex", since: ago(5 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
+			[]string{"  ⚑ " + title, "    decision pending for 5h"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("COOP_SPINNER", "1")
-			sections := boardSections(ui.Palette{}, []mergedTask{tc.task}, 1, 120)
+			sections := renderSections(ui.Palette{}, []mergedTask{tc.task}, 1, 120)
 			want := append([]string{tc.section}, tc.lines...)
 			if len(sections) != 1 || !reflect.DeepEqual(sections[0], want) {
 				t.Errorf("board =\n%q\nwant one section\n%q", sections, want)
@@ -206,7 +315,7 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 // state and its commands bold; a list header is gray after its dot, and a wait past a day is yellow.
 func TestTaskWatchRowColors(t *testing.T) {
 	p := ui.Colored()
-	board := strings.Join(slices.Concat(boardSections(p, []mergedTask{
+	board := strings.Join(slices.Concat(renderSections(p, []mergedTask{
 		{Item: inProgress("a", "Busy", 0, 1), lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex", Held: time.Minute}},
 		{Item: inProgress("b", "Quiet", 0, 1), lease: TaskLeaseObservation{State: leaseStalled, Provider: "codex", Quiet: 6 * time.Minute}},
 		{Item: inProgress("c", "Gone", 0, 1)},
@@ -217,8 +326,8 @@ func TestTaskWatchRowColors(t *testing.T) {
 		p.Faint("0/1 · codex · ") + p.Faint("working for 1m"),
 		p.Yellow("no heartbeat for 6m"),
 		p.Red(stoppedMarker) + " Gone", p.Red("worker gone"), "to resume, run: " + p.Bold("coop loop"),
-		"Needs you" + p.Gray(" · answer them: coop tasks decisions -i"),
-		p.Dim(" · ") + p.Dim("5h"), p.Dim(" · ") + p.Yellow("30h"),
+		"Needs you (2)" + p.Gray(" · answer them: coop tasks decisions -i"),
+		p.Faint(" for ") + p.Faint("5h"), p.Faint(" for ") + p.Yellow("30h"),
 	} {
 		if !strings.Contains(board, want) {
 			t.Errorf("board is missing %q:\n%q", want, board)
@@ -226,7 +335,33 @@ func TestTaskWatchRowColors(t *testing.T) {
 	}
 }
 
-// Active work always shows in full; Needs you shows three and Up next two, then how many more.
+// A title is a terminal link to what a person opens next: a blocked task's decision, another task's
+// folder, a merging fork's folder. A pipe gets the plain title.
+func TestTaskWatchLinksTitles(t *testing.T) {
+	dir := t.TempDir()
+	merged := []mergedTask{
+		{Item: Item{ID: "ask", Title: "Pick a region", State: StateBlocked, Dir: filepath.Join(dir, "ask"), HasDecision: true}},
+		{Item: Item{ID: "next", Title: "Wire auth", State: StateTodo, Dir: filepath.Join(dir, "next dir")}},
+	}
+	merges := []forkMerge{{fork: "portal-b", dir: filepath.Join(dir, "portal-b"), tasks: 1}}
+	p := ui.Colored()
+	board := strings.Join(slices.Concat(renderBoardSections(p, merged, merges, 0, 120)...), "\n")
+	for _, want := range []string{
+		p.Link("file://"+filepath.ToSlash(filepath.Join(dir, "ask", "decision.md")), "Pick a region"),
+		p.Link("file://"+filepath.ToSlash(filepath.Join(dir, "next%20dir")), "Wire auth"),
+		p.Link("file://"+filepath.ToSlash(filepath.Join(dir, "portal-b")), "Merge fork portal-b (1 task)"),
+	} {
+		if !strings.Contains(board, want) {
+			t.Errorf("board is missing the link %q:\n%q", want, board)
+		}
+	}
+	plain := strings.Join(slices.Concat(renderBoardSections(ui.Palette{}, merged, merges, 0, 120)...), "\n")
+	if strings.Contains(plain, "\x1b") || !strings.Contains(plain, "  ⚑ Pick a region\n") {
+		t.Errorf("a pipe's board carries escapes or lost a title:\n%q", plain)
+	}
+}
+
+// Active work always shows in full; a pipe shows three of Needs you and of Up next, then how many more.
 func TestTaskWatchCapsTheListsNeverTheWork(t *testing.T) {
 	var merged []mergedTask
 	for i := range 6 {
@@ -236,7 +371,7 @@ func TestTaskWatchCapsTheListsNeverTheWork(t *testing.T) {
 			mergedTask{Item: Item{ID: fmt.Sprintf("ask-%d", i), Title: fmt.Sprintf("Ask %d", i), State: StateBlocked}},
 			mergedTask{Item: Item{ID: fmt.Sprintf("todo-%d", i), Title: fmt.Sprintf("Todo %d", i), State: StateTodo}})
 	}
-	board := strings.Join(tasksWatchFrame(nil, merged, 0, 120), "\n")
+	board := strings.Join(tasksWatchFrame(boardRead{merged: merged}, 0, 120, 0), "\n")
 	for i := range 6 {
 		for _, title := range []string{"Now %d\n", "Stopped %d\n"} {
 			if want := fmt.Sprintf(title, i); !strings.Contains(board, want) {
@@ -244,33 +379,99 @@ func TestTaskWatchCapsTheListsNeverTheWork(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"Ask 2\n  + 3 more\n", "Todo 1\n  + 4 more"} {
+	for _, want := range []string{"Ask 2\n    decision pending\n  + 3 more\n", "Todo 2\n  + 3 more"} {
 		if !strings.Contains(board, want) {
 			t.Errorf("board is missing %q:\n%s", want, board)
 		}
 	}
-	for _, capped := range []string{"Ask 3", "Todo 2"} {
+	for _, capped := range []string{"Ask 3", "Todo 3"} {
 		if strings.Contains(board, capped) {
 			t.Errorf("%q is past its section's cap:\n%s", capped, board)
 		}
 	}
 }
 
-// The single placement rule: a fork is named only as "in fork <name>" in a detail line (and in the
-// command that restarts it), never on a title, a header or a list row, and nothing is right-aligned.
-// Section headers carry no reason text, every section's first task sits right under its header, and
-// only Stopped tasks are set apart by a blank line. Nothing sends the reader to the fork's logs.
+// A live board fills the terminal: Needs you and Up next take the rows the work leaves, Needs you
+// first, and never fewer than three each, even when that runs past the bottom.
+func TestTaskWatchFillsTheTerminalHeight(t *testing.T) {
+	var merged []mergedTask
+	merged = append(merged, mergedTask{Item: inProgress("now", "Now", 0, 1), lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"}})
+	for i := range 10 {
+		merged = append(merged,
+			mergedTask{Item: Item{ID: fmt.Sprintf("ask-%d", i), Title: fmt.Sprintf("Ask %d", i), State: StateBlocked}},
+			mergedTask{Item: Item{ID: fmt.Sprintf("todo-%d", i), Title: fmt.Sprintf("Todo %d", i), State: StateTodo}})
+	}
+	shown := func(frame []string, prefix string) int {
+		n := 0
+		for _, line := range frame {
+			if strings.HasPrefix(line, prefix) {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tc := range []struct {
+		height, asks, todos int
+	}{
+		{0, 3, 3},   // a pipe
+		{10, 3, 3},  // too short: the minimum, past the bottom
+		{26, 6, 3},  // Needs you takes the room first
+		{36, 10, 6}, // then Up next
+		{60, 10, 10},
+	} {
+		frame := tasksWatchFrame(boardRead{merged: merged}, 0, 120, tc.height)
+		if asks, todos := shown(frame, "  ⚑ Ask"), shown(frame, "  ○ Todo"); asks != tc.asks || todos != tc.todos {
+			t.Errorf("height %d shows %d asks and %d todos, want %d and %d:\n%s", tc.height, asks, todos, tc.asks, tc.todos, strings.Join(frame, "\n"))
+		}
+		if tc.height >= 26 && len(frame) > tc.height {
+			t.Errorf("height %d: frame has %d lines:\n%s", tc.height, len(frame), strings.Join(frame, "\n"))
+		}
+	}
+}
+
+// A narrow terminal gets a shorter header, never a cut one: "today" goes first, then the labels
+// shorten, then the bar.
+func TestTaskWatchHeaderShortensInsteadOfBeingCut(t *testing.T) {
+	b := boardCounts{TaskCounts: TaskCounts{Todo: 34, Blocked: 11}, Working: 4, Stopped: 8, DoneToday: 58}
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{120, "34 todo · 4 working · 8 stopped · 11 blocked · 58 done today"},
+		{60, "34 todo · 4 working · 8 stopped · 11 blocked · 58 done"},
+		{50, "34 todo · 4 work · 8 stop · 11 block · 58 done"},
+	} {
+		if got := tasksProgressLine(ui.Palette{}, b, tc.width); got != tc.want {
+			t.Errorf("width %d header = %q, want %q", tc.width, got, tc.want)
+		}
+	}
+	p := ui.Colored()
+	strip := func(s string) string { return ansiSequence.ReplaceAllString(s, "") }
+	if got := strip(tasksProgressLine(p, b, 120)); !strings.HasPrefix(got, "[") || !strings.HasSuffix(got, "58 done today") {
+		t.Errorf("wide colored header = %q, want the bar and every word", got)
+	}
+	if got := strip(tasksProgressLine(p, b, 60)); got != "34 todo · 4 work · 8 stop · 11 block · 58 done" {
+		t.Errorf("narrow colored header = %q, want the short labels without the bar", got)
+	}
+}
+
+// The single placement rule: a fork's task names its fork only as "in fork <name>" in a detail line
+// (and in the command that restarts it); a fork's merge row names it in its title, its detail line
+// and its merge command. Nothing is right-aligned. Section headers carry their count and no reason
+// text, every section's first row sits right under its header, and only Stopped rows are set apart
+// by a blank line. Nothing sends the reader to the fork's logs.
 func TestTaskWatchPlacesEveryFactByOneRule(t *testing.T) {
 	merged := []mergedTask{
 		{Item: inProgress("a", "Working in a fork", 1, 2), fork: "alpha", phase: ForkAssignmentWorking, live: true, agent: "codex"},
 		{Item: inProgress("b", "Stopped in a fork", 0, 2), fork: "beta", phase: ForkAssignmentPaused, agent: "codex"},
 		{Item: inProgress("c", "Stopped here", 0, 2)},
-		{Item: inProgress("d", "Ready in a fork", 2, 2), fork: "gamma", phase: ForkAssignmentReady, since: ago(time.Hour)},
+		{Item: inProgress("d", "Ready in a fork", 2, 2), fork: "gamma", phase: ForkAssignmentReady, folded: true},
 		{Item: Item{ID: "e", Title: "Blocked in a fork", State: StateBlocked}, fork: "delta", phase: ForkAssignmentBlocked},
 		{Item: Item{ID: "f", Title: "Queued for a fork", State: StateTodo}, fork: "epsilon", phase: ForkAssignmentBlocked},
 	}
-	frame := tasksWatchFrame(nil, merged, 0, 120)
-	headers := map[string]bool{"Now": true, "Stopped": true, "Needs you · answer them: coop tasks decisions -i": true, "Up next · 1": true}
+	merges := []forkMerge{{fork: "gamma", tasks: 1, since: ago(time.Hour), ins: 3, del: 1}}
+	frame := tasksWatchFrame(boardRead{merged: merged, merges: merges}, 0, 120, 0)
+	headers := map[string]bool{"Now (1)": true, "Stopped (2)": true, "Needs you (2) · answer them: coop tasks decisions -i": true, "Up next (1)": true}
 	seen := 0
 	for i, line := range frame {
 		if strings.Contains(line, "coop fork logs") || strings.Contains(line, "←") {
@@ -280,9 +481,13 @@ func TestTaskWatchPlacesEveryFactByOneRule(t *testing.T) {
 			t.Errorf("line %d pads text into a column: %q", i, line)
 		}
 		for _, fork := range []string{"alpha", "beta", "gamma", "delta", "epsilon"} {
-			rest := strings.ReplaceAll(strings.ReplaceAll(line, "in fork "+fork, ""), "coop fork "+fork+" --loop -d", "")
+			rest := line
+			for _, named := range []string{"in fork " + fork, "coop fork " + fork + " --loop -d", "  ⚑ Merge fork " + fork + " (",
+				"    fork " + fork + " ready", "coop fork merge " + fork} {
+				rest = strings.ReplaceAll(rest, named, "")
+			}
 			if strings.Contains(rest, fork) || (strings.Contains(line, "in fork "+fork) && !strings.HasPrefix(line, "    ")) {
-				t.Errorf("line %d names fork %s outside a detail line's \"in fork\": %q", i, fork, line)
+				t.Errorf("line %d names fork %s outside its places: %q", i, fork, line)
 			}
 		}
 		switch {
@@ -305,33 +510,46 @@ func TestTaskWatchPlacesEveryFactByOneRule(t *testing.T) {
 	if seen != len(headers) {
 		t.Errorf("frame has %d headers, want %d:\n%s", seen, len(headers), strings.Join(frame, "\n"))
 	}
-	if !slices.Contains(frame, "    1/2 · codex in fork alpha · working") || !slices.Contains(frame, "    0/2 · codex in fork beta · loop ended unexpectedly") {
-		t.Errorf("a fork task lost its detail line:\n%s", strings.Join(frame, "\n"))
+	for _, want := range []string{"    1/2 · codex in fork alpha · working", "    0/2 · codex in fork beta · loop ended unexpectedly",
+		"  ⚑ Merge fork gamma (1 task)", "    +3 −1 · to merge, run: coop fork merge gamma"} {
+		if !slices.Contains(frame, want) {
+			t.Errorf("frame lost %q:\n%s", want, strings.Join(frame, "\n"))
+		}
+	}
+	if strings.Contains(strings.Join(frame, "\n"), "Ready in a fork") {
+		t.Errorf("a task in its fork's merge has a row of its own:\n%s", strings.Join(frame, "\n"))
 	}
 }
 
 // A title is cut only by the terminal's width, at the end of its line: the facts after it go first,
-// and no row is wider than the board leaves room for.
+// and no row is wider than the board leaves room for. A command is never cut: one that does not fit
+// goes on a line of its own.
 func TestTaskWatchTitleUsesAvailableTerminalWidth(t *testing.T) {
 	title := "Log every cloud error envelope instead of silently swallowing the useful diagnostic details"
-	merged := []mergedTask{{
-		Item:  Item{ID: "errors", Title: title, State: StateBlocked},
-		queue: "api/.agent/tasks", since: ago(5 * time.Hour),
-	}}
-	rowAt := func(width int) string { return boardSections(ui.Palette{}, merged, 0, width)[0][1] }
-	if wide := rowAt(132); wide != "  ⚑ "+title+" · api · 5h" {
-		t.Errorf("wide row = %q, want the title, its queue and its age", wide)
+	merged := []mergedTask{{Item: Item{ID: "errors", Title: title, State: StateTodo}, queue: "api"}}
+	rowAt := func(width int) string { return renderSections(ui.Palette{}, merged, 0, width)[0][1] }
+	if wide := rowAt(132); wide != "  ○ "+title+" · api" {
+		t.Errorf("wide row = %q, want the title and its queue", wide)
 	}
 	const narrowWidth = 52
 	narrow := rowAt(narrowWidth)
-	if want := "  ⚑ " + title[:narrowWidth-1-4-1] + "…"; narrow != want {
+	if want := "  ○ " + title[:narrowWidth-1-4-1] + "…"; narrow != want {
 		t.Errorf("narrow row = %q, want the title cut at the width %q", narrow, want)
 	}
 	stopped := []mergedTask{{Item: inProgress("x", title, 0, 2), fork: "sweep-b", phase: ForkAssignmentWorking, stopReason: "this project asks for network access that has not been approved"}}
-	for _, line := range boardSections(ui.Palette{}, stopped, 0, narrowWidth)[0] {
+	lines := renderSections(ui.Palette{}, stopped, 0, narrowWidth)[0]
+	for _, line := range lines {
 		if got := len([]rune(line)); got > narrowWidth-1 {
 			t.Errorf("row width = %d, want at most %d: %q", got, narrowWidth-1, line)
 		}
+	}
+	if want := []string{"    to fix, run: coop approve", "    then coop fork sweep-b --loop -d"}; !reflect.DeepEqual(lines[3:], want) {
+		t.Errorf("fix lines = %q, want each command whole %q", lines[3:], want)
+	}
+	long := []mergedTask{{Item: inProgress("2026-11-05-fall-back-to-the-live-debian-archives-when-the-s", title, 0, 1), owner: "claimed by claude"}}
+	lines = renderSections(ui.Palette{}, long, 0, narrowWidth)[0]
+	if want := []string{"    to free it, run:", "    coop tasks release 2026-11-05-fall-back-to-the-live-debian-archives-when-the-s"}; !reflect.DeepEqual(lines[3:], want) {
+		t.Errorf("fix lines = %q, want the command whole, on its own line %q", lines[3:], want)
 	}
 }
 
@@ -365,7 +583,7 @@ func TestTasksWatchFrameMergesForks(t *testing.T) {
 	cf, _ := TaskTreeCounts(forked)
 	sources := []watchSource{{label: ".agent/tasks", counts: cl}, {label: "api", counts: cf}}
 	merged := []mergedTask{{Item: local[0]}, {Item: forked[0], fork: "api", phase: ForkAssignmentWorking, live: true}}
-	joined := strings.Join(tasksWatchFrame(sources, merged, 0, 80), "\n")
+	joined := strings.Join(tasksWatchFrame(boardRead{sources: sources, merged: merged}, 0, 80, 0), "\n")
 	for _, want := range []string{"  .agent/tasks  0/1", "  api           0/1", "Local thing", "Wire auth\n    in fork api · working"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("multi-source frame missing %q:\n%s", want, joined)
@@ -434,7 +652,7 @@ func TestReservationOnlyForkIsNotTaskWatchActivity(t *testing.T) {
 	if snapshotHasVisibleActivity(snapshot) {
 		t.Fatal("durable session ownership was presented as current task work")
 	}
-	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	frame := strings.Join(tasksWatchFrame(boardRead{snapshot: snapshot}, 0, 120, 0), "\n")
 	for _, unwanted := range []string{"forks", "idle-session", "session-owner"} {
 		if strings.Contains(frame, unwanted) {
 			t.Fatalf("reservation-only fork rendered %q:\n%s", unwanted, frame)
@@ -452,7 +670,7 @@ func TestReservedForkWithAssignmentRendersTaskActivity(t *testing.T) {
 	if !snapshotHasVisibleActivity(snapshot) {
 		t.Fatal("a fork assignment was hidden by its session reservation")
 	}
-	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	frame := strings.Join(tasksWatchFrame(boardRead{snapshot: snapshot}, 0, 120, 0), "\n")
 	if !strings.Contains(frame, "worker · 1 assigned task") {
 		t.Fatalf("assigned fork did not render its task activity:\n%s", frame)
 	}
@@ -473,8 +691,7 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 		{name: "loop another system started", fork: ProjectForkSnapshot{Name: "worker", DetachedSystem: "Linux"}, want: "background loop started on Linux"},
 		{name: "cleanup", fork: ProjectForkSnapshot{Name: "worker", CleanupPending: true}, want: "cleanup-pending"},
 		{name: "assignment", fork: ProjectForkSnapshot{Name: "worker", Assignments: 2}, want: "2 assigned tasks"},
-		{name: "candidate", fork: ProjectForkSnapshot{Name: "worker", Candidate: true}, want: "ready"},
-		{name: "landing", fork: ProjectForkSnapshot{Name: "worker", PendingLand: true}, want: "landing"},
+		{name: "candidate under review", fork: ProjectForkSnapshot{Name: "worker", CandidatePhase: forkCandidateReviewing, CandidateRound: 2}, want: "reviewing round 2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -482,7 +699,7 @@ func TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution(t *testing.T) {
 			if !snapshotHasVisibleActivity(snapshot) {
 				t.Fatal("fork work was not treated as visible activity")
 			}
-			frame := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+			frame := strings.Join(tasksWatchFrame(boardRead{snapshot: snapshot}, 0, 120, 0), "\n")
 			if !strings.Contains(frame, "worker · "+tt.want) {
 				t.Fatalf("fork work did not render %q:\n%s", tt.want, frame)
 			}
@@ -567,9 +784,9 @@ func TestTaskWatchHidesTodoClaims(t *testing.T) {
 		{fork: "worker", phase: ForkAssignmentBlocked, agent: "codex"},
 	} {
 		task.Item = Item{Title: "Queued work", State: StateTodo}
-		task.queue = "api/.agent/tasks"
-		lines := boardSections(ui.Palette{}, []mergedTask{task}, 0, 80)[0]
-		if want := []string{"Up next · 1", "  ○ Queued work · api"}; !reflect.DeepEqual(lines, want) {
+		task.queue = "api"
+		lines := renderSections(ui.Palette{}, []mergedTask{task}, 0, 80)[0]
+		if want := []string{"Up next (1)", "  ○ Queued work · api"}; !reflect.DeepEqual(lines, want) {
 			t.Errorf("TODO rows = %q, want %q", lines, want)
 		}
 	}
@@ -624,7 +841,7 @@ func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
 						t.Errorf("TODO claim appeared in watch:\n%s", out)
 					}
 				case process == "stopped":
-					if want := "  ✕ Queued work\n    " + who + " · claimed by a session that has ended\n    to free it, run: coop tasks release " + id + "\n"; !strings.Contains(out, want) {
+					if want := "  ✕ Queued work\n    " + who + " · claim held by a session that ended <1m ago\n    to free it, run: coop tasks release " + id + "\n"; !strings.Contains(out, want) {
 						t.Errorf("watch lost the ended claim; want\n%s\ngot:\n%s", want, out)
 					}
 				default:
@@ -647,50 +864,91 @@ func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
 	}
 }
 
+// A queue is named by the folder that holds it, without the word "queue" or the .agent folder; the
+// project's own queue by the project's folder name, never "root". Other labels stay as they are.
 func TestTaskWatchCompactQueueLabels(t *testing.T) {
-	for _, tt := range []struct {
-		queue, suffix string
-	}{
-		{"", ""},
-		{".agent/tasks", ""},
-		{"portal/.agent/tasks", " · portal"},
-		{"packs/.agent/tasks", " · packs"},
-		{"apps/api/.agent/tasks", " · apps/api"},
-		{"custom/tasks", " · custom/tasks"},
-		{"portal/.agent/tasks-extra", " · portal/.agent/tasks-extra"},
-		{"portal/.agent/tasks/archive", " · portal/.agent/tasks/archive"},
-		{"/shared/project/.agent/tasks", " · /shared/project"},
+	for label, want := range map[string]string{
+		"":                             "",
+		".agent/tasks":                 "emisar",
+		".agent/tasks-b":               "tasks-b",
+		"portal/.agent/tasks":          "portal",
+		"portal/.agent/tasks-b":        "portal/tasks-b",
+		"apps/api/.agent/tasks":        "apps/api",
+		"custom/tasks":                 "custom/tasks",
+		"portal/.agent/tasks/archive":  "portal/.agent/tasks/archive",
+		"/shared/project/.agent/tasks": "/shared/project",
 	} {
-		t.Run(tt.queue, func(t *testing.T) {
-			for _, state := range []string{StateTodo, StateBlocked, StateInProgress} {
-				m := mergedTask{
-					Item:  Item{Title: "Apply schema", State: state, Subtasks: []bool{true, false}},
-					queue: tt.queue,
-					lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude"},
-				}
-				line := boardSections(ui.Palette{}, []mergedTask{m}, 0, 100)[0][1]
-				if want := " Apply schema" + tt.suffix; !strings.HasSuffix(line, want) {
-					t.Errorf("%s row = %q, want title and suffix %q", state, line, want)
-				}
-			}
-		})
+		if got := queueName(label, "emisar"); got != want {
+			t.Errorf("queueName(%q) = %q, want %q", label, got, want)
+		}
+	}
+	// The queue leads a detail line, and follows a list entry's title.
+	for state, want := range map[string][]string{
+		StateTodo:       {"  ○ Apply schema · portal"},
+		StateBlocked:    {"  ⚑ Apply schema", "    portal · decision pending"},
+		StateInProgress: {"  ◳ Apply schema", "    portal · 1/2 · claude · working"},
+	} {
+		t.Setenv("COOP_SPINNER", "1")
+		m := mergedTask{Item: Item{Title: "Apply schema", State: state, Subtasks: []bool{true, false}}, queue: "portal",
+			lease: TaskLeaseObservation{State: leaseBusy, Provider: "claude"}}
+		if got := renderSections(ui.Palette{}, []mergedTask{m}, 1, 100)[0][1:]; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s row = %q, want %q", state, got, want)
+		}
+	}
+}
+
+// On a board of several queues every row names its queue, the project's own by the project's folder
+// name; on a board of one, none does.
+func TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "shop")
+	root, api := filepath.Join(repo, TasksRoot), filepath.Join(repo, "api", TasksRoot)
+	writeTaskFile(t, filepath.Join(root, StateBlocked, "ask", "task.md"), "# Pick a region\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "next", "task.md"), "# Wire auth\n")
+	writeTaskFile(t, filepath.Join(api, StateInProgress, "doing", "task.md"), "# Cache the probe\n")
+	watch := func(roots ...string) string {
+		return captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, roots) })
+	}
+	several := watch(root, api)
+	for _, want := range []string{"  ⚑ Pick a region\n    shop · decision pending for <1m\n", "  ○ Wire auth · shop\n",
+		"  ✕ Cache the probe\n    api · worker gone <1m ago\n", "  shop  0/2 · 1 blocked\n"} {
+		if !strings.Contains(several, want) {
+			t.Errorf("several queues: watch is missing %q:\n%s", want, several)
+		}
+	}
+	if strings.Contains(several, "root") || strings.Contains(several, ".agent") {
+		t.Errorf("several queues: a queue is named by its path or as root:\n%s", several)
+	}
+	one := watch(root)
+	for _, want := range []string{"  ⚑ Pick a region\n    decision pending for <1m\n", "  ○ Wire auth\n"} {
+		if !strings.Contains(one, want) {
+			t.Errorf("one queue: watch is missing %q:\n%s", want, one)
+		}
+	}
+	if strings.Contains(one, "shop") {
+		t.Errorf("one queue: a row names its queue:\n%s", one)
 	}
 }
 
 // A fork with a task on the board shows only in that task's detail line, not again in a forks
-// section; a fork with no task row (landing, cleaning up, between tasks) keeps its own line.
+// section; a fork with no row (cleaning up, between tasks) keeps its own line, and a fork ready to
+// merge or merging is its merge row.
 func TestTaskWatchListsAForkOnceOnItsTaskRow(t *testing.T) {
 	snapshot := ProjectSnapshot{Forks: []ProjectForkSnapshot{
 		{Name: "sweep-a", Assignments: 1},
+		{Name: "cleaner", CleanupPending: true},
 		{Name: "lander", PendingLand: true},
 	}}
 	merged := []mergedTask{{Item: Item{ID: "t", Title: "Wire auth", State: StateInProgress}, fork: "sweep-a", phase: ForkAssignmentWorking, live: true}}
-	frame := strings.Join(tasksWatchFrameWithSnapshot(nil, merged, snapshot, 0, 120), "\n")
+	merges := []forkMerge{{fork: "lander", landing: true}}
+	frame := strings.Join(tasksWatchFrame(boardRead{merged: merged, merges: merges, snapshot: snapshot}, 0, 120, 0), "\n")
 	if strings.Contains(frame, "sweep-a · 1 assigned task") || strings.Count(frame, "sweep-a") != 1 {
 		t.Errorf("a fork with a task row was listed again:\n%s", frame)
 	}
-	if !strings.Contains(frame, "\nforks\n  lander · landing") {
-		t.Errorf("a fork without a task row lost its line:\n%s", frame)
+	if !strings.Contains(frame, "\nforks\n  cleaner · cleanup-pending") {
+		t.Errorf("a fork without a row lost its line:\n%s", frame)
+	}
+	if strings.Count(frame, "lander") != 2 || !strings.Contains(frame, "Merge fork lander\n    fork lander merging\n") {
+		t.Errorf("a merging fork is not one merge row:\n%s", frame)
 	}
 }
 
@@ -709,20 +967,21 @@ func TestTaskWatchSaysWhatAForkIsDoingWithItsTask(t *testing.T) {
 		{"working loop", task(ForkAssignmentWorking, true), 1, 0},
 		{"loop died while working", task(ForkAssignmentWorking, false), 0, 1},
 		{"paused, loop gone", task(ForkAssignmentPaused, false), 0, 1},
-		{"waiting for merge", task(ForkAssignmentReady, false), 0, 0},
-		{"finished, loop gone", task(ForkAssignmentReviewing, false), 0, 0},
+		{"in its fork's merge", mergedTask{Item: Item{ID: "t", State: StateInProgress}, fork: "sweep-a", phase: ForkAssignmentReady, folded: true}, 0, 0},
+		{"in final review, loop gone", task(ForkAssignmentReviewing, false), 0, 1},
 		{"final review running", task(ForkAssignmentReviewing, true), 1, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if b := countBoard([]mergedTask{tc.task}); b.Working != tc.working || b.Stopped != tc.stopped || b.Doing != 1 {
+			if b := countBoard([]mergedTask{tc.task}, nil); b.Working != tc.working || b.Stopped != tc.stopped || b.Doing != 1 {
 				t.Errorf("counts = %+v, want %d working and %d stopped of 1 in progress", b, tc.working, tc.stopped)
 			}
 		})
 	}
 }
 
-// A blocked task is one line under Needs you with how long it has waited; its question stays in
-// coop tasks decisions, which the header names. A task moved into done today is today's work.
+// A blocked task is under Needs you with whether it was answered and how long it has waited; its
+// question stays in coop tasks decisions, which the header names. A task moved into done today is
+// today's work.
 func TestTaskWatchShowsDecisionsAndTodaysWork(t *testing.T) {
 	repo := t.TempDir()
 	root := filepath.Join(repo, TasksRoot)
@@ -754,8 +1013,9 @@ func TestTaskWatchShowsDecisionsAndTodaysWork(t *testing.T) {
 	out := captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}) })
 	for _, want := range []string{
 		"0 todo · 0 working · 0 stopped · 3 blocked · 1 done today\n",
-		"\nNeeds you · answer them: coop tasks decisions -i\n",
-		"  ⚑ Task open · <1m\n", "  ⚑ Task answered · <1m\n", "  ⚑ Task unwritten · <1m\n",
+		"\nNeeds you (3) · answer them: coop tasks decisions -i\n",
+		"  ⚑ Task open\n    decision pending for <1m\n", "  ⚑ Task answered\n    answered, not yet resumed for <1m\n",
+		"  ⚑ Task unwritten\n    decision pending for <1m\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("watch is missing %q:\n%s", want, out)
@@ -774,7 +1034,7 @@ func TestTaskWatchCountsAPersonsClaimAsWork(t *testing.T) {
 	claimed := mergedTask{Item: Item{ID: "t", Title: "Wire auth", State: StateInProgress}, owner: "claimed by alice", live: true}
 	stopped := claimed
 	stopped.live = false
-	if b := countBoard([]mergedTask{claimed, stopped}); b.Working != 1 || b.Stopped != 1 || b.Doing != 2 {
+	if b := countBoard([]mergedTask{claimed, stopped}, nil); b.Working != 1 || b.Stopped != 1 || b.Doing != 2 {
 		t.Errorf("counts = %+v, want the live claim working and the ended one stopped", b)
 	}
 }
@@ -821,6 +1081,69 @@ func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	}
 }
 
+// A fork's published candidate is one row for the fork, from its real records: how many tasks it
+// carries, when it was published and the command that merges it. Its tasks get no rows of their own,
+// and the fork no line under forks.
+func TestTaskWatchShowsAForksMergeOnce(t *testing.T) {
+	f := newCandidateRoundFixture(t, "alpha", "beta")
+	head, tree := f.headTree()
+	review, _, err := BeginForkCandidateReview(f.repo, f.identity, head, tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AuthorizeForkCandidateReview(f.repo, f.identity, review.Candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, published, err := PublishForkCandidate(f.repo, f.identity, head, tree); err != nil || !published {
+		t.Fatalf("publish = %v, %v", published, err)
+	}
+	out := captureStdout(t, func() { _, _ = TasksWatch(Host{}, f.repo, []string{f.root}) })
+	want := "\nNeeds you (1)\n  ⚑ Merge fork rounds (2 tasks)\n    fork rounds ready for <1m\n    to merge, run: coop fork merge rounds\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("watch is missing the merge row %q:\n%s", want, out)
+	}
+	if !strings.HasPrefix(out, "0 todo · 0 working · 0 stopped · 0 blocked") {
+		t.Errorf("a merge waiting on a person counts as work:\n%s", out)
+	}
+	for _, gone := range []string{"alpha", "beta", "forks", "ready to merge"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("watch shows %q beside the fork's merge row:\n%s", gone, out)
+		}
+	}
+}
+
+// A row names its agent by the full target the worker recorded in its lease: a local loop's lease
+// on the task, a gone worker's last lease, or a fork loop's lease on its own copy of the task, which
+// the assignment names. A fork with no recorded lease falls back to the agent coop fork noted.
+func TestTaskWatchNamesTheFullTargetTheWorkerRecorded(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "projection", "tasks")
+	task := taskWithCompletedChecklist(t, root, StateInProgress, "wire-auth")
+	owner := testLeaseOwner()
+	owner.Target = "codex:gpt-6-astra/xhigh@personal"
+	lease, _, err := TryTaskLease(root, task, owner)
+	if err != nil || lease == nil {
+		t.Fatalf("lease = %v, %v", lease, err)
+	}
+	t.Cleanup(func() { _ = lease.Release() })
+	if got := observeLeaseAt(root, task.ID, time.Now()); got.State == leaseUnleased || knownTarget(got.Target, got.Provider) != owner.Target {
+		t.Errorf("held lease = %+v, want it held by %s", got, owner.Target)
+	}
+	if got, _ := goneWorker(task); got != owner.Target {
+		t.Errorf("gone worker = %q, want %q", got, owner.Target)
+	}
+	if got := forkTaskTarget(ForkTaskOwner{Projection: root}, task.ID); got != owner.Target {
+		t.Errorf("fork task target = %q, want %q", got, owner.Target)
+	}
+	if got := forkTaskTarget(ForkTaskOwner{Projection: filepath.Join(t.TempDir(), "tasks")}, task.ID); got != "" {
+		t.Errorf("fork task without a lease = %q, want none (the fork's own agent note stands)", got)
+	}
+	for target, want := range map[string]string{"claude@personal": "claude@personal", "codex:o3/high@a,b": "codex:o3/high@a,b", "": "codex", "x y": "codex"} {
+		if got := knownTarget(target, "codex"); got != want {
+			t.Errorf("knownTarget(%q) = %q, want %q", target, got, want)
+		}
+	}
+}
+
 // A held lease reports how long its heartbeat has been quiet, which a stalled row shows.
 func TestLeaseObservationReportsHeartbeatQuiet(t *testing.T) {
 	now := time.Now()
@@ -846,7 +1169,7 @@ func TestTaskWatchDropsTheStandaloneBoxInventory(t *testing.T) {
 		Forks:    []ProjectForkSnapshot{{Name: "api", DetachedRunning: true}},
 		Problems: []string{"queue web/.agent/tasks is unreadable"},
 	}
-	joined := strings.Join(tasksWatchFrameWithSnapshot(nil, nil, snapshot, 0, 120), "\n")
+	joined := strings.Join(tasksWatchFrame(boardRead{snapshot: snapshot}, 0, 120, 0), "\n")
 	for _, gone := range []string{"sandboxes", "remote-session · running", "role: active-turn", "source: session-run"} {
 		if strings.Contains(joined, gone) {
 			t.Errorf("the board still paints the box inventory (%q):\n%s", gone, joined)

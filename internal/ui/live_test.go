@@ -28,6 +28,22 @@ func TestClip(t *testing.T) {
 	if visible(got) != 3 {
 		t.Errorf("clip styled visible width = %d, want 3 (%q)", visible(got), got)
 	}
+	// A link's escape is no width either: a line that fits is kept whole, and a cut inside the
+	// link's text closes the link.
+	link := Colored().Link("file:///tmp/task", "Wire auth") + " · api"
+	if got := clip(link, 15); got != link {
+		t.Errorf("clip of a line that fits changed it: %q", got)
+	}
+	if got, want := clip(link, 4), "\033]8;;file:///tmp/task\033\\Wire\033]8;;\033\\"; got != want {
+		t.Errorf("clip inside a link = %q, want %q", got, want)
+	}
+}
+
+// Off a terminal the height is unknown, never a made-up default.
+func TestTermHeightIsZeroOffATerminal(t *testing.T) {
+	if got := TermHeight(nil); got != 0 {
+		t.Errorf("TermHeight(nil) = %d, want 0", got)
+	}
 }
 
 func TestSpinFramesAndFreeze(t *testing.T) {

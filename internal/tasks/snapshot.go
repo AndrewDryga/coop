@@ -70,6 +70,12 @@ type ProjectForkSnapshot struct {
 	Reservation      *forkspace.WorkspaceReservation  `json:"reservation,omitempty"`
 	Executions       []forkspace.ExecutionObservation `json:"executions,omitempty"`
 	ActiveExecutions int                              `json:"active_executions"`
+
+	// For the board's merge row, not the JSON contract: when the candidate was published and how
+	// many tasks it carries, and when its merge started.
+	candidateAt    time.Time
+	candidateTasks int
+	landingAt      time.Time
 }
 
 type ProjectSnapshot struct {
@@ -338,9 +344,12 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				fork.CandidateRound++
 			}
 			fork.Candidate = status.Phase == forkCandidateActive
+			if candidate, ok, err := ReadForkCandidate(repo, identity); fork.Candidate && err == nil && ok {
+				fork.candidateAt, fork.candidateTasks = candidate.CreatedAt, len(candidate.Assignments)
+			}
 		}
 		if info, err := os.Lstat(forkspace.LandIntentPath(repo, identity)); err == nil {
-			fork.PendingLand = true
+			fork.PendingLand, fork.landingAt = true, info.ModTime()
 			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 				appendSnapshotProblem(&snapshot, "fork "+identity.Name+" land", errors.New("land journal is not a regular file"))
 			}

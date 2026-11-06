@@ -205,8 +205,8 @@ const (
 // watchFrame is one frame of `coop tasks watch` (internal/tasks/watch.go), a board redrawn in place:
 // the bar and the counts (todo · working · stopped · blocked · done today), then its sections. Now
 // holds the task being worked, with the Corner Run spinner and a detail line of its subtasks, its
-// agent and how long it has run; Needs you the blocked task with how long it has waited; Up next the
-// first two todo tasks and how many more.
+// agent and how long it has run; Needs you the blocked task with how long its decision has waited;
+// Up next the first three todo tasks and how many more. Each header carries its count.
 func watchFrame(done int, doing, subtasks, elapsed string, todo, blocked []string) string {
 	counts := strings.Join([]string{
 		`<span class="s-todo">` + strconv.Itoa(len(todo)) + ` todo</span>`, `<span class="s-doing">1 working</span>`,
@@ -214,16 +214,16 @@ func watchFrame(done int, doing, subtasks, elapsed string, todo, blocked []strin
 		`<span class="s-done">` + strconv.Itoa(done) + ` done today</span>`,
 	}, dot)
 	frame := line("", stateBar(done, 1, len(blocked), done+1+len(todo)+len(blocked), 22)+"  "+counts) + line("", "")
-	frame += line("", "Now") + line("", `  <span class="s-doing spin">◰</span> `+doing) +
+	frame += line("", "Now (1)") + line("", `  <span class="s-doing spin">◰</span> `+doing) +
 		line("", `    <span class="dim">`+subtasks+` · claude · working for `+elapsed+`</span>`) + line("", "")
-	frame += line("", `Needs you<span class="dim"> · answer them: coop tasks decisions -i</span>`)
+	frame += line("", `Needs you (`+strconv.Itoa(len(blocked))+`)<span class="dim"> · answer them: coop tasks decisions -i</span>`)
 	for _, title := range blocked {
-		frame += line("", `  <span class="s-blocked">⚑</span> `+title+`<span class="dim"> · 2h</span>`)
+		frame += line("", `  <span class="s-blocked">⚑</span> `+title) + line("", `    <span class="dim">decision pending for 2h</span>`)
 	}
-	frame += line("", "") + line("", `Up next<span class="dim"> · `+strconv.Itoa(len(todo))+`</span>`)
+	frame += line("", "") + line("", `Up next (`+strconv.Itoa(len(todo))+`)`)
 	for i, title := range todo {
-		if i == 2 {
-			frame += line("", `<span class="dim">  + `+strconv.Itoa(len(todo)-2)+` more</span>`)
+		if i == 3 {
+			frame += line("", `<span class="dim">  + `+strconv.Itoa(len(todo)-3)+` more</span>`)
 			break
 		}
 		frame += line("", `  <span class="s-todo">○</span> `+title)

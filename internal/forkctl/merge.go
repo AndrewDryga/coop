@@ -1033,7 +1033,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	ref := "review/" + name
 	ahead := forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref)
-	ins, del := parseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
+	ins, del := forkspace.ParseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
 	aheadN, _ := strconv.Atoi(ahead)
 	ui.Note("Merge fork %s into %s", name, gitBranch(repo))
 	ui.Note("  %s · +%d −%d", ui.Count(aheadN, "commit"), ins, del)

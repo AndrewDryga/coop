@@ -126,7 +126,7 @@ func TestShellJoinQuotesOnlyWhatAShellWouldSplit(t *testing.T) {
 func TestTaskWatchWithoutColorAndJSONUseStateNames(t *testing.T) {
 	items := []Item{{ID: "a", Title: "Wire auth", State: StateInProgress}, {ID: "b", Title: "Ship", State: StateDone}}
 	c, _ := TaskTreeCounts(items)
-	frame := tasksWatchFrame([]watchSource{{label: ".agent/tasks", counts: c}, {label: "web/.agent/tasks", counts: c}}, merge(items), 0, 80)
+	frame := tasksWatchFrame(boardRead{sources: []watchSource{{label: ".agent/tasks", counts: c}, {label: "web/.agent/tasks", counts: c}}, merged: merge(items)}, 0, 80, 0)
 	joined := strings.Join(frame, "\n")
 	if strings.ContainsAny(joined, "█░") || !strings.Contains(frame[0], "1 stopped") || strings.Contains(joined, "in_progress") {
 		t.Fatalf("a colorless board draws bars or folder names:\n%s", joined)

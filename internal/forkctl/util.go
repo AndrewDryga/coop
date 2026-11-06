@@ -51,23 +51,6 @@ func indent(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// parseShortstat pulls insertion/deletion counts out of a `git diff --shortstat`
-// line ("N files changed, I insertions(+), D deletions(-)").
-func parseShortstat(s string) (ins, del int) {
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		n := 0
-		fmt.Sscanf(part, "%d", &n)
-		switch {
-		case strings.Contains(part, "insertion"):
-			ins = n
-		case strings.Contains(part, "deletion"):
-			del = n
-		}
-	}
-	return ins, del
-}
-
 // rejectArgs returns a usage error when a command that takes no arguments is given some, so a stray
 // token fails clearly instead of being silently ignored.
 func rejectArgs(cmd string, args []string) error {

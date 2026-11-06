@@ -236,19 +236,21 @@ func ProgressBarStates(done, doing, blocked, total, width int) string {
 	return "[" + Cyan(strings.Repeat("█", d)) + Yellow(strings.Repeat("█", a)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-a-b) + "]"
 }
 
-// clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes, and
-// appends a reset if it cut inside styled text — so a colored status line can be width-bounded
-// without leaving a dangling color or miscounting escape bytes as width.
+// clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes or OSC 8
+// links, and appends a reset if it cut inside styled text and a link end if it cut inside a link —
+// so a colored status line can be width-bounded without leaving a dangling color or link, or
+// miscounting escape bytes as width.
 func clip(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
 	var b strings.Builder
-	vis, styled := 0, false
+	vis, styled, linked := 0, false, false
 	for i := 0; i < len(s); {
 		if s[i] == '\033' { // copy a whole escape without counting it as width
 			j := i + 1
-			if j < len(s) && s[j] == '[' { // CSI: ESC [ <params 0x20-0x3f> <final 0x40-0x7e>
+			switch {
+			case j < len(s) && s[j] == '[': // CSI: ESC [ <params 0x20-0x3f> <final 0x40-0x7e>
 				j++
 				for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
 					j++
@@ -256,15 +258,28 @@ func clip(s string, n int) string {
 				if j < len(s) {
 					j++ // the final byte (e.g. 'm')
 				}
-			} else if j < len(s) {
-				j++ // a non-CSI escape; skip the next byte
+				styled = true
+			case j < len(s) && s[j] == ']': // OSC: ESC ] <text>, ended by ESC \ (what Palette.Link writes)
+				if end := strings.Index(s[j:], "\033\\"); end >= 0 {
+					j += end + 2
+				} else {
+					j = len(s)
+				}
+				if osc := s[i:j]; strings.HasPrefix(osc, "\033]8;") {
+					linked = osc != "\033]8;;\033\\"
+				}
+			case j < len(s):
+				j++ // another escape; skip the next byte
+				styled = true
 			}
 			b.WriteString(s[i:j])
-			styled = true
 			i = j
 			continue
 		}
 		if vis >= n {
+			if linked {
+				b.WriteString("\033]8;;\033\\")
+			}
 			if styled {
 				b.WriteString("\033[0m")
 			}

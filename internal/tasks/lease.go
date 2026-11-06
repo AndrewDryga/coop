@@ -801,6 +801,7 @@ const (
 type TaskLeaseObservation struct {
 	State    taskLeaseState
 	Provider string
+	Target   string        // the holder's target as it recorded it (provider:model/effort@account), unchecked
 	Held     time.Duration // how long the current holder has had it; zero when unknown or unleased
 	Quiet    time.Duration // how long since the holder's last heartbeat; zero when unknown or unleased
 }
@@ -950,13 +951,17 @@ func observeTaskLease(item Item, now time.Time) TaskLeaseObservation {
 // lock is unleased even if a crashed controller left stale metadata behind; only a HELD lock means
 // another controller owns the work.
 func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
-	root := filepath.Dir(filepath.Dir(item.Dir))
-	authority, err := lockLeaseAuthority(root, item.ID, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	return observeLeaseAt(filepath.Dir(filepath.Dir(item.Dir)), item.ID, now)
+}
+
+// observeLeaseAt is observeHeldTaskLease for task id of the queue at root.
+func observeLeaseAt(root, id string, now time.Time) TaskLeaseObservation {
+	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
 	switch {
 	case err == nil:
 		_ = unlockLeaseFile(authority)
 	case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
-		meta, ok := readLeaseAuthorityMetadata(root, item.ID)
+		meta, ok := readLeaseAuthorityMetadata(root, id)
 		return leaseObservationFromMetadata(meta, ok, now)
 	case !errors.Is(err, os.ErrNotExist):
 		return TaskLeaseObservation{State: leaseBusy, Provider: "unknown"}
@@ -975,10 +980,10 @@ func leaseObservationFromMetadata(meta taskLeaseMetadata, ok bool, now time.Time
 			quiet = now.Sub(meta.HeartbeatAt)
 		}
 		if now.Sub(meta.HeartbeatAt) > leaseStaleAfter {
-			return TaskLeaseObservation{State: leaseStalled, Provider: provider, Held: held, Quiet: quiet}
+			return TaskLeaseObservation{State: leaseStalled, Provider: provider, Target: meta.Target, Held: held, Quiet: quiet}
 		}
 	}
-	return TaskLeaseObservation{State: leaseBusy, Provider: provider, Held: held, Quiet: quiet}
+	return TaskLeaseObservation{State: leaseBusy, Provider: provider, Target: meta.Target, Held: held, Quiet: quiet}
 }
 
 func leaseProvider(provider string) string {

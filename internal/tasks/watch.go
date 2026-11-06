@@ -3,9 +3,11 @@ package tasks
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -48,6 +50,21 @@ type mergedTask struct {
 	stopReason string
 	// doneToday: a done task finished today. The board's progress is today's, not the archive's.
 	doneToday bool
+	// answered: a blocked task's decision carries its answer; it waits only to be resumed.
+	answered bool
+	// folded: the task is in its fork's merge candidate, so the fork's one merge row stands for it.
+	folded bool
+}
+
+// forkMerge is a fork's finished work as one row: ready to merge (Needs you) or merging (Now).
+type forkMerge struct {
+	fork     string
+	dir      string // the fork's folder, which the row's title links to
+	queue    string // the queues its tasks came from, on a board of several queues
+	tasks    int
+	landing  bool
+	since    time.Time // when the candidate was published, or when its merge started
+	ins, del int
 }
 
 // TasksWatch is the live `coop tasks watch` board: every task across the configured queue(s) AND
@@ -68,13 +85,28 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		snapshot := ReadProjectSnapshot(repo, roots)
 		merged := make([]mergedTask, 0, len(snapshot.Tasks))
 		showQueues := len(snapshot.Queues) > 1
+		project := filepath.Base(snapshot.Repository)
 		liveForks := liveForkGenerations(snapshot.Forks)
 		forkSystems := map[forkspace.Identity]string{}
+		merging := map[forkspace.Identity]*forkMerge{}
+		var merges []*forkMerge
 		for _, fork := range snapshot.Forks {
 			if fork.Identity != nil && fork.DetachedSystem != "" {
 				forkSystems[*fork.Identity] = fork.DetachedSystem
 			}
+			if fork.Identity != nil && (fork.Candidate || fork.PendingLand) {
+				ws := forkspace.Workspace(repo, fork.Name)
+				merge := &forkMerge{fork: fork.Name, dir: ws, tasks: fork.candidateTasks, landing: fork.PendingLand, since: fork.candidateAt}
+				if merge.landing {
+					merge.since = fork.landingAt
+				}
+				merge.ins, merge.del = forkspace.WorkspaceChanges(ws)
+				merging[*fork.Identity] = merge
+				merges = append(merges, merge)
+			}
 		}
+		folded := map[*forkMerge]int{}
+		mergeQueues := map[*forkMerge][]string{}
 		now := time.Now()
 		doneToday := map[string]int{} // by queue label, for the per-source lines
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -91,9 +123,14 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				if claimantElsewhere(record) {
 					m.system = processidentity.System(record.ActorStart)
 				}
+				if !m.live {
+					// The claim says when it was made, not when its session ended: the task's own
+					// files are the last sign anyone worked on it.
+					m.since = lastTouched(task.Item)
+				}
 			}
 			if showQueues {
-				m.queue = task.QueueLabel
+				m.queue = queueName(task.QueueLabel, project)
 			}
 			if task.Fork != nil {
 				m.fork = task.Fork.Name
@@ -102,6 +139,19 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				m.agent = forkAgent(repo, task.Fork.Name)
 				if task.ownerRecord != nil && task.ownerRecord.Fork != nil {
 					m.since = task.ownerRecord.Fork.UpdatedAt
+					if target := forkTaskTarget(*task.ownerRecord.Fork, task.Item.ID); target != "" {
+						m.agent = target
+					}
+					if projection := task.ownerRecord.Fork.Projection; projection != "" && m.live {
+						m.lease = observeLeaseAt(projection, task.Item.ID, now)
+					}
+				}
+				if merge := merging[*task.Fork]; merge != nil && (m.phase == ForkAssignmentReady || m.phase == ForkAssignmentReviewing) {
+					m.folded = true
+					folded[merge]++
+					if m.queue != "" && !slices.Contains(mergeQueues[merge], m.queue) {
+						mergeQueues[merge] = append(mergeQueues[merge], m.queue)
+					}
 				}
 				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
 					m.stopReason = forkStopReason(repo, *task.Fork)
@@ -115,6 +165,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			switch task.Item.State {
 			case StateBlocked:
 				m.since = folderChanged(task.Item.Dir)
+				m.answered = answeredDecision(task.Item)
 			case StateDone:
 				if m.doneToday = changedSince(task.Item.Dir, midnight); m.doneToday {
 					doneToday[task.QueueLabel]++
@@ -128,7 +179,16 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		for _, queue := range snapshot.Queues {
 			counts := queue.Counts
 			counts.Done = doneToday[queue.Label]
-			sources = append(sources, watchSource{label: queue.Label, counts: counts})
+			sources = append(sources, watchSource{label: queueName(queue.Label, project), counts: counts})
+		}
+		board := boardRead{snapshot: snapshot, sources: sources, merged: merged}
+		for _, merge := range merges {
+			if merge.tasks == 0 {
+				merge.tasks = folded[merge]
+			}
+			sort.Strings(mergeQueues[merge])
+			merge.queue = strings.Join(mergeQueues[merge], ", ")
+			board.merges = append(board.merges, *merge)
 		}
 		sort.Slice(merged, func(i, j int) bool {
 			if merged[i].ID != merged[j].ID {
@@ -136,13 +196,13 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			}
 			return merged[i].Dir < merged[j].Dir
 		})
-		running := snapshot.ActiveExecutions()
+		board.running = snapshot.ActiveExecutions()
 		for _, fork := range snapshot.Forks {
 			if fork.DetachedRunning {
-				running++
+				board.running++
 			}
 		}
-		return boardRead{snapshot: snapshot, sources: sources, merged: merged, running: running}
+		return board
 	}
 
 	// An unreadable queue is unknown work, never a drained one: every view still shows what it
@@ -164,7 +224,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	if !ui.IsTerminal(os.Stdout) || !ui.IsTerminal(os.Stderr) {
 		// Pipe output is the same snapshot and renderer as the live view, sampled once.
 		board := read()
-		for _, line := range tasksWatchFrameWithSnapshot(board.sources, board.merged, board.snapshot, 0, 120) {
+		for _, line := range tasksWatchFrame(board, 0, 120, 0) {
 			fmt.Println(line)
 		}
 		if err := board.snapshot.QueueError(); err != nil {
@@ -185,16 +245,19 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	cache := &boardCache{roots: roots, read: read}
 	tick := func(spin int) ([]string, bool) {
 		board := cache.get(time.Now())
-		snapshot, sources, merged, running := board.snapshot, board.sources, board.merged, board.running
-		c := mergedCounts(merged)
 		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
-		// captured snapshot must not carry an instruction nobody can follow.
-		frame := append(tasksWatchFrameWithSnapshot(sources, merged, snapshot, spin, width()), "", watchExitFooter)
+		// captured snapshot must not carry an instruction nobody can follow. The board fills the
+		// terminal's height above it.
+		height := ui.TermHeight(os.Stdout)
+		if height > 0 {
+			height = max(height-2, 1)
+		}
+		frame := append(tasksWatchFrame(board, spin, width(), height), "", watchExitFooter)
 		screen.Frame(frame)
-		if queueErr = snapshot.QueueError(); queueErr != nil {
+		if queueErr = board.snapshot.QueueError(); queueErr != nil {
 			return frame, true // settle on the failure so the loop's debounce still bounds the exit
 		}
-		return frame, tasksWatchSettling(c, running)
+		return frame, tasksWatchSettling(mergedCounts(board.merged), board.running)
 	}
 	code, err := host.runWatchLoop(screen, tick, func() {
 		if queueErr == nil {
@@ -248,15 +311,21 @@ func folderChanged(dir string) time.Time {
 // otherwise the task's own files say when anyone last worked on it.
 func goneWorker(item Item) (string, time.Time) {
 	if meta, ok := readLeaseAuthorityMetadata(filepath.Dir(filepath.Dir(item.Dir)), item.ID); ok && !meta.HeartbeatAt.IsZero() {
-		return knownAgent(meta.Provider), meta.HeartbeatAt
+		return knownTarget(meta.Target, meta.Provider), meta.HeartbeatAt
 	}
+	return "", lastTouched(item)
+}
+
+// lastTouched is when anyone last worked on a task by its own files: its folder or the files a
+// worker writes, whichever changed last.
+func lastTouched(item Item) time.Time {
 	last := folderChanged(item.Dir)
 	for _, name := range []string{"task.md", "state.md", "log.md"} {
 		if info, err := os.Lstat(filepath.Join(item.Dir, name)); err == nil && info.ModTime().After(last) {
 			last = info.ModTime()
 		}
 	}
-	return "", last
+	return last
 }
 
 // knownAgent is an agent name safe to print, or "" when there is none to name.
@@ -265,6 +334,55 @@ func knownAgent(name string) string {
 		return agent
 	}
 	return ""
+}
+
+// knownTarget is the full target a worker recorded, in coop's own grammar
+// (provider:model/effort@account), when it reads as one; else its agent name, or "".
+func knownTarget(target, provider string) string {
+	t := sanitizeCell(strings.TrimSpace(target))
+	ok := t != "" && len(t) <= 80
+	for _, r := range t {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && !strings.ContainsRune("-_@.:/,", r) {
+			ok = false
+		}
+	}
+	if ok {
+		return t
+	}
+	return knownAgent(provider)
+}
+
+// forkTaskTarget is the target a fork's loop recorded when it took the task: the lease it holds on
+// its own copy of the task, which the assignment names. "" when no loop has recorded one.
+func forkTaskTarget(fork ForkTaskOwner, id string) string {
+	if fork.Projection == "" {
+		return ""
+	}
+	if meta, ok := readLeaseAuthorityMetadata(fork.Projection, id); ok {
+		return knownTarget(meta.Target, meta.Provider)
+	}
+	return ""
+}
+
+// queueName is how the board names a queue: the folder that holds it, so `portal/.agent/tasks`
+// reads `portal` and `portal/.agent/tasks-b` reads `portal/tasks-b`, and the project's own queue
+// reads as the project's folder name, never "root". Any other label is kept as it is.
+func queueName(label, project string) string {
+	dir, name := filepath.Split(filepath.Clean(label))
+	dir = strings.TrimSuffix(dir, "/")
+	switch {
+	case label == "":
+		return ""
+	case dir == ".agent" && name == "tasks":
+		return project
+	case dir == ".agent":
+		return name
+	case strings.HasSuffix(dir, "/.agent") && name == "tasks":
+		return strings.TrimSuffix(dir, "/.agent")
+	case strings.HasSuffix(dir, "/.agent"):
+		return strings.TrimSuffix(dir, ".agent") + name
+	}
+	return label
 }
 
 // forkAgent is the agent a fork was last run with, from the note coop fork keeps in its workspace
@@ -344,6 +462,7 @@ type boardRead struct {
 	snapshot ProjectSnapshot
 	sources  []watchSource
 	merged   []mergedTask
+	merges   []forkMerge
 	running  int
 }
 
@@ -436,27 +555,56 @@ func forkHasVisibleActivity(fork ProjectForkSnapshot) bool {
 // view can be left with Ctrl-C.
 const watchExitFooter = "Press Ctrl-C to leave this view."
 
-// tasksWatchFrameWithSnapshot is the task board plus the problems its snapshot found. The board is
-// about TASKS: a box or session that is running without a task of its own is execution data the
-// JSON snapshot still carries (and activity accounting and auto-exit still read), not a second
-// inventory on screen. A fork shows on its task's row; only a fork with no task row on the board
-// (cleaning up, landing, or between tasks) gets a line of its own.
-func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, snapshot ProjectSnapshot, spin, width int) []string {
-	frame := tasksWatchFrame(sources, merged, spin, width)
+// tasksWatchFrame renders the board: the progress header (and one line per queue when there are
+// several), then Now, Stopped, Needs you and Up next, each left out when empty, then the forks with
+// no row of their own and the problems the snapshot found. The board is about TASKS: a box or
+// session running without a task of its own is execution data the JSON snapshot still carries (and
+// activity accounting and auto-exit still read), not a second inventory on screen. height is how
+// many rows the board may use: Needs you and Up next fill what the rest leaves, Needs you first and
+// at least listMin rows each. Without one (0: a pipe, or a terminal that cannot say) each shows
+// listMin. Pure, so it unit-tests headless.
+func tasksWatchFrame(board boardRead, spin, width, height int) []string {
+	p := ui.For(os.Stdout)
+	out := []string{tasksProgressLine(p, countBoard(board.merged, board.merges), width)}
+	// With several queues, break them down compactly, so a glance shows which is how far along.
+	if len(board.sources) > 1 {
+		w := 0
+		for _, s := range board.sources {
+			w = max(w, len([]rune(s.label)))
+		}
+		for _, s := range board.sources {
+			out = append(out, sourceLine(p, s.label, w, s.counts))
+		}
+	}
+	tail := boardTail(board, width)
+	sections := boardSections(p, board.merged, board.merges, spin, width)
+	shown := listShown(sections, height-len(out)-len(tail))
+	for i, section := range sections {
+		out = append(out, "")
+		out = append(out, section.lines(p, shown[i])...)
+	}
+	return append(out, tail...)
+}
+
+// boardTail is what follows the sections: a fork with no row on the board (cleaning up, or between
+// tasks) gets a line of its own, and every problem the snapshot found is listed.
+func boardTail(board boardRead, width int) []string {
 	onBoard := map[string]bool{}
-	for _, m := range merged {
+	for _, m := range board.merged {
 		if m.fork != "" && m.State != StateTodo && m.State != StateDone {
 			onBoard[m.fork] = true
 		}
 	}
 	var visibleForks []ProjectForkSnapshot
-	for _, fork := range snapshot.Forks {
-		if len(fork.Executions) == 0 && forkHasVisibleActivity(fork) && !onBoard[fork.Name] {
+	for _, fork := range board.snapshot.Forks {
+		// A fork ready to merge or merging is its merge row.
+		if len(fork.Executions) == 0 && forkHasVisibleActivity(fork) && !onBoard[fork.Name] && !fork.Candidate && !fork.PendingLand {
 			visibleForks = append(visibleForks, fork)
 		}
 	}
+	var out []string
 	if len(visibleForks) > 0 {
-		frame = append(frame, "", "forks")
+		out = append(out, "", "forks")
 	}
 	for _, fork := range visibleForks {
 		state := "idle"
@@ -467,28 +615,24 @@ func tasksWatchFrameWithSnapshot(sources []watchSource, merged []mergedTask, sna
 			state = "background loop started on " + fork.DetachedSystem
 		case fork.CleanupPending:
 			state = "cleanup-pending"
-		case fork.PendingLand:
-			state = "landing"
 		case fork.CandidatePhase == forkCandidateSuperseding:
 			state = fmt.Sprintf("review round %d pending", fork.CandidateRound)
 		case fork.CandidatePhase == forkCandidateReviewing:
 			state = fmt.Sprintf("reviewing round %d", fork.CandidateRound)
 		case fork.CandidatePhase == forkCandidatePublishing:
 			state = fmt.Sprintf("publishing round %d", fork.CandidateRound)
-		case fork.Candidate:
-			state = fmt.Sprintf("ready · round %d", fork.CandidateRound)
 		case fork.Assignments > 0:
 			state = ui.Count(fork.Assignments, "assigned task")
 		}
-		frame = append(frame, "  "+fork.Name+" · "+state)
+		out = append(out, "  "+fork.Name+" · "+state)
 	}
-	if len(snapshot.Problems) > 0 {
-		frame = append(frame, "", "problems")
-		for _, problem := range snapshot.Problems {
-			frame = append(frame, "  "+truncate(oneLineTitle(problem), width-3))
+	if len(board.snapshot.Problems) > 0 {
+		out = append(out, "", "problems")
+		for _, problem := range board.snapshot.Problems {
+			out = append(out, "  "+truncate(oneLineTitle(problem), width-3))
 		}
 	}
-	return frame
+	return out
 }
 
 // mergedCounts tallies the deduped task set — each task counted once, by its winning state.
@@ -501,8 +645,8 @@ func mergedCounts(merged []mergedTask) TaskCounts {
 	return c
 }
 
-// boardCounts is what the header reports: the state counts, how many tasks are under Now and
-// under Stopped, and how many finished today.
+// boardCounts is what the header reports: the state counts, how many rows are under Now and under
+// Stopped, and how many tasks finished today.
 type boardCounts struct {
 	TaskCounts
 	Working   int
@@ -510,7 +654,7 @@ type boardCounts struct {
 	DoneToday int
 }
 
-func countBoard(merged []mergedTask) boardCounts {
+func countBoard(merged []mergedTask, merges []forkMerge) boardCounts {
 	b := boardCounts{TaskCounts: mergedCounts(merged)}
 	for _, m := range merged {
 		switch classifyTask(m).section {
@@ -521,6 +665,11 @@ func countBoard(merged []mergedTask) boardCounts {
 		}
 		if m.State == StateDone && m.doneToday {
 			b.DoneToday++
+		}
+	}
+	for _, merge := range merges {
+		if merge.landing { // a merge running is a row under Now
+			b.Working++
 		}
 	}
 	return b
@@ -544,10 +693,10 @@ func tasksWatchSettling(c TaskCounts, running int) bool {
 type boardSection int
 
 const (
-	sectionHidden   boardSection = iota // done: a header count, never a row
+	sectionHidden   boardSection = iota // done, or in its fork's merge row: a header count, never a row
 	sectionNow                          // something is on it
 	sectionStopped                      // in progress, nothing on it, and it will not move by itself
-	sectionNeedsYou                     // waits on a person: a decision, or a fork's finished work
+	sectionNeedsYou                     // waits on a person's decision
 	sectionUpNext                       // todo
 )
 
@@ -561,9 +710,8 @@ const (
 	toneStopped
 )
 
-// taskRow is what the board says about one task. Now and Stopped rows carry the state that ends
-// their detail line, and a Stopped row the commands that move it on. A Needs you row may carry one
-// fact for after its title.
+// taskRow is what the board says about one task: the state that ends its detail line, and for a
+// Stopped row the commands that move it on.
 type taskRow struct {
 	section boardSection
 	state   string
@@ -580,7 +728,10 @@ func classifyTask(m mergedTask) taskRow {
 	case StateTodo:
 		return taskRow{section: sectionUpNext}
 	case StateBlocked:
-		return taskRow{section: sectionNeedsYou}
+		if m.answered {
+			return taskRow{section: sectionNeedsYou, state: "answered, not yet resumed"}
+		}
+		return taskRow{section: sectionNeedsYou, state: "decision pending"}
 	case StateInProgress:
 	default:
 		return taskRow{section: sectionHidden}
@@ -599,7 +750,11 @@ func classifyTask(m mergedTask) taskRow {
 	case m.owner != "" && m.live:
 		return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
 	case m.owner != "":
-		return taskRow{section: sectionStopped, state: "claimed by a session that has ended", tone: toneStopped,
+		state := "claim held by a session that has ended"
+		if !m.since.IsZero() {
+			state = "claim held by a session that ended " + shortElapsed(sinceOrZero(m.since)) + " ago"
+		}
+		return taskRow{section: sectionStopped, state: state, tone: toneStopped,
 			fixVerb: "to free it, run:", fix: []string{"coop tasks release " + m.ID}}
 	}
 	state := "worker gone"
@@ -609,22 +764,31 @@ func classifyTask(m mergedTask) taskRow {
 	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: "to resume, run:", fix: []string{"coop loop"}}
 }
 
+// classifyForkTask places a task a fork holds. A task in the fork's merge candidate shows only as
+// the fork's merge row. One that finished or is in its final review while the fork's loop is gone
+// and nothing was published is stopped: the loop has to run again to finish it.
 func classifyForkTask(m mergedTask) taskRow {
 	switch {
-	case m.phase == ForkAssignmentReady, m.phase == ForkAssignmentReviewing && !m.live:
-		return taskRow{section: sectionNeedsYou, state: "ready to merge"}
+	case m.folded:
+		return taskRow{section: sectionHidden}
 	case m.phase == ForkAssignmentBlocked:
-		return taskRow{section: sectionNeedsYou}
+		return taskRow{section: sectionNeedsYou, state: "decision pending"}
 	case m.system != "":
 		return taskRow{section: sectionNow, state: "running on " + m.system}
 	case m.live:
-		switch m.phase {
-		case ForkAssignmentWorking:
+		// Between two of its loop's iterations the task reads paused; the lease the loop holds on its
+		// copy of the task says it is being worked.
+		switch {
+		case m.phase == ForkAssignmentReviewing:
+			return taskRow{section: sectionNow, state: "final review" + forElapsed(m.since)}
+		case m.lease.State == leaseBusy:
+			return taskRow{section: sectionNow, state: workingFor(m.lease.Held)}
+		case m.lease.State == leaseStalled:
+			return taskRow{section: sectionNow, state: "no heartbeat for " + shortElapsed(m.lease.Quiet), tone: toneWaiting}
+		case m.phase == ForkAssignmentWorking:
 			return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
-		case ForkAssignmentReviewing:
-			return taskRow{section: sectionNow, state: "final review"}
 		}
-		return taskRow{section: sectionNow, state: string(m.phase)}
+		return taskRow{section: sectionNow, state: string(m.phase) + forElapsed(m.since)}
 	}
 	state, verb, fix := forkStopNext(m.fork, m.stopReason)
 	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: verb, fix: fix}
@@ -656,6 +820,14 @@ func workingFor(d time.Duration) string {
 	return "working for " + shortElapsed(d)
 }
 
+// forElapsed is " for <how long>" since t, or "" when t is unknown.
+func forElapsed(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " for " + shortElapsed(sinceOrZero(t))
+}
+
 func sinceOrZero(t time.Time) time.Duration {
 	if t.IsZero() {
 		return 0
@@ -663,48 +835,40 @@ func sinceOrZero(t time.Time) time.Duration {
 	return max(time.Since(t), 0)
 }
 
-// Section caps keep the board glanceable: active work always shows in full, the lists do not.
-const (
-	needsYouCap = 3
-	upNextCap   = 2
-)
+// listMin is how many rows Needs you and Up next show at least, and all a pipe shows: the work
+// above them always shows in full, a list only as far as the terminal has room.
+const listMin = 3
 
-// tasksWatchFrame renders the unified board: the progress header (and one line per source when
-// there are several), then Now, Stopped, Needs you and Up next, each left out when empty. Tasks
-// being worked or stopped get a title line and a detail line in one fixed order —
-// `<done>/<total> · <agent>[ in fork <name>] · <state>` — and a stopped one a line with the commands
-// that move it on. Tasks waiting in a list get one line. Nothing is right-aligned. Pure, so it
-// unit-tests headless.
-func tasksWatchFrame(sources []watchSource, merged []mergedTask, spin, width int) []string {
-	p := ui.For(os.Stdout)
-	b := countBoard(merged)
-	out := []string{tasksProgressLine(p, b)}
-	// With several sources — the local queue and/or active forks — break them down compactly, so a
-	// glance shows which queue or fork is how far along.
-	if len(sources) > 1 {
-		w := 0
-		for _, s := range sources {
-			if len(s.label) > w {
-				w = len(s.label)
-			}
-		}
-		for _, s := range sources {
-			out = append(out, sourceLine(p, s.label, w, s.counts))
-		}
-	}
-	for _, section := range boardSections(p, merged, spin, width) {
-		out = append(out, "")
-		out = append(out, section...)
-	}
-	return out
+// headerForm is one way to write the header's counts, from the fullest to the shortest.
+type headerForm struct {
+	bar                             bool
+	working, stopped, blocked, done string
+}
+
+var headerForms = []headerForm{
+	{true, "working", "stopped", "blocked", "done today"},
+	{true, "working", "stopped", "blocked", "done"},
+	{true, "work", "stop", "block", "done"},
+	{false, "work", "stop", "block", "done"},
 }
 
 // tasksProgressLine is the overall header: a bar and the per-state counts. Both describe the live
 // queue and today's finished work. The archive of done tasks is left out: hundreds of them filled the
-// bar, so it never moved during a run.
-func tasksProgressLine(p ui.Palette, b boardCounts) string {
+// bar, so it never moved during a run. A narrow terminal gets a shorter header, never a cut one.
+func tasksProgressLine(p ui.Palette, b boardCounts, width int) string {
 	today := TaskCounts{Todo: b.Todo, Doing: b.Doing, Blocked: b.Blocked, Done: b.DoneToday}
-	return progressBar(p, today, 22) + tasksCountSummary(p, b)
+	var line string
+	for _, form := range headerForms {
+		line = tasksCountSummary(p, b, form)
+		plain := len([]rune(tasksCountSummary(ui.Palette{}, b, form)))
+		if bar := progressBar(p, today, 22); form.bar && bar != "" {
+			line, plain = bar+line, plain+22+4 // the bar's cells, its brackets and the gap after it
+		}
+		if plain <= width-1 {
+			break
+		}
+	}
+	return line
 }
 
 // progressBar is a state bar of width cells and the gap after it, or "" without color: its segments
@@ -730,13 +894,13 @@ func sourceLine(p ui.Palette, label string, w int, c TaskCounts) string {
 // tasksCountSummary is the breakdown after the bar — todo · working · stopped · blocked · done today
 // — each painted like its section's marker, so a glance maps color to state. Every cell shows, even
 // at zero, so the colors read as a consistent legend.
-func tasksCountSummary(p ui.Palette, b boardCounts) string {
+func tasksCountSummary(p ui.Palette, b boardCounts, form headerForm) string {
 	cells := []string{
 		paintState(p, StateTodo, fmt.Sprintf("%d todo", b.Todo)),
-		paintState(p, StateInProgress, fmt.Sprintf("%d working", b.Working)),
-		p.Red(fmt.Sprintf("%d stopped", b.Stopped)),
-		paintState(p, StateBlocked, fmt.Sprintf("%d blocked", b.Blocked)),
-		paintState(p, StateDone, fmt.Sprintf("%d done today", b.DoneToday)),
+		paintState(p, StateInProgress, fmt.Sprintf("%d %s", b.Working, form.working)),
+		p.Red(fmt.Sprintf("%d %s", b.Stopped, form.stopped)),
+		paintState(p, StateBlocked, fmt.Sprintf("%d %s", b.Blocked, form.blocked)),
+		paintState(p, StateDone, fmt.Sprintf("%d %s", b.DoneToday, form.done)),
 	}
 	return strings.Join(cells, p.Dim(" · "))
 }
@@ -765,133 +929,280 @@ func fitSpans(spans []span, room int) string {
 	return b.String()
 }
 
-// boardSections renders Now, Stopped, Needs you and Up next, leaving out an empty one. A section's
-// first task starts right under its header; only Stopped tasks, three lines each, are set apart by a
-// blank line. A header carries no reason text: Up next its count, Needs you the command that answers.
-func boardSections(p ui.Palette, merged []mergedTask, spin, width int) [][]string {
+// paintSpans paints spans in order, whole: for a line that must never be cut.
+func paintSpans(spans []span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		if s.paint != nil {
+			b.WriteString(s.paint(s.text))
+		} else {
+			b.WriteString(s.text)
+		}
+	}
+	return b.String()
+}
+
+// watchSection is one of the board's sections: its header and its rows, each row one or more lines.
+type watchSection struct {
+	header string
+	rows   [][]string
+	gap    bool // a blank line sets each row apart from the next
+	list   bool // shows as many rows as fit (see listShown); the others always show in full
+}
+
+// lines is the section with its first shown rows, then how many more there are.
+func (s watchSection) lines(p ui.Palette, shown int) []string {
+	out := []string{s.header}
+	for i, row := range s.rows[:shown] {
+		if i > 0 && s.gap {
+			out = append(out, "")
+		}
+		out = append(out, row...)
+	}
+	if more := len(s.rows) - shown; more > 0 {
+		out = append(out, p.Dim(fmt.Sprintf("  + %d more", more)))
+	}
+	return out
+}
+
+// height is how many lines the section takes with its first shown rows, the blank line before it
+// included.
+func (s watchSection) height(shown int) int {
+	n := 2 // the blank line before it and its header
+	for i, row := range s.rows[:shown] {
+		if i > 0 && s.gap {
+			n++
+		}
+		n += len(row)
+	}
+	if shown < len(s.rows) {
+		n++
+	}
+	return n
+}
+
+// listShown is how many rows each section shows within budget lines: every row of the work
+// sections, and of each list listMin, then as many more as fit, the first list filled first.
+func listShown(sections []watchSection, budget int) []int {
+	shown := make([]int, len(sections))
+	used := 0
+	for i, s := range sections {
+		shown[i] = len(s.rows)
+		if s.list {
+			shown[i] = min(listMin, len(s.rows))
+		}
+		used += s.height(shown[i])
+	}
+	for i, s := range sections {
+		for s.list && shown[i] < len(s.rows) {
+			grown := used - s.height(shown[i]) + s.height(shown[i]+1)
+			if grown > budget {
+				break
+			}
+			shown[i]++
+			used = grown
+		}
+	}
+	return shown
+}
+
+// fileLink is the URL a title links to: a task's folder or decision, or a fork's folder.
+func fileLink(path string) string {
+	if path == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+}
+
+// boardSections renders Now, Stopped, Needs you and Up next, leaving out an empty one. Each header
+// carries its count, and Needs you the command that answers its decisions. A section's first row
+// starts right under its header; only Stopped rows are set apart by a blank line. Every row that is
+// not a plain list entry has a detail line in one order:
+// `<queue> · [<done>/<total> · ][<agent>[ in fork <name>] · ]<state> for <duration>`, the queue named
+// only on a board of several. Titles link to the task's folder, a blocked task's decision, or the
+// merging fork's folder; commands are never cut.
+func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, width int) []watchSection {
 	const (
 		rowIndent  = 4 // two-space indent + one-column marker + separating space
 		lineIndent = "    "
 	)
 	// AltScreen leaves the terminal's final column empty so a full row cannot auto-wrap.
 	room, lineRoom := width-1-rowIndent, width-1-len(lineIndent)
-	var now, stopped, needsYou, upNext []mergedTask
-	for _, m := range merged {
-		switch classifyTask(m).section {
-		case sectionNow:
-			now = append(now, m)
-		case sectionStopped:
-			stopped = append(stopped, m)
-		case sectionNeedsYou:
-			needsYou = append(needsYou, m)
-		case sectionUpNext:
-			upNext = append(upNext, m)
-		}
+	type listed struct {
+		since time.Time
+		lines []string
 	}
+	var now, stopped [][]string
+	var needsYou []listed
+	var upNext [][]string
+	decisions := false
+
 	// A title is cut only by the terminal's width, at the end of its line: what follows it goes first.
-	titleLine := func(marker string, m mergedTask, extra ...span) string {
-		spans := []span{{oneLineTitle(m.Title), nil}}
-		if queue := strings.TrimSuffix(m.queue, "/"+TasksRoot); queue != "" && queue != TasksRoot {
-			spans = append(spans, span{" · " + queue, p.Dim})
-		}
+	titleLine := func(marker, title, link string, extra ...span) string {
+		spans := []span{{oneLineTitle(title), func(s string) string { return p.Link(link, s) }}}
 		return "  " + marker + " " + fitSpans(append(spans, extra...), room)
 	}
-	detailLine := func(m mergedTask, row taskRow) string {
-		var parts []string
+	detailLine := func(queue string, facts []string, state ...span) string {
+		if queue != "" {
+			facts = append([]string{queue}, facts...)
+		}
+		var spans []span
+		if len(facts) > 0 {
+			spans = append(spans, span{strings.Join(facts, " · ") + " · ", p.Faint})
+		}
+		return lineIndent + fitSpans(append(spans, state...), lineRoom)
+	}
+	// commandLines is lead facts, then a verb and its commands. A command that does not fit on the
+	// line goes on one of its own, so none is ever cut.
+	commandLines := func(lead []span, verb string, commands []string) []string {
+		var lines []string
+		var line []span
+		used := 0
+		add := func(s span) {
+			line = append(line, s)
+			used += len([]rune(s.text))
+		}
+		for _, s := range lead {
+			add(s)
+		}
+		if verb != "" {
+			if used > 0 {
+				add(span{" · ", p.Faint})
+			}
+			add(span{verb, nil})
+		}
+		for i, command := range commands {
+			sep := " "
+			if i > 0 {
+				sep = ", then "
+			}
+			if used > 0 && used+len([]rune(sep+command)) > lineRoom {
+				lines = append(lines, lineIndent+paintSpans(line))
+				line, used, sep = nil, 0, ""
+				if i > 0 {
+					sep = "then "
+				}
+			}
+			if sep != "" {
+				add(span{sep, nil})
+			}
+			add(span{command, p.Bold})
+		}
+		if len(line) > 0 {
+			lines = append(lines, lineIndent+paintSpans(line))
+		}
+		return lines
+	}
+	stateSpan := func(row taskRow) span {
+		switch row.tone {
+		case toneWaiting:
+			return span{row.state, p.Yellow}
+		case toneStopped:
+			return span{row.state, p.Red}
+		}
+		return span{row.state, p.Faint}
+	}
+	// ageSpans is " for <age>" after a waiting row's state, yellow past a day.
+	ageSpans := func(since time.Time) []span {
+		if since.IsZero() {
+			return nil
+		}
+		age, paint := sinceOrZero(since), p.Faint
+		if age >= 24*time.Hour {
+			paint = p.Yellow
+		}
+		return []span{{" for ", p.Faint}, {shortAge(age), paint}}
+	}
+	taskFacts := func(m mergedTask) []string {
+		var facts []string
 		if n := len(m.Subtasks); n > 0 {
-			parts = append(parts, fmt.Sprintf("%d/%d", m.doneSubtasks(), n))
+			facts = append(facts, fmt.Sprintf("%d/%d", m.doneSubtasks(), n))
 		}
 		agent := m.agent
 		if m.fork == "" && m.lease.State != leaseUnleased {
-			agent = knownAgent(m.lease.Provider)
+			agent = knownTarget(m.lease.Target, m.lease.Provider)
 		}
-		if m.fork != "" { // the one place a fork is named
+		if m.fork != "" { // the one place a fork's task names its fork
 			agent = strings.TrimSpace(agent + " in fork " + m.fork)
 		}
 		if agent != "" {
-			parts = append(parts, agent)
+			facts = append(facts, agent)
 		}
-		paint := p.Faint
-		switch row.tone {
-		case toneWaiting:
-			paint = p.Yellow
-		case toneStopped:
-			paint = p.Red
-		}
-		var spans []span
-		if len(parts) > 0 {
-			spans = append(spans, span{strings.Join(parts, " · ") + " · ", p.Faint})
-		}
-		return lineIndent + fitSpans(append(spans, span{row.state, paint}), lineRoom)
+		return facts
 	}
-	fixLine := func(row taskRow) string {
-		spans := []span{{row.fixVerb + " ", nil}}
-		for i, command := range row.fix {
-			if i > 0 {
-				spans = append(spans, span{", then ", nil})
-			}
-			spans = append(spans, span{command, p.Bold})
+	taskLink := func(m mergedTask) string {
+		if (m.State == StateBlocked || m.phase == ForkAssignmentBlocked) && m.HasDecision {
+			return fileLink(filepath.Join(m.Dir, "decision.md"))
 		}
-		return lineIndent + fitSpans(spans, lineRoom)
+		return fileLink(m.Dir)
 	}
-	more := func(n int) string { return p.Dim(fmt.Sprintf("  + %d more", n)) }
 
-	var sections [][]string
-	if len(now) > 0 {
-		lines := []string{"Now"}
-		for _, m := range now {
-			lines = append(lines, titleLine(p.Yellow(ui.CompactSpinFrame(spin)), m), detailLine(m, classifyTask(m)))
+	for _, m := range merged {
+		row := classifyTask(m)
+		switch row.section {
+		case sectionNow:
+			now = append(now, []string{titleLine(p.Yellow(ui.CompactSpinFrame(spin)), m.Title, taskLink(m)),
+				detailLine(m.queue, taskFacts(m), stateSpan(row))})
+		case sectionStopped:
+			lines := []string{titleLine(p.Red(stoppedMarker), m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))}
+			stopped = append(stopped, append(lines, commandLines(nil, row.fixVerb, row.fix)...))
+		case sectionNeedsYou:
+			decisions = true
+			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)),
+				detailLine(m.queue, nil, append([]span{stateSpan(row)}, ageSpans(m.since)...)...)}})
+		case sectionUpNext:
+			var extra []span
+			if m.queue != "" {
+				extra = append(extra, span{" · " + m.queue, p.Dim})
+			}
+			upNext = append(upNext, []string{titleLine(p.Cyan("○"), m.Title, taskLink(m), extra...)})
 		}
-		sections = append(sections, lines)
+	}
+	for _, merge := range merges {
+		title := "Merge fork " + merge.fork
+		if merge.tasks > 0 {
+			title += " (" + ui.Count(merge.tasks, "task") + ")"
+		}
+		var stat []span
+		if merge.ins != 0 || merge.del != 0 {
+			stat = append(stat, span{fmt.Sprintf("+%d −%d", merge.ins, merge.del), p.Faint})
+		}
+		if merge.landing {
+			lines := []string{titleLine(p.Yellow(ui.CompactSpinFrame(spin)), title, fileLink(merge.dir)),
+				detailLine(merge.queue, nil, span{"fork " + merge.fork + " merging" + forElapsed(merge.since), p.Faint})}
+			now = append(now, append(lines, commandLines(stat, "", nil)...))
+			continue
+		}
+		lines := []string{titleLine(p.Red("⚑"), title, fileLink(merge.dir)),
+			detailLine(merge.queue, nil, append([]span{{"fork " + merge.fork + " ready", p.Faint}}, ageSpans(merge.since)...)...)}
+		needsYou = append(needsYou, listed{merge.since, append(lines, commandLines(stat, "to merge, run:", []string{"coop fork merge " + merge.fork})...)})
+	}
+
+	var sections []watchSection
+	if len(now) > 0 {
+		sections = append(sections, watchSection{header: fmt.Sprintf("Now (%d)", len(now)), rows: now})
 	}
 	if len(stopped) > 0 {
-		lines := []string{"Stopped"}
-		for i, m := range stopped {
-			if i > 0 {
-				lines = append(lines, "")
-			}
-			row := classifyTask(m)
-			lines = append(lines, titleLine(p.Red(stoppedMarker), m), detailLine(m, row), fixLine(row))
-		}
-		sections = append(sections, lines)
+		sections = append(sections, watchSection{header: fmt.Sprintf("Stopped (%d)", len(stopped)), rows: stopped, gap: true})
 	}
 	if len(needsYou) > 0 {
-		// Newest first, as the ages read; a task whose age is unknown goes last.
+		// Newest first, as the ages read; a row whose age is unknown goes last.
 		sort.SliceStable(needsYou, func(i, j int) bool {
 			a, b := needsYou[i].since, needsYou[j].since
 			return !a.IsZero() && (b.IsZero() || a.After(b))
 		})
-		lines := []string{"Needs you" + p.Gray(" · answer them: coop tasks decisions -i")}
-		for i, m := range needsYou {
-			if i == needsYouCap {
-				lines = append(lines, more(len(needsYou)-needsYouCap))
-				break
-			}
-			var extra []span
-			if state := classifyTask(m).state; state != "" {
-				extra = append(extra, span{" · " + state, p.Dim})
-			}
-			if !m.since.IsZero() {
-				age, paint := sinceOrZero(m.since), p.Dim
-				if age >= 24*time.Hour {
-					paint = p.Yellow
-				}
-				extra = append(extra, span{" · ", p.Dim}, span{shortAge(age), paint})
-			}
-			lines = append(lines, titleLine(p.Red("⚑"), m, extra...))
+		header := fmt.Sprintf("Needs you (%d)", len(needsYou))
+		if decisions {
+			header += p.Gray(" · answer them: coop tasks decisions -i")
 		}
-		sections = append(sections, lines)
+		section := watchSection{header: header, list: true}
+		for _, row := range needsYou {
+			section.rows = append(section.rows, row.lines)
+		}
+		sections = append(sections, section)
 	}
 	if len(upNext) > 0 {
-		lines := []string{"Up next" + p.Gray(fmt.Sprintf(" · %d", len(upNext)))}
-		for i, m := range upNext {
-			if i == upNextCap {
-				lines = append(lines, more(len(upNext)-upNextCap))
-				break
-			}
-			lines = append(lines, titleLine(p.Cyan("○"), m))
-		}
-		sections = append(sections, lines)
+		sections = append(sections, watchSection{header: fmt.Sprintf("Up next (%d)", len(upNext)), rows: upNext, list: true})
 	}
 	return sections
 }

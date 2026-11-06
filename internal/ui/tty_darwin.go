@@ -20,12 +20,23 @@ func isTerminalFd(fd uintptr) bool {
 // termWidthFd returns the terminal column count for fd via TIOCGWINSZ, or 0 if it can't be
 // read (so the caller falls back to a default width).
 func termWidthFd(fd uintptr) int {
+	_, cols := termSizeFd(fd)
+	return cols
+}
+
+// termHeightFd returns the terminal row count for fd, or 0 if it can't be read.
+func termHeightFd(fd uintptr) int {
+	rows, _ := termSizeFd(fd)
+	return rows
+}
+
+func termSizeFd(fd uintptr) (rows, cols int) {
 	var ws struct{ Row, Col, Xpixel, Ypixel uint16 }
 	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd, syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)), 0, 0, 0)
 	if errno != 0 {
-		return 0
+		return 0, 0
 	}
-	return int(ws.Col)
+	return int(ws.Row), int(ws.Col)
 }
 
 func disableTerminalEcho(f *os.File) (func() error, error) {

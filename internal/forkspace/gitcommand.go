@@ -42,6 +42,29 @@ func GitOut(dir string, args ...string) string {
 	return out
 }
 
+// WorkspaceChanges is a fork workspace's diff against its parent branch, as coop fork ls and
+// coop tasks watch both show it: lines added and removed. Zero and zero when git cannot say.
+func WorkspaceChanges(ws string) (ins, del int) {
+	return ParseShortstat(GitOut(ws, "diff", "--shortstat", "origin/HEAD"))
+}
+
+// ParseShortstat pulls insertion/deletion counts out of a `git diff --shortstat`
+// line ("N files changed, I insertions(+), D deletions(-)").
+func ParseShortstat(s string) (ins, del int) {
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		n := 0
+		fmt.Sscanf(part, "%d", &n)
+		switch {
+		case strings.Contains(part, "insertion"):
+			ins = n
+		case strings.Contains(part, "deletion"):
+			del = n
+		}
+	}
+	return ins, del
+}
+
 // GitOutErr is GitOut for a read Coop acts on: a failure comes back as an error, so "git broke"
 // cannot pass for "git said nothing".
 func GitOutErr(dir string, args ...string) (string, error) {
