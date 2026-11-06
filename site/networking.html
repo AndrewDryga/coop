@@ -693,7 +693,8 @@ can&#39;t connect through it.</p>
 <p>A Docker socket or kernel control directory could let the agent bypass the gateway. For example,
 one <code>curl</code> request to a Docker socket could start another container outside the filtered network.
 So filtered runs reject mounts of <code>/var/run</code>, <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code> and the Docker
-endpoint&#39;s socket directory, and the error names the blocked mount.</p>
+endpoint&#39;s socket directory, and the error names the blocked mount. They also reject a mount whose
+source doesn&#39;t exist, which <code>--egress open</code> lets Docker create as an empty folder.</p>
 </section><section class="doc-section reference-section" id="observed-versus-counted"><h2>Observed versus counted</h2>
 <p><code>coop net inspect [&lt;run&gt;]</code> shows network activity for a run, or this project&#39;s newest one if you
 omit the run. The report starts with totals for allowed traffic, then lists every destination the

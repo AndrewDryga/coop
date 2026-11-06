@@ -164,7 +164,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>WORKDIR</code></td>
 <td>the repo&#39;s real path</td>
-<td>Where the repo mounts in the box.</td>
+<td>Where the repo mounts in the box, as an absolute path.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>HOME_<wbr/>IN_<wbr/>BOX</code></td>
@@ -194,7 +194,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>NO_<wbr/>NEW_<wbr/>PRIVILEGES</code></td>
 <td><code>1</code></td>
-<td>Runs the box with <code>--security-opt no-new-privileges</code>.</td>
+<td>Runs the box with <code>--security-opt no-new-privileges</code>. Filtered boxes always run with it, so <code>0</code> applies only with <code>--egress open</code> or <code>offline</code>.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>ALLOW_<wbr/>CASE_<wbr/>EXPOSED_<wbr/>SECRETS</code></td>

@@ -66,6 +66,24 @@ func TestDetectOverride(t *testing.T) {
 	}
 }
 
+// Only a missing runtime Coop knows is worth installing. Any other missing name is most likely a
+// typo, so its refusal names the two runtimes instead of advising to install the typo.
+func TestDetectNamesTheRuntimesForAMissingUnknownName(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for override, want := range map[string]string{
+		"dokcer":              "choose docker or container, or unset COOP_RUNTIME",
+		"bogus":               "choose docker or container, or unset COOP_RUNTIME",
+		"docker":              "install it, or unset COOP_RUNTIME",
+		"container":           "install it, or unset COOP_RUNTIME",
+		"/opt/missing/docker": "install it, or unset COOP_RUNTIME",
+	} {
+		_, err := Detect(override)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("runtime %q not found (from COOP_RUNTIME)", override)) || !strings.Contains(err.Error(), want) {
+			t.Errorf("Detect(%q) = %v, want it not found and %q", override, err, want)
+		}
+	}
+}
+
 func TestDetectContextStopsRuntimeProbeAtCallerDeadline(t *testing.T) {
 	wrapper := filepath.Join(t.TempDir(), "runtime-wrapper")
 	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {

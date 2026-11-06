@@ -92,6 +92,16 @@
   changes nothing, and it asks again on every run until the folder is in Git, even where an
   earlier run left files.
 
+- **Coop checks box settings before any Docker work and names what is wrong.** `COOP_MEMORY=lots`,
+  `COOP_CPUS=many` and a relative `COOP_WORKDIR` reached "Starting" and failed there with "Docker
+  operation failed; outcome unknown". They are now refused while the settings load, like
+  `COOP_PIDS`: "Use a size such as 512m or 4g", "Use a number of CPUs such as 0.5 or 2", and
+  "COOP_WORKDIR must be an absolute path", as is a relative `COOP_HOME_IN_BOX`. A filtered run names
+  a `COOP_RUN_ARGS` mount source that doesn't exist, and refuses `/proc`, `/run` and `/sys` as
+  control paths even on a Mac, which lacks them, before Docker does anything; it used to say "network
+  workload source cannot be frozen unambiguously". A mistyped `COOP_RUNTIME` is told to choose
+  docker or container instead of to install the typo. A filtered run says once that it keeps
+  no-new-privileges on when `COOP_NO_NEW_PRIVILEGES=0` asks otherwise.
 - **A broken `coop.conf` reads like every other Coop error, and `coop version` still works.** The
   error was one line that glued the problem to the fix with ".:", as in "This line is not a
   setting.: Write settings as KEY=value". It now shows the headline, then the file and line, the

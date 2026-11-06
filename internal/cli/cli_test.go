@@ -58,30 +58,53 @@ func TestFallbackErrorLineEscapesBoxChosenText(t *testing.T) {
 	}
 }
 
+// A bad setting is refused while the settings load, so the runtime is never called. Docker refuses a
+// bad memory or CPU cap, or a relative path in the box, only once the box is being created: the QA
+// run saw COOP_MEMORY=lots reach "Starting" and fail there with "Docker operation failed; outcome
+// unknown".
 func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {
-	conf := filepath.Join(t.TempDir(), "coop.conf")
-	if err := os.WriteFile(conf, []byte("COOP_HOMES=flase\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(t.TempDir(), "runtime-called")
-	runtime := filepath.Join(t.TempDir(), "runtime")
-	script := "#!/bin/sh\n: > \"" + marker + "\"\n"
-	if err := os.WriteFile(runtime, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("COOP_CONF", conf)
-	t.Setenv("COOP_RUNTIME", runtime)
+	for _, tc := range []struct {
+		name, conf, key, value string
+		want                   []string
+	}{
+		{"a boolean in coop.conf", "COOP_HOMES=flase\n", "", "", []string{"coop.conf:1", "Invalid value for COOP_HOMES."}},
+		{"a memory cap in coop.conf", "COOP_MEMORY=lots\n", "", "", []string{"coop.conf:1", "Invalid value for COOP_MEMORY.", "Use a size such as 512m or 4g."}},
+		{"a memory cap", "", "COOP_MEMORY", "lots", []string{"✗ Invalid value for COOP_MEMORY", "Use a size such as 512m or 4g."}},
+		{"a CPU cap", "", "COOP_CPUS", "many", []string{"✗ Invalid value for COOP_CPUS", "Use a number of CPUs such as 0.5 or 2."}},
+		{"a relative working folder", "", "COOP_WORKDIR", "relative", []string{`✗ COOP_WORKDIR must be an absolute path, not "relative"`}},
+		{"a relative home in the box", "", "COOP_HOME_IN_BOX", "home", []string{`✗ COOP_HOME_IN_BOX must be an absolute path, not "home"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := filepath.Join(t.TempDir(), "coop.conf")
+			if err := os.WriteFile(conf, []byte(tc.conf), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(t.TempDir(), "runtime-called")
+			runtime := filepath.Join(t.TempDir(), "runtime")
+			script := "#!/bin/sh\n: > \"" + marker + "\"\n"
+			if err := os.WriteFile(runtime, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("COOP_CONF", conf)
+			t.Setenv("COOP_RUNTIME", runtime)
+			if tc.key != "" {
+				t.Setenv(tc.key, tc.value)
+			}
 
-	stderr := captureStderr(t, func() {
-		if code := Main([]string{"build"}); code != 1 {
-			t.Errorf("Main invalid config exit = %d, want 1", code)
-		}
-	})
-	if !strings.Contains(stderr, conf+":1") || !strings.Contains(stderr, "COOP_HOMES") {
-		t.Fatalf("invalid config stderr = %q, want path:line and key", stderr)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("runtime marker stat = %v, want runtime untouched", err)
+			stderr := captureStderr(t, func() {
+				if code := Main([]string{"run", "--", "true"}); code != 1 {
+					t.Errorf("Main invalid config exit = %d, want 1", code)
+				}
+			})
+			for _, want := range tc.want {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("invalid config stderr = %q, want %q", stderr, want)
+				}
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("runtime marker stat = %v, want runtime untouched", err)
+			}
+		})
 	}
 }
 

@@ -285,6 +285,10 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return nil, err
 	}
+	// A bind this box cannot take is named here, before Docker does any work for the run.
+	if err := checkBindSources(spec.ExtraArgs, candidate.Runtime.Endpoint); err != nil {
+		return nil, err
+	}
 	// The qualified candidate owns the endpoint. Replaying an admitted launch
 	// must not rediscover a later ambient Docker context. An empty daemon
 	// argument permits launch; the full candidate tuple is checked below.

@@ -327,6 +327,18 @@ func TestTypedConfigValuesFromEnvironment(t *testing.T) {
 		{"pids zero", "COOP_PIDS", "0", func(c *Config) bool { return c.Pids == "0" }},
 		{"pids off", "COOP_PIDS", " Unlimited ", func(c *Config) bool { return c.Pids == "unlimited" }},
 		{"pids cap", "COOP_PIDS", " 42 ", func(c *Config) bool { return c.Pids == "42" }},
+		{"memory unset", "COOP_MEMORY", "", func(c *Config) bool { return c.Memory == "" }},
+		{"memory megabytes", "COOP_MEMORY", " 512m ", func(c *Config) bool { return c.Memory == "512m" }},
+		{"memory fraction", "COOP_MEMORY", "1.5G", func(c *Config) bool { return c.Memory == "1.5G" }},
+		{"memory long unit", "COOP_MEMORY", "4GiB", func(c *Config) bool { return c.Memory == "4GiB" }},
+		{"memory bytes", "COOP_MEMORY", "1073741824", func(c *Config) bool { return c.Memory == "1073741824" }},
+		{"memory off", "COOP_MEMORY", "0", func(c *Config) bool { return c.Memory == "0" }},
+		{"cpus whole", "COOP_CPUS", "2", func(c *Config) bool { return c.CPUs == "2" }},
+		{"cpus fraction", "COOP_CPUS", " 0.5 ", func(c *Config) bool { return c.CPUs == "0.5" }},
+		{"cpus leading point", "COOP_CPUS", ".5", func(c *Config) bool { return c.CPUs == ".5" }},
+		{"cpus a job's ceiling", "COOP_CPUS", "1.500", func(c *Config) bool { return c.CPUs == "1.500" }},
+		{"workdir", "COOP_WORKDIR", "/work", func(c *Config) bool { return c.Workdir == "/work" }},
+		{"home in box", "COOP_HOME_IN_BOX", "/home/agent", func(c *Config) bool { return c.HomeInBox == "/home/agent" }},
 		{"timeout unlimited", "COOP_CONSULT_TIMEOUT", "0", func(c *Config) bool { return c.ConsultTimeout == "" }},
 		{"timeout bounded minimum", "COOP_CONSULT_TIMEOUT", "1", func(c *Config) bool { return c.ConsultTimeout == "1" }},
 		{"timeout bounded", "COOP_CONSULT_TIMEOUT", " 86400 ", func(c *Config) bool { return c.ConsultTimeout == "86400" }},
@@ -351,14 +363,17 @@ func TestTypedConfigValuesFromFile(t *testing.T) {
 		"COOP_NO_UPDATE_CHECK=YES",
 		"COOP_ACP_CARRY_TOKENS=42",
 		"COOP_PIDS=0",
+		"COOP_MEMORY=4g",
+		"COOP_CPUS=1.5",
+		"COOP_WORKDIR=/work",
 		"COOP_CONSULT_TIMEOUT=10",
 		"COOP_EGRESS=offline",
 		"",
 	}, "\n"))
 	t.Setenv("COOP_CONF", path)
 	cfg := mustLoad(t)
-	if cfg.Homes || !cfg.NoUpdateCheck || cfg.ACPCarryTokens != 42 || cfg.Pids != "0" ||
-		cfg.ConsultTimeout != "10" || cfg.Egress != "none" {
+	if cfg.Homes || !cfg.NoUpdateCheck || cfg.ACPCarryTokens != 42 || cfg.Pids != "0" || cfg.Memory != "4g" ||
+		cfg.CPUs != "1.5" || cfg.Workdir != "/work" || cfg.ConsultTimeout != "10" || cfg.Egress != "none" {
 		t.Fatalf("typed file config = %+v", cfg)
 	}
 }
@@ -397,6 +412,18 @@ func TestInvalidTypedConfigValues(t *testing.T) {
 		{"COOP_ACP_CARRY_TOKENS", overflow},
 		{"COOP_PIDS", "-1"},
 		{"COOP_PIDS", "many"},
+		// Docker refuses these only once the box is being created, after "Starting".
+		{"COOP_MEMORY", "lots"},
+		{"COOP_MEMORY", "-1g"},
+		{"COOP_MEMORY", "4gg"},
+		{"COOP_MEMORY", "4ki"},
+		{"COOP_MEMORY", "1.2.3g"},
+		{"COOP_CPUS", "many"},
+		{"COOP_CPUS", "-1"},
+		{"COOP_CPUS", "1/2"},
+		{"COOP_CPUS", "0.0000000001"},
+		{"COOP_WORKDIR", "relative"},
+		{"COOP_HOME_IN_BOX", "home/node"},
 		{"COOP_CONSULT_TIMEOUT", ""},
 		{"COOP_CONSULT_TIMEOUT", "-1"},
 		{"COOP_CONSULT_TIMEOUT", "86401"},

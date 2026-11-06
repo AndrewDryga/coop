@@ -754,6 +754,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		return -1, errors.New("restricted networking requires host policy capture before box launch")
 	}
 	noticeUnappliedLimits(cfg, rt, spec)
+	noticeKeptNoNewPrivileges(cfg, spec)
 	workdir := resolveWorkdir(spec, cfg)
 	if spec.Homes {
 		if !spec.Login { // sign-in runs no model, so no effort can stand in its way
@@ -3205,6 +3206,16 @@ func noticeUnappliedLimits(cfg *config.Config, rt runtime.Runtime, spec RunSpec)
 	}
 	ui.Warning(fmt.Sprintf("%s does not apply the %s limit", filepath.Base(rt.Name), strings.Join(asked, " or ")),
 		"Those caps are Docker run flags; this runtime takes different ones.", "Run this box on docker to have them enforced.")
+}
+
+// noticeKeptNoNewPrivileges says once that a filtered box keeps no-new-privileges whatever
+// COOP_NO_NEW_PRIVILEGES says: the filtered launcher always sets it. Keeping it is the safe side,
+// but a setting the person chose must not be dropped without a word.
+func noticeKeptNoNewPrivileges(cfg *config.Config, spec RunSpec) {
+	if spec.CapturedEgress == nil || cfg.NoNewPrivileges || !cfg.Explicit("COOP_NO_NEW_PRIVILEGES") || spec.Quiet || spec.Batch {
+		return
+	}
+	ui.Note("Filtered boxes always keep no-new-privileges on; COOP_NO_NEW_PRIVILEGES=0 applies only with --egress open or offline.")
 }
 
 // boxLimits returns the resource + privilege caps that keep a runaway agent from

@@ -279,7 +279,10 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 			return errors.New("restricted workload environment must be an owned immutable snapshot")
 		}
 		canonical, err := filepath.EvalSymlinks(source)
-		if err != nil || strings.ContainsAny(canonical, ":\x00\r\n") {
+		if err != nil {
+			return unresolvedBindSource(source, f.record.Endpoint, err)
+		}
+		if strings.ContainsAny(canonical, ":\x00\r\n") {
 			return errors.New("network workload source cannot be frozen unambiguously")
 		}
 		if err := checkRuntimeControlReach(canonical, f.record.Endpoint); err != nil {
@@ -551,4 +554,46 @@ func checkRuntimeControlReach(canonical, endpoint string) error {
 		}
 	}
 	return nil
+}
+
+// checkBindSources checks the host bind sources among a filtered run's extra arguments, already
+// reduced to -v, -e and --label pairs (filteredExtraArgs), before Docker does any work for the
+// run. A named volume has no host path to check here, and a relative source or a mount without a
+// target is refused with the rest of the mount plan (validateMountsContext), which repeats these
+// checks on the paths it freezes.
+func checkBindSources(extra []string, endpoint string) error {
+	for i := 0; i+1 < len(extra); i += 2 {
+		source, _, bind := strings.Cut(extra[i+1], ":")
+		if extra[i] != "-v" || !bind || !filepath.IsAbs(source) {
+			continue
+		}
+		canonical, err := filepath.EvalSymlinks(source)
+		if err != nil {
+			return unresolvedBindSource(source, endpoint, err)
+		}
+		if err := checkRuntimeControlReach(canonical, endpoint); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unresolvedBindSource names a bind source that does not resolve on this machine. On a Mac, /proc,
+// /run and /sys exist only in Docker's VM, where the bind would reach them, so a missing path that
+// is or holds a control path is refused as one. Any other missing path is named as missing: Docker
+// would create an empty folder there, and a filtered box mounts only what exists.
+func unresolvedBindSource(source, endpoint string, err error) error {
+	if nearest, resolveErr := resolveExisting(source); resolveErr == nil {
+		if reach := checkRuntimeControlReach(nearest, endpoint); reach != nil {
+			return reach
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("a filtered box cannot mount %s: it does not exist on this machine — create it, or remove it from COOP_RUN_ARGS", source)
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		err = pathErr.Err
+	}
+	return fmt.Errorf("a filtered box cannot mount %s: %v", source, err)
 }

@@ -84,8 +84,12 @@ func DetectContext(ctx context.Context, override string) (Runtime, error) {
 		// Validate the COOP_RUNTIME override here, not later with a misleading "image not built":
 		// it must resolve on PATH, and an UNRECOGNIZED override (a typo'd path, /bin/false) must
 		// also answer `--version`, so a non-runtime fails clearly. A known runtime (docker or
-		// container) is trusted on PATH alone, matching the auto-detect path below.
+		// container) is trusted on PATH alone, matching the auto-detect path below. Only a known
+		// one is worth installing: any other missing name is most likely a typo.
 		if _, err := exec.LookPath(override); err != nil {
+			if !isKnownRuntime(override) {
+				return Runtime{}, fmt.Errorf("runtime %q not found (from COOP_RUNTIME) — choose docker or container, or unset COOP_RUNTIME to auto-detect", override)
+			}
 			return Runtime{}, fmt.Errorf("runtime %q not found (from COOP_RUNTIME) — install it, or unset COOP_RUNTIME to auto-detect", override)
 		}
 		if !isKnownRuntime(override) {

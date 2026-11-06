@@ -483,7 +483,8 @@ can't connect through it.
 A Docker socket or kernel control directory could let the agent bypass the gateway. For example,
 one `curl` request to a Docker socket could start another container outside the filtered network.
 So filtered runs reject mounts of `/var/run`, `/run`, `/proc`, `/sys`, `/dev`, `/` and the Docker
-endpoint's socket directory, and the error names the blocked mount.
+endpoint's socket directory, and the error names the blocked mount. They also reject a mount whose
+source doesn't exist, which `--egress open` lets Docker create as an empty folder.
 
 ## Observed versus counted
 

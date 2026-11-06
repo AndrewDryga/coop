@@ -18,13 +18,13 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 | `COOP_IMAGE` | auto | Forces a specific image, overriding `.agent/Dockerfile` detection. |
 | `COOP_BASE_IMAGE` | `coop-box` | The shared base image. `coop-box` selects co:op's own image, with a `coop-box:<definition>` tag for each box definition. |
 | `COOP_REPO` | the nearest folder with `.git` | Chooses the repo instead of detecting it from the current directory. co:op follows links, but refuses a link that leads to your home folder or any folder above it. With this unset outside a repository, the current folder is the project, unless it's your home folder or above, which co:op refuses. |
-| `COOP_WORKDIR` | the repo's real path | Where the repo mounts in the box. |
+| `COOP_WORKDIR` | the repo's real path | Where the repo mounts in the box, as an absolute path. |
 | `COOP_HOME_IN_BOX` | `/home/node` | Where provider homes and instructions mount in the box. |
 | `COOP_RUN_ARGS` | unset | Extra arguments for the container runtime. Filtered runs accept only bind mounts, `-e KEY=VALUE` and `--label KEY=VALUE`. |
 | `COOP_BOX` | `1` in every box | Lets a process detect that it's running inside a co:op box. |
 | `COOP_PIDS` | `4096` | Limits the number of processes in the box. `0`, `unlimited` or empty turns it off. |
 | `COOP_MEMORY`, `COOP_CPUS` | unset | Limits the box's memory and CPUs, for example `4g` and `2`. |
-| `COOP_NO_NEW_PRIVILEGES` | `1` | Runs the box with `--security-opt no-new-privileges`. |
+| `COOP_NO_NEW_PRIVILEGES` | `1` | Runs the box with `--security-opt no-new-privileges`. Filtered boxes always run with it, so `0` applies only with `--egress open` or `offline`. |
 | `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | On a Mac, lets one run start when mount protection can't hide every letter-case spelling of a long filename. The box or a service could then read a secret through a name such as `.ENV.PRODUCTION`. To remember this access for file paths you've reviewed, use `coop approve --case-exposure`. Runs protected by eBPF keep these files hidden and need neither. See [hiding secrets](box.md#hiding-secrets). |
 | `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out and disables preset and consult runs. |
 | `COOP_EGRESS` | `filtered` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |

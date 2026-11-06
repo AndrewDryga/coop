@@ -1294,41 +1294,105 @@ func TestFilteredStartupPersistenceFailureIsRuntimeFailure(t *testing.T) {
 	}
 }
 
+// A bind source a filtered box cannot take is refused, by its path, before Docker does any work for
+// the run. The QA run saw a missing COOP_RUN_ARGS source refused only at launch, after the gateway
+// setup, as "network workload source cannot be frozen unambiguously", naming no path.
+func TestFilteredLaunchRefusesABadBindSourceBeforeDocker(t *testing.T) {
+	f, d := filteredFixture(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	capture := &CapturedEgress{Store: f.store, Project: f.record.Project, Fingerprint: f.policy.Fingerprint}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	spec := RunSpec{Repo: f.record.Project, Cmd: []string{"true"}, ExtraArgs: []string{"-e", "A=/b:/c", "-v", "data:/data", "-v", missing + ":/x"}}
+	_, err := prepareFilteredExecution(t.Context(), &config.Config{Egress: "filtered", ConfigDir: t.TempDir()}, recorderRuntime(t, recorder),
+		spec, capture, "", &networkSmokeLaunch{authority: d.smoke}, nil)
+	if want := "a filtered box cannot mount " + missing + ": it does not exist on this machine — create it, or remove it from COOP_RUN_ARGS"; err == nil || err.Error() != want {
+		t.Fatalf("prepare = %v, want %q", err, want)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the refused launch reached the runtime")
+	}
+	// A mount with no target names a path in the box, not a host folder: the mount plan refuses it
+	// as ambiguous, so this check leaves it alone rather than call it missing.
+	if err := checkBindSources([]string{"-v", missing}, ""); err != nil {
+		t.Errorf("a mount with no target was checked as a host folder: %v", err)
+	}
+}
+
+// COOP_NO_NEW_PRIVILEGES=0 cannot apply to a filtered box, which always keeps the option on, so a
+// filtered launch says so once instead of dropping the setting without a word. Open and offline
+// boxes honor it, and the default says nothing.
+func TestFilteredLaunchSaysItKeepsNoNewPrivileges(t *testing.T) {
+	const note = "Filtered boxes always keep no-new-privileges on; COOP_NO_NEW_PRIVILEGES=0 applies only with --egress open or offline.\n"
+	filtered := RunSpec{CapturedEgress: &CapturedEgress{}}
+	for _, test := range []struct {
+		name, value string
+		spec        RunSpec
+		want        string
+	}{
+		{"filtered, turned off", "0", filtered, note},
+		{"filtered, default", "", filtered, ""},
+		{"filtered, turned on", "1", filtered, ""},
+		{"filtered, quiet", "0", RunSpec{CapturedEgress: &CapturedEgress{}, Quiet: true}, ""},
+		{"open or offline", "0", RunSpec{}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.value != "" {
+				t.Setenv("COOP_NO_NEW_PRIVILEGES", test.value)
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := captureStderr(t, func() { noticeKeptNoNewPrivileges(cfg, test.spec) }); got != test.want {
+				t.Errorf("note = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 // The gateway filters PACKETS. A bind of the runtime's own control surface
 // hands the agent a way to start a sibling container that never meets the
 // gateway at all, so those sources are refused by name before anything runs.
+// A control path this host lacks, as a Mac lacks /proc, /run and /sys, still
+// exists where Docker runs, so it is refused as one; any other missing source
+// is named as missing. Both checks say so: the one before Docker does any work
+// (checkBindSources) and the one on the frozen mount plan.
 func TestFilteredMountsRefuseTheRuntimeControlSurface(t *testing.T) {
 	f, _ := filteredFixture(t)
 	f.record.Endpoint = "unix:///fixture/run/docker.sock"
 	ordinary := t.TempDir()
+	missing := filepath.Join(ordinary, "nope")
+	const control = "reaches Docker or the kernel"
 	for _, test := range []struct {
-		name, source string
-		valid        bool
+		name, source, want string
 	}{
-		{"docker socket directory", "/var/run", false},
-		{"run", "/run", false},
-		{"proc", "/proc", false},
-		{"sys", "/sys", false},
-		{"dev", "/dev", false},
-		{"root", "/", false},
-		{"ordinary data directory", ordinary, true},
+		{"docker socket directory", "/var/run", control},
+		{"run", "/run", control},
+		{"proc", "/proc", control},
+		{"sys", "/sys", control},
+		{"dev", "/dev", control},
+		{"root", "/", control},
+		{"missing source", missing, "a filtered box cannot mount " + missing + ": it does not exist on this machine"},
+		{"ordinary data directory", ordinary, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := os.Stat(test.source); err != nil {
-				t.Skip("host has no", test.source)
-			}
-			err := f.validateMounts([]string{"-v", test.source + ":/x:ro"}, nil, nil)
-			if test.valid {
-				if err != nil {
-					t.Fatalf("an ordinary directory was refused: %v", err)
+			mount := []string{"-v", test.source + ":/x:ro"}
+			for check, err := range map[string]error{
+				"before Docker": checkBindSources(mount, f.record.Endpoint),
+				"mount plan":    f.validateMounts(mount, nil, nil),
+			} {
+				if test.want == "" {
+					if err != nil {
+						t.Fatalf("%s: an ordinary directory was refused: %v", check, err)
+					}
+					continue
 				}
-				return
-			}
-			if err == nil {
-				t.Fatal("the runtime control surface was mounted into a filtered box")
-			}
-			if !strings.Contains(err.Error(), "reaches Docker or the kernel") {
-				t.Fatalf("the refusal does not name the reason: %v", err)
+				if err == nil {
+					t.Fatalf("%s: %s was mounted into a filtered box", check, test.source)
+				}
+				if !strings.Contains(err.Error(), "a filtered box cannot mount ") || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("%s: the refusal does not name the mount and the reason: %v", check, err)
+				}
 			}
 		})
 	}

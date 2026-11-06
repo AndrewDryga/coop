@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -252,6 +253,14 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, configValueError("COOP_PIDS", err)
 	}
+	memory, err := parseMemory(get("COOP_MEMORY", ""))
+	if err != nil {
+		return nil, configValueError("COOP_MEMORY", err)
+	}
+	cpus, err := parseCPUs(get("COOP_CPUS", ""))
+	if err != nil {
+		return nil, configValueError("COOP_CPUS", err)
+	}
 	// Unset means filtered, the same built-in default network admission resolves to; it stays
 	// non-explicit so a project's box.egress can still decide.
 	egress, err := parseEgress(get("COOP_EGRESS", "filtered"))
@@ -292,8 +301,8 @@ func Load() (*Config, error) {
 		Gate:           shellSplit(get("COOP_GATE", "")),
 		ExtraRunArgs:   shellSplit(get("COOP_RUN_ARGS", "")),
 
-		Memory:                  get("COOP_MEMORY", ""),
-		CPUs:                    get("COOP_CPUS", ""),
+		Memory:                  memory,
+		CPUs:                    cpus,
 		Pids:                    pids,
 		NoNewPrivileges:         noNewPrivileges,
 		AllowCaseExposedSecrets: allowCaseExposedSecrets,
@@ -320,6 +329,11 @@ func Load() (*Config, error) {
 	// Checked before anything below touches these paths (relativePathError).
 	for _, setting := range [][2]string{{"COOP_CONFIG_DIR", c.ConfigDir}, {"COOP_MCP_FILE", c.MCPFile}, {"COOP_PRESETS_DIR", c.GlobalPresetsDir()}} {
 		if hostPath(setting[0], setting[1]) != nil {
+			return nil, relativePathError(setting[0], setting[1])
+		}
+	}
+	for _, setting := range [][2]string{{"COOP_WORKDIR", c.Workdir}, {"COOP_HOME_IN_BOX", c.HomeInBox}} {
+		if boxPath(setting[1]) != nil {
 			return nil, relativePathError(setting[0], setting[1])
 		}
 	}
@@ -766,7 +780,8 @@ func xdgConfigHome() (string, error) {
 
 // relativePathError refuses a relative path for a setting that names one of Coop's own folders or
 // files on this machine. It would follow the working folder, which is usually a repository Coop's
-// boxes mount and you may commit, and put accounts or settings inside it.
+// boxes mount and you may commit, and put accounts or settings inside it. A path inside the box
+// gets the same refusal, before any Docker work: Docker takes no other kind.
 func relativePathError(key, value string) error {
 	return fmt.Errorf("%s must be an absolute path, not %q", key, value)
 }
@@ -775,6 +790,15 @@ func relativePathError(key, value string) error {
 // for the last two nothing, which means no MCP file or no global presets.
 func hostPath(key, value string) error {
 	if filepath.IsAbs(value) || (value == "" && key != "COOP_CONFIG_DIR") {
+		return nil
+	}
+	return advice("Use an absolute path.")
+}
+
+// boxPath accepts a COOP_WORKDIR or COOP_HOME_IN_BOX value: a mount target and working folder inside
+// the box, so an absolute path. Empty keeps the default.
+func boxPath(value string) error {
+	if value == "" || filepath.IsAbs(value) {
 		return nil
 	}
 	return advice("Use an absolute path.")
@@ -1181,8 +1205,16 @@ func validateMainConfigValue(key, value string) error {
 	case "COOP_PIDS":
 		_, err := parsePids(value)
 		return err
+	case "COOP_MEMORY":
+		_, err := parseMemory(value)
+		return err
+	case "COOP_CPUS":
+		_, err := parseCPUs(value)
+		return err
 	case "COOP_CONFIG_DIR", "COOP_MCP_FILE", "COOP_PRESETS_DIR":
 		return hostPath(key, value)
+	case "COOP_WORKDIR", "COOP_HOME_IN_BOX":
+		return boxPath(value)
 	default:
 		return nil
 	}
@@ -1275,6 +1307,34 @@ func parsePids(value string) (string, error) {
 		return "", advice("Use a positive whole number, or 0/unlimited to remove the limit.")
 	}
 	return strconv.Itoa(n), nil
+}
+
+// The two caps Coop hands docker run unchanged, in the forms Docker reads them: --memory takes a
+// size, a number with an optional unit (b, k, m, g, t or p, any case, the last five optionally
+// followed by b or ib), and --cpus a decimal number with at most nine decimal places. Docker reads
+// 0 as no limit for both. Checked here because Docker refuses anything else only once the box is
+// being created.
+var (
+	memorySize = regexp.MustCompile(`(?i)^(\d+(\.\d*)?|\.\d+) ?([kmgtp](i?b)?|b)?$`)
+	cpuCount   = regexp.MustCompile(`^(\d+(\.\d{0,9})?|\.\d{1,9})$`)
+)
+
+// parseMemory reads COOP_MEMORY; empty means no limit.
+func parseMemory(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value != "" && !memorySize.MatchString(value) {
+		return "", advice("Use a size such as 512m or 4g.")
+	}
+	return value, nil
+}
+
+// parseCPUs reads COOP_CPUS; empty means no limit.
+func parseCPUs(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value != "" && !cpuCount.MatchString(value) {
+		return "", advice("Use a number of CPUs such as 0.5 or 2.")
+	}
+	return value, nil
 }
 
 // parseEgress reads COOP_EGRESS as a person writes it. They say offline; the rest of coop keeps the
