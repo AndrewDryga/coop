@@ -317,7 +317,7 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 		{"answered, not resumed", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, answered: true, since: ago(3 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
 			[]string{"  ⚑ " + title, "    answered, not yet resumed for 3h"}},
 		{"blocked in a fork", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentBlocked, agent: "codex", since: ago(5 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
-			[]string{"  ⚑ " + title, "    decision pending for 5h"}},
+			[]string{"  ⚑ " + title, "    codex in fork sweep-a · decision pending for 5h"}},
 		// The fork's loop finished this task, then stopped for a decision on its other task: nothing
 		// failed, and answering that decision is what moves this one on.
 		{"done in a fork that stopped for its other task's decision",

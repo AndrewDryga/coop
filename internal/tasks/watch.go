@@ -1376,19 +1376,23 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 		}
 		return []span{{" for ", p.Faint}, {shortAge(age), paint}}
 	}
+	// who is the detail line's `<agent>[ in fork <name>]`: the one place a fork's task names its fork.
+	who := func(m mergedTask) string {
+		agent := m.agent
+		if m.fork == "" && m.lease.State != leaseUnleased {
+			agent = knownTarget(m.lease.Target, m.lease.Provider)
+		}
+		if m.fork != "" {
+			agent = strings.TrimSpace(agent + " in fork " + m.fork)
+		}
+		return agent
+	}
 	taskFacts := func(m mergedTask) []string {
 		var facts []string
 		if n := len(m.Subtasks); n > 0 {
 			facts = append(facts, fmt.Sprintf("%d/%d", m.doneSubtasks(), n))
 		}
-		agent := m.agent
-		if m.fork == "" && m.lease.State != leaseUnleased {
-			agent = knownTarget(m.lease.Target, m.lease.Provider)
-		}
-		if m.fork != "" { // the one place a fork's task names its fork
-			agent = strings.TrimSpace(agent + " in fork " + m.fork)
-		}
-		if agent != "" {
+		if agent := who(m); agent != "" {
 			facts = append(facts, agent)
 		}
 		return facts
@@ -1433,7 +1437,11 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 			if !row.waits {
 				state = append(state, ageSpans(m.since)...)
 			}
-			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)), detailLine(m.queue, nil, state...)}})
+			var facts []string
+			if m.fork != "" && !row.waits { // a waiting row's state already names its fork
+				facts = append(facts, who(m))
+			}
+			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)), detailLine(m.queue, facts, state...)}})
 		case sectionUpNext:
 			todo = append(todo, m)
 		}

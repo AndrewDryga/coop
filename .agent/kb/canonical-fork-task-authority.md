@@ -2,7 +2,7 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
 updated: 2026-11-06
 ---
 
@@ -32,9 +32,9 @@ to todo, and refuses, leaving the task blocked, when it cannot. The resumed rest
 for an unblock that stopped before it, but only over a copy that asks the same question: a fork
 stopped after parking a new question, before acceptance carried it here, keeps that question (stop
 pauses a working assignment without accepting it). Only decision.md moves; the projection's log,
-artifacts and scratch stay its own. When the task's decision.md holds an answer, the loop prompt starts with it
-(`decisionResumePrompt`, internal/loop/prompts.go), and a decision.md that cannot be read stops the
-launch.
+artifacts and scratch stay its own. When the task's decision.md holds an answer, the loop prompt
+starts with it (`decisionResumePrompt`, internal/loop/prompts.go), and a decision.md that cannot be
+read stops the launch.
 A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
@@ -44,6 +44,13 @@ is not in the assignment's baseline, it imports the fork's proposals, completes 
 removes proposal records, the index and the owner record in that order, so a rerun finishes an
 interrupted one. A crash between the index and owner removal followed by `coop fork rm` leaves an
 owner record nothing clears; rerun --from-fork before removing the fork.
+
+The project's views of a fork's decision name the fork from the canonical owner record
+(`taskForkName`, internal/tasks/cmd.go): `coop tasks decisions` and `-i` after the task id, the
+board's Needs you in the detail line's `<agent> in fork <name>` part. The lookup only labels: a
+record it cannot read leaves no label, and the commands that act on the task read the record
+themselves. After an answer, unblock says the fork picks the task up on its next pass and that a
+stopped loop resumes with `coop fork <name> --loop -d`, the board's restart command.
 
 Merge writes a replayable land intent before the parent fast-forward. Recovery can therefore finish
 canonical task completion, receipts, proposal import, assignment removal, and workspace teardown
@@ -60,6 +67,8 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — the project's decision views name the fork, and unblock says how the fork goes on
+  (task 2026-11-05-let-a-person-answer-a-fork-s-blocked-decision-fr).
 - 2026-11-06 — `coop tasks unblock` copies the answer into the fork's projection, the resumed restore
   repeats it, and the loop prompt carries it; the fork's worker had resumed from a copy with no
   answer (task 2026-11-05-carry-a-coop-tasks-unblock-answer-into-the-fork). Acceptance still copies

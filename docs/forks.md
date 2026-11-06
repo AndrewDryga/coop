@@ -59,7 +59,9 @@ A refused loop appears as stopped in `coop fork ls`, with the reason beneath it.
 must wait for other boxes before it can start its services appears as waiting to start services,
 with the boxes it waits for beneath it. When a task needs your decision, it waits in
 `coop tasks decisions` while the fork goes on with its other tasks. The fork stops for the decision
-only when nothing else is left.
+only when nothing else is left. Answer it from the project with `coop tasks unblock <id> "<answer>"`
+or `coop tasks decisions -i`: the fork picks the task up on its next pass, and a stopped fork
+resumes with `coop fork <name> --loop -d`.
 
 ## Isolated-write forks
 

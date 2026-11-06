@@ -1304,6 +1304,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	if err != nil {
 		return lookupExit(err), err
 	}
+	fork := taskForkName(root, t)
 	if t.State == StateTodo {
 		record, ok, readErr := ReadAuditReopenRecord(root, t.ID)
 		if readErr != nil {
@@ -1344,6 +1345,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 		} else if recovered {
 			ui.OK("Finished unblocking task: %s", t.Title)
 			ui.Note("\n  Its fork assignment is paused. The task is in todo.")
+			noteForkResume(fork)
 			return 0, nil
 		}
 	}
@@ -1374,7 +1376,31 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	} else {
 		ui.Note("\n  The task is back in todo.")
 	}
+	noteForkResume(fork)
 	return 0, nil
+}
+
+// taskForkName is the fork that holds a task in the project's queue, or "" when none does or its
+// owner record cannot be read: the name only labels what a person sees, and the commands that act
+// on the task read the record themselves.
+func taskForkName(root string, item Item) string {
+	record, owned, err := readTaskOwnerRecordOf(root, item)
+	if err != nil || !owned || record.Kind != TaskOwnerFork || record.Fork == nil {
+		return ""
+	}
+	return record.Fork.Fork.Name
+}
+
+// forkResumeNote tells a person who answered a fork's decision how the fork goes on: its loop picks
+// the task up by itself, and a stopped loop resumes with the board's restart command.
+func forkResumeNote(fork string) string {
+	return "Fork " + fork + " picks it up on its next pass. If its loop has stopped, resume it: coop fork " + fork + " --loop -d"
+}
+
+func noteForkResume(fork string) {
+	if fork != "" {
+		ui.Note("\n  %s", forkResumeNote(fork))
+	}
 }
 
 // recordResolution writes a human's answer into decision.md's "**Resolution:**" line so that
@@ -2981,6 +3007,10 @@ func queueDecisions(project, root string, interactive bool, merges []readyMerge)
 	}
 	fmt.Printf("%s%s\n", p.Bold("Questions waiting for your answer"), p.Dim(fmt.Sprintf(" · %d", len(decisions))))
 	for _, t := range decisions {
+		decisionID := t.ID // the handle unblock takes, then the fork that asked
+		if fork := taskForkName(root, t); fork != "" {
+			decisionID += " · in fork " + fork
+		}
 		question := t.Title
 		rec := ""
 		decPath := filepath.Join(t.Dir, "decision.md")
@@ -2992,7 +3022,7 @@ func queueDecisions(project, root string, interactive bool, merges []readyMerge)
 			// The scaffold's "<title>?" and its placeholders are no question: name the file to write.
 			fmt.Printf("\n  %s\n", sanitizeCell(t.Title))
 			fmt.Printf("    %s %s\n", p.Dim("Decision not written yet:"), displayPath(decPath))
-			fmt.Printf("    %s\n", p.Faint(t.ID))
+			fmt.Printf("    %s\n", p.Faint(decisionID))
 			continue
 		}
 		if q := decisionQuestion(string(body)); q != "" {
@@ -3009,7 +3039,7 @@ func queueDecisions(project, root string, interactive bool, merges []readyMerge)
 		if rec != "" && !isPlaceholder(rec) {
 			fmt.Printf("    %s %s\n", p.Dim("Recommendation:"), sanitizeCell(rec))
 		}
-		fmt.Printf("    %s\n", p.Faint(t.ID))
+		fmt.Printf("    %s\n", p.Faint(decisionID))
 	}
 	fmt.Print("\nAnswer one: coop tasks unblock <id> \"<answer>\"\n")
 	fmt.Print("Read and answer each: coop tasks decisions -i\n")
@@ -3146,10 +3176,14 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		if err != nil {
 			return -1, err
 		}
+		fork := taskForkName(ref.root, t)
 		decPath := filepath.Join(t.Dir, "decision.md")
 		where := t.ID
 		if ref.label != "" {
 			where = ref.label + " · " + t.ID // say which queue this decision lives in
+		}
+		if fork != "" {
+			where += " · in fork " + fork
 		}
 		fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), sanitizeCell(where)))
 		body, exists, err := readOptionalTaskMetadataPath(decPath)
@@ -3252,6 +3286,9 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 					return -1, unblockRetryError(t.ID, true, err)
 				}
 				answered++
+				if fork != "" {
+					fmt.Fprintf(out, "\n  %s\n", forkResumeNote(fork))
+				}
 			} else if err := recordResolution(decPath, line); err != nil {
 				return -1, err
 			}

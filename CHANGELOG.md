@@ -201,6 +201,11 @@
   blocked and the error names that copy. A loop agent that picks up an answered task also gets the
   answer at the start of its prompt.
 
+- **`coop tasks decisions` names the fork that is waiting.** A decision a fork's task waits on now
+  shows `in fork <name>` after its id there and in `-i`, and the board's Needs you names the fork
+  too. After you answer, `coop tasks unblock` says the fork picks the task up on its next pass, and
+  how to resume the fork if its loop has stopped.
+
 - **`coop tasks watch` names the agent of an editor session's claim.** A task an agent claims
   through its session's task tools records the full target the session runs, such as
   `claude:opus/high@work`, and the board names the claim by it, as it names a loop's worker. A
