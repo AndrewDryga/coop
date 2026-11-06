@@ -149,13 +149,13 @@ In the default `writes: tasks` mode, the reviewer can only report findings: the 
 queues are read-only. It returns a PASS/FAIL receipt listing the exact task IDs to reopen, and
 co:op checks the whole proposal and reopens those tasks in one transaction.
 
-If the review finishes successfully but returns the wrong output format, co:op runs the whole
-review once more, with the same tasks and write permissions and a fixed instruction to correct the
-format.
+If the review finishes successfully but returns the wrong output format, co:op asks for one
+correction. It resumes the same reviewer session for one more turn, with the same tasks and write
+permissions, and asks only for the verdict in the right format. It doesn't run the review again.
 
 co:op leaves every task unchanged if:
 
-- the second verdict is malformed
+- the corrected verdict is malformed, or the reviewer session can't be resumed
 - a task changes state during the review
 - the process is interrupted or fails
 - the proposal includes a task outside the review

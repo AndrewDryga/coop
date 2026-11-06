@@ -253,12 +253,12 @@ the host accepted as completed during this run.</p>
 <p>In the default <code>writes: tasks</code> mode, the reviewer can only report findings: the repository and task
 queues are read-only. It returns a PASS/FAIL receipt listing the exact task IDs to reopen, and
 co:op checks the whole proposal and reopens those tasks in one transaction.</p>
-<p>If the review finishes successfully but returns the wrong output format, co:op runs the whole
-review once more, with the same tasks and write permissions and a fixed instruction to correct the
-format.</p>
+<p>If the review finishes successfully but returns the wrong output format, co:op asks for one
+correction. It resumes the same reviewer session for one more turn, with the same tasks and write
+permissions, and asks only for the verdict in the right format. It doesn&#39;t run the review again.</p>
 <p>co:op leaves every task unchanged if:</p>
 <ul>
-<li>the second verdict is malformed</li>
+<li>the corrected verdict is malformed, or the reviewer session can&#39;t be resumed</li>
 <li>a task changes state during the review</li>
 <li>the process is interrupted or fails</li>
 <li>the proposal includes a task outside the review</li>

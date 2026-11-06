@@ -149,6 +149,65 @@ func TestShippedTaskReadmesAreUsableTemplates(t *testing.T) {
 	}
 }
 
+// The README's state.md and log.md blocks are what coop tasks add writes below each file's comment,
+// word for word: an agent that copies the README and one that fills the seeded file write the same
+// fields. The two had drifted apart once.
+func TestShippedTaskReadmesShowTheSeededStateAndLog(t *testing.T) {
+	template, err := parseTaskTemplate(fallbackTaskTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := newTaskFiles(template, "2026-01-01-test", "Test task", "2026-01-01T00:00:00Z", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, readme := range []string{"../../.agent/tasks/README.md", "../scaffold/templates/agent/tasks/README.md"} {
+		data, err := os.ReadFile(readme)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range []string{"state.md", "log.md"} {
+			_, seeded, found := strings.Cut(files[file], "-->\n\n")
+			shown := strings.ReplaceAll(readmeTemplateBlock(string(data), "## "+file), "<title>", "Test task")
+			if !found || shown != seeded {
+				t.Errorf("%s shows %s as:\n%s\ncoop tasks add writes:\n%s", readme, file, shown, seeded)
+			}
+		}
+	}
+}
+
+// readmeTemplateBlock is the indented block under **Template:** in the README section whose heading
+// starts with heading, read the way loadTaskTemplate reads the task.md one.
+func readmeTemplateBlock(readme, heading string) string {
+	var block []string
+	inSection, inTemplate := false, false
+	for _, line := range strings.Split(readme, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			if inTemplate {
+				break
+			}
+			inSection = strings.HasPrefix(line, heading)
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if !inTemplate {
+			inTemplate = strings.TrimSpace(line) == "**Template:**"
+			continue
+		}
+		if indented, ok := strings.CutPrefix(line, "    "); ok {
+			block = append(block, indented)
+			continue
+		}
+		if strings.TrimSpace(line) != "" {
+			break
+		}
+		block = append(block, "")
+	}
+	return strings.Trim(strings.Join(block, "\n"), "\n") + "\n"
+}
+
 func TestDraftTaskUsesQueueTemplate(t *testing.T) {
 	root := t.TempDir()
 	writeQueueTemplate(t, root, strings.Replace(fallbackTaskTemplate,

@@ -108,6 +108,12 @@
   lists the signed-in accounts and offers `coop credentials <agent> <account> default` or
   `coop <agent>@<account>` instead of a sign-in.
 
+- **Four pages now say what Coop does.** The exit-code table lists `coop net check`'s `3` (the
+  rules block the connection, or new runs need approval first). The loop page says a review with
+  the wrong output format gets one correction turn in the same reviewer session, not a second
+  review. The editor page says no agent runs until you approve the project's network access, or
+  until you fix a broken `.agent/project.yaml`. The task README's state.md block now matches what
+  `coop tasks add` writes, and a test keeps the two in step.
 - **`coop up` names every Compose setting it refuses.** A file with `privileged: true` was refused
   with only "yaml: unmarshal errors:". Each refused setting now gets its own line with its service
   and line, such as `Service "app": privileged is not allowed (line 4).` For a custom-named volume,

@@ -137,8 +137,8 @@ a few lines, and on resume read it first.
 
     **Status:** not started
     **Done so far:** —
-    **Next action:** <the very next concrete step>
-    **Traps:** <gotchas the next agent must know, or —>
+    **Next action:** <the next concrete step>
+    **Traps:** <anything the next session needs to watch for, or —>
 
 **Example** (mid-task):
 

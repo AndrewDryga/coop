@@ -346,11 +346,10 @@ once, for ten minutes.</li>
 which lists the services and offers to add their rules. Or set <code>box.network: false</code> to start
 without services.</li>
 <li>If the project asks for network access you haven&#39;t approved, the thread says to run
-<code>coop approve</code>. Until then, the editor talks to a box that sees your project read-only and
-reaches only your agent&#39;s provider, and none of the rules the project asks for apply.</li>
-<li>If <code>.agent/project.yaml</code> doesn&#39;t load, the thread says what&#39;s wrong and where. The editor talks
-to that same box, and nothing in the file applies. Once you fix the file, anything new it asks
-for still waits for <code>coop approve</code>.</li>
+<code>coop approve</code>. No agent runs until you approve.</li>
+<li>If <code>.agent/project.yaml</code> doesn&#39;t load, the thread says what&#39;s wrong and where. No agent runs
+until you fix the file, and the session moves on by itself once you do. Anything new the file
+asks for still waits for <code>coop approve</code>.</li>
 <li>If the box exits as it starts for any other reason, such as a service that changed since you
 approved it, the thread says so and the agent log has the reason. co:op tries again every 30
 seconds and whenever the project changes.</li>

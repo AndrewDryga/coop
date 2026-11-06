@@ -222,11 +222,10 @@ never works without your project's tools.
   which lists the services and offers to add their rules. Or set `box.network: false` to start
   without services.
 - If the project asks for network access you haven't approved, the thread says to run
-  `coop approve`. Until then, the editor talks to a box that sees your project read-only and
-  reaches only your agent's provider, and none of the rules the project asks for apply.
-- If `.agent/project.yaml` doesn't load, the thread says what's wrong and where. The editor talks
-  to that same box, and nothing in the file applies. Once you fix the file, anything new it asks
-  for still waits for `coop approve`.
+  `coop approve`. No agent runs until you approve.
+- If `.agent/project.yaml` doesn't load, the thread says what's wrong and where. No agent runs
+  until you fix the file, and the session moves on by itself once you do. Anything new the file
+  asks for still waits for `coop approve`.
 - If the box exits as it starts for any other reason, such as a service that changed since you
   approved it, the thread says so and the agent log has the reason. co:op tries again every 30
   seconds and whenever the project changes.
