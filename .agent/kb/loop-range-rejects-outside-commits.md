@@ -2,8 +2,8 @@
 name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/loop/loop.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-10-18
+sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
+updated: 2026-11-05
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -51,7 +51,25 @@ the completion window audit), whether or not the attempt completed its task; the
 trailers pass there, and their count stays the completion check's job. Without it a box could forge
 or rewrite a binding in an attempt that then fails, and every later attempt's range would start
 above that commit. A refused attempt stops the run with the same "Task completion rejected" text,
-after returning the task to in progress (from done or blocked) with the rejection note. The run's
+after returning the task to in progress (from done or blocked) with the rejection note.
+
+**The refusal names what broke it.** `touched` maps each id to why it counts (`touchedTasks` in
+`internal/loop/completion.go`: moved to done during this attempt, already done before it started,
+under review rework, the attempt's own task), and `scanTaskBindings` walks the whole range, writing
+one sentence per offending commit — its short id, the task ids it carries (escaped and cut, since a
+box writes trailers) and the reason — capped at five plus a count. A count failure is explained by
+`tasks.UnbindableTaskProblems` (no new commit, an older binding plus a new one, several new ones).
+The failure box, the `RestoreQueuedCompletion` log note and the in-box `tasks_complete` refusal all
+quote them, so the next attempt does not mistake another task's commit for its own mistake.
+
+**A host lifecycle move cannot be told apart from a box's, so it is not tolerated.** The tempting
+fix for the operator case is to tolerate a binding for a task the host CLI closed. There is no
+host-only evidence for that: a loop box's `tasks_complete` on another, unclaimed task runs
+`CompleteBoxTask` → `completeTrustedTask`, the very path `coop tasks done` takes, and writes the same
+lease completion receipt; the trailer and its commit are box-writable too. Tolerating a receipted
+task would let a box plant a binding and close that task itself. Note also that one commit with two
+`Coop-Task` trailers (the 2026-11-05 incident's `d47340b0`) is refused before `touched` is consulted,
+so no provenance rule would have saved that completion. The run's
 recorded base (`loopStartHead`) also counts as a base for rewrites, so a binding dropped or rewritten
 below the attempt's start, outside any checked attempt, still refuses a trailer that replaces it.
 Audit rework (a lease holding host audit-reopen authority) is skipped: it rewrites history by design,
@@ -146,6 +164,10 @@ See [[task-authority-model]] for the full four-authority map and the lock-orderi
 authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
 
 ## Changelog
+- 2026-11-05 — the refusal names each offending commit, task id and reason, and the retry command
+  (task 2026-11-05-name-the-foreign-commit-when-a-loop-rejects-a-co). Kept rejecting host-closed
+  tasks' bindings: a box's `tasks_complete` on another task writes the same receipt `coop tasks done`
+  does (`CompleteBoxTask`), so no host-only evidence tells the two apart; recorded above.
 - 2026-10-18 — the ref-authority lock dropped its post-flock inode re-check and shares
   `config.TryLock` with the loop and session locks (task 2026-10-15-read-coop-s-host-only-records-with-one-plain-hel).
 - 2026-10-18 — the refusal runs at the end of every ordinary attempt, not only a completing one, and

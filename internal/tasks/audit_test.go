@@ -3041,7 +3041,7 @@ func TestCommitsForTaskAndUnbindableTasks(t *testing.T) {
 	}
 	git("commit", "-q", "--allow-empty", "-m", "forge another task\n\nCoop-Task: archived-task")
 	forgedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
-	touchedArchived := map[string]bool{"archived-task": true}
+	touchedArchived := map[string]string{"archived-task": "was already done before this attempt started"}
 	if m, tol := unbindableTasks(repo, base, forgedHead, []string{"task-42"}, touchedArchived); !slices.Equal(m, []string{"task-42"}) || len(tol) != 0 {
 		t.Errorf("foreign task binding in assigned range = %v, tolerated = %v, want [task-42] and none", m, tol)
 	}
@@ -3192,7 +3192,7 @@ func TestUnbindableTasksIgnoresGraftAndShallowMetadata(t *testing.T) {
 			if got := CommitsForTask(repo, base+".."+head, "task-b"); (len(got) != 0) == (metadata == "shallow") {
 				t.Fatalf("%s fixture: plain traversal of the foreign task-b binding = %v", metadata, got)
 			}
-			if got, tol := unbindableTasks(repo, base, head, []string{"task-a"}, map[string]bool{"task-b": true}); !slices.Equal(got, []string{"task-a"}) || len(tol) != 0 {
+			if got, tol := unbindableTasks(repo, base, head, []string{"task-a"}, map[string]string{"task-b": "moved to done during this attempt"}); !slices.Equal(got, []string{"task-a"}) || len(tol) != 0 {
 				t.Fatalf("hidden foreign binding = %v, tolerated = %v, want [task-a] and none", got, tol)
 			}
 		})
@@ -3224,7 +3224,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "unrelated host work mid-iteration\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		touched := map[string]bool{"task-42": true} // task-99 is untracked: not leased, not archived, not moved
+		touched := map[string]string{"task-42": "is the task this attempt works on"} // task-99 is untracked: not leased, not archived, not moved
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
 		if len(missing) != 0 {
 			t.Fatalf("finished task wrongly rejected by an untouched foreign binding: missing=%v", missing)
@@ -3243,7 +3243,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "human commit 2\n\nCoop-Task: task-100")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]string{"task-42": "is the task this attempt works on"})
 		if len(missing) != 0 {
 			t.Fatalf("finished task wrongly rejected: missing=%v", missing)
 		}
@@ -3262,7 +3262,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "forged extra\n\nCoop-Task: task-42")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, map[string]string{"task-42": "is the task this attempt works on"})
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("duplicate self-binding was not rejected: missing=%v", missing)
 		}
@@ -3284,7 +3284,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 
 		// task-99's folder ALSO moved this iteration (the box widened its own authority), so the
 		// caller's touched set names it too.
-		touched := map[string]bool{"task-42": true, "task-99": true}
+		touched := map[string]string{"task-42": "is the task this attempt works on", "task-99": "moved to done during this attempt"}
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("widened authority over task-99 was not rejected: missing=%v", missing)
@@ -3311,7 +3311,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "forge a trailer for an untouched archived task\n\nCoop-Task: archived-task")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		touched := map[string]bool{"task-42": true, "archived-task": true} // BaselineDoneIDs' doing, not a folder move
+		touched := map[string]string{"task-42": "is the task this attempt works on", "archived-task": "was already done before this attempt started"} // BaselineDoneIDs' doing, not a folder move
 		missing, tolerated := unbindableTasks(repo, base, head, []string{"task-42"}, touched)
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("forged archived-task binding was not rejected: missing=%v", missing)
@@ -3348,7 +3348,7 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 		git("cherry-pick", oldHead)
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 
-		missing, tolerated := unbindableTasks(repo, oldHead, head, []string{"task-42"}, map[string]bool{"task-42": true})
+		missing, tolerated := unbindableTasks(repo, oldHead, head, []string{"task-42"}, map[string]string{"task-42": "is the task this attempt works on"})
 		if !slices.Equal(missing, []string{"task-42"}) {
 			t.Fatalf("a rewritten foreign binding was not rejected even though task-99 was never in touched: missing=%v", missing)
 		}
@@ -3398,14 +3398,14 @@ func TestUnbindableTasksTouchedSetNarrowsForeignBindings(t *testing.T) {
 // The next attempt's range starts above a failed attempt's commits, so the failed attempt's own
 // check is the only one that sees a binding it forged or rewrote.
 func TestAttemptBindingsRefused(t *testing.T) {
-	touched := map[string]bool{"task-42": true, "archived-task": true}
+	touched := map[string]string{"task-42": "is the task this attempt works on", "archived-task": "was already done before this attempt started"}
 	t.Run("a forged trailer for an archived task refuses an attempt that completed nothing", func(t *testing.T) {
 		repo, git := gitRepo(t)
 		git("commit", "-q", "--allow-empty", "-m", "base")
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "forge\n\nCoop-Task: archived-task")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); !refused || len(tolerated) != 0 {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) == 0 || len(tolerated) != 0 {
 			t.Fatalf("forged archived binding = refused %v, tolerated %v", refused, tolerated)
 		}
 	})
@@ -3418,10 +3418,10 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "host work\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched)
-		if refused || !slices.Equal(tolerated, []string{"task-99"}) {
+		if len(refused) > 0 || !slices.Equal(tolerated, []string{"task-99"}) {
 			t.Fatalf("own binding = refused %v, tolerated %v; want accepted with task-99 tolerated", refused, tolerated)
 		}
-		if tolerated, refused := AttemptBindingsRefused(repo, base, head, head, "task-42", touched); refused || len(tolerated) != 0 {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, head, head, "task-42", touched); len(refused) > 0 || len(tolerated) != 0 {
 			t.Fatalf("an attempt without commits = refused %v, tolerated %v", refused, tolerated)
 		}
 	})
@@ -3433,11 +3433,11 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--amend", "--allow-empty", "-m", "task-99's work, reworded\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if _, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); !refused {
+		if _, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) == 0 {
 			t.Fatal("an attempt that rewrote untouched task-99's bound commit was accepted")
 		}
 		git("commit", "-q", "--allow-empty", "-m", "invalid\n\nCoop-Task:")
-		if _, refused := AttemptBindingsRefused(repo, head, head, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-42", touched); !refused {
+		if _, refused := AttemptBindingsRefused(repo, head, head, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-42", touched); len(refused) == 0 {
 			t.Fatal("an attempt with an invalid trailer was accepted")
 		}
 	})
@@ -3451,14 +3451,88 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "a replacement\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if _, refused := AttemptBindingsRefused(repo, runBase, base, head, "task-42", touched); !refused {
+		if _, refused := AttemptBindingsRefused(repo, runBase, base, head, "task-42", touched); len(refused) == 0 {
 			t.Fatal("a trailer replacing a binding the run base reached was accepted")
 		}
-		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); refused || !slices.Equal(tolerated, []string{"task-99"}) {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) > 0 || !slices.Equal(tolerated, []string{"task-99"}) {
 			t.Fatalf("without the run base = refused %v, tolerated %v; want the replacement tolerated", refused, tolerated)
 		}
-		if _, refused := AttemptBindingsRefused(repo, strings.Repeat("0", 40), base, head, "task-42", touched); !refused {
+		if _, refused := AttemptBindingsRefused(repo, strings.Repeat("0", 40), base, head, "task-42", touched); len(refused) == 0 {
 			t.Fatal("an unreadable run base was accepted")
+		}
+	})
+}
+
+// A refusal names what broke the binding: each offending commit, the task ids it carries, and why
+// they count, so an operator can tell another task's commit from the box's own mistake.
+func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
+	touched := map[string]string{"task-42": "is the task this attempt works on", "task-a": "moved to done during this attempt"}
+	commit := func(git func(...string), repo, message string) string {
+		git("commit", "-q", "--allow-empty", "-m", message)
+		return forkspace.GitOut(repo, "rev-parse", "HEAD")[:12]
+	}
+	t.Run("a host commit binding two closed tasks", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		base := commit(git, repo, "base")
+		commit(git, repo, "work\n\nCoop-Task: task-42")
+		both := commit(git, repo, "host work\n\nCoop-Task: task-a\nCoop-Task: task-b")
+		closed := commit(git, repo, "close task-a\n\nCoop-Task: task-a")
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		want := []string{
+			"commit " + closed + " binds task task-a, which moved to done during this attempt",
+			"commit " + both + " carries 2 Coop-Task trailers (task-a, task-b); one commit can bind only one task",
+		}
+		if !slices.Equal(refused, want) {
+			t.Fatalf("refusal = %q, want %q", refused, want)
+		}
+	})
+	t.Run("another task's rewritten commit", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		commit(git, repo, "base")
+		old := commit(git, repo, "task-99's work\n\nCoop-Task: task-99")
+		git("commit", "-q", "--amend", "--allow-empty", "-m", "task-99's work, reworded\n\nCoop-Task: task-99")
+		_, refused := AttemptBindingsRefused(repo, old, old, "HEAD", "task-42", touched)
+		if len(refused) != 1 || !strings.Contains(refused[0], "binds task task-99 and replaces its bound commit "+old) {
+			t.Fatalf("refusal = %q, want the replaced commit %s named", refused, old)
+		}
+	})
+	t.Run("a trailer value is quoted escaped", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		base := commit(git, repo, "base")
+		commit(git, repo, "forged\n\nCoop-Task: task-a\nCoop-Task: evil\x1b[31m")
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		if len(refused) != 1 || strings.Contains(refused[0], "\x1b") || !strings.Contains(refused[0], `evil\u001B[31m`) {
+			t.Fatalf("refusal = %q, want the hidden character escaped", refused)
+		}
+	})
+	t.Run("many commits are counted past the first few", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		base := commit(git, repo, "base")
+		for i := range bindingProblemsShown + 2 {
+			commit(git, repo, fmt.Sprintf("forged %d\n\nCoop-Task: task-a", i))
+		}
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		if len(refused) != bindingProblemsShown+1 || refused[bindingProblemsShown] != "2 more commits break the binding the same way" {
+			t.Fatalf("refusal = %q, want %d problems and the rest counted", refused, bindingProblemsShown)
+		}
+	})
+	t.Run("the task's own second binding", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		commit(git, repo, "base")
+		first := commit(git, repo, "work\n\nCoop-Task: task-42")
+		base := commit(git, repo, "unrelated")
+		second := commit(git, repo, "follow-up\n\nCoop-Task: task-42")
+		if missing, _ := unbindableTasks(repo, base, second, []string{"task-42"}, touched); !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("second binding missing = %v", missing)
+		}
+		got := UnbindableTaskProblems(repo, base, second, []string{"task-42"}, touched)
+		want := "task task-42 already has commit " + first + " carrying its trailer, and this attempt added " + second +
+			"; a task binds one commit, so make the follow-up unbound or file a new task for it"
+		if !slices.Equal(got, []string{want}) {
+			t.Fatalf("problems = %q, want %q", got, want)
+		}
+		if got := UnbindableTaskProblems(repo, second, second, []string{"task-42"}, touched); len(got) != 1 || !strings.Contains(got[0], "made no commit") {
+			t.Fatalf("empty attempt problems = %q", got)
 		}
 	})
 }
@@ -5353,7 +5427,7 @@ func TestRestoreUnbindableCompletions(t *testing.T) {
 		}
 	}
 
-	rejectErr := UnbindableCompletionError([]string{id}, nil)
+	rejectErr := UnbindableCompletionError([]string{id}, nil, nil)
 	if rejectErr == nil {
 		t.Fatal("unbindable completion must stop the controller")
 	}

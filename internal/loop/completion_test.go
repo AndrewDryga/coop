@@ -531,6 +531,85 @@ func TestAuditReworkOutcomeRefusalNamesTheNormalCompletion(t *testing.T) {
 	}
 }
 
+// A host commit landing in the loop's checkout mid-attempt, for tasks the host closed meanwhile, still
+// rejects the attempt — but the refusal names the commit, the task ids and why they count, and says
+// how to retry, instead of only that some binding did not verify.
+func TestLoopRejectionNamesTheForeignCommit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	for _, tc := range []struct {
+		name, message string
+		want          func(sha string) string
+	}{
+		{"one commit binds two tasks", "Close two tasks\n\nCoop-Task: task-a\nCoop-Task: task-b",
+			func(sha string) string {
+				return "Commit " + sha + " carries 2 Coop-Task trailers (task-a, task-b); one commit can bind only one task."
+			}},
+		{"a commit binds a task the host closed", "Close task-a\n\nCoop-Task: task-a",
+			func(sha string) string {
+				return "Commit " + sha + " binds task task-a, which moved to done during this attempt."
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			root := filepath.Join(repo, tasksRoot)
+			for _, id := range []string{"decision", "task-a", "task-b"} {
+				writeTaskFile(t, filepath.Join(root, stateTodo, id, "task.md"), "# "+id+"\n- [x] verified\n")
+			}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			foreign := ""
+			c.boxRun = func(s box.RunSpec) (int, error) {
+				if foreign != "" {
+					t.Fatal("the loop started a second attempt after the rejection")
+				}
+				writeTaskFile(t, filepath.Join(repo, "answer.txt"), "implemented\n")
+				git("add", "answer.txt")
+				git("commit", "-m", "Implement the contract\n\nCoop-Task: decision")
+				// The operator's commit and `coop tasks done`, made on the host during the attempt.
+				git("commit", "--allow-empty", "-m", tc.message)
+				foreign = forkspace.GitOut(repo, "rev-parse", "HEAD")[:12]
+				for _, id := range []string{"task-a", "task-b"} {
+					task, ok, err := tasks.CurrentTask(root, id)
+					if err != nil || !ok {
+						t.Fatalf("find %s: %v %v", id, ok, err)
+					}
+					if err := tasks.CompleteTrustedTask(repo, root, task); err != nil {
+						t.Fatalf("host completion of %s: %v", id, err)
+					}
+				}
+				_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+				return 0, err
+			}
+			var code int
+			var err error
+			output := captureStderr(t, func() {
+				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+			})
+			if code != 1 || err == nil {
+				t.Fatalf("loop = %d, %v; want the rejection\n%s", code, err, output)
+			}
+			flat := strings.Join(strings.Fields(output), " ")
+			for _, want := range []string{"Task completion rejected", tc.want(foreign), "Coop cannot safely advance to another task.", "Retry this task: coop loop"} {
+				if !strings.Contains(flat, want) {
+					t.Errorf("refusal omitted %q:\n%s", want, output)
+				}
+			}
+			if current, ok, err := tasks.CurrentTask(root, "decision"); err != nil || !ok || current.State != tasks.StateInProgress {
+				t.Fatalf("rejected task = %v, %v, %v; want it kept in progress", current, ok, err)
+			}
+			log, err := os.ReadFile(filepath.Join(root, stateInProgress, "decision", "log.md"))
+			if err != nil || !strings.Contains(string(log), "rejected because commit "+foreign) {
+				t.Fatalf("the task's log does not name the foreign commit: %s, %v", log, err)
+			}
+		})
+	}
+}
+
 func TestAssignedCompletionFeedbackRejectsInvalidBindings(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

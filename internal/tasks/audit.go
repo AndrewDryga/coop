@@ -2561,7 +2561,7 @@ func (l *TaskLease) RebaseTimedOutAuditReopen(repo, base, head string) error {
 // faithful reproduction, which trailer counting would otherwise reject as the very foreign-binding
 // shape reopened work necessarily has. touched is unused on that branch — replay validation subsumes
 // the foreign-binding question for it — so it always returns a nil tolerated set.
-func CompletionUnbindableTasks(repo, base, head string, finished []string, reopen *AuditReopenRecord, touched map[string]bool) (missing, tolerated []string) {
+func CompletionUnbindableTasks(repo, base, head string, finished []string, reopen *AuditReopenRecord, touched map[string]string) (missing, tolerated []string) {
 	if reopen == nil || len(finished) != 1 || finished[0] != reopen.TaskID {
 		return unbindableTasks(repo, base, head, finished, touched)
 	}
@@ -2594,7 +2594,7 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // host-side knowledge the box cannot influence (built once per attempt by internal/loop from the
 // leased task id, the audit-reopen record's task, every id whose queue state this completion window
 // observed change, and every id windows.BaselineDoneIDs() reports — every task already archived
-// before the box ever ran).
+// before the box ever ran), each mapped to why it counts, the clause a refusal quotes.
 // That last member matters even when the archived task's folder never moves: its history is meant to
 // be closed, so a forged extra commit corrupts that closed record without needing to touch its
 // folder at all — unbindableTasks alone cannot tell "genuinely untracked" from "already closed" by
@@ -2610,24 +2610,52 @@ func ordinaryBindingMatchesRaw(repo, head, id string) bool {
 // was rewritten, which means some OTHER task's already-bound commit was reparented — silently
 // altering another task's committed content without ever moving its queue folder is exactly the
 // smuggling this guard exists to stop.
-func unbindableTasks(repo, base, head string, finished []string, touched map[string]bool) (missing, tolerated []string) {
+func unbindableTasks(repo, base, head string, finished []string, touched map[string]string) (missing, tolerated []string) {
 	if base == "" || head == "" || base == head {
 		return slices.Clone(finished), nil
 	}
-	allowed := make(map[string]bool, len(finished))
-	for _, id := range finished {
-		allowed[id] = true
-	}
-	scan, ok := scanTaskBindings(repo, base, head, "", allowed, touched)
+	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(finished), touched)
 	if !ok {
 		return slices.Clone(finished), nil
 	}
 	for _, id := range finished {
-		if scan.inRange[id] != 1 || scan.reachable[id] != 1 || scan.invalid[id] {
+		if scan.inRange[id] != 1 || scan.reachable[id] != 1 || scan.invalid[id] != "" {
 			missing = append(missing, id)
 		}
 	}
 	return missing, scan.tolerated
+}
+
+func allowedTasks(ids []string) map[string]bool {
+	allowed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		allowed[id] = true
+	}
+	return allowed
+}
+
+// UnbindableTaskProblems says why unbindableTasks found ids unbindable over base..head, one sentence
+// each, naming the commits and task ids, so a refusal can say what broke the binding instead of only
+// that something did. It reads the same immutable objects again, so it sees what the check saw.
+func UnbindableTaskProblems(repo, base, head string, ids []string, touched map[string]string) []string {
+	if base != "" && base == head {
+		problems := make([]string, 0, len(ids))
+		for _, id := range ids {
+			problems = append(problems, fmt.Sprintf("this attempt made no commit, so nothing new binds task %s", bindingLabel(id)))
+		}
+		return problems
+	}
+	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(ids), touched)
+	if !ok {
+		return scan.refused
+	}
+	var problems []string
+	for _, id := range ids {
+		if problem := scan.countProblem(id); problem != "" {
+			problems = append(problems, problem)
+		}
+	}
+	return problems
 }
 
 // AttemptBindingsRefused applies unbindableTasks' refusal to one ordinary work attempt, base..head,
@@ -2635,35 +2663,99 @@ func unbindableTasks(repo, base, head string, finished []string, touched map[str
 // rewrite a binding in an attempt that then failed, below every later attempt's base. The assigned
 // task's own bindings are its count check's business, not a refusal here. runBase, the run's
 // recorded base, also counts as a base for rewrites, so a binding rewritten below base outside any
-// checked attempt still refuses a trailer that replaces it.
-func AttemptBindingsRefused(repo, runBase, base, head, assigned string, touched map[string]bool) (tolerated []string, refused bool) {
+// checked attempt still refuses a trailer that replaces it. refused is nil when the attempt passes,
+// else one sentence per commit that broke it, naming the commit, the task ids and why they count.
+func AttemptBindingsRefused(repo, runBase, base, head, assigned string, touched map[string]string) (tolerated, refused []string) {
 	if base != "" && base == head {
-		return nil, false
+		return nil, nil
 	}
-	scan, ok := scanTaskBindings(repo, base, head, runBase, map[string]bool{assigned: true}, touched)
-	return scan.tolerated, !ok
+	scan, _ := scanTaskBindings(repo, base, head, runBase, map[string]bool{assigned: true}, touched)
+	return scan.tolerated, scan.refused
 }
 
 // taskBindingScan is what one walk over the Coop-Task trailers head reaches learns about allowed
 // ids, split at base.
 type taskBindingScan struct {
-	tolerated          []string        // sorted outside ids whose in-range trailers were tolerated
-	reachable, inRange map[string]int  // single valid bindings per allowed id
-	invalid            map[string]bool // allowed ids on an invalid or shared reachable trailer
+	tolerated          []string            // sorted outside ids whose in-range trailers were tolerated
+	refused            []string            // why the scan failed, one sentence per offending commit
+	reachable, inRange map[string]int      // single valid bindings per allowed id
+	bound              map[string][]string // each allowed id's single valid bindings, walked from head
+	newBound           map[string][]string // the in-range subset of bound
+	invalid            map[string]string   // allowed ids on an invalid or shared reachable trailer, by commit
+}
+
+// countProblem says why id lacks exactly one valid binding both in range and reachable, or "".
+func (scan taskBindingScan) countProblem(id string) string {
+	label := bindingLabel(id)
+	if commit := scan.invalid[id]; commit != "" {
+		return fmt.Sprintf("commit %s names task %s in a trailer block that also names another task or cannot be read, so it binds nothing", shortCommit(commit), label)
+	}
+	older := slices.DeleteFunc(slices.Clone(scan.bound[id]), func(sha string) bool { return slices.Contains(scan.newBound[id], sha) })
+	switch added := scan.newBound[id]; {
+	case len(added) == 0 && len(older) == 0:
+		return fmt.Sprintf("no commit carries the trailer %s", CoopTaskTrailer+": "+label)
+	case len(added) == 0:
+		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer", label, shortCommits(older))
+	case len(added) > 1:
+		return fmt.Sprintf("this attempt added %d commits carrying %s (%s); a task binds one commit, so make the follow-ups unbound or file a new task for them", len(added), CoopTaskTrailer+": "+label, shortCommits(added))
+	case len(older) > 0:
+		return fmt.Sprintf("task %s already has commit %s carrying its trailer, and this attempt added %s; a task binds one commit, so make the follow-up unbound or file a new task for it", label, shortCommits(older), shortCommits(added))
+	}
+	return ""
+}
+
+// The most commits or problems a refusal names before it says how many more there are: a box can
+// plant any number.
+const bindingProblemsShown = 5
+
+// bindingLabel is a trailer value fit to quote: a box writes trailers, so hidden characters are
+// escaped and a long value is cut.
+func bindingLabel(value string) string {
+	const maxRunes = 80
+	if runes := []rune(value); len(runes) > maxRunes {
+		value = string(runes[:maxRunes]) + "…"
+	}
+	return ui.SafeInline(value)
+}
+
+func shortCommit(sha string) string { return sha[:min(12, len(sha))] }
+
+func shortCommits(shas []string) string {
+	shown := make([]string, 0, min(len(shas), bindingProblemsShown)+1)
+	for i, sha := range shas {
+		if i == bindingProblemsShown {
+			shown = append(shown, fmt.Sprintf("and %d more", len(shas)-i))
+			break
+		}
+		shown = append(shown, shortCommit(sha))
+	}
+	return strings.Join(shown, ", ")
+}
+
+func bindingLabels(values []string) string {
+	labels := make([]string, len(values))
+	for i, value := range values {
+		labels[i] = bindingLabel(value)
+	}
+	return strings.Join(labels, ", ")
 }
 
 // scanTaskBindings walks the history head reaches. ok is false when that history cannot be read or
 // a commit in base..head carries a binding no attempt may add: an invalid or several trailers, or a
 // trailer outside allowed for a touched task or for one whose single bound commit base (or
-// runBase, when set) reached and head no longer does.
-func scanTaskBindings(repo, base, head, runBase string, allowed, touched map[string]bool) (scan taskBindingScan, ok bool) {
+// runBase, when set) reached and head no longer does. refused then says why, one sentence per
+// offending commit, so the scan walks on to name each of them.
+func scanTaskBindings(repo, base, head, runBase string, allowed map[string]bool, touched map[string]string) (scan taskBindingScan, ok bool) {
+	unreadable := func(err error) (taskBindingScan, bool) {
+		return taskBindingScan{refused: []string{fmt.Sprintf("Coop could not read this attempt's commits: %v", err)}}, false
+	}
 	if base == "" || head == "" {
-		return taskBindingScan{}, false
+		return unreadable(errors.New("the range has no commit at one end"))
 	}
 	headCommits, headErr := rawReachableAuditCommits(repo, head)
 	baseCommits, baseErr := rawReachableAuditCommits(repo, base)
-	if headErr != nil || baseErr != nil {
-		return taskBindingScan{}, false
+	if err := errors.Join(headErr, baseErr); err != nil {
+		return unreadable(err)
 	}
 	baseReachable := make(map[string]bool, len(baseCommits))
 	for _, commit := range baseCommits {
@@ -2673,16 +2765,16 @@ func scanTaskBindings(repo, base, head, runBase string, allowed, touched map[str
 	for _, commit := range headCommits {
 		headReachable[commit.sha] = true
 	}
-	// rewritten[id] means id already had a valid single-trailer binding reachable from base whose
-	// commit fell out of head's reachable set — only possible if something rebased or amended an
-	// ancestor. A fast-forward (the ordinary case) never drops a base-reachable commit.
-	rewritten := make(map[string]bool)
+	// rewritten[id] names id's valid single-trailer binding reachable from base whose commit fell out
+	// of head's reachable set — only possible if something rebased or amended an ancestor. A
+	// fast-forward (the ordinary case) never drops a base-reachable commit.
+	rewritten := make(map[string]string)
 	markRewritten := func(commits []rawReachableAuditCommit) {
 		for _, commit := range commits {
 			if commit.taskBindingInvalid || len(commit.taskValues) != 1 || headReachable[commit.sha] {
 				continue
 			}
-			rewritten[commit.taskValues[0]] = true
+			rewritten[commit.taskValues[0]] = commit.sha
 		}
 	}
 	markRewritten(baseCommits)
@@ -2690,24 +2782,37 @@ func scanTaskBindings(repo, base, head, runBase string, allowed, touched map[str
 	if runBase != "" && !baseReachable[forkspace.GitOut(repo, "rev-parse", "--verify", runBase+"^{commit}")] {
 		runCommits, err := rawReachableAuditCommits(repo, runBase)
 		if err != nil {
-			return taskBindingScan{}, false
+			return unreadable(err)
 		}
 		markRewritten(runCommits)
 	}
-	scan = taskBindingScan{reachable: map[string]int{}, inRange: map[string]int{}, invalid: map[string]bool{}}
+	scan = taskBindingScan{reachable: map[string]int{}, inRange: map[string]int{}, invalid: map[string]string{},
+		bound: map[string][]string{}, newBound: map[string][]string{}}
 	toleratedSeen := map[string]bool{}
+	refuse := func(format string, args ...any) {
+		scan.refused = append(scan.refused, fmt.Sprintf(format, args...))
+	}
 	for _, commit := range headCommits {
 		inRange := !baseReachable[commit.sha]
-		if inRange && (commit.taskBindingInvalid || len(commit.taskValues) > 1) {
-			return taskBindingScan{}, false
+		if inRange && commit.taskBindingInvalid {
+			refuse("commit %s has a %s trailer Coop cannot read as one task id", shortCommit(commit.sha), CoopTaskTrailer)
+			continue
+		}
+		if inRange && len(commit.taskValues) > 1 {
+			refuse("commit %s carries %d %s trailers (%s); one commit can bind only one task",
+				shortCommit(commit.sha), len(commit.taskValues), CoopTaskTrailer, bindingLabels(commit.taskValues))
+			continue
 		}
 		for _, id := range commit.taskValues {
 			if !allowed[id] {
 				if inRange {
-					if touched[id] || rewritten[id] {
-						return taskBindingScan{}, false
-					}
-					if !toleratedSeen[id] {
+					switch {
+					case rewritten[id] != "":
+						refuse("commit %s binds task %s and replaces its bound commit %s, which is no longer in history: another task's history was rewritten",
+							shortCommit(commit.sha), bindingLabel(id), shortCommit(rewritten[id]))
+					case touched[id] != "":
+						refuse("commit %s binds task %s, which %s", shortCommit(commit.sha), bindingLabel(id), touched[id])
+					case !toleratedSeen[id]:
 						toleratedSeen[id] = true
 						scan.tolerated = append(scan.tolerated, id)
 					}
@@ -2715,14 +2820,22 @@ func scanTaskBindings(repo, base, head, runBase string, allowed, touched map[str
 				continue
 			}
 			if commit.taskBindingInvalid || len(commit.taskValues) != 1 {
-				scan.invalid[id] = true
+				scan.invalid[id] = commit.sha
 				continue
 			}
 			scan.reachable[id]++
+			scan.bound[id] = append(scan.bound[id], commit.sha)
 			if inRange {
 				scan.inRange[id]++
+				scan.newBound[id] = append(scan.newBound[id], commit.sha)
 			}
 		}
+	}
+	if len(scan.refused) > 0 {
+		if len(scan.refused) > bindingProblemsShown {
+			scan.refused = append(scan.refused[:bindingProblemsShown], fmt.Sprintf("%d more commits break the binding the same way", len(scan.refused)-bindingProblemsShown))
+		}
+		return taskBindingScan{refused: scan.refused}, false
 	}
 	slices.Sort(scan.tolerated)
 	return scan, true
@@ -2768,8 +2881,9 @@ func ReportToleratedForeignBindings(repo string, hosts []string, base, head, lea
 }
 
 // RestoreQueuedCompletion returns a task Coop rejected to in progress, from whichever folder its
-// attempt moved it to, and records why.
-func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
+// attempt moved it to, and records why: problems, when the caller knows them, name what broke the
+// binding, so the next attempt does not mistake another task's commit for its own mistake.
+func RestoreQueuedCompletion(task QueuedTask, audit bool, problems ...string) error {
 	id := task.Item.ID
 	if task.Item.State != StateInProgress {
 		if err := MoveTaskDir(task.Root, task.Item, StateInProgress); err != nil {
@@ -2778,6 +2892,10 @@ func RestoreQueuedCompletion(task QueuedTask, audit bool) error {
 	}
 	dir := filepath.Join(task.Root, StateInProgress, id)
 	note := fmt.Sprintf("implementation completion rejected: expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; rewrite or squash duplicate bindings down to one, then re-run `coop loop`", CoopTaskTrailer, taskBindingRecovery(id))
+	if len(problems) > 0 {
+		note = "implementation completion rejected because " + strings.Join(problems, "; ") + ". " +
+			fmt.Sprintf("Expected exactly one commit with one matching %s trailer in the iteration's range and exactly one reachable binding overall; %s; then re-run `coop loop`", CoopTaskTrailer, taskBindingRecovery(id))
+	}
 	normalize := normalizeRejectedTaskState
 	if audit {
 		note = fmt.Sprintf("completion rejected: %s; then re-run `coop loop`", auditBindingRecovery(id))
@@ -2946,12 +3064,16 @@ func normalizeAuditRejectedTaskState(id, taskDir string) error {
 	)
 }
 
-func UnbindableCompletionError(ids []string, restoreErr error) error {
+func UnbindableCompletionError(ids, problems []string, restoreErr error) error {
 	recoveries := make([]string, 0, len(ids))
 	for _, id := range ids {
 		recoveries = append(recoveries, fmt.Sprintf("%s: %s", id, taskBindingRecovery(id)))
 	}
-	msg := fmt.Sprintf("implementation completion rejected for task(s) %s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), CoopTaskTrailer, strings.Join(recoveries, "; "))
+	cause := ""
+	if len(problems) > 0 {
+		cause = " because " + strings.Join(problems, "; ")
+	}
+	msg := fmt.Sprintf("implementation completion rejected for task(s) %s%s: the new commit range and reachable HEAD each need exactly one commit with one parseable `%s: <id>` trailer per task; task(s) restored to in_progress — %s; rewrite/squash duplicate bindings down to one, then re-run `coop loop`", strings.Join(ids, ", "), cause, CoopTaskTrailer, strings.Join(recoveries, "; "))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}

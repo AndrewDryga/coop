@@ -990,17 +990,9 @@ reviewAgain:
 			// record without needing to touch its folder at all (a departed task was archived at that
 			// baseline, so it is already here). A foreign Coop-Task trailer in range for anything outside this set is tolerated rather
 			// than rejecting — see unbindableTasks, tasks.CompletionWindowSet.baselineDoneIDs, and
-			// .agent/kb/loop-range-rejects-outside-commits.md.
-			touched := map[string]bool{assigned.Item.ID: true}
-			if lease.Reopen != nil {
-				touched[lease.Reopen.TaskID] = true
-			}
-			for _, t := range completedTasks {
-				touched[t.Item.ID] = true
-			}
-			for id := range windows.BaselineDoneIDs() {
-				touched[id] = true
-			}
+			// .agent/kb/loop-range-rejects-outside-commits.md. Each id maps to why it counts, the clause
+			// a refusal names it with.
+			touched := touchedTasks(assigned.Item.ID, lease.Reopen, completedTasks, windows.BaselineDoneIDs())
 			// Every ordinary attempt's commits are checked, not only a completing one's: a box that
 			// forged or rewrote a binding in an attempt that then failed would otherwise leave it
 			// below every later attempt's base. Audit rework rewrites history by design; semantic
@@ -1008,13 +1000,13 @@ reviewAgain:
 			headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			if lease.Reopen == nil {
 				tolerated, refused := tasks.AttemptBindingsRefused(repo, loopStartHead, iterHead, headAfter, assigned.Item.ID, touched)
-				if refused {
+				if len(refused) > 0 {
 					current, ok, restoreErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
 					if restoreErr == nil && !ok {
 						restoreErr = fmt.Errorf("task %s has no folder left to restore", assigned.Item.ID)
 					}
 					if restoreErr == nil {
-						restoreErr = tasks.RestoreQueuedCompletion(tasks.QueuedTask{Root: assigned.Root, Item: current}, false)
+						restoreErr = tasks.RestoreQueuedCompletion(tasks.QueuedTask{Root: assigned.Root, Item: current}, false, refused...)
 					}
 					departed, departureErr := windows.Departures()
 					if len(departed) > 0 {
@@ -1031,9 +1023,9 @@ reviewAgain:
 						windowErr = windows.Close()
 					}
 					releaseErr := lease.Release()
-					bindErr := tasks.UnbindableCompletionError([]string{assigned.Item.ID}, restoreErr)
+					bindErr := tasks.UnbindableCompletionError([]string{assigned.Item.ID}, refused, restoreErr)
 					if restoreErr == nil && departureErr == nil && unownedErr == nil && windowErr == nil && releaseErr == nil {
-						failRejectedCompletion(active, assigned.Item.ID, continueCmd)
+						failRejectedCompletion(active, assigned.Item.ID, continueCmd, refused)
 						return 1, ui.Reported(bindErr)
 					}
 					return 1, errors.Join(bindErr, departureErr, unownedErr, windowErr, releaseErr)
@@ -1266,7 +1258,11 @@ reviewAgain:
 				}
 			}
 			if len(missing) > 0 {
-				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*completionCandidate, lease.Reopen != nil))
+				var problems []string
+				if lease.Reopen == nil {
+					problems = tasks.UnbindableTaskProblems(repo, iterHead, headAfter, missing, touched)
+				}
+				restoreErr = errors.Join(restoreErr, tasks.RestoreQueuedCompletion(*completionCandidate, lease.Reopen != nil, problems...))
 				canRepair := restoreErr == nil && len(unowned) == 0 && lease.Reopen == nil && classification.outcome == "success" && iterCtx.Err() == nil &&
 					tasks.UncommittedCompletionCanRetry(repo, noChangeBase.head, headAfter, assigned.Item.ID, noChangeBase.checkout)
 				parked := canRepair && completionRepairs[assigned.Item.ID] > 0
@@ -1305,14 +1301,14 @@ reviewAgain:
 				if len(unowned) > 0 {
 					unownedErr = tasks.UnownedCompletionError(unowned, nil)
 				}
-				bindErr := tasks.UnbindableCompletionError(missing, restoreErr)
+				bindErr := tasks.UnbindableCompletionError(missing, problems, restoreErr)
 				if lease.Reopen != nil {
 					// With audit authority, missing is exactly the assigned reopened task and the
 					// failure was the semantic replay validation, not trailer counting.
 					bindErr = tasks.AuditCompletionError(missing[0], restoreErr)
 				}
 				if lease.Reopen == nil && restoreErr == nil && unownedErr == nil && releaseErr == nil {
-					failRejectedCompletion(active, assigned.Item.ID, continueCmd)
+					failRejectedCompletion(active, assigned.Item.ID, continueCmd, problems)
 					return 1, ui.Reported(bindErr)
 				}
 				return 1, errors.Join(bindErr, unownedErr, releaseErr)

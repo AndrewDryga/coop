@@ -10,6 +10,13 @@
   `coop tasks ls` lists todo tasks in that order and marks high and low ones, and
   `coop tasks lint` names any other value. A task without the field is normal and keeps its place.
 
+- **A rejected loop completion says which commit broke it.** "Task completion rejected" used to say
+  only that the commit range did not verify one task binding. It now names each commit and task id
+  that broke it and why that task counts (for example, it moved to done during this attempt, or one
+  commit carries two `Coop-Task` trailers), and its last line says to run `coop loop` again to
+  retry the task. The task's log and the worker's `tasks_complete` refusal carry the same reasons.
+  A commit for a task you close on the host while a loop works in the same checkout still rejects
+  that attempt.
 - **`coop tasks decisions` lists forks ready to merge.** The board's Needs you section shows a
   fork's finished work beside the open questions and points at `coop tasks decisions -i`, which
   until now listed only the questions. After them it now lists each fork ready to merge with its
@@ -120,6 +127,8 @@
   that fork failed with "filtered service network is not internal" or "Docker container mutation
   failed; outcome unknown". Containers that have not started yet now count, and a services network
   that is gone is now reported as missing.
+
+
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
