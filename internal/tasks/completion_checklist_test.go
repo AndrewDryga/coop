@@ -137,6 +137,52 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	}
 }
 
+// In emisar a person unblocked a task whose partial commit from before the decision was already
+// bound, and the work done after it carried the same trailer: nothing said the task was bound until
+// a final review failed on the second binding. Unblock and claim now say it, and how to commit more.
+func TestUnblockAndClaimSayTheTaskIsAlreadyBound(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, git := gitRepo(t)
+	root := t.TempDir()
+	id := "partial-before-decision"
+	git("commit", "-q", "--allow-empty", "-m", "Start the importer\n\nCoop-Task: "+id)
+	bound := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	blocked := taskForLease(t, root, StateBlocked, id)
+	writeTaskFile(t, filepath.Join(blocked.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
+	taskForLease(t, root, StateTodo, "not-bound-yet")
+
+	run := func(args ...string) string {
+		t.Helper()
+		return captureStderr(t, func() {
+			if code, err := CmdTasksFolder(repo, root, args); code != 0 || err != nil {
+				t.Fatalf("coop tasks %s = %d, %v", strings.Join(args, " "), code, err)
+			}
+		})
+	}
+	for _, args := range [][]string{{"unblock", id, "keep the importer"}, {"claim", id}} {
+		out := run(args...)
+		for _, want := range []string{
+			"Its commit " + bound[:12] + " already carries Coop-Task: " + id + ", and a task binds one commit.",
+			"Commit further work on it without that trailer, and name the task in the message body instead.",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("coop tasks %s output lacks %q:\n%s", args[0], want, out)
+			}
+		}
+	}
+	if out := run("claim", "not-bound-yet"); strings.Contains(out, "already carries") {
+		t.Errorf("a task with no commit was called bound:\n%s", out)
+	}
+	// A second binding is named, with the remedy done gives when it refuses one.
+	git("commit", "-q", "--allow-empty", "-m", "Finish the importer\n\nCoop-Task: "+id)
+	out := run("claim", id)
+	for _, want := range []string{"has 2 commits carrying \"Coop-Task: " + id + "\"", "Make the follow-up unbound by dropping its trailer, or file a new task for that work."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("claim of a task bound twice lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 // Authority and cleanup tests need otherwise-completable tasks; tests of a missing or
 // unfinished checklist keep taskForLease or write their own metadata.
 func taskWithCompletedChecklist(t *testing.T, root, state, id string) Item {

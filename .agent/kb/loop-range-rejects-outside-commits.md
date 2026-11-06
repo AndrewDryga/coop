@@ -109,7 +109,10 @@ reopen (`CaptureAuditReopen`) needs exactly one reachable binding for its subjec
 committed after it, so a second binding silently accepted at close loses a later review's verdict.
 `completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) refuses a
 task with more than one with `ExtraBindingsError`, and the loop's startup names every queued task
-that already has more (`tasks.ExtraBindings`) before any review runs.
+that already has more (`tasks.ExtraBindings`) before any review runs. `coop tasks claim` and
+`coop tasks unblock` warn earlier still (`boundTaskNote`): a task already bound gets its commit
+named and the rule that further work is an unbound commit naming the task in its body, since a
+partial commit made before a decision is the binding a person taking the task up again misses.
 
 The single-writer rule for a loop's checkout still covers **commits**, not just file edits — for two
 narrower reasons now instead of one. A commit that touches a task this iteration also leases,
@@ -186,6 +189,8 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-06 — claim and unblock name a task's existing binding (task
+  2026-11-06-catch-a-second-coop-task-binding-before-a-task-c).
 - 2026-11-06 — documented the late-commit wait refusal: judged from the commit `tasks_wait`
   recorded, another session's bindings tolerated, forged bindings named, unreadable queues fail
   closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`

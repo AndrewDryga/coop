@@ -135,7 +135,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "add":
 		return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", repo)
 	case "claim":
-		return tasksFolderClaim(root, args)
+		return tasksFolderClaim(repo, root, args)
 	case "release":
 		return tasksFolderRelease(root, args)
 	case "lease":
@@ -930,11 +930,12 @@ func noLiveActorProcess(pid int) error {
 // tasksFolderClaim is the `coop tasks claim` entry: it binds the claim to the process that made it
 // (see captureClaimActor) before the move so the queue can show who holds the task and whether
 // they are still alive.
-func tasksFolderClaim(root string, args []string) (int, error) {
+func tasksFolderClaim(project, root string, args []string) (int, error) {
 	id, opts, err := parseClaimArgs(args)
 	if err != nil {
 		return 2, err
 	}
+	opts.project = project
 	requested := opts.actor.PID
 	opts.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), opts.actor)
 	if requested != 0 && opts.actor.PID == 0 {
@@ -1014,6 +1015,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			if stopErr != nil {
 				return 1, fmt.Errorf("the claim is yours, but the lease of %s did not end: %w", claimHolder(*takeover.from, true), stopErr)
 			}
+			noteBoundTask(opts.project, t.ID)
 		default:
 			ui.Note("%s is already %s.", t.Title, StateLabel(newState))
 		}
@@ -1067,6 +1069,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		}
 		logClaim(filepath.Join(root, StateInProgress, t.ID), opts.actor, takeover)
 		printClaimResult(t, opts.actor, note)
+		noteBoundTask(opts.project, t.ID)
 	case StateDone:
 		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
@@ -1521,6 +1524,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	} else {
 		ui.Note("\n  The task is back in todo.")
 	}
+	noteBoundTask(project, t.ID)
 	noteForkResume(project, fork)
 	return 0, nil
 }
@@ -1553,6 +1557,13 @@ func forkResumeNote(project, fork string) string {
 func noteForkResume(project, fork string) {
 	if fork != "" {
 		ui.Note("\n  %s", forkResumeNote(project, fork))
+	}
+}
+
+// noteBoundTask tells a person who unblocks or claims a task that its commit is already in history.
+func noteBoundTask(project, id string) {
+	if fact, remedy := boundTaskNote(project, id); fact != "" {
+		ui.Note("\n  %s\n  %s", fact, remedy)
 	}
 }
 

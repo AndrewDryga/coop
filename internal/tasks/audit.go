@@ -581,6 +581,27 @@ func refuseExtraBindings(project, id string) error {
 	return extraBindings(repo, id, bindings[id])
 }
 
+// boundTaskNote is what a person taking a task up again must know when history already binds it:
+// closing it refuses a second commit carrying its trailer (refuseExtraBindings), so further work
+// goes in a commit without one. Empty when nothing binds the task or the history cannot be walked.
+func boundTaskNote(project, id string) (fact, remedy string) {
+	repo, head := auditHistory(project)
+	if repo == "" || head == "" {
+		return "", ""
+	}
+	bindings, ok := rawTaskBindings(repo, head)
+	switch shas := bindings[id]; {
+	case !ok || len(shas) == 0:
+		return "", ""
+	case len(shas) > 1:
+		extra := extraBindings(repo, id, shas)
+		return extra.Cause(), extra.Remedy() + "."
+	default:
+		return fmt.Sprintf("Its commit %s already carries %s: %s, and a task binds one commit.", shortCommit(shas[0]), CoopTaskTrailer, bindingLabel(id)),
+			"Commit further work on it without that trailer, and name the task in the message body instead."
+	}
+}
+
 func extraBindings(repo, id string, shas []string) *ExtraBindingsError {
 	return &ExtraBindingsError{TaskID: id, Found: len(shas), Commits: describeTaskCommits(repo, shas)}
 }

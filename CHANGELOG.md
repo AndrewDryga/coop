@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks claim` and `coop tasks unblock` say when a task's commit is already in history.**
+  Someone taking a task up again, often after a partial commit made before a decision, could
+  commit more work with the same `Coop-Task` trailer, and nothing said so until a final review
+  failed on the second binding. Both commands now name the commit and say to commit further work
+  without the trailer, naming the task in the message body instead. For a task that already has
+  two, they say what `coop tasks done` will refuse it for.
+
 - **A custom `work.command` that leaves its task unfinished is retried.** An attempt that exited 0
   with the task still in progress stopped the loop at once with "Task terminal correction
   stopped", a step that resumes an agent's session, which a custom command does not have. It now
