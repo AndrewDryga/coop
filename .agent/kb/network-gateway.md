@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
 updated: 2026-11-06
 ---
 
@@ -294,6 +294,23 @@ killed mid-teardown, followed only by direct launches, kept both containers and 
 the preflight proves the exact path a workload gets, and it can never appear on a `RunSpec` a caller
 builds.
 
+**Ctrl-C while the box starts** reaches coop two ways, and both end with `Stopped before the box
+started.` and exit 130 once cleanup has removed the run's containers and volumes
+(`launchSections.ended`, which also keeps the stop from hiding a cleanup that failed). Typed before
+Docker's attach client has the terminal, it is a SIGINT: `hostInterrupt` cancels the launch's
+context, every step that takes the context stops, and the calls the signal killed say whatever they
+say, none of it shown. Typed after (`docker start --attach` puts the terminal in raw mode as it
+attaches, BEFORE the daemon starts the container), it is no signal at all but a byte for the box's
+own tty, which kills its first process before it runs. Docker answers with a different line for
+whichever step it had reached ("cannot start a stopped process", "container process is already
+dead", a failed bind-mount), but always leaves the same record: the container `created`, never
+started, exit code 130. `StartAttached` returns `runtime.ErrDockerStartInterrupted` for that record,
+not for Docker's wording; a refused start (`exec: not found`) exits 127 and stays a plain failure.
+The attach client also shares coop's process group on purpose, so its stderr is held until the
+workload runs and dropped when the caller cancelled or the start was interrupted (`startupStderr`).
+A pty with no controlling terminal can drive only the second case, which is how it was checked
+against real Docker (2026-11-06).
+
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
 tar and `tools/gennetimage` writes it: the non-test Go files of `sourceDirs` (`cmd/coop-net`,
@@ -367,6 +384,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — Ctrl-C before the box starts is a stop, not a failure: one plain line, exit 130, the
+  attach client's raw words held back, and a Ctrl-C only the box heard recognized from the daemon's
+  record (task 2026-11-06-stop-a-box-start-cleanly-on-ctrl-c).
 - 2026-11-06 — a container create Docker refused is a failed launch, not an unfinished one. The
   agent's names the settings to check, never Docker's text
   (task 2026-11-06-treat-docker-errors-and-ctrl-c-during-box-start).

@@ -32,6 +32,13 @@
   and why, or no `AUDIT EVIDENCE` line, with the task IDs it left out. `coop fork review` also shows
   the notes of every task in the fork under its title, without the template comment. It showed only
   the newest task's.
+
+- **Ctrl-C while a box starts stops it cleanly.** It printed Docker's own error lines and "Could not
+  start" with "the container never started", and it exited 1. Coop now removes what it set up for the
+  run, prints `Stopped before the box started.` and exits 130. That holds when Ctrl-C reaches Coop as
+  a signal, and when Docker's client holds the terminal and passes it to the box, which ends the box's
+  first process before it runs. Docker's words about a start you stopped are no longer shown. A box
+  with its input redirected that Ctrl-C or SIGTERM stops also exits 130 or 143, not 1.
 - **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
   such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
   that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.

@@ -136,7 +136,8 @@ type filteredExecution struct {
 }
 
 func (f *filteredExecution) workloadOutcome(code int, err error, cancelled bool) string {
-	if cancelled {
+	// A Ctrl-C the daemon recorded as ending the start is a cancellation like one coop heard.
+	if cancelled || errors.Is(err, runtime.ErrDockerStartInterrupted) {
 		return "cancelled"
 	}
 	if err == nil && code >= 0 {

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -47,6 +48,16 @@ func DockerCreateLeftNothing(err error) bool {
 var ErrDockerOwnership = errors.New("Docker resource ownership conflict")
 
 var errDockerStartupProbe = errors.New("attached Docker startup observation unavailable")
+
+// ErrDockerStartInterrupted is a start the daemon records as ended by Ctrl-C before it began: the
+// container never started and its exit status is 130. The attached client holds the terminal raw
+// from the moment it attaches, so a Ctrl-C typed while the daemon starts the box is a byte for the
+// box's own terminal, not a signal to coop: it ends the box's first process, and Docker answers
+// with whatever step it had reached ("cannot start a stopped process" and others).
+var ErrDockerStartInterrupted = errors.New("the box was stopped by Ctrl-C before it started")
+
+// startInterruptedStatus is the exit status of a process SIGINT ended: 128 plus its number.
+const startInterruptedStatus = 130
 
 // ErrDockerImageMissing is proven absence on the bound daemon, not an inspection failure.
 var ErrDockerImageMissing = errors.New("Docker image is missing")
@@ -261,6 +272,7 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 	if err := d.beforeStart(ctx, ref); err != nil {
 		return -1, err
 	}
+	caller := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	args := []string{"--config", d.clientConfig, "--host", d.endpoint, "container", "start", "--attach"}
@@ -276,8 +288,17 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 	// A client attached to coop's terminal drives that terminal: it must run in coop's own
 	// foreground process group or the kernel suspends it (SIGTTOU) before it starts anything.
 	run := runInterruptibleCommand
+	var held *startupStderr
 	if attachedToTerminal(stdin, stdout, stderr) {
 		run = runForegroundCommand
+		// Sharing the terminal, the client hears a Ctrl-C too, and answers the start it then never
+		// makes in Docker's own words. What it says waits until the workload runs: a start the
+		// caller cancelled shows none of it, and any other failure shows all of it.
+		if file, ok := stderr.(*os.File); ok {
+			held = &startupStderr{to: file}
+			cmd.Stderr = held
+			defer func() { held.release(caller.Err() == nil) }()
+		}
 	}
 	done := make(chan result, 1)
 	go func() {
@@ -319,6 +340,7 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 		}
 		if !value.State.StartedAt.IsZero() {
 			started = true
+			held.release(caller.Err() == nil)
 			if onStarted != nil {
 				return onStarted()
 			}
@@ -356,6 +378,12 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 			confirm.Stop()
 			cancelBudget()
 			if confirmErr != nil {
+				// The daemon's own record of a start Ctrl-C ended: nothing ran, and its first process
+				// exited 130. Docker's words about it, held back above, say nothing a person needs.
+				if ctx.Err() == nil && value.State.StartedAt.IsZero() && value.State.ExitCode == startInterruptedStatus {
+					held.release(false)
+					return -1, ErrDockerStartInterrupted
+				}
 				// A cancel that landed mid-confirmation reads as a run of unanswered inspects; join
 				// ctx.Err() so the caller still sees context.Canceled, not only "unconfirmed".
 				return -1, errors.Join(ctx.Err(), outcome.err, startupErr, confirmErr)
@@ -395,6 +423,53 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 			noticeSlowStart()
 		}
 	}
+}
+
+// maxHeldStartupStderr bounds what startupStderr holds. Past it the client is plainly talking, not
+// failing, so everything held is shown and nothing is held again.
+const maxHeldStartupStderr = 64 << 10
+
+// startupStderr is the attached client's stderr while the workload has not started. It holds what
+// the client writes, and release says whether to show it or drop it; every write after that passes
+// straight through, so a workload that writes to stderr is never delayed past its start.
+type startupStderr struct {
+	mu   sync.Mutex
+	to   io.Writer
+	held []byte
+	open bool
+}
+
+func (s *startupStderr) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.open && len(s.held)+len(p) <= maxHeldStartupStderr {
+		s.held = append(s.held, p...)
+		return len(p), nil
+	}
+	s.openLocked(true)
+	return s.to.Write(p)
+}
+
+// release stops holding, once: it shows what was held when show is true and drops it otherwise.
+// A nil receiver holds nothing.
+func (s *startupStderr) release(show bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.openLocked(show)
+}
+
+func (s *startupStderr) openLocked(show bool) {
+	if s.open {
+		return
+	}
+	s.open = true
+	if show && len(s.held) > 0 {
+		_, _ = s.to.Write(s.held)
+	}
+	s.held = nil
 }
 
 func (d *Docker) StopContainer(ctx context.Context, ref DockerRef, graceSeconds int) error {

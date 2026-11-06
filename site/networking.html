@@ -747,6 +747,8 @@ network setup that didn&#39;t run normally, and unfinished cleanup. A clean run 
 report on stderr under <code>Networking stats:</code>. First, it says why the box stopped, as in
 <code>The Coop box has stopped: main process exited with status 0.</code> When Ctrl-C reached <code>coop</code>, the
 reason is <code>interrupted by Ctrl-C</code>.</p>
+<p>If you press Ctrl-C before the box starts, co:op removes what it set up for the run, prints
+<code>Stopped before the box started.</code> and exits <code>130</code>. There is no network report, because nothing ran.</p>
 <p>What the report shows depends on what co:op could record:</p>
 <ul>
 <li>For TLS traffic, the gateway records each connection&#39;s requested name, resolved address and

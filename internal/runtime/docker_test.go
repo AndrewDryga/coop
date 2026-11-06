@@ -25,6 +25,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/testutil/teststate"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestDockerWorkloadKeepsOwnerBindingAndPrivateConfig(t *testing.T) {
@@ -346,6 +347,25 @@ func TestDockerFixtureProcess(t *testing.T) {
 				// drives the terminal, a group of its own otherwise.
 				fmt.Fprintf(os.Stdout, "PGID=%d\n", syscall.Getpgrp())
 			}
+			if fixture.Mode == "refused-start" || fixture.Mode == "interrupted-start" || fixture.Mode == "held-start" {
+				// The workload never starts, and the client says why in Docker's own words: the
+				// daemon refused a command that does not exist, or it records a Ctrl-C that ended
+				// the box's first process (exit status 130) before it ran. A held start keeps
+				// talking until its caller cancels it.
+				text, status := "Error response from daemon: OCI runtime create failed: exec: \"nope\": executable file not found in $PATH\n", 127
+				if fixture.Mode != "refused-start" {
+					text, status = "Error response from daemon: cannot start a stopped process\n", 130
+				}
+				fixture.Container.State = DockerContainerState{Status: "created", ExitCode: status}
+				store()
+				fmt.Fprint(os.Stderr, text)
+				if fixture.Mode == "held-start" {
+					time.Sleep(200 * time.Millisecond) // the words reach coop before the marker does
+					_ = os.WriteFile(file+".said", nil, 0o600)
+					time.Sleep(time.Minute) // cancellation must reap this exact client
+				}
+				os.Exit(1)
+			}
 			if fixture.Mode == "late-start" {
 				// The daemon accepted the attach but has not started the workload
 				// yet: every inspection in this window reads the created state the
@@ -353,7 +373,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 				time.Sleep(300 * time.Millisecond)
 			}
 			fixture.Container.State = DockerContainerState{Status: "exited", StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(), ExitCode: 7}
-			if fixture.Mode == "detach" || fixture.Mode == "hold" {
+			if fixture.Mode == "detach" || fixture.Mode == "hold" || fixture.Mode == "hold-noisy" {
 				fixture.Container.State.Status, fixture.Container.State.Running = "running", true
 			}
 			if fixture.Mode == "settling" {
@@ -368,7 +388,10 @@ func TestDockerFixtureProcess(t *testing.T) {
 			fixture.ClientToken = processidentity.StartToken(os.Getpid())
 			store()
 			fmt.Fprint(os.Stdout, "first provider output\n")
-			if fixture.Mode == "hold" {
+			if fixture.Mode == "hold-noisy" {
+				fmt.Fprint(os.Stderr, "workload note\n")
+			}
+			if fixture.Mode == "hold" || fixture.Mode == "hold-noisy" {
 				time.Sleep(time.Minute) // cancellation must reap this exact client group
 			}
 			if fixture.Mode == "queued-cancel" || fixture.Mode == "transient-start" {
@@ -1333,6 +1356,138 @@ func TestAttachedClientJoinsCoopsGroupOnlyWhenItDrivesTheTerminal(t *testing.T) 
 				t.Fatalf("client group %d against coop's %d: shares=%v, want %v", group, syscall.Getpgrp(), shared, terminal)
 			}
 		})
+	}
+}
+
+// terminalStart binds a fixture whose client behaves as mode says, with coop's streams a terminal and
+// stderr a real file, as an interactive launch has them. read is what has reached that file.
+func terminalStart(t *testing.T, mode string) (d *Docker, fixtureFile string, stderr *os.File, read func() string) {
+	t.Helper()
+	previous := attachedToTerminal
+	attachedToTerminal = func(...any) bool { return true }
+	t.Cleanup(func() { attachedToTerminal = previous })
+	rt, fixtureFile := fixtureDocker(t, dockerFixture{Mode: mode, Container: dockerFixtureContainer()})
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	stderr, err = os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stderr.Close() })
+	read = func() string {
+		data, err := os.ReadFile(stderr.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	return d, fixtureFile, stderr, read
+}
+
+// The client holds the terminal raw from the moment it attaches, so a Ctrl-C typed while the daemon
+// starts the box is a byte for the box's own terminal: it ends the box's first process, and the
+// client answers in Docker's words. The daemon's record of that, nothing ran and its process exited
+// 130, is a stop the person asked for, and none of those words are shown.
+func TestAttachedStartThatCtrlCEndedIsAStopAndSaysNothing(t *testing.T) {
+	d, _, stderr, read := terminalStart(t, "interrupted-start")
+	code, err := d.StartAttached(context.Background(), dockerFixtureRef(), nil, io.Discard, stderr, nil)
+	if code != -1 || !errors.Is(err, ErrDockerStartInterrupted) {
+		t.Fatalf("a start Ctrl-C ended = (%d, %v), want the interrupted start", code, err)
+	}
+	if got := read(); got != "" {
+		t.Fatalf("Docker's words about the Ctrl-C reached the terminal: %q", got)
+	}
+}
+
+// Any other reason the workload never ran is a failure, and Docker's reason is what a person needs.
+func TestAttachedStartThatFailsOnItsOwnShowsDockersReason(t *testing.T) {
+	d, _, stderr, read := terminalStart(t, "refused-start")
+	code, err := d.StartAttached(context.Background(), dockerFixtureRef(), nil, io.Discard, stderr, nil)
+	if code != -1 || err == nil || errors.Is(err, ErrDockerStartInterrupted) || errors.Is(err, context.Canceled) {
+		t.Fatalf("a refused start = (%d, %v), want a plain failure", code, err)
+	}
+	if got, want := read(), "Error response from daemon: OCI runtime create failed: exec: \"nope\": executable file not found in $PATH\n"; got != want {
+		t.Fatalf("a refused start showed %q, want Docker's own words %q", got, want)
+	}
+}
+
+// A signal that cancels the caller reaches the client too, and what it says as it dies is about a
+// start nobody is waiting for: coop shows none of it, even words that arrived before the cancel.
+func TestAttachedStartTheCallerCancelledShowsNoneOfWhatTheClientSaid(t *testing.T) {
+	d, file, stderr, read := terminalStart(t, "held-start")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.StartAttached(ctx, dockerFixtureRef(), nil, io.Discard, stderr, nil)
+		done <- err
+	}()
+	wait.ForFile(t, file+".said")
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled start = %v, want the cancellation", err)
+	}
+	if got := read(); got != "" {
+		t.Fatalf("the client's words about a cancelled start reached the terminal: %q", got)
+	}
+}
+
+// Once the workload runs, the client's stderr is the workload's: it streams while the workload goes
+// on, and a later cancel does not take back what it already said.
+func TestAttachedStartStreamsStderrOnceTheWorkloadRuns(t *testing.T) {
+	d, _, stderr, read := terminalStart(t, "hold-noisy")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.StartAttached(ctx, dockerFixtureRef(), nil, io.Discard, stderr, nil)
+		done <- err
+	}()
+	wait.For(t, "the workload's stderr reaching the terminal while it runs", func() bool { return read() == "workload note\n" })
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled run = %v, want the cancellation", err)
+	}
+	if got := read(); got != "workload note\n" {
+		t.Fatalf("stderr after the cancel = %q, want the workload's note once", got)
+	}
+}
+
+// What the startup writer holds is shown or dropped once, then it passes everything straight
+// through; past its bound it stops holding, since a client that talks that much is not failing.
+func TestStartupStderrHoldsThenShowsOrDropsAndStopsHoldingPastItsBound(t *testing.T) {
+	var out bytes.Buffer
+	s := &startupStderr{to: &out}
+	_, _ = s.Write([]byte("one\n"))
+	if out.Len() != 0 {
+		t.Fatalf("held words reached the terminal early: %q", out.String())
+	}
+	s.release(false)
+	s.release(true) // the first release decides
+	if out.Len() != 0 {
+		t.Fatalf("dropped words reached the terminal: %q", out.String())
+	}
+	_, _ = s.Write([]byte("two\n"))
+	if out.String() != "two\n" {
+		t.Fatalf("a write after release = %q, want it passed straight through", out.String())
+	}
+	var nilWriter *startupStderr
+	nilWriter.release(true) // a start with no held stderr releases nothing
+
+	out.Reset()
+	s = &startupStderr{to: &out}
+	early, big := "early\n", strings.Repeat("x", maxHeldStartupStderr)
+	_, _ = s.Write([]byte(early))
+	_, _ = s.Write([]byte(big))
+	if out.String() != early+big {
+		t.Fatalf("past the bound the writer showed %d bytes, want everything held (%d)", out.Len(), len(early+big))
+	}
+	_, _ = s.Write([]byte("late\n"))
+	if !strings.HasSuffix(out.String(), big+"late\n") {
+		t.Fatal("a write after the bound was held again")
 	}
 }
 

@@ -521,6 +521,9 @@ report on stderr under `Networking stats:`. First, it says why the box stopped, 
 `The Coop box has stopped: main process exited with status 0.` When Ctrl-C reached `coop`, the
 reason is `interrupted by Ctrl-C`.
 
+If you press Ctrl-C before the box starts, co:op removes what it set up for the run, prints
+`Stopped before the box started.` and exits `130`. There is no network report, because nothing ran.
+
 What the report shows depends on what co:op could record:
 
 - For TLS traffic, the gateway records each connection's requested name, resolved address and

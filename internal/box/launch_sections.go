@@ -16,6 +16,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -534,6 +535,49 @@ func (s *launchSections) failed(err error) error {
 	return ui.Reported(err)
 }
 
+// ended settles a launch that returned result, once every cleanup has run: what the person is told,
+// and the status coop exits with.
+//
+// A launch a person stopped before its main process ran is not a failure to explain. Cleanup removed
+// what it made, so one line says the box never started, and the status is the shell's for a command
+// a signal ended (130 for Ctrl-C). Whatever the stop broke on the way, a cancelled Docker call or
+// Docker's own complaint, goes unsaid. When cleanup itself could not finish, the person needs the
+// whole failure, so nothing is hidden and the status stays the launch's own.
+func (s *launchSections) ended(started bool, interrupt *hostInterrupt, teardownErr error, exitCode int, result error) (int, error) {
+	stopStatus := 0
+	if teardownErr == nil {
+		stopStatus = stoppedStatus(interrupt, result)
+	}
+	switch {
+	case !started && result != nil && stopStatus != 0:
+		if s.interactive {
+			ui.Note("\nStopped before the box started.")
+			result = ui.Reported(result)
+		}
+	case !started:
+		result = s.failed(result)
+	case teardownErr == nil:
+		result = s.explained(result, interrupt)
+	}
+	if result != nil && stopStatus != 0 && (!started || errors.Is(result, context.Canceled)) {
+		exitCode = stopStatus
+	}
+	return exitCode, result
+}
+
+// stoppedStatus is the exit status of a launch a person stopped, or 0 when nobody did. The stop
+// reached coop as a host signal, or reached only the box: runtime.ErrDockerStartInterrupted is a
+// Ctrl-C that Docker's client, which held the terminal, passed to the box's own first process.
+func stoppedStatus(interrupt *hostInterrupt, err error) int {
+	if status := interrupt.exitCode(); status != 0 {
+		return status
+	}
+	if errors.Is(err, runtime.ErrDockerStartInterrupted) {
+		return 128 + int(syscall.SIGINT)
+	}
+	return 0
+}
+
 // explained marks a cancellation the stop line has already named — "interrupted by Ctrl-C" —
 // as reported, so the dispatcher does not add a bare "✗ interrupted" beneath the run it just
 // printed. The error itself is untouched: the exit status and errors.Is still see a cancellation.
@@ -609,6 +653,20 @@ func (h *hostInterrupt) reason() string {
 		return "stopped by SIGTERM"
 	}
 	return "stopped by signal " + h.sig.String()
+}
+
+// exitCode is the status a shell gives a command the signal ended, 128 plus its number: 130 for
+// Ctrl-C. A nil recorder, or one no signal reached, has none: 0.
+func (h *hostInterrupt) exitCode() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if sig, ok := h.sig.(syscall.Signal); ok {
+		return 128 + int(sig)
+	}
+	return 0
 }
 
 // services narrates the project's sibling services: the section, each service Compose actually

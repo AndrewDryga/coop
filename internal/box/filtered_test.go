@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type filteredDaemonFixture struct {
@@ -39,6 +40,7 @@ type filteredDaemonFixture struct {
 	sequence                               networkview.Count
 	ambiguous, refuseRemoval, corruptRole  string
 	brokenProbe, holdAgent, malformedFinal bool
+	ctrlCAtStart                           bool // the agent's start is recorded as ended by Ctrl-C, not as a refusal
 	resolverStatus                         *string
 	corruptMount                           string
 	earlyGuardEnd, failStartupPersistence  bool
@@ -501,7 +503,22 @@ func (d *filteredDaemonFixture) StartContainer(_ context.Context, ref runtime.Do
 	return nil
 }
 func (d *filteredDaemonFixture) StartAttached(ctx context.Context, ref runtime.DockerRef, _ io.Reader, stdout, _ io.Writer, started func() error) (int, error) {
+	if d.ctrlCAtStart {
+		// Docker's client held the terminal raw, so the Ctrl-C reached the box's own first process.
+		d.arrive("start:agent")
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.log = append(d.log, "start:agent")
+		v := d.containers[ref.Name]
+		v.State = runtime.DockerContainerState{Status: "created", ExitCode: 130}
+		d.containers[ref.Name] = v
+		return -1, runtime.ErrDockerStartInterrupted
+	}
 	if err := d.StartContainer(ctx, ref); err != nil {
+		return -1, err
+	}
+	// A caller cancelled before coop saw the daemon start the workload never learns it started.
+	if err := ctx.Err(); err != nil {
 		return -1, err
 	}
 	if d.failStartupPersistence {
@@ -870,6 +887,69 @@ func TestFilteredLaunchCancelledMidPairDrainsBoth(t *testing.T) {
 			defer d.mu.Unlock()
 			if len(d.containers) != 0 || len(d.volumes) != 0 {
 				t.Fatalf("cancellation leaked %v and %v", slices.Collect(maps.Keys(d.containers)), slices.Collect(maps.Keys(d.volumes)))
+			}
+		})
+	}
+}
+
+// A person who stops the start, at any step of it, ends it where it stands: the launch ends before any
+// main process, cleanup removes every container and volume it made, and the receipt says cancelled.
+// The person is told once that the box never started, with none of what the stopped calls said, and
+// coop exits 130. A Ctrl-C typed while Docker's client holds the terminal never reaches coop as a
+// signal; the daemon's record of it, a start that nothing survived, ends the same way.
+func TestStoppingTheStartAtAnyStepCleansUpAndExits130(t *testing.T) {
+	type stop struct {
+		name, op  string
+		interrupt *hostInterrupt // the signal coop heard; nil for a Ctrl-C only the box heard
+		want      error
+	}
+	var stops []stop
+	for _, op := range []string{"create:ipc", "create:controller", "start:controller", "create:guard", "start:guard", "create:agent", "start:agent"} {
+		stops = append(stops, stop{"Ctrl-C at " + op, op, &hostInterrupt{sig: os.Interrupt}, context.Canceled})
+	}
+	stops = append(stops, stop{"Ctrl-C held by Docker's client", "", nil, runtime.ErrDockerStartInterrupted})
+	for _, test := range stops {
+		t.Run(test.name, func(t *testing.T) {
+			f, d := filteredFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var once sync.Once
+			if test.interrupt == nil {
+				d.ctrlCAtStart = true
+			} else {
+				d.beforeCall = func(op string) {
+					if op == test.op {
+						once.Do(cancel) // the signal lands while this step is in flight
+					}
+				}
+			}
+			code, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard)
+			if !errors.Is(err, test.want) || f.started() {
+				t.Fatalf("launch = (%d, %v) with the main process started=%v, want %v and no main process", code, err, f.started(), test.want)
+			}
+			if gone, cleanupErr := f.cleanup(f.workloadOutcome(code, err, ctx.Err() != nil)); cleanupErr != nil || !gone {
+				t.Fatal("cleanup after the stop", gone, cleanupErr)
+			}
+			d.mu.Lock()
+			left := slices.Concat(slices.Collect(maps.Keys(d.containers)), slices.Collect(maps.Keys(d.volumes)))
+			d.mu.Unlock()
+			if len(left) != 0 {
+				t.Fatalf("the stop left %v behind", left)
+			}
+			record, recordErr := f.store.Execution(f.record.ID)
+			if recordErr != nil || record.Receipt == nil || record.Receipt.Workload != "cancelled" || record.Receipt.Cleanup != "complete" {
+				t.Fatalf("the receipt = %+v, %v; want a cancelled run with its cleanup complete", record.Receipt, recordErr)
+			}
+			var status int
+			var shown error
+			output := captureStderr(t, func() {
+				status, shown = newLaunchSections(RunSpec{Cmd: []string{"sleep"}}).ended(f.started(), test.interrupt, nil, code, err)
+			})
+			if want := "\nStopped before the box started.\n"; output != want {
+				t.Fatalf("the person was told %q, want exactly %q", output, want)
+			}
+			if status != 130 || !errors.Is(shown, ui.ErrReported) || !errors.Is(shown, err) {
+				t.Fatalf("exit status %d, error %v; want 130 and the stop marked reported", status, shown)
 			}
 		})
 	}

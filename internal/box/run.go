@@ -967,12 +967,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// removal that backs it is confirmed. Empty while the box runs, and for one that never started.
 	stopped := ""
 	defer func() {
-		switch {
-		case !started:
-			result = sections.failed(result)
-		case teardownErr == nil:
-			result = sections.explained(result, interrupt)
-		}
+		exitCode, result = sections.ended(started, interrupt, teardownErr, exitCode, result)
 	}()
 	if spec.CapturedEgress != nil {
 		// COOP_RUN_ARGS and this run's own extra arguments are reduced to bind

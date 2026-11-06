@@ -398,6 +398,70 @@ func TestExplainedMarksOnlyANamedInterruption(t *testing.T) {
 	}
 }
 
+// A launch a person stopped before its main process ran is one line and the shell's status for a
+// signal, whatever the stop broke on the way. A failure nobody caused, one that cleanup could not
+// undo and a batch run's errors keep their message and the launch's own status.
+func TestEndedSaysOnlyThatAStoppedLaunchNeverStarted(t *testing.T) {
+	ctrlC, term := &hostInterrupt{sig: os.Interrupt}, &hostInterrupt{sig: syscall.SIGTERM}
+	raw := errors.New("Docker file copy requires one bounded regular file") // what a call the stop killed says
+	cleanup := errors.New("filesystem custody retained at /state/coop-fs-1")
+	for _, test := range []struct {
+		name         string
+		spec         RunSpec
+		started      bool
+		interrupt    *hostInterrupt
+		teardownErr  error
+		result       error
+		wantOutput   string // exact; contains when it starts with "~"
+		wantStatus   int
+		wantReported bool
+	}{
+		{"Ctrl-C before the box started", RunSpec{}, false, ctrlC, nil, raw, "\nStopped before the box started.\n", 130, true},
+		{"SIGTERM before the box started", RunSpec{}, false, term, nil, raw, "\nStopped before the box started.\n", 143, true},
+		{"a Ctrl-C only the box heard", RunSpec{}, false, nil, nil, fmt.Errorf("%w: %w", runtime.ErrDockerStartInterrupted, raw), "\nStopped before the box started.\n", 130, true},
+		{"cleanup could not finish", RunSpec{}, false, ctrlC, cleanup, errors.Join(raw, cleanup), "~✗ Could not start sleep", -1, true},
+		{"a failure nobody caused", RunSpec{}, false, nil, nil, raw, "~✗ Could not start sleep", -1, true},
+		{"Ctrl-C after the box started", RunSpec{}, true, ctrlC, nil, interruptedRun{}, "", 130, true},
+		{"a failure after the box started", RunSpec{}, true, ctrlC, nil, raw, "", -1, false},
+		{"a batch run", RunSpec{Batch: true}, false, ctrlC, nil, raw, "", 130, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec := test.spec
+			spec.Cmd = []string{"sleep"}
+			var status int
+			var got error
+			output := captureStderr(t, func() {
+				s := newLaunchSections(spec)
+				s.starting()
+				status, got = s.ended(test.started, test.interrupt, test.teardownErr, -1, test.result)
+			})
+			output = strings.TrimPrefix(output, "Starting sleep\n")
+			if want, contains := strings.CutPrefix(test.wantOutput, "~"); contains && !strings.Contains(output, want) || !contains && output != want {
+				t.Errorf("printed %q, want %q", output, test.wantOutput)
+			}
+			if status != test.wantStatus || errors.Is(got, ui.ErrReported) != test.wantReported {
+				t.Errorf("status %d, reported %v; want %d, %v", status, errors.Is(got, ui.ErrReported), test.wantStatus, test.wantReported)
+			}
+			if !errors.Is(got, test.result) && got != test.result {
+				t.Errorf("the error changed to %v", got)
+			}
+		})
+	}
+}
+
+// The status of a signal's death is 128 plus its number; a recorder no signal reached has none.
+func TestHostInterruptExitCodeIsTheShellsForASignal(t *testing.T) {
+	var none *hostInterrupt
+	for _, test := range []struct {
+		recorder *hostInterrupt
+		want     int
+	}{{&hostInterrupt{sig: os.Interrupt}, 130}, {&hostInterrupt{sig: syscall.SIGTERM}, 143}, {&hostInterrupt{}, 0}, {none, 0}} {
+		if got := test.recorder.exitCode(); got != test.want {
+			t.Errorf("exitCode() = %d, want %d", got, test.want)
+		}
+	}
+}
+
 func TestLaunchStoppingImmediatelyPrecedesCleanup(t *testing.T) {
 	got := captureStderr(t, func() {
 		s := newLaunchSections(RunSpec{Agent: "claude"})

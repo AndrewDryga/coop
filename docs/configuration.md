@@ -256,7 +256,7 @@ Commands use these exit codes so CI and scripts can check the result without par
 | `2` | A usage error: an unknown command or flag, or bad arguments. |
 | `3` | `coop loop` stopped with a task blocked on a human decision. `coop net check` found that the rules block the connection, or that new runs need approval first. `coop sessions check` found data this build would convert. `coop sessions quiescence` found queued or running work. |
 | `4` | `coop sessions check` only: this build can't use the session data. |
-| `130` | `coop loop` only: Ctrl-C interrupted it before the final verdict. |
+| `130` | Ctrl-C stopped the command: `coop loop` before its final verdict, or a launch such as `coop run` before its box started or while its input was redirected. |
 
 If final verification is enabled and fails, `coop loop` keeps the completed work and exits with
 `1`, or `3` if the only work left is blocked. An intentional `--max-tasks N` pause exits
