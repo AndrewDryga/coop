@@ -107,12 +107,18 @@ func (line NativeBrokerRequestLine) matchesPath(value string) bool {
 	return false
 }
 
+// nativeQueryBytes are the bytes a URL query may carry (RFC 3986, section 3.4).
+const nativeQueryBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/?%"
+
 func (line NativeBrokerRequestLine) matchesQuery(raw string) bool {
 	if len(line.Queries) == 0 {
 		return raw == line.Query
 	}
+	// The query goes upstream as sent, so it must hold only query bytes: ParseQuery read
+	// "pageToken=x#&scope=GLOBAL&limit=200" as pageToken "x#", and a provider that stops at the
+	// '#' saw pageToken=x with its own default scope and limit.
 	values, err := url.ParseQuery(raw)
-	if err != nil || len(raw) > 8192 {
+	if err != nil || len(raw) > 8192 || strings.Trim(raw, nativeQueryBytes) != "" {
 		return false
 	}
 	for _, rule := range line.Queries {

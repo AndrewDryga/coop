@@ -59,6 +59,12 @@
   without a word. It still goes through, with one line naming the tool, the files and its error,
   such as "pre-commit: rustfmt failed on src/main.rs, so formatting was not checked: error: this
   file contains an unclosed delimiter". A formatting diff still stops the commit.
+
+- **A sign-in request's query reaches the provider as Coop checked it.** In filtered mode, a `#`
+  in a Codex plugin-page or Grok session-search query passed Coop's check, but a provider stops
+  reading at the `#`, so it could apply its own default scope or limit. Coop now refuses a query
+  with a `#` or any other byte a URL query may not carry. The clients' encoded queries still pass.
+
 - **A project can be approved again after its approval marker is written over.** Writing
   `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
   Coop's private copy through the hard link. Every run was then refused, and `coop approve` and

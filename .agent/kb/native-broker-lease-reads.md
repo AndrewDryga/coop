@@ -46,6 +46,11 @@ report tags a destination whose every refusal is `native_account_unavailable`
 needs both). The loop prints it last in the attempt block as a slow sign-in read, with no lookup,
 and leaves it out of "could not reach", the explain pointer and the closing tally.
 
+A line with query rules forwards the raw query it checked, so it admits only RFC 3986 query bytes
+(`nativeQueryBytes`). Go's server never splits a fragment off a request target, so `url.ParseQuery`
+read `pageToken=x#&scope=GLOBAL&limit=200` as pageToken `x#`, while a provider that stops at the
+`#` read only `pageToken=x` and applied its own scope and limit.
+
 The host publisher (`nativeRun.serve`) writes a lease every 5 s, at most a minute and never past
 the access's own expiry. It renews the access planning read once under 10 minutes of it are left
 (`nativeRenewalLead`, well under Gemini's hour, the shortest access a provider issues), and each
@@ -85,6 +90,10 @@ mutex; a blocked log sink cannot delay revocation. Credentials, accounts, raw do
 arbitrary I/O/parser errors are never logged. Document callers still receive the generic error.
 
 ## Changelog
+- 2026-11-06 — a line with query rules admits only query bytes, so a `#` can no longer hide the
+  checked scope and limit from the provider (task
+  2026-11-06-refuse-broker-requests-whose-query-the-exact-que). Verified with
+  `TestNativeBrokerRefusesAQueryTheProviderWouldReadDifferently` and three mutation runs.
 - 2026-11-06 — every Codex and Grok sign-in run ended with one `native_broker_request_refused`
   nobody could place (task 2026-11-06-find-and-fix-the-provider-request-codex-and-grok). Refusals
   now name their check and the request class. Verified with

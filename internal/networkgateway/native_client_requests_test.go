@@ -144,6 +144,70 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 	}
 }
 
+// The broker forwards a query as it was sent, so the provider must read the query the broker
+// checked. "pageToken=x#&scope=GLOBAL&limit=200" passed as pageToken "x#", and a provider that
+// stops at the '#' read pageToken=x with its own default scope and limit. Every byte a URL query
+// may not carry is refused the same way; the same values percent-encoded pass, forwarded as sent.
+func TestNativeBrokerRefusesAQueryTheProviderWouldReadDifferently(t *testing.T) {
+	outside := []string{"#", " ", `"`, "<", ">", "[", `\`, "]", "^", "`", "{", "|", "}", "é"}
+	for _, tc := range []struct {
+		name, provider, selection, host, account, path string
+		refused                                        func(string) string // the query with one more byte in a value
+		admitted                                       []string
+	}{
+		{name: "codex plugin page", provider: "codex", selection: "chatgpt", host: "chatgpt.com", account: "selected-id", path: "/backend-api/ps/plugins/list",
+			refused:  func(b string) string { return "pageToken=x" + b + "&scope=GLOBAL&limit=200" },
+			admitted: []string{"pageToken=x%23&scope=GLOBAL&limit=200", "pageToken=AZaz09-._~!$'()*+,=:@/?%25&scope=GLOBAL&limit=200"}},
+		{name: "grok session search", provider: "grok", selection: "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828", host: "cli-chat-proxy.grok.com",
+			path:     "/v1/sessions/search",
+			refused:  func(b string) string { return "query=x" + b + "&limit=100" },
+			admitted: []string{"query=fix+%23123+bug&limit=100", "limit=100&query=AZaz09-._~!$'()*+,=:@/?%25"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			forwarded := make(chan string, len(tc.admitted)+len(outside))
+			f := newNativeTransportFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				forwarded <- r.URL.RawQuery
+				_, _ = io.WriteString(w, "provider")
+			}), nativeAdapterRoutes(t, tc.provider, tc.selection, tc.host, tc.account))
+			events := NewGuardEvents(nil)
+			f.broker.events = events
+			send := func(query string) int {
+				request := f.request(t, tc.path)
+				request.Header.Del("ChatGPT-Account-ID")
+				request.URL.RawQuery = query // http.NewRequest would read a '#' as a fragment and never send it
+				response, _ := nativeResponse(t, f.client, request)
+				return response.StatusCode
+			}
+			for _, query := range tc.admitted {
+				if status := send(query); status != http.StatusOK {
+					t.Fatalf("%s was not admitted: %d", query, status)
+				}
+				if got := <-forwarded; got != query {
+					t.Errorf("forwarded %q, want %q as sent", got, query)
+				}
+			}
+			before := f.forwarded.Load()
+			for _, b := range outside {
+				if status := send(tc.refused(b)); status != http.StatusForbidden {
+					t.Errorf("%q was admitted: %d", tc.refused(b), status)
+				}
+			}
+			if f.forwarded.Load() != before {
+				t.Fatal("a refused query reached the provider")
+			}
+			recorded, _ := events.Drain(MaxGuardEvents)
+			for _, event := range recorded {
+				if event.Reason != "native_broker_request_refused" {
+					t.Errorf("refusal recorded as %+v", event)
+				}
+			}
+			if len(recorded) != len(outside) {
+				t.Errorf("recorded %d refusals, want %d", len(recorded), len(outside))
+			}
+		})
+	}
+}
+
 // Each check that refuses a sign-in request names itself in the record, so a refusal says which
 // rule it broke: the route, the account selector, or the host.
 func TestNativeBrokerRecordsWhichCheckRefused(t *testing.T) {
