@@ -410,6 +410,15 @@ func candidateFromManifest(repo string, manifest forkCandidateManifest) (ForkCan
 	return record.Candidate, nil
 }
 
+// Landed is a candidate history whose reviewed work the parent took.
+func (s ForkCandidateRoundStatus) Landed() bool { return s.Phase == forkCandidateLanded }
+
+// Closed is a candidate history that ended, by landing or by a discard. AssignForkTask gives such a
+// generation no more tasks: a kept workspace is evidence, not a scheduler.
+func (s ForkCandidateRoundStatus) Closed() bool {
+	return s.Phase == forkCandidateLanded || s.Phase == forkCandidateDiscarded
+}
+
 func forkCandidateStateStatus(state forkCandidateState) ForkCandidateRoundStatus {
 	manifest := *state.manifest
 	status := ForkCandidateRoundStatus{Phase: manifest.Phase, TerminalID: manifest.TerminalID}

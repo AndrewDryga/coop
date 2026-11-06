@@ -180,6 +180,10 @@ delete the fork, then run the same command again for the next task:</p>
 coop fork merge api --yes                   # merges the reviewed work and deletes the fork
 coop fork api codex -d --stop-after-review  # a new fork takes the next task
 </code></pre></div>
+<p>A fork you keep after merging takes no new task: its files stay for you to look at, and a loop on it
+refuses and names how to go on, either <code>--fresh</code> to start it over or a new fork. A loop that finds no
+task to take, because the queue is empty or other agents hold what is left, says so in its log
+(<code>coop fork logs</code>) and beside the idle fork in <code>coop fork ls</code>.</p>
 </section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Isolated-write forks code example" tabindex="0"><code class="language-bash">coop fork research codex --isolated
 coop fork research                 # the host remembers isolation

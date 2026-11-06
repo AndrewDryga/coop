@@ -836,6 +836,11 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		// A loop reports its own state and keeps its own log, so a note that an earlier interactive
 		// start failed would only go stale. Like the note itself, its removal is best effort.
 		_ = forkctl.ClearForkStartError(ws)
+		// A fork whose work landed takes no task: say so here, in the terminal, not by a worker that ends
+		// at once after "Started" and a foreground loop that ends with next steps for work never done.
+		if err := refuseClosedFork(repo, forkIdentity, args); err != nil {
+			return 1, err
+		}
 		switch {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, fa.stopAfterReview, true)
@@ -1528,7 +1533,9 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			if _, _, err := tasks.PublishForkCandidate(repo, identity, head, tree); err != nil {
 				return 1, err
 			}
-			if !detached {
+			if detached {
+				printForkReady(name) // the worker's output is its log, which would stay empty
+			} else {
 				forkctl.ForkNextSteps(name)
 			}
 			return 0, nil
@@ -1594,10 +1601,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 				return 1, reviewErr
 			}
 			if !exists {
-				if !detached {
-					forkctl.ForkNextSteps(name)
-				}
-				return 0, nil
+				// No task for this fork and none to review: not an end to pass over in silence.
+				return forkNoWork(ws, identity, authorityQueues, detached)
 			}
 			if review.Required {
 				queueRels := make([]string, 0, len(review.Candidate.Assignments))
@@ -1647,11 +1652,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 				return 1, err
 			}
 			if published {
-				ui.Note("")
-				ui.OK("Fork %s is ready to merge", name)
-				ui.Note("")
-				ui.Note("  Review: coop fork review %s", name)
-				ui.Note("  Merge:  coop fork merge %s", name)
+				printForkReady(name)
 				return 0, nil // what comes next is above; the generic steps would only repeat it
 			}
 			if !detached {

@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-11-06
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
@@ -118,6 +118,20 @@ format) into `ProjectForkSnapshot.LoopError` (`loop_error` in `coop tasks watch 
 bounded `ui.SafeInline` line, and only while nothing runs the fork's loop. `coop tasks watch` takes a
 stopped fork task's state from it, else from the last `✗` line in the tail of the fork's log, and a
 known reason maps to its complete fix commands.
+
+A loop that ended with nothing to take (an empty queue, or tasks only other agents hold) is no
+failure, and leaves a sibling hint, `<workspace>/.coop/loop-end`, in the same `<generation>\n<reason>`
+shape (`NoteForkLoopEnd`, written by `forkNoWork` in `internal/cli/fork_loop_report.go`). `coop fork
+ls` shows it as `Last loop:` for an idle fork of that generation only. `ClearForkLoopError` clears both
+hints when a loop or an agent starts, but `NoteForkLoopExit`'s clean exit clears only the failure, or
+the worker would erase the note it wrote a moment before. The same worker prints the reason in its
+log, which was empty. A kept merged fork takes no loop at all: `refuseClosedFork` stops it up front.
+
+`coop fork ls`'s `Changes:` is `git diff --shortstat origin/HEAD` run in the fork, so it counts from
+the fork's `origin/HEAD`. A clone leaves that at the parent's tip of the day the fork was made, and a
+merge moves it (`forkspace.SetWorkspaceBase`): to the parent commit the fork was rebased onto, then to
+the landed commit once the parent has the work. Left alone, a kept fork counted the parent's own later
+commits and the merged work as its changes.
 
 ## Unsupported state never becomes an identity
 
@@ -257,6 +271,10 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-06 — a loop that takes no task leaves a `.coop/loop-end` hint beside `loop-error` and says
+  why in its own output; a merge moves the fork's `origin/HEAD` so `coop fork ls` counts changes
+  from the fork's real base; a loop on a kept merged fork is refused up front (task
+  2026-11-06-show-true-fork-changes-after-a-merge-and-say-why).
 - 2026-11-06 — a fork keeps its whole target across reopen, resume and a stopped loop's restart
   (`.coop/target`, written only by a launch that names a target); the stop's fallback Continue line is
   `coop fork <name> --loop -d` and a background loop's own Continue lines carry `-d`; the fork log is

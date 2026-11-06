@@ -79,6 +79,11 @@ coop fork merge api --yes                   # merges the reviewed work and delet
 coop fork api codex -d --stop-after-review  # a new fork takes the next task
 ```
 
+A fork you keep after merging takes no new task: its files stay for you to look at, and a loop on it
+refuses and names how to go on, either `--fresh` to start it over or a new fork. A loop that finds no
+task to take, because the queue is empty or other agents hold what is left, says so in its log
+(`coop fork logs`) and beside the idle fork in `coop fork ls`.
+
 ## Isolated-write forks
 
 ```bash

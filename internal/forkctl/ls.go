@@ -83,6 +83,9 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		if s.stateCell() == "failed" {
 			listing("    Loop failed: %s", ui.SafeInline(s.LoopError))
 		}
+		if s.stateCell() == "idle" && s.LoopEnd != "" {
+			listing("    Last loop: %s", ui.SafeInline(s.LoopEnd)) // the agent can write the note
+		}
 		if s.stateCell() == "launch-wait" {
 			listing("    %s", ui.SafeInline(s.launchWaitLine()))
 		}

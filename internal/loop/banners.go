@@ -156,17 +156,32 @@ func printStoppedBeforeFinalVerdict(cf tasks.TaskCounts) {
 // printNoActionableTasks is the honest empty result: nothing to work on. It is not a review
 // verdict, so it never carries a checkmark — and when the queue is parked on decisions it says so.
 func printNoActionableTasks(cf tasks.TaskCounts) {
+	ui.Note("%s", noActionableTasks(cf))
+	if cf.Blocked > 0 {
+		ui.Note("")
+		ui.Note("  %s coop tasks decisions -i", decisionsLabel(cf.Blocked))
+	}
+}
+
+// noActionableTasks is the sentence that says nothing is ready: the same for coop loop, and for a fork
+// loop that finds no task to take.
+func noActionableTasks(cf tasks.TaskCounts) string {
 	if cf.Blocked == 0 {
-		ui.Note("No tasks ready to work on.")
-		return
+		return "No tasks ready to work on."
 	}
 	verb := "need"
 	if cf.Blocked == 1 {
 		verb = "needs"
 	}
-	ui.Note("No tasks ready to work on. %s %s your decision.", ui.Count(cf.Blocked, "task"), verb)
-	ui.Note("")
-	ui.Note("  %s coop tasks decisions -i", decisionsLabel(cf.Blocked))
+	return fmt.Sprintf("No tasks ready to work on. %s %s your decision.", ui.Count(cf.Blocked, "task"), verb)
+}
+
+// NoActionableTasks closes a run with nothing to work on the way coop loop does: it prints the report
+// and returns the sentence at its head, for a note that outlives the terminal, and the exit status
+// coop loop gives such a run (3 when only decisions are left, else 0).
+func NoActionableTasks(cf tasks.TaskCounts) (string, int) {
+	printNoActionableTasks(cf)
+	return noActionableTasks(cf), loopExitCode(cf)
 }
 
 // printTaskLimitReached closes an intentional --max-tasks pause. It is a success, not a

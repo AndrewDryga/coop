@@ -42,10 +42,26 @@ func GitOut(dir string, args ...string) string {
 	return out
 }
 
-// WorkspaceChanges is a fork workspace's diff against its parent branch, as coop fork ls and
-// coop tasks watch both show it: lines added and removed. Zero and zero when git cannot say.
+// WorkspaceChanges is what a fork workspace has changed since its base, as coop fork ls and coop
+// tasks watch both show it: lines added and removed, counting uncommitted edits to tracked files.
+// The base is the clone's origin/HEAD, the parent commit the fork was cut from, which a merge moves
+// (SetWorkspaceBase). Zero and zero when git cannot say.
 func WorkspaceChanges(ws string) (ins, del int) {
 	return ParseShortstat(GitOut(ws, "diff", "--shortstat", "origin/HEAD"))
+}
+
+// SetWorkspaceBase moves the commit WorkspaceChanges counts from. A clone leaves origin/HEAD at the
+// parent's tip of the day the fork was made, and nothing else moves it: once a merge rebased the fork
+// onto a newer parent and the parent took its work, the count held every parent commit since and all
+// the merged work, as changes the fork never made. A merge calls it with the parent commit the fork
+// now stands on after its rebase, and with the landed commit once the parent has the fork's work.
+// The move is local: it asks the parent for nothing, and writes nothing there.
+func SetWorkspaceBase(ws, commit string) error {
+	if !ValidObjectID(commit) {
+		return errors.New("invalid fork base commit")
+	}
+	// update-ref follows the symbolic origin/HEAD to the remote branch ref it names.
+	return GitRefCommand(context.Background(), ws, "update-ref", "refs/remotes/origin/HEAD", commit).Run()
 }
 
 // ParseShortstat pulls insertion/deletion counts out of a `git diff --shortstat`

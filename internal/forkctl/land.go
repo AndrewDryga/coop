@@ -318,6 +318,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if forkspace.GitRun(repo, "merge-base", "--is-ancestor", intent.RebasedHead, "HEAD") != nil {
 			return intent, false, errors.New("land journal says landed but parent does not contain its exact commit")
 		}
+		_ = forkspace.SetWorkspaceBase(ws, intent.RebasedHead) // the parent has the fork's work: see mergeOneMode
 		for _, assignment := range intent.Candidate.Assignments {
 			if err := tasks.FinalizeForkCandidateTask(repo, intent.Candidate, assignment); err != nil {
 				return intent, true, fmt.Errorf("finalize canonical task %s after land: %w", assignment.Index.Task.Ref.ID, err)

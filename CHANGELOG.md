@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A fork kept after a merge shows no changes, and a fork loop with nothing to do says so.** `coop
+  fork ls` counted a fork's changes from the parent commit it was cut from, so a kept fork showed the
+  parent's own later commits and the work already merged (`Changes: +10 −0` beside a review of `0
+  commits`). A merge now moves that base to the parent commit the fork stands on, and to the landed
+  commit once the parent has its work. A background loop that finds no task to take no longer ends in
+  silence after `✓ Started`: its log says `No tasks ready to work on.` (or that other agents hold the
+  rest), `coop fork ls` shows it beside the idle fork, and a fork already ready to merge says so. A
+  loop on a kept merged fork, which takes no new task, refuses up front and names `--fresh` or a new
+  fork.
+
 - **Fork review and merge messages name the real cause and a command that works.** `coop fork review
   --gate` says `Into: main` instead of `HEAD`, lists the fork's own commits instead of ids of a
   temporary copy that exist nowhere afterwards, and names the files checks that exited 0 still changed;

@@ -94,9 +94,31 @@ func NoteForkStart(ws string, firstStart, agentRan bool, err error) {
 
 func forkLoopErrorFile(ws string) string { return filepath.Join(ws, ".coop", "loop-error") }
 
+// forkLoopEndFile notes why the fork's last loop ended with nothing to take, so coop fork ls can say
+// why a fork that started a loop is idle. Like loop-error it is a bounded, agent-writable display
+// hint, never authority.
+func forkLoopEndFile(ws string) string { return filepath.Join(ws, ".coop", "loop-end") }
+
 // ClearForkLoopError starts a new result once this process owns the worker/controller, or an
-// interactive agent has run. Clear before a stop can hold the lock and prevent exit bookkeeping.
-func ClearForkLoopError(ws string) error { return removeForkMeta(ws, forkLoopErrorFile(ws)) }
+// interactive agent has run: the failure and the note of how the loop before ended. Clear before a
+// stop can hold the lock and prevent exit bookkeeping.
+func ClearForkLoopError(ws string) error {
+	return errors.Join(removeForkMeta(ws, forkLoopErrorFile(ws)), removeForkMeta(ws, forkLoopEndFile(ws)))
+}
+
+// NoteForkLoopEnd records why a loop that took no task ended, for coop fork ls. The loop said the same
+// in its own output, which is what its starter reads, so a note that cannot be written is left out.
+func NoteForkLoopEnd(ws string, identity forkspace.Identity, reason string) {
+	_ = saveForkMeta(ws, forkLoopEndFile(ws), string(identity.Generation)+"\n"+startFailure(errors.New(reason)))
+}
+
+func readForkLoopEnd(ws string, generation forkspace.Generation) string {
+	stored, reason, ok := strings.Cut(readForkMeta(ws, forkLoopEndFile(ws)), "\n")
+	if !ok || !forkspace.ValidGeneration(generation) || stored != string(generation) {
+		return ""
+	}
+	return startFailure(errors.New(reason))
+}
 
 // NoteForkLoopExit preserves a terminal failure after liveness records disappear. Like start-error,
 // this is only a bounded, agent-writable display hint, never lifecycle or approval authority.
@@ -119,9 +141,10 @@ func NoteForkLoopExit(repo string, identity forkspace.Identity, code int, err er
 	}
 	ws := forkspace.Workspace(repo, identity.Name)
 	// Nil-error outcomes include work remaining (1) and a human decision (3). A review can also
-	// return a reported interruption error; neither is a failed loop.
+	// return a reported interruption error; neither is a failed loop. A loop that ended with nothing to
+	// take keeps its note of that (NoteForkLoopEnd): it is not a failure to clear.
 	if err == nil || code == 130 || code == 143 {
-		_ = ClearForkLoopError(ws)
+		_ = removeForkMeta(ws, forkLoopErrorFile(ws))
 		return
 	}
 	_ = saveForkMeta(ws, forkLoopErrorFile(ws), string(identity.Generation)+"\n"+startFailure(err))

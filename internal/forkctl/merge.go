@@ -814,6 +814,8 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	if err := c.FastForwardParent(repo, ws, name); err != nil {
 		return mergeOutcome{}, err
 	}
+	// The parent has the fork's work, so a fork kept after the merge has changed nothing yet.
+	_ = forkspace.SetWorkspaceBase(ws, landedHead)
 	// A fork with no task candidate lands Git only. Canonical task completion is never inferred from
 	// a trailer; generation candidates above carry exact task and projection authority.
 	return finishLand(true, landedHead, nil)
@@ -896,6 +898,10 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 		_ = forkspace.GitRun(ws, "rebase", "--abort")
 		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
 	}
+	// The fork stands on head now, so the parent's commits up to it are no changes of the fork's, even
+	// if the checks below fail and leave it rebased. Only a display (coop fork ls) reads the base, so
+	// failing to move it never fails a merge.
+	_ = forkspace.SetWorkspaceBase(ws, head)
 	return nil
 }
 

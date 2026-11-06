@@ -34,6 +34,7 @@ type forkStatus struct {
 	Cost                                  float64 // total loop spend across the fork's runs, 0 if it never ran
 	StartError                            string  // why the fork's first start stopped before its agent ran (see NoteForkStart)
 	LoopError                             string  // the current generation's last terminal loop failure
+	LoopEnd                               string  // why the current generation's last loop took no task (NoteForkLoopEnd)
 	// LaunchWaiting is a box of the fork waiting for a service launch lock now; LaunchWait names what it
 	// waits for, in the words the wait itself prints (box.ServiceLaunchBusy).
 	LaunchWaiting bool
@@ -136,6 +137,7 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		Cost:                cost,
 		StartError:          ReadForkStartError(ws),
 		LoopError:           readForkLoopError(ws, identity.Generation),
+		LoopEnd:             readForkLoopEnd(ws, identity.Generation),
 	}
 }
 
