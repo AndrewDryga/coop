@@ -52,6 +52,10 @@ func TestTaskChannelLiveInARealBox(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		// And a log entry of the worker's own.
+		if err := os.WriteFile(filepath.Join(dir, "log.md"), []byte("# Log — "+id+"\n\n- Checked the one subtask.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	theirs, _, err := tasks.CurrentTask(queue, "theirs")
 	if err != nil {

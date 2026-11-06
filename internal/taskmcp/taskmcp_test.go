@@ -172,7 +172,7 @@ func writeTask(t *testing.T, dir, id string) {
 		"task.md": "---\nid: " + id + "\ntitle: " + title + "\nlabels: []\nupdated: 2026-09-10T00:00:00Z\n---\n\n# " + title + "\n\n" +
 			"**Context:** some context\n\n**Acceptance criteria:** gate green\n\n**Approach:** boring\n\n## Subtasks\n- [x] first\n- [ ] second\n",
 		"state.md": "# State — " + title + "\n\n**Status:** in progress\n**Done so far:** first\n**Next action:** second\n**Traps:** —\n",
-		"log.md":   "# Log — " + title + "\n",
+		"log.md":   "# Log — " + title + "\n\n## 2026-09-10 — first\n- Did the first subtask.\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -370,7 +370,7 @@ func TestStateLogAndSubtasksOnTheAssignedTask(t *testing.T) {
 	sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1", "status": "esc\x1b[31m", "done_so_far": "x", "next_action": "y", "traps": "z"})
 	sess.mustCall("tasks_append_log", map[string]any{"id": "t1", "entry": "## 2026-09-10 — did a thing\n- because"})
 	log, _ := os.ReadFile(filepath.Join(dir, "log.md"))
-	if want := "# Log — Title of t1\n\n## 2026-09-10 — did a thing\n- because\n"; string(log) != want {
+	if want := "# Log — Title of t1\n\n## 2026-09-10 — first\n- Did the first subtask.\n\n## 2026-09-10 — did a thing\n- because\n"; string(log) != want {
 		t.Fatalf("log.md = %q", log)
 	}
 	sess.mustRefuse("tasks_append_log", map[string]any{"id": "t1", "entry": "\x00"})

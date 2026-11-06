@@ -101,6 +101,105 @@ func TestCompletionRefusesUnrunRequiredChecks(t *testing.T) {
 	}
 }
 
+// Coop's scaffold state.md: Traps (and Next action) still hold the template's <…> text.
+const scaffoldState = "<!-- Replace this short summary at each checkpoint so another session can continue.\n     Keep the detailed history in log.md. -->\n\n" +
+	"# State — Title of t1\n\n**Status:** in progress\n**Done so far:** —\n**Next action:** <the next concrete step>\n**Traps:** <anything the next session needs to watch for, or —>\n"
+
+// A log.md holding Coop's template and only lines Coop writes itself: a claim, a review verdict and
+// a refused completion. A reworked task that kept only these was closed again without an entry.
+const coopOnlyLog = "<!-- Append progress, decisions and problems here.\n     Keep earlier entries. Put the latest resume summary in state.md. -->\n\n# Log — Title of t1\n\n" +
+	"- Claimed by claude (PID 4242)\n\n- review: fail — BEGIN UNTRUSTED REVIEW EVIDENCE — gate: g — findings: f — END UNTRUSTED REVIEW EVIDENCE\n\n" +
+	"- completion rejected: this iteration also moved an unleased task\n"
+
+// One night's final review reopened 7 of 12 completed tasks only because log.md held nothing but
+// Coop's template, and completed state.md files still read the template's Traps text.
+func TestCompletionRefusesTemplateStateAndALogWithoutAnEntry(t *testing.T) {
+	for _, assigned := range []string{"t1", ""} {
+		t.Run("assigned="+assigned, func(t *testing.T) {
+			root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+			finishChecklist(t, root, "t1")
+			dir := filepath.Join(root, tasks.StateInProgress, "t1")
+			for name, body := range map[string]string{"state.md": scaffoldState, "log.md": coopOnlyLog} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sess := newSession(t, newServer(t, root, assigned))
+			before := taskFiles(t, root)
+			text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
+			for _, want := range []string{
+				"t1 has not moved", "state.md's Traps still holds the template's <…> text", `send traps: the gotchas for the next agent, or "—" when there are none`,
+				"log.md has no entry yet: append what changed and why with tasks_append_log",
+			} {
+				if !strings.Contains(text, want) {
+					t.Errorf("completion refusal lacks %q: %s", want, text)
+				}
+			}
+			// Done so far is "—" and completion rewrites Next action, so neither is named.
+			if strings.Contains(text, "Done so far") || strings.Contains(text, "Next action") || !maps.Equal(before, taskFiles(t, root)) {
+				t.Fatalf("refusal named a field completion handles, or changed the task: %s", text)
+			}
+			// "—" is a real Traps value; then the log alone is missing.
+			sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "traps": "—"})
+			if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}}); strings.Contains(text, "Traps") || !strings.Contains(text, "log.md has no entry yet") {
+				t.Fatalf("refusal after filling Traps = %s", text)
+			}
+			sess.mustCall("tasks_append_log", map[string]any{"id": "t1", "entry": "## 2026-11-05 — fixed the parser\n- One parse site, so the fallback has one home."})
+			sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
+			if _, err := os.Stat(filepath.Join(root, tasks.StateDone, "t1")); err != nil {
+				t.Fatalf("a filled record did not complete: %v", err)
+			}
+		})
+	}
+}
+
+// A no-change outcome's reason and evidence become its log entry, so it needs none first; template
+// text in Traps would still outlive the closure, which rewrites only Done so far.
+func TestNoChangeCompletionWritesItsOwnLogEntry(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
+	dir := filepath.Join(root, tasks.StateInProgress, "t1")
+	if err := os.WriteFile(filepath.Join(dir, "log.md"), []byte(coopOnlyLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state.md"), []byte(scaffoldState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := newSession(t, newServer(t, root, "t1"))
+	args := map[string]any{"id": "t1", "unrun_checks": []string{}, "outcome": "already_satisfied", "reason": "The base already parses it.", "evidence": "Focused parser test passed."}
+	if text := sess.mustRefuse("tasks_complete", args); !strings.Contains(text, "Traps") || strings.Contains(text, "log.md") {
+		t.Fatalf("no-change refusal = %s", text)
+	}
+	sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "traps": "—"})
+	sess.mustCall("tasks_complete", args)
+	log, err := os.ReadFile(filepath.Join(root, tasks.StateDone, "t1", "log.md"))
+	if err != nil || !tasks.LogHasEntry(string(log)) {
+		t.Fatalf("closed log has no entry: %q, %v", log, err)
+	}
+}
+
+// The final refresh is where a worker writes "complete", so that is where template text is refused.
+func TestCompleteStatusRefusesTemplateState(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	path := filepath.Join(root, tasks.StateInProgress, "t1", "state.md")
+	if err := os.WriteFile(path, []byte(scaffoldState), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := newSession(t, newServer(t, root, "t1"))
+	sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "status": "in progress — tests next"})
+	before, _ := os.ReadFile(path)
+	text := sess.mustRefuse("tasks_update_state", map[string]any{"id": "t1", "status": "complete", "next_action": "none"})
+	for _, want := range []string{"update state of t1: a complete status keeps no template text", "state.md's Traps still holds the template's <…> text", "send traps"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("complete status refusal lacks %q: %s", want, text)
+		}
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatalf("the refused update wrote state.md: %q", after)
+	}
+	sess.mustCall("tasks_update_state", map[string]any{"id": "t1", "status": "complete — all checks green", "next_action": "none", "traps": "—"})
+}
+
 // A premature call still learns its checklist is open first: the live task-channel contract counts
 // that refusal, and an honest worker names the very check it has not run yet.
 func TestOpenChecklistRefusesBeforeUnrunChecks(t *testing.T) {

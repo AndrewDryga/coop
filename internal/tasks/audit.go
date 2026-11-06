@@ -3574,7 +3574,8 @@ func releaseGoneOwner(root, id string, expected TaskOwnerRecord) (bool, error) {
 	return true, removeTaskOwnerRecordFile(root, id)
 }
 
-// AppendTaskLogStrict appends one host note to a task's log.md as a bullet line.
+// AppendTaskLogStrict appends one host note to a task's log.md as a bullet line. A new note's opening
+// words belong in coopLogNotes, so a log holding only Coop's notes still reads as having no entry.
 func AppendTaskLogStrict(taskDir, note string) error {
 	return appendTaskLogChunk(taskDir, "\n- "+note+"\n")
 }

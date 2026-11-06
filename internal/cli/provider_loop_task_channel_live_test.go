@@ -185,6 +185,8 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeTaskFile(t, filepath.Join(s.root, tasks.StateInProgress, s.id, "task.md"), "# Task\n\n## Subtasks\n- [ ] required check\n")
+			// Completion needs a log entry of the worker's own; this contract is about the checklist.
+			writeTaskFile(t, filepath.Join(s.root, tasks.StateInProgress, s.id, "log.md"), "# Log — Task\n\n- Ran the required check.\n")
 			if err := tasks.WriteTaskState(filepath.Join(s.root, tasks.StateInProgress, s.id), "Task", tasks.TaskStateFields{
 				Status: "in progress", DoneSoFar: "not started", NextAction: "Run the check", Traps: "none",
 			}); err != nil {

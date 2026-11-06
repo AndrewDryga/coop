@@ -841,7 +841,8 @@ Usage: coop tasks lint [--tasks <path>]...
 
   Checks the task folders, frontmatter, required sections and decision state.
   It also names tasks that still hold the template's <…> text. The loop still
-  works such a task: its agent fills the text in first.
+  works such a task: its agent fills the text in first. A finished task is
+  named when its state.md keeps template text.
   Returns a nonzero exit status when it finds a problem.
 
 EXAMPLES

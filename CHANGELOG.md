@@ -28,6 +28,14 @@
   so setting work aside meant blocking it on an invented question first. A task in progress is
   refused with the command that releases it.
 
+- **A finished task keeps a real log and no template text.** One night's final review reopened 7 of
+  12 finished tasks only because their log.md held nothing but the empty template, and finished
+  tasks' state.md still read the template's "<anything the next session needs to watch for, or —>".
+  Each reopen cost another review round and a fresh worker. A loop worker now cannot finish a task
+  while its log.md has no entry of its own saying what changed and why (Coop's own notes, such as
+  claims and review results, do not count), or while state.md's Done so far or Traps still holds the
+  template text. `coop tasks lint` names finished tasks whose state.md still holds the template
+  text.
 - **A reopened task no longer bounces between two refusals.** When a review reopened a task whose
   commit already met the finding, workers tried to close it as "already satisfied" first and were
   refused. When the fix needed code, workers in two forks put it in a new commit, and then neither

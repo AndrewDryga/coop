@@ -41,6 +41,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 			id := "decision"
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [x] required acceptance checks passed\n")
 			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "state.md"), "# State — Decision\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "log.md"), "# Log — Decision\n\n- Verified the required acceptance checks.\n")
 			if scenario == "unfinished checklist" {
 				writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, id, "task.md"), "# Decision\n- [ ] required verification is still pending\n")
 			}
@@ -283,6 +284,7 @@ func TestLoopWarnsAboutBulkInACompletedTask(t *testing.T) {
 			dir := filepath.Join(repo, tasksRoot, stateTodo, id)
 			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Ship it\n- [x] required checks passed\n")
 			writeTaskFile(t, filepath.Join(dir, "state.md"), "# State — Ship it\n\n**Status:** in progress\n**Done so far:** verified\n**Next action:** complete\n**Traps:** none\n")
+			writeTaskFile(t, filepath.Join(dir, "log.md"), "# Log — Ship it\n\n- Shipped it after the required checks passed.\n")
 			artifact := filepath.Join(dir, "artifacts", tc.file)
 			writeTaskFile(t, artifact, tc.content)
 			if err := os.Chmod(artifact, tc.mode); err != nil {

@@ -62,7 +62,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_update_state",
-		description: "Patch state.md: send id and one or more fields to change. Omitted fields keep their saved values. Refresh before each commit and before pausing.",
+		description: "Patch state.md: send id and one or more fields to change. Omitted fields keep their saved values. Refresh before each commit and before pausing. A complete status is refused while Done so far or Traps still holds the template's <…> text.",
 		schema: withExample(withMinProperties(object(map[string]any{
 			"id":          idProp(),
 			"status":      textProp("Where the task stands, e.g. in progress — tests next.", false, blockLimit),
@@ -85,7 +85,7 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ after required verification passed. List every required check that did not run after your final edits in unrun_checks, or send [] when all of them ran; a nonempty list refuses completion, so run those checks, or block on the missing authority with tasks_block. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. A task the review reopened, whose existing commit already meets the finding, re-closes with a normal completion, without outcome. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused for a blocked task, which waits for a human's answer, and when another live process holds the task.",
+		description: "Move the task into 99_done/ after required verification passed. List every required check that did not run after your final edits in unrun_checks, or send [] when all of them ran; a nonempty list refuses completion, so run those checks, or block on the missing authority with tasks_block. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. A task the review reopened, whose existing commit already meets the finding, re-closes with a normal completion, without outcome. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused while state.md's Done so far or Traps still holds the template's <…> text, or while log.md has no entry saying what changed and why: Coop's own notes do not count, and a no-change outcome's reason and evidence become its entry. Refused for a blocked task, which waits for a human's answer, and when another live process holds the task.",
 		schema: object(map[string]any{
 			"id":       idProp(),
 			"outcome":  enumProp("Omit for normal implementation completion. No-change choices require reason and evidence.", "already_satisfied", "could_not_reproduce", "wont_fix"),
@@ -709,6 +709,9 @@ func (s *Server) updateState(_ context.Context, args json.RawMessage) *toolResul
 		if in.Traps.present {
 			fields.Traps = in.Traps.value
 		}
+		if gaps := stateTemplateGaps(fields); len(gaps) > 0 && statusSaysComplete(fields.Status) {
+			return errors.New("a complete status keeps no template text: " + strings.Join(gaps, "; "))
+		}
 		return tasks.WriteTaskState(loc.item.Dir, loc.item.Title, fields)
 	}); r != nil {
 		return r
@@ -822,6 +825,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if r := s.boxWriteRefusal(loc, "complete"); r != nil {
 			return r
 		}
+		if r := completionRecordRefusal(loc.item, false); r != nil {
+			return r
+		}
 		// Another task: the host's own trusted completion — its lease, receipt, and normalization —
 		// so the loop's completion audit sees a controller-owned move, not an unowned one. It judges
 		// the claim again under that lease, where no new claim can land.
@@ -841,6 +847,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		return refusal(err.Error())
 	}
 	if r := unrunChecksRefusal(loc.item.ID, in.UnrunChecks.values); r != nil {
+		return r
+	}
+	if r := completionRecordRefusal(loc.item, claim.NoChange()); r != nil {
 		return r
 	}
 	if check := s.authority.ValidateAssignedCompletion; check != nil {
@@ -1132,6 +1141,50 @@ func unrunChecksRefusal(id string, unrun []string) *toolResult {
 		return nil
 	}
 	return refusal(fmt.Sprintf("%s has not moved: required checks did not run after the final edits: %s. Run them and call tasks_complete again with unrun_checks [], or, if this run lacks the authority to run them, call tasks_block on that missing authority", id, strings.Join(unrun, "; ")))
+}
+
+// completionRecordRefusal keeps Coop's scaffold out of a completed task: one night's final review
+// reopened 7 of 12 tasks only because log.md held nothing but the template header, and completed
+// state.md files still read the template's <…> Traps text. A no-change outcome writes its reason and
+// evidence to log.md itself, so it needs no entry first. Completion repairs a malformed state.md, so
+// only a readable one is checked.
+func completionRecordRefusal(item tasks.Item, noChange bool) *toolResult {
+	var gaps []string
+	if fields, err := tasks.ReadTaskState(item.Dir); err == nil {
+		gaps = stateTemplateGaps(fields)
+	}
+	if !noChange {
+		hasEntry, err := tasks.TaskLogHasEntry(item.Dir)
+		if err != nil {
+			return refusal(fmt.Sprintf("complete %s: read log.md: %v", item.ID, err))
+		}
+		if !hasEntry {
+			gaps = append(gaps, "log.md has no entry yet: append what changed and why with tasks_append_log (Coop's own notes do not count)")
+		}
+	}
+	if len(gaps) == 0 {
+		return nil
+	}
+	return refusal(fmt.Sprintf("%s has not moved: %s. Then call tasks_complete again", item.ID, strings.Join(gaps, "; ")))
+}
+
+// stateTemplateGaps names each state.md field a completed task keeps that still holds template
+// text, with what tasks_update_state should send instead.
+func stateTemplateGaps(fields tasks.TaskStateFields) []string {
+	repairs := map[string]string{
+		"Done so far": "send done_so_far: what is finished and verified",
+		"Traps":       "send traps: the gotchas for the next agent, or \"—\" when there are none",
+	}
+	var gaps []string
+	for _, label := range tasks.StateTemplateFields(fields) {
+		gaps = append(gaps, fmt.Sprintf("state.md's %s still holds the template's <…> text (%s)", label, repairs[label]))
+	}
+	return gaps
+}
+
+// statusSaysComplete reads a status the way completion writes one: "complete", or "complete — …".
+func statusSaysComplete(status string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(status)), "complete")
 }
 
 // checkText refuses text a task file must never carry: empty, over its limit, invalid UTF-8, or

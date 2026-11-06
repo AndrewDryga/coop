@@ -3454,6 +3454,17 @@ func tasksFolderLint(root string) (int, error) {
 				add(t.ID, "not filled in yet: "+joinWithAnd(parts)+" (an agent that takes the task fills them in first)")
 			}
 		}
+		// A done task is the shipped record: it says what was done, not what Coop's scaffold asked
+		// for. A state.md without the four fields is skipped here rather than guessed at. An empty
+		// log.md is not named: completion refuses one now, and listing the archive's old ones would
+		// bury the findings someone can act on.
+		if t.State == StateDone {
+			if fields, err := ReadTaskState(t.Dir); err == nil {
+				if labels := StateTemplateFields(fields); len(labels) > 0 {
+					add(t.ID, "state.md still holds template text in "+joinWithAnd(labels)+" — write what the next reader needs, or — when there is nothing")
+				}
+			}
+		}
 	}
 	if len(findings) == 0 {
 		if len(items) == 0 {

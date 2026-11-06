@@ -212,6 +212,9 @@ func TestLoopWorkPromptNamesUnrunChecksAtCompletion(t *testing.T) {
 			"each required check that did not run after your final edits, or `[]` only when every one ran",
 			"A nonempty list is refused and the task does not move",
 			"run those checks, or block on the missing authority with tasks_block",
+			// A review reopened tasks only for an empty log.md or a template Traps line.
+			"Completion also needs your own log.md entry saying what changed and why (Coop's notes do not count)",
+			"real values, not the template's <…> text, in state.md's Done so far and Traps",
 		} {
 			if !strings.Contains(work, want) {
 				t.Errorf("audit=%v work prompt lacks %q", audit, want)

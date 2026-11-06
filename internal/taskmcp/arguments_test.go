@@ -66,6 +66,8 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 				"a nonempty list refuses completion", "block on the missing authority with tasks_block",
 				// Reopened workers sent outcome already_satisfied first and were refused for the binding.
 				"A task the review reopened, whose existing commit already meets the finding, re-closes with a normal completion, without outcome.",
+				"Refused while state.md's Done so far or Traps still holds the template's <…> text", "or while log.md has no entry saying what changed and why",
+				"Coop's own notes do not count", "a no-change outcome's reason and evidence become its entry",
 			} {
 				if !strings.Contains(descriptor["description"].(string), want) {
 					t.Fatalf("completion descriptor lacks %q", want)
@@ -83,6 +85,9 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 			}
 			if schema["minProperties"] != float64(2) || !strings.Contains(descriptor["description"].(string), "Omitted fields keep") {
 				t.Fatal("patch semantics absent")
+			}
+			if !strings.Contains(descriptor["description"].(string), "A complete status is refused while Done so far or Traps still holds the template's <…> text.") {
+				t.Fatal("state tool does not say a complete status refuses template text")
 			}
 			for _, field := range []string{"status", "done_so_far", "next_action", "traps"} {
 				p := properties[field].(map[string]any)
