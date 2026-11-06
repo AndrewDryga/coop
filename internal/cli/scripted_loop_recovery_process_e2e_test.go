@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -442,6 +443,52 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		parsed, _ := agents.ParseTarget(target)
 		assertLoopProcessResult(t, suite, "codex", taskID, parsed.Model, parsed.Effort, parsed.Account(), suite.repoHead, 1, false)
 		assertProcessTraceGone(t, trace)
+	})
+
+	// 2026-11-05: script(1) runs coop as the leader of its own session on the pty, so stopping a
+	// terminal-bound loop at its deadline kills only script. coop learns of it from the hangup and
+	// removes its box while it still holds the checkout. A loop started at once waits for that
+	// teardown instead of being turned away as "already working".
+	t.Run("a loop started while a terminal loop stops waits for it", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "terminal-deadline"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		target := loopRecoveryTarget("codex", "deadline-model", "work")
+		attempts := []loopProcessAttempt{
+			{Target: target, Stage: "work", Result: "wait"},
+			{Target: target, Stage: "work", Result: "complete"},
+		}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		terminal := startLoopRecoveryPTY(t, suite, target)
+		defer terminal.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		stopping := awaitDescendantPID(t, terminal.PID(), filepath.Base(suite.coopBin))
+		release := holdLoopRuntime(t, suite, "runtime-teardown-hold")
+		deadline, cancel := context.WithCancel(context.Background())
+		cancel()
+		if first := terminal.Wait(deadline); first.ExitCode == 0 {
+			t.Fatalf("the terminal loop outlived its deadline: %#v", first)
+		}
+		// The orphaned loop is now removing its box, held there, with the checkout still locked.
+		awaitProcessEvent(t, suite.layout.Trace, "runtime", "teardown-hold")
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-cursor.json"), []byte("{\"index\":1}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		next := startLoopRecovery(t, suite, target)
+		defer next.Cleanup()
+		awaitLoopProcessOutput(t, next, fmt.Sprintf("Waiting for the loop that is stopping in this checkout (pid %d", stopping))
+		release()
+		ctx, cancelNext := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
+		result := next.Wait(ctx)
+		cancelNext()
+		if result.Err != nil || result.ExitCode != 0 || strings.Contains(result.Stderr, "already working") ||
+			!strings.Contains(result.Stdout, "fixture-loop-complete-codex") {
+			t.Fatalf("loop started beside a stopping one = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) {
+			t.Fatal("the waiting loop did not finish the task")
+		}
+		awaitProcessGone(t, stopping)
 	})
 
 	t.Run("removed interrupted completion stays removed on restart", func(t *testing.T) {

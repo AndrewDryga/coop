@@ -82,7 +82,12 @@ then requires one task-bound commit, final state/log, done move, host cleanup of
 clean worktree, and one exact work-stage telemetry row. The fixture accepts no command, arbitrary
 path, or shell fragment; its v6 attempts are only closed semantic lifecycle outcomes. Provider-native
 event schemas stay in adapter decoder tests, while `script(1)` gives focused recovery rows the real
-terminal boundary for streaming and two-stage Ctrl-C behavior.
+terminal boundary for streaming and two-stage Ctrl-C behavior. `script` makes coop the leader of its
+own session on the pty, so the harness's group TERM/KILL at a deadline reaches only `script`: coop
+gets the hangup, outlives it (reparented to pid 1) and tears its box down while it still holds the
+checkout's loop lock. Signal coop itself (`awaitDescendantPID`), and expect a loop started right
+after to wait for that teardown. The fixture's `runtime-teardown-hold` file holds the stopping
+loop's task-channel `volume rm` so a test can catch it there (`holdLoopRuntime`).
 Unbound-completion denials also prove host recovery never follows provider-created task metadata
 links outside the repository. A finalization failure restores the task to in-progress, and the
 state-link case reruns the loop to repair the commit binding, clean scratch, and finish normally.
@@ -165,6 +170,10 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-05 — a pty-bound loop stopped at its deadline keeps the loop lock through its teardown
+  (script(1) puts coop in its own session); the next loop now waits for a stopping holder, proved
+  by the recovery row with the new `runtime-teardown-hold` (task
+  2026-11-05-release-the-loop-lock-when-a-pseudo-terminal-loo).
 - 2026-11-05 — the scripted guards scale with load (task
   2026-11-05-investigate-scripted-loop-timeouts-under-concurr): per-attempt `wait.Deadline` run
   budgets, `wait.Deadline` in every await helper, 60 s fixture marker/release waits and suite

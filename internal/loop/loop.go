@@ -185,7 +185,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	// One loop per checkout, claimed before ANY queue state is touched — the reconcilers just
 	// below already mutate it. Per-worktree, so parallel forks stay independent (see lockLoopCheckout).
-	releaseCheckout, err := lockLoopCheckout(c.cfg, repo)
+	releaseCheckout, markCheckoutStopping, err := lockLoopCheckout(c.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
@@ -508,6 +508,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 				loopInterruptInfo("Finishing this attempt and its review, then stopping.", again)
 			},
 			func() {
+				markCheckoutStopping() // a loop started during the teardown waits for it (lockLoopCheckout)
 				loopInterruptInfo(now)
 				requestStop()
 				cancel()

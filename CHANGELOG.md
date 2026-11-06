@@ -54,6 +54,12 @@
   and fork workers now forbid stash and say how to check a baseline instead: save the committed
   version of a file with `git show HEAD:<path>` and test against that copy.
 
+- **A loop started right after another one stops now waits for it.** When the terminal running
+  `coop loop` closed, or a supervisor stopped it, that loop kept the checkout for the few seconds
+  it took to remove its box, and a `coop loop` started meanwhile was refused with "another coop
+  loop is already working". The new loop now says it is waiting for the stopping one and starts
+  when it is gone, waiting up to a minute. A loop that is still working is refused at once, as
+  before.
 - **A task that left the archive no longer stops every later loop.** When a task waiting for its
   final review was moved out of `99_done/`, or its archived folder changed while the review ran
   (a note appended to its `log.md` is enough), every later `coop loop` stopped with "left the

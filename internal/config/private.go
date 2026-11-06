@@ -86,18 +86,10 @@ var ErrLockHeld = errors.New("the lock is held by another process")
 // process's "pid N" note, so the caller can name it. Nothing unlinks these files, so the flock on
 // the one inode the name answers is the whole exclusion.
 func (c *Config) TryLock(kind, key string) (release func(), holder string, err error) {
-	// Production always carries a ConfigDir; an in-process test app may not, and joining "" would
-	// drop a .locks/ directory into whatever the working directory happens to be.
-	base := c.ConfigDir
-	if base == "" {
-		base = os.TempDir()
-	}
-	dir := filepath.Join(base, ".locks")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path, err := c.lockPath(kind, key)
+	if err != nil {
 		return nil, "", err
 	}
-	sum := sha256.Sum256([]byte(key))
-	path := filepath.Join(dir, fmt.Sprintf("%s-%x.lock", kind, sum[:12]))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, "", err
@@ -119,6 +111,42 @@ func (c *Config) TryLock(kind, key string) (release func(), holder string, err e
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, "", nil
+}
+
+// NoteLock replaces the note of a lock this process holds, so a process TryLock turns away can
+// say what the holder is doing ("pid N, stopping"). Only the holder writes it.
+func (c *Config) NoteLock(kind, key, note string) error {
+	path, err := c.lockPath(kind, key)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Write before trimming, so a reader never finds the note empty.
+	body := []byte(note + "\n")
+	if _, err := f.WriteAt(body, 0); err != nil {
+		return err
+	}
+	return f.Truncate(int64(len(body)))
+}
+
+// lockPath is ConfigDir/.locks/<kind>-<hash of key>.lock, its folder created owner-only.
+func (c *Config) lockPath(kind, key string) (string, error) {
+	// Production always carries a ConfigDir; an in-process test app may not, and joining "" would
+	// drop a .locks/ directory into whatever the working directory happens to be.
+	base := c.ConfigDir
+	if base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, ".locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(dir, fmt.Sprintf("%s-%x.lock", kind, sum[:12])), nil
 }
 
 // TightenReadable makes an owner's file or folder owner-only again when only its group or world

@@ -37,8 +37,10 @@ const (
 	largeConsultReplyBytes = 270000
 	consultCursorFileName  = "consult-cursor.json"
 	// hostSetupHoldFile, while it exists, blocks the host-side setup of every box run (see
-	// holdHostSetup). The test that creates it owns removing it.
+	// holdHostSetup). teardownHoldFile blocks the removal of a box's task-channel volume, the
+	// last runtime call of a stopping loop's teardown. The test that creates one owns removing it.
 	hostSetupHoldFile  = "runtime-setup-hold"
+	teardownHoldFile   = "runtime-teardown-hold"
 	hostSetupHoldLimit = 30 * time.Second
 )
 
@@ -255,7 +257,12 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 			fmt.Println("fixture-daemon")
 		}
 		return nil
-	case "inspect", "network-ls", "volume", "volume-ls":
+	case "volume":
+		if args[1] == "rm" {
+			return holdWhilePresent(root, trace, teardownHoldFile, "teardown-hold")
+		}
+		return nil
+	case "inspect", "network-ls", "volume-ls":
 		return nil
 	case "task-channel":
 		return serveTaskChannelHelper()
@@ -369,11 +376,16 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 	}
 }
 
-// holdHostSetup blocks the box run's host-side setup while the test holds it — a brake the test
-// releases by removing the file. It records the hold once so the test can wait for the brake to
-// bite instead of sleeping blind, and gives up rather than wedging the suite when nobody releases.
+// holdHostSetup blocks the box run's host-side setup while the test holds it.
 func holdHostSetup(root, trace string) error {
-	path := filepath.Join(root, "state", hostSetupHoldFile)
+	return holdWhilePresent(root, trace, hostSetupHoldFile, "hold")
+}
+
+// holdWhilePresent blocks while the test holds the named file — a brake the test releases by
+// removing it. It records event once so the test can wait for the brake to bite instead of
+// sleeping blind, and gives up rather than wedging the suite when nobody releases.
+func holdWhilePresent(root, trace, name, event string) error {
+	path := filepath.Join(root, "state", name)
 	held := false
 	deadline := time.Now().Add(hostSetupHoldLimit)
 	for {
@@ -385,16 +397,16 @@ func holdHostSetup(root, trace string) error {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("host setup hold %q is not a regular file", path)
+			return fmt.Errorf("runtime hold %q is not a regular file", path)
 		}
 		if !held {
 			held = true
-			if err := record(root, trace, traceRecord{Source: "runtime", Event: "hold", PID: os.Getpid()}); err != nil {
+			if err := record(root, trace, traceRecord{Source: "runtime", Event: event, PID: os.Getpid()}); err != nil {
 				return err
 			}
 		}
 		if !time.Now().Before(deadline) {
-			return errors.New("host setup hold was never released")
+			return fmt.Errorf("runtime hold %q was never released", name)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

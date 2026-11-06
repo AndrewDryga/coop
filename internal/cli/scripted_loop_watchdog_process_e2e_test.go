@@ -39,11 +39,19 @@ func setLoopWatchdogDeadlines(t *testing.T, suite *directProcessSuite, value str
 }
 
 // holdLoopHostSetup blocks the host-side setup of every box run until the returned release is
-// called — the fixture runtime holds its daemon probe while the file exists. Idempotent, and
-// released on cleanup so a failed assertion cannot leave the next subtest wedged.
+// called — the fixture runtime holds its daemon probe while the file exists.
 func holdLoopHostSetup(t *testing.T, suite *directProcessSuite) func() {
 	t.Helper()
-	path := filepath.Join(suite.layout.State, "runtime-setup-hold")
+	return holdLoopRuntime(t, suite, "runtime-setup-hold")
+}
+
+// holdLoopRuntime creates one of the fixture runtime's hold files ("runtime-setup-hold" holds a box
+// run's daemon probe, "runtime-teardown-hold" the removal of its task-channel volume) and returns
+// its release. Idempotent, and released on cleanup so a failed assertion cannot leave the next
+// subtest wedged.
+func holdLoopRuntime(t *testing.T, suite *directProcessSuite, name string) func() {
+	t.Helper()
+	path := filepath.Join(suite.layout.State, name)
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +62,7 @@ func holdLoopHostSetup(t *testing.T, suite *directProcessSuite) func() {
 		}
 		released = true
 		if err := os.Remove(path); err != nil {
-			t.Errorf("release host setup hold: %v", err)
+			t.Errorf("release %s: %v", name, err)
 		}
 	}
 	t.Cleanup(release)
