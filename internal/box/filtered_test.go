@@ -1043,9 +1043,16 @@ func TestFilteredHealthLossCancelsAttachmentAndRemovesAgent(t *testing.T) {
 	if err == nil || ctx.Err() != nil {
 		t.Fatal("health loss did not stop attachment", err)
 	}
-	// The loop shows an attempt's first line. It once read only "context canceled".
-	if first := strings.SplitN(err.Error(), "\n", 2)[0]; !strings.HasPrefix(first, "the network gateway stopped answering") || strings.Contains(err.Error(), "context canceled") {
-		t.Fatalf("health loss did not lead with its cause: %q", err)
+	// The loop shows an attempt's first line. It once read only "context canceled", and later ended on
+	// Docker's own words for a busy host ("Docker evidence source unavailable"). The first line now
+	// says what failed and the likely reason; the failed check's own error is kept on the next.
+	first, rest, _ := strings.Cut(err.Error(), "\n")
+	want := fmt.Sprintf("the network gateway stopped answering %d checks in a row", gatewayProbeFailureLimit)
+	if !strings.HasPrefix(first, want) || !strings.Contains(first, "may be busy") || strings.Contains(first, "evidence source") || strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("health loss did not lead with its cause and the busy host: %q", err)
+	}
+	if !strings.Contains(rest, "fixture guard unhealthy") {
+		t.Fatalf("the failed check's own error was dropped: %q", err)
 	}
 	if gone, err := f.cleanup("runtime_failed"); err != nil || !gone {
 		t.Fatal("health cleanup", gone, err)

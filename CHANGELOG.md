@@ -36,6 +36,15 @@
   gets `postgres://` or `redis://`, in open and filtered boxes and in what `coop up` prints. The
   label still wins, and `https` only ever comes from it: Coop never wraps a service's traffic in TLS.
 
+- **Four loop and editor slips fixed.** `coop acp codex:gpt-6-luna/high` now shows the effort it runs
+  in the answer to a new thread (it showed `reasoning_effort=low` until a later update, which some
+  editors ignore). A Ctrl-C pressed while the `--debug-on-fail` shell's box is stopping ends the loop
+  at once, with no retry countdown first. A filtered attempt that ends because the network gateway
+  missed three health checks in a row says that Docker or the computer may be busy, instead of
+  "Docker evidence source unavailable". A removed account reads the same in `coop loop` and
+  `coop credentials`: `No Gemini account named "personal"` with the `coop login` command, not
+  "requires re-login".
+
 - **Fork review and merge messages name the real cause and a command that works.** `coop fork review
   --gate` says `Into: main` instead of `HEAD`, lists the fork's own commits instead of ids of a
   temporary copy that exist nowhere afterwards, and names the files checks that exited 0 still changed;

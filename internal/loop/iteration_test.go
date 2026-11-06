@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,6 +153,41 @@ func TestDebugShellIsAnnouncedAsAShell(t *testing.T) {
 	}
 	if launched.StartingNotice != "Exit the shell to retry. To stop the loop, press Ctrl-C after you exit." {
 		t.Errorf("debug shell hint = %q", launched.StartingNotice)
+	}
+}
+
+// A Ctrl-C pressed while the shell's box is still stopping has already asked the loop to stop, so
+// leaving the shell announces no retry and waits for none: the loop's stop banner is the only closing
+// line. With no stop asked, the shell is followed by the countdown, which a wake ends.
+func TestDebugRetryAfterTheShellExits(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		stopWhileClosing bool
+		wantRetryNotice  bool
+	}{
+		{"Ctrl-C while the shell's box stops", true, false},
+		{"no stop asked", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var asked atomic.Bool
+			wake := make(chan struct{})
+			if tc.wantRetryNotice {
+				close(wake) // ends the countdown at once; only the stop request varies between the cases
+			}
+			c := &Control{cfg: &config.Config{Shell: "/bin/bash"}, net: newNetworkLog(),
+				boxRun: func(box.RunSpec) (int, error) { asked.Store(tc.stopWhileClosing); return 0, nil }}
+			begun := time.Now()
+			out := captureStderr(t, func() { c.debugRetry(t.TempDir(), "img", "claude", "", asked.Load, wake) })
+			if !strings.Contains(out, "Opening a box shell to investigate this failed attempt.") {
+				t.Errorf("the shell was not announced:\n%s", out)
+			}
+			if got := strings.Contains(out, "Retrying in 10 seconds. Press Ctrl-C to stop."); got != tc.wantRetryNotice {
+				t.Errorf("retry notice shown = %t, want %t:\n%s", got, tc.wantRetryNotice, out)
+			}
+			if time.Since(begun) > 5*time.Second {
+				t.Errorf("returned after %s: a requested stop waited out the countdown", time.Since(begun))
+			}
+		})
 	}
 }
 

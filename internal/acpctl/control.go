@@ -931,7 +931,8 @@ func (c *Control) childReset() {
 
 // rewriteToEditor applies coop's toolbar rewrite: on any object carrying configOptions/modes (a
 // session/new|load|resume result or a config_option_update) it drops the mode+subagent dropdowns and the
-// modes mirror, defaults the model to coop's, and prepends coop's selector. On a session result that
+// modes mirror, defaults the model to coop's (and a session/new answer's effort to the target's, see
+// retargetSettings), and prepends coop's selector. On a session result that
 // carries NO configOptions (an adapter may expose only `models`, or neither) it still injects Coop's
 // selector, so the credential/preset switcher appears for every agent. Other lines pass through.
 func (c *Control) rewriteToEditor(line []byte) []byte {
@@ -968,7 +969,14 @@ func (c *Control) rewriteToEditor(line []byte) []byte {
 			changed = true
 		}
 		if _, hasCO := inner["configOptions"]; hasCO {
-			inner["configOptions"] = visibleConfigOptions(c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid, false))
+			options := c.rewriteConfigOptions(inner["configOptions"], inner["models"], sid, false)
+			if key == "result" && sid != "" {
+				// Only a session/new answer: its options predate the settings sessionReady sends next. A
+				// notification or a set_config_option answer already holds the adapter's current values,
+				// and the target they would be pointed at can lag the change that produced them.
+				options = c.retargetSettings(options)
+			}
+			inner["configOptions"] = visibleConfigOptions(options)
 			changed = true
 		} else if key == "result" && sid != "" {
 			// A session/new|load|resume result with no configOptions. Coop still owns the toolbar, so
@@ -2531,6 +2539,50 @@ func (c *Control) retargetModels(models json.RawMessage) json.RawMessage {
 		}
 	}
 	return nil
+}
+
+// retargetSettings points a session/new answer's options at the values sessionReady sets next, the
+// way rewriteConfigOptions points the model option at coop's. The editor learns the final values from
+// the config_option_update that follows those settings, but one that never reads it would keep the
+// adapter's own defaults (reasoning_effort=low, effort=default). An option takes a value only if it
+// lists it: each model owns its effort levels, so one the adapter lists for another model keeps what
+// the adapter sent until that update arrives. The model option is left to rewriteConfigOptions.
+func (c *Control) retargetSettings(options json.RawMessage) json.RawMessage {
+	c.mu.Lock()
+	target := c.target
+	c.mu.Unlock()
+	a, ok := agents.Get(target.Provider)
+	var list []json.RawMessage
+	if !ok || json.Unmarshal(options, &list) != nil {
+		return options
+	}
+	changed := false
+	for _, setting := range a.ACPSessionSettings(target) {
+		if setting.Method != agents.ACPSetConfigOption || setting.ConfigID == "model" {
+			continue
+		}
+		for i, item := range list {
+			var head struct {
+				ID      string   `json:"id"`
+				Current string   `json:"currentValue"`
+				Options []Option `json:"options"`
+			}
+			if json.Unmarshal(item, &head) != nil || head.ID != setting.ConfigID || head.Current == setting.Value ||
+				!optionHasValue(head.Options, setting.Value) {
+				continue
+			}
+			list[i] = withField(item, "currentValue", setting.Value)
+			changed = true
+		}
+	}
+	if !changed {
+		return options
+	}
+	out, err := json.Marshal(list)
+	if err != nil {
+		return options
+	}
+	return out
 }
 
 // rewriteErrorMessage replaces the message of a JSON-RPC error line, preserving its id + code (so the

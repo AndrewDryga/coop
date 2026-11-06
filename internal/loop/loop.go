@@ -1630,13 +1630,9 @@ reviewAgain:
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
 			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop. Ctrl-C in
 			// the shell reaches only the box, so the retry waits out a short countdown the loop's
-			// own Ctrl-C can end.
+			// own Ctrl-C can end; one pressed while the shell's box stops ends the loop at once.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
-				ui.Note("Opening a box shell to investigate this failed attempt.")
-				c.debugShell(repo, img, agent, spec.ForkName)
-				ui.Note("")
-				ui.Note("Retrying in 10 seconds. Press Ctrl-C to stop.")
-				ladder.SleepOrWake(10*time.Second, wake)
+				c.debugRetry(repo, img, agent, spec.ForkName, softStop.Load, wake)
 				fails = 0 // the developer intervened; don't count this toward the stop cap
 				continue
 			}

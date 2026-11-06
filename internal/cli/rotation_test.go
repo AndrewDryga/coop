@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
@@ -122,6 +123,31 @@ func TestExpandLadderSkipsCredentialsThatNeedRelogin(t *testing.T) {
 		!strings.Contains(err.Error(), `"claude@line\nnext"`) ||
 		!strings.Contains(err.Error(), `coop login $'claude@line\nnext'`) {
 		t.Fatalf("control-character credential recovery = %q, want escaped display and command", err)
+	}
+}
+
+// A removed account leaves a tombstone, and coop credentials counts it as no account at all. A loop
+// that pinned it used to say its sign-in "requires re-login". Both now refuse with the same block,
+// naming coop login: the loop with 1, since a missing login is not rejected input, credentials with 2.
+func TestLoopAndCredentialsRefuseARemovedAccountAlike(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cfg := freshConfig(t)
+	signInCred(t, cfg, "gemini", "personal")
+	if err := box.RemoveNativeAccount(t.Context(), cfg, "gemini", "personal"); err != nil {
+		t.Fatal(err)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	loopExit, loop, _ := refuse(t, cfg, recorder, (*app).cmdLoop, []string{"gemini@personal"})
+	credentialsExit, credentials, _ := refuse(t, cfg, recorder, (*app).cmdCredentials, []string{"gemini", "personal"})
+	const want = `No Gemini account named "personal" — Accounts: coop credentials gemini — Sign in: coop login gemini@personal`
+	if loop != want || credentials != want {
+		t.Fatalf("a removed account reads two ways:\n  loop:        %q\n  credentials: %q\nwant both %q", loop, credentials, want)
+	}
+	if loopExit != 1 || credentialsExit != 2 {
+		t.Errorf("exit codes = loop %d, credentials %d, want 1 and 2", loopExit, credentialsExit)
+	}
+	if pathExists(recorder) {
+		t.Fatal("a refused loop reached the container runtime")
 	}
 }
 

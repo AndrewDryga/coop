@@ -14,6 +14,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -40,6 +41,21 @@ func (c *Control) debugShell(repo, img, agent, forkName string) {
 // debugShellNotice sits right above the shell's prompt. Ctrl-C at that prompt reaches the box's
 // shell, not the loop, so stopping is a step taken after leaving it.
 const debugShellNotice = "Exit the shell to retry. To stop the loop, press Ctrl-C after you exit."
+
+// debugRetry opens the --debug-on-fail shell on a failed attempt, then counts down to the retry.
+// The Ctrl-C the notice promises arrives after the shell exits: while its box is still stopping, or
+// in the countdown. One that came during the stop has already asked the loop to stop, so there is
+// no retry to announce: it returns at once and the loop's stop banner is the only closing line.
+func (c *Control) debugRetry(repo, img, agent, forkName string, stopped func() bool, wake <-chan struct{}) {
+	ui.Note("Opening a box shell to investigate this failed attempt.")
+	c.debugShell(repo, img, agent, forkName)
+	if stopped() {
+		return
+	}
+	ui.Note("")
+	ui.Note("Retrying in 10 seconds. Press Ctrl-C to stop.")
+	ladder.SleepOrWake(10*time.Second, wake)
+}
 
 const progressPoll = 2 * time.Second // how often the live bar checks the queue while an iteration runs
 

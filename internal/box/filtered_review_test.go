@@ -63,9 +63,11 @@ func TestFilteredUnsubmittedCreationLeavesNoCleanupDebt(t *testing.T) {
 	}
 }
 
+// One check short of the limit goes unanswered, as it does while Docker is slow under load, and the
+// next one is answered: the work goes on. One more miss ends it (TestFilteredHealthLossCancelsAttachmentAndRemovesAgent).
 func TestFilteredTransientHealthProbeDoesNotKillHealthyWork(t *testing.T) {
 	f, d := filteredFixture(t)
-	d.holdAgent, d.transientProbes = true, 2
+	d.holdAgent, d.transientProbes = true, gatewayProbeFailureLimit-1
 	d.probeRecovered = make(chan struct{}, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

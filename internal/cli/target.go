@@ -36,7 +36,7 @@ func targetUsage(err error, command, usage string) error {
 
 // noAccountErr refuses a launch that named an account this agent has no login for: the two
 // commands that resolve it — the agent's accounts, and signing this one in.
-func noAccountErr(agent, account string) error {
+func noAccountErr(agent, account string) *ui.UsageError {
 	rows := [][2]string{{"Accounts:", "coop credentials " + agent}}
 	if validProfileName(account) { // coop login refuses any other name
 		rows = append(rows, [2]string{"Sign in:", agents.LoginCommand(agent + "@" + account)})

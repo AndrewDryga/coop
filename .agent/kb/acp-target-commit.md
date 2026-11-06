@@ -38,12 +38,25 @@ points its `currentModelId` at the model `SessionReady` applies; codex-acp ids n
 (`gpt-6-luna[high]`). `TestScriptedACPEditorSeesTheTargetTheBoxRuns` compares what the editor shows
 with what the box got.
 
+An editor that ignores `config_option_update` would still show the adapter's `reasoning_effort=low`
+or `effort=default` from the session/new answer, so a plain session's answer is also pointed at the
+settings: `retargetSettings` (internal/acpctl/control.go) gives each effort option the target's
+value when it lists it, as `rewriteConfigOptions` does for the model. Only a result with a
+`sessionId` is touched. A notification or an option answer already holds the adapter's current
+values, and the target would lag the choice that produced them. A fork's native frames pass
+unchanged, so a fork's editor learns the effort from the update alone.
+`TestACPControlSessionAnswerShowsTheTargetEffort` covers it.
+
 Live conformance changes a model only when the installed adapter advertises a distinct option. Grok
 0.2.101 can truthfully expose only its current agent model. Coop must not merge the illustrative
 `Agent.Models()` list into native ACP choices: scripted E2E owns the cross-agent migration contract,
 while live E2E still requires a nonempty current model, reload, and a second successful prompt.
 
 ## Changelog
+- 2026-11-06 — a plain session's session/new answer now shows the target's effort too
+  (`retargetSettings`), so an editor that ignores the settled update does not show the adapter's
+  default; verified against each agent's `ACPSessionSettings` and the option ids the 2026-11-06
+  re-test saw in session/new answers (`reasoning_effort`, `effort`).
 - 2026-11-06 — the editor now gets the adapter's options after Coop's settings, and the legacy
   `models.currentModelId` names the target; verified against codex-acp 2.0.1's `ModelId` and
   `setSessionConfigOption`, and the ACP config-options spec.

@@ -561,6 +561,72 @@ func TestACPControlRetargetsLegacyCurrentModel(t *testing.T) {
 	}
 }
 
+// TestACPControlSessionAnswerShowsTheTargetEffort: the settings sessionReady sends right after a
+// session/new answer reach the editor in a config_option_update, but an editor that never reads it
+// keeps what the answer lists. So the answer already names the target's model and effort, wherever
+// the adapter lists that effort. A later notification or option answer shows the adapter's own values.
+func TestACPControlSessionAnswerShowsTheTargetEffort(t *testing.T) {
+	const (
+		codex = `[{"id":"model","type":"select","currentValue":"gpt-6.1-sol","options":[{"value":"gpt-6.1-sol","name":"Sol"},{"value":"gpt-6-luna","name":"Luna"}]},` +
+			`{"id":"reasoning_effort","type":"select","currentValue":"low","options":[{"value":"low","name":"Low"},{"value":"medium","name":"Medium"},{"value":"high","name":"High"}]}]`
+		claude = `[{"id":"mode","type":"select","currentValue":"default","options":[{"value":"default","name":"Default"},{"value":"bypassPermissions","name":"Bypass"}]},` +
+			`{"id":"model","type":"select","currentValue":"default","options":[{"value":"default","name":"Default"},{"value":"sonnet","name":"Sonnet"}]},` +
+			`{"id":"effort","type":"select","currentValue":"default","options":[{"value":"default","name":"Default"},{"value":"low","name":"Low"},{"value":"high","name":"High"}]}]`
+	)
+	for _, tc := range []struct {
+		name, provider, model, effort, options, effortID string
+		adapterEffort, wantEffort                        string // the adapter's own value, and what session/new should show
+	}{
+		{"codex", "codex", "gpt-6-luna", "high", codex, "reasoning_effort", "low", "high"},
+		{"claude", "claude", "sonnet", "high", claude, "effort", "default", "high"},
+		{"an effort the adapter does not list", "codex", "gpt-6-luna", "xhigh", codex, "reasoning_effort", "low", "low"},
+		{"no effort to set", "codex", "gpt-6-luna", "", codex, "reasoning_effort", "low", "low"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := &config.Config{ConfigDir: dir}
+			c := New(cfg, tc.provider, tc.model, tc.effort, dir, Selection{}, nil, nil, testHost())
+			shown := func(line string) map[string]string {
+				t.Helper()
+				out := toEd(c, []byte(line+"\n"))
+				var m struct {
+					Result struct {
+						ConfigOptions []struct{ ID, CurrentValue string } `json:"configOptions"`
+					} `json:"result"`
+					Params struct {
+						Update struct {
+							ConfigOptions []struct{ ID, CurrentValue string } `json:"configOptions"`
+						} `json:"update"`
+					} `json:"params"`
+				}
+				if err := json.Unmarshal(out, &m); err != nil {
+					t.Fatalf("decode %s: %v", out, err)
+				}
+				options := append(m.Result.ConfigOptions, m.Params.Update.ConfigOptions...)
+				values := map[string]string{}
+				for _, o := range options {
+					values[o.ID] = o.CurrentValue
+				}
+				return values
+			}
+			answer := shown(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S","configOptions":` + tc.options + `}}`)
+			if answer["model"] != tc.model || answer[tc.effortID] != tc.wantEffort {
+				t.Errorf("session/new shows model=%q %s=%q, want %q and %q", answer["model"], tc.effortID, answer[tc.effortID], tc.model, tc.wantEffort)
+			}
+			if _, listed := answer["mode"]; listed {
+				t.Errorf("coop's permission mode reached the editor: %v", answer)
+			}
+			// What the adapter says about a running session stays its word.
+			update := shown(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"config_option_update","configOptions":` + tc.options + `}}}`)
+			reply := shown(`{"jsonrpc":"2.0","id":3,"result":{"configOptions":` + tc.options + `}}`)
+			if update[tc.effortID] != tc.adapterEffort || reply[tc.effortID] != tc.adapterEffort {
+				t.Errorf("after session/new, %s shows %q in an update and %q in an option answer, want the adapter's %q",
+					tc.effortID, update[tc.effortID], reply[tc.effortID], tc.adapterEffort)
+			}
+		})
+	}
+}
+
 // TestACPControlPassthrough: a non-config line (the bulk of ACP traffic) is returned byte-identical.
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)

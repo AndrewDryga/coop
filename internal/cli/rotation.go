@@ -54,7 +54,8 @@ func accountsFor(cfg *config.Config, agent string) []string {
 // ladder rotates across agents. An empty ladder means defaultAgent's default model across all
 // accounts. Order preserved, deduped first-seen. Errors only when NOTHING in the ladder is
 // runnable, and name the exact credential repair where the ladder selected one — unless a
-// provider's accounts could not all be listed, which is named instead (accountsUnlistedErr).
+// provider's accounts could not all be listed, which is named instead (accountsUnlistedErr). One
+// selected account that was removed is refused as coop credentials refuses it (noAccountErr).
 func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target) ([]agents.Target, error) {
 	if len(rungs) == 0 {
 		rungs = []agents.Target{{}} // defaultAgent, default model, all accounts
@@ -70,8 +71,9 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 	var providers []string // every provider the ladder names, in ladder order
 	var missing []string   // fan-out providers with no runnable account (reported only if NOTHING resolves)
 	type repair struct {
-		target  string
-		relogin bool
+		target, agent, account string
+		relogin                bool
+		removed                bool // a removal left a tombstone: no account to coop credentials, not a dead sign-in
 	}
 	var repairs []repair // selected or fan-out credentials whose exact login fixes an empty ladder
 	recordRepair := func(agent, account string, pinned bool) {
@@ -81,7 +83,10 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 		}
 		target := agent + "@" + account
 		if !slices.ContainsFunc(repairs, func(r repair) bool { return r.target == target }) {
-			repairs = append(repairs, repair{target: target, relogin: need == agents.SignInAgain})
+			repairs = append(repairs, repair{
+				target: target, agent: agent, account: account, relogin: need == agents.SignInAgain,
+				removed: need == agents.SignInAgain && box.NativeAccountRemoved(cfg, agent, account),
+			})
 		}
 	}
 	for _, e := range rungs {
@@ -126,6 +131,13 @@ func expandLadder(cfg *config.Config, defaultAgent string, rungs []agents.Target
 			}
 		}
 		if len(repairs) == 1 {
+			if r := repairs[0]; r.removed {
+				// A removed account reads as coop credentials words it, with the same two commands. Its
+				// login is missing, not mistyped input, so it fails the job with 1 like any other.
+				block := noAccountErr(r.agent, r.account)
+				block.ExitCode = 1
+				return nil, block
+			}
 			state := "is not signed in"
 			if repairs[0].relogin {
 				state = "requires re-login"
