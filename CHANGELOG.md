@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Give a task a priority.** Add `priority: high` or `priority: low` to a task.md's frontmatter
+  and the loop takes high tasks first and low tasks last, in folder order within each. Before, the
+  loop always went by folder name, so among tasks filed on the same day it went alphabetically.
+  `coop tasks ls` lists todo tasks in that order and marks high and low ones, and
+  `coop tasks lint` names any other value. A task without the field is normal and keeps its place.
+
 - **`coop tasks decisions` lists forks ready to merge.** The board's Needs you section shows a
   fork's finished work beside the open questions and points at `coop tasks decisions -i`, which
   until now listed only the questions. After them it now lists each fork ready to merge with its

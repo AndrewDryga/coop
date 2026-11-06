@@ -999,6 +999,8 @@ Usage: coop loop [<target|preset>] [<options>]
 HOW IT WORKS
   A fresh agent works on each task, then a final review checks the work and
   can reopen tasks. Coop continues until it passes or needs your decision.
+  Tasks run in folder order; priority: high or priority: low in a task.md's
+  frontmatter moves it ahead or back.
 
 OPTIONS
   --tasks <path>         choose a task queue; repeat for more queues

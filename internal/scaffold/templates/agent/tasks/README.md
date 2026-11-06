@@ -118,6 +118,10 @@ header comment says exactly this, so the reminder travels with the task.
 A subtask is a `- [ ]` line; `[x]` marks it done and `coop tasks` shows the count. Lines inside
 fenced code blocks don't count, so you can paste examples freely.
 
+The loop takes todo tasks in folder order. To move one ahead or back, add `priority: high` or
+`priority: low` to its frontmatter; a task without the field is `normal`, and `coop tasks lint`
+rejects any other value.
+
 ---
 
 ## state.md — the resume snapshot

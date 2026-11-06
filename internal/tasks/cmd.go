@@ -2652,6 +2652,9 @@ func printTaskTree(root, heading string, all bool, only ...string) (int, error) 
 		if len(ts) == 0 { // an empty lifecycle section is not an empty heading
 			continue
 		}
+		if state == StateTodo {
+			slices.SortStableFunc(ts, byPriority) // the order the loop claims them in
+		}
 		if !printed && heading != "" {
 			fmt.Printf("%s\n", p.Bold(heading))
 		}
@@ -2801,12 +2804,20 @@ func decisionDividerWidth() int {
 }
 
 // listMarkers renders what is EXCEPTIONAL about a task, on its own line between the title and the
-// id: subtask progress, a blocked task's waiting answer, and an in-progress task's owner or
-// reservation — joined with " · ", or "" when there is nothing to say. An ordinary todo task, and
-// an in-progress task nobody has claimed or reserved, carry no marker at all: a row that always
-// says something says nothing (see rule tag-exceptions-not-every-row).
+// id: a high or low priority, subtask progress, a blocked task's waiting answer, and an in-progress
+// task's owner or reservation — joined with " · ", or "" when there is nothing to say. An ordinary
+// todo task, and an in-progress task nobody has claimed or reserved, carry no marker at all: a row
+// that always says something says nothing (see rule tag-exceptions-not-every-row).
 func listMarkers(p ui.Palette, t Item) string {
 	var parts []string
+	if t.State != StateDone {
+		switch priorityRank(t) {
+		case 0:
+			parts = append(parts, "High priority")
+		case 2:
+			parts = append(parts, p.Gray("Low priority"))
+		}
+	}
 	if n := len(t.Subtasks); n > 0 {
 		prog := fmt.Sprintf("%d/%d subtasks", t.doneSubtasks(), n)
 		if t.doneSubtasks() == n {
@@ -3422,8 +3433,13 @@ func tasksFolderLint(root string) (int, error) {
 			}
 		}
 		// a status field is forbidden — the directory IS the status
-		if fields, _ := SplitFrontmatter(body); fields["status"] != "" {
+		fields, _ := SplitFrontmatter(body)
+		if fields["status"] != "" {
 			add(t.ID, "has a `status:` field — remove it; the parent directory is the status")
+		}
+		// the loop reads an unknown priority as normal, so a typo would silently change nothing
+		if v, ok := fields["priority"]; ok && t.State != StateDone && !slices.Contains(taskPriorities, v) {
+			add(t.ID, fmt.Sprintf("has priority %q — use high, normal or low", v))
 		}
 		// self-contained: frontmatter, every shape section present, and none still the template's
 		// placeholder (not for done, which is the shipped record).

@@ -92,6 +92,9 @@ func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, fore
 		if ai != bi {
 			return ai < bi
 		}
+		if ai == 1 && priorityRank(a.Item) != priorityRank(b.Item) {
+			return priorityRank(a.Item) < priorityRank(b.Item) // between todo tasks, a person's priority first
+		}
 		if a.Root != b.Root {
 			return a.Root < b.Root
 		}

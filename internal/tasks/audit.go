@@ -3372,6 +3372,9 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 			}
 		}
 
+		// A person's priority picks the next todo task; within one priority the queues keep the
+		// order they were read in, folder name first.
+		slices.SortStableFunc(todo, func(a, b QueuedTask) int { return byPriority(a.Item, b.Item) })
 		var busy TaskLeaseSummary
 		changed := false
 		for _, candidate := range inProgress {

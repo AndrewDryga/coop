@@ -28,9 +28,9 @@ type QueuedTask struct {
 
 // QueueState reads the queue union once, tallying it and selecting the authoritative next task.
 // An interrupted task wins globally, even when an earlier subproject queue still has todo work;
-// ties preserve queue order and ReadTaskTree's stable ID order. Shared by the loop's own
-// assignment (AssignLoopTaskOnly) and cli's banner printing, so the two can never disagree about
-// what's next.
+// a todo task's priority comes next, and ties preserve queue order and ReadTaskTree's stable ID
+// order — the order AssignLoopTaskOnly claims in, so cli's banner cannot disagree about what's
+// next.
 func QueueState(hosts []string) (TaskCounts, QueuedTask, bool, error) {
 	var total TaskCounts
 	var firstTodo, firstDoing QueuedTask
@@ -44,7 +44,7 @@ func QueueState(hosts []string) (TaskCounts, QueuedTask, bool, error) {
 			switch t.State {
 			case StateTodo:
 				total.Todo++
-				if !haveTodo {
+				if !haveTodo || byPriority(t, firstTodo.Item) < 0 {
 					firstTodo, haveTodo = QueuedTask{Root: h, Item: t}, true
 				}
 			case StateInProgress:

@@ -55,7 +55,28 @@ type Item struct {
 	Subtasks      []bool   // one per body checkbox; true = checked/done
 	SubtaskLabels []string // SubtaskLabels[i] is the text of Subtasks[i]; empty for an Item built in memory
 	HasDecision   bool     // a decision.md is present (must hold iff State == blocked)
+	Priority      string   // frontmatter `priority:` as written, "" without one; see priorityRank
 }
+
+// taskPriorities are the values of the optional `priority:` frontmatter field, in the order the
+// loop claims them. A task without the field is normal.
+var taskPriorities = []string{"high", "normal", "low"}
+
+// priorityRank orders todo tasks for the loop's next claim: high, then normal, then low, each in
+// folder order. A missing or unknown value counts as normal, so a typo never moves a task; coop
+// tasks lint names it.
+func priorityRank(t Item) int {
+	switch t.Priority {
+	case "high":
+		return 0
+	case "low":
+		return 2
+	}
+	return 1
+}
+
+// byPriority is the stable sort key for todo tasks already in folder order.
+func byPriority(a, b Item) int { return priorityRank(a) - priorityRank(b) }
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.
 func (t Item) doneSubtasks() int {
@@ -328,6 +349,7 @@ func parseTaskFolderIn(root *os.Root, dir, state string) (Item, bool, error) {
 		Subtasks:      subtasks,
 		SubtaskLabels: labels,
 		HasDecision:   hasDecision,
+		Priority:      fields["priority"],
 	}, true, nil
 }
 
@@ -663,17 +685,18 @@ func LatestForkTaskLog(repo, name string, n int) (string, error) {
 }
 
 // TaskTreeCounts tallies a task tree into the shared TaskCounts and returns the "active"
-// task title — the first in_progress task, or failing that the first todo — so the
-// status and loop views agree on what a queue is "working on".
+// task title — the first in_progress task, or failing that the todo task the loop claims next —
+// so the status and loop views agree on what a queue is "working on".
 func TaskTreeCounts(items []Item) (TaskCounts, string) {
 	var c TaskCounts
 	active, firstTodo := "", ""
+	var next Item
 	for _, t := range items {
 		switch t.State {
 		case StateTodo:
 			c.Todo++
-			if firstTodo == "" {
-				firstTodo = t.Title
+			if firstTodo == "" || byPriority(t, next) < 0 {
+				firstTodo, next = t.Title, t
 			}
 		case StateInProgress:
 			c.Doing++
