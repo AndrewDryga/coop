@@ -2,8 +2,8 @@
 name: secret-finding-identity
 description: how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may and may not excuse, and why exceptions stop at check-secrets
 subsystem: secretscan
-sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go]
-updated: 2026-11-03
+sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go, internal/forkctl/isolated_candidate.go, internal/gitdiff/gitdiff.go]
+updated: 2026-11-06
 ---
 
 A reviewed false positive is excused by NAMING the exact finding, so the detectors never learn to
@@ -36,6 +36,18 @@ needs a path those callers do not supply. `ScanFile(path, content)` is the check
 Exceptions are applied in `cmdCheckSecrets` after pure detection and NOWHERE else: an in-repository
 note is not permission to move a credential out of the repository.
 
+A fork is judged only on what it adds. Fork merge (`PolicyScan`) and isolated publication
+(`validateIsolatedHistory`) still scan the whole file, so line numbers and a private key's
+BEGIN-to-END block are unchanged, but report a finding only on a line the fork adds: every line of a
+file it adds, else the new side of a `-U0` diff against the merge base, or for isolated publication
+against each commit's first parent (`gitdiff.AddedLines`). A credential the project's copy already
+held never holds up a fork that edits or renames its file. check-secrets still judges whole files.
+
+The assignment heuristic reads a line as a string literal writes it: `\n`, `\r` and `\t` are
+whitespace (`literalWhitespace`), so `"URL=%s\nAPI_KEY=%s\n"` assigns `%s` to `API_KEY` and does not
+fire, where it used to read `nAPI_KEY`. A finding whose value ran across such an escape now hashes the
+shorter value, so its old exception re-reports rather than hides.
+
 `.coopignore` never dismisses a commit-candidate finding. `scanVisibleTree` uses the
 shared shadow decision only to label hidden candidates and exclude hidden files
 outside the commit-candidate set. Root/nested hide rules, tracked files also matched
@@ -58,6 +70,9 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-11-06: fork merge and isolated publication report only findings on lines the fork adds; the
+  assignment heuristic reads a literal's `\n`, `\r` and `\t` as whitespace (task
+  2026-11-05-flag-only-secrets-a-fork-adds-not-lines-already).
 - 2026-11-03: overlapping provider matches report once, by the earlier pattern
   (TestScanSecretsReportsEachTokenOnce).
 - 2026-09-13: corrected fork warning advice; synthetic visible/hidden fixtures retain

@@ -42,3 +42,28 @@ func TestDiffRejectsIncompleteRecords(t *testing.T) {
 		}
 	}
 }
+
+// AddedLines reads only the new side of each hunk header: what a pure deletion removes is no
+// added line, a header without a count adds one line, and anything else that starts like a header
+// is refused rather than read as no change.
+func TestAddedLines(t *testing.T) {
+	patch := "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n" +
+		"@@ -3 +3 @@ func main() {\n-old\n+new\n" +
+		"@@ -10,2 +9,0 @@\n-gone\n-gone\n" +
+		"@@ -20,0 +20,3 @@\n+a\n+b\n+c\n"
+	added, err := AddedLines(patch)
+	if err != nil || !reflect.DeepEqual(added, LineRanges{{3, 3}, {20, 22}}) {
+		t.Fatalf("AddedLines = %v, %v", added, err)
+	}
+	for n, want := range map[int]bool{2: false, 3: true, 9: false, 19: false, 20: true, 22: true, 23: false} {
+		if added.Contains(n) != want {
+			t.Errorf("Contains(%d) = %v, want %v", n, !want, want)
+		}
+	}
+	if added, err := AddedLines(""); added != nil || err != nil {
+		t.Fatalf("empty patch = %v, %v", added, err)
+	}
+	if added, err := AddedLines("@@ -1 +x @@\n"); err == nil || added != nil {
+		t.Fatalf("malformed header = %v, %v; want a refusal", added, err)
+	}
+}

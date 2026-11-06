@@ -74,3 +74,40 @@ func TestForkSecretAdvice(t *testing.T) {
 		})
 	}
 }
+
+// The merge's secret check judges only the lines the fork adds. A fake credential the project
+// already had stays quiet in a file the fork edits or renames (emisar's redaction tests held up a
+// merge that never touched them), while one the fork adds, even to that same file, is named at
+// its own line.
+func TestPolicyScanFlagsOnlySecretsTheForkAdds(t *testing.T) {
+	repo := initRepo(t)
+	const existing = "package mcp\n\nconst dsn = \"postgres://user:hunter2@db/app\"\n"
+	writeTaskFile(t, filepath.Join(repo, "mcp", "main_test.go"), existing)
+	writeTaskFile(t, filepath.Join(repo, "mcp", "old_name.go"), "package mcp\n\nconst other = \"postgres://user:hunter2@db/other\"\n")
+	git(t, repo, "add", "mcp")
+	git(t, repo, "commit", "-qm", "redaction fixtures")
+	ws, err := forkspace.Setup(repo, "candidate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(ws, "mcp", "main_test.go"), existing+"\nfunc helper() {}\n")
+	git(t, ws, "add", "mcp/main_test.go")
+	git(t, ws, "mv", "mcp/old_name.go", "mcp/new_name.go")
+	git(t, ws, "commit", "-qm", "edit around the fixtures")
+	if err := gitFetchInto(repo, ws, "candidate"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mustPolicyScan(t, repo, "review/candidate"), "\n"); strings.Contains(got, "possible secret") {
+		t.Fatalf("the project's own fixtures held up the fork:\n%s", got)
+	}
+
+	writeTaskFile(t, filepath.Join(ws, "mcp", "main_test.go"), existing+"\nfunc helper() {}\n\nconst live = \"postgres://admin:Zq8vR2mXk4@db/prod\"\n")
+	git(t, ws, "commit", "-qam", "add a credential")
+	if err := gitFetchInto(repo, ws, "candidate"); err != nil {
+		t.Fatal(err)
+	}
+	got := mustPolicyScan(t, repo, "review/candidate")
+	if len(got) != 1 || !strings.Contains(got[0], "possible secret in mcp/main_test.go:7 ") {
+		t.Fatalf("warnings = %q, want only the added credential at line 7", got)
+	}
+}

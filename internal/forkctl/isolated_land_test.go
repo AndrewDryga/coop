@@ -917,6 +917,33 @@ func TestIsolatedPublicationRetainsAllImmutableRiskPolicy(t *testing.T) {
 	}
 }
 
+// An isolated publication refuses a credential its commits add, even to a file the project already
+// had, but not one the project's copy already held in a file a commit edits: that line was never
+// the fork's (emisar's redaction fixtures).
+func TestIsolatedPublicationJudgesOnlyCredentialsItsCommitsAdd(t *testing.T) {
+	repo := initRepo(t)
+	const fixture = "package mcp\n\nconst dsn = \"postgres://user:hunter2@db/app\"\n"
+	writeTaskFile(t, filepath.Join(repo, "mcp", "main_test.go"), fixture)
+	git(t, repo, "add", "mcp")
+	git(t, repo, "commit", "-qm", "redaction fixture")
+	repo, ws, _, c := isolatedTestForkFromRepo(t, repo)
+	isolatedTestCommit(t, ws, "mcp/main_test.go", fixture+"\nfunc helper() {}\n")
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); err != nil || !landed {
+		t.Fatalf("the project's own fixture held up the publication: %v, %v", landed, err)
+	}
+	isolatedTestCommit(t, ws, "mcp/main_test.go", fixture+"\nfunc helper() {}\n\nconst live = \"postgres://admin:Zq8vR2mXk4@db/prod\"\n")
+	before, err := captureIsolatedParent(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "refuses possible credentials") {
+		t.Fatalf("an added credential = %v, %v; want the credential refusal", landed, err)
+	}
+	if after, err := captureIsolatedParent(repo); err != nil || !sameIsolatedParent(before, after) {
+		t.Fatal("the refusal changed the parent", err)
+	}
+}
+
 // A .coopignore the parent cannot read leaves unknown whether a published file is hidden, so the
 // isolated publication refuses it, naming the .coopignore, and --force does not change that.
 func TestIsolatedPublicationRefusesUnderAnUnreadableCoopignore(t *testing.T) {

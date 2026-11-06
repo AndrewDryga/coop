@@ -37,6 +37,13 @@
   task that is missing or blocked, or that waits for it in turn, becomes your decision, and
   `coop tasks ls` shows what each task waits for.
 
+- **A fork merge flags only the secrets the fork adds.** `coop fork merge` scanned the whole of
+  every file a fork changed, so a fake credential your branch already had, such as a password in a
+  redaction test, refused the merge, and `--force` lifted every other merge check along with it.
+  The scan now reports only lines the fork adds, for an isolated fork's publication too, where
+  `--force` cannot bypass the check. A string's `\n` no longer runs into the next name either:
+  `"EMISAR_URL=%s\nEMISAR_API_KEY=%s\n"` read as a secret assigned to `nEMISAR_API_KEY`, and a
+  template like it is no longer flagged.
 - **Complete a fork's task whose commit you already landed.** When a fork can't reach a mergeable
   candidate, for example because its box keeps failing a check, and you cherry-pick its commit
   yourself, `coop tasks done <id>` refused the task while the fork held it, and the only ways out

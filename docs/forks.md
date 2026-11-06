@@ -132,7 +132,7 @@ refuses the following, and `--force` cannot bypass the refusal:
 - changes to nested Git sources
 - files that can automatically run code on your host
 - new or changed npm install lifecycle scripts
-- possible credentials
+- possible credentials that a commit adds
 - oversized files
 
 You can still review and merge build files that run only when someone explicitly invokes them.
@@ -303,10 +303,10 @@ filenames and paths matched by a [`.coopignore`](box.md#your-own-paths-coopignor
 above the project. It also flags additions, edits, removals and renames of a `.coopignore`, because
 these change what future boxes can see.
 
-The scan checks each changed file for credential patterns from AWS, OpenAI, Anthropic, GitHub,
-Slack and other providers, and for random-looking values assigned to secret-named keys, even if the
-file's name doesn't look secret. co:op refuses to merge while your own working tree has uncommitted
-changes.
+The scan checks the lines the fork adds for credential patterns from AWS, OpenAI, Anthropic,
+GitHub, Slack and other providers, and for random-looking values assigned to secret-named keys, even
+if the file's name doesn't look secret. A credential your branch already has doesn't hold up a fork
+that edits its file. co:op refuses to merge while your own working tree has uncommitted changes.
 
 co:op asks before merging, then offers to delete the fork after the merge. In a non-interactive
 shell, such as CI or a pipe, you must confirm up front, or co:op refuses to run the merge.

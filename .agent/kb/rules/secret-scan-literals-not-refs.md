@@ -4,7 +4,7 @@ description: "the scanner flags literal credentials and never references to them
 scope: security
 sources: [internal/secretscan/secretscan.go, internal/secretscan/secretscan_test.go]
 check: "go test ./internal/secretscan -run TestScanSecrets"
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 # A secret scanner flags literal credentials, never references to them
@@ -67,6 +67,11 @@ random token.
   `_build/`. That enumeration is the single biggest noise win; keep it.
 
 ## Changelog
+- 2026-11-06 — a string literal's `\n`, `\r` and `\t` read as whitespace in the assignment
+  heuristic: emisar's env template `"EMISAR_URL=%s\nEMISAR_API_KEY=%s\n…"` read as a value
+  assigned to `nEMISAR_API_KEY`. The test pairs the template with a real-looking value after an
+  escape that still flags. Swept the other line checks: provider patterns and URL passwords
+  match the raw line and were left alone.
 - 2026-06-17 — created
 - 2026-07-13 — revised
 - 2026-08-06 — card metadata added (format v1); body unchanged

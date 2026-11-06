@@ -176,6 +176,27 @@ func TestScanSecretsEntropy(t *testing.T) {
 	}
 }
 
+// A string literal's \n, \r and \t write whitespace, so an assignment is read as the text the
+// literal writes: the escape's letter is not part of the next key, and the escape ends a value. A
+// format template of env lines is not a credential (emisar's mcp/clientconfig.go read as a
+// high-entropy value assigned to 'nEMISAR_API_KEY'), while a real-looking value after an escape is
+// still flagged under its own key.
+func TestScanSecretsReadsAssignmentsAsALiteralWritesThem(t *testing.T) {
+	for _, clean := range []string{
+		`fmt.Fprintf(w, "EMISAR_URL=%s\nEMISAR_API_KEY=%s\nEMISAR_RUNNER=%s\n", url, key, runner)`,
+		`"API_TOKEN=%s\r\nNEXT=1"`,
+		`"\token=aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx"`, // a tab, then "oken", a key no credential word ends
+	} {
+		if f := ScanSecrets(clean); len(f) != 0 {
+			t.Errorf("false positive on %q: %v", clean, f)
+		}
+	}
+	f := ScanSecrets(`env := "EMISAR_URL=https://x\nEMISAR_API_KEY=aB3xK9mP2qL7vR4tY8wZ1cF6nH5jD0sUvWx\n"`)
+	if len(f) != 1 || f[0].Key != "EMISAR_API_KEY" {
+		t.Fatalf("findings = %+v, want one under EMISAR_API_KEY", f)
+	}
+}
+
 // A minified/generated bundle puts a whole program on one huge line, where a high-entropy
 // token:"…" literal is a build artifact — the entropy heuristic skips a match drowning in
 // more than maxEntropyLineSlack of surrounding code. The skip is per-match, not per-file

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
 )
 
@@ -300,8 +302,12 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 					return fmt.Errorf("isolated publication refuses new or changed automatic %s script at %q; --force cannot bypass this boundary", script, entry.path)
 				}
 			}
-			if strings.IndexByte(content, 0) < 0 && len(box.ScanSecrets(content)) != 0 {
-				return fmt.Errorf("isolated publication refuses possible credentials at %q; remove real credentials before review", entry.path)
+			if strings.IndexByte(content, 0) < 0 {
+				if adds, err := commitAddsCredential(repo, previous, present, entry, content); err != nil {
+					return err
+				} else if adds {
+					return fmt.Errorf("isolated publication refuses possible credentials at %q; remove real credentials before review", entry.path)
+				}
 			}
 		}
 		for _, entry := range old {
@@ -311,6 +317,33 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 		}
 	}
 	return nil
+}
+
+// commitAddsCredential reports whether a finding in content, the commit's version of entry, sits on
+// a line the commit adds: any line of a file it adds, else a line its diff from previous adds. A
+// credential the previous version held is the parent's, or an earlier incoming commit added it and
+// was judged for it.
+func commitAddsCredential(repo string, previous isolatedTreeEntry, present bool, entry isolatedTreeEntry, content string) (bool, error) {
+	findings := box.ScanSecrets(content)
+	if len(findings) == 0 {
+		return false, nil
+	}
+	added := gitdiff.LineRanges{{1, math.MaxInt}}
+	if present {
+		patch, err := observed(repo, "diff", "-U0", "--no-color", previous.object, entry.object)
+		if err == nil {
+			added, err = gitdiff.AddedLines(patch)
+		}
+		if err != nil {
+			return false, fmt.Errorf("isolated publication cannot read the changes to %q: %w", entry.path, err)
+		}
+	}
+	for _, finding := range findings {
+		if added.Contains(finding.Line) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (c *Control) gateIsolatedCandidate(repo, img string, candidate isolatedCandidate, review bool) error {

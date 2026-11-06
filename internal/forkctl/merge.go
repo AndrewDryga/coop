@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -142,11 +143,41 @@ func PolicyScan(repo, ref string) ([]string, error) {
 				warns = append(warns, label+" adds a "+k+" script — npm runs it automatically on `npm install`")
 			}
 		}
-		for _, s := range box.ScanSecrets(content) {
-			warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", label, s.Line, s.Kind))
+		if findings := box.ScanSecrets(content); len(findings) > 0 {
+			added, err := forkAddedLines(repo, ref, change)
+			if err != nil {
+				return nil, err
+			}
+			for _, s := range findings {
+				if added.Contains(s.Line) {
+					warns = append(warns, fmt.Sprintf("possible secret in %s:%d (%s) — review the finding and remove any real credential from the fork before merging", label, s.Line, s.Kind))
+				}
+			}
 		}
 	}
 	return warns, nil
+}
+
+// forkAddedLines is which lines of change's file the fork adds: all of a file it adds, else the
+// lines its diff against the merge base adds. A finding on any other line was already in the
+// project's copy, and merging the fork does not bring it (emisar, 2026-11-05: fake credentials in
+// redaction tests the fork never touched held up its merge).
+func forkAddedLines(repo, ref string, change gitdiff.Change) (gitdiff.LineRanges, error) {
+	if change.Status == "A" {
+		return gitdiff.LineRanges{{1, math.MaxInt}}, nil
+	}
+	args := []string{"diff", "-U0", "--no-color", "HEAD..." + ref, "--", ":(literal)" + change.Path}
+	if change.OldPath != "" {
+		args = append(args, ":(literal)"+change.OldPath)
+	}
+	patch, err := forkspace.GitOutput(repo, args...)
+	if err == nil {
+		var added gitdiff.LineRanges
+		if added, err = gitdiff.AddedLines(patch); err == nil {
+			return added, nil
+		}
+	}
+	return nil, fmt.Errorf("read the fork's changes to %s: %w", ui.SafeInline(change.Path), err)
 }
 
 // notRegularCoopignore reports whether the fork's change at path leaves a .coopignore, in any case,

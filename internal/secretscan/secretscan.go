@@ -99,6 +99,11 @@ func (f SecretFinding) Label() string {
 // are listed explicitly rather than a bare "_key", which would flag public_key/primary_key/etc.
 var secretAssignRe = regexp.MustCompile(`(?i)([\w-]*(?:password|passwd|secret[_-]?key[_-]?base|secret[_-]?key|master[_-]?key|encryption[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|authorization|secret|token|credentials?)(?:[_-](?:b64|base64|encoded|value|json|pem))?)\s*[:=]\s*["']?([^\s"']{20,})`)
 
+// literalWhitespace reads an assignment the way a string literal writes it: \n, \r and \t are
+// whitespace there, which ends a value and starts the next key, so "URL=%s\nAPI_KEY=%s\n" assigns
+// %s to API_KEY, not "%s\nAPI_KEY…" to nAPI_KEY. Each escape becomes two spaces, keeping offsets.
+var literalWhitespace = strings.NewReplacer(`\n`, "  ", `\r`, "  ", `\t`, "  ")
+
 // entropyThreshold flags a value as likely-random above this many bits/char (Shannon).
 // Real base64/hex tokens sit ~3.5–6; English/placeholder text sits lower.
 const entropyThreshold = 3.5
@@ -273,7 +278,7 @@ func ScanFile(path, content string) []SecretFinding {
 		// same value a precise pattern already flagged, not a comment, not a match drowning
 		// in a minified/generated line, and not a code reference, URL, or filesystem path.
 		if !commentRe.MatchString(line) {
-			if m := secretAssignRe.FindStringSubmatch(line); m != nil &&
+			if m := secretAssignRe.FindStringSubmatch(literalWhitespace.Replace(line)); m != nil &&
 				len(line)-len(m[0]) <= maxEntropyLineSlack &&
 				!precise[m[2]] && !looksLikeCodeRef(m[2]) && !looksLikeURLOrPath(m[2]) && !placeholderRe.MatchString(m[2]) &&
 				shannonEntropy(m[2]) >= entropyThreshold {

@@ -221,7 +221,7 @@ refuses the following, and <code>--force</code> cannot bypass the refusal:</p>
 <li>changes to nested Git sources</li>
 <li>files that can automatically run code on your host</li>
 <li>new or changed npm install lifecycle scripts</li>
-<li>possible credentials</li>
+<li>possible credentials that a commit adds</li>
 <li>oversized files</li>
 </ul>
 <p>You can still review and merge build files that run only when someone explicitly invokes them.
@@ -390,10 +390,10 @@ still review the changes yourself.</p>
 filenames and paths matched by a <a href="box.html#your-own-paths-coopignore"><code>.coopignore</code></a>, including one
 above the project. It also flags additions, edits, removals and renames of a <code>.coopignore</code>, because
 these change what future boxes can see.</p>
-<p>The scan checks each changed file for credential patterns from AWS, OpenAI, Anthropic, GitHub,
-Slack and other providers, and for random-looking values assigned to secret-named keys, even if the
-file&#39;s name doesn&#39;t look secret. co:op refuses to merge while your own working tree has uncommitted
-changes.</p>
+<p>The scan checks the lines the fork adds for credential patterns from AWS, OpenAI, Anthropic,
+GitHub, Slack and other providers, and for random-looking values assigned to secret-named keys, even
+if the file&#39;s name doesn&#39;t look secret. A credential your branch already has doesn&#39;t hold up a fork
+that edits its file. co:op refuses to merge while your own working tree has uncommitted changes.</p>
 <p>co:op asks before merging, then offers to delete the fork after the merge. In a non-interactive
 shell, such as CI or a pipe, you must confirm up front, or co:op refuses to run the merge.</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Land it table"><table class="ref">
