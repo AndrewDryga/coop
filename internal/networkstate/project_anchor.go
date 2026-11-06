@@ -66,7 +66,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 	case err == nil:
 		boundProject, anchor, parseErr := parseAnyProjectAnchorBody(body)
 		if parseErr != nil {
-			return "", fmt.Errorf("reserved network approval marker is not valid: %w; "+markerRecovery, parseErr)
+			return "", errors.New("this folder's network approval marker is not in Coop's format; " + markerRecovery)
 		}
 		if boundProject != projectID {
 			if !allowTransition {
@@ -78,7 +78,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 			oldBinding := s.projectAnchorBinding(project, boundProject, anchor)
 			root, openErr := fsidentity.Open(oldBinding)
 			if openErr != nil {
-				return "", fmt.Errorf("project approval marker names another checkout but does not match its private anchor: %w", openErr)
+				return "", errors.New("this folder's network approval marker came from another checkout, as after a copy; " + markerRecovery)
 			}
 			if closeErr := root.Close(); closeErr != nil {
 				return "", closeErr
@@ -89,7 +89,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 		} else {
 			root, openErr := fsidentity.Open(s.projectAnchorBinding(project, projectID, anchor))
 			if openErr != nil {
-				return "", fmt.Errorf("validate pending project identity: %w; "+markerRecovery, openErr)
+				return "", errors.New("this folder's network approval marker is not the file Coop made for it, as after a copy; " + markerRecovery)
 			}
 			if closeErr := root.Close(); closeErr != nil {
 				return "", closeErr
@@ -102,7 +102,7 @@ func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition b
 		}
 		// Fresh checkout: create the non-authoritative pair below.
 	default:
-		return "", fmt.Errorf("read pending project identity: %w", err)
+		return "", fmt.Errorf("this folder's network approval marker cannot be read: %w; "+markerRecovery, err)
 	}
 	if allowTransition && prior != nil && prior.Version == networkApprovalVersion {
 		// At this point the current path has no marker: it was absent, or the exact marker from a

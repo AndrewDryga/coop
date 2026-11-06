@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
+  to approve, `coop approve` prints "No approval needed: this project's requested access has not
+  changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any
+  hidden file needs file access approval. Declining `coop net forget` exits 1, as declining
+  `coop approve` does. `coop net forget --project` with nothing saved names that path instead of
+  saying it was a symlink. A launch and `coop net` say when the approval marker is gone, as after
+  `git clean -x`, or was written over, instead of calling the folder replaced. The moved, copied
+  and unreadable marker messages drop "two-link anchor" and "pending network identity" and name
+  `coop approve` once.
+
 - **A project can be approved again after its approval marker is written over.** Writing
   `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
   Coop's private copy through the hard link. Every run was then refused, and `coop approve` and

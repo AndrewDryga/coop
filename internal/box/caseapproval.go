@@ -58,38 +58,11 @@ func UnapprovedCaseExposures(repo string, paths []string) []string {
 // ReviewCaseExposure includes configured service binds because their cover
 // budget and target lengths differ from the agent's workspace mount.
 func ReviewCaseExposure(ctx context.Context, cfg *config.Config, repo string) (*CaseExposureReview, error) {
-	_, err := ComputeMounts(repo, Workdir(cfg, repo))
-	var uncovered *UncoveredSpellings
-	var paths []string
-	if errors.As(err, &uncovered) {
-		paths = append(paths, uncovered.Paths...)
-	} else if err != nil {
-		return nil, err
-	}
-	p, err := project.Load(repo)
+	paths, pending, err := CaseExposures(cfg, repo)
 	if err != nil {
 		return nil, err
 	}
-	if file := ComposeFileAt(repo, p.ComposeRel()); file != "" {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return nil, err
-		}
-		_, _, exposed, err := serviceShadowPlan(repo, file, data)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, exposed...)
-	}
-	slices.Sort(paths)
-	paths = slices.Compact(paths)
-	for _, path := range paths {
-		if IsCoopignoreName(filepath.Base(path)) {
-			return nil, &UncoveredSpellings{Paths: []string{path}}
-		}
-	}
-	review := &CaseExposureReview{Paths: paths, repo: repo}
-	review.Pending = UnapprovedCaseExposures(repo, paths)
+	review := &CaseExposureReview{Paths: paths, Pending: pending, repo: repo}
 	if len(review.Pending) == 0 {
 		return review, nil
 	}
@@ -107,6 +80,42 @@ func ReviewCaseExposure(ctx context.Context, cfg *config.Config, repo string) (*
 	defer unlock()
 	review.anchor, err = serviceApprovalAnchor(repo, true)
 	return review, err
+}
+
+// CaseExposures is what ReviewCaseExposure asks about, read without creating anything: every hidden
+// file a mount-protected run would leave readable under another letter case, and those of them not
+// approved yet.
+func CaseExposures(cfg *config.Config, repo string) (paths, pending []string, err error) {
+	_, err = ComputeMounts(repo, Workdir(cfg, repo))
+	var uncovered *UncoveredSpellings
+	if errors.As(err, &uncovered) {
+		paths = append(paths, uncovered.Paths...)
+	} else if err != nil {
+		return nil, nil, err
+	}
+	p, err := project.Load(repo)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file := ComposeFileAt(repo, p.ComposeRel()); file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		_, _, exposed, err := serviceShadowPlan(repo, file, data)
+		if err != nil {
+			return nil, nil, err
+		}
+		paths = append(paths, exposed...)
+	}
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	for _, path := range paths {
+		if IsCoopignoreName(filepath.Base(path)) {
+			return nil, nil, &UncoveredSpellings{Paths: []string{path}}
+		}
+	}
+	return paths, UnapprovedCaseExposures(repo, paths), nil
 }
 
 func (r *CaseExposureReview) Commit(ctx context.Context) error {

@@ -417,19 +417,38 @@ func (s *Store) checkDirectory(a *Approval, canonical string) *PendingApproval {
 		// resolve to the fresh default and silently forget the old sticky posture. A marker with no
 		// approval for this path is an explicit re-enrollment, not a first-use project.
 		if _, err := fsidentity.ReadMarker(canonical, ProjectApprovalMarker); err == nil {
-			return &PendingApproval{Reason: "this checkout moved or has a pending network identity — review it with 'coop approve'",
+			return &PendingApproval{Reason: "this checkout has a network approval marker but no approval for its current location",
 				Cause: "This checkout has a network approval marker but no approval for its current location."}
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return &PendingApproval{Reason: "this checkout's network identity cannot be verified — review it with 'coop approve'",
-				Cause: "Coop could not verify this checkout's network approval marker."}
+			return &PendingApproval{Reason: "Coop could not read this checkout's network approval marker",
+				Cause: "Coop could not read this checkout's network approval marker."}
 		}
 		return nil
 	}
 	if err := s.validateProjectAnchor(canonical, a); err != nil {
-		return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
-			Cause: "This project folder was replaced after its network access was approved."}
+		return s.markerDrift(canonical, a)
 	}
 	return nil
+}
+
+// markerDrift says in plain words why the marker no longer proves the approved folder, each a pending
+// review with the remedy left to the caller: the marker was deleted, as git clean -x does, which leaves
+// the private anchor its only name; it was written over in place; or the folder is not the one
+// approved, as after a copy or a swap, which takes the marker's link along with the old folder.
+func (s *Store) markerDrift(canonical string, a *Approval) *PendingApproval {
+	_, markerErr := os.Lstat(filepath.Join(canonical, ProjectApprovalMarker))
+	if anchor, err := s.root.Lstat(projectAnchorName(a.ProjectID, a.ProjectAnchor)); errors.Is(markerErr, os.ErrNotExist) && err == nil {
+		if stat, ok := anchor.Sys().(*syscall.Stat_t); ok && stat.Nlink == 1 {
+			return &PendingApproval{Reason: "this project's network approval marker is gone, as after git clean -x",
+				Cause: "This project's network approval marker (" + ProjectApprovalMarker + ") is gone, as after git clean -x."}
+		}
+	}
+	if altered, err := s.priorAnchorAltered(canonical, a); err == nil && altered {
+		return &PendingApproval{Reason: "this project's network approval marker was written over",
+			Cause: "This project's network approval marker (" + ProjectApprovalMarker + ") was written over, so its approval no longer applies."}
+	}
+	return &PendingApproval{Reason: "the project directory at " + canonical + " was replaced since it was approved",
+		Cause: "This project folder was replaced after its network access was approved."}
 }
 
 type FeatureApproval = egress.FeatureExpansion

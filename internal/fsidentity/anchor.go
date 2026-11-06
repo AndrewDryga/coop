@@ -363,7 +363,7 @@ func validateOpen(root *os.Root, rootInfo, stateInfo os.FileInfo, binding Bindin
 		markerOwner != uint32(os.Getuid()) || anchorOwner != uint32(os.Getuid()) ||
 		markerInfo.Mode().Perm() != 0o600 || anchorInfo.Mode().Perm() != 0o600 ||
 		!os.SameFile(markerInfo, anchorInfo) {
-		return nil, errors.New("filesystem identity marker no longer matches its private two-link anchor")
+		return nil, errors.New("the marker is not the file Coop made, as after a copy")
 	}
 	body, err := io.ReadAll(io.LimitReader(marker, maxAnchorBody+1))
 	if err != nil || !bytes.Equal(body, binding.Body) {

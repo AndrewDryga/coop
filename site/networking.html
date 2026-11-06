@@ -688,6 +688,18 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <td>an approved project directory replaced by another at the same path</td>
 <td><code>&lt;Agent&gt; cannot start because the project directory at &lt;path&gt; was replaced since it was approved</code> · <code>Review it: coop approve</code></td>
 </tr>
+<tr>
+<td>an approved project whose marker was deleted, as by <code>git clean -x</code></td>
+<td><code>&lt;Agent&gt; cannot start because this project&#39;s network approval marker is gone, as after git clean -x</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>an approved project whose marker was written over in place</td>
+<td><code>&lt;Agent&gt; cannot start because this project&#39;s network approval marker was written over</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>a checkout moved to a new folder with its marker</td>
+<td><code>&lt;Agent&gt; cannot start because this checkout has a network approval marker but no approval for its current location</code> · <code>Review it: coop approve</code></td>
+</tr>
 </tbody>
 </table></div></div>
 <p>If co:op can&#39;t enforce a rule, it stops the launch before saving approval or creating a container.

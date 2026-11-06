@@ -67,6 +67,14 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 	if path, err = filepath.Abs(path); err != nil {
 		return 1, err
 	}
+	return forgetProject(context.Background(), path, func() bool {
+		fmt.Fprintln(os.Stderr)
+		return ui.Confirm(netForgetPrompt, false)
+	})
+}
+
+// forgetProject is `coop net forget` for the project at path, with a person there to answer.
+func forgetProject(ctx context.Context, path string, confirm func() bool) (int, error) {
 	review, err := box.ReviewProjectNetworkForget(path)
 	if err != nil {
 		return 1, err
@@ -75,26 +83,26 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		if err := review.Close(); err != nil {
 			return 1, err
 		}
-		ui.Note("%s", netForgetNothing)
-		if review.Gone() {
-			ui.Detail("a path that was a symlink was approved as the directory it pointed at — forget that path instead")
+		if !review.Gone() {
+			ui.Note("%s", netForgetNothing)
+			return 0, nil
 		}
+		// Nothing tells a path that never held a project from a symlink whose folder is gone too.
+		ui.Note("No network approval is saved for %s.", ui.SafeInline(path))
+		ui.Detail("If it was a symlink, its approval belongs to the folder it pointed to: forget that folder instead.")
 		return 0, nil
 	}
-	err = confirmNetForget(context.Background(), review, os.Stderr, func() bool {
-		fmt.Fprintln(os.Stderr)
-		return ui.Confirm(netForgetPrompt, false)
-	})
+	err = confirmNetForget(ctx, review, os.Stderr, confirm)
 	declined := errors.Is(err, errNetDeclined)
 	if declined {
 		err = nil
 	}
 	err = errors.Join(err, review.Close())
-	// Answering no is an answer, not a failure: nothing changed, and the run
-	// says so without an error marker or a nonzero status.
+	// No is an answer, so the run says what was kept without an error marker; but the reset asked
+	// for did not happen, so it exits 1, as a declined coop approve does.
 	if declined && err == nil {
 		ui.Note("%s", netForgetCancelled)
-		return 0, nil
+		return 1, nil
 	}
 	return reportNetChange(err, netForgetForgotten)
 }

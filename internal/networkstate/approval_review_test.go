@@ -299,6 +299,136 @@ func TestApprovalRefusesLostIdentityAndCancellation(t *testing.T) {
 	}
 }
 
+// A marker coop approve cannot use is refused in plain words, and the steps to look at it, remove it
+// and approve again come once.
+func TestApproveRefusesAMarkerItCannotUseInPlainWords(t *testing.T) {
+	requests := []egress.Rule{rule("docs.example.com")}
+	for name, test := range map[string]struct {
+		marker func(t *testing.T, s *Store) string
+		says   string
+	}{
+		"copied in place": {func(t *testing.T, s *Store) string {
+			project := filepath.Join(t.TempDir(), "repo")
+			if err := os.Mkdir(project, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(project, project+".old"); err != nil {
+				t.Fatal(err)
+			}
+			copyMarker(t, project+".old", project)
+			return project
+		}, "this folder's network approval marker is not the file Coop made for it, as after a copy"},
+		"copied from another checkout": {func(t *testing.T, s *Store) string {
+			original, copied := t.TempDir(), t.TempDir()
+			if err := approve(s, original, egress.Filtered, requests, nil); err != nil {
+				t.Fatal(err)
+			}
+			copyMarker(t, original, copied)
+			return copied
+		}, "this folder's network approval marker came from another checkout, as after a copy"},
+		"not in Coop's format": {func(t *testing.T, s *Store) string {
+			project := t.TempDir()
+			if err := os.WriteFile(filepath.Join(project, ProjectApprovalMarker), []byte("not coop\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return project
+		}, "this folder's network approval marker is not in Coop's format"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openStore(t)
+			project := test.marker(t, s)
+			_, err := s.ReviewApproval(project, egress.Filtered, requests, nil, nil)
+			if err == nil || !strings.HasPrefix(err.Error(), test.says+"; ") || strings.Count(err.Error(), "coop approve") != 1 ||
+				!strings.Contains(err.Error(), "rm -- ./.coop-network-approval") {
+				t.Fatalf("review = %v, want %q and the steps once", err, test.says)
+			}
+			for _, jargon := range []string{"two-link", "identity", "anchor", "reserved"} {
+				if strings.Contains(err.Error(), jargon) {
+					t.Errorf("the refusal says %q: %v", jargon, err)
+				}
+			}
+		})
+	}
+}
+
+// copyMarker puts a copy of one checkout's marker in another folder: the bytes, never the hard link.
+func copyMarker(t *testing.T, from, to string) {
+	t.Helper()
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(from, ProjectApprovalMarker))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(to, ProjectApprovalMarker), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Each way a marker stops proving its folder is said in plain words, with no jargon and no remedy:
+// the launch and coop net print "coop approve" once, after it.
+func TestMarkerDriftSaysWhatHappenedToTheMarker(t *testing.T) {
+	requests := []egress.Rule{rule("example.com")}
+	for name, test := range map[string]struct {
+		change func(t *testing.T, project string) string
+		reason string
+	}{
+		"deleted, as git clean -x does": {func(t *testing.T, project string) string {
+			if err := os.Remove(filepath.Join(project, ProjectApprovalMarker)); err != nil {
+				t.Fatal(err)
+			}
+			return project
+		}, "this project's network approval marker is gone, as after git clean -x"},
+		"written over in place": {func(t *testing.T, project string) string {
+			overwriteMarker(t, project)
+			return project
+		}, "this project's network approval marker was written over"},
+		"moved with its marker": {func(t *testing.T, project string) string {
+			moved := filepath.Join(filepath.Dir(project), "moved")
+			if err := os.Rename(project, moved); err != nil {
+				t.Fatal(err)
+			}
+			return moved
+		}, "this checkout has a network approval marker but no approval for its current location"},
+		"swapped for another folder": {func(t *testing.T, project string) string {
+			if err := os.Rename(project, filepath.Join(filepath.Dir(project), "aside")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(project, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return project
+		}, " was replaced since it was approved"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := openStore(t)
+			project := filepath.Join(t.TempDir(), "repo")
+			if err := os.Mkdir(project, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := approve(s, project, egress.Filtered, requests, nil); err != nil {
+				t.Fatal(err)
+			}
+			path := test.change(t, project)
+			preview, err := s.admissionPreview(path, Admission{Requests: requests})
+			if err != nil || preview.Pending == nil || !strings.HasSuffix(preview.Pending.Reason, test.reason) {
+				t.Fatalf("pending = %+v, %v; want %q", preview.Pending, err, test.reason)
+			}
+			for _, text := range []string{preview.Pending.Reason, preview.Pending.Sentence()} {
+				for _, jargon := range []string{"coop approve", "two-link", "network identity", "anchor"} {
+					if strings.Contains(text, jargon) {
+						t.Errorf("%q says %q", text, jargon)
+					}
+				}
+			}
+		})
+	}
+}
+
 // An approval is bound to a DIRECTORY, not to the name of one. Moving the
 // approved project aside and putting another checkout at the same path must not
 // hand that checkout its grants.

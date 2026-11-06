@@ -225,6 +225,17 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 		admission: input, pending: pending, needs: modeChanged || pending != nil}, nil
 }
 
+// ProjectNetworkReviewNeeded reports whether `coop approve` has a network question to ask about this
+// project, from the same inputs its review loads: no means it would say nothing changed. A request it
+// would refuse is that refusal. It writes nothing, so it needs no terminal.
+func ProjectNetworkReviewNeeded(cfg *config.Config, repo string) (bool, error) {
+	if cfg == nil {
+		return false, errors.New("network approval requires host configuration")
+	}
+	inputs, err := loadProjectNetworkReviewInputs(cfg, repo)
+	return inputs.needs, err
+}
+
 // ReviewProjectNetworkContext is ReviewProjectNetwork with cancellation for the transition lock.
 // A first approval can legitimately wait for live sandbox mount windows; Ctrl-C must release that
 // wait without creating a project marker or owner decision.

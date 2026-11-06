@@ -213,3 +213,41 @@ func TestNetCommandsRefuseOlderBuildsRecordsByName(t *testing.T) {
 		})
 	}
 }
+
+// Declining keeps the approval and exits 1, as a declined coop approve does: the reset asked for did
+// not happen. It is an answer, so it carries no error marker.
+func TestForgetDeclinedKeepsTheApprovalAndExitsOne(t *testing.T) {
+	a, repo := servicesProject(t, approveOtherRule, "")
+	if code, _, out, err := runApprove(t, a, repo, func(string) bool { return true }); code != 0 || err != nil {
+		t.Fatalf("approval: code=%d err=%v out=%s", code, err, out)
+	}
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = forgetProject(t.Context(), repo, func() bool { return false }) })
+	if code != 1 || err != nil || !strings.HasSuffix(out, netForgetCancelled+"\n") || strings.Contains(out, "✗") {
+		t.Fatalf("code=%d err=%v out=%s", code, err, out)
+	}
+	if access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo); err != nil || access.Approval == nil {
+		t.Fatalf("a declined forget removed the approval: %+v, %v", access.Approval, err)
+	}
+}
+
+// A --project path with nothing saved says so for that path. It never claims the path was a symlink:
+// nothing tells one that was from one that never held a project.
+func TestForgetAPathWithNothingSavedSaysSo(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "never-existed")
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = forgetProject(t.Context(), path, func() bool {
+			t.Error("it asked about nothing")
+			return false
+		})
+	})
+	want := "No network approval is saved for " + path + ".\n" +
+		"  If it was a symlink, its approval belongs to the folder it pointed to: forget that folder instead.\n"
+	if code != 0 || err != nil || out != want {
+		t.Fatalf("code=%d err=%v printed\n%s\nwant\n%s", code, err, out, want)
+	}
+}

@@ -666,7 +666,8 @@ func TestApproveDoesNotCarryALaterEditAlong(t *testing.T) {
 }
 
 // With no terminal it decides nothing. It shows the rules and the box.network: false choice only when
-// they are the whole problem, and fails, since nothing got settled.
+// they are the whole problem, and fails, since nothing got settled. With nothing to settle it says so
+// and succeeds, as at a terminal.
 func TestApproveWithoutATerminal(t *testing.T) {
 	a, repo := servicesProject(t, "", approveCompose)
 	root, err := box.NetworkStatePath()
@@ -686,11 +687,12 @@ func TestApproveWithoutATerminal(t *testing.T) {
 	if after := directoryListing(t, root, repo); after != before {
 		t.Errorf("it wrote something:\n%s\nwas\n%s", after, before)
 	}
-	const onlyTerminal = "needs your confirmation in a terminal"
-	if _, err := a.cmdApprove([]string{"--case-exposure"}); err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
-		t.Errorf("--case-exposure: %v", err)
+	// With no file access to ask about, --case-exposure leaves the services refusal as the answer.
+	if code, err := a.cmdApprove([]string{"--case-exposure"}); code != 1 || err == nil || !strings.Contains(err.Error(), "box.network: false") {
+		t.Errorf("--case-exposure: code=%d err=%v", code, err)
 	}
 	// A real question stays a refusal, with nothing to act on until a person sees the review.
+	const onlyTerminal = "needs your confirmation in a terminal"
 	a, repo = servicesProject(t, approveOtherRule, approveCompose)
 	if code, err := a.cmdApprove(nil); code != 1 || err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
 		t.Errorf("pending: code=%d err=%v", code, err)
@@ -698,9 +700,79 @@ func TestApproveWithoutATerminal(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(repo, ".agent", "project.yaml")); string(got) != approveOtherRule {
 		t.Errorf("project.yaml changed:\n%s", got)
 	}
-	a, _ = servicesProject(t, "box:\n  egress: filtered\n", "")
-	if _, err := a.cmdApprove(nil); err == nil || !strings.Contains(usageBlock(t, err), onlyTerminal) {
-		t.Errorf("no services: %v", err)
+	// Nothing to approve needs no terminal to say so.
+	for args, want := range map[string]string{
+		"":                netApproveUnchanged + "\n",
+		"--case-exposure": netApproveUnchanged + "\n" + netCaseExposureSettled(nil) + "\n",
+	} {
+		a, repo = servicesProject(t, "box:\n  egress: filtered\n", "")
+		root, err := box.NetworkStatePath()
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := directoryListing(t, root, repo)
+		var code int
+		out := captureStderr(t, func() { code, err = a.cmdApprove(strings.Fields(args)) })
+		if code != 0 || err != nil || out != want {
+			t.Errorf("nothing to approve %q: code=%d err=%v printed\n%s\nwant\n%s", args, code, err, out, want)
+		}
+		if after := directoryListing(t, root, repo); after != before {
+			t.Errorf("nothing to approve %q wrote something:\n%s\nwas\n%s", args, after, before)
+		}
+	}
+}
+
+// File access waiting for a person stays a terminal question with no terminal, and writes nothing.
+// Once approved, the same command answers that it already is.
+func TestApproveCaseExposureWithoutATerminal(t *testing.T) {
+	netHostFixture(t)
+	state := t.TempDir()
+	t.Setenv(box.ServiceStateRootEnv, state)
+	repo := netFixtureProject(t)
+	if err := os.WriteFile(filepath.Join(repo, "credentials.json"), []byte("inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "CREDENTIALS.JSON")); err != nil {
+		t.Skip("requires a disk that folds case")
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	before := directoryListing(t, state, repo)
+	if code, err := a.cmdApprove([]string{"--case-exposure"}); code != 1 || err == nil || !strings.Contains(usageBlock(t, err), "needs your confirmation in a terminal") {
+		t.Fatalf("pending file access: code=%d err=%v", code, err)
+	}
+	if after := directoryListing(t, state, repo); after != before {
+		t.Fatalf("it wrote something:\n%s\nwas\n%s", after, before)
+	}
+	captureStderr(t, func() {
+		if code, err := a.approveProject(t.Context(), repo, true, func(string) bool { return true }); code != 0 || err != nil {
+			t.Fatalf("approving at a terminal: %d, %v", code, err)
+		}
+	})
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = a.cmdApprove([]string{"--case-exposure"}) })
+	if want := netApproveUnchanged + "\n" + netCaseExposureSettled([]string{"credentials.json"}) + "\n"; code != 0 || err != nil || out != want {
+		t.Fatalf("approved file access: code=%d err=%v printed\n%s\nwant\n%s", code, err, out, want)
+	}
+}
+
+// Asked about case exposure with none to approve, approve answers about it too, not only about the
+// network access nobody changed.
+func TestApproveCaseExposureWithNothingToApproveSaysSo(t *testing.T) {
+	a, repo := servicesProject(t, "box:\n  egress: filtered\n", "")
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = a.approveProject(t.Context(), repo, true, func(string) bool {
+			t.Error("nothing to approve, but it asked")
+			return false
+		})
+	})
+	if want := netApproveUnchanged + "\nNo hidden file can be read under another letter case, so no file access needs approval.\n"; code != 0 || err != nil || out != want {
+		t.Fatalf("code=%d err=%v printed\n%s\nwant\n%s", code, err, out, want)
+	}
+	if got := netCaseExposureSettled([]string{"credentials.json"}); got != "The hidden files that can be read under another letter case are already approved." {
+		t.Errorf("already approved: %q", got)
 	}
 }
 

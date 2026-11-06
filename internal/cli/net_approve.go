@@ -36,7 +36,7 @@ func (a *app) cmdApprove(args []string) (int, error) {
 		caseExposure = true
 	}
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
-		return 1, a.approveWithoutTerminal(caseExposure)
+		return a.approveWithoutTerminal(caseExposure)
 	}
 	repo, err := netApprovalProject(a.cfg.RepoOverride)
 	if err != nil {
@@ -75,6 +75,9 @@ func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool
 		}
 		if services == nil {
 			ui.Note("%s", netApproveUnchanged)
+			if caseReview != nil {
+				ui.Note("%s", netCaseExposureSettled(caseReview.Paths))
+			}
 			return 0, nil
 		}
 		return a.offerServiceRules(ctx, repo, services, confirm)
@@ -100,27 +103,50 @@ func (a *app) approveProject(ctx context.Context, repo string, caseExposure bool
 }
 
 // approveWithoutTerminal is `coop approve` with nobody there to answer. It asks nothing and writes
-// nothing, and it fails either way, since nothing got settled. When only service rules hold the box up
-// it says what they are: reading them needs no decision, and the person can act on them later.
-func (a *app) approveWithoutTerminal(caseExposure bool) error {
+// nothing. With nothing to approve it says so and succeeds, as a terminal run does, and a refusal is
+// the one a terminal run prints. A real question fails, since nothing got settled. When only service
+// rules hold the box up it says what they are: reading them needs no decision, and the person can act
+// on them later.
+func (a *app) approveWithoutTerminal(caseExposure bool) (int, error) {
 	refused := netTerminalOnly("coop approve")
-	if caseExposure {
-		return refused
-	}
 	repo, err := netApprovalProject(a.cfg.RepoOverride)
 	if err != nil {
-		return refused
+		return 1, err
 	}
-	ctx := context.Background()
-	access, err := box.ProjectNetworkAccess(ctx, a.cfg, repo)
-	if err != nil || access.Pending != nil {
-		return refused
+	needed, err := box.ProjectNetworkReviewNeeded(a.cfg, repo)
+	if err != nil {
+		return 1, err
 	}
-	services, err := box.ProjectServicesRefusal(ctx, a.cfg, repo)
-	if err != nil || services == nil {
-		return refused
+	var paths, pending []string
+	if caseExposure {
+		if paths, pending, err = box.CaseExposures(a.cfg, repo); err != nil {
+			return 1, err
+		}
 	}
-	return services
+	if needed || len(pending) != 0 {
+		return 1, refused
+	}
+	services, err := box.ProjectServicesRefusal(context.Background(), a.cfg, repo)
+	if err != nil {
+		return 1, err
+	}
+	if services != nil {
+		return 1, services
+	}
+	ui.Note("%s", netApproveUnchanged)
+	if caseExposure {
+		ui.Note("%s", netCaseExposureSettled(paths))
+	}
+	return 0, nil
+}
+
+// netCaseExposureSettled answers `coop approve --case-exposure` when it has no file access to ask
+// about, since that is what the person asked about.
+func netCaseExposureSettled(paths []string) string {
+	if len(paths) == 0 {
+		return "No hidden file can be read under another letter case, so no file access needs approval."
+	}
+	return "The hidden files that can be read under another letter case are already approved."
 }
 
 // offerServiceRules settles a box stuck on missing service rules in one question. Coop knows the names

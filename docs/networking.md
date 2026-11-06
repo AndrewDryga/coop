@@ -464,6 +464,9 @@ base, gateway and client images, but those builds don't run instructions from yo
 | `open`, in a project with no approval yet | `<Agent> cannot start because this project asks for unrestricted internet access, which has not been approved` · `Review it: coop approve` |
 | an approved Compose service whose definition changed | `<Agent> cannot start because the Compose service "db" changed since it was approved` · `Review it: coop approve` |
 | an approved project directory replaced by another at the same path | `<Agent> cannot start because the project directory at <path> was replaced since it was approved` · `Review it: coop approve` |
+| an approved project whose marker was deleted, as by `git clean -x` | `<Agent> cannot start because this project's network approval marker is gone, as after git clean -x` · `Review it: coop approve` |
+| an approved project whose marker was written over in place | `<Agent> cannot start because this project's network approval marker was written over` · `Review it: coop approve` |
+| a checkout moved to a new folder with its marker | `<Agent> cannot start because this checkout has a network approval marker but no approval for its current location` · `Review it: coop approve` |
 
 If co:op can't enforce a rule, it stops the launch before saving approval or creating a container.
 It never starts a run with a requested restriction silently removed.

@@ -338,7 +338,9 @@ func TestSnapshotForkApprovalRefusesMarkersWithoutChangingParentAuthority(t *tes
 			err = s.SnapshotForkApprovals(t.Context(), parent, fork, "coop-fork-filtered")
 			want := "new fork already has a network approval marker"
 			if kind == "replaced parent marker" {
-				want = "was replaced since it was approved"
+				// os.WriteFile truncates the marker in place, so the foreign bytes reach the private
+				// anchor through the hard link: the marker was written over.
+				want = "network approval marker was written over"
 			}
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("snapshot with %s returned %v, want refusal containing %q", kind, err, want)
