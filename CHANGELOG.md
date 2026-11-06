@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions connect` says what is wrong with a token file it refuses.** A token file other
+  users could open was refused as "must be a private bounded regular file", with no fix. The
+  refusal now names the failed check: a file open to other users (with the `chmod 600` that fixes
+  it), a folder or other non-regular file, an empty file, one larger than a token, or one that
+  holds no token. The usage line in its errors shows `--token-file` as optional, as the help does:
+  only the first connection needs it.
+
+- **`coop context` inside a subproject lists that subproject's own `AGENTS.md`.** It comes right
+  after the root's, with the subproject's rules index after the root's when a route includes that.
+  Paths stay relative to the repository root; in a folder below it, a path that only exists from
+  that folder now gets a warning with the command for that file. The refusal of a path outside the
+  repository shows `coop context src/app.ts` as its example, not a file from Coop's own source.
 - **`coop loop --egress offline` stops before it starts an agent that cannot work offline.** An
   offline box cannot reach the agent's provider, so every attempt failed, and the loop ended with
   "No configured agent could sign in" and told you to sign in again, though your account was fine.

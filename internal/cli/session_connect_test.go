@@ -14,10 +14,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -53,6 +55,47 @@ func TestParseSessionConnectFlagsReportsTheActualBadArgument(t *testing.T) {
 		t.Fatalf("reconnect without enrollment token: %v", err)
 	}
 
+}
+
+// A token file the worker cannot use is refused before anything starts, with the check it failed
+// and its fix: the chmod for a file other users can open. The usage line shows --token-file as
+// optional, as coop help does: only the first connection needs it.
+func TestSessionConnectExplainsAnUnusableTokenFile(t *testing.T) {
+	home := shortHome(t)
+	token := filepath.Join(home, "tok")
+	if err := os.WriteFile(token, []byte("qa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(token, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "w1")
+	code, err := runSessionConnect(&config.Config{}, sessionConnectOptions{Controller: "https://127.0.0.1:9", TokenFile: token, State: state})
+	want := &ui.UsageError{
+		Headline: "Could not use the enrollment token file",
+		Cause:    token + " is open to other users (mode 0644).",
+		Rows:     [][2]string{{"Make it private:", "chmod 600 " + token}, {"Help:", "coop help sessions connect"}},
+		ExitCode: 1,
+	}
+	if usage := asUsage(err); code != 1 || usage == nil || !reflect.DeepEqual(usage, want) {
+		t.Errorf("connect with a shared token file = (%d, %#v), want %#v", code, err, want)
+	}
+	if _, err := os.Lstat(state); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a refused connect made its state folder: %v", err)
+	}
+
+	if err := os.Chmod(token, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runSessionConnect(&config.Config{}, sessionConnectOptions{Controller: "https://127.0.0.1:9", TokenFile: token, State: state})
+	if usage := asUsage(err); usage == nil || usage.Cause != sentence(token+" does not hold an enrollment token")+"\nSave the token the controller gave you in it, on one line." {
+		t.Errorf("connect with a private file that holds no token = %#v", err)
+	}
+
+	_, err = parseSessionConnectFlags([]string{"config.json"})
+	if usage := asUsage(err); usage == nil || usage.Rows[0] != [2]string{"Usage:", "coop sessions connect --controller <https-url> [--token-file <path>]"} {
+		t.Errorf("the usage line = %#v, want --token-file shown as optional", err)
+	}
 }
 
 // shortHome is a REAL, short directory for a session state root. t.TempDir() will not do: on macOS

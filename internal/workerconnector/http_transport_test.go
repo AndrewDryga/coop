@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -229,26 +230,67 @@ func writeWorkerIdentityResponse(t *testing.T, response http.ResponseWriter, req
 	_ = json.NewEncoder(response).Encode(identity)
 }
 
-// A worker refuses an unusable token file before it starts anything.
+// A worker refuses an unusable token file before it starts anything, naming the check it failed and
+// what to do about it. Permissions are never loosened: a file other users can open is refused with
+// the chmod that makes it private. A link to a private token file is followed, as before.
 func TestCheckEnrollmentTokenFile(t *testing.T) {
 	dir := t.TempDir()
-	missing := filepath.Join(dir, "missing")
-	if err := CheckEnrollmentTokenFile(missing); err == nil || !strings.Contains(err.Error(), "no file at "+missing) {
-		t.Errorf("missing file = %v", err)
+	token := strings.Repeat("t", 43)
+	write := func(name, content string, mode os.FileMode) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil { // past the umask
+			t.Fatal(err)
+		}
+		return path
 	}
-	open := filepath.Join(dir, "open")
-	if err := os.WriteFile(open, []byte("token"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckEnrollmentTokenFile(open); err == nil || !strings.Contains(err.Error(), open) {
-		t.Errorf("group-readable file = %v", err)
-	}
-	private := filepath.Join(dir, "private")
-	if err := os.WriteFile(private, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	private := write("private", token, 0o600)
 	if err := CheckEnrollmentTokenFile(private); err != nil {
 		t.Errorf("private file = %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckEnrollmentTokenFile(link); err != nil {
+		t.Errorf("link to a private file = %v", err)
+	}
+	folder := filepath.Join(dir, "folder")
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing")
+	open := write("open", "qa", 0o644)
+	for _, tc := range []struct {
+		path, problem, advice string
+		shared                bool
+	}{
+		{missing, "no file at " + missing, "", false},
+		{open, open + " is open to other users (mode 0644)", "", true},
+		{write("group", token, 0o640), filepath.Join(dir, "group") + " is open to other users (mode 0640)", "", true},
+		{folder, folder + " is a folder", "Give --token-file the token file itself.", false},
+		{fifo, fifo + " is not a regular file", "Give --token-file the token file itself.", false},
+		{write("empty", "", 0o600), filepath.Join(dir, "empty") + " is empty", "Save the enrollment token in it.", false},
+		{write("large", strings.Repeat("t", 129), 0o600), filepath.Join(dir, "large") + " is 129 bytes, larger than an enrollment token (at most 128)",
+			"Save only the enrollment token in it.", false},
+		{write("short", "qa", 0o600), filepath.Join(dir, "short") + " does not hold an enrollment token",
+			"Save the token the controller gave you in it, on one line.", false},
+	} {
+		err := CheckEnrollmentTokenFile(tc.path)
+		var unusable *TokenFileError
+		if !errors.As(err, &unusable) || unusable.Problem != tc.problem || unusable.Advice != tc.advice || unusable.Shared != tc.shared || unusable.Path != tc.path {
+			t.Errorf("CheckEnrollmentTokenFile(%s) = %#v, want problem %q, advice %q, shared %v", tc.path, err, tc.problem, tc.advice, tc.shared)
+		}
+	}
+	if err := CheckEnrollmentTokenFile(open); err == nil || err.Error() != open+" is open to other users (mode 0644); make it private with chmod 600 "+open {
+		t.Errorf("a shared file's error = %v, want the chmod that fixes it", err)
 	}
 }
 

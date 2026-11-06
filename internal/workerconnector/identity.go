@@ -364,22 +364,56 @@ func ControllerUnreachable(err error) bool {
 // a person can act on. The first connection reads it again and consumes it.
 func CheckEnrollmentTokenFile(path string) error {
 	_, err := readEnrollmentToken(path)
+	var unusable *TokenFileError
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("no file at %s", path)
+		return &TokenFileError{Path: path, Problem: "no file at " + path}
+	case errors.As(err, &unusable):
+		return err
 	case err != nil:
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
 }
 
+// TokenFileError is an enrollment token file a worker cannot use: Problem names the check it
+// failed and Advice what to do about it. Shared marks a file other users can open, which
+// `chmod 600 <Path>` makes private; the caller shows that command.
+type TokenFileError struct {
+	Path, Problem, Advice string
+	Shared                bool
+}
+
+func (e *TokenFileError) Error() string {
+	switch {
+	case e.Shared:
+		return e.Problem + "; make it private with chmod 600 " + e.Path
+	case e.Advice != "":
+		return e.Problem + ". " + e.Advice
+	}
+	return e.Problem
+}
+
+// readEnrollmentToken reads the one-time token a first connection exchanges for worker credentials:
+// a private, token-sized regular file. A link to one is followed, as a secret mount such as
+// /run/secrets often is one; each check it fails is named, with what fixes it.
 func readEnrollmentToken(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat worker enrollment token: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() <= 0 || info.Size() > maxEnrollmentTokenBytes {
-		return "", errors.New("worker enrollment token must be a private bounded regular file")
+	switch mode := info.Mode(); {
+	case mode.IsDir():
+		return "", &TokenFileError{Path: path, Problem: path + " is a folder", Advice: "Give --token-file the token file itself."}
+	case !mode.IsRegular():
+		return "", &TokenFileError{Path: path, Problem: path + " is not a regular file", Advice: "Give --token-file the token file itself."}
+	case mode.Perm()&0o077 != 0:
+		return "", &TokenFileError{Path: path, Problem: fmt.Sprintf("%s is open to other users (mode %04o)", path, mode.Perm()), Shared: true}
+	case info.Size() == 0:
+		return "", &TokenFileError{Path: path, Problem: path + " is empty", Advice: "Save the enrollment token in it."}
+	case info.Size() > maxEnrollmentTokenBytes:
+		return "", &TokenFileError{Path: path, Problem: fmt.Sprintf("%s is %d bytes, larger than an enrollment token (at most %d)", path, info.Size(), maxEnrollmentTokenBytes),
+			Advice: "Save only the enrollment token in it."}
 	}
 	value, err := os.ReadFile(path)
 	if err != nil {
@@ -387,7 +421,8 @@ func readEnrollmentToken(path string) (string, error) {
 	}
 	token := strings.TrimSpace(string(value))
 	if len(token) < 32 || len(token) > maxEnrollmentTokenBytes || strings.ContainsAny(token, "\r\n\t ") {
-		return "", errors.New("worker enrollment token is invalid")
+		return "", &TokenFileError{Path: path, Problem: path + " does not hold an enrollment token",
+			Advice: "Save the token the controller gave you in it, on one line."}
 	}
 	return token, nil
 }

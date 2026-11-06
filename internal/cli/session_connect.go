@@ -42,7 +42,8 @@ type sessionConnectOptions struct {
 
 func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 	const command = "coop sessions connect"
-	const usage = command + " --controller <https-url> --token-file <path>"
+	// Only the first connection needs the token, as the help says.
+	const usage = command + " --controller <https-url> [--token-file <path>]"
 	const example = command + " --controller https://controller.example.com --token-file /path/to/token"
 	var options sessionConnectOptions
 	for i := 0; i < len(args); i++ {
@@ -100,6 +101,29 @@ func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 	return options, err
 }
 
+// tokenFileRefusal is the block for a token file the worker cannot use: the check it failed, and
+// what fixes it, as a command when one does.
+func tokenFileRefusal(err error) error {
+	cause := "Coop found: " + err.Error() + "."
+	var rows [][2]string
+	var unusable *workerconnector.TokenFileError
+	if errors.As(err, &unusable) {
+		cause = sentence(unusable.Problem)
+		if unusable.Advice != "" {
+			cause += "\n" + unusable.Advice
+		}
+		if unusable.Shared {
+			if word, ok := ui.ShellWord(unusable.Path); ok {
+				rows = append(rows, [2]string{"Make it private:", "chmod 600 " + word})
+			} else {
+				cause += "\nMake it private with chmod 600."
+			}
+		}
+	}
+	rows = append(rows, [2]string{"Help:", ui.HelpCommand("coop sessions connect")})
+	return ui.CommandFailed("Could not use the enrollment token file", cause, rows...)
+}
+
 func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, error) {
 	state, socket, err := sessionSocketPath(options.State, "")
 	if err != nil {
@@ -109,8 +133,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 	// restarting with the same flag is fine.
 	if _, statErr := os.Lstat(filepath.Join(state, "identity.json")); options.TokenFile != "" && errors.Is(statErr, os.ErrNotExist) {
 		if err := workerconnector.CheckEnrollmentTokenFile(options.TokenFile); err != nil {
-			return 1, ui.CommandFailed("Could not use the enrollment token file", "Coop found: "+err.Error()+".",
-				[2]string{"Help:", ui.HelpCommand("coop sessions connect")})
+			return 1, tokenFileRefusal(err)
 		}
 	}
 	transport, err := workerconnector.NewHTTPTransport(workerconnector.HTTPTransportConfig{
