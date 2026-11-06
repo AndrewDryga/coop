@@ -1,6 +1,7 @@
 package box
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestAuthedAgents(t *testing.T) {
@@ -146,6 +148,41 @@ func TestCredentialScope(t *testing.T) {
 		if got := credentialScope(cfg, c.spec); !slices.Equal(got, c.want) {
 			t.Errorf("%s: credentialScope = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// With COOP_HOMES=0 no account is connected, so an agent run that would reach its provider is
+// refused before its box starts, in the shared block. What needs no sign-in still runs: an offline
+// box, a sign-in, a raw command and an ACP or maintenance command. Run refuses presets and peers.
+func TestSignInNeedsHomes(t *testing.T) {
+	agent := RunSpec{Agent: "claude", AgentCommand: true, Cmd: []string{"claude"}}
+	want := "Claude Code cannot sign in with COOP_HOMES=0 — Coop connects the agent's account through its home in the box, and COOP_HOMES=0 keeps that home out. — Run it with COOP_HOMES=1, the default."
+	for _, mode := range []string{"filtered", "open"} {
+		var refusal *ui.UsageError
+		if err := SignInNeedsHomes(&config.Config{Egress: mode}, agent); !errors.As(err, &refusal) || refusal.ExitCode != 1 || refusal.Error() != want {
+			t.Errorf("%s agent run without homes = %v, want %q", mode, err, want)
+		}
+	}
+	with := func(change func(*RunSpec)) RunSpec {
+		spec := agent
+		change(&spec)
+		return spec
+	}
+	for name, spec := range map[string]RunSpec{
+		"homes on":     with(func(s *RunSpec) { s.Homes = true }),
+		"sign-in":      with(func(s *RunSpec) { s.Login = true }),
+		"raw command":  with(func(s *RunSpec) { s.Agent, s.AgentCommand = "", false }),
+		"ACP command":  with(func(s *RunSpec) { s.AgentCommand = false }),
+		"preset":       with(func(s *RunSpec) { s.Preset, s.ConsultLead = &preset.Preset{Name: "frontier"}, "claude" }),
+		"peer":         with(func(s *RunSpec) { s.ConsultLead, s.Peers = "claude", peerTargets("codex") }),
+		"unknown kind": with(func(s *RunSpec) { s.Agent = "nosuch" }),
+	} {
+		if err := SignInNeedsHomes(&config.Config{Egress: "filtered"}, spec); err != nil {
+			t.Errorf("%s: refused with %v", name, err)
+		}
+	}
+	if err := SignInNeedsHomes(&config.Config{Egress: "none"}, agent); err != nil {
+		t.Errorf("an offline agent run without homes was refused: %v", err)
 	}
 }
 

@@ -2430,6 +2430,43 @@ func TestRawCommandsReadPipedStdin(t *testing.T) {
 	}
 }
 
+// With COOP_HOMES=0 no account is connected, so a plain agent run that would reach its provider stops
+// before its box starts, with the sign-in refusal. An offline one needs no sign-in and still starts.
+func TestAgentRunWithoutHomesIsRefusedBeforeTheBox(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	want := "Claude Code cannot sign in with COOP_HOMES=0 — Coop connects the agent's account through its home in the box, and COOP_HOMES=0 keeps that home out. — Run it with COOP_HOMES=1, the default."
+	for _, tc := range []struct {
+		egress  string
+		refused bool
+	}{{"open", true}, {"none", false}} {
+		t.Run(tc.egress, func(t *testing.T) {
+			saved := os.Stdin
+			os.Stdin = nullStdin(t)
+			t.Cleanup(func() { os.Stdin = saved })
+			dir := t.TempDir()
+			calls, shim := filepath.Join(dir, "calls"), filepath.Join(dir, "runtime")
+			if err := os.WriteFile(shim, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+strconv.Quote(calls)+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// Homes stays false, as COOP_HOMES=0 leaves it.
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(),
+				BaseImage: "test-base", ImageOverride: "test-image", Shell: "bash"}
+			cfg.SetEgress(tc.egress)
+			a := &app{cfg: cfg, rt: runtime.Runtime{Name: shim}, rtSet: true}
+			var code int
+			var err error
+			out := captureStderr(t, func() { code, err = a.runInBox([]string{"claude"}, "claude", nil) })
+			started := slices.ContainsFunc(strings.Split(readFileString(calls), "\n"), func(line string) bool { return strings.HasPrefix(line, "run ") })
+			switch {
+			case tc.refused && (code != 1 || err == nil || err.Error() != want || started):
+				t.Errorf("open run without homes = (%d, %v), box started %v; want 1 and %q before the box\n%s", code, err, started, want, out)
+			case !tc.refused && (code != 0 || err != nil || !started):
+				t.Errorf("offline run without homes = (%d, %v), box started %v; want it to start\n%s", code, err, started, out)
+			}
+		})
+	}
+}
+
 // pipedStdin is a pipe that already holds data and is closed for writing, as `printf … |` hands it over.
 func pipedStdin(data string) func(t *testing.T) *os.File {
 	return func(t *testing.T) *os.File {

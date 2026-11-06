@@ -235,6 +235,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if err := refuseOfflineOnePrompt(a.cfg, spec); err != nil {
 		return 1, err
 	}
+	if err := box.SignInNeedsHomes(a.cfg, spec); err != nil {
+		return 1, err
+	}
 	spec.CapturedEgress = capture
 	// A filtered box runs the qualified client image, so the shared image's currency is not its
 	// concern; an open or offline one runs this repo's, repaired here when its definition drifted.

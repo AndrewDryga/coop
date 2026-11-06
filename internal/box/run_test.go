@@ -3337,6 +3337,8 @@ func TestRunDoesNotMountDirectMCPForMaintenanceCommand(t *testing.T) {
 	}
 }
 
+// A preset or a peer cannot run with COOP_HOMES=0. Each is refused before the runtime, in the
+// shared block: what needs the homes, why, and how to run it.
 func TestRunDeclaredCompositionRequiresHomes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -3346,12 +3348,17 @@ func TestRunDeclaredCompositionRequiresHomes(t *testing.T) {
 		{
 			name: "preset",
 			spec: RunSpec{Preset: &preset.Preset{Name: "frontier"}, ConsultLead: "claude"},
-			want: `preset "frontier" requires agent homes`,
+			want: `Preset "frontier" needs agent homes — Its instructions, wrappers and roles mount in the agents' homes, and COOP_HOMES=0 keeps them out. — Run it with COOP_HOMES=1, the default.`,
 		},
 		{
 			name: "explicit consult",
 			spec: RunSpec{ConsultLead: "claude", Peers: []agents.Target{{Provider: "codex"}}},
-			want: "consult requires agent homes",
+			want: "Peers need agent homes — A peer's instructions, wrapper and sign-in mount in the agents' homes, and COOP_HOMES=0 keeps them out. — Run it with COOP_HOMES=1, the default.",
+		},
+		{
+			name: "lead without peers", // a fork's agent
+			spec: RunSpec{Agent: "claude", ConsultLead: "claude", AgentCommand: true},
+			want: "Claude Code needs its home for this run — Its consult instructions and wrapper mount in its home, and COOP_HOMES=0 keeps it out. — Run it with COOP_HOMES=1, the default.",
 		},
 	}
 	for _, tc := range tests {
@@ -3360,8 +3367,9 @@ func TestRunDeclaredCompositionRequiresHomes(t *testing.T) {
 			tc.spec.Repo = t.TempDir()
 			recorder := filepath.Join(t.TempDir(), "runtime-args")
 			code, err := Run(&config.Config{ConfigDir: t.TempDir()}, recorderRuntime(t, recorder), tc.spec)
-			if code != -1 || err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Run = (%d, %v), want pre-runtime %q error", code, err, tc.want)
+			var refusal *ui.UsageError
+			if code != -1 || !errors.As(err, &refusal) || refusal.ExitCode != 1 || refusal.Error() != tc.want {
+				t.Fatalf("Run = (%d, %v), want the pre-runtime refusal %q", code, err, tc.want)
 			}
 			if _, statErr := os.Stat(recorder); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("container run started without required homes; recorder error = %v", statErr)

@@ -635,10 +635,20 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	}
 	if !spec.Homes {
 		if spec.Preset != nil {
-			return -1, fmt.Errorf("preset %q requires agent homes so its instructions, wrappers, and roles can mount", spec.Preset.Name)
+			return -1, ui.CommandFailed(fmt.Sprintf("Preset %q needs agent homes", spec.Preset.Name),
+				"Its instructions, wrappers and roles mount in the agents' homes, and COOP_HOMES=0 keeps them out.", homesFix)
 		}
-		if spec.ConsultLead != "" || len(spec.Peers) > 0 {
-			return -1, fmt.Errorf("consult requires agent homes so its instructions, wrapper, and peer credentials can mount")
+		if len(spec.Peers) > 0 {
+			return -1, ui.CommandFailed("Peers need agent homes",
+				"A peer's instructions, wrapper and sign-in mount in the agents' homes, and COOP_HOMES=0 keeps them out.", homesFix)
+		}
+		if spec.ConsultLead != "" { // a fork's agent leads without peers
+			title := spec.ConsultLead
+			if ag, ok := agents.Get(title); ok {
+				title = ag.DisplayName()
+			}
+			return -1, ui.CommandFailed(title+" needs its home for this run",
+				"Its consult instructions and wrapper mount in its home, and COOP_HOMES=0 keeps it out.", homesFix)
 		}
 	}
 	if spec.Login {

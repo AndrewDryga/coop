@@ -9,6 +9,8 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // AuthedAgents returns agents whose active account looks authenticated. The active account is the
@@ -110,6 +112,26 @@ func credentialScope(cfg *config.Config, spec RunSpec) []string {
 		}
 	}
 	return scope
+}
+
+// homesFix is the fix every COOP_HOMES=0 refusal offers.
+var homesFix = [2]string{"", "Run it with COOP_HOMES=1, the default."}
+
+// SignInNeedsHomes refuses an agent run that has to sign in while COOP_HOMES=0 keeps agent homes
+// out of the box. Coop connects an agent's account through its home (credentialScope), so the
+// agent would start signed out, and a filtered box would block its provider as well. An offline
+// run reaches no provider and needs no sign-in. Run refuses presets and peers with their own reason.
+func SignInNeedsHomes(cfg *config.Config, spec RunSpec) error {
+	ag, ok := agents.Get(spec.Agent)
+	if !ok || spec.Homes || !spec.AgentCommand || spec.Login || spec.Preset != nil || spec.ConsultLead != "" || len(spec.Peers) > 0 {
+		return nil
+	}
+	if mode := egress.Mode(cfg.Egress); mode != egress.Filtered && mode != egress.Open {
+		return nil
+	}
+	return ui.CommandFailed(ag.DisplayName()+" cannot sign in with COOP_HOMES=0",
+		"Coop connects the agent's account through its home in the box, and COOP_HOMES=0 keeps that home out.",
+		homesFix)
 }
 
 // envKeysOutsideScope is the set of adapter token keys to strip for this concrete run. A provider

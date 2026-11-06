@@ -26,7 +26,7 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 | `COOP_MEMORY`, `COOP_CPUS` | unset | Limits the box's memory and CPUs, for example `4g` and `2`. |
 | `COOP_NO_NEW_PRIVILEGES` | `1` | Runs the box with `--security-opt no-new-privileges`. Filtered boxes always run with it, so `0` applies only with `--egress open` or `offline`. |
 | `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | On a Mac, lets one run start when mount protection can't hide every letter-case spelling of a long filename. The box or a service could then read a secret through a name such as `.ENV.PRODUCTION`. To remember this access for file paths you've reviewed, use `coop approve --case-exposure`. Runs protected by eBPF keep these files hidden and need neither. See [hiding secrets](box.md#hiding-secrets). |
-| `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out and disables preset and consult runs. |
+| `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out. Agents sign in through their homes, so with `0` an agent runs only offline, and co:op refuses presets, peers and fork sessions. |
 | `COOP_EGRESS` | `filtered` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |
 | `COOP_NO_ASDF` | off | Skips installing the tools pinned in `.tool-versions` when the box starts. Set it in `agents/env`, not your host shell. |
 | `COOP_NETWORK` | `1` | Joins the services network. |

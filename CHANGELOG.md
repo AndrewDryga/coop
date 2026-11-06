@@ -176,6 +176,12 @@
   relative one, and an unset `HOME` no longer puts Coop's settings in `.config` under the current
   folder. An empty `COOP_MCP_FILE` or `COOP_PRESETS_DIR` still means none.
 
+- **With `COOP_HOMES=0`, an agent run that needs a sign-in stops before its box starts.** Coop
+  connects an agent's account through its home, which `COOP_HOMES=0` keeps out, so `coop claude`
+  started a box that printed "Not logged in", and a filtered one blocked the provider too. It now
+  says so up front and offers `COOP_HOMES=1`; an offline run still starts. The refusals of presets,
+  peers and fork sessions use the same layout, and the configuration docs say that with `0` an
+  agent runs only offline.
 - **`coop models` says why it could not refresh when Coop itself stopped the refresh.** With
   `COOP_MCP_FILE` inside the current folder, or in the home folder, a refresh printed only "The model
   request failed." and saved that failure for every folder. It now prints Coop's own message, as
