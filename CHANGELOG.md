@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A service can bind a Unix socket again.** The start check added for required real files refused
+  every bind source that was neither a file nor a folder, so a socket Compose validation accepts no
+  longer started. Sockets bind again; a path listed in `services.require_real_files` must still be a
+  real file, and devices and named pipes are still refused.
+
 - **Claiming a waiting task while a loop settles waits no longer stops the loop.** The loop's wait
   settlement now holds the task's owner lock from its checks to its write, the lock a claim takes
   before it moves the task, so the claim waits a moment instead of moving the folder out from under it.

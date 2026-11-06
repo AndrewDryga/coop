@@ -51,25 +51,27 @@ func checkServiceBindSources(workspace, file string, data []byte, selected []str
 			if err != nil {
 				return fmt.Errorf("service %q: bind source %q must already exist — create it before starting services: %w", name, source, err)
 			}
-			required := false
-			if info.IsDir() {
-				// Frozen controller stacks cannot bind the checkout and must not depend on
-				// its mutable project config. Only directory binds need the request list.
-				if p == nil {
-					p, err = project.Load(workspace)
-					if err != nil {
-						return err
-					}
-				}
-				for _, request := range p.Services.RequireRealFiles {
-					if SameFolder(filepath.Join(workspace, filepath.FromSlash(request)), path) {
-						required = true
-						break
-					}
+			if info.Mode().IsRegular() {
+				continue
+			}
+			// A directory, or a Unix socket a service shares (which Compose validation accepts), may be
+			// bound unless the project declares this path as one that must be a real file. Anything
+			// else, such as a device or a named pipe, must be a regular file.
+			if !info.IsDir() && info.Mode()&os.ModeSocket == 0 {
+				return fmt.Errorf("service %q: bind source %q must be a regular file", name, source)
+			}
+			// Frozen controller stacks cannot bind the checkout and must not depend on its mutable
+			// project config, so only these binds read the request list.
+			if p == nil {
+				p, err = project.Load(workspace)
+				if err != nil {
+					return err
 				}
 			}
-			if !info.Mode().IsRegular() && (required || !info.IsDir()) {
-				return fmt.Errorf("service %q: bind source %q must be a regular file", name, source)
+			for _, request := range p.Services.RequireRealFiles {
+				if SameFolder(filepath.Join(workspace, filepath.FromSlash(request)), path) {
+					return fmt.Errorf("service %q: bind source %q must be a regular file", name, source)
+				}
 			}
 		}
 	}
