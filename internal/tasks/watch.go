@@ -1415,8 +1415,12 @@ func shortElapsed(d time.Duration) string {
 		return "<1m"
 	case d < time.Hour:
 		return fmt.Sprintf("%dm", int(d.Minutes()))
-	default:
+	case d < 10*time.Hour && int(d.Minutes())%60 != 0:
 		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		// Past a few hours the minutes are noise ("worker gone 101h 0m ago"): say it in the
+		// largest unit, as a waiting row does.
+		return shortAge(d)
 	}
 }
 

@@ -1270,9 +1270,9 @@ func TestTaskWatchGroupsStoppedTasksByTheirFix(t *testing.T) {
 	want := []string{
 		"Stopped (11)",
 		"  ✕ Verify Gateway takeover by a waiting bot replica",
-		"    3/3 · worker gone 101h 0m ago",
+		"    3/3 · worker gone 4d ago",
 		"  ✕ Verify interrupted log sends across packaged app restart",
-		"    3/3 · worker gone 110h 0m ago",
+		"    3/3 · worker gone 4d ago",
 		"  + 8 more with no worker",
 		"    to resume them, run: coop loop",
 		"",
@@ -1496,7 +1496,9 @@ func TestShortElapsed(t *testing.T) {
 		30 * time.Second:              "<1m",
 		14 * time.Minute:              "14m",
 		2*time.Hour + 5*time.Minute:   "2h 5m",
-		26*time.Hour + 59*time.Minute: "26h 59m",
+		2 * time.Hour:                 "2h",
+		26*time.Hour + 59*time.Minute: "26h",
+		101 * time.Hour:               "4d",
 	} {
 		if got := shortElapsed(d); got != want {
 			t.Errorf("shortElapsed(%s) = %q, want %q", d, got, want)
