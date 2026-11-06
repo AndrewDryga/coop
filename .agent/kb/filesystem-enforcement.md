@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
-sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
 updated: 2026-11-06
 ---
 
@@ -241,7 +241,18 @@ passes, so the box must first read the project's public file and list `notes-har
 or wrong mount fails the probe instead of passing it. The separate project keeps those files away
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
+An open or offline run on this backend leaves `box.Run` through `finish` and `retireFilesystem`, not
+the plain-runner branch, and narrates its own end there: `Stopping X` when the main process
+returns, the stop line once `close` confirms the box gone. A test with a shim runtime never reaches
+that branch (`rt.Name != "docker"` skips admission), so `TestFilesystemBoxRunNamesItsStopRuntime`
+is its proof; a missing stop line on an offline or open run points here first.
+
 ## Changelog
+- 2026-11-06 — an offline or open run on this backend printed no stop line, because its branch of
+  `box.Run` never narrated one (`coop run --egress offline -- true` ended at `Starting true` on the
+  owner's Mac); `retireFilesystem` now says it once `close` confirms the box gone. Checked with the
+  real binary before and after, and with the new live test (task
+  2026-11-06-hide-claude-s-own-resume-hint-in-coop-and-say-th).
 - 2026-11-06 — a teardown inventory that ran out of time on a host with about 58 containers turned a
   successful run into exit 1, with the deadline printed twice (task
   2026-11-06-keep-busy-host-docker-inventories-from-failing-r). Verified with

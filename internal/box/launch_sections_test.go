@@ -888,6 +888,76 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 	}
 }
 
+// Offline and open runs end in the same sentence as a filtered one: the stop line carries the status
+// the box's main process exited with. On a host with kernel filesystem protection, where coop removes
+// these boxes itself, neither printed it (retireFilesystem); this is the shim-run side of that.
+func TestRunNarratesAnInteractiveOfflineLaunchAndItsStop(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "rt")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in run) exit 3 ;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ egress, network string }{
+		{"none", "⚠ Offline: nothing outside the box can be reached"},
+		{"open", "⚠ Unrestricted: nothing is blocked"},
+	} {
+		t.Run(test.egress, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), HomeInBox: "/home/node", Egress: test.egress}
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Workdir: "/workspace", Cmd: []string{"sh", "-c", "exit 3"}}
+			var code int
+			var err error
+			got := captureStderr(t, func() { code, err = Run(cfg, runtime.Runtime{Name: shim}, spec) })
+			if err != nil || code != 3 {
+				t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
+			}
+			want := "Protecting secrets\n  ✓ No secret paths to hide\n" +
+				"\nConfiguring network access\n  " + test.network + "\n" +
+				"\nStarting sh\n" +
+				"\nThe Coop box has stopped: main process exited with status 3.\n"
+			if got != want {
+				t.Fatalf("interactive %s run narrated:\n%q\nwant:\n%q", test.egress, got, want)
+			}
+		})
+	}
+}
+
+// A box that coop removes itself (kernel filesystem protection on an open or offline run) has not
+// stopped until that removal is confirmed, so the run holds the stop line back and says it only
+// then. Docker's inventory running out of time keeps the protection but not the box, so that stays
+// one warning and a true stop; any other failure is the run's, and no stop is claimed over it. A run
+// whose main process never started has no stop to name.
+func TestAnOpenOrOfflineBoxCoopRemovesNamesItsStopOnlyOnceItIsGone(t *testing.T) {
+	const stop = "\nThe Coop box has stopped: main process exited with status 0.\n"
+	const kept = "⚠ Coop could not check every Docker container in time, so this box's filesystem protection stays until the next run in this project removes it\n"
+	failed := errors.New("filesystem consumer still present")
+	for _, test := range []struct {
+		name        string
+		stopped     string
+		closeErr    error
+		wantOut     string
+		wantFailure error
+	}{
+		{name: "removed", stopped: "main process exited with status 0", wantOut: stop},
+		{name: "protection kept", stopped: "main process exited with status 0", closeErr: fmt.Errorf("check consumers: %w", runtime.ErrConsumerInventoryUnfinished), wantOut: kept + stop},
+		{name: "removal failed", stopped: "main process exited with status 0", closeErr: failed, wantFailure: failed},
+		{name: "never started", closeErr: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sections := newLaunchSections(RunSpec{Agent: "claude"})
+			var closed, failure error
+			var closes int
+			out := captureStderr(t, func() {
+				closed, failure = retireFilesystem(func() error { closes++; return test.closeErr }, sections, test.stopped)
+			})
+			if closes != 1 || closed != test.closeErr || failure != test.wantFailure {
+				t.Fatalf("closes %d, closed %v, failure %v; want 1, %v, %v", closes, closed, failure, test.closeErr, test.wantFailure)
+			}
+			if out != test.wantOut {
+				t.Fatalf("retiring the protection printed %q, want %q", out, test.wantOut)
+			}
+		})
+	}
+}
+
 // A filtered launch starts its approved services just before the box, so an interactive one names
 // them ahead of the box's own section; a loop narrates them as they start instead.
 func TestFilteredLaunchNamesTheServicesItStarts(t *testing.T) {

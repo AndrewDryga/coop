@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Offline and open runs say the box has stopped.** On a host with kernel filesystem protection,
+  such as a Mac with Docker on APFS, `coop claude --egress offline` and `coop run --egress open`
+  ended at "Starting …" with nothing to say the box was gone, while a filtered run printed "The
+  Coop box has stopped: main process exited with status 0." They now print "Stopping …" as the
+  agent exits and the same stop line once the box is confirmed removed. The exit status is the
+  same as before.
+
 - **A linked `.dockerignore` is refused in plain words, as a linked Dockerfile is.** With a
   `.dockerignore` or `.agent/Dockerfile.dockerignore` that is a symlink, `coop build` said "too many
   levels of symbolic links" (a filtered build only after it had checked the host's network setup),

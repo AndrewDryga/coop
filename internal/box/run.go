@@ -963,8 +963,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	started := false
 	var teardownErr error
 	// The truthful teardown reason, taken where the main process returns and printed by the
-	// filtered cleanup below — "has stopped" is a claim about the box, so it waits until the
-	// removal that backs it is confirmed. Empty while the box runs, and for one that never started.
+	// filtered cleanup or the filesystem retirement below — "has stopped" is a claim about the box,
+	// so it waits until the removal that backs it is confirmed. Empty while the box runs, and for
+	// one that never started.
 	stopped := ""
 	defer func() {
 		exitCode, result = sections.ended(started, interrupt, teardownErr, exitCode, result)
@@ -1640,11 +1641,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	finish := func(code int, runErr error) (int, error) {
 		var filesystemCleanup error
 		if spec.filesystem != nil && filtered == nil && !filesystemClosed {
-			filesystemCleanup = spec.filesystem.close()
+			var failure error
+			filesystemCleanup, failure = retireFilesystem(spec.filesystem.close, sections, stopped)
 			filesystemClosed = true
 			if filesystemCleanup != nil {
 				retainArtifacts = true
-				runErr = errors.Join(runErr, keptFileProtection(filesystemCleanup))
+				runErr = errors.Join(runErr, failure)
 			}
 		}
 		// A review's stack is as disposable as its candidate: containers, network and volumes.
@@ -2026,6 +2028,12 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	sections.starting()
 	if spec.filesystem != nil {
 		code, runErr := spec.filesystem.run(spec.Ctx, spec.filesystem.workloadImage, spec.Cmd, finalOptions, stdin, stdout, stderr, func() error { started = true; return nil })
+		if started {
+			// Coop removes this box itself, as it does a filtered one: cleanup is announced now, and
+			// finish names the stop once the removal is confirmed.
+			stopped = stopReason(code, runErr, nil)
+			sections.stopping()
+		}
 		return finish(code, runErr)
 	}
 	if spec.Ctx != nil {

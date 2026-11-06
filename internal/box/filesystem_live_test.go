@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,6 +321,37 @@ print('guarded box works')`}})
 		t.Fatalf("no workload proof: %s", output.String())
 	}
 	t.Log(output.String())
+}
+
+// Coop removes the box of an open or offline run on kernel filesystem protection itself, so such a
+// run ends as a filtered one does: the cleanup it begins at once, then the stop line once the
+// removal is confirmed. It ended at "Starting sh" before, with nothing to say the box had stopped.
+func TestFilesystemBoxRunNamesItsStopRuntime(t *testing.T) {
+	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
+	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires an explicit installed client image and local Docker")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, egress := range []string{"none", "open"} {
+		t.Run(egress, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), BoxHome: t.TempDir(), HomeInBox: "/home/node", BaseImage: image, Egress: egress, NoNewPrivileges: true, Memory: "256m", Pids: "64", CPUs: "1"}
+			var output bytes.Buffer
+			var code int
+			var runErr error
+			narration := captureStderr(t, func() {
+				code, runErr = Run(cfg, runtime.Runtime{Name: "docker"}, RunSpec{Repo: repo, Image: image, Workdir: "/workspace", Stdout: &output, Stderr: &output, Cmd: []string{"sh", "-c", "exit 3"}})
+			})
+			if code != 3 || runErr != nil {
+				t.Fatalf("run code %d: %v\n%s\n%s", code, runErr, narration, output.String())
+			}
+			if want := "\nStarting sh\n\nStopping sh\n\nThe Coop box has stopped: main process exited with status 3.\n"; !strings.HasSuffix(narration, want) {
+				t.Fatalf("the run narrated %q, want it to end with %q", narration, want)
+			}
+		})
+	}
 }
 
 func TestFilesystemServiceReuseRuntime(t *testing.T) {

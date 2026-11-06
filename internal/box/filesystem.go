@@ -431,6 +431,21 @@ func keptFileProtection(err error) error {
 	return nil
 }
 
+// retireFilesystem ends the kernel filesystem protection of an open or offline run and, once its
+// removal confirms the box is gone, says the box has stopped. The run held that sentence back
+// (launchSections.stopped) because a box coop removes itself has not stopped until then. close takes
+// the box out first, so the protection a run keeps because Docker's inventory timed out says so in
+// its own line and leaves the stop true; any other failure is the run's and leaves the stop unsaid.
+// It returns what close returned, which decides what the run keeps, and the part that is a failure.
+func retireFilesystem(closeFilesystem func() error, sections *launchSections, stopped string) (closed, failure error) {
+	closed = closeFilesystem()
+	failure = keptFileProtection(closed)
+	if failure == nil {
+		sections.stopped(stopped)
+	}
+	return closed, failure
+}
+
 // close retains both enforcement and records whenever a consumer's removal or
 // daemon observation is uncertain. It is safe to retry after any completed step.
 func (a *filesystemAdmission) close() error {

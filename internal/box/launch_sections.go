@@ -498,9 +498,10 @@ func loopLaunchWidth() int {
 // stopped. So it waits until the stop is confirmed — the main process returned AND whatever
 // teardown this process owns has removed the box — and never announces a stop still in progress.
 // The reason is the truthful one stopReason derived; a blank line sets the sentence off from
-// whatever arbitrary output the agent or shell left above it.
+// whatever arbitrary output the agent or shell left above it. No reason means the main process
+// never ran, and a box that never started has not stopped.
 func (s *launchSections) stopped(reason string) {
-	if !s.interactive {
+	if !s.interactive || reason == "" {
 		return
 	}
 	ui.Note("\nThe Coop box has stopped: %s.", reason)
