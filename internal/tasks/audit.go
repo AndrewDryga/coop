@@ -2369,7 +2369,7 @@ func auditShallowRefusal(repo, id string) error {
 	if forkspace.GitOut(repo, "rev-parse", "--is-shallow-repository") == "false" {
 		return nil
 	}
-	return fmt.Errorf("Git reads this repository as shallow, so it can miss a commit that binds task %s; "+
+	return fmt.Errorf("this repository is shallow, so Git can miss a commit that binds task %s; "+
 		"fetch the full history (git fetch --unshallow), or remove a .git/shallow file nobody made", bindingLabel(id))
 }
 

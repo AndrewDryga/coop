@@ -665,7 +665,7 @@ func TestUnblockPastAMergeRefusesWhatNamesTheTask(t *testing.T) {
 		{name: "a merged commit binding the task for Git alone", message: gitOnly,
 			want: "the review recorded one commit for task reopened-task, but Git reads "},
 		{name: "a merged commit binding the task for Git alone behind a shallow boundary", message: gitOnly, shallow: true,
-			want: "Git reads this repository as shallow, so it can miss a commit that binds task reopened-task"},
+			want: "this repository is shallow, so Git can miss a commit that binds task reopened-task"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newReanchorFixture(t, true)
