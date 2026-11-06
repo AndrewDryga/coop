@@ -465,6 +465,109 @@ func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 	}
 }
 
+// A fork that cannot pass its own checks keeps its task paused. A person who brought its commit to
+// the branch, and kept working there, takes the task with `coop tasks done --from-fork`; merging the
+// fork afterwards drops the commit the branch already has instead of conflicting with the later
+// work, lands nothing new and leaves the fork with no task to finish.
+func TestMergeAfterDoneFromForkDropsTheCommitAlreadyLanded(t *testing.T) {
+	for _, isolated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("isolated=%v", isolated), func(t *testing.T) {
+			const id, name = "landed-elsewhere", "sweep-a"
+			repo := initRepo(t)
+			root := filepath.Join(repo, tasks.TasksRoot)
+			if err := tasks.ScaffoldStateDirs(root); err != nil {
+				t.Fatal(err)
+			}
+			writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Landed elsewhere\n- [x] required checks passed\n")
+			var ws string
+			var err error
+			if isolated {
+				ws, err = forkspace.SetupIsolatedContext(t.Context(), repo, name, forkspace.GitOut(repo, "rev-parse", "HEAD"))
+			} else {
+				ws, err = forkspace.Setup(repo, name)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := forkspace.LockState(repo, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var identity forkspace.Identity
+			if isolated {
+				identity, err = forkspace.EnsureIsolatedGenerationLocked(repo, name)
+			} else {
+				identity, err = forkspace.EnsureGenerationLocked(repo, name)
+			}
+			unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+				AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+				BaselineHead: forkspace.GitOut(ws, "rev-parse", "HEAD"),
+				LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := assignment.Lease.Release(); err != nil {
+				t.Fatal(err)
+			}
+			writeTaskFile(t, filepath.Join(ws, "feature.txt"), "landed\n")
+			git(t, ws, "add", "feature.txt")
+			git(t, ws, "commit", "-qm", "Implement it\n\nCoop-Task: "+id)
+			if _, err := tasks.AcceptForkProjection(repo, root, id, assignment.Owner); err != nil {
+				t.Fatal(err)
+			}
+			git(t, repo, "fetch", "-q", ws, "HEAD")
+			git(t, repo, "cherry-pick", "FETCH_HEAD")
+			writeTaskFile(t, filepath.Join(repo, "feature.txt"), "landed, then polished\n")
+			git(t, repo, "commit", "-qam", "Polish it")
+			before := forkspace.GitOut(repo, "rev-parse", "HEAD")
+
+			item, _ := mustCurrentTask(t, root, id)
+			if _, err := tasks.CompleteLandedForkTask(repo, root, item); err != nil {
+				t.Fatal(err)
+			}
+			c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+			if landed, err := mergeOneForTest(t, c, repo, "", name, false); err != nil || !landed {
+				t.Fatalf("merge after done --from-fork = (%v, %v), want a clean land", landed, err)
+			}
+			if after := forkspace.GitOut(repo, "rev-parse", "HEAD"); after != before {
+				t.Fatalf("the merge added %s to the branch; it already had the fork's commit", forkspace.GitOut(repo, "log", "--oneline", before+".."+after))
+			}
+			if data, err := os.ReadFile(filepath.Join(repo, "feature.txt")); err != nil || string(data) != "landed, then polished\n" {
+				t.Fatalf("feature.txt after the merge = %q, %v", data, err)
+			}
+			if active, err := tasks.ForkTaskState(repo, identity); err != nil || active {
+				t.Fatalf("fork task state after the merge = %v, %v; want none", active, err)
+			}
+		})
+	}
+}
+
+// An isolated rebase skips a source commit only for a matching parent commit made since the last
+// publication, never for the parent's own copy of published source: a source commit that redoes a
+// change the parent has since reverted brings that change back.
+func TestIsolatedMergeKeepsASourceCommitThatRedoesARevertedChange(t *testing.T) {
+	repo, ws, _, c := isolatedTestFork(t)
+	isolatedTestCommit(t, ws, "feature.txt", "feature\n")
+	isolatedTestCommit(t, repo, "parent.txt", "parent\n") // so the publication rewrites the source commit
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); err != nil || !landed {
+		t.Fatalf("first publication = %v, %v", landed, err)
+	}
+	git(t, repo, "revert", "--no-edit", "HEAD")
+	git(t, ws, "revert", "--no-edit", "HEAD")
+	git(t, ws, "revert", "--no-edit", "HEAD")
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); err != nil || !landed {
+		t.Fatalf("second publication = %v, %v", landed, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, "feature.txt")); err != nil || string(data) != "feature\n" {
+		t.Fatalf("feature.txt after the source redid the reverted change = %q, %v; want it back", data, err)
+	}
+}
+
 // Landing a fork completes its tasks, so both the plain and the isolated landing warn as `coop
 // tasks done` does when a folder they archive keeps a compiled program: once per task, in the same
 // words, and led by the task's folder, since no line above the warning names the task. The warning

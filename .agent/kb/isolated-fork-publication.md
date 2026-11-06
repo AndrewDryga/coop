@@ -3,7 +3,7 @@ name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
 sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/testhelpers_test.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 `--isolated` is opt-in; ordinary shared-write behavior stays trusted collaboration. Host-private
@@ -48,7 +48,12 @@ This is roll-forward, not atomic unchanged-parent publication. Only exact unchan
 published state replays; partial/foreign states retain custody and never reset/stash/delete locks.
 
 Task authority always binds original source HEAD/tree. Kept-fork boundaries record that original
-HEAD, not rebased publication. The source receipt, version 2 only, also binds publication HEAD/tree;
+HEAD, not rebased publication. The private rebase replays only source after that boundary and
+compares it only with parent commits since the last publication, through two throwaway merges: the
+upstream joins the boundary and the parent HEAD, the rebased branch joins the source and the
+publication head (creation base before any). A source commit the parent already has (a person's
+cherry-pick) is skipped rather than conflicting with later parent edits, while one that redoes a
+change the parent reverted is not matched against the parent's copy of published source. The source receipt, version 2 only, also binds publication HEAD/tree;
 only its presence in current parent ancestry qualifies a privately rewritten source for removal/recreation.
 Pending/malformed journals refuse removal; direct original-source ancestry remains sufficient.
 Coherent replay verifies hydrated files/cache before finalization. Tracked-byte comparison also
@@ -63,6 +68,9 @@ Custom tools run at the captured base comparison while COOP_FORK_PATH points to 
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-11-06 — the private rebase skips source commits the parent already has, so a fork whose
+  task a person took with `coop tasks done --from-fork` still merges cleanly (task
+  2026-11-05-let-the-owner-complete-a-fork-held-task-whose-co).
 - 2026-11-04 — the source receipt reader dropped version 1, which no commit wrote; a stray one fails
   closed on both the boundary and the removal path.
 - 2026-10-09 — Git 2.55 release CI lost a detached maintenance lock between enumeration and Info.

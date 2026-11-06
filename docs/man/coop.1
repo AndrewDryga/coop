@@ -781,7 +781,8 @@ coop tasks done: move completed work to the archive
 Usage: coop tasks done <id> [--tasks <path>]... [<options>]
 
 OPTIONS
-  --force  close it even though its checklist is unfinished
+  --force      close it even though its checklist is unfinished
+  --from-fork  complete a fork's task whose commit is already on this branch
 
   Finish the checks and commit the task's work first.
   The task must have at least one checklist item, with every item checked.
@@ -792,6 +793,12 @@ OPTIONS
   --force is for a person at a terminal who has checked the work. Coop leaves
   the checklist as it is and notes what was open in the task's log.
   Agents never use it.
+
+  A fork's task completes when you merge the fork. If you brought the commit
+  with its Coop-Task trailer to this branch yourself, --from-fork completes
+  the task, notes that in its log and keeps the stopped fork. A later merge
+  skips that commit if you brought it over unchanged. It also needs a person
+  at a terminal.
 
 EXAMPLES
   coop tasks done login-retries

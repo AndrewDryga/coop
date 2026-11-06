@@ -46,37 +46,40 @@ func isolatedSourcePath(repo string, identity forkspace.Identity) string {
 	return filepath.Join(forkspace.StateDir(repo), ".isolated-source-"+string(identity.Generation)+".json")
 }
 
-func isolatedSourceBoundary(repo string, identity forkspace.Identity, parentHead string) (string, error) {
+// isolatedSourceBoundary is the source commit up to which the parent already holds the fork's
+// work, and published, the parent commit that holds it: the last publication's source head and
+// publication head, or the creation base for both before any publication.
+func isolatedSourceBoundary(repo string, identity forkspace.Identity, parentHead string) (boundary, published string, err error) {
 	var record isolatedSourceRecord
 	ok, err := readIsolatedRecord(isolatedSourcePath(repo, identity), &record)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !ok {
 		base, err := forkspace.IsolatedCreationBase(repo, identity)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if _, err := observed(repo, "merge-base", "--is-ancestor", base, parentHead); err != nil {
-			return "", fmt.Errorf("isolated creation base is no longer in the captured parent; preserve the fork and reconcile explicitly: %w", err)
+			return "", "", fmt.Errorf("isolated creation base is no longer in the captured parent; preserve the fork and reconcile explicitly: %w", err)
 		}
-		return base, nil
+		return base, base, nil
 	}
 	if err := validateIsolatedSource(record, identity); err != nil {
-		return "", errors.New("invalid isolated published source boundary")
+		return "", "", errors.New("invalid isolated published source boundary")
 	}
 	tree, err := observed(repo, "rev-parse", "--verify", record.PublicationHead+"^{tree}")
 	if err != nil || tree != record.PublicationTree {
-		return "", errors.Join(errors.New("isolated source cutoff has no matching publication tree; preserve the fork and reconcile explicitly"), err)
+		return "", "", errors.Join(errors.New("isolated source cutoff has no matching publication tree; preserve the fork and reconcile explicitly"), err)
 	}
 	if _, err := observed(repo, "merge-base", "--is-ancestor", record.PublicationHead, parentHead); err != nil {
-		return "", fmt.Errorf("isolated source cutoff is no longer published in the captured parent; preserve the fork and reconcile explicitly: %w", err)
+		return "", "", fmt.Errorf("isolated source cutoff is no longer published in the captured parent; preserve the fork and reconcile explicitly: %w", err)
 	}
 	tree, err = observed(forkspace.Workspace(repo, identity.Name), "rev-parse", "--verify", record.Head+"^{tree}")
 	if err != nil || tree != record.Tree {
-		return "", errors.Join(errors.New("isolated source cutoff tree changed"), err)
+		return "", "", errors.Join(errors.New("isolated source cutoff tree changed"), err)
 	}
-	return record.Head, nil
+	return record.Head, record.PublicationHead, nil
 }
 
 func validateIsolatedSource(record isolatedSourceRecord, identity forkspace.Identity) error {

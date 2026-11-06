@@ -707,6 +707,12 @@ func ImportForkProposals(authorityRepo string, identity forkspace.Identity) ([]I
 		return nil, err
 	}
 	defer unlock()
+	return importForkProposalsLocked(authorityRepo, identity)
+}
+
+// importForkProposalsLocked is ImportForkProposals for a caller that already holds the fork's
+// lifecycle lock.
+func importForkProposalsLocked(authorityRepo string, identity forkspace.Identity) ([]ImportedForkProposal, error) {
 	if err := forkspace.ValidateGenerationWorkspace(authorityRepo, identity); err != nil {
 		return nil, err
 	}

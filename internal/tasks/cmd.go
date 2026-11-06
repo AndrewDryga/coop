@@ -42,7 +42,7 @@ var taskArgSpecs = map[string]taskArgSpec{
 	"ls":      {lsFlags, 0, "coop tasks ls [<options>...]"},
 	"lint":    {nil, 0, "coop tasks lint"},
 	"release": {nil, 1, "coop tasks release <task-id>"}, "path": {nil, 1, "coop tasks path <task-id>"},
-	"done": {[]string{"--force"}, 1, "coop tasks done <task-id>"},
+	"done": {[]string{"--force", "--from-fork"}, 1, "coop tasks done <task-id>"},
 }
 
 // lsFlags are the flags `coop tasks ls` accepts: --all (uncap the done archive) plus a per-state
@@ -146,14 +146,18 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 	case "park":
 		return tasksFolderPark(root, args)
 	case "done":
-		id := slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--force" })
-		forceClose, interactive := len(id) != len(args), stdinIsTerminal()
+		id := slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--force" || a == "--from-fork" })
+		forceClose, fromFork, interactive := slices.Contains(args, "--force"), slices.Contains(args, "--from-fork"), stdinIsTerminal()
 		if forceClose && !interactive {
 			return 2, errForceCloseNeedsTerminal
+		}
+		if fromFork && !interactive {
+			return 2, errFromForkNeedsTerminal
 		}
 		return tasksFolderMoveWith(root, id, StateDone, "done", "done", claimOptions{
 			actor:      captureClaimActor(realClaimActorProbe, os.Getppid(), interactive, ClaimActor{}),
 			forceClose: forceClose,
+			fromFork:   fromFork,
 			project:    repo,
 		})
 	case "path":
@@ -655,10 +659,11 @@ type claimOptions struct {
 	actor      ClaimActor
 	force      bool // claim --force: take over a live competing claim
 	forceClose bool // done --force: a person closes a task whose checklist is unfinished
+	fromFork   bool // done --from-fork: a person takes a fork's task whose commit already landed
 	project    string
 }
 
-// stdinIsTerminal is the one terminal check done --force makes; tests replace it.
+// stdinIsTerminal is the one terminal check done --force and --from-fork make; tests replace it.
 var stdinIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
 
 // errForceCloseNeedsTerminal keeps `coop tasks done --force` a person's tool. An agent's shell
@@ -836,14 +841,29 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	}
 	completion := completionOptions{force: opts.forceClose, actor: opts.actor}
 	var forced *IncompleteChecklistError // what a forced close left open, from the close itself
+	var landed *LandedForkTask           // the fork a --from-fork completion took the task from
+	complete := func() (*IncompleteChecklistError, error) {
+		if !opts.fromFork {
+			return completeTrustedTask(opts.project, root, t, completion)
+		}
+		closed, from, err := completeLandedForkTask(opts.project, root, t, completion)
+		for _, id := range from.Discovered {
+			ui.OK("Added discovered task: %s", id)
+		}
+		if err == nil {
+			landed = &from
+		}
+		return closed, err
+	}
 	if t.State == newState {
 		switch newState {
 		case StateDone:
-			if forced, err = completeTrustedTask(opts.project, root, t, completion); err != nil {
-				return -1, trustedCompletionError(err, t, opts.forceClose)
+			if forced, err = complete(); err != nil {
+				return -1, trustedCompletionError(err, t, opts)
 			}
 			ui.Note("%s is already done.", t.Title)
 			noteForcedClose(forced)
+			noteLandedFork(landed)
 			WarnTaskBulk(root, t.Dir)
 		case StateInProgress:
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
@@ -871,7 +891,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		// Refuse known unfinished work before stopping this caller's lease
 		// holder; trusted completion rechecks current metadata under authority.
 		if err := RequireCompletedChecklist(t); err != nil && !opts.forceClose {
-			return -1, trustedCompletionError(err, t, false)
+			return -1, trustedCompletionError(err, t, opts)
 		}
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
@@ -883,8 +903,8 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 				return -1, err
 			}
 		}
-		if forced, err = completeTrustedTask(opts.project, root, t, completion); err != nil {
-			return -1, trustedCompletionError(err, t, opts.forceClose)
+		if forced, err = complete(); err != nil {
+			return -1, trustedCompletionError(err, t, opts)
 		}
 	} else {
 		// A human claim must protect the task from the INSTANT it starts, not from whenever the
@@ -916,6 +936,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		ui.OK("Completed task: %s", t.Title)
 		ui.Note("\n  %s", displayPath(dir))
 		noteForcedClose(forced)
+		noteLandedFork(landed)
 		WarnTaskBulk(root, dir)
 	default:
 		ui.OK("%s %s", pastVerb, t.ID)
@@ -1041,16 +1062,23 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	})
 }
 
-// trustedCompletionError draws a refused completion. A forced call's retry keeps --force; the
-// plain refusal never suggests it.
-func trustedCompletionError(err error, t Item, forceClose bool) error {
+// trustedCompletionError draws a refused completion. A retry keeps the call's --force and
+// --from-fork; the plain refusal never suggests --force.
+func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	var recovery auditCompletionRecoveryError
 	if errors.As(err, &recovery) {
 		return err
 	}
 	retry := "coop tasks done " + ui.SafeInline(t.ID)
-	if forceClose {
+	if opts.forceClose {
 		retry += " --force"
+	}
+	if opts.fromFork {
+		retry += " --from-fork"
+	}
+	var held *forkHeldError
+	if errors.As(err, &held) {
+		return &drawnRefusal{usage: held.completionRefusal(), err: err}
 	}
 	if errors.Is(err, errFinalReviewRunning) {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID),
@@ -1069,9 +1097,17 @@ func trustedCompletionError(err error, t Item, forceClose bool) error {
 	}
 	var checklist *IncompleteChecklistError
 	if errors.As(err, &checklist) {
-		return &checklistRefusalError{usage: checklistUsage(checklist, t), checklist: checklist}
+		return &drawnRefusal{usage: checklistUsage(checklist, t), err: checklist}
 	}
 	return fmt.Errorf("%w — fix the obstruction, then retry: %s", err, retry)
+}
+
+// noteLandedFork tells the person which fork no longer holds the task, and why.
+func noteLandedFork(landed *LandedForkTask) {
+	if landed != nil {
+		ui.Note("  Commit %s carrying its trailer is on this branch, so fork %s no longer holds it.",
+			shortCommit(landed.Commit), landed.Fork)
+	}
 }
 
 // noteForcedClose tells the person what a forced close left in the task's log.
@@ -1087,15 +1123,15 @@ func noteForcedClose(e *IncompleteChecklistError) {
 	}
 }
 
-// checklistRefusalError is the drawn refusal that still matches ErrIncompleteChecklist, so a
-// caller can tell unfinished work from any other failure.
-type checklistRefusalError struct {
-	usage     *ui.UsageError
-	checklist *IncompleteChecklistError
+// drawnRefusal is a refusal drawn for the person that still matches the error it draws, such as
+// ErrIncompleteChecklist or ErrTaskSandboxOwned, so a caller can tell why it was refused.
+type drawnRefusal struct {
+	usage *ui.UsageError
+	err   error
 }
 
-func (e *checklistRefusalError) Error() string   { return e.usage.Error() }
-func (e *checklistRefusalError) Unwrap() []error { return []error{e.usage, e.checklist} }
+func (e *drawnRefusal) Error() string   { return e.usage.Error() }
+func (e *drawnRefusal) Unwrap() []error { return []error{e.usage, e.err} }
 
 // checklistUsage is the person's view of an unfinished checklist: what is still open, the task.md
 // that holds it, and the command to run once it is ticked.

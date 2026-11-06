@@ -2,8 +2,8 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go]
-updated: 2026-11-05
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go]
+updated: 2026-11-06
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -27,7 +27,13 @@ never through `PrepareForkProjectionForRun`, because a resumed (`paused`) assign
 unblock the projection again and lose the new decision. A projected done task becomes `reviewing`;
 after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
-Canonical tasks remain in-progress until merge lands that exact candidate.
+Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
+is a person's `coop tasks done <id> --from-fork` (internal/tasks/landed_fork.go): with the fork
+stopped, no live candidate and exactly one reachable `Coop-Task` commit on the project's HEAD that
+is not in the assignment's baseline, it imports the fork's proposals, completes the task, then
+removes proposal records, the index and the owner record in that order, so a rerun finishes an
+interrupted one. A crash between the index and owner removal followed by `coop fork rm` leaves an
+owner record nothing clears; rerun --from-fork before removing the fork.
 
 Merge writes a replayable land intent before the parent fast-forward. Recovery can therefore finish
 canonical task completion, receipts, proposal import, assignment removal, and workspace teardown
@@ -44,6 +50,8 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — added the person-only `--from-fork` completion of a fork's task whose commit
+  already landed (task 2026-11-05-let-the-owner-complete-a-fork-held-task-whose-co).
 - 2026-11-05 — a fork loop goes on with its other tasks after one blocks, and a re-blocked resumed
   task stays blocked (task 2026-11-05-keep-a-fork-loop-working-its-other-tasks-when-on).
 - 2026-11-04 — dropped the "fall back" sentence: the fallback registry reader is retired (task

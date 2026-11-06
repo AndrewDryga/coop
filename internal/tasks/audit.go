@@ -334,6 +334,9 @@ type completionOptions struct {
 	// refuse, when set, judges the task's owner record while the lease authority is held: a box's
 	// tools refuse a task someone else holds (CompleteBoxTask).
 	refuse func(TaskOwnerRecord) error
+	// landed, when set, takes the task from the fork assignment that holds it, whose commit already
+	// reached the project's branch (`coop tasks done --from-fork`), instead of refusing it.
+	landed *landedForkRelease
 }
 
 // errFinalReviewRunning refuses a forced close while a loop's final review could reopen the task.
@@ -389,8 +392,13 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	defer func() { retErr = errors.Join(retErr, unlockLeaseFile(authority)) }()
 	// A projected completion is only candidate-ready. Ordinary host completion must
 	// refuse it before moving or normalizing the canonical folder; exact fork landing owns that
-	// transition through its generation-bound journal.
-	if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
+	// transition through its generation-bound journal, and a person's --from-fork takes it from the
+	// exact assignment its caller checked.
+	if opts.landed != nil {
+		if err := opts.landed.requireOwner(root, task.ID); err != nil {
+			return nil, err
+		}
+	} else if err := refuseForkTaskOwner(root, task.ID, "complete"); err != nil {
 		return nil, err
 	}
 	if opts.refuse != nil {
@@ -506,11 +514,21 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	// candidate again, so a leftover record would only ever be silent dead weight, but clearing it
 	// here (not just in tasksFolderMove) covers the interactive verb and a re-run of `done` on
 	// an already-done task. Fork landing finalizes its exact candidate through its durable journal.
-	if err := removeTaskOwnerRecord(root, task.ID); err != nil {
+	released := false
+	if opts.landed != nil {
+		if released, err = opts.landed.release(root, task.ID); err != nil {
+			return nil, err
+		}
+	} else if err := removeTaskOwnerRecord(root, task.ID); err != nil {
 		return nil, err
 	}
 	acceptedTask = QueuedTask{Root: root, Item: current}
 	accepted = true
+	if released {
+		if err := AppendTaskLogStrict(current.Dir, opts.landed.note()); err != nil {
+			return nil, fmt.Errorf("task %s is done, but its log.md could not record where its work landed: %w", current.ID, err)
+		}
+	}
 	if waived == nil || alreadyAccepted {
 		return nil, nil
 	}

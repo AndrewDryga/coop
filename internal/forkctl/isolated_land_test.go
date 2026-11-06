@@ -283,9 +283,9 @@ func TestIsolatedPublicationLeavesSourceAndSupportsKeptFork(t *testing.T) {
 	if pending, err := ForkHasPendingLand(repo, identity); err != nil || pending {
 		t.Fatalf("journal not retired: %v, %v", pending, err)
 	}
-	boundary, err := isolatedSourceBoundary(repo, identity, parent)
-	if err != nil || boundary != first {
-		t.Fatalf("next source boundary: %s, %v", boundary, err)
+	boundary, published, err := isolatedSourceBoundary(repo, identity, parent)
+	if err != nil || boundary != first || published != parent {
+		t.Fatalf("next source boundary: %s published at %s, %v; want %s at %s", boundary, published, err, first, parent)
 	}
 	if ForkUnmerged(repo, ws) {
 		t.Fatal("fully published privately rebased source falsely considered unmerged")
@@ -355,7 +355,7 @@ func TestIsolatedUnmergedRequiresCurrentPublicationEvidence(t *testing.T) {
 		if !ForkUnmerged(repo, ws) {
 			t.Fatalf("invalid/old receipt granted removal authority: %+v", bad)
 		}
-		if _, err := isolatedSourceBoundary(repo, identity, parent); err == nil {
+		if _, _, err := isolatedSourceBoundary(repo, identity, parent); err == nil {
 			t.Fatalf("invalid/old receipt gave a source boundary: %+v", bad)
 		}
 	}

@@ -35,6 +35,7 @@ var (
 		"provider exited while an agent-owned background job", "the host watchdog killed this provider attempt",
 		"preflight: ", "host parked this task", "host preflight parked this task",
 		"Previous decision before completion repair was exhausted:", "Closed with coop tasks done --force",
+		"Completed with coop tasks done --from-fork",
 		"a commit in task ", "loop stopped ",
 	}
 	coopLogNoteLines = []string{"Unblocked", "Blocked for a decision in decision.md"}

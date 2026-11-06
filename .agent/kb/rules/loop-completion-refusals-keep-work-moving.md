@@ -3,8 +3,8 @@ name: loop-completion-refusals-keep-work-moving
 description: ordinary completion mistakes get immediate feedback and bounded safe repair without weakening task acceptance
 scope: loop
 sources: [internal/loop/loop.go, internal/loop/completion.go, internal/loop/prompts.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_checklist.go, internal/tasks/cmd.go, internal/tasks/audit.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/pending_review.go, internal/tasks/pending_review_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go]
-check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings|TestIncompleteChecklistNamesOpenItems|TestDoneRefusalShowsOpenItemsAndWhereToTickThem|TestDoneForceClosesAnUnfinishedChecklistAndRecordsIt|TestDoneForceNeedsATerminal|TestDoneForceKeepsEveryOtherRefusal|TestForcedCloseNoteWaitsForTheReceipt'"
-updated: 2026-11-03
+check: "go test ./internal/tasks -run 'TestUncommittedCompletionCanRetry|TestParkUncommittedCompletion|TestTrustedCompletionRequiresCurrentChecklist|TestIncompleteForkCompletionRefusesAcceptanceButCanResume|TestForkChecklistCheckedAgainAtPublicationAndLanding|TestPendingReviewKeepsEarlierDebtAcrossLaterTaskRework|TestCarryReopenedReviewsAcrossSiblingRework|TestPendingReviewResumesInterruptedReworkForItsSiblings|TestIncompleteChecklistNamesOpenItems|TestDoneRefusalShowsOpenItemsAndWhereToTickThem|TestDoneForceClosesAnUnfinishedChecklistAndRecordsIt|TestDoneForceNeedsATerminal|TestDoneForceKeepsEveryOtherRefusal|TestForcedCloseNoteWaitsForTheReceipt|TestDoneFromForkNeedsATerminal|TestDoneFromForkRefusesWithoutALandedCommit'"
+updated: 2026-11-06
 ---
 
 # Recover ordinary completion mistakes without losing work or acceptance
@@ -27,7 +27,9 @@ note never outlives a failed close. Forcing an already-accepted task again adds 
 a plain repeat still refuses its open checklist and leaves the receipt alone. Without a terminal,
 which is how agents run commands, --force is refused, and MCP and the loop use the strict
 `CompleteTrustedTask`. An agent with a terminal tool is held only by its instructions, which
-forbid the flag.
+forbid the flag. The other person-only path, `coop tasks done --from-fork`, waives fork ownership
+alone, and only for a stopped fork whose task's one `Coop-Task` commit is already on the branch;
+the checklist and every other refusal still apply.
 
 If a successful attempt ends after an ordinary no-commit completion refusal, allow one fresh
 repair only when HEAD and the checkout/index content fingerprint match the first leased attempt
@@ -68,6 +70,9 @@ code. The check above pins the conservative recovery boundary; the tagged script
 also runs in `make check` and proves continuation and both terminal modes.
 
 ## Changelog
+- 2026-11-06 — named the second person-only path, `coop tasks done --from-fork`, and added its
+  terminal and no-landed-commit refusals to the check (task
+  2026-11-05-let-the-owner-complete-a-fork-held-task-whose-co).
 - 2026-11-03 — the owner asked for a person's override: `coop tasks done --force` (task
   2026-11-03-let-a-person-force-close-a-task-with-open-checkl). Swept the completion boundaries:
   only the host CLI passes force (`completeTrustedTask` options), and only with a terminal; MCP

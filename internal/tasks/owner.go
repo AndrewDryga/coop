@@ -14,6 +14,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/randid"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -415,7 +416,32 @@ func refuseForkTaskOwner(root, id, action string) error {
 		return err
 	}
 	if ok && record.Kind == TaskOwnerFork {
-		return fmt.Errorf("%w: cannot %s %s while it is %s", ErrTaskSandboxOwned, action, id, TaskOwnerLabel(record))
+		return &forkHeldError{action: action, id: id, record: record}
 	}
 	return nil
+}
+
+// forkHeldError refuses a person's change to a task a fork holds. It matches ErrTaskSandboxOwned.
+type forkHeldError struct {
+	action, id string
+	record     TaskOwnerRecord
+}
+
+func (e *forkHeldError) Error() string {
+	return fmt.Sprintf("%v: cannot %s %s while it is %s", ErrTaskSandboxOwned, e.action, e.id, TaskOwnerLabel(e.record))
+}
+
+func (e *forkHeldError) Unwrap() error { return ErrTaskSandboxOwned }
+
+// completionRefusal is the refusal `coop tasks done` draws: merging the fork's reviewed work
+// completes the task, and a person who already brought its commit to this branch takes it from the
+// fork instead. The merge is offered only once the fork's work is ready to merge.
+func (e *forkHeldError) completionRefusal() *ui.UsageError {
+	id, owner := ui.SafeInline(e.id), e.record.Fork
+	rows := [][2]string{{"If its commit is already on this branch:", "coop tasks done " + id + " --from-fork"}}
+	if owner.Phase == ForkAssignmentReady {
+		rows = append([][2]string{{"Merge the fork:", "coop fork merge " + owner.Fork.Name}}, rows...)
+	}
+	return ui.CommandFailed("Could not complete "+id,
+		id+" is "+TaskOwnerLabel(e.record)+".\nIt completes when the fork's reviewed work is merged.", rows...)
 }

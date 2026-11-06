@@ -821,7 +821,8 @@ EXAMPLES
 Questions waiting for you: coop tasks decisions -i</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-done-move-completed-work-to-the-archive"><h2>coop tasks done: move completed work to the archive</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks done: move completed work to the archive code example" tabindex="0"><code>Usage: coop tasks done &lt;id&gt; [--tasks &lt;path&gt;]... [&lt;options&gt;]
 
 OPTIONS
-  --force  close it even though its checklist is unfinished
+  --force      close it even though its checklist is unfinished
+  --from-fork  complete a fork&#39;s task whose commit is already on this branch
 
   Finish the checks and commit the task&#39;s work first.
   The task must have at least one checklist item, with every item checked.
@@ -832,6 +833,12 @@ OPTIONS
   --force is for a person at a terminal who has checked the work. Coop leaves
   the checklist as it is and notes what was open in the task&#39;s log.
   Agents never use it.
+
+  A fork&#39;s task completes when you merge the fork. If you brought the commit
+  with its Coop-Task trailer to this branch yourself, --from-fork completes
+  the task, notes that in its log and keeps the stopped fork. A later merge
+  skips that commit if you brought it over unchanged. It also needs a person
+  at a terminal.
 
 EXAMPLES
   coop tasks done login-retries</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-path-print-a-tasks-folder-path"><h2>coop tasks path: print a task&#39;s folder path</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks path: print a task&#39;s folder path code example" tabindex="0"><code>Usage: coop tasks path &lt;id&gt; [--tasks &lt;path&gt;]...

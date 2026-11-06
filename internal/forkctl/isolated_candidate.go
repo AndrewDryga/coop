@@ -97,7 +97,7 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if err != nil {
 		return isolatedCandidate{}, err
 	}
-	upstream, err := isolatedSourceBoundary(repo, identity, parent.Head)
+	upstream, published, err := isolatedSourceBoundary(repo, identity, parent.Head)
 	if err != nil {
 		return isolatedCandidate{}, err
 	}
@@ -128,14 +128,29 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if err = validateIsolatedHistory(dir, repo, upstream, sourceHead); err != nil {
 		return isolatedCandidate{}, err
 	}
-	if err = forkspace.CheckoutIndependent(ctx, dir, sourceHead, "candidate"); err != nil {
+	// Rebase skips a source commit the parent already has, such as one a person cherry-picked, only
+	// when it compares that commit with the parent's own commits since the last publication, as an
+	// ordinary fork's rebase does from its merge base. An isolated source shares no merge base with
+	// the parent's copies of it, so two throwaway merges stand in: the upstream joins the published
+	// boundary and the parent HEAD, so published source is never replayed, and the rebased branch
+	// joins the source and the parent commit that published it, so those copies are never compared
+	// and a source commit that redoes a change the parent reverted is kept. Rebase replays no merge.
+	base, err := isolatedJoin(ctx, dir, parent.Tree, upstream, parent.Head)
+	if err != nil {
+		return isolatedCandidate{}, err
+	}
+	branch, err := isolatedJoin(ctx, dir, sourceTree, sourceHead, published)
+	if err != nil {
+		return isolatedCandidate{}, err
+	}
+	if err = forkspace.CheckoutIndependent(ctx, dir, branch, "candidate"); err != nil {
 		return isolatedCandidate{}, err
 	}
 	args := []string{}
 	if sign {
 		args = append(args, forkspace.TrustedSignArgs()...)
 	}
-	args = append(args, "rebase", "--onto", parent.Head, upstream, "candidate")
+	args = append(args, "rebase", "--onto", parent.Head, base, "candidate")
 	command, commandErr := forkspace.GitCommandWithEnv(ctx, dir, forkspace.IndependentGitEnv(), args...)
 	if commandErr != nil {
 		return isolatedCandidate{}, commandErr
@@ -166,6 +181,25 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		return isolatedCandidate{}, err
 	}
 	return candidate, nil
+}
+
+// isolatedJoin is a throwaway merge commit of tree with parents first and second, or first when
+// they are one commit: a commit with that parent twice would be an empty commit the rebase keeps.
+func isolatedJoin(ctx context.Context, dir, tree, first, second string) (string, error) {
+	if first == second {
+		return first, nil
+	}
+	join, err := forkspace.GitCommandWithEnv(ctx, dir, forkspace.IndependentGitEnv(),
+		"commit-tree", "-p", first, "-p", second, "-m", "Coop rebase join", tree)
+	if err != nil {
+		return "", err
+	}
+	out, err := join.Output()
+	commit := strings.TrimSpace(string(out))
+	if err != nil || !forkspace.ValidObjectID(commit) {
+		return "", errors.Join(errors.New("prepare the isolated private rebase"), err)
+	}
+	return commit, nil
 }
 
 func (candidate isolatedCandidate) validateSource(repo string) error {

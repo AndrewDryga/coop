@@ -36,6 +36,19 @@
   skips it until the other task is done, then works it in the same run or a later one. A wait on a
   task that is missing or blocked, or that waits for it in turn, becomes your decision, and
   `coop tasks ls` shows what each task waits for.
+
+- **Complete a fork's task whose commit you already landed.** When a fork can't reach a mergeable
+  candidate, for example because its box keeps failing a check, and you cherry-pick its commit
+  yourself, `coop tasks done <id>` refused the task while the fork held it, and the only ways out
+  were a merge the fork couldn't produce or deleting the fork with `coop fork rm --force`. From
+  your terminal, `coop tasks done <id> --from-fork` now completes it once exactly one commit on
+  your branch, made after the fork took the task, carries its `Coop-Task` trailer: it adds the
+  tasks the fork found, notes in the log where the work landed, and releases the fork's assignment
+  without deleting the fork. The fork must be stopped and have no candidate waiting to merge. A
+  later `coop fork merge` of that fork, isolated or not, skips each commit you brought over
+  unchanged instead of conflicting with later changes to it; an isolated fork still publishes a
+  commit that redoes a change you reverted. The plain `coop tasks done` refusal now points at
+  `--from-fork`, and at the merge once the fork's work is ready.
 - **Give a task a priority.** Add `priority: high` or `priority: low` to a task.md's frontmatter
   and the loop takes high tasks first and low tasks last, in folder order within each. Before, the
   loop always went by folder name, so among tasks filed on the same day it went alphabetically.
