@@ -265,6 +265,11 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 	if d.SourcePort != nil && (*d.SourcePort < 1 || *d.SourcePort > 65535) {
 		return bad
 	}
+	// A request class is printed as it is, so it holds only what the broker's classifier writes.
+	if d.Request != "" && (d.Kind != "admission_failed" || len(d.Request) > networkview.MaxRequestClass ||
+		strings.Trim(d.Request, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 /*?&-_.…") != "") {
+		return bad
+	}
 	switch d.Source {
 	case "guard":
 		if d.Basis != "observed" || !slices.Contains([]string{"tls_denied", "dns_denied", "admission_failed"}, d.Kind) {
@@ -386,6 +391,9 @@ var diagnosticReasons = map[string]string{
 	"native_account_unavailable":              "Coop could not confirm the agent's sign-in in time, so it refused this request to the agent's provider. A busy host can do this.",
 	"native_broker_revoked":                   "Coop stopped passing the agent's sign-in for the rest of this run, so it refused this request to the agent's provider.",
 	"native_broker_request_refused":           "Coop refused this request to the agent's provider because it was not one the sign-in may carry.",
+	"native_broker_account_refused":           "Coop refused this request to the agent's provider because it asked for another account than the one Coop signed in.",
+	"native_broker_origin_refused":            "Coop refused this request because it named another host than the provider connection it was sent on.",
+	"native_broker_connect_refused":           "Coop refused this connection to the agent's provider because it was not a plain tunnel to port 443.",
 	"clock_namespace_mismatch":                "The gateway ran under a different clock than this run expected.",
 	"clock_unsupported":                       "This system has no clock the gateway can use.",
 	"collector_configuration_invalid":         "The network observer's settings were invalid.",

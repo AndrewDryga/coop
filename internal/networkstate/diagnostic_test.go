@@ -181,6 +181,41 @@ func TestNetworkExplainPreservesObservedFactsAndDraftBoundary(t *testing.T) {
 	}
 }
 
+// A sign-in broker refusal keeps the class of the request it refused, so `coop net blocked` can say
+// which one. The class goes with the destination when destinations are withheld, and a retained one
+// that the broker's classifier could not have written is not evidence.
+func TestNetworkExplainKeepsTheRefusedRequestClass(t *testing.T) {
+	s, evidence, record := diagnosticFixture(t)
+	id := strings.Repeat("d", 32)
+	snapshot := record.Snapshot
+	snapshot.Sequence, snapshot.AsOf = 1, time.Now().UTC()
+	class := "GET /backend-api/ps/plugins/list?limit&pageToken&scope"
+	snapshot.Denials = []networkview.Denial{{ID: id, Source: "guard", Sequence: 1, Basis: "observed", Kind: "admission_failed",
+		Reason: "native_broker_request_refused", Name: "chatgpt.com", Request: class, At: snapshot.AsOf}}
+	if _, err := s.AcceptSnapshot(context.Background(), record.ID, record.Revision, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	got, err := evidence.Explain(record.ID, id, true)
+	if err != nil || got.Event.Request != class || got.Message != DiagnosticReason("native_broker_request_refused") {
+		t.Fatalf("the refused request was lost: %+v %v", got, err)
+	}
+	if redacted, err := evidence.Explain(record.ID, id, false); err != nil || redacted.Event.Request != "" {
+		t.Fatalf("a withheld destination kept its request: %+v %v", redacted, err)
+	}
+	for name, change := range map[string]func(*networkview.Denial){
+		"another kind": func(d *networkview.Denial) { d.Kind = "dns_denied" },
+		"an escape":    func(d *networkview.Denial) { d.Request = "GET /\x1b[31m" },
+		"a quote":      func(d *networkview.Denial) { d.Request = `GET /"x"` },
+		"too long":     func(d *networkview.Denial) { d.Request = "GET /" + strings.Repeat("a", networkview.MaxRequestClass) },
+	} {
+		denial := snapshot.Denials[0]
+		change(&denial)
+		if validateDiagnosticDenial(denial, snapshot.PolicyFingerprint) == nil {
+			t.Errorf("accepted a request class with %s: %q", name, denial.Request)
+		}
+	}
+}
+
 func TestNetworkWhyRawAddressUsesRetainedPolicyAndRedacts(t *testing.T) {
 	s, old := executionFixture(t)
 	mode := egress.Filtered

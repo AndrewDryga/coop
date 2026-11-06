@@ -7,18 +7,21 @@ import (
 	"errors"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
 type NativeBrokerBinding struct {
@@ -472,11 +475,11 @@ func (b *NativeBroker) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	}
 	if err != nil || port != "443" || request.RequestURI != request.Host || request.URL.Host != request.Host ||
 		request.ContentLength > 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" {
-		b.refuse(w, host, "native_broker_request_refused", "native CONNECT refused")
+		b.refuse(w, request, host, "native_broker_connect_refused", "native CONNECT refused")
 		return
 	}
 	if _, err := b.current(); err != nil {
-		b.refuse(w, host, safeReason(err), "native account unavailable")
+		b.refuse(w, request, host, safeReason(err), "native account unavailable")
 		return
 	}
 	select {
@@ -553,13 +556,13 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		if !ok {
 			host = "" // the handshake admits only declared names; never record another
 		}
-		b.refuse(w, host, "native_broker_request_refused", "native origin refused")
+		b.refuse(w, request, host, "native_broker_origin_refused", "native origin refused")
 		return
 	}
 	for name, expected := range origin.clientAccountHeaders {
 		values := request.Header.Values(name)
 		if len(values) != 0 && (len(values) != 1 || values[0] != expected[0]) {
-			b.refuse(w, host, "native_broker_request_refused", "native account selector refused")
+			b.refuse(w, request, host, "native_broker_account_refused", "native account selector refused")
 			return
 		}
 	}
@@ -570,7 +573,7 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		if route.line.ClientMarker != "" {
 			values := request.Header.Values(route.line.ClientHeader)
 			if len(values) != 1 || values[0] != route.line.ClientPrefix+route.line.ClientMarker {
-				b.refuse(w, host, "native_broker_request_refused", "native account selector refused")
+				b.refuse(w, request, host, "native_broker_account_refused", "native account selector refused")
 				return
 			}
 		}
@@ -583,7 +586,7 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		}
 		access, err := b.current()
 		if err != nil {
-			b.refuse(w, host, safeReason(err), "native account unavailable")
+			b.refuse(w, request, host, safeReason(err), "native account unavailable")
 			return
 		}
 		request = request.WithContext(context.WithValue(request.Context(), nativeAccessKey{}, access))
@@ -591,17 +594,68 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		route.proxy.ServeHTTP(w, request)
 		return
 	}
-	b.refuse(w, host, "native_broker_request_refused", "native route refused")
+	b.refuse(w, request, host, "native_broker_request_refused", "native route refused")
 }
 
 // refuse answers 403 and records the refusal beside the gateway's own, so a provider refused here
-// shows in the run's evidence and `coop net blocked`, not only in the agent's log.
-func (b *NativeBroker) refuse(w http.ResponseWriter, host, reason, message string) {
+// shows in the run's evidence and `coop net blocked`, not only in the agent's log. Each check has its
+// own reason, and the record names the request by its class (NativeRequestClass).
+func (b *NativeBroker) refuse(w http.ResponseWriter, request *http.Request, host, reason, message string) {
 	if b.events != nil {
-		b.events.emit(GuardEvent{Kind: "admission_failed", Name: host, Reason: reason})
+		b.events.emit(GuardEvent{Kind: "admission_failed", Name: host, Reason: reason, Request: NativeRequestClass(request)})
 	}
 	http.Error(w, message, http.StatusForbidden)
 }
+
+// NativeRequestClass names a request the broker refused without anything it carried: the method,
+// the path with every segment that is not a plain word shown as "*", and the names of its query
+// parameters, never their values. An id, a token or a signed path cannot reach the record that way.
+// A CONNECT is named by its method alone: its target is the destination the record already names.
+func NativeRequestClass(request *http.Request) string {
+	method := request.Method
+	if len(method) > 16 || method == "" || strings.Trim(method, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+		method = "OTHER"
+	}
+	if method == http.MethodConnect || request.URL == nil {
+		return method
+	}
+	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
+	if len(segments) > 8 {
+		segments = append(segments[:8], "…")
+	}
+	for i, segment := range segments {
+		if segment != "…" && (len(segment) > 40 || !nativePathWord(segment)) {
+			segments[i] = "*"
+		}
+	}
+	class := method + " /" + strings.Join(segments, "/")
+	if request.URL.RawQuery != "" {
+		names := []string{"…"} // a query that does not parse is named by its presence alone
+		if values, err := url.ParseQuery(request.URL.RawQuery); err == nil && len(values) != 0 {
+			names = slices.Sorted(maps.Keys(values))
+			for i, name := range names {
+				if len(name) > 40 || !nativeQueryName(name) {
+					names[i] = "*"
+				}
+			}
+		}
+		class += "?" + strings.Join(names, "&")
+	}
+	if len(class) > networkview.MaxRequestClass {
+		class = strings.ToValidUTF8(class[:networkview.MaxRequestClass-len("…")], "") + "…"
+	}
+	return class
+}
+
+// nativePathWord matches a path segment that names an endpoint rather than a value: lowercase words
+// joined by "-", "_" or ".", with an optional leading dot and at most two trailing digits ("v1",
+// "wham", "rate-limit-reset-credits", ".well-known"). An id like "plugin_ab12c3" or a token is not one.
+// An empty segment is a trailing or doubled slash, shown as it was sent.
+var nativePathWord = regexp.MustCompile(`^(\.?[a-z]+([-_.][a-z]+)*[0-9]{0,2})?$`).MatchString
+
+// nativeQueryName is the same for a query name, in either case ("pageToken", "client_version"). A
+// query that is only a token ("?a3f9c2e1") parses as a name, and is not one.
+var nativeQueryName = regexp.MustCompile(`^[A-Za-z]+([-_.][A-Za-z]+)*[0-9]{0,2}$`).MatchString
 
 func (b *NativeBroker) stopProtected(reason string, revision uint64, attempts int, elapsed time.Duration) {
 	b.mu.Lock()

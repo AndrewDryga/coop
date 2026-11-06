@@ -232,6 +232,13 @@
   unreadable in the box the moment it exists; the box can still create, write or delete one, so
   installs and key generators keep working. A new hidden folder and a file only `.coopignore` hides
   still need a restart, and the docs now say so.
+
+- **Codex and Grok runs on a sign-in no longer end with a refused provider request.** In filtered
+  mode, Coop refused the second page of Codex's plugin catalog, which lost the whole catalog, and
+  Grok's bare `GET /` check of its API host. Both now get through: the page token is bounded, and
+  the check carries no credential. When Coop still refuses a request to the agent's provider, the
+  record names the check and the request's method, path and query names, never their values, and
+  `coop net blocked` shows that request instead of suggesting a rule.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

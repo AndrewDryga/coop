@@ -261,7 +261,7 @@ func (c *Collector) ingest(guards []GuardEvent, gt GuardTotals, proxies []EnvoyE
 			}
 		case "tls_denied", "dns_denied", "admission_failed":
 			row := networkview.Denial{ID: c.opaque("guard", fmt.Sprint(event.Sequence)), Source: "guard", Sequence: networkview.Count(event.Sequence),
-				At: event.At, Kind: event.Kind, Reason: event.Reason, Name: event.Name, Service: event.Service, Basis: "observed"}
+				At: event.At, Kind: event.Kind, Reason: event.Reason, Name: event.Name, Service: event.Service, Request: event.Request, Basis: "observed"}
 			if event.Name != "" {
 				row.DestinationID = c.opaque("destination", event.Name)
 			}

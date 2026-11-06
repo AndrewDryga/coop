@@ -311,6 +311,39 @@ func TestExplainNeverFabricatesARuleFromThinEvidence(t *testing.T) {
 	}
 }
 
+// A refusal by the agent's sign-in broker names the request it refused, one row per request, and
+// offers no rule: no rule changes what a sign-in may carry. It used to end on "The record has no
+// connection type or port to use in a rule.", which sent people looking for one.
+func TestExplainNamesTheRequestASignInBrokerRefused(t *testing.T) {
+	refusal := func(request string) netExplainCause {
+		return netExplainCause{Count: 1, Explanation: networkstate.EventExplanation{RunID: netTestRun, CandidateState: "none",
+			Message: networkstate.DiagnosticReason("native_broker_request_refused"),
+			Event: networkview.Denial{ID: netTestEventID, Kind: "admission_failed", Reason: "native_broker_request_refused",
+				Name: "chatgpt.com", Request: request, At: time.Unix(1, 0).UTC()}}}
+	}
+	render := func(causes ...netExplainCause) string {
+		var b bytes.Buffer
+		writeNetExplanation(&b, ui.Palette{}, time.Now(), netExplanation{RunID: netTestRun, Host: "chatgpt.com", Causes: causes})
+		return b.String()
+	}
+	page, probe := "GET /backend-api/ps/plugins/list?limit&pageToken&scope", "GET /"
+	one := render(refusal(page))
+	if !strings.Contains(one, " · request "+page+"\n\nCoop refused this request to the agent's provider because it was not one the sign-in may carry.\n") {
+		t.Errorf("the refused request is not named:\n%s", one)
+	}
+	two := render(refusal(page), refusal(probe))
+	for _, request := range []string{page, probe} {
+		if !strings.Contains(two, "  admission · request "+request+" · 1 attempt\n") {
+			t.Errorf("%s has no row of its own:\n%s", request, two)
+		}
+	}
+	for _, got := range []string{one, two} {
+		if strings.Contains(got, "no connection type or port") || strings.Contains(got, "coop approve") {
+			t.Errorf("a sign-in refusal sent the reader to a rule:\n%s", got)
+		}
+	}
+}
+
 // netDenial is one retained refusal of host, in the shape the guard records
 // it: an id, its producer sequence and the time it happened.
 func netDenial(id string, seq networkview.Count, kind, reason, host string, at time.Time) networkview.Denial {

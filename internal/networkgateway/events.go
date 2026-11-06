@@ -32,6 +32,8 @@ type GuardEvent struct {
 	// destination and must never be rendered as one.
 	SourcePort int
 	Reason     string
+	// Request is the class of a request the sign-in broker refused (NativeRequestClass).
+	Request string
 }
 
 type GuardTotals struct {

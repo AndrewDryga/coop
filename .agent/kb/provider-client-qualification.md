@@ -2,8 +2,8 @@
 name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-10-16
+sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-11-06
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -203,7 +203,15 @@ interactive start in a home without `-c` or `--profile` copies the whole client 
 into it under `packages/app-server-daemon` and runs a self-updater beside it; later starts reuse
 the copy. Any `-c` (Coop's effort flag, the API-key setup) or `--profile` already skips the server,
 so a live check needs a plain ChatGPT-login start with no effort, or it passes for the wrong
-reason. MCP routes are pinned the same way
+reason. A sign-in client's native routes are captured the same way, through its own proxy: run
+it in the locked image with `--network none`, its broker seed home (the adapter's
+`NativeCredentials().Broker.Seed`), `HTTPS_PROXY` at a local listener that answers CONNECT and
+terminates TLS with its own CA, and that CA in `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`, as the
+box sets them. Answer the requests the client needs to go on (Codex: account discovery and one
+Responses stream) and page the lists it pages: a listener that answers 403 to everything hides
+every request that only follows a real answer. That is how Codex 0.159.2's second catalog page
+(`pageToken` on `ps/plugins/list` and `installed`) and Grok 1.0.44's bare credential-free `GET /`
+were found (`TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend`). MCP routes are pinned the same way
 (`TestMCPRoutesAdmitWhatThePinnedClientsSend`): point each client (and claude-agent-acp's bundled SDK
 `claude`) at a local endpoint that answers `initialize`/`tools/list` and logs `method url` plus the
 Authorization shape — claude `--mcp-config` with `headers.Authorization: "Bearer ${VAR}"` (it ignores
@@ -231,6 +239,9 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-06 — recorded the native sign-in capture recipe and its trap (a 403-everything listener
+  hides follow-up requests) after it found Codex's catalog page and Grok's probe (task
+  2026-11-06-find-and-fix-the-provider-request-codex-and-grok).
 - 2026-10-16 — the Codex bump check now covers `features.daemon_auto_start`, which Coop's managed
   layer turns off: read in rust-v0.159.2 (`tui/src/startup_orchestration.rs`,
   `tui/src/daemon_startup.rs`, `app-server-daemon/src/prepare_install.rs`), it is why seven native

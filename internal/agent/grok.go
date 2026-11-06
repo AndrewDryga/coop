@@ -92,6 +92,9 @@ func grokBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	out = append(out, NativeBrokerRoute{Host: "cli-chat-proxy.grok.com", Method: "GET", Path: "/v1/sessions/search", Header: "Authorization", HeaderPrefix: "Bearer ",
 		Queries: []NativeBrokerQuery{{Name: "limit", Values: []string{"100"}}, {Name: "query", Optional: true, MaxBytes: 4096}}})
 	out = append(out, NativeBrokerRoute{Host: "code.grok.com", Method: "DELETE", Path: "/sessions/", Segment: "uuid", Suffix: "/data", Header: "Authorization", HeaderPrefix: "Bearer "})
+	// The pinned client checks its API host with a bare GET / at every start. It sends no
+	// credential, and Coop adds none.
+	out = append(out, NativeBrokerRoute{CredentialFree: true, Host: "cli-chat-proxy.grok.com", Method: "GET", Path: "/"})
 	return out, nil
 }
 

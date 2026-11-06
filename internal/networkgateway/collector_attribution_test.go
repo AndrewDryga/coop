@@ -411,3 +411,15 @@ func TestCollectorCarriesTheSourceOfItsOwnRefusals(t *testing.T) {
 		t.Error("an ordinary refusal lost its destination")
 	}
 }
+
+// A sign-in broker refusal reaches the evidence with the class of the request it refused.
+func TestCollectorCarriesTheRequestABrokerRefused(t *testing.T) {
+	c, now := collectorFixture(t)
+	class := "GET /backend-api/ps/plugins/list?limit&pageToken&scope"
+	c.ingest([]GuardEvent{{Sequence: 1, BootAt: *now, At: time.Unix(100, 0), Kind: "admission_failed", Name: "chatgpt.com",
+		Reason: "native_broker_request_refused", Request: class}}, GuardTotals{Sequence: 1, AdmissionFailures: 1}, nil, EnvoyTotals{})
+	publishFixture(c, *now, nil)
+	if denials := c.snapshot.Denials; len(denials) != 1 || denials[0].Request != class || denials[0].Name != "chatgpt.com" {
+		t.Fatalf("the refused request did not reach the evidence: %+v", denials)
+	}
+}

@@ -179,10 +179,16 @@ type Denial struct {
 	// made against something addressed to IT: those name no destination, so this
 	// is what ties one to the process that made it. It is not a destination and
 	// is never rendered as one.
-	SourcePort *int       `json:"source_port,omitempty"`
-	Candidate  *Candidate `json:"candidate,omitempty"`
-	Withheld   bool       `json:"destination_withheld,omitempty"`
+	SourcePort *int `json:"source_port,omitempty"`
+	// Request is the class of a request the agent's sign-in broker refused: its method, its path
+	// with every segment that could hold a value shown as "*", and its query names, never a value.
+	Request   string     `json:"request,omitempty"`
+	Candidate *Candidate `json:"candidate,omitempty"`
+	Withheld  bool       `json:"destination_withheld,omitempty"`
 }
+
+// MaxRequestClass bounds Denial.Request.
+const MaxRequestClass = 160
 
 type AlertFacts struct {
 	Packets      Count  `json:"packets"`
@@ -312,6 +318,7 @@ func (s Snapshot) Project(exportDestinations bool) Snapshot {
 		if exportDestinations {
 			row.Name = d.Name
 			row.Peer = d.Peer
+			row.Request = d.Request // a path on the destination says what it was
 			if c := d.Candidate; c != nil {
 				r := c.Rule
 				row.Candidate = &Candidate{ID: c.ID, EvidenceID: c.EvidenceID, PolicyFingerprint: c.PolicyFingerprint,

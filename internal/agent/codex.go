@@ -153,9 +153,17 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	for _, method := range []string{"GET", "POST", "DELETE"} {
 		add(method, "/backend-api/ps/mcp", "")
 	}
-	add("GET", "/backend-api/ps/plugins/installed", "limit=200")
-	add("GET", "/backend-api/ps/plugins/installed", "limit=200&includeDownloadUrls=true")
-	add("GET", "/backend-api/ps/plugins/list", "scope=GLOBAL&limit=200")
+	// The plugin catalog and the installed list come 200 to a page, and the pinned client asks for
+	// the next page with the opaque pageToken the last one named (codex-rs core-plugins remote.rs).
+	// Refusing that page failed the whole catalog fetch.
+	page := NativeBrokerQuery{Name: "pageToken", Optional: true, MaxBytes: 4096}
+	limit := NativeBrokerQuery{Name: "limit", Values: []string{"200"}}
+	paged := func(path string, queries ...NativeBrokerQuery) {
+		add("GET", path, "")
+		out[len(out)-1].Queries = append(queries, page)
+	}
+	paged("/backend-api/ps/plugins/installed", limit, NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true})
+	paged("/backend-api/ps/plugins/list", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL"}}, limit)
 	add("GET", "/backend-api/ps/plugins/suggested/codex", "scope=GLOBAL")
 	return out, nil
 }

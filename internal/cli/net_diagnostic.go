@@ -653,7 +653,7 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 		if denial.Name != host {
 			continue
 		}
-		key := networkreport.RefusalLabel(denial)
+		key := networkreport.RefusalLabel(denial) + " " + denial.Request // two refused requests are two causes
 		if index[key] == nil {
 			index[key] = &group{newest: denial}
 			order = append(order, key)
@@ -693,6 +693,9 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 	// address it was seen going to stays on screen, so it never reads as a connection made by name.
 	if host, _, ok := networkreport.SplitPeer(first.Peer); ok && len(explanation.Causes) == 1 && first.Name != "" {
 		detail += " · address " + host
+	}
+	if len(explanation.Causes) == 1 && first.Request != "" {
+		detail += " · request " + first.Request
 	}
 	fmt.Fprintf(w, "  %s\n", p.Dim(detail))
 	var candidate *networkview.Candidate
@@ -824,6 +827,9 @@ func netCauseLabel(event networkview.Denial, count int) string {
 	if event.Service != "" {
 		label += " · service " + event.Service
 	}
+	if event.Request != "" {
+		label += " · request " + event.Request
+	}
 	return label + " · " + ui.Count(count, "attempt")
 }
 
@@ -872,14 +878,18 @@ func netRuleYAML(rule egress.Rule) string {
 // it ONLY where a rule is the kind of thing that could have helped. A protected
 // address, an unsupported capability or a connection that failed on its own
 // already said so in its cause; repeating it as rule advice would imply the
-// destination should be allowed. What is left is the honest case: the record
-// names no transport or port, so there is nothing exact to write down.
+// destination should be allowed. So did the agent's sign-in broker: it refused
+// a request to a provider the run may reach, and no rule changes what a
+// sign-in may carry. What is left is the honest case: the record names no
+// transport or port, so there is nothing exact to write down.
 func netNoDraftReason(event networkview.Denial) string {
 	if netBlockedVerb(event.Reason) != "was blocked" || event.Port != nil {
 		return ""
 	}
 	switch event.Reason {
-	case "protected_destination", "unsafe_dns_answer", "tls_name_missing", "tls_name_invalid", "dns_type_unsupported":
+	case "protected_destination", "unsafe_dns_answer", "tls_name_missing", "tls_name_invalid", "dns_type_unsupported",
+		"native_account_unavailable", "native_broker_revoked", "native_broker_request_refused",
+		"native_broker_account_refused", "native_broker_origin_refused", "native_broker_connect_refused":
 		return ""
 	}
 	return "The record has no connection type or port to use in a rule."

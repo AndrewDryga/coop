@@ -2,7 +2,7 @@
 name: native-broker-lease-reads
 description: the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 subsystem: box
-sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/box/network_summary.go, internal/loop/network.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/networkgateway/native_broker_unsettled_test.go, internal/safefile/safefile.go]
+sources: [internal/cli/net_diagnostic.go, internal/networkstate/diagnostic.go, internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/box/network_summary.go, internal/loop/network.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/networkgateway/native_broker_unsettled_test.go, internal/safefile/safefile.go]
 updated: 2026-11-06
 ---
 
@@ -32,8 +32,15 @@ how long a stalled host publisher already kept them. Measured cause: under host 
 guard logged `native_broker_stopped reason=document_canceled attempts=1 load_ms=1233`, a single
 blocking read past the 1s budget, and Codex got 403 from chatgpt.com for the rest of the run.
 `document_io`, `document_schema` and shutdown still latch. Every broker 403 is emitted as a guard
-`admission_failed` event naming the origin (`native_account_unavailable`, `native_broker_revoked`,
-`native_broker_request_refused`), so it reaches the run's denials; an open run has no sink. The run
+`admission_failed` event naming the origin, so it reaches the run's denials; an open run has no
+sink. Its reason names the check that refused: `native_account_unavailable`, `native_broker_revoked`,
+`native_broker_connect_refused` (not a plain tunnel to 443), `native_broker_origin_refused` (Host
+is not the tunnel's name), `native_broker_account_refused` (selector header or marker), and
+`native_broker_request_refused` (no declared line matches). The event also carries
+`NativeRequestClass`: method, path with every segment that is not a short word as `*`, and the
+sorted query names that are words, never a value, at most `networkview.MaxRequestClass` bytes. It reaches `Denial.Request` only under
+the destinations projection, networkstate refuses a retained class with any other character, and
+`coop net blocked` shows it and offers no rule for these reasons. The run
 report tags a destination whose every refusal is `native_account_unavailable`
 (`NetworkDenial.SlowSignIn`, matched by that literal in box's `slowSignInRead`, so a renamed reason
 needs both). The loop prints it last in the attempt block as a slow sign-in read, with no lookup,
@@ -78,6 +85,12 @@ mutex; a blocked log sink cannot delay revocation. Credentials, accounts, raw do
 arbitrary I/O/parser errors are never logged. Document callers still receive the generic error.
 
 ## Changelog
+- 2026-11-06 — every Codex and Grok sign-in run ended with one `native_broker_request_refused`
+  nobody could place (task 2026-11-06-find-and-fix-the-provider-request-codex-and-grok). Refusals
+  now name their check and the request class. Verified with
+  `TestNativeBrokerRecordsWhichCheckRefused`, `TestNativeRequestClassNeverCarriesAValue`,
+  `TestCollectorCarriesTheRequestABrokerRefused`, `TestNetworkExplainKeepsTheRefusedRequestClass`
+  and `TestExplainNamesTheRequestASignInBrokerRefused`.
 - 2026-11-06 — the loop listed slow-read refusals as remote addresses an attempt could not reach,
   with `coop net blocked` hints. The run report now tags them and the loop words them apart (task
   2026-11-06-say-a-provider-refusal-was-a-slow-sign-in-read-n). Verified with
