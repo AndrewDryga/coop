@@ -20,8 +20,10 @@ const (
 // auto-exit — with the final frame printed on the NORMAL screen via the LIFO-defer trick (the
 // finalFrame printer is registered before screen.Leave, so it runs after it). Each board injects its
 // differences: tick is called every poll — it paints the current frame (via screen.Frame) and
-// returns that frame plus whether this tick counts toward the idle-exit debounce (the differing
-// torn-read / startup predicates live there); done prints the closing summary after the final frame.
+// returns the frame to leave on the normal screen should the board close itself now (without what
+// only the live view needs, such as a Ctrl-C hint), plus whether this tick counts toward the
+// idle-exit debounce (the differing torn-read / startup predicates live there); done prints the
+// closing summary after the final frame.
 // Ctrl-C / SIGTERM exit 0 with no final frame.
 func runWatchLoop(screen *ui.AltScreen, tick func(spin int) (frame []string, settled bool), done func()) (int, error) {
 	screen.Enter()

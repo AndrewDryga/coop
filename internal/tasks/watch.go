@@ -66,6 +66,8 @@ type mergedTask struct {
 	forkBlocked bool
 	// claimRank: a todo task's place in the order the loop claims them (claimRanks), which Up next keeps.
 	claimRank int
+	// waiting: a todo task the loop skips for now, because the task its waits_on names is not done.
+	waiting bool
 }
 
 // forkMerge is a fork's finished work as one row: ready to merge (Needs you) or merging (Now).
@@ -133,9 +135,9 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		now := time.Now()
 		doneToday := map[string]int{} // by queue label, for the per-source lines
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		claims := claimRanks(snapshot.Tasks, roots)
+		claims, waiting := claimRanks(snapshot.Tasks, roots)
 		for _, task := range snapshot.Tasks {
-			m := mergedTask{Item: task.Item, phase: task.Phase, claimRank: claims[task.Item.Dir]}
+			m := mergedTask{Item: task.Item, phase: task.Phase, claimRank: claims[task.Item.Dir], waiting: waiting[task.Item.Dir]}
 			if task.Item.State != StateTodo && task.ownerRecord != nil && task.ownerRecord.Kind != TaskOwnerFork {
 				record := *task.ownerRecord
 				m.owner = taskOwnerLabel(record, false)
@@ -276,13 +278,14 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	tick := func(spin int) ([]string, bool) {
 		board := cache.get(time.Now())
 		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
-		// captured snapshot must not carry an instruction nobody can follow.
-		frame := liveFrame(board, spin, width(), ui.TermHeight(os.Stdout))
+		// captured snapshot must not carry an instruction nobody can follow. The frame the loop
+		// prints once the view closes itself is the board without it, for the same reason.
+		frame, final := liveFrame(board, spin, width(), ui.TermHeight(os.Stdout))
 		screen.Frame(frame)
 		if queueErr = board.snapshot.QueueError(); queueErr != nil {
-			return frame, true // settle on the failure so the loop's debounce still bounds the exit
+			return final, true // settle on the failure so the loop's debounce still bounds the exit
 		}
-		return frame, tasksWatchSettling(mergedCounts(board.merged), board.running)
+		return final, tasksWatchSettling(mergedCounts(board.merged), board.running)
 	}
 	code, err := host.runWatchLoop(screen, tick, func() {
 		if queueErr == nil {
@@ -309,11 +312,14 @@ func liveForkGenerations(forks []ProjectForkSnapshot) map[forkspace.Identity]boo
 
 // claimRanks maps each todo task's folder to its place in the order the loop claims them: the loop
 // reads its queues in the order they are configured (roots), each in folder order as the snapshot
-// lists it, and sorts them with claimOrder. A queue only a fork's assignment brought onto the board
-// comes after them.
-func claimRanks(tasks []ProjectTaskSnapshot, roots []string) map[string]int {
+// lists it, and sorts them with claimOrder, which puts a task that waits for another last. waiting
+// holds those, which the loop skips. A queue only a fork's assignment brought onto the board comes
+// after them.
+func claimRanks(tasks []ProjectTaskSnapshot, roots []string) (ranks map[string]int, waiting map[string]bool) {
+	index := queueIndex{}
 	var todo []QueuedTask
 	for _, task := range tasks {
+		index.add(task.Item)
 		if task.Item.State == StateTodo {
 			todo = append(todo, QueuedTask{Root: task.Queue, Item: task.Item})
 		}
@@ -325,12 +331,15 @@ func claimRanks(tasks []ProjectTaskSnapshot, roots []string) map[string]int {
 		return len(roots)
 	}
 	slices.SortStableFunc(todo, func(a, b QueuedTask) int { return configured(a.Root) - configured(b.Root) })
-	claimOrder(todo)
-	ranks := make(map[string]int, len(todo))
+	ready := claimOrder(todo, index)
+	ranks, waiting = make(map[string]int, len(todo)), map[string]bool{}
 	for i, task := range todo {
 		ranks[task.Item.Dir] = i
+		if i >= ready {
+			waiting[task.Item.Dir] = true
+		}
 	}
-	return ranks
+	return ranks, waiting
 }
 
 // changedSince reports whether a done task's folder arrived in or changed in its state directory
@@ -665,27 +674,37 @@ func tasksWatchFrame(board boardRead, spin, width, height int) []string {
 	}
 	tail := boardTail(board, width)
 	sections := boardSections(p, board.merged, board.merges, spin, width)
-	shown := sectionShown(sections, height-len(out)-len(tail))
+	budget := -1 // a pipe has no height to fill
+	if height > 0 {
+		budget = max(height-len(out)-len(tail), 0)
+	}
+	shown := sectionShown(sections, budget)
 	for i, section := range sections {
+		if shown[i] < 0 {
+			continue // not even its header and count fit
+		}
 		out = append(out, "")
 		out = append(out, section.render(shown[i])...)
 	}
 	out = append(out, tail...)
 	if height > 0 && len(out) > height {
-		// Even the fewest rows do not fit: cut the bottom rather than scroll the header away.
+		// Even the header and the forks and problems under the sections do not fit: cut the bottom
+		// rather than scroll the header away.
 		out = out[:height]
 	}
 	return out
 }
 
 // liveFrame is the live board for a terminal of termHeight rows: the board, then a blank line and
-// the Ctrl-C footer, never taller than the terminal.
-func liveFrame(board boardRead, spin, width, termHeight int) []string {
+// the Ctrl-C footer, never taller than the terminal. final is the board alone, which stays on the
+// screen once the view closes itself and no key leaves it any more.
+func liveFrame(board boardRead, spin, width, termHeight int) (frame, final []string) {
 	height := 0
 	if termHeight > 0 {
 		height = max(termHeight-2, 1)
 	}
-	return append(tasksWatchFrame(board, spin, width, height), "", watchExitFooter)
+	final = tasksWatchFrame(board, spin, width, height)
+	return slices.Concat(final, []string{"", watchExitFooter}), final
 }
 
 // boardTail is what follows the sections: a fork with no row on the board (cleaning up, or between
@@ -1104,11 +1123,13 @@ type watchSection struct {
 // included.
 func (s watchSection) height(shown int) int { return 1 + len(s.render(shown)) }
 
-// sectionShown is how many task rows each section shows within budget lines. Now always shows in
-// full. Stopped and Needs you keep liveMin rows each and Up next its own, then Stopped and Needs you
-// share the room left, a row at a time, and Up next takes what they leave. When even the minimums do
-// not fit, Up next gives way first, then Needs you, then Stopped, down to a row each. Without a
-// budget (a pipe) the work shows in full and each list listMin rows.
+// sectionShown is how many task rows each section shows within budget lines, or -1 for a section
+// left out. Now shows in full, Stopped and Needs you keep liveMin rows each and Up next its own,
+// then Stopped and Needs you share the room left, a row at a time, and Up next takes what they
+// leave. When even the minimums do not fit, Up next gives way first, then Needs you, then Stopped,
+// then Now, down to a row each, and then all but Now down to their header and "+ N more". A section
+// that does not fit even so is left out, the lowest first, so a header never shows alone. Without a
+// budget (a pipe, budget < 0) the work shows in full and each list listMin rows.
 func sectionShown(sections []watchSection, budget int) []int {
 	shown := make([]int, len(sections))
 	for i, s := range sections {
@@ -1117,8 +1138,26 @@ func sectionShown(sections []watchSection, budget int) []int {
 			shown[i] = min(listMin, s.total)
 		}
 	}
-	if budget <= 0 {
+	if budget < 0 {
 		return shown
+	}
+	// The fewest rows a section shows: Now keeps one, a list can stand as its header and count.
+	fewest := func(s watchSection) int {
+		if s.kind == sectionNow {
+			return 1
+		}
+		return 0
+	}
+	for len(sections) > 0 {
+		least := 0
+		for _, s := range sections {
+			least += s.height(fewest(s))
+		}
+		if least <= budget {
+			break
+		}
+		shown[len(sections)-1] = -1
+		sections = sections[:len(sections)-1]
 	}
 	used := 0
 	for i, s := range sections {
@@ -1131,10 +1170,12 @@ func sectionShown(sections []watchSection, budget int) []int {
 		used += sections[i].height(n) - sections[i].height(shown[i])
 		shown[i] = n
 	}
-	for _, kind := range []boardSection{sectionUpNext, sectionNeedsYou, sectionStopped, sectionNow} {
-		for i, s := range sections {
-			for s.kind == kind && used > budget && shown[i] > 1 {
-				resize(i, shown[i]-1)
+	for _, floor := range []int{1, 0} {
+		for _, kind := range []boardSection{sectionUpNext, sectionNeedsYou, sectionStopped, sectionNow} {
+			for i, s := range sections {
+				for s.kind == kind && used > budget && shown[i] > max(floor, fewest(s)) {
+					resize(i, shown[i]-1)
+				}
 			}
 		}
 	}
@@ -1231,7 +1272,10 @@ func stoppedSection(p ui.Palette, groups []*stopGroup) watchSection {
 			out = append(out, g.fix(len(g.rows))...)
 		}
 		if hidden > 0 {
-			out = append(out, "", p.Dim(fmt.Sprintf("  + %d more", hidden)))
+			if len(out) > 1 { // set apart from the groups shown above it
+				out = append(out, "")
+			}
+			out = append(out, p.Dim(fmt.Sprintf("  + %d more", hidden)))
 		}
 		return out
 	}}
@@ -1457,6 +1501,9 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 			extra = append(extra, span{" · ", p.Dim}, span{"High priority", nil})
 		case 2:
 			extra = append(extra, span{" · Low priority", p.Dim})
+		}
+		if m.waiting { // last, as the loop skips it
+			extra = append(extra, span{" · Waits for " + m.WaitsOn, p.Dim})
 		}
 		upNext = append(upNext, []string{titleLine(p.Cyan("○"), m.Title, taskLink(m), extra...)})
 	}

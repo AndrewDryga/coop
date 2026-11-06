@@ -82,9 +82,22 @@ func byPriority(a, b Item) int { return priorityRank(a) - priorityRank(b) }
 
 // claimOrder sorts todo tasks, given in the order the loop reads them (its queues in order, each in
 // folder order), into the order it claims them: a person's priority first, that read order within
-// each. The tasks board lists Up next with it too, so the board cannot name another next task.
-func claimOrder(todo []QueuedTask) {
+// each, and a task that waits for another (index.waiting) after all the rest, since the loop skips
+// it. ready is how many come before those. The tasks board lists Up next with it too, so the board
+// cannot name another next task.
+func claimOrder(todo []QueuedTask, index queueIndex) (ready int) {
 	slices.SortStableFunc(todo, func(a, b QueuedTask) int { return byPriority(a.Item, b.Item) })
+	var waiting []QueuedTask
+	for _, task := range todo {
+		if index.waiting(task.Item) {
+			waiting = append(waiting, task)
+			continue
+		}
+		todo[ready] = task
+		ready++
+	}
+	copy(todo[ready:], waiting)
+	return ready
 }
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.

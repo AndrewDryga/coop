@@ -3856,7 +3856,7 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 			}
 		}
 
-		claimOrder(todo)
+		claimOrder(todo, index)
 		var busy TaskLeaseSummary
 		changed := false
 		for _, candidate := range inProgress {

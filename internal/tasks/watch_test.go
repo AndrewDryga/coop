@@ -57,7 +57,7 @@ func renderSections(p ui.Palette, merged []mergedTask, spin, width int) [][]stri
 func renderBoardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, width int) [][]string {
 	var out [][]string
 	sections := boardSections(p, merged, merges, spin, width)
-	for i, shown := range sectionShown(sections, 0) {
+	for i, shown := range sectionShown(sections, -1) { // a pipe
 		out = append(out, sections[i].render(shown))
 	}
 	return out
@@ -1424,7 +1424,7 @@ func TestTaskWatchLiveFrameFitsTheTerminal(t *testing.T) {
 			mergedTask{Item: Item{ID: fmt.Sprintf("todo-%d", i), Title: fmt.Sprintf("Todo %d", i), State: StateTodo}})
 	}
 	for _, height := range []int{24, 12, 40} {
-		frame := liveFrame(boardRead{merged: merged}, 0, 80, height)
+		frame, _ := liveFrame(boardRead{merged: merged}, 0, 80, height)
 		board := strings.Join(frame, "\n")
 		if len(frame) > height {
 			t.Errorf("height %d: frame has %d lines:\n%s", height, len(frame), board)
@@ -1434,6 +1434,80 @@ func TestTaskWatchLiveFrameFitsTheTerminal(t *testing.T) {
 		}
 		if height == 24 && (!strings.Contains(board, "more with no worker\n    to resume them, run: coop loop") || strings.Contains(board, "Stopped (11)\n\n")) {
 			t.Errorf("height %d: stopped group =\n%s", height, board)
+		}
+	}
+}
+
+// The live board on terminals of 24, 16 and 12 rows, line for line: the lists give way a row at a
+// time, then to their header and "+ N more", and only a section that does not fit even so is left
+// out, the lowest first. On 16 rows the board used to end on a bare "Needs you (4)" header and lose
+// Up next. What stays on the screen once the board closes itself has no Ctrl-C hint.
+func TestTaskWatchFitsSmallTerminals(t *testing.T) {
+	t.Setenv("COOP_SPINNER", "1")
+	merged := []mergedTask{{Item: inProgress("2026-11-06-live-work", "Live work", 1, 3),
+		owner: "claimed by qa", live: true, agent: "qa", since: ago(3 * time.Minute)}}
+	for _, name := range []string{"one", "two", "three"} {
+		merged = append(merged, mergedTask{Item: inProgress("2026-11-06-gone-"+name, "Gone "+name, 0, 1), owner: "claimed by qa3", agent: "qa3"})
+	}
+	for i, name := range []string{"one", "two", "three", "four"} {
+		merged = append(merged, mergedTask{Item: Item{ID: "2026-11-06-ask-" + name, Title: "Ask " + name, State: StateBlocked},
+			since: ago(time.Duration(4-i) * time.Hour)})
+	}
+	for i, name := range []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"} {
+		merged = append(merged, mergedTask{Item: Item{ID: "2026-11-06-up-" + name, Title: "Up " + name, State: StateTodo}, claimRank: i})
+	}
+	for i := range 2 {
+		merged = append(merged, mergedTask{Item: Item{ID: fmt.Sprintf("done-%d", i), Title: "Shipped", State: StateDone}, doneToday: true})
+	}
+	top := []string{
+		"7 todo · 1 working · 3 stopped · 4 blocked · 2 done today",
+		"",
+		"Now (1)",
+		"  ◳ Live work",
+		"    1/3 · qa · working for 3m",
+		"",
+		"Stopped (3)",
+	}
+	for _, tc := range []struct {
+		rows int
+		rest []string
+	}{
+		{24, []string{
+			"  ✕ Gone one",
+			"    0/1 · qa3 · claim held by a session that has ended",
+			"    to free it, run: coop tasks release 2026-11-06-gone-one",
+			"",
+			"  + 2 more",
+			"",
+			"Needs you (4) · answer them: coop tasks decisions -i",
+			"  ⚑ Ask four",
+			"    decision pending for 1h",
+			"  + 3 more",
+			"",
+			"Up next (7)",
+			"  ○ Up alpha",
+			"  ○ Up bravo",
+			"  + 5 more",
+		}},
+		{16, []string{
+			"  + 3 more",
+			"",
+			"Needs you (4) · answer them: coop tasks decisions -i",
+			"  + 4 more",
+			"",
+			"Up next (7)",
+			"  + 7 more",
+		}},
+		{12, []string{
+			"  + 3 more",
+		}},
+	} {
+		frame, final := liveFrame(boardRead{merged: merged}, 1, 80, tc.rows)
+		if want := slices.Concat(top, tc.rest); !reflect.DeepEqual(final, want) {
+			t.Errorf("%d rows: board =\n%s\nwant\n%s", tc.rows, strings.Join(final, "\n"), strings.Join(want, "\n"))
+		}
+		if want := slices.Concat(final, []string{"", watchExitFooter}); !reflect.DeepEqual(frame, want) || len(frame) > tc.rows {
+			t.Errorf("%d rows: live frame =\n%s\nwant the board, then the Ctrl-C hint, within the terminal", tc.rows, strings.Join(frame, "\n"))
 		}
 	}
 }

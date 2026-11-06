@@ -22,6 +22,12 @@
   `coop fork merg api` and `coop help fork merg` suggest `coop fork merge` instead of reading
   `merg` as a fork name, `coop fork <name> acp` for a missing fork names the command that creates
   it, and the account-name rule shows one backslash, not two.
+
+- **The tasks board shows Up next in the loop's order and fits short terminals.** A task that
+  waits for another now comes last in Up next, marked "Waits for <id>", since the loop skips it;
+  before, the board could list it first. On a short terminal a section shrinks to its header and
+  "+ N more" before it is left out, so no header shows alone and Up next stays while it fits. The
+  board left on the screen after every task is done no longer says to press Ctrl-C.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

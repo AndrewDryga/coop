@@ -3,6 +3,7 @@ package tasks
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -177,6 +178,51 @@ func TestWithFrontmatterFieldKeepsEveryOtherLine(t *testing.T) {
 				t.Errorf("%s: written field reads back as %q", tc.name, fields[waitsOnField])
 			}
 		}
+	}
+}
+
+// The board's Up next follows the loop's picker: a task that waits for another comes last, marked
+// with what it waits for, so the first row is always the task the loop takes next.
+func TestTaskWatchListsAWaitingTaskLast(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "shop")
+	root := filepath.Join(repo, TasksRoot)
+	// The waiting task sorts first, so only its wait keeps the loop from taking it.
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-alpha", "task.md"), "---\ntitle: Alpha\nwaits_on: 2026-01-03-charlie\n---\n# Alpha\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-bravo", "task.md"), "---\ntitle: Bravo\n---\n# Bravo\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-03-charlie", "task.md"), "---\ntitle: Charlie\n---\n# Charlie\n")
+	upNext := func() []string {
+		board := captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}) })
+		var rows []string
+		for _, line := range strings.Split(board, "\n") {
+			if strings.HasPrefix(line, "  ○ ") {
+				rows = append(rows, line)
+			}
+		}
+		return rows
+	}
+	if got, want := upNext(), []string{"  ○ Bravo", "  ○ Charlie", "  ○ Alpha · Waits for 2026-01-03-charlie"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Up next = %q, want %q", got, want)
+	}
+	var order []string
+	for range 3 {
+		rows := upNext()
+		assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+		if err != nil || assignment.Outcome != assignmentReady {
+			t.Fatalf("assignment = (%+v, %v)", assignment, err)
+		}
+		order = append(order, assignment.Task.Item.ID)
+		if len(rows) == 0 || rows[0] != "  ○ "+assignment.Task.Item.Title {
+			t.Errorf("the board listed %q, but the loop claimed %s", rows, assignment.Task.Item.ID)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		if err := MoveTaskDir(root, assignment.Task.Item, StateDone); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []string{"2026-01-02-bravo", "2026-01-03-charlie", "2026-01-01-alpha"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("the loop claimed %v, want %v", order, want)
 	}
 }
 
