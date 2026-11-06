@@ -40,8 +40,16 @@ func TestNetworkRulesFileCannotLaunderRulesThroughOrdinaryMode(t *testing.T) {
 	}
 }
 
+// Only a private file outside every agent mount grants. Any other is refused by name: the agent
+// could have written it, and no review exists that could approve rules for one run.
 func TestCaptureNetworkRulesFileClassifiesTheSource(t *testing.T) {
-	for _, kind := range []string{"private", "repository", "traversed-alias", "hard-link", "shared-writable"} {
+	for kind, want := range map[string]string{
+		"private":         "",
+		"repository":      "keep the rules file outside the project",
+		"traversed-alias": "keep the rules file outside the project",
+		"hard-link":       "must be yours alone: owned by you, with no other hard links, and not writable by others",
+		"shared-writable": "must be yours alone",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			repo, private := t.TempDir(), t.TempDir()
 			path := filepath.Join(private, "rules.yaml")
@@ -68,14 +76,16 @@ func TestCaptureNetworkRulesFileClassifiesTheSource(t *testing.T) {
 				}
 			}
 			capture, err := captureNetworkRulesFile(path, []string{repo})
-			var rules []egress.Rule
-			operator := false
-			if capture != nil {
-				rules, operator = capture.rules, capture.operator
+			if want != "" {
+				if capture != nil || err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), path) {
+					t.Fatalf("capture = %#v, %v; want a refusal naming %s and %q", capture, err, path, want)
+				}
+				return
 			}
-			if err != nil || operator != (kind == "private") || len(rules) != 1 || rules[0].To.Domain != "example.com" {
-				t.Fatalf("capture = %#v operator %v error %v", rules, operator, err)
+			if err != nil || capture == nil || len(capture.rules) != 1 || capture.rules[0].To.Domain != "example.com" {
+				t.Fatalf("capture = %#v error %v", capture, err)
 			}
+			rules := capture.rules
 			// A later review or launch consumes the captured data, not the path.
 			if err := os.WriteFile(path, []byte("egress_rules: []\n"), 0o600); err != nil {
 				t.Fatal(err)
@@ -113,7 +123,7 @@ func TestCaptureNetworkRulesFileRefusesInvalidSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if capture, err := captureNetworkRulesFile(path, nil); err == nil || capture != nil && capture.operator {
+			if capture, err := captureNetworkRulesFile(path, nil); err == nil || capture != nil {
 				t.Fatalf("invalid source granted authority: %v %v", capture, err)
 			}
 		})
@@ -133,7 +143,9 @@ func TestNetworkRulesFileRepositoryRequestRefusesBeforeRuntime(t *testing.T) {
 		_ = capture.Close()
 		t.Fatal("repository rules bypassed approval")
 	}
-	if !strings.Contains(err.Error(), "has not been approved") {
+	// No review can approve rules for one run, so sending the person to coop approve would be a dead end.
+	if want := "egress rules file " + path + " is inside "; !strings.HasPrefix(err.Error(), want) ||
+		!strings.HasSuffix(err.Error(), ", which the box can reach — keep the rules file outside the project") {
 		t.Fatal("wrong refusal", err)
 	}
 	root, err := NetworkStatePath()

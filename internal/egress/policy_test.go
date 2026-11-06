@@ -60,6 +60,41 @@ func TestRuleGrammar(t *testing.T) {
 	}
 }
 
+// A /0 and an ICMP type the file cannot name are refused in the words the docs give: a /0 by what it
+// means wherever it is met first, and an unknown type pointing at the one type a filtered box allows.
+func TestRuleGrammarRefusalsSayWhatToWrite(t *testing.T) {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0", "1.2.3.4/0"} {
+		_, err := NormalizeRules([]Rule{{To: Destination{CIDR: cidr}, Protocol: "tcp", Ports: []int{80}}})
+		if err == nil || err.Error() != "egress rule 1: a /0 rule allows everything, which is not filtering — use --egress open if that is what you want" {
+			t.Errorf("cidr %s = %v", cidr, err)
+		}
+	}
+	for _, kind := range []string{"timestamp", "08", "256"} {
+		_, err := NormalizeRules([]Rule{{To: Destination{IP: "1.1.1.1"}, Protocol: "icmp", Types: []string{kind}}})
+		if err == nil || err.Error() != "egress rule 1: ICMP type must be echo-request or a number from 0 to 255" {
+			t.Errorf("ICMP type %s = %v", kind, err)
+		}
+	}
+}
+
+// SupportedTogether is RequireSupported's whole-set half, so approval can ask it before anything is
+// compiled: a raw tcp rule on a port a tls rule names is refused, a different port is not.
+func TestSupportedTogetherRefusesARawRuleOnATLSPort(t *testing.T) {
+	tls := Rule{To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}}
+	raw := Rule{To: Destination{CIDR: "1.1.1.1/32"}, Protocol: "tcp", Ports: []int{8443}}
+	if err := SupportedTogether([]Rule{raw, tls}); err == nil ||
+		err.Error() != "raw tcp to 1.1.1.1/32 on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port" {
+		t.Fatalf("clash = %v", err)
+	}
+	raw.Ports = []int{8444}
+	if err := SupportedTogether([]Rule{raw, tls}); err != nil {
+		t.Fatal(err)
+	}
+	if got := TLSPorts([]Rule{tls, tlsRule("a.example.com"), raw}); !slices.Equal(got, []int{443, 8443}) {
+		t.Fatalf("TLS ports = %v", got)
+	}
+}
+
 func TestDomainNormalizationAndWildcardBoundary(t *testing.T) {
 	for _, name := range []string{"https://example.com", "example.com:443", "example.com/path", "example.com..", "*.com", "*.co.uk", "*.github.io", "*example.com", "*.*.example.com", "example", "a\n.example.com", "é.example.com", "127.0.0.1", "-bad.example.com", strings.Repeat("a", 64) + ".com"} {
 		if _, err := NormalizeDomain(name, true); err == nil {

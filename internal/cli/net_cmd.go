@@ -23,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkreport"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 	"go.yaml.in/yaml/v3"
 )
@@ -326,12 +327,21 @@ func (a *app) cmdNetAccess() (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
+	ctx := context.Background()
+	access, err := box.ProjectNetworkAccess(ctx, a.cfg, repo)
 	if err != nil {
 		return 1, err
 	}
+	// A box stuck on service rules nobody asked for yet is refused at every launch, so this view says
+	// so too. Under a pending request, the review comes first.
+	var services *box.ServicesNeedRules
+	if access.Pending == nil {
+		if services, err = box.ProjectServicesRefusal(ctx, a.cfg, repo); err != nil {
+			return 1, err
+		}
+	}
 	p := ui.For(os.Stdout)
-	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetAccess(b, p, access) })
+	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetAccess(b, p, access, services) })
 }
 
 // netPendingNotice is what `coop init` adds after its scaffold, and only when
@@ -362,18 +372,30 @@ func (a *app) netPendingNotice(repo string) {
 	if access.Pending == nil {
 		return
 	}
+	headline, remedy := netPendingWords(access)
 	ui.Note("")
-	ui.Warn("%s", netPendingHeadline)
+	ui.Warn("%s", headline)
 	ui.Note("  %s", access.Pending.Sentence())
-	ui.Note("  %s", netPendingReview)
+	ui.Note("  %s", remedy)
 }
 
 // The pending block's two fixed lines: a request nobody approved is the one
-// thing that stops a new run, and one command settles it.
+// thing that stops a new run, and one command settles it. A request coop approve
+// refuses is settled by an edit first, so it gets the second pair.
 const (
 	netPendingHeadline = "New runs need your approval"
 	netPendingReview   = "Review changes: coop approve"
+	netRefusedHeadline = "New runs cannot start"
+	netRefusedFix      = "Change " + project.File + ", then review it: coop approve"
 )
+
+// netPendingWords is the headline and the remedy of a pending request.
+func netPendingWords(access box.NetworkAccess) (string, string) {
+	if access.Refused != nil {
+		return netRefusedHeadline, netRefusedFix
+	}
+	return netPendingHeadline, netPendingReview
+}
 
 // writeNetAccess answers the one question a person arrives with: what can a
 // new run reach, and why. A pending request REPLACES that answer — describing a
@@ -382,7 +404,7 @@ const (
 // the project's mode, the approved network rules when there are any, and where
 // to read more. No project header, no path, no setup or run history: a
 // launch sets the host up itself, and `coop net runs` owns history.
-func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
+func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess, services *box.ServicesNeedRules) {
 	if access.Pending != nil {
 		writeNetPending(w, p, access)
 		return
@@ -399,6 +421,9 @@ func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 			fmt.Fprintf(w, "  %s\n", networkreport.RuleText(rule))
 		}
 	}
+	if services != nil {
+		fmt.Fprintf(w, "\n%s %s\n\n  %s\n", p.Yellow("⚠"), p.Yellow(services.Headline()), services.TerminalRemedy())
+	}
 	fmt.Fprintf(w, "\nFor more details see:\n  %s\n", p.Cyan("coop help net"))
 }
 
@@ -408,7 +433,8 @@ func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 // change in the approve command's own words — with the red warning an
 // unrestricted request earns — and the rule diff.
 func writeNetPending(w io.Writer, p ui.Palette, access box.NetworkAccess) {
-	fmt.Fprintf(w, "%s %s\n", p.Yellow("⚠"), p.Yellow(netPendingHeadline))
+	headline, remedy := netPendingWords(access)
+	fmt.Fprintf(w, "%s %s\n", p.Yellow("⚠"), p.Yellow(headline))
 	fmt.Fprintf(w, "\n      %s\n", access.Pending.Sentence())
 	var approved []egress.Rule
 	var approvedMode egress.Mode
@@ -423,7 +449,7 @@ func writeNetPending(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 		fmt.Fprintf(w, "\n  %s\n", "Access:")
 		writeNetRuleRows(w, p, rows, 2)
 	}
-	fmt.Fprintf(w, "\n  %s\n", p.Cyan(netPendingReview))
+	fmt.Fprintf(w, "\n  %s\n", p.Cyan(remedy))
 }
 
 // netModeExplanation is what a new run may reach, and why, in one sentence. The project file is

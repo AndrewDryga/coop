@@ -254,6 +254,34 @@ func TestCurrentQualificationSelectsNewestCompatiblePresentImagePair(t *testing.
 	}
 }
 
+// A policy the runtime cannot enforce fails every record alike, and no setup changes the policy.
+// Read as a missing proof, it set the host up again on every launch only to fail with "does not
+// cover this run"; it is refused as itself, with a current record right there.
+func TestCurrentQualificationRefusesAPolicyNoSetupCanCover(t *testing.T) {
+	_, docker, candidate, images := qualificationInventoryFixture(t)
+	store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	record := writeQualificationFixture(t, store, candidate, egress.ClientACP, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	for _, id := range []string{candidate.ClientImage, candidate.GatewayImage} {
+		writeQualificationImageFixture(t, images, id, id)
+	}
+	dependencies := []egress.Dependency{{Provider: "claude", Client: egress.ClientACP}}
+	supported := egress.Snapshot{Mode: egress.Filtered, Dependencies: dependencies, Grants: []egress.Grant{
+		{Rule: egress.Rule{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}}}}}
+	if got, err := currentQualification(t.Context(), docker, store, supported, ""); err != nil || got == nil || got.ID != record.ID {
+		t.Fatalf("a supported policy = %+v, %v; want the current record", got, err)
+	}
+	clash := supported
+	clash.Grants = append(clash.Grants, egress.Grant{Rule: egress.Rule{To: egress.Destination{CIDR: "1.1.1.1/32"}, Protocol: "tcp", Ports: []int{8443}}})
+	got, err := currentQualification(t.Context(), docker, store, clash, "")
+	if got != nil || err == nil || !strings.Contains(err.Error(), "raw tcp to 1.1.1.1/32 on port 8443 clashes with a TLS rule") {
+		t.Fatalf("a clash = %+v, %v; want it refused as itself", got, err)
+	}
+}
+
 // Moving a worker to another kernel stranded every filtered conversation, even
 // after explicit net setup succeeded. Future runs need fresh proof, not rewritten history.
 func TestSessionContinuesWithFreshProofAndKeepsItsFrozenAuthority(t *testing.T) {

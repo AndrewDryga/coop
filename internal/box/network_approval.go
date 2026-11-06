@@ -49,6 +49,10 @@ type NetworkAccess struct {
 	// reported here rather than raised as an error nobody can act on. It is the
 	// same check every launch and `coop init` make.
 	Pending *networkstate.PendingApproval
+	// Refused is why `coop approve` refuses the current request before saving anything, nil when it
+	// would review it. No approval can settle a request it refuses, so Pending then says the reason
+	// too, as a launch does.
+	Refused error
 }
 
 // ProjectNetworkAccess answers `coop net` for one project. It reads the same
@@ -72,7 +76,7 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 	store, err := networkstate.OpenExisting(root, nil)
 	if errors.Is(err, fs.ErrNotExist) {
 		out.Source, out.Add, out.RequestedMode = postureSource(input, nil), out.Requested, approvalMode(input, nil)
-		return out, nil
+		return out.withRefusal(p), nil
 	}
 	if err != nil {
 		return NetworkAccess{}, err
@@ -89,7 +93,60 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 	}
 	out.Source, out.RequestedMode = postureSource(input, out.Approval), approvalMode(input, prior)
 	out.Add, out.Remove = NetworkRuleDiff(approvedEnvelope(prior), out.Requested)
-	return out, nil
+	return out.withRefusal(p), nil
+}
+
+// withRefusal adds what `coop approve` would refuse in the request (Refused), and says it in place of
+// a pending review, as pendingRefusal does for a launch.
+func (a NetworkAccess) withRefusal(p *project.Project) NetworkAccess {
+	a.Refused = approvalRefusal(p, a.RequestedMode)
+	if a.Refused != nil && a.Pending != nil {
+		a.Pending = unapprovable(a.Refused)
+	}
+	return a
+}
+
+// approvalRefusal is why `coop approve` refuses a project's request before it saves anything, nil
+// when it reviews it: a provider rule, a rule this release cannot enforce, alone or beside the
+// others, or a serve port the gateway takes for itself. A launch would refuse each of them, and no
+// approval changes that, so a launch and `coop net` name the refusal in place of sending a person
+// to coop approve. mode is the access the review would approve (approvalMode).
+func approvalRefusal(p *project.Project, mode egress.Mode) error {
+	for _, rule := range p.Box.EgressRules {
+		if rule.To.Provider != "" {
+			return errors.New("this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule")
+		}
+	}
+	if err := checkSupportedRequests(networkstate.Admission{Requests: p.Box.EgressRules}); err != nil {
+		return err
+	}
+	if mode != egress.Filtered {
+		return nil
+	}
+	return checkFilteredServePorts(p.Serve.Ports, egress.TLSPorts(p.Box.EgressRules))
+}
+
+// unapprovable is the pending approval of a request `coop approve` refuses: only an edit to the file
+// settles it, so it says approve's reason where a plain pending request says "has not been approved".
+// It is still a pending approval, so a caller that waits for a person still waits.
+func unapprovable(refused error) *networkstate.PendingApproval {
+	return &networkstate.PendingApproval{
+		Reason: "this project asks for network access that cannot be approved: " + refused.Error(),
+		Cause:  project.File + " asks for network access that cannot be approved: " + refused.Error() + "."}
+}
+
+// priorApproval is the approval a review of this project starts from: nil when there is none, or no
+// authority store yet. It creates nothing.
+func priorApproval(root, canonical string, exposed []string) (*networkstate.Approval, error) {
+	store, err := networkstate.OpenExisting(root, exposed)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	before, err := store.PriorApproval(canonical)
+	return before, errors.Join(err, store.Close())
 }
 
 // postureSource names the input that decided the mode. It mirrors
@@ -144,23 +201,13 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 	if err != nil {
 		return projectNetworkReviewInputs{}, err
 	}
-	for _, rule := range p.Box.EgressRules {
-		if rule.To.Provider != "" {
-			return projectNetworkReviewInputs{}, errors.New("this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule")
-		}
-	}
-	if err := checkSupportedRequests(input); err != nil {
+	before, err := priorApproval(root, canonical, exposed)
+	if err != nil {
 		return projectNetworkReviewInputs{}, err
 	}
-	var before *networkstate.Approval
-	if existing, openErr := networkstate.OpenExisting(root, exposed); openErr == nil {
-		before, err = existing.PriorApproval(canonical)
-		err = errors.Join(err, existing.Close())
-		if err != nil {
-			return projectNetworkReviewInputs{}, err
-		}
-	} else if !errors.Is(openErr, fs.ErrNotExist) {
-		return projectNetworkReviewInputs{}, openErr
+	// Refused before anything is saved, or even opened for writing: a launch would refuse it.
+	if err := approvalRefusal(p, approvalMode(input, before)); err != nil {
+		return projectNetworkReviewInputs{}, err
 	}
 	if input.HostOffline() { // a review is about what runs without COOP_EGRESS=offline may do
 		input.HostPreference = nil

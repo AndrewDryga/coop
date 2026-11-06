@@ -68,6 +68,19 @@ func TestUnsupportedRequestsAreRefusedBeforeAdmission(t *testing.T) {
 	if err := checkSupportedRequests(supported); err != nil {
 		t.Fatal("a supported request set was refused:", err)
 	}
+	// Two rules that are each fine can clash, whichever sources they come from: the launch checks
+	// what the box would get, and coop approve checks the project's own rules the same way.
+	tls := egress.Rule{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{8443}}
+	raw := egress.Rule{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{8443}}
+	for label, input := range map[string]networkstate.Admission{
+		"project":             {Requests: []egress.Rule{tls, raw}},
+		"project beside flag": {Requests: []egress.Rule{raw}, Operator: []egress.Input{{Origin: egress.Origin{Kind: "operator"}, Rules: []egress.Rule{tls}}}},
+	} {
+		err := checkSupportedRequests(input)
+		if err == nil || err.Error() != "raw tcp to 1.1.1.1/32 on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port" {
+			t.Errorf("%s: a clash = %v", label, err)
+		}
+	}
 }
 
 func mustNormalize(t *testing.T, rule egress.Rule) egress.Rule {

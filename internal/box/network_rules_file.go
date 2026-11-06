@@ -13,14 +13,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 )
 
-// captureNetworkRulesFile reads one bounded regular-file descriptor. Operator
-// authority requires an owner-controlled, single-link file outside all supplied
-// exposures, including aliases traversed on the way there. Otherwise the exact
-// rules are requests, never grants. The captured bytes are what admission uses;
-// the path is never reopened after this read.
+// captureNetworkRulesFile reads one bounded regular-file descriptor. Its rules
+// are the operator's grants, so it must be an owner-controlled, single-link file
+// outside all supplied exposures, including aliases traversed on the way there.
+// Any other file is refused by name: an agent could have written it, and no
+// review exists that could approve rules for one run. The captured bytes are
+// what admission uses; the path is never reopened after this read.
 type networkRulesFile struct {
-	rules    []egress.Rule
-	operator bool
+	rules []egress.Rule
 }
 
 func networkRulesRoots(exposed []string) []MCPSourceRoot {
@@ -40,6 +40,9 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	if err != nil || !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("egress rules file %s must exist and be a regular file", path)
 	}
+	if source.overlap != nil {
+		return nil, fmt.Errorf("egress rules file %s is inside %s, which the box can reach — keep the rules file outside the project", path, source.overlap.Path)
+	}
 	file, err := os.OpenFile(source.path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, errors.New("egress rules file cannot be captured")
@@ -49,6 +52,9 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() > egress.MaxDocumentBytes {
 		return nil, errors.New("egress rules file changed or exceeds its limit")
 	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Nlink != 1 || int(stat.Uid) != os.Getuid() || info.Mode().Perm()&0o022 != 0 {
+		return nil, fmt.Errorf("egress rules file %s must be yours alone: owned by you, with no other hard links, and not writable by others", path)
+	}
 	data, err := io.ReadAll(io.LimitReader(file, egress.MaxDocumentBytes+1))
 	if err != nil || len(data) > egress.MaxDocumentBytes {
 		return nil, errors.New("egress rules file cannot be captured within its limit")
@@ -57,24 +63,14 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	if err != nil {
 		return nil, err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	operator := source.overlap == nil && ok && stat.Nlink == 1 && int(stat.Uid) == os.Getuid() && info.Mode().Perm()&0o022 == 0
-	return &networkRulesFile{rules: rules, operator: operator}, nil
+	return &networkRulesFile{rules: rules}, nil
 }
 
 func (f *networkRulesFile) apply(input networkstate.Admission) (networkstate.Admission, error) {
 	if f == nil {
 		return input, nil
 	}
-	if f.operator {
-		input.Operator = append(append([]egress.Input{}, input.Operator...), egress.Input{Rules: f.rules, Origin: egress.Origin{Kind: "operator", Name: "rules-file"}})
-	} else {
-		var err error
-		input.Requests, err = egress.NormalizeRules(append(append([]egress.Rule{}, input.Requests...), f.rules...))
-		if err != nil {
-			return networkstate.Admission{}, err
-		}
-	}
+	input.Operator = append(append([]egress.Input{}, input.Operator...), egress.Input{Rules: f.rules, Origin: egress.Origin{Kind: "operator", Name: "rules-file"}})
 	return input, nil
 }
 
@@ -88,9 +84,9 @@ type hostFileSource struct {
 	link    bool
 }
 
-// An exposed source is a CLASSIFICATION, not a read failure. Rules files may
-// request reviewed permissions from that lane; MCP and environment files may
-// not. Keep malformed paths and filesystem errors distinct from either case.
+// An exposed source is a CLASSIFICATION, not a read failure: each caller refuses
+// it in its own words. Keep malformed paths and filesystem errors distinct from
+// that case.
 func resolveHostFileSource(sourcePath, kind string, roots []MCPSourceRoot) (hostFileSource, error) {
 	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
 		if component == ".." {

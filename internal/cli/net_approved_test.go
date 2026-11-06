@@ -80,7 +80,7 @@ func TestApprovedNetPosture(t *testing.T) {
 	} {
 		t.Run(fixture, func(t *testing.T) {
 			var b bytes.Buffer
-			writeNetAccess(&b, ui.Palette{}, access)
+			writeNetAccess(&b, ui.Palette{}, access, nil)
 			assertApprovedOutput(t, fixture, b.String())
 		})
 	}
@@ -94,7 +94,7 @@ func TestNetPostureShowsAWideningToOpen(t *testing.T) {
 		RequestedMode: egress.Open, Remove: []egress.Rule{netApprovedRule("github.com")},
 		Pending: &networkstate.PendingApproval{Cause: ".agent/project.yaml requests unrestricted internet access."}}
 	var b bytes.Buffer
-	writeNetAccess(&b, ui.Palette{}, widening)
+	writeNetAccess(&b, ui.Palette{}, widening, nil)
 	want := "⚠ New runs need your approval\n\n" +
 		"      .agent/project.yaml requests unrestricted internet access.\n\n" +
 		"  - Filtered: only approved network traffic is allowed.\n" +
@@ -112,7 +112,7 @@ func TestNetPostureWarnsWhenCOOPEgressWidensTheProject(t *testing.T) {
 	notice := "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."
 	access := box.NetworkAccess{Mode: egress.Open, Source: box.AccessFromHost, Widening: notice, RequestedMode: egress.None}
 	var b bytes.Buffer
-	writeNetAccess(&b, ui.Palette{}, access)
+	writeNetAccess(&b, ui.Palette{}, access, nil)
 	want := "As COOP_EGRESS sets, new runs have unrestricted internet access.\n" +
 		"⚠ " + notice + "\n\n" +
 		"For more details see:\n  coop help net\n"

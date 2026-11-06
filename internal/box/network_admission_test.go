@@ -310,7 +310,7 @@ func TestAdmitNetworkRefusesRuleFlagsOnARunThatIsNotFiltered(t *testing.T) {
 	}{
 		"open flag and a domain":        {invocation: &open, domains: []string{"example.com"}, want: []string{"--allow-domain only adds", "this run is open"}},
 		"offline flag and a rules file": {invocation: &none, rulesFile: "outside", want: []string{"--egress-rules only adds", "this run is offline"}},
-		"offline flag and a repo file":  {invocation: &none, rulesFile: "inside", want: []string{"--egress-rules only adds", "this run is offline"}},
+		"offline flag and a repo file":  {invocation: &none, rulesFile: "inside", want: []string{"keep the rules file outside the project"}},
 		"COOP_EGRESS and both flags":    {env: "offline", domains: []string{"example.com"}, rulesFile: "outside", want: []string{"--allow-domain and --egress-rules only add", "this run is offline"}},
 		"filtered flag and a domain":    {invocation: &filtered, domains: []string{"example.com"}, want: []string{filteredReachedRuntimePreflight}},
 	} {
@@ -347,7 +347,8 @@ func TestAdmitNetworkRefusesRuleFlagsOnARunThatIsNotFiltered(t *testing.T) {
 			if test.invocation != nil && *test.invocation == egress.Filtered {
 				return
 			}
-			if !strings.Contains(err.Error(), "Use --egress filtered") || strings.Contains(err.Error(), "network_policy_conflict") {
+			// A file inside the project is refused whatever the mode, and the mode then comes second.
+			if test.rulesFile != "inside" && !strings.Contains(err.Error(), "Use --egress filtered") || strings.Contains(err.Error(), "network_policy_conflict") {
 				t.Errorf("refusal %q does not name the way out in plain words", err)
 			}
 			if cfg.Egress != before {
@@ -508,7 +509,7 @@ func TestAdmitNetworkOpenLaunchIgnoresFilteredMCPRules(t *testing.T) {
 }
 
 // Operator domains and an operator-owned rules file grant directly; a rules
-// file inside an agent mount is only a request.
+// file inside an agent mount is refused.
 func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 	cfg, repo, _ := admissionFixture(t)
 	inside := filepath.Join(repo, "rules.yaml")
@@ -516,7 +517,7 @@ func TestAdmitNetworkClassifiesOperatorInputBeforeCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{RulesFile: inside}); err == nil ||
-		!strings.Contains(err.Error(), "has not been approved") {
+		!strings.Contains(err.Error(), "keep the rules file outside the project") {
 		t.Fatal("a repository rules file granted authority", err)
 	}
 	outside := filepath.Join(t.TempDir(), "rules.yaml")

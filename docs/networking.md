@@ -126,7 +126,6 @@ and exact images in use.
 | `to: {domain: "dns.google"}` · `protocol: tls` · `ports: [853, 8443]` | that name over TLS on those ports, and on no other | the gateway redirects only those ports, then checks the original port that the kernel reports |
 | `to: {ip: "10.42.8.12"}` / `to: {cidr: "10.42.9.0/24"}` · `protocol: tcp\|udp` · `ports: [...]` | raw TCP or UDP to those IPv4 addresses on those ports | an nftables rule allows the traffic and keeps its own packet and byte counts |
 | `to: {ip: ...}` / `to: {cidr: ...}` · `protocol: icmp` · `types: [echo-request]` | IPv4 ping to those addresses | an nftables rule allows echo requests, and conntrack allows the replies |
-| `to: {provider: claude}` | the core endpoints that co:op maintains for that provider | co:op turns the provider definitions built into its release into explicit TLS rules |
 | `to: {service: "db"}` · `protocol: tcp` · `ports: [5432]` | one Compose sidecar that belongs to this project | co:op reads the service container's exact IP address from the runtime at launch |
 | `serve: {ports: [3000]}` in `.agent/project.yaml` | the host browser reaches the box's dev server | Docker publishes the port on the gateway, and the box shares the gateway's network namespace |
 
@@ -318,9 +317,9 @@ Allowed and blocked external requests appear in `coop net watch`, `inspect`, `bl
 views, with the name of the Compose service they came from. Direct traffic between services stays on
 the internal network and isn't reported as external traffic.
 
-In filtered mode, you must name the service you need. co:op rejects `box.network: true` alone.
-`coop init --services` adds a rule for each service it sets up, so one `coop approve` lets the box
-reach them.
+In filtered mode, you must name the service you need. co:op rejects `box.network: true` alone, and
+`coop net` shows the same refusal with the rules to add. `coop init --services` adds a rule for each
+service it sets up, so one `coop approve` lets the box reach them.
 
 For any other Compose file, `coop approve` lists the services and their ports and asks once whether
 to add and approve their rules:
@@ -441,6 +440,7 @@ base, gateway and client images, but those builds don't run instructions from yo
 | a `serve` port on a port the gateway takes for TLS or DNS | `port 8443 is one the gateway uses for TLS and DNS — serve on another port in filtered mode` |
 | ICMP beyond echo-request | `ICMP N to <dest> is not supported yet — only echo-request is` |
 | `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
+| `to: {provider: …}` | `this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule` |
 | a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
 | a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE=coop-box and FROM ${COOP_BASE_IMAGE} …` |
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs only the clients that coop net setup checked on this host …` |
@@ -449,6 +449,8 @@ base, gateway and client images, but those builds don't run instructions from yo
 | `box.network: true` with no `service:` rule | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service. In a terminal, `coop approve` offers to add them |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with an unapproved rule, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| a project file with a rule that `coop approve` refuses | `<Agent> cannot start because this project asks for network access that cannot be approved:` and the reason above · `Change .agent/project.yaml, then review it: coop approve` |
+| an `--egress-rules` file inside the project | `egress rules file <path> is inside <project>, which the box can reach — keep the rules file outside the project` |
 | `--allow-domain` or `--egress-rules` on a run that is open or offline | `<Agent> cannot start because --allow-domain only adds to filtered access, and this run is offline` · `Use --egress filtered, or leave out --allow-domain.` |
 | a rules file that is a bare list, or nests its rules under `box:` | `--egress-rules takes a file that lists its rules under one top-level egress_rules key, like this:`, then a rules file to copy |
 | `open`, in a project with no approval yet | `<Agent> cannot start because this project asks for unrestricted internet access, which has not been approved` · `Review it: coop approve` |
@@ -593,8 +595,9 @@ you reconnect the editor.
 Approval covers the file's exact network mode, rules and the reviewed definition of every `service:`
 it names. To change network access, edit the file and review it again. Before saving approval,
 `coop approve` checks that the runtime can enforce the rules, just as it does at launch. It refuses
-unsupported rules, such as an IPv6 destination, during review so they can't be approved and then
-fail at every launch.
+unsupported rules, such as an IPv6 destination, rules that clash, such as raw TCP on a port a TLS
+rule names, and a `serve` port the gateway takes, so they can't be approved and then fail at every
+launch.
 
 Plain `coop approve` doesn't allow any file exposure. With mount protection, a launch may refuse
 hidden files that stay readable under another letter case. To review that permission as well, use
@@ -625,6 +628,8 @@ If the project's request differs from your saved approval, co:op treats it as pe
 - Every launch stops before starting a box or its main process. It explains why and prints
   `Review it: coop approve`. This applies to `coop run`, a named agent, `coop loop`, an interactive
   fork, fork ACP, and a fork review or merge gate.
+- If `coop approve` would refuse the request, a launch and `coop net` give its reason and ask you to
+  change `.agent/project.yaml` first.
 - `coop acp` connects your editor anyway and runs no agent until you approve. See
   [editors](integrations.md#when-the-project-box-is-not-ready). A withdrawn approval, a replaced
   project folder or an offline setting still stops it.
@@ -641,8 +646,9 @@ that run only. A rules file lists its rules under one top-level `egress_rules` k
         protocol: tls
         ports: [443]
 
-Keep the file outside the project. A rules file inside a folder mounted into the agent's box only
-requests access, so the agent can't use such a file to approve its own rules.
+Keep the file outside the project. co:op refuses a rules file inside a folder mounted into the
+agent's box, where the agent could write its own rules, and a file with other hard links or one that
+someone else can change.
 
 Both flags only add to filtered access, and co:op refuses them by name on an open or offline run.
 

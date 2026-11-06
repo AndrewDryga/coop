@@ -313,6 +313,10 @@ func normalizeRule(rule Rule) (Rule, error) {
 	return rule, nil
 }
 
+// errAllAddresses refuses a /0 by what it means, whether the file or the capability gate meets it
+// first: a rule that reaches every address is open networking, not a filter.
+var errAllAddresses = errors.New("a /0 rule allows everything, which is not filtering — use --egress open if that is what you want")
+
 func canonicalRule(rule Rule) (Rule, error) {
 	selectors := 0
 	for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Service, rule.To.Provider} {
@@ -367,12 +371,15 @@ func canonicalRule(rule Rule) (Rule, error) {
 			}
 		} else {
 			prefix, err = netip.ParsePrefix(rule.To.CIDR)
-			if err == nil && (prefix != prefix.Masked() || prefix.Addr().Is4In6() || prefix.Bits() == 0) {
-				err = errors.New("noncanonical or all-address prefix")
+			if err == nil && prefix.Bits() == 0 {
+				return Rule{}, errAllAddresses
+			}
+			if err == nil && (prefix != prefix.Masked() || prefix.Addr().Is4In6()) {
+				err = errors.New("noncanonical prefix")
 			}
 		}
 		if err != nil {
-			return Rule{}, errors.New("ip/cidr must be an exact IPv4 address or network, narrower than /0")
+			return Rule{}, errors.New("ip/cidr must be an exact IPv4 address or network")
 		}
 		rule.To.IP, rule.To.CIDR = "", prefix.String()
 	}
@@ -411,7 +418,7 @@ func canonicalRule(rule Rule) (Rule, error) {
 			}
 			n, e := strconv.Atoi(kind)
 			if e != nil || n < 0 || n > 255 || strconv.Itoa(n) != kind {
-				return Rule{}, errors.New("ICMP type must be a canonical 0..255 integer, echo-request or echo-reply")
+				return Rule{}, errors.New("ICMP type must be echo-request or a number from 0 to 255")
 			}
 			rule.Types[i] = kind
 		}

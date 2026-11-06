@@ -583,6 +583,19 @@ func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 			"is a protected range"},
 		{"box:\n  egress_rules:\n    - to:\n        ip: 2606:4700:4700::1111\n      protocol: tcp\n      ports: [5432]\n",
 			"IPv6 destinations are not supported yet"},
+		// Each rule alone is fine; together the raw one never reaches its destination.
+		{"box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [8443]\n    - to: {ip: 1.1.1.1}\n      protocol: tcp\n      ports: [8443]\n",
+			"raw tcp to 1.1.1.1/32 on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port"},
+		{"serve:\n  ports: [8443]\nbox:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [8443]\n",
+			"port 8443 is one the gateway uses for TLS and DNS — serve on another port in filtered mode"},
+		{"serve:\n  ports: [443]\nbox:\n  egress: filtered\n",
+			"port 443 is one the gateway uses for TLS and DNS"},
+		{"box:\n  egress_rules:\n    - to: {provider: claude}\n",
+			"this release has no optional provider features to approve"},
+		{"box:\n  egress_rules:\n    - to: {cidr: 0.0.0.0/0}\n      protocol: tcp\n      ports: [80]\n",
+			"a /0 rule allows everything, which is not filtering — use --egress open if that is what you want"},
+		{"box:\n  egress_rules:\n    - to: {ip: 1.1.1.1}\n      protocol: icmp\n      types: [timestamp]\n",
+			"ICMP type must be echo-request or a number from 0 to 255"},
 	} {
 		cfg, repo, root := postureFixture(t, test.yaml)
 		_, err := ReviewProjectNetwork(cfg, repo)
@@ -595,11 +608,63 @@ func TestReviewRefusesARuleNoLaunchCouldEnforce(t *testing.T) {
 			t.Errorf("an unenforceable request created the authority root: %v", err)
 		}
 	}
-	// The same shape, on a port this runtime does enforce, is reviewable.
-	cfg, repo, _ := postureFixture(t, "box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [443]\n")
-	review, err := ReviewProjectNetwork(cfg, repo)
-	if err != nil {
-		t.Fatalf("an enforceable request was refused: %v", err)
+	// The same shapes, on ports this runtime does enforce, are reviewable, and a serve port is the
+	// gateway's only in filtered mode.
+	for _, yaml := range []string{
+		"box:\n  egress_rules:\n    - to:\n        domain: api.example.com\n      protocol: tls\n      ports: [443]\n",
+		"serve:\n  ports: [8444]\nbox:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [8443]\n    - to: {ip: 1.1.1.1}\n      protocol: tcp\n      ports: [8445]\n",
+		"serve:\n  ports: [443]\nbox:\n  egress: open\n",
+	} {
+		cfg, repo, _ := postureFixture(t, yaml)
+		review, err := ReviewProjectNetwork(cfg, repo)
+		if err != nil {
+			t.Fatalf("an enforceable request was refused: %v\n%s", err, yaml)
+		}
+		_ = review.Close()
 	}
-	defer review.Close()
+}
+
+// A request coop approve refuses is one no approval can settle, so the launch and coop net say
+// approve's reason and the edit, where a plain pending request sends the person to coop approve.
+// It still reads as a pending approval to whoever waits for a person to settle it.
+func TestALaunchNamesWhatApproveWouldRefuse(t *testing.T) {
+	clash := "box:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [8443]\n    - to: {ip: 1.1.1.1}\n      protocol: tcp\n      ports: [8443]\n"
+	for name, test := range map[string]struct{ yaml, reason string }{
+		"clash":    {clash, "raw tcp to 1.1.1.1/32 on port 8443 clashes with a TLS rule on the same port"},
+		"provider": {"box:\n  egress_rules:\n    - to: {provider: claude}\n", "this release has no optional provider features to approve"},
+		"serve":    {"serve:\n  ports: [8443]\nbox:\n  egress_rules:\n    - to: {domain: example.com}\n      protocol: tls\n      ports: [8443]\n", "port 8443 is one the gateway uses for TLS and DNS"},
+		"ipv6":     {"box:\n  egress_rules:\n    - to: {ip: \"2606:4700::1111\"}\n      protocol: tcp\n      ports: [80]\n", "IPv6 destinations are not supported yet"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), test.yaml)
+			capture, err := admitFixture(t, cfg, repo, NetworkAdmission{})
+			want := "This box cannot start because this project asks for network access that cannot be approved: "
+			if capture != nil || err == nil || !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), test.reason) ||
+				!strings.HasSuffix(err.Error(), "\n\n  Change .agent/project.yaml, then review it: coop approve") {
+				t.Fatalf("launch = %v, want approve's reason %q and the edit", err, test.reason)
+			}
+			var pending *networkstate.PendingApproval
+			if !errors.As(err, &pending) {
+				t.Error("the refusal no longer reads as a pending approval")
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Error("the refusal created authority state", err)
+			}
+			access, err := ProjectNetworkAccess(t.Context(), cfg, repo)
+			if err != nil || access.Refused == nil || !strings.Contains(access.Refused.Error(), test.reason) ||
+				access.Pending == nil || !strings.Contains(access.Pending.Sentence(), ".agent/project.yaml asks for network access that cannot be approved: ") {
+				t.Fatalf("access = %+v, %v; want approve's reason in place of the review", access, err)
+			}
+		})
+	}
+	// A request approve would review still names the review.
+	cfg, repo, _ := admissionFixture(t)
+	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), requestFixtureYAML)
+	if _, err := admitFixture(t, cfg, repo, NetworkAdmission{}); err == nil || !strings.HasSuffix(err.Error(), "has not been approved\n\n  Review it: coop approve") {
+		t.Fatalf("a reviewable request = %v, want the review command", err)
+	}
+	if access, err := ProjectNetworkAccess(t.Context(), cfg, repo); err != nil || access.Refused != nil || access.Pending == nil {
+		t.Fatalf("access = %+v, %v; want a plain pending review", access, err)
+	}
 }

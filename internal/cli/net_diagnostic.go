@@ -375,6 +375,9 @@ func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles ma
 	target := host + ":" + strconv.Itoa(port)
 	if access.Pending != nil {
 		// Answering against a policy that cannot launch would be a fiction.
+		if access.Refused != nil {
+			return netCheckAnswer{Pending: true, Verdict: netRefusedHeadline, Cause: access.Pending.Sentence() + " " + netRefusedFix}
+		}
 		return netCheckAnswer{Pending: true, Verdict: netPendingHeadline,
 			Cause: "Review the requested changes: coop approve"}
 	}

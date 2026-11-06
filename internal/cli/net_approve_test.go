@@ -704,6 +704,55 @@ func TestApproveWithoutATerminal(t *testing.T) {
 	}
 }
 
+// coop net shows the blocker every filtered launch would hit: services with no approved rules, with
+// the rules to add, as the launch and coop approve say it.
+func TestNetShowsTheServicesBlocker(t *testing.T) {
+	a, _ := servicesProject(t, "", "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n  worker:\n    image: example/worker:1\n")
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = a.cmdNetAccess() })
+	const want = "By default, new runs reach only your agent's provider and approved traffic.\n\n" +
+		"⚠ This project's box cannot start because filtered boxes reach project services only through approved network rules\n\n" +
+		"  Ask for each service it uses under box.egress_rules in .agent/project.yaml:\n" +
+		"    - to: {service: \"db\"}\n      protocol: tcp\n      ports: [5432]\n" +
+		"    - to: {service: \"worker\"}\n      protocol: tcp\n      ports: [<port>]\n" +
+		"  Replace <port> with the port the service listens on.\n" +
+		"  Then review it: coop approve\n" +
+		"  Or run coop approve in a terminal, which offers to add them for you.\n" +
+		"  To start without project services, set box.network: false.\n\n" +
+		"For more details see:\n  coop help net\n"
+	if code != 0 || err != nil || out != want {
+		t.Fatalf("code=%d err=%v printed\n%s\nwant\n%s", code, err, out, want)
+	}
+	// With the services off, nothing stands in the way.
+	a, _ = servicesProject(t, "box:\n  network: false\n", approveCompose)
+	out = captureStdout(t, func() { code, err = a.cmdNetAccess() })
+	if code != 0 || err != nil || strings.Contains(out, "⚠") {
+		t.Fatalf("code=%d err=%v printed\n%s", code, err, out)
+	}
+}
+
+// A request coop approve refuses gets approve's reason and the edit in coop net, where a request it
+// would review gets the review.
+func TestNetNamesWhatApproveWouldRefuse(t *testing.T) {
+	a, _ := servicesProject(t, "box:\n  egress_rules:\n    - to: {provider: claude}\n", "")
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = a.cmdNetAccess() })
+	const want = "⚠ New runs cannot start\n\n" +
+		"      .agent/project.yaml asks for network access that cannot be approved: this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule.\n\n" +
+		"  Access:\n  + claude provider access  requested\n\n" +
+		"  Change .agent/project.yaml, then review it: coop approve\n"
+	if code != 0 || err != nil || out != want {
+		t.Fatalf("code=%d err=%v printed\n%s\nwant\n%s", code, err, out, want)
+	}
+	a, _ = servicesProject(t, approveOtherRule, "")
+	out = captureStdout(t, func() { code, err = a.cmdNetAccess() })
+	if code != 0 || err != nil || !strings.HasPrefix(out, "⚠ "+netPendingHeadline) || !strings.HasSuffix(out, "\n  "+netPendingReview+"\n") {
+		t.Fatalf("a reviewable request: code=%d err=%v printed\n%s", code, err, out)
+	}
+}
+
 // A project file that does not parse is a failure to look, never a project with nothing wrong.
 func TestApproveReportsAProjectItCannotRead(t *testing.T) {
 	a, repo := servicesProject(t, "box: [\n", "services:\n  db:\n    image: postgres:18\n")

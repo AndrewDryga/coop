@@ -292,15 +292,20 @@ func (s Snapshot) Domain(name string, port int) Decision {
 // what the gateway captures and therefore what the guard may be asked to route:
 // a port outside it never reaches the guard, and the guard refuses one anyway.
 func (s Snapshot) TLSPorts() []int {
-	var ports []int
 	if s.Mode != Filtered {
 		return nil
 	}
-	for _, grant := range s.Grants {
-		if grant.Rule.Protocol != "tls" {
+	return TLSPorts(s.rules())
+}
+
+// TLSPorts is every port a tls rule in rules names, sorted, once.
+func TLSPorts(rules []Rule) []int {
+	var ports []int
+	for _, rule := range rules {
+		if rule.Protocol != "tls" {
 			continue
 		}
-		for _, port := range grant.Rule.Ports {
+		for _, port := range rule.Ports {
 			if !slices.Contains(ports, port) {
 				ports = append(ports, port)
 			}
@@ -308,6 +313,14 @@ func (s Snapshot) TLSPorts() []int {
 	}
 	slices.Sort(ports)
 	return ports
+}
+
+func (s Snapshot) rules() []Rule {
+	rules := make([]Rule, 0, len(s.Grants))
+	for _, grant := range s.Grants {
+		rules = append(rules, grant.Rule)
+	}
+	return rules
 }
 
 // AdmitsName is a DNS admission check, deliberately not an inferred TLS attempt.
@@ -426,13 +439,17 @@ func (s Snapshot) RequireSupported() error {
 			counters[name] = true
 		}
 	}
-	// The gateway captures the agent's TCP on every port a tls grant names, so a
-	// raw tcp grant on one of those ports would be redirected to the guard and
-	// never reach its destination. That is the unenforced grant this gate exists
-	// to refuse, and only the whole policy can see the collision.
-	captured := s.TLSPorts()
-	for _, grant := range s.Grants {
-		rule := grant.Rule
+	return SupportedTogether(s.rules())
+}
+
+// SupportedTogether is the part of the capability gate only a whole set of rules shows, for rules
+// SupportedRule accepts one by one. The gateway captures the agent's TCP on every port a tls rule
+// names, so a raw tcp rule on one of those ports would be redirected to the guard and never reach
+// its destination. coop approve asks it of a project's rules before saving them, so a clash is
+// refused there and not at every launch.
+func SupportedTogether(rules []Rule) error {
+	captured := TLSPorts(rules)
+	for _, rule := range rules {
 		if rule.Protocol != "tcp" {
 			continue
 		}
@@ -540,7 +557,7 @@ func supportedPrefix(rule Rule) (netip.Prefix, error) {
 		return netip.Prefix{}, errors.New("IPv6 destinations are not supported yet — a filtered box runs on IPv4 only")
 	}
 	if prefix.Bits() == 0 {
-		return netip.Prefix{}, errors.New("a /0 rule allows everything, which is not filtering — use --egress open if that is what you want")
+		return netip.Prefix{}, errAllAddresses
 	}
 	// A destination entirely inside a permanent denial can never pass a packet:
 	// accepting it would be exactly the unenforced grant this gate exists for.

@@ -267,11 +267,6 @@ and exact images in use.</p>
 <td>an nftables rule allows echo requests, and conntrack allows the replies</td>
 </tr>
 <tr>
-<td><code>to: {provider: claude}</code></td>
-<td>the core endpoints that co:op maintains for that provider</td>
-<td>co:op turns the provider definitions built into its release into explicit TLS rules</td>
-</tr>
-<tr>
 <td><code>to: {service: &#34;db&#34;}</code> · <code>protocol: tcp</code> · <code>ports: [5432]</code></td>
 <td>one Compose sidecar that belongs to this project</td>
 <td>co:op reads the service container&#39;s exact IP address from the runtime at launch</td>
@@ -485,9 +480,9 @@ the proxy variables disconnects the services from the internet. It doesn&#39;t b
 <p>Allowed and blocked external requests appear in <code>coop net watch</code>, <code>inspect</code>, <code>blocked</code> and the JSON
 views, with the name of the Compose service they came from. Direct traffic between services stays on
 the internal network and isn&#39;t reported as external traffic.</p>
-<p>In filtered mode, you must name the service you need. co:op rejects <code>box.network: true</code> alone.
-<code>coop init --services</code> adds a rule for each service it sets up, so one <code>coop approve</code> lets the box
-reach them.</p>
+<p>In filtered mode, you must name the service you need. co:op rejects <code>box.network: true</code> alone, and
+<code>coop net</code> shows the same refusal with the rules to add. <code>coop init --services</code> adds a rule for each
+service it sets up, so one <code>coop approve</code> lets the box reach them.</p>
 <p>For any other Compose file, <code>coop approve</code> lists the services and their ports and asks once whether
 to add and approve their rules:</p>
 <ul>
@@ -617,6 +612,10 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <td><code>a /0 rule allows everything, which is not filtering — use --egress open if that is what you want</code></td>
 </tr>
 <tr>
+<td><code>to: {provider: …}</code></td>
+<td><code>this release has no optional provider features to approve — an agent&#39;s core endpoints are allowed automatically, so drop the provider rule</code></td>
+</tr>
+<tr>
 <td>a host, loopback, link-local or metadata range</td>
 <td><code>&lt;range&gt; is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it</code></td>
 </tr>
@@ -647,6 +646,14 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <tr>
 <td>a project file with an unapproved rule, or a changed rule or mode</td>
 <td><code>&lt;Agent&gt; cannot start because this project asks for network access that has not been approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>a project file with a rule that <code>coop approve</code> refuses</td>
+<td><code>&lt;Agent&gt; cannot start because this project asks for network access that cannot be approved:</code> and the reason above · <code>Change .agent/project.yaml, then review it: coop approve</code></td>
+</tr>
+<tr>
+<td>an <code>--egress-rules</code> file inside the project</td>
+<td><code>egress rules file &lt;path&gt; is inside &lt;project&gt;, which the box can reach — keep the rules file outside the project</code></td>
 </tr>
 <tr>
 <td><code>--allow-domain</code> or <code>--egress-rules</code> on a run that is open or offline</td>
@@ -785,8 +792,9 @@ you reconnect the editor.</p>
 <p>Approval covers the file&#39;s exact network mode, rules and the reviewed definition of every <code>service:</code>
 it names. To change network access, edit the file and review it again. Before saving approval,
 <code>coop approve</code> checks that the runtime can enforce the rules, just as it does at launch. It refuses
-unsupported rules, such as an IPv6 destination, during review so they can&#39;t be approved and then
-fail at every launch.</p>
+unsupported rules, such as an IPv6 destination, rules that clash, such as raw TCP on a port a TLS
+rule names, and a <code>serve</code> port the gateway takes, so they can&#39;t be approved and then fail at every
+launch.</p>
 <p>Plain <code>coop approve</code> doesn&#39;t allow any file exposure. With mount protection, a launch may refuse
 hidden files that stay readable under another letter case. To review that permission as well, use
 <code>coop approve --case-exposure</code>. A run that uses eBPF enforcement protects those files without this
@@ -811,6 +819,8 @@ each agent needs.</p>
 <li>Every launch stops before starting a box or its main process. It explains why and prints
 <code>Review it: coop approve</code>. This applies to <code>coop run</code>, a named agent, <code>coop loop</code>, an interactive
 fork, fork ACP, and a fork review or merge gate.</li>
+<li>If <code>coop approve</code> would refuse the request, a launch and <code>coop net</code> give its reason and ask you to
+change <code>.agent/project.yaml</code> first.</li>
 <li><code>coop acp</code> connects your editor anyway and runs no agent until you approve. See
 <a href="integrations.html#when-the-project-box-is-not-ready">editors</a>. A withdrawn approval, a replaced
 project folder or an offline setting still stops it.</li>
@@ -825,8 +835,9 @@ that run only. A rules file lists its rules under one top-level <code>egress_rul
     protocol: tls
     ports: [443]
 </code></pre></div>
-<p>Keep the file outside the project. A rules file inside a folder mounted into the agent&#39;s box only
-requests access, so the agent can&#39;t use such a file to approve its own rules.</p>
+<p>Keep the file outside the project. co:op refuses a rules file inside a folder mounted into the
+agent&#39;s box, where the agent could write its own rules, and a file with other hard links or one that
+someone else can change.</p>
 <p>Both flags only add to filtered access, and co:op refuses them by name on an open or offline run.</p>
 <h3 id="the-approval-follows-the-directory">The approval follows the directory</h3>
 <p>Approval belongs to the project directory itself. If you move an approved checkout aside and put

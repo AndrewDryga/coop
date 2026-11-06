@@ -41,8 +41,8 @@ type NetworkAdmission struct {
 	InvocationMode *egress.Mode
 	// Domains are --allow-domain grants: exact names, TLS on 443.
 	Domains []string
-	// RulesFile is --egress-rules. Its authority depends on where the file
-	// lives: outside every agent mount it grants, inside one it only requests.
+	// RulesFile is --egress-rules: the operator's grants for this run. A file
+	// inside an agent mount, or one someone else could change, is refused.
 	RulesFile string
 	// ExistingQualification refuses, naming `coop net setup`, when no current
 	// host proof covers the policy, instead of setting the host up. A running
@@ -199,7 +199,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		ui.Warn("%s", notice)
 	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
-		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: %s", networkLaunchName(spec), preview.Pending, ApproveCommand(approvingProject(cfg), canonical))
+		refusal = pendingRefusal(cfg, spec, p, input, root, canonical, exposed, preview.Pending)
 	}
 	if refusal != nil {
 		if !options.HoldPending || mode == egress.None {
@@ -242,6 +242,19 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		capture.Pending = preview.Pending
 	}
 	return capture, nil
+}
+
+// pendingRefusal refuses a launch whose project asks for access nobody approved, naming the review
+// that settles it. When coop approve would refuse the request too, a review settles nothing, so it
+// names approve's reason and the edit instead.
+func pendingRefusal(cfg *config.Config, spec RunSpec, p *project.Project, input networkstate.Admission, root, canonical string, exposed []string, pending *networkstate.PendingApproval) error {
+	review := ApproveCommand(approvingProject(cfg), canonical)
+	if before, err := priorApproval(root, canonical, exposed); err == nil {
+		if refused := approvalRefusal(p, approvalMode(input, before)); refused != nil {
+			return fmt.Errorf("%s cannot start because %w\n\n  Change %s, then review it: %s", networkLaunchName(spec), unapprovable(refused), project.File, review)
+		}
+	}
+	return fmt.Errorf("%s cannot start because %w\n\n  Review it: %s", networkLaunchName(spec), pending, review)
 }
 
 // captureFilteredNetwork is the filtered half of an admission, once the mode and the inputs are settled.
@@ -557,9 +570,11 @@ func checkFilteredSupport(cfg *config.Config) error {
 }
 
 // checkSupportedRequests applies the runtime capability gate to every concrete
-// rule this launch would authorize. Provider selectors are skipped: they expand
-// from the trusted release bundle into concrete rules the same gate re-checks
-// on the compiled snapshot.
+// rule this launch would authorize, one by one and then all together, since two
+// rules can clash where each alone is fine. coop approve asks it of a project's
+// rules (approvalRefusal), so the two cannot disagree. Provider selectors are
+// skipped: they expand from the trusted release bundle into concrete rules the
+// same gate re-checks on the compiled snapshot.
 func checkSupportedRequests(input networkstate.Admission) error {
 	sources := [][]egress.Rule{input.Requests}
 	for _, operator := range input.Operator {
@@ -568,6 +583,7 @@ func checkSupportedRequests(input networkstate.Admission) error {
 	for _, automatic := range input.Automatic {
 		sources = append(sources, automatic.Rules)
 	}
+	var concrete []egress.Rule
 	for _, rules := range sources {
 		normalized, err := egress.NormalizeRules(rules)
 		if err != nil {
@@ -580,9 +596,10 @@ func checkSupportedRequests(input networkstate.Admission) error {
 			if err := egress.SupportedRule(rule); err != nil {
 				return fmt.Errorf("%s: %w", NetworkRuleText(rule), err)
 			}
+			concrete = append(concrete, rule)
 		}
 	}
-	return nil
+	return egress.SupportedTogether(concrete)
 }
 
 // admitFilteredNetwork completes the capture: operator and project rules and
@@ -666,6 +683,12 @@ func ensureNetworkQualification(ctx context.Context, current func() (*networksta
 // coop's client and gateway definitions, and the image pair it names still
 // exists. Anything less is no proof, and the launch qualifies again.
 func currentQualification(ctx context.Context, docker *runtime.Docker, store *networkstate.Store, policy egress.Snapshot, imageOverride string) (*networkstate.Qualification, error) {
+	// RequireLaunch fails every record alike for a policy this runtime cannot enforce, and no setup
+	// changes the policy. Read as "no proof", it would set the host up again on every launch only
+	// to fail, so it is refused as itself.
+	if err := policy.RequireSupported(); err != nil {
+		return nil, err
+	}
 	qualifications, err := store.Qualifications(ctx)
 	if err != nil {
 		return nil, err

@@ -122,7 +122,7 @@ RULES FILE
         ports: [443]
 
   Keep the file outside the project, where the agent cannot edit it.
-  A file inside the project only requests access.
+  Coop refuses a file inside the project.
 
 For more details see:
   coop help net

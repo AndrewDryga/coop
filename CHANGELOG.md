@@ -13,6 +13,15 @@
   a second loop in one checkout names the real fork command, and with `NO_COLOR` the progress bar
   marks tasks in progress with ▒ and blocked ones with !, so it no longer looks complete.
 
+- **`coop approve` and a launch agree on which network rules can run.** Approve accepted a raw TCP
+  rule on a port a TLS rule also names, and a `serve` port the gateway takes; every launch then
+  refused, and the clash set the host up again on each try before failing with "does not cover this
+  run". Approve now refuses both before saving anything, and a launch that meets such a set says why
+  once. When approve would refuse a request, such as a `provider:` rule or an IPv6 address, a
+  launch and `coop net` give that reason and ask you to change `.agent/project.yaml`, instead of
+  sending you to `coop approve`. `coop net` also shows the services blocker a launch would hit. An
+  `--egress-rules` file inside the project is refused at start with its path, since nothing could
+  approve it. `cidr: 0.0.0.0/0` and an unknown ICMP type get the documented wording.
 - **The installer accepts a version without the v.** `COOP_VERSION=12.1.0`, the form
   `coop version` prints, installs release v12.1.0 as `COOP_VERSION=v12.1.0` does, instead of
   failing with curl's 404. A version with no release now gets one plain line, such as
