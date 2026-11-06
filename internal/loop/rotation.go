@@ -51,7 +51,7 @@ func (c *Control) rotateOnLimit(r *ladder.Rotation, resetAt time.Time, waits *in
 	agent := c.applyTarget(r)
 	if sleep > 0 {
 		ui.Note("All configured agents have reached their usage limits.")
-		sleepForLimit(sleep, until, wake)
+		c.waitOutLimit(sleep, until, wake)
 		r.ClearExpired(time.Now())
 		return agent
 	}
@@ -60,6 +60,13 @@ func (c *Control) rotateOnLimit(r *ladder.Rotation, resetAt time.Time, waits *in
 		cleanDiagnosticLine(agents.DisplayTarget(r.Active().String()))))
 	*waits = 0 // only consecutive all-limited waits count toward the stop cap
 	return agent
+}
+
+// waitOutLimit is sleepForLimit while the run's note tells coop tasks watch that the task it let go
+// of waits out a usage limit, and until when.
+func (c *Control) waitOutLimit(wait time.Duration, resetAt time.Time, wake <-chan struct{}) {
+	defer c.loopNote.WaitingForLimit(time.Now().Add(wait))()
+	sleepForLimit(wait, resetAt, wake)
 }
 
 func printLoopCaution(message string) {

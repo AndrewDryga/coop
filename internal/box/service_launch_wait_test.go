@@ -510,6 +510,55 @@ func TestAWaitAsksAgainWhoHoldsTheLock(t *testing.T) {
 	}
 }
 
+// A box that has to wait before it starts its services says so beside its record for coop tasks watch
+// for as long as it waits, and no longer once it holds the lock; a box that never waited says nothing.
+func TestABoxSaysItWaitsToStartItsServicesOnlyWhileItDoes(t *testing.T) {
+	noticeLaunchWaitAfter(t, 20*time.Millisecond)
+	repo := t.TempDir()
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	record := recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
+	waiting := func() bool {
+		observations, _ := forkspace.Executions(repo)
+		for _, observation := range observations {
+			if observation.Record.ID == record.ID {
+				return observation.WaitingForServices
+			}
+		}
+		return false
+	}
+	spec := RunSpec{Quiet: true, ForceNoTTY: true, ActivityRepo: repo, activityID: record.ID}
+	unlock, err := lockServiceLaunch(t.Context(), repo, true, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if waiting() {
+		t.Fatal("a box that took the lock at once says it waited")
+	}
+	release := holdLaunchLock(t, repo)
+	entered := make(chan func(), 1)
+	captureStderr(t, func() {
+		go func() {
+			unlock, err := lockServiceLaunch(t.Context(), repo, true, spec, nil)
+			if err != nil {
+				t.Error(err)
+			}
+			entered <- unlock
+		}()
+		for deadline := time.Now().Add(5 * time.Second); !waiting() && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !waiting() {
+			t.Error("a box waiting for the lock does not say so")
+		}
+		release()
+		(<-entered)()
+	})
+	if waiting() {
+		t.Error("a box that holds the lock still says it waits")
+	}
+}
+
 // A box says it holds the lock for as long as it does, and a box stopped by a crash says nothing.
 func TestABoxSaysItHoldsTheLockOnlyWhileItDoes(t *testing.T) {
 	repo := t.TempDir()

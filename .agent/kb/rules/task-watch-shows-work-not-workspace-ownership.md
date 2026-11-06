@@ -2,8 +2,8 @@
 name: task-watch-shows-work-not-workspace-ownership
 description: tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 scope: cli-output
-sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go, internal/loop/rotation.go]
-check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles|TestTaskWatchNamesEveryTaskOfAForkTheSameWay|TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines|TestTaskWatchGroupsStoppedTasksByTheirFix|TestTaskWatchLiveFrameFitsTheTerminal'
+sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/loop_note.go, internal/box/service_launch_wait.go, internal/tasks/owner.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go, internal/loop/rotation.go]
+check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles|TestTaskWatchNamesEveryTaskOfAForkTheSameWay|TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines|TestTaskWatchGroupsStoppedTasksByTheirFix|TestTaskWatchLiveFrameFitsTheTerminal|TestTaskWatchRowColors|TestLoopNoteSaysAStopOrAWaitOnlyWhileItIsTrue|TestTheSnapshotReadsTheNoteOfTheLoopThatHeldTheTask|TestTaskWatchSaysWhileATasksBoxWaitsToStartItsServices'
 updated: 2026-11-05
 ---
 
@@ -26,7 +26,10 @@ target for every task of a fork), and
 a stopped one a fix line with the complete commands that move it on (never "see the logs": the
 board reads the fork's recorded failure or the loop's own `✗` line in its log, never an agent's
 indented, quoted tool failure, and none after the loop stopped for a decision). Stopped tasks that
-share a fix are one group with the fix printed once after its last row; a fork task finished
+share a fix are one group with the fix printed once after its last row; a task a person stopped
+reads `stopped by you` with a dim `‖`, and a usage-limit wait or a box waiting to start its
+services is a yellow Now row, each from a record the loop or box keeps only while it is true
+(never from its narration); a fork task finished
 before its loop stopped for another task's decision waits under Needs you, never Stopped. The live
 board never runs past the terminal's height. A command is never cut; one that does
 not fit goes on its own line. A fork's task names its fork only as `in fork <name>`; a fork's ready
@@ -62,6 +65,14 @@ shared activity predicate that excludes reservation-only state. Do not render ex
 and keep standalone fork rows only for lifecycle states that affect task progress.
 
 ## Changelog
+
+- 2026-11-05 — the spec's last three edge cases: a loop run's note beside its leases (`NoteLoopRun`:
+  stopped by a person at the signal, a usage-limit wait until a time; the next run replaces it, and
+  only the run that last held a task speaks for it) and a box's `launch-waiters/` note. Swept every
+  usage-limit sleep in internal/loop: the work wait and the rotation's all-limited wait (reviews
+  share it) note it; the preflight wait and a single-target review's wait hold no task in progress.
+  `requestStop` is the loop's only stop path, for Ctrl-C and coop fork stop's SIGTERM alike. A stopped-by-you row shares a group with other rows that one command moves on; a group's
+  `+ N more` names what they share only when every row shares it.
 
 - 2026-11-05 — round three, from the coordinator's look at the real boards: the log fallback read
   an agent's failed `make` (`  ✗ "sh -c …" (exit 2): …`) as the fork loop's error although the loop

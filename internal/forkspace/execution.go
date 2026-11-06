@@ -108,6 +108,9 @@ type ExecutionObservation struct {
 	Active  bool
 	// Foreign is a record another operating system wrote: a pid this kernel cannot check.
 	Foreign bool
+	// WaitingForServices: the running box waits for the service launch lock to start its services
+	// (NoteServiceLaunchWaiting).
+	WaitingForServices bool
 }
 
 // Path is the file the record was read from, for a refusal that tells a person which file to remove.
@@ -470,13 +473,33 @@ func launchLockPath(repo, name string) (string, error) {
 // which stops work on forks.
 const launchHolderFolder = "launch-holders"
 
+// launchWaiterFolder is the same for each execution whose box waits for the lock before it starts its
+// services, so that coop tasks watch can say its task waits.
+const launchWaiterFolder = "launch-waiters"
+
 // NoteServiceLaunchHeld says execution id now holds the lock, and returns the call that says it no longer
 // does. It only tells a waiter who to name, so a failure leaves this box unnamed and changes no lock.
 func NoteServiceLaunchHeld(repo, id string) func() {
+	return noteExecution(repo, launchHolderFolder, id)
+}
+
+// ServiceLaunchHeldBy reports what NoteServiceLaunchHeld last said. A crashed box's note means nothing:
+// callers ask only about a running record, and EndExecution removes the note with the record.
+func ServiceLaunchHeldBy(repo, id string) bool { return executionNoted(repo, launchHolderFolder, id) }
+
+// NoteServiceLaunchWaiting says execution id waits for the lock to start its services, and returns the
+// call that says the wait is over. Like NoteServiceLaunchHeld it is only a hint, read beside a running
+// record (ExecutionObservation.WaitingForServices).
+func NoteServiceLaunchWaiting(repo, id string) func() {
+	return noteExecution(repo, launchWaiterFolder, id)
+}
+
+// noteExecution leaves an empty file named by execution id in folder, and returns the call that removes it.
+func noteExecution(repo, folder, id string) func() {
 	if !validExecutionID(id) {
 		return func() {}
 	}
-	root, err := OpenStateRoot(repo, launchHolderFolder, true)
+	root, err := OpenStateRoot(repo, folder, true)
 	if err != nil {
 		return func() {}
 	}
@@ -486,13 +509,11 @@ func NoteServiceLaunchHeld(repo, id string) func() {
 		return func() {}
 	}
 	_ = f.Close()
-	return func() { forgetServiceLaunchHeld(repo, id) }
+	return func() { forgetExecutionNote(repo, folder, id) }
 }
 
-// ServiceLaunchHeldBy reports what NoteServiceLaunchHeld last said. A crashed box's note means nothing:
-// callers ask only about a running record, and EndExecution removes the note with the record.
-func ServiceLaunchHeldBy(repo, id string) bool {
-	root, err := OpenStateRoot(repo, launchHolderFolder, false)
+func executionNoted(repo, folder, id string) bool {
+	root, err := OpenStateRoot(repo, folder, false)
 	if err != nil {
 		return false
 	}
@@ -501,8 +522,8 @@ func ServiceLaunchHeldBy(repo, id string) bool {
 	return err == nil
 }
 
-func forgetServiceLaunchHeld(repo, id string) {
-	root, err := OpenStateRoot(repo, launchHolderFolder, false)
+func forgetExecutionNote(repo, folder, id string) {
+	root, err := OpenStateRoot(repo, folder, false)
 	if err != nil {
 		return
 	}
@@ -657,7 +678,8 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 	}
 	removeErr := root.Remove(expected.ID + ".json")
 	closeErr := root.Close()
-	forgetServiceLaunchHeld(repo, expected.ID)
+	forgetExecutionNote(repo, launchHolderFolder, expected.ID)
+	forgetExecutionNote(repo, launchWaiterFolder, expected.ID)
 	return errors.Join(removeErr, closeErr)
 }
 
@@ -666,6 +688,9 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 func Executions(repo string) ([]ExecutionObservation, []error) {
 	observations, problems := executionsInRegistry(executionDir(repo))
 	problems = append(problems, oldExecutionRecords(repo)...)
+	for i := range observations {
+		observations[i].WaitingForServices = observations[i].Running && executionNoted(repo, launchWaiterFolder, observations[i].Record.ID)
+	}
 	if len(observations) > executionRecordCount {
 		problems = append(problems, fmt.Errorf("project execution registries exceed %d total records", executionRecordCount))
 	}

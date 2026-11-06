@@ -23,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -111,6 +112,9 @@ type Control struct {
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
 	reuseServices  bool   // the current work box may inspect the unchanged run-owned stack without another Compose up
 	startRecorded  bool   // the first box launch has created the start record coop eval asked for (or tried to)
+
+	// loopNote is what coop tasks watch reads about this run beside its leases: a stop, a limit wait.
+	loopNote *tasks.LoopNote
 
 	// capture is the run's frozen network policy, admitted ONCE at the top of Run
 	// (nil outside filtered mode); net accumulates what each box could not reach.

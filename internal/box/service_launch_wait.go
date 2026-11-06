@@ -68,6 +68,8 @@ func waitForLaunchLock(ctx context.Context, repo string, project, exclusive bool
 	}
 	var said *ServiceLaunchBusy
 	var told, own bool
+	waitOver := func() {}
+	defer func() { waitOver() }()
 	for {
 		step, cancel := context.WithTimeout(ctx, serviceLaunchWaitNotice)
 		unlock, err := take(step, repo, exclusive)
@@ -83,6 +85,10 @@ func waitForLaunchLock(ctx context.Context, repo string, project, exclusive bool
 			return unlock, nil
 		case !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
 			return nil, err
+		}
+		if said == nil && spec.activityID != "" {
+			// coop tasks watch reads it beside the box's record: its task waits to start its services.
+			waitOver = forkspace.NoteServiceLaunchWaiting(spec.ActivityRepo, spec.activityID)
 		}
 		// Only a service launch waits for running boxes. The shared side waits for whoever is starting
 		// services, or for a command such as `coop up`, which keeps no record.

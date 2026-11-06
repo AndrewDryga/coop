@@ -231,12 +231,13 @@ func TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout(t *testing.T) {
 	}
 }
 
-// Every situation the board can derive from what coop already records, as its title, detail and fix
-// lines, in the section it belongs to. Stopped on purpose, a usage-limit wait and the service-launch
-// wait are not recorded yet, so they have no rows here.
+// Every situation the board can derive from what coop records, as its title, detail and fix lines,
+// in the section it belongs to (the spec's edge-case table).
 func TestTaskWatchEdgeCaseRows(t *testing.T) {
 	const title = "Wire auth"
 	task := inProgress("2026-11-05-wire-auth", title, 0, 3)
+	busy := TaskLeaseObservation{State: leaseBusy, Provider: "codex", Held: 6 * time.Minute}
+	back := time.Now().Add(12*time.Minute + 30*time.Second)
 	for _, tc := range []struct {
 		name    string
 		task    mergedTask
@@ -247,6 +248,14 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 			[]string{"  ✕ " + title, "    0/3 · codex · worker gone 25m ago", "    to resume, run: coop loop"}},
 		{"worker gone, never seen", mergedTask{Item: task}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · worker gone", "    to resume, run: coop loop"}},
+		{"stopped on purpose", mergedTask{Item: task, agent: "codex", stoppedByYou: true, since: ago(25 * time.Minute)}, "Stopped (1)",
+			[]string{"  ‖ " + title, "    0/3 · codex · stopped by you", "    to resume, run: coop loop"}},
+		{"usage limit", mergedTask{Item: task, agent: "codex", limitUntil: back, since: ago(3 * time.Minute)}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex · usage limit, back in 12m"}},
+		{"usage limit that has passed", mergedTask{Item: task, agent: "codex", limitUntil: ago(time.Minute), since: ago(25 * time.Minute)}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex · worker gone 25m ago", "    to resume, run: coop loop"}},
+		{"waiting on the service launch lock", mergedTask{Item: task, lease: busy, startingServices: true}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex · waiting to start its services"}},
 		{"no heartbeat while the process exists",
 			mergedTask{Item: task, lease: TaskLeaseObservation{State: leaseStalled, Provider: "codex", Held: time.Hour, Quiet: 6*time.Minute + 10*time.Second}}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · codex · no heartbeat for 6m"}},
@@ -276,6 +285,16 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 			[]string{"  ◳ " + title, "    0/3 · codex@personal in fork sweep-a · working for 14m"}},
 		{"fork loop on another system", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, system: "Linux"}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · in fork sweep-a · running on Linux"}},
+		{"fork loop waits out a usage limit", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, agent: "codex", limitUntil: back}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex in fork sweep-a · usage limit, back in 12m"}},
+		{"fork box waits on the service launch lock",
+			mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentWorking, live: true, agent: "codex", lease: busy, startingServices: true}, "Now (1)",
+			[]string{"  ◳ " + title, "    0/3 · codex in fork sweep-a · waiting to start its services"}},
+		{"fork loop stopped on purpose", mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stoppedByYou: true}, "Stopped (1)",
+			[]string{"  ‖ " + title, "    0/3 · codex in fork sweep-b · stopped by you", "    to resume, run: coop fork sweep-b --loop -d"}},
+		{"fork loop stopped on purpose, then failed",
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stoppedByYou: true, stopReason: "Codex cannot start because the box image is missing"}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · the box image is missing", "    to resume, run: coop fork sweep-b --loop -d"}},
 		{"fork loop refused, reason recorded",
 			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPaused, agent: "codex", stopReason: "this project asks for unrestricted internet access, which has not been approved"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · network access not approved", "    to fix, run: coop approve, then coop fork sweep-b --loop -d"}},
@@ -318,7 +337,8 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 }
 
 // Detail lines are dim gray; a task waiting but alive is yellow; a stopped one has a red marker and
-// state and its commands bold; a list header is gray after its dot, and a wait past a day is yellow.
+// state and its commands bold, unless a person stopped it, which reads dim; a list header is gray
+// after its dot, and a wait past a day is yellow.
 func TestTaskWatchRowColors(t *testing.T) {
 	p := ui.Colored()
 	board := strings.Join(slices.Concat(renderSections(p, []mergedTask{
@@ -327,11 +347,16 @@ func TestTaskWatchRowColors(t *testing.T) {
 		{Item: inProgress("c", "Gone", 0, 1)},
 		{Item: Item{ID: "d", Title: "Fresh question", State: StateBlocked}, since: ago(5 * time.Hour)},
 		{Item: Item{ID: "e", Title: "Old question", State: StateBlocked}, since: ago(30 * time.Hour)},
+		{Item: inProgress("f", "Paused", 0, 1), stoppedByYou: true},
+		{Item: inProgress("g", "Limited", 0, 1), limitUntil: time.Now().Add(12*time.Minute + 30*time.Second)},
+		{Item: inProgress("h", "Starting", 0, 1), startingServices: true},
 	}, 0, 120)...), "\n")
 	for _, want := range []string{
 		p.Faint("0/1 · codex · ") + p.Faint("working for 1m"),
 		p.Yellow("no heartbeat for 6m"),
-		p.Red(stoppedMarker) + " Gone", p.Red("worker gone"), "to resume, run: " + p.Bold("coop loop"),
+		p.Red(stoppedMarker) + " Gone", p.Red("worker gone"),
+		p.Dim(pausedMarker) + " Paused", p.Faint("stopped by you"), "to resume them, run: " + p.Bold("coop loop"),
+		p.Yellow("usage limit, back in 12m"), p.Yellow("waiting to start its services"),
 		"Needs you (2)" + p.Gray(" · answer them: coop tasks decisions -i"),
 		p.Faint(" for ") + p.Faint("5h"), p.Faint(" for ") + p.Yellow("30h"),
 	} {
@@ -1053,7 +1078,7 @@ func TestTaskWatchCountsAPersonsClaimAsWork(t *testing.T) {
 func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "sweep-b")
-	if got := forkStopReason(repo, identity); got != "" {
+	if got := forkStopReason(repo, identity, false); got != "" {
 		t.Errorf("no record and no log: reason = %q, want none", got)
 	}
 	if err := forkspace.EnsureStateDir(repo); err != nil {
@@ -1068,19 +1093,26 @@ func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	}
 	write(log, "Using .agent/loop.yaml\n\x1b[31m✗ An older failure\x1b[0m\nmore output\n\x1b[31m✗ Codex cannot start because this project asks for network access that has not been approved\x1b[0m\n\n  Review it: coop approve\n")
 	network := "Codex cannot start because this project asks for network access that has not been approved"
-	if got := forkStopReason(repo, identity); got != network {
+	if got := forkStopReason(repo, identity, false); got != network {
 		t.Errorf("log only: reason = %q, want its last error line %q", got, network)
 	}
 	if err := os.MkdirAll(filepath.Join(workspace, ".coop"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	write(filepath.Join(workspace, ".coop", "loop-error"), "an-older-generation\nthe old loop's failure\n")
-	if got := forkStopReason(repo, identity); got != network {
+	if got := forkStopReason(repo, identity, false); got != network {
 		t.Errorf("another generation's record: reason = %q, want the log's %q", got, network)
 	}
+	// A person stopped the loop: tearing its attempt down is no failure, whatever the log says last.
+	if got := forkStopReason(repo, identity, true); got != "" {
+		t.Errorf("stopped by you: reason = %q, want none from the log", got)
+	}
 	write(filepath.Join(workspace, ".coop", "loop-error"), string(identity.Generation)+"\nthe recorded failure\n")
-	if got := forkStopReason(repo, identity); got != "the recorded failure" {
+	if got := forkStopReason(repo, identity, false); got != "the recorded failure" {
 		t.Errorf("recorded failure: reason = %q, want it before the log", got)
+	}
+	if got := forkStopReason(repo, identity, true); got != "the recorded failure" {
+		t.Errorf("recorded failure of a stopped loop: reason = %q, want it", got)
 	}
 	// Only the log's tail is read: an error line further back than that is not this stop's reason.
 	write(log, "✗ An ancient failure\n"+strings.Repeat("progress\n", forkLogTail/9+1))

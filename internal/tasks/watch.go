@@ -48,6 +48,11 @@ type mergedTask struct {
 	since time.Time
 	// stopReason is why a stopped fork's loop ended, as its loop recorded or logged it.
 	stopReason string
+	// What the loop that let go of the task said (ProjectTaskLoop): a person stopped it, or it waits
+	// out a usage limit until limitUntil. startingServices: the task's box waits to start its services.
+	stoppedByYou     bool
+	limitUntil       time.Time
+	startingServices bool
 	// doneToday: a done task finished today. The board's progress is today's, not the archive's.
 	doneToday bool
 	// answered: a blocked task's decision carries its answer; it waits only to be resumed.
@@ -141,6 +146,10 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 			if showQueues {
 				m.queue = queueName(task.QueueLabel, project)
 			}
+			if task.Loop != nil {
+				m.stoppedByYou, m.limitUntil = !task.Loop.StoppedAt.IsZero(), task.Loop.UsageLimitUntil
+			}
+			m.startingServices = executionsWaitingForServices(task.Executions)
 			if task.Fork != nil {
 				m.fork = task.Fork.Name
 				m.live = liveForks[*task.Fork] || executionsRunning(task.Executions)
@@ -161,7 +170,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 					}
 				}
 				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
-					m.stopReason = forkStopReason(repo, *task.Fork)
+					m.stopReason = forkStopReason(repo, *task.Fork, m.stoppedByYou)
 				}
 			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, now)
@@ -436,9 +445,9 @@ func forkNote(repo, name, file string) string {
 }
 
 // forkStopReason is why a fork's loop ended: the failure the loop recorded for this generation
-// (forkctl.NoteForkLoopExit), else the last error line of its log (what coop fork logs shows), else
-// "" — nothing says why.
-func forkStopReason(repo string, identity forkspace.Identity) string {
+// (forkctl.NoteForkLoopExit), else, unless a person stopped it, the last error line of its log (what
+// coop fork logs shows; a stop tears an attempt down, and its error says nothing), else "".
+func forkStopReason(repo string, identity forkspace.Identity, stoppedByYou bool) string {
 	if root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, identity.Name), ".coop")); err == nil {
 		data, readErr := ReadTaskMetadataFile(root, "loop-error")
 		root.Close()
@@ -447,6 +456,9 @@ func forkStopReason(repo string, identity forkspace.Identity) string {
 				return reason
 			}
 		}
+	}
+	if stoppedByYou {
+		return ""
 	}
 	return lastLoggedError(forkspace.LogPath(repo, identity.Name))
 }
@@ -494,6 +506,15 @@ func lastLoggedError(path string) string {
 func executionsRunning(executions []forkspace.ExecutionObservation) bool {
 	for _, e := range executions {
 		if e.Running {
+			return true
+		}
+	}
+	return false
+}
+
+func executionsWaitingForServices(executions []forkspace.ExecutionObservation) bool {
+	for _, e := range executions {
+		if e.WaitingForServices {
 			return true
 		}
 	}
@@ -764,6 +785,7 @@ type taskRow struct {
 	state   string
 	failure string // the error a stopped fork loop reported, shown under its detail line
 	tone    rowTone
+	paused  bool     // a Stopped row a person stopped on purpose: a dim marker, nothing failed
 	waits   bool     // a Needs you row waiting on another task's decision: it has no age of its own
 	fixVerb string   // what the commands do: "resume", "fix" or "free"
 	fix     []string // the complete commands, in order
@@ -792,6 +814,8 @@ func classifyTask(m mergedTask) taskRow {
 		return classifyForkTask(m)
 	}
 	switch {
+	case m.startingServices:
+		return startingServicesRow
 	case m.lease.State == leaseBusy:
 		return taskRow{section: sectionNow, state: workingFor(m.lease.Held)}
 	case m.lease.State == leaseStalled:
@@ -809,12 +833,30 @@ func classifyTask(m mergedTask) taskRow {
 		}
 		return taskRow{section: sectionStopped, state: state, tone: toneStopped,
 			fixVerb: "free", fix: []string{"coop tasks release " + m.ID}}
+	case m.limitUntil.After(time.Now()):
+		return usageLimitRow(m.limitUntil)
+	case m.stoppedByYou:
+		return stoppedByYouRow("coop loop")
 	}
 	state := "worker gone"
 	if !m.since.IsZero() {
 		state += " " + shortElapsed(sinceOrZero(m.since)) + " ago"
 	}
 	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: "resume", fix: []string{"coop loop"}, others: "with no worker"}
+}
+
+// startingServicesRow is a task whose box waits for the project's service launch lock: other boxes
+// are starting services or hold the lock, and it goes on by itself once they let go.
+var startingServicesRow = taskRow{section: sectionNow, state: "waiting to start its services", tone: toneWaiting}
+
+// usageLimitRow is a task whose loop waits out a usage limit until until, then goes on by itself.
+func usageLimitRow(until time.Time) taskRow {
+	return taskRow{section: sectionNow, state: "usage limit, back in " + shortElapsed(time.Until(until)), tone: toneWaiting}
+}
+
+// stoppedByYouRow is a task a person stopped the loop on, and the command that starts it again.
+func stoppedByYouRow(restart string) taskRow {
+	return taskRow{section: sectionStopped, state: "stopped by you", paused: true, fixVerb: "resume", fix: []string{restart}, others: "stopped by you"}
 }
 
 // classifyForkTask places a task a fork holds. A task in the fork's merge candidate shows only as
@@ -832,12 +874,16 @@ func classifyForkTask(m mergedTask) taskRow {
 		// Between two of its loop's iterations the task reads paused; the lease the loop holds on its
 		// copy of the task says it is being worked.
 		switch {
+		case m.startingServices:
+			return startingServicesRow
 		case m.phase == ForkAssignmentReviewing:
 			return taskRow{section: sectionNow, state: "final review" + forElapsed(m.since)}
 		case m.lease.State == leaseBusy:
 			return taskRow{section: sectionNow, state: workingFor(m.lease.Held)}
 		case m.lease.State == leaseStalled:
 			return taskRow{section: sectionNow, state: "no heartbeat for " + shortElapsed(m.lease.Quiet), tone: toneWaiting}
+		case m.limitUntil.After(time.Now()):
+			return usageLimitRow(m.limitUntil)
 		case m.phase == ForkAssignmentWorking:
 			return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
 		}
@@ -846,6 +892,10 @@ func classifyForkTask(m mergedTask) taskRow {
 		// The loop finished this task, then stopped for a decision on another of the fork's tasks:
 		// nothing failed, and answering that decision is what moves this one on.
 		return taskRow{section: sectionNeedsYou, state: "done in fork " + m.fork + ", waiting for the fork's other task", waits: true}
+	case m.stoppedByYou && m.stopReason == "":
+		row := stoppedByYouRow("coop fork " + m.fork + " --loop -d")
+		row.others = "in fork " + m.fork
+		return row
 	}
 	state, failure, verb, fix := forkStopNext(m.fork, m.stopReason)
 	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix, others: "in fork " + m.fork}
@@ -1330,7 +1380,14 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 				stopIndex[key] = group
 				stopped = append(stopped, group)
 			}
-			group.rows = append(group.rows, []string{titleLine(p.Red(stoppedMarker), m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))})
+			if group.others != row.others { // the rows that do not fit share only their fix
+				group.others = ""
+			}
+			marker := p.Red(stoppedMarker)
+			if row.paused {
+				marker = p.Dim(pausedMarker)
+			}
+			group.rows = append(group.rows, []string{titleLine(marker, m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))})
 		case sectionNeedsYou:
 			decisions = true
 			state := []span{stateSpan(row)}
@@ -1395,8 +1452,12 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 	return sections
 }
 
-// stoppedMarker marks a task in progress that nothing is working and that will not move by itself.
-const stoppedMarker = "✕"
+// stoppedMarker marks a task in progress that nothing is working and that will not move by itself;
+// pausedMarker one a person stopped on purpose.
+const (
+	stoppedMarker = "✕"
+	pausedMarker  = "‖"
+)
 
 // shortElapsed is a compact duration for a detail line: "<1m", "14m", "2h 5m".
 func shortElapsed(d time.Duration) string {

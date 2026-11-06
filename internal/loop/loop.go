@@ -403,6 +403,10 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// measurable. Best-effort throughout; a telemetry hiccup never touches the work.
 	runid := randid.Hex(8)
 	c.runID = runid // boxes get it as COOP_RUN_ID so a consult peer can log its usage for the cost digest
+	c.loopNote = nil
+	if spec.CandidateReview == nil { // a candidate review holds no task, so it leaves the last run's note
+		c.loopNote = tasks.NoteLoopRun(hosts, runid)
+	}
 	preparedServices := ""
 	servicesSeen := loopServiceFingerprint(repo, c.activityRepo) != ""
 	servicesCleaned := false
@@ -475,6 +479,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	requestStop := func() {
 		softStop.Store(true)
 		wakeOnce.Do(func() { close(wake) })
+		c.loopNote.Stopped() // only a signal asks for a stop: Ctrl-C, or coop fork stop
 	}
 	interactive := ui.IsTerminal(os.Stdin)
 	var iterCtx context.Context
@@ -1535,7 +1540,7 @@ reviewAgain:
 					// from rot (applyTarget), so the returned name would go unread here.
 					c.rotateOnLimit(rot, resetAt, &waits, wake)
 				} else {
-					sleepForLimit(wait, resetAt, wake)
+					c.waitOutLimit(wait, resetAt, wake)
 				}
 			case actRetryNow:
 				ui.Note("The model reached its response limit.")

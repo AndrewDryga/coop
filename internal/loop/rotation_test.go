@@ -2,6 +2,8 @@ package loop
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,7 +12,59 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ladder"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+// A loop waiting out a usage limit says so for coop tasks watch on the task it let go of, and until
+// when, for as long as the wait lasts: here until a stop wakes it.
+func TestWaitOutLimitTellsTheBoardUntilWhen(t *testing.T) {
+	repo := t.TempDir()
+	root := filepath.Join(repo, ".agent", "tasks")
+	dir := filepath.Join(root, tasks.StateInProgress, "wire-auth")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# Wire auth\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task, ok, err := tasks.CurrentTask(root, "wire-auth")
+	if err != nil || !ok {
+		t.Fatalf("task = %v, %v", ok, err)
+	}
+	c := &Control{loopNote: tasks.NoteLoopRun([]string{root}, "run-x")}
+	lease, _, err := tasks.TryTaskLease(root, task, tasks.TaskLeaseOwner{RunID: "run-x", PID: os.Getpid(), Provider: "codex"})
+	if err != nil || lease == nil {
+		t.Fatalf("lease = %v, %v", lease, err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	limit := func() time.Time {
+		snapshot := tasks.ReadProjectSnapshot(repo, []string{root})
+		if len(snapshot.Tasks) == 1 && snapshot.Tasks[0].Loop != nil {
+			return snapshot.Tasks[0].Loop.UsageLimitUntil
+		}
+		return time.Time{}
+	}
+	wake, done := make(chan struct{}), make(chan struct{})
+	captureStderr(t, func() {
+		go func() {
+			c.waitOutLimit(time.Hour, time.Time{}, wake)
+			close(done)
+		}()
+		for deadline := time.Now().Add(5 * time.Second); limit().IsZero() && time.Now().Before(deadline); {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if until := limit(); until.Before(time.Now().Add(59 * time.Minute)) {
+			t.Errorf("waiting: the board reads the limit until %v, want about an hour from now", until)
+		}
+		close(wake)
+		<-done
+	})
+	if until := limit(); !until.IsZero() {
+		t.Errorf("the wait ended, but the board still reads it until %v", until)
+	}
+}
 
 func TestQuotaFallbackIsSanitizedAndWidthBounded(t *testing.T) {
 	got := captureStderr(t, func() {

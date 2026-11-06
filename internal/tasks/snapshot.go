@@ -47,6 +47,7 @@ type ProjectTaskSnapshot struct {
 	Task         *TaskInstance                    `json:"task,omitempty"`
 	Owner        string                           `json:"owner,omitempty"`
 	Lease        string                           `json:"lease,omitempty"`
+	Loop         *ProjectTaskLoop                 `json:"loop,omitempty"` // a task in progress that nothing holds
 	Fork         *forkspace.Identity              `json:"fork,omitempty"`
 	AssignmentID string                           `json:"assignment_id,omitempty"`
 	Phase        ForkAssignmentPhase              `json:"phase,omitempty"`
@@ -255,6 +256,18 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 						view.AssignmentID = owner.Fork.AssignmentID
 						view.Phase = owner.Fork.Phase
 					}
+				}
+			}
+			// What the loop that let go of a task in progress says about it. A fork's loop leases its
+			// own copy of the task, and a person's claim is not a loop's.
+			if item.State == StateInProgress {
+				switch now := time.Now(); {
+				case view.Fork != nil && owner.Fork.Projection != "":
+					if observeLeaseAt(owner.Fork.Projection, item.ID, now).State == leaseUnleased {
+						view.Loop = taskLoopNote(owner.Fork.Projection, item.ID, now)
+					}
+				case !owned && view.Lease == "":
+					view.Loop = taskLoopNote(root, item.ID, now)
 				}
 			}
 			position := len(snapshot.Tasks)

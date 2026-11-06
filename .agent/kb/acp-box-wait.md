@@ -188,6 +188,9 @@ So a box that holds the lock says so (`noteLaunchHeld`, an empty file in `launch
 by the record), and `serviceLaunchHolders` counts only those. It is a file and not a field because the supervisor
 rewrites the record from another process to change its role, and a running older build refuses a record it cannot
 fully read. A box of an older build holds without saying so, so it reads as "another Coop command" until it stops.
+A box that has to wait before it starts its services says so the same way in `launch-waiters/`
+(`NoteServiceLaunchWaiting`, from `lockServiceLaunch`'s first wait until it returns); `Executions` reports it as
+`WaitingForServices` on a running record, and `coop tasks watch` reads it as `waiting to start its services`.
 
 Readiness asks what the launch will ask. A cold box that would join needs only the shared side, so
 `editorServiceLaunchBusy` runs the join's own check (`openSessionServicesRunning`, `sessionServicesRunning`) when the
@@ -222,6 +225,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-05 — a waiting box notes its wait in `launch-waiters/` for `coop tasks watch`; `EndExecution`
+  removes both notes with the record.
 - 2026-11-05 — the launch-wait reporter stopped wrapping its inherited descriptor in an `*os.File`; its
   finalizer closed a reused descriptor (EBADF in TestReapACPChildBoxesUsesExactExecutionAuthority under race).
 - 2026-11-04 — `coop approve` offers the missing service rules, and the thread sends the person there instead of

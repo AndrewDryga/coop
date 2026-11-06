@@ -183,7 +183,8 @@ and lists the task and commits.</p>
 <p>While an agent works on a task, co:op holds a lock on the host under
 <code>~/.local/state/coop/task-leases/</code>, so another loop skips that task and can work on an independent
 one. <code>coop tasks watch</code> shows how long the task has been worked, how long its heartbeat has been
-quiet, or that its worker is gone, without run IDs or PIDs.</p>
+quiet, that its loop waits out a usage limit, or that its worker is gone or you stopped it, without
+run IDs or PIDs.</p>
 <p>A missing heartbeat can help you spot a stalled worker, but it doesn&#39;t release the task. The loop
 takes over as soon as the operating system&#39;s lock becomes available, never because a timeout has
 passed. It can also resume an in-progress task that no co:op process, such as a running

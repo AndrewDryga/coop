@@ -60,6 +60,14 @@
   work, and the fork stops for the decision, with exit status 3 as `coop loop` uses, only when
   nothing else is left. A task answered and then blocked again in the same fork now shows its new
   question there too; the fork used to put it back in progress.
+
+- **`coop tasks watch` tells a stop you made, and a wait, from a crash.** A task whose loop you
+  stopped with Ctrl-C or `coop fork stop` reads `stopped by you` with the command that resumes it,
+  where it read `worker gone` or `loop ended unexpectedly`. A loop waiting out a usage limit keeps
+  its task under Now as `usage limit, back in 12m`, and a task whose box waits for other boxes
+  before it starts the project's services reads `waiting to start its services`. Each shows only
+  while it is true: the next run forgets the stop, and a wait ends with the wait or its process.
+  `--json` carries them as the task's `loop` and its execution's `WaitingForServices`.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
