@@ -16,35 +16,9 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/safefile"
+	"github.com/AndrewDryga/coop/internal/secretname"
 	"golang.org/x/sys/unix"
 )
-
-var SecretGlobs = []string{
-	".env", ".env.*", ".envrc", "*.secret", "*.secrets",
-	"*.tfvars", "*.tfvars.json", "*.tfstate", "*.tfstate.*",
-	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx", "*.ovpn", "*.pkcs12",
-	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
-	".netrc", "_netrc", ".npmrc", ".yarnrc", ".yarnrc.yml", ".pypirc", ".git-credentials", ".htpasswd",
-	".dockercfg", ".pgpass", ".my.cnf", ".s3cfg", ".boto", ".vault-token", "vault-token",
-	"secrets", ".secrets", "credentials", ".aws", ".kube", ".ssh", ".gnupg", ".docker",
-	"credentials.json", "service_account.json", "service-account.json", "*-sa.json", "client_secret*.json",
-	"firebase-adminsdk*.json", "gha-creds-*.json", "auth.json", "secret.json", "secrets.json", "*.secret.json",
-	// Config-style names that say "secrets" (a sourced .shell-secrets, secrets.env), never source or docs.
-	".*secrets", "secrets.env", "secret.env", "*-secrets.env", "*_secrets.env", "secrets.conf", "secrets.cfg",
-	"secrets.ini", "secrets.toml", "secrets.properties", "secrets.txt", "secrets.sh",
-	"kubeconfig", "kubeconfig.yaml", "kubeconfig.yml", "database.yml", "credentials.y*ml", "secrets.y*ml",
-}
-
-var AllowGlobs = []string{
-	"cacerts.pem", "cacert.pem", "ca-bundle.pem", "ca-bundle.crt", "ca-certificates.crt", "ca-cert.pem",
-}
-
-var allowTemplateGlobs = []string{"*.example", "*.sample", "*.template"}
-
-var hardSecretGlobs = []string{
-	"*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.p8", "*.ppk", "*.kdbx", "*.pkcs12",
-	"id_rsa*", "id_ed25519*", "id_ecdsa*", "id_dsa*",
-}
 
 const (
 	CoopIgnoreFile = ".coopignore"
@@ -598,8 +572,8 @@ func newDecider(repo string, present map[string]bool) func(string) (bool, error)
 		chains[dirRel] = c
 		return c.policies, c.err
 	}
-	secret, allow := compileGlobs(SecretGlobs), compileGlobs(AllowGlobs)
-	template, hard := compileGlobs(allowTemplateGlobs), compileGlobs(hardSecretGlobs)
+	secret, allow := compileGlobs(secretname.SecretGlobs), compileGlobs(secretname.AllowGlobs)
+	template, hard := compileGlobs(secretname.TemplateGlobs), compileGlobs(secretname.HardGlobs)
 	// Worktrees and dependencies repeat basenames; built-in rules are path-independent.
 	builtin := map[string]bool{}
 	// here is shadowedHere over the rules coop can read, with the same answers: hidden by the path's
@@ -689,7 +663,7 @@ func readRepoPolicy(root, dirRel string) ([]byte, error) {
 // A name can match a pattern only if it starts with the text before the pattern's first wildcard
 // and ends with the text after its last one, and almost no name passes both string comparisons;
 // Literal patterns use exact lookup; filepath.Match decides the remaining wildcard candidates.
-// Matching 40,000 names against SecretGlobs with filepath.Match alone took 0.31 s (2026-10-06).
+// Matching 40,000 names against secretname.SecretGlobs with filepath.Match alone took 0.31 s (2026-10-06).
 type globSet struct {
 	literals map[string]bool
 	patterns []compiledGlob
@@ -757,16 +731,7 @@ func shadowedHere(relSlash string, enclosing []enclosingPolicy, loadDir func(str
 	if i := strings.LastIndexByte(relSlash, '/'); i >= 0 {
 		name = relSlash[i+1:]
 	}
-	return secretName(name) || shadowedByCoopignore(relSlash, enclosing, loadDir)
-}
-
-// secretName is the verdict on one file or folder name by itself: a secret glob no allow rule
-// rescues.
-func secretName(name string) bool {
-	lname := strings.ToLower(name)
-	allowed := MatchesAny(lname, AllowGlobs) ||
-		(MatchesAny(lname, allowTemplateGlobs) && !MatchesAny(lname, hardSecretGlobs))
-	return MatchesAny(lname, SecretGlobs) && !allowed
+	return secretname.Hidden(name) || shadowedByCoopignore(relSlash, enclosing, loadDir)
 }
 
 func cleanSlash(relSlash string) string {

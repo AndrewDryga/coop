@@ -15,7 +15,7 @@ typedef unsigned long long u64;
 #define TYPE(name, val) val *name
 
 struct super_block { unsigned int s_dev; } CORE;
-struct inode { unsigned short i_mode; struct super_block *i_sb; unsigned long i_ino; } CORE;
+struct inode { unsigned short i_mode; struct super_block *i_sb; unsigned long i_ino; unsigned int i_nlink; } CORE;
 struct qstr { const unsigned char *name; } CORE;
 struct dentry { struct inode *d_inode; struct dentry *d_parent; struct qstr d_name; } CORE;
 struct path { struct dentry *dentry; } CORE;
@@ -44,6 +44,10 @@ extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksym
 #define WRITE 1
 #define MOVE 2
 #define STAT 4
+/* The operation can neither reveal the object's bytes nor give it another name: a write-only open, a
+ * truncate, a metadata change, a create or a remove. Only these reach a file named like a secret that
+ * the launch did not capture (see access). */
+#define BLIND 8
 /* Hook verdicts beyond allow (1) and deny (0): deny with ENODATA or EOPNOTSUPP instead of EPERM. */
 #define QUIET_NODATA 2
 #define QUIET_NOTSUP 3
@@ -174,6 +178,9 @@ SEC("syscall") int hierarchy_root(u64 *id) {
 #endif
 
 #ifdef FS_NORMALIZATION
+/* Generated at image build from internal/secretname: NAME_STATES, name_next and name_hidden. */
+#include "names.h"
+
 INLINE u32 ccc(u32 rune) {
     struct rune_mapping *value = lookup(&runes, &rune);
     return value ? value->ccc : 0;
@@ -283,6 +290,20 @@ static long hash_step(u32 i, void *data) {
     c->b = (c->b ^ rune) * PRIME_B;
     return 0;
 }
+/* The last name of a path also walks the secret-name table: A-Z are lowered, and the only two other
+ * code points strings.ToLower turns into ASCII join their letters, as the table expects. */
+struct name_context { struct scratch *s; u32 length, state; int error; };
+static long name_step(u32 i, void *data) {
+    struct name_context *c = data;
+    if (i >= c->length || i >= MAX_RUNES) return 1;
+    u32 rune = c->s->input[i], state = c->state;
+    u32 column = rune >= 'A' && rune <= 'Z' ? rune + 32 : rune < 128 ? rune : rune == 0x130 ? 'i' : rune == 0x212a ? 'k' : NAME_OTHER;
+    if (state >= NAME_STATES || column >= NAME_COLUMNS) { c->error = 1; return 1; }
+    c->state = name_next[state][column];
+    return 0;
+}
+/* Returns 1 when the last name (depth 0) looks like a secret, 0 for any other name, and -1 when the
+ * name cannot be read, which denies. */
 SEC("freplace/name_key") int normalize_name(u32 length, u32 normalize_names, u32 fold, u32 depth) {
     struct scratch *s = task_storage(&work, current_task(), 0, 0);
     if (!s || length > 255) return -1;
@@ -297,10 +318,16 @@ SEC("freplace/name_key") int normalize_name(u32 length, u32 normalize_names, u32
     if (n < 0) return -1;
     struct hash_context h = {s, SEED_A, SEED_B, n, !c.nonascii && fold};
     if (loop(MAX_RUNES, hash_step, &h, 0) < 0) return -1;
+    int named = 0;
+    if (!depth) {
+        struct name_context t = {s, n, 0, 0};
+        if (loop(MAX_RUNES, name_step, &t, 0) < 0 || t.error || t.state >= NAME_STATES) return -1;
+        named = name_hidden[t.state];
+    }
     /* Check at the store: bpf_loop can discard bounds on scalar spills. */
     if (depth >= MAX_DEPTH) return -1;
     s->names[depth] = (struct name_key){h.a, h.b};
-    return 0;
+    return named;
 }
 #else
 /* One fresh freplace program serves every guard; its absence must deny.
@@ -312,7 +339,7 @@ __attribute__((noinline)) int name_key(u32 length, u32 normalize_names, u32 fold
 }
 
 struct policy { void *objects, *paths, *devices, *config; u64 id; };
-struct walk_context { void *objects; struct dentry *d; struct scratch *s; struct settings *settings; u32 root, depth; int operation, result, identify; };
+struct walk_context { void *objects; struct dentry *d; struct scratch *s; struct settings *settings; u32 root, depth; int operation, result, identify, named; };
 static long walk_step(u32 i, void *data) {
         struct walk_context *c = data;
         if (i >= MAX_DEPTH) { c->result = -1; return 1; }
@@ -328,7 +355,15 @@ static long walk_step(u32 i, void *data) {
         }
         if (!c->identify) {
             long n = read_str(c->s->name, sizeof(c->s->name), d->d_name.name);
-            if (n <= 0 || n > 256 || name_key(n-1, c->settings->normalize, c->settings->fold, i)) { c->result = -1; return 1; }
+            int named = n > 0 && n <= 256 ? name_key(n-1, c->settings->normalize, c->settings->fold, i) : -1;
+            if (named < 0) { c->result = -1; return 1; }
+            int directory = inode && (inode->i_mode & 0170000) == 0040000;
+            /* Only a file's own name counts. A box still lists, fills and removes a new folder it
+             * made, such as a package's credentials/; a launch hides one by its name. */
+            if (!i && !directory) c->named = named;
+            /* A launch classifies nothing inside a .git folder. */
+            u8 *g = c->s->name;
+            if (c->named && directory && n == 5 && g[0] == '.' && g[1] == 'g' && g[2] == 'i' && g[3] == 't') c->named = 0;
         }
         struct dentry *parent = d->d_parent;
         if (!parent || parent == d) { c->result = 1; return 1; }
@@ -351,6 +386,10 @@ static long path_step(u32 n, void *data) {
 
 NOINLINE int access(struct dentry *d, int operation, struct policy *policy) {
     if (!d) return 1;
+    /* BLIND only lets an operation reach a file named like a secret that the launch did not capture;
+     * captured protection never relaxes for it. */
+    int blind = operation & (BLIND|STAT);
+    operation &= ~BLIND;
     struct inode *inode = d->d_inode;
     struct dentry *parent = d->d_parent;
     if (!inode && parent) inode = parent->d_inode;
@@ -372,11 +411,26 @@ NOINLINE int access(struct dentry *d, int operation, struct policy *policy) {
     if (c.root != identified.root || c.depth != identified.depth || c.result) return denied(d, operation, 4);
     struct path_context p = {policy->paths, s, {SEED_A, SEED_B, c.root, 0}, c.depth, operation, 0};
     if (loop(MAX_DEPTH, path_step, &p, 0) < 0 || p.denied) return denied(d, operation, 5);
+    /* A file named like a secret that the launch did not capture, such as a key the host saved after
+     * the box started. The box may create, write, truncate, change or remove one, so installs and
+     * generators keep working, but never read it or give it another name. */
+    if (c.named && !blind) return denied(d, operation, 6);
     return (owner_alive(policy->id) && owner_alive(0));
 }
 
 INLINE int file_access(struct file *file, int operation, struct policy *policy) {
     return !file || access(file->f_path.dentry, operation, policy);
+}
+/* Opened write-only, a file cannot show its bytes. */
+INLINE int opened(unsigned int flags, int truncates) {
+    return ((flags & (truncates ? 3|512 : 3)) ? WRITE : 0) | ((flags & 3) == 1 ? BLIND : 0);
+}
+/* A rename may give a name like a secret only to what no other name reaches: a folder, which keeps
+ * its own rules, or a file with a single link. */
+INLINE int single(struct dentry *d) {
+    struct inode *inode = d ? d->d_inode : 0;
+    u32 mode = inode ? inode->i_mode & 0170000 : 0;
+    return mode == 0040000 || (mode == 0100000 && inode->i_nlink == 1);
 }
 /* Preserve prior LSM decisions; the cgroup map retains the exact parent object. */
 #define HOOK(name, argc) \
@@ -397,22 +451,22 @@ INLINE int file_access(struct file *file, int operation, struct policy *policy) 
         return verdict == QUIET_NODATA ? -61 : verdict == QUIET_NOTSUP ? -95 : verdict ? 0 : -1; \
     } \
     static int check_##name(u64 *ctx, struct policy *policy)
-HOOK(file_open, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & (3|512)) ? WRITE : 0, policy); }
-HOOK(file_permission, 2) { return file_access((void *)ctx[0], (ctx[1] & 2) ? WRITE : 0, policy); }
-HOOK(file_truncate, 1) { return file_access((void *)ctx[0], WRITE, policy); }
-HOOK(file_receive, 1) { struct file *f = (void *)ctx[0]; return file_access(f, (f->f_flags & 3) ? WRITE : 0, policy); }
+HOOK(file_open, 1) { struct file *f = (void *)ctx[0]; return file_access(f, opened(f->f_flags, 1), policy); }
+HOOK(file_permission, 2) { return file_access((void *)ctx[0], ((ctx[1] & 2) ? WRITE : 0) | ((ctx[1] & 4) ? 0 : BLIND), policy); }
+HOOK(file_truncate, 1) { return file_access((void *)ctx[0], WRITE|BLIND, policy); }
+HOOK(file_receive, 1) { struct file *f = (void *)ctx[0]; return file_access(f, opened(f->f_flags, 0), policy); }
 /* Private writable mappings are copy-on-write, not mutations of the file. */
 HOOK(mmap_file, 4) { return file_access((void *)ctx[0], (ctx[2] & 2) && (ctx[3] & 1) ? WRITE : 0, policy); }
 HOOK(file_mprotect, 3) { struct vm_area_struct *v = (void *)ctx[0]; return file_access(v->vm_file, (ctx[2] & 2) && (v->vm_flags & 8) ? WRITE : 0, policy); }
-HOOK(inode_setattr, 3) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_unlink, 2) { return access((void *)ctx[1], MOVE, policy); }
-HOOK(inode_rmdir, 2) { return access((void *)ctx[1], MOVE, policy); }
+HOOK(inode_setattr, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
+HOOK(inode_unlink, 2) { return access((void *)ctx[1], MOVE|BLIND, policy); }
+HOOK(inode_rmdir, 2) { return access((void *)ctx[1], MOVE|BLIND, policy); }
 HOOK(inode_link, 3) { return access((void *)ctx[0], MOVE, policy) && access((void *)ctx[2], MOVE, policy); }
-HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE, policy); }
-HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE | (single((void *)ctx[1]) ? BLIND : 0), policy); }
+HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
+HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_follow_link, 3) { return access((void *)ctx[0], 0, policy); }
 HOOK(inode_readlink, 1) { return access((void *)ctx[0], 0, policy); }
 /* Tools stat every name readdir lists, and readdir already shows the name. A hidden file's size
@@ -432,12 +486,12 @@ INLINE int xattr_read(struct dentry *d, int quiet, struct policy *policy) {
 HOOK(inode_getxattr, 2) { return xattr_read((void *)ctx[0], QUIET_NODATA, policy); }
 /* A list call cannot fail with "no such attribute", so the quiet answer is "not supported". */
 HOOK(inode_listxattr, 1) { return xattr_read((void *)ctx[0], QUIET_NOTSUP, policy); }
-HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_removexattr, 3) { return access((void *)ctx[1], WRITE, policy); }
+HOOK(inode_setxattr, 6) { return access((void *)ctx[1], WRITE|BLIND, policy); }
+HOOK(inode_removexattr, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_get_acl, 3) { return xattr_read((void *)ctx[1], QUIET_NODATA, policy); }
-HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE, policy); }
-HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE, policy); }
+HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE|BLIND, policy); }
+HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
+HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE|BLIND, policy); }
 HOOK(inode_file_getattr, 2) { return access((void *)ctx[0], 0, policy); }
 #endif
 char LICENSE[] SEC("license") = "GPL";

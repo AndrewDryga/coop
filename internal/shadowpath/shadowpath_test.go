@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/safefile"
+	"github.com/AndrewDryga/coop/internal/secretname"
 )
 
 func TestInventoryDeciderPreservesPolicySemantics(t *testing.T) {
@@ -670,7 +671,7 @@ func TestSecretsNamedConfigFilesAreHidden(t *testing.T) {
 		"secrets.toml": true, "secrets.go": false, "secrets.md": false, "secretscan": false, "internal": false,
 		"secrets_test.go": false, "my-secrets.md": false, "secrets.env.example": false,
 	} {
-		if got := MatchesAny(name, SecretGlobs) && !MatchesAny(name, allowTemplateGlobs); got != want {
+		if got := MatchesAny(name, secretname.SecretGlobs) && !MatchesAny(name, secretname.TemplateGlobs); got != want {
 			t.Errorf("%s hidden=%t, want %t", name, got, want)
 		}
 	}
@@ -683,7 +684,7 @@ func TestSecretsNamedConfigFilesAreHidden(t *testing.T) {
 func TestGlobSetMatchesFilepathMatch(t *testing.T) {
 	tricky := []string{`a\*b`, `\*.pem`, `*\[x`, `x[a-c]y`, `[!.]env`, `a]b`, `*.[kp]e[my]`, `id_??a*`, `[`, `a[b`, `*\`, `?`, `*`, ``}
 	lists := map[string][]string{
-		"secret": SecretGlobs, "allow": AllowGlobs, "template": allowTemplateGlobs, "hard": hardSecretGlobs, "tricky": tricky,
+		"secret": secretname.SecretGlobs, "allow": secretname.AllowGlobs, "template": secretname.TemplateGlobs, "hard": secretname.HardGlobs, "tricky": tricky,
 		"literals": {"", "plain", "plain", "dir/file", "résumé", "re\u0301sume\u0301", "政策"},
 	}
 	var names []string

@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/scaffold"
+	"github.com/AndrewDryga/coop/internal/secretname"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -164,7 +165,7 @@ func TestApprovedSecretScans(t *testing.T) {
 	}
 	// 19l is about a file only .coopignore hides: a path on the built-in list would make the
 	// case pass with .coopignore ignored.
-	if rel := "config/stripe.live.json"; shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesAny(rel, shadowpath.SecretGlobs) {
+	if rel := "config/stripe.live.json"; shadowpath.MatchesAny(filepath.Base(rel), secretname.SecretGlobs) || shadowpath.MatchesAny(rel, secretname.SecretGlobs) {
 		t.Errorf("%s matches a built-in secret pattern; case 19l needs a path only .coopignore hides", rel)
 	}
 	for _, tc := range cases {

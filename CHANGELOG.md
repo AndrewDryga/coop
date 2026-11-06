@@ -202,6 +202,13 @@
   to start without any MCP servers. When an MCP token has no value, the error now says to set it in
   `agents/env`, because Coop doesn't read MCP tokens from your shell.
 
+- **A secret the host saves into the project after a box starts is protected at once.** A file
+  whose name is on the built-in list, such as `*.pem`, `*.key` or `.env`, was readable in a running
+  eBPF-guarded box until a restart, although `docs/box.md` promised otherwise. The kernel guard now
+  checks every file name against the list in the forms the volume compares, so such a file is
+  unreadable in the box the moment it exists; the box can still create, write or delete one, so
+  installs and key generators keep working. A new hidden folder and a file only `.coopignore` hides
+  still need a restart, and the docs now say so.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

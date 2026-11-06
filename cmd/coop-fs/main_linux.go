@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/fsfilter"
+	"github.com/AndrewDryga/coop/internal/secretname"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,6 +65,13 @@ func currentBoot() (string, error) {
 func run(args []string) error {
 	if len(args) == 2 && args[0] == "unicode-table" {
 		data, err := fsfilter.UnicodeData()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(args[1], data, 0444)
+	}
+	if len(args) == 2 && args[0] == "name-table" {
+		data, err := secretname.CHeader()
 		if err != nil {
 			return err
 		}

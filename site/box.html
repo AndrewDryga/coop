@@ -160,9 +160,12 @@ over it. A tool that opens one, such as Terraform with <code>terraform.tfvars</c
 keeps working, and the secret stays out of reach. The box can&#39;t delete or rename a folder that
 holds a covered file. In a repository, only a file Git ignores gets a cover, because an agent&#39;s
 <code>git add -A</code> would commit a tracked or new file as empty. Add your secrets to <code>.gitignore</code>.</p>
-<p>eBPF protects everything else: other letter cases, hardlinks, files past the limit, hidden files
-created after the box starts, and hidden directories. Reading or changing one of those returns
-<code>Operation not permitted</code>. A restart covers a hidden file created since the last start.</p>
+<p>eBPF protects everything else: other letter cases, hardlinks, files past the limit and hidden
+directories. Reading or changing one of those returns <code>Operation not permitted</code>. A file created
+after the box starts is protected at once when its name is on the built-in list, such as <code>*.pem</code>,
+<code>*.key</code> or <code>.env</code>: the box can create, overwrite or delete such a file, so installers and key
+generators keep working, but it can&#39;t read one or give it another name. A new file that only
+<code>.coopignore</code> hides, and a new hidden folder, need a restart.</p>
 <p><code>stat</code> still works on a hidden file without a cover, so <code>find</code> and tools that list a folder keep
 working. It shows the file&#39;s real size, times, mode, owner and link count. The box still can&#39;t
 read the contents, and extended attributes read as empty. A hidden symlink shows no target, and
@@ -200,18 +203,23 @@ service runs. Newly exposed paths need another approval, and running boxes stay 
 for a single run. eBPF protects these paths without either kind of approval.</p>
 <h3 id="filesystem-protection-contract">Filesystem protection contract</h3>
 <p>co:op trusts the host and its editors. Each time it starts an agent or service with eBPF protection,
-it captures the current hiding rules and the protected files and folders. In practice:</p>
+it captures the current hiding rules and the protected files and folders, and it keeps checking
+every file name the box opens against the built-in list. In practice:</p>
 <ul>
 <li>Ordinary edits to public files work immediately.</li>
 <li>A path that is already protected stays protected when you edit it or save it atomically on the
 host, even when a parent folder is replaced. Existing hardlinks keep their protection when the
 original file is replaced.</li>
-<li>Restart the affected agent or service after you change <code>.coopignore</code>, mark an already-public
-file or folder as secret, or create an unprotected hardlink to a secret from the host. Protection
-that is already running does not reload its rules or revoke memory mappings that were already
-readable.</li>
+<li>A new file whose name is on the built-in list, such as <code>late.pem</code> or <code>.env</code>, is unreadable in the
+box as soon as it exists, in any letter case or Unicode spelling. The box can still create,
+overwrite, truncate or delete such a file, but it can&#39;t read one or give it another name.</li>
+<li>Restart the affected agent or service after you change <code>.coopignore</code>, create a hidden folder,
+mark an already-public file or folder as secret, or create an unprotected hardlink to a secret
+from the host. Protection that is already running does not reload its rules or revoke memory
+mappings that were already readable.</li>
 <li>To save a secret atomically, write the temporary file outside the shared tree or inside an
-already hidden folder. A new temporary file at a public path is not protected.</li>
+already hidden folder. A new temporary file at a public path is protected only when its own name
+is on the built-in list.</li>
 <li>Protection follows the file or folder itself, not its path. Removing its hiding rule alone doesn&#39;t
 make a hidden secret public while it still has another hardlink in the project. Remove the other
 hardlinks and restart before you make the original file public.</li>

@@ -40,7 +40,7 @@ func Fingerprint() string {
 
 func Tag() string { return "coop-filesystem:" + Fingerprint()[:32] }
 
-var directories = []string{"cmd/coop-fs", "internal/fsfilter"}
+var directories = []string{"cmd/coop-fs", "internal/fsfilter", "internal/secretname"}
 var fixedFiles = []string{"go.mod", "go.sum", "LICENSE", "internal/fsfilter/assets/filter.c", "internal/fsfilter/assets/loader.c", "internal/fsfilter/assets/shared.h"}
 
 func sourcePath(name string) bool {

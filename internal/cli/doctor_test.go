@@ -17,6 +17,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/secretname"
 	"github.com/AndrewDryga/coop/internal/shadowpath"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
@@ -275,7 +276,7 @@ func TestDoctorCoopignoreCheckNeedsCoopignore(t *testing.T) {
 	if !strings.Contains(doctorProbe, "ID=sandbox.coopignore        check hidden_file "+rel+"\n") {
 		t.Fatalf("the probe's .coopignore check does not read %s:\n%s", rel, doctorProbe)
 	}
-	if shadowpath.MatchesAny(filepath.Base(rel), shadowpath.SecretGlobs) || shadowpath.MatchesAny(rel, shadowpath.SecretGlobs) {
+	if shadowpath.MatchesAny(filepath.Base(rel), secretname.SecretGlobs) || shadowpath.MatchesAny(rel, secretname.SecretGlobs) {
 		t.Fatalf("%s matches a built-in secret pattern, so the check passes even if .coopignore is ignored", rel)
 	}
 	dir, err := buildFixture()

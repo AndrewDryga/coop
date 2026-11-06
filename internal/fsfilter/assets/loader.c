@@ -121,6 +121,8 @@ static int load_normalizer(const struct bpf_object_open_opts *options) {
     if (!normalizer) return -1;
     struct bpf_map *map;
     bpf_object__for_each_map(map, normalizer) {
+        /* Its read-only data, the secret-name table, is the normalizer's own. */
+        if (bpf_map__is_internal(map)) continue;
         int fd = map_fd(bpf_map__name(map));
         if (fd < 0 || bpf_map__reuse_fd(map, fd)) return -1;
     }
