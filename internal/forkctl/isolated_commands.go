@@ -161,7 +161,7 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 	if err := forkspace.CheckoutIndependent(context.Background(), candidate.dir, candidate.parent.Head, ""); err != nil {
 		return 1, err
 	}
-	ui.Note("The review uses a private copy of the committed files. Parent Git refs and the agent's workspace are unchanged.")
+	ui.Note("The review uses a private copy of the committed files in %s. Your project's Git refs and the agent's workspace are unchanged.", candidate.dir)
 	into := strings.TrimPrefix(candidate.parent.Target, "refs/heads/")
 	if into == "" {
 		into = "detached parent " + candidate.parent.Head
@@ -186,9 +186,9 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 		}
 		preview := candidate.dir
 		candidate.dir = "" // GUI tools may return before their window closes.
-		ui.Note("The editor opens a private copy of the committed files, not the agent's workspace.")
-		ui.Note("Edits there are never merged. Deleting the fork removes the copy.%s", removeSooner("it", preview))
-		return c.openInEditor(preview)
+		ui.Note("The editor opens that copy, not the agent's workspace. Edits there are never merged.")
+		ui.Note("Deleting the fork removes the copy.%s", removeSooner("it", preview))
+		return c.openInEditor(preview, name)
 	case stat:
 		return 0, nil
 	case tool:
@@ -202,9 +202,8 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 		}
 		comparison := candidate.dir
 		candidate.dir = ""
-		ui.Note("Your review command uses a private copy of the committed files: %s", preview)
-		ui.Note("It compares that copy with a second one in %s. Neither is ever merged.", comparison)
-		ui.Note("Deleting the fork removes both copies.%s", removeSooner("both", preview, comparison))
+		ui.Note("Your review command runs in that copy. The fork's committed files, as they will merge, are in %s.", preview)
+		ui.Note("Neither copy is ever merged. Deleting the fork removes both.%s", removeSooner("both", preview, comparison))
 		return c.runReviewCmd(comparison, preview, name, ref)
 	}
 	return 0, gitInteractive(candidate.dir, "diff", "--no-ext-diff", "HEAD..."+ref)

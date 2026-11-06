@@ -15,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type isolatedCandidate struct {
@@ -89,6 +90,9 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		parent, err = captureIsolatedParent(repo)
 	}
 	if err != nil {
+		if block := parentRefusal(err, false); block != nil {
+			return isolatedCandidate{}, block
+		}
 		return isolatedCandidate{}, err
 	}
 	sourceHead, err := observed(ws, "rev-parse", "--verify", "HEAD^{commit}")
@@ -219,6 +223,22 @@ func (candidate isolatedCandidate) validateSource(repo string) error {
 	return nil
 }
 
+// isolatedFileLimit is the largest file an isolated publication reads and judges.
+const isolatedFileLimit = 5 << 20
+
+const changeInYourCheckout = "Remove it from the fork's commits and make the change in your own checkout."
+
+// isolatedRefusal answers a commit of an isolated fork that Coop will not merge, in the block the
+// other merge refusals use: what it refuses and why, that --force cannot change it, and what to do.
+func isolatedRefusal(headline, why, action string) *ui.UsageError {
+	return ui.CommandFailed(headline, why+"\n--force cannot bypass this check.", [2]string{"", action})
+}
+
+func nestedSourcesRefusal(path string) *ui.UsageError {
+	return isolatedRefusal(fmt.Sprintf("The fork changes %q, which Coop will not merge", path),
+		"Coop does not merge changes to submodules or nested Git repositories, because they decide what git submodule update fetches.", changeInYourCheckout)
+}
+
 // Scan every reachable incoming commit, including add-then-remove attacks. A
 // terminal diff cannot grant permission to import unsafe intermediate history.
 func validateIsolatedHistory(repo, authority, upstream, head string) error {
@@ -255,25 +275,33 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 				continue
 			}
 			if entry.mode == "160000" || previous.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
-				return fmt.Errorf("isolated publication refuses changed nested Git sources at %q", entry.path)
+				return nestedSourcesRefusal(entry.path)
 			}
 			if reason, automatic := hostsurface.Classify("M", entry.path); automatic {
-				return fmt.Errorf("isolated publication refuses %q: %s; --force cannot bypass this boundary", entry.path, reason)
+				return isolatedRefusal(fmt.Sprintf("The fork changes %q, which Coop will not merge", entry.path), reason, changeInYourCheckout)
 			}
 			hidden, err := shadowed(hostsurface.Key(entry.path))
 			if err != nil {
-				return fmt.Errorf("isolated publication refuses %q: %w; --force cannot bypass this boundary", entry.path, err)
+				return isolatedRefusal(fmt.Sprintf("Coop cannot check the fork's change to %q", entry.path), err.Error(),
+					"Remove it if you did not create it, or make it a readable regular file of at most 1 MiB, then merge again.")
 			}
 			if hidden {
-				return fmt.Errorf("isolated publication refuses secret-like file %q; --force cannot bypass this boundary", entry.path)
+				return isolatedRefusal(fmt.Sprintf("The fork adds %q, a file Coop hides from boxes", entry.path),
+					"Its name matches a secret or a .coopignore rule, and Coop will not merge a secret from an isolated fork.",
+					"Remove it from the fork's commits.")
 			}
 			sizeText, err := observed(repo, "cat-file", "-s", entry.object)
 			if err != nil {
 				return err
 			}
 			size, err := strconv.ParseInt(sizeText, 10, 64)
-			if err != nil || size < 0 || size > 5<<20 {
-				return errors.Join(fmt.Errorf("isolated publication refuses oversized or uninspectable blob at %q", entry.path), err)
+			if err != nil || size < 0 {
+				return errors.Join(fmt.Errorf("read the size of %q from the fork", entry.path), err)
+			}
+			if size > isolatedFileLimit {
+				return isolatedRefusal(fmt.Sprintf("The fork adds %q, a file over 5 MiB", entry.path),
+					"Coop reads every file it merges from an isolated fork, and 5 MiB is the most it reads.",
+					"Keep it out of the fork's commits and add it in your own checkout.")
 			}
 			content, err := observed(repo, "cat-file", "blob", entry.object)
 			if err != nil {
@@ -281,7 +309,9 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			}
 			if filepath.Base(hostsurface.Key(entry.path)) == "package.json" {
 				if entry.mode == "120000" || !json.Valid([]byte(content)) {
-					return fmt.Errorf("isolated publication cannot inspect package lifecycle scripts at %q", entry.path)
+					return isolatedRefusal(fmt.Sprintf("Coop cannot read the scripts in %q", entry.path),
+						"It is a link or is not valid JSON, so Coop cannot tell whether npm would run new commands on install.",
+						"Make it a regular, valid package.json, or leave it out of the fork's commits.")
 				}
 				oldContent := ""
 				if present && previous.mode != "120000" {
@@ -290,7 +320,7 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 						return err
 					}
 					n, err := strconv.ParseInt(oldSize, 10, 64)
-					if err != nil || n < 0 || n > 5<<20 {
+					if err != nil || n < 0 || n > isolatedFileLimit {
 						return errors.Join(errors.New("previous package lifecycle scripts are uninspectable"), err)
 					}
 					oldContent, err = observed(repo, "cat-file", "blob", previous.object)
@@ -299,20 +329,23 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 					}
 				}
 				if script := changedLifecycleScript(oldContent, content); script != "" {
-					return fmt.Errorf("isolated publication refuses new or changed automatic %s script at %q; --force cannot bypass this boundary", script, entry.path)
+					return isolatedRefusal(fmt.Sprintf("The fork adds or changes the %s script in %q", script, entry.path),
+						"npm runs it by itself when someone runs npm install.", changeInYourCheckout)
 				}
 			}
 			if strings.IndexByte(content, 0) < 0 {
 				if adds, err := commitAddsCredential(repo, previous, present, entry, content); err != nil {
 					return err
 				} else if adds {
-					return fmt.Errorf("isolated publication refuses possible credentials at %q; remove real credentials before review", entry.path)
+					return isolatedRefusal(fmt.Sprintf("The fork adds what looks like a credential to %q", entry.path),
+						"Coop will not merge a possible secret from an isolated fork. Deleting it in a later commit does not help, because Coop reads every commit.",
+						"Rewrite the fork's commits so none adds it, then merge again.")
 				}
 			}
 		}
 		for _, entry := range old {
 			if entry.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
-				return fmt.Errorf("isolated publication refuses changed nested Git sources at %q", entry.path)
+				return nestedSourcesRefusal(entry.path)
 			}
 		}
 	}

@@ -243,6 +243,13 @@ func TestIsolatedReviewOpenSaysHowTheKeptCopyGoesAway(t *testing.T) {
 	if want := "Deleting the fork removes the copy. To remove it sooner, run: rm -r " + preview; !strings.Contains(notes, want) {
 		t.Errorf("review --open did not say how the copy goes away, want %q in:\n%s", want, notes)
 	}
+	// It names the fork it opens, never the folder of the copy, and says where the copy is.
+	if want := "Opening fork " + identity.Name + " in editor"; !strings.Contains(notes, want) || strings.Contains(notes, "Opening fork .isolated") {
+		t.Errorf("review --open did not name the fork, want %q in:\n%s", want, notes)
+	}
+	if want := "The review uses a private copy of the committed files in " + preview; !strings.Contains(notes, want) {
+		t.Errorf("review did not say where its copy is, want %q in:\n%s", want, notes)
+	}
 	if !strings.HasPrefix(filepath.Base(preview), forkspace.IsolatedRecordPrefix("candidate", identity)) {
 		t.Errorf("the kept copy %s is not named for its fork, so deleting the fork could not find it", preview)
 	}

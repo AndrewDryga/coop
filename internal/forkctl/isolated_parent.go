@@ -20,6 +20,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type isolatedParent struct {
@@ -33,6 +34,40 @@ type isolatedParent struct {
 }
 
 type isolatedTreeEntry struct{ mode, object, path string }
+
+// The two states of the parent a publication will not start from that a person can fix at once.
+// parentRefusal draws them for the one who ran the merge.
+var errParentDetached = errors.New("the parent is not on a branch")
+
+type parentLockedError struct{ lock string }
+
+func (e *parentLockedError) Error() string { return "the parent has a Git lock file at " + e.lock }
+
+// parentRefusal is the block for a parent that is detached or locked, or nil for any other error.
+// journaled says an interrupted publication's journal is kept, so the block says not to reset.
+func parentRefusal(err error, journaled bool) *ui.UsageError {
+	kept := ""
+	if journaled {
+		kept = "\nCoop kept the journal of the interrupted merge. Do not reset your project. Fix this, then run the merge again."
+	}
+	var locked *parentLockedError
+	switch {
+	case errors.Is(err, errParentDetached):
+		return ui.CommandFailed("Your project is not on a branch",
+			"A merge puts the fork's commits on the branch your project has checked out, and HEAD is detached."+kept,
+			[2]string{"", "Check out that branch (git switch <branch>), then merge again."})
+	case errors.As(err, &locked):
+		rows := [][2]string{{"Check Git:", "pgrep -lx git"}}
+		if quoted, ok := ui.ShellWord(locked.lock); ok {
+			rows = append(rows, [2]string{"Remove it:", "rm " + quoted})
+		}
+		return ui.CommandFailed("Git has a lock file in your project",
+			locked.lock+" exists, so Coop cannot tell whether a Git command is still changing your project.\n"+
+				"If one is running, wait for it to finish. If none is, the lock is left over and safe to remove.\n"+
+				"Coop never removes it for you."+kept, rows...)
+	}
+	return nil
+}
 
 func observed(repo string, args ...string) (string, error) {
 	output, err := forkspace.ObserveGit(context.Background(), repo, args...)
@@ -153,15 +188,21 @@ func captureIsolatedCheckoutBounded(repo string, detachedAllowed bool, depth int
 	if err != nil {
 		return isolatedParent{}, err
 	}
-	if _, err := os.Lstat(filepath.Join(metadata[0], "index.lock")); !errors.Is(err, os.ErrNotExist) {
-		return isolatedParent{}, errors.Join(errors.New("isolated land refuses an uncertain index.lock; preserve it and reconcile the checkout"), err)
+	lock := filepath.Join(metadata[0], "index.lock")
+	if _, err := os.Lstat(lock); !errors.Is(err, os.ErrNotExist) {
+		return isolatedParent{}, errors.Join(&parentLockedError{lock}, err)
 	}
 	target, err := observed(canonical, "symbolic-ref", "--quiet", "HEAD")
 	if target == "" && detachedAllowed {
 		err = nil
 	}
 	if err != nil || target != "" && !strings.HasPrefix(target, "refs/heads/") {
-		return isolatedParent{}, errors.Join(errors.New("isolated land needs an attached target branch"), err)
+		// `symbolic-ref --quiet` exits 1 for a detached HEAD, which says all there is to say about it.
+		var exit *exec.ExitError
+		if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+			return isolatedParent{}, fmt.Errorf("read the branch the project has checked out: %w", err)
+		}
+		return isolatedParent{}, errParentDetached
 	}
 	head, err := observed(canonical, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || !forkspace.ValidObjectID(head) {
@@ -392,7 +433,9 @@ func checkIsolatedIntroductions(repo, candidate, base, publication string) error
 				break // a committed file-to-directory transition is checked by Git
 			}
 			if i == len(parts) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("isolated land refuses untracked/ignored path collision at %q", path)
+				return ui.CommandFailed("A file in your project is in the way",
+					fmt.Sprintf("The fork adds %q, but %q already exists in your project and Git does not track it.", entry.path, path),
+					[2]string{"", "Move or delete it, then merge again."})
 			}
 		}
 	}

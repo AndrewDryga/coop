@@ -92,6 +92,9 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		if s.Agent != "" && s.Agent != "?" {
 			listing("    Agent: %s", s.Agent)
 		}
+		if s.Isolated {
+			listing("    Isolated: yes")
+		}
 		if s.Branch != "" {
 			listing("    Branch: %s", s.Branch)
 		}
@@ -211,6 +214,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 		Landing             bool             `json:"landing"`
 		CleanupPending      bool             `json:"cleanup_pending"`
 		Legacy              bool             `json:"legacy_generation"`
+		Isolated            bool             `json:"isolated"`
 		Problems            []string         `json:"problems,omitempty"`
 		LoopError           string           `json:"loop_error,omitempty"`
 		LaunchWait          []string         `json:"launch_wait,omitempty"` // what a "launch-wait" fork's box waits for
@@ -250,7 +254,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 			UnverifiedSandboxes: s.UnverifiedSandboxes,
 			DetachedRunning:     s.Running, DetachedSystem: s.Elsewhere,
 			WorkspaceReserved: s.Reserved, Candidate: s.Ready,
-			Landing: s.Landing, CleanupPending: s.Cleanup, Legacy: s.Legacy, Problems: s.Problems,
+			Landing: s.Landing, CleanupPending: s.Cleanup, Legacy: s.Legacy, Isolated: s.Isolated, Problems: s.Problems,
 		}
 		if s.stateCell() == "failed" {
 			status.LoopError = s.LoopError

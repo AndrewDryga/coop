@@ -2,7 +2,7 @@
 name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
-sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/testhelpers_test.go]
+sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/testhelpers_test.go]
 updated: 2026-11-06
 ---
 
@@ -37,8 +37,13 @@ every incoming commit; `--force` cannot bypass risk/nested-Git/automatic-surface
 
 v2 journals retain all strong lands, even non-task ones. Parent binding is semantic: canonical
 checkout/admin/common paths, target, HEAD/tree, logical index and tracked bytes. Reject hidden
-index flags, introduced-path collisions and uncertain locks. Sync custody and journal before
-object import; read-tree updates files/index, verified LFS hydration follows, then target-ref CAS.
+index flags, introduced-path collisions and uncertain locks. A refusal that leaves the parent as it
+was comes before the journal exists: mergeIsolatedLocked checks path collisions before the question
+and the box checks, and advanceIsolatedLand writes the journal itself, under the ref lock, once the
+collision and parent checks pass and just before the object import. Such a refusal leaves no journal,
+so the fork shows no merge and the next merge asks and checks again. A land that starts from a
+journal keeps it on any refusal. Sync custody and journal before object import; read-tree updates
+files/index, verified LFS hydration follows, then target-ref CAS.
 Path/mode-framed raw byte checksums include symlink targets and recursive child semantic state.
 Persist the verified publication checksum before CAS; both confirmation and coherent replay require
 it. LF/CRLF and LFS pointer/payload equivalence never erase external physical byte changes.
@@ -64,10 +69,24 @@ trusted drivers, includes themselves and external attribute paths never enter th
 Native default LFS stores include common metadata for linked worktrees/gitfiles; custom storage
 is explicitly refused before publication. Private attribute enumeration builds a pinned index.
 GUI/custom review previews are retained and never merge input; direct `fork open` is untrusted.
+Candidates, previews and the source receipt are named by the fork's generation
+(forkspace.IsolatedRecordPrefix), so deleting the fork sweeps exactly its own, and its log, in
+forkspace.Destroy and orphan recovery, never without a valid generation. The lock file stays: flock
+locks the file, so removing it under a waiting command would let two commands hold one fork's lock.
+Refusals are the shared block (`ui.CommandFailed`): `isolatedRefusal` for the fork's commits, which
+always says `--force` cannot bypass the check, and `parentRefusal` for a detached or locked parent,
+which adds that the journal is kept when the land came from one. Wrapping such an error hides its
+text, since the dispatcher draws only the block.
 Custom tools run at the captured base comparison while COOP_FORK_PATH points to a separate exact
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-11-06 — isolated refusals became blocks that name the cause and the next step, and `fork ls`
+  marks isolation (task 2026-11-06-word-isolated-fork-refusals-and-previews-plainly).
+- 2026-11-06 — a merge refused before it changed the parent (an untracked file in the way) left its
+  journal, so the fork showed as merging and the next merge finished it unasked. The journal is now
+  written just before the first change to the parent, and deleting a fork removes its previews,
+  source receipt and log (task 2026-11-06-stop-a-refused-isolated-fork-merge-from-staying).
 - 2026-11-06 — the private rebase skips source commits the parent already has, so a fork whose
   task a person took with `coop tasks done --from-fork` still merges cleanly (task
   2026-11-05-let-the-owner-complete-a-fork-held-task-whose-co).

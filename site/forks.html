@@ -196,7 +196,8 @@ that co:op inspects. The agent can still create commits and branches and run reb
 fork.</p>
 <p>Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP. You
 can&#39;t convert an existing ordinary fork, so you must create a new isolated one. Ordinary forks and
-runs that write directly to your checkout don&#39;t get this isolation.</p>
+runs that write directly to your checkout don&#39;t get this isolation. <code>coop fork ls</code> marks an isolated
+fork with <code>Isolated: yes</code>, and <code>coop fork ls --json</code> has an <code>isolated</code> field for every fork.</p>
 <h3 id="what-an-isolated-fork-copies">What an isolated fork copies</h3>
 <p>co:op recreates each initialized, unchanged local submodule from its exact commit, with independent
 storage, and never copies the submodule&#39;s raw Git metadata. <code>coop fork review</code> and <code>coop fork merge</code>

@@ -26,6 +26,7 @@ type forkStatus struct {
 	Ins, Del                     int
 	Dirty                        bool
 	Legacy                       bool
+	Isolated                     bool // made with --isolated: its own Git storage, its commits checked before they merge
 	Counts                       tasks.TaskCounts
 	// Phases are the fork's assignments as their OWN phase records them. Counts folds reviewing
 	// and ready into Done, so it cannot prove a review passed; these can.
@@ -56,9 +57,14 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 	var doing, reviewing, readyTasks, blockedTasks int
 	var problems []string
 	identity, hasIdentity, generationErr := forkspace.ReadGeneration(repo, name)
+	isolated := false
 	if generationErr != nil {
 		problems = append(problems, "generation: "+generationErr.Error())
 	} else if hasIdentity {
+		var err error
+		if isolated, err = forkspace.IsolatedGeneration(repo, identity); err != nil {
+			problems = append(problems, "generation: "+err.Error())
+		}
 		if assignments, err := projectSnapshot.ForkAssignments(identity); err == nil {
 			for _, assignment := range assignments {
 				switch assignment.Record.Fork.Phase {
@@ -126,6 +132,7 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		Del:                 del,
 		Dirty:               gitDirty(ws),
 		Legacy:              generationErr == nil && !hasIdentity && pathExists(ws),
+		Isolated:            isolated,
 		Counts:              counts,
 		Doing:               doing,
 		Reviewing:           reviewing,

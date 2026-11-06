@@ -1335,6 +1335,17 @@
   log, its publication record and the private copies `coop fork review --open` kept, and
   `review --open` prints the command that removes its copy sooner.
 
+- **Isolated fork refusals say what to do, and `coop fork ls` shows isolation.** Each refusal of an
+  isolated merge, such as a changed `.gitmodules`, a Git hook, an install script, a possible
+  credential, a file over 5 MiB, a detached HEAD, a leftover `index.lock` or an untracked file in
+  the way, is now one block with the reason and the next step. Every refusal of the fork's own
+  commits says `--force` cannot bypass it, the detached HEAD no longer prints a raw `exit status 1`,
+  and the `index.lock` block says how to tell whether Git is running and when the lock is safe to
+  remove. Passing `--force` to an isolated merge, and an ordinary fork's policy refusal, use the same
+  block. `coop fork review --open` names the fork, not the folder of its private copy, and a review
+  prints where its copy is. `coop fork ls` shows `Isolated: yes` for an isolated fork, and
+  `coop fork ls --json` has an `isolated` field.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

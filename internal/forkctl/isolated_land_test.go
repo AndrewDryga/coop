@@ -976,7 +976,7 @@ func TestIsolatedPublicationJudgesOnlyCredentialsItsCommitsAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "refuses possible credentials") {
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "looks like a credential") {
 		t.Fatalf("an added credential = %v, %v; want the credential refusal", landed, err)
 	}
 	if after, err := captureIsolatedParent(repo); err != nil || !sameIsolatedParent(before, after) {
@@ -1378,7 +1378,7 @@ func TestForkMergeAllDispatchesMixedForksAndStopsAtRefusal(t *testing.T) {
 			}
 			code, err := c.ForkMerge(args)
 			if force {
-				if code != 1 || err == nil || !strings.Contains(err.Error(), "--force cannot bypass isolated publication policy") {
+				if code != 1 || err == nil || !strings.Contains(err.Error(), "--force cannot bypass an isolated fork's checks") {
 					t.Fatalf("mixed refusal=%d %v", code, err)
 				}
 			} else if code != 0 || err != nil {

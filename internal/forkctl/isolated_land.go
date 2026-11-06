@@ -222,6 +222,9 @@ func intentCandidate(repo string, intent isolatedLandIntent) isolatedCandidate {
 // journal nothing has started and nothing waits to be reconciled; with one, the parent may be half
 // published, and the journal and the kept copy wait for a person to reconcile it.
 func parentChangedRefusal(journaled bool, cause error) error {
+	if block := parentRefusal(cause, journaled); block != nil {
+		return block
+	}
 	switch {
 	case !journaled:
 		return errors.Join(errors.New("parent changed after isolated review; publication not started"), cause)
@@ -389,7 +392,9 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		return finish(landed, intent.SourceHead, intent.PublicationHead, err)
 	}
 	if force {
-		return mergeOutcome{}, errors.New("--force cannot bypass isolated publication policy")
+		return mergeOutcome{}, ui.CommandFailed("--force cannot bypass an isolated fork's checks",
+			"Coop reads every commit of an isolated fork before it merges, and no option skips that.",
+			[2]string{"", "Run the merge without --force."})
 	}
 	candidate, err := prepareIsolatedCandidate(repo, name, identity, forkspace.WantsSigning())
 	if err != nil {
@@ -454,7 +459,7 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	// Refuse stale approval before creating any parent publication effect.
 	parent, err := captureIsolatedParent(repo)
 	if err != nil || !sameIsolatedParent(parent, candidate.parent) {
-		return mergeOutcome{}, errors.Join(errors.New("parent changed after isolated review; publication not started"), err)
+		return mergeOutcome{}, parentChangedRefusal(false, err)
 	}
 	if err := candidate.validateSource(repo); err != nil {
 		return mergeOutcome{}, err

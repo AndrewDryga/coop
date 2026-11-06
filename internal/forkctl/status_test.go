@@ -108,7 +108,7 @@ func TestForkLsNamesTheSystemThatStartedALoop(t *testing.T) {
 	const wantStatus = `{"state":"elsewhere","tasks":{"todo":0,"in_progress":0,"done":0,"blocked":0},` +
 		`"active_sandboxes":0,"parked_sandboxes":0,"cleanup_sandboxes":0,"unverified_sandboxes":%d,` +
 		`"detached_running":false,"detached_system":%q,"workspace_reserved":false,"candidate":false,` +
-		`"landing":false,"cleanup_pending":false,"legacy_generation":false%s}`
+		`"landing":false,"cleanup_pending":false,"legacy_generation":false,"isolated":false%s}`
 	for _, tc := range []struct {
 		name string
 		pid  int

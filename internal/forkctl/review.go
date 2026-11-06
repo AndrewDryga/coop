@@ -271,7 +271,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 
 	switch {
 	case open: // open the fork in your IDE; review via its SCM panel
-		return c.openInEditor(ws)
+		return c.openInEditor(ws, name)
 	case tool: // hand the diff to your GLOBAL git difftool (diff.tool), forced via -c so a
 		// repo-poisoned diff.tool / difftool.<tool>.cmd can't run on `coop fork review --tool`.
 		if t := gitGlobalOut("diff.tool"); t != "" {
@@ -359,15 +359,16 @@ func resolveEditor(cfgEditor string) string {
 	return detectEditor()
 }
 
-// openInEditor opens the fork directory in an editor so you can review via its SCM
-// panel. See resolveEditor for how the editor is chosen.
-func (c *Control) openInEditor(ws string) (int, error) {
+// openInEditor opens the folder ws of fork in an editor so you can review via its SCM panel. ws is
+// the fork's own folder, or the private copy of an isolated fork's committed files: the fork is
+// named either way, never the copy's folder. See resolveEditor for how the editor is chosen.
+func (c *Control) openInEditor(ws, fork string) (int, error) {
 	editor := resolveEditor(c.cfg.Editor)
 	if editor == "" {
 		return 1, errors.New("no editor found — set $COOP_EDITOR, git config core.editor, or $VISUAL/$EDITOR (or install code/cursor/zed/idea)")
 	}
 	parts := append(strings.Fields(editor), ws)
-	ui.Note("Opening fork %s in %s", filepath.Base(ws), filepath.Base(parts[0]))
+	ui.Note("Opening fork %s in %s", fork, filepath.Base(parts[0]))
 	ui.Note("  %s", ws)
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin

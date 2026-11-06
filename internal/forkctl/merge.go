@@ -739,11 +739,15 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 		}
 	}
 	warns, scanErr := PolicyScan(repo, ref)
+	reviewIt := [2]string{"Review it:", "coop fork review " + name}
 	if scanErr != nil && !force {
-		return mergeOutcome{}, fmt.Errorf("%s: Coop could not check the fork's changes against the merge policy, so it did not merge them:\n%s\n(use --force to merge without the check)", name, indent(scanErr.Error()))
+		return mergeOutcome{}, ui.CommandFailed(fmt.Sprintf("Coop could not check fork %s", name),
+			"Coop could not check the fork's changes against the merge policy, so it did not merge them.\n"+scanErr.Error(),
+			reviewIt, [2]string{"Merge without the check:", "coop fork merge " + name + " --force"})
 	}
 	if len(warns) > 0 && !force {
-		return mergeOutcome{}, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
+		return mergeOutcome{}, ui.CommandFailed(fmt.Sprintf("Fork %s changes files Coop flags as risky", name),
+			strings.Join(warns, "\n"), reviewIt, [2]string{"Merge anyway:", "coop fork merge " + name + " --force"})
 	}
 	// A rebase refuses over uncommitted changes to tracked files. Say so before "Rebasing onto", which
 	// would read as a rebase that failed, and before the land journal or the rebase touches anything.

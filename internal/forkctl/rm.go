@@ -573,8 +573,8 @@ func (c *Control) ForkOpenEditor(args []string) (int, error) {
 	if _, isolated, err := isolatedForkIdentity(repo, name); err != nil {
 		return 1, err
 	} else if isolated {
-		ui.Note("Opening the untrusted execution workspace on the host may run its Git/editor metadata.")
-		ui.Note("For committed custody review, use coop fork review %s --open instead.", name)
+		ui.Note("This is the agent's own workspace. Opening it on your computer can run code from its Git and editor settings.")
+		ui.Note("To read the committed files in a private copy instead, run coop fork review %s --open.", name)
 	}
-	return c.openInEditor(ws)
+	return c.openInEditor(ws, name)
 }

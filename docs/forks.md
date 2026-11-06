@@ -100,7 +100,8 @@ fork.
 
 Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP. You
 can't convert an existing ordinary fork, so you must create a new isolated one. Ordinary forks and
-runs that write directly to your checkout don't get this isolation.
+runs that write directly to your checkout don't get this isolation. `coop fork ls` marks an isolated
+fork with `Isolated: yes`, and `coop fork ls --json` has an `isolated` field for every fork.
 
 ### What an isolated fork copies
 
