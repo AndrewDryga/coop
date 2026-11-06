@@ -142,8 +142,12 @@ func serviceApprovalScope(workspace, file string, data []byte, create bool) (can
 	if err != nil {
 		return "", "", "", "", err
 	}
-	sum := sha256.Sum256([]byte("v5\x00" + anchor + "\x00" + rel + "\x00" + composeDigest(data)))
-	return canonical, rel, anchor, hex.EncodeToString(sum[:]), nil
+	return canonical, rel, anchor, serviceApprovalKey(anchor, rel, composeDigest(data)), nil
+}
+
+func serviceApprovalKey(anchor, file, digest string) string {
+	sum := sha256.Sum256([]byte("v5\x00" + anchor + "\x00" + file + "\x00" + digest))
+	return hex.EncodeToString(sum[:])
 }
 
 // ServiceSecretReview is what `coop up` puts in front of a human: the secret-looking files one

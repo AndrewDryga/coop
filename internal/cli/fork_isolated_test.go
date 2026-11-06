@@ -46,7 +46,7 @@ func TestIsolatedForkRefusesExistingOrdinaryBeforeLaunch(t *testing.T) {
 
 func TestRecoverForkBoundaryKeepsIsolatedAdmission(t *testing.T) {
 	repo := initRepo(t)
-	if err := setupForkBoundary(repo, "safe", true); err != nil {
+	if err := setupForkBoundary(nil, repo, "safe", true); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := forkspace.LockState(repo, "safe")
@@ -72,7 +72,7 @@ func TestRecoverForkBoundaryKeepsIsolatedAdmission(t *testing.T) {
 
 func TestIsolatedModeSurvivesMissingWorkspaceBeforeRecreation(t *testing.T) {
 	repo := initRepo(t)
-	if err := setupForkBoundary(repo, "safe", true); err != nil {
+	if err := setupForkBoundary(nil, repo, "safe", true); err != nil {
 		t.Fatal(err)
 	}
 	unlock, err := forkspace.LockState(repo, "safe")

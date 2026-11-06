@@ -1746,7 +1746,7 @@ func TestDetachedWorkerEarlyValidationFailureClearsItsRecord(t *testing.T) {
 			t.Fatalf("fork ls = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(listing, "perf · failed") || !strings.Contains(listing, `Could not load preset "vanish"`) {
+	if !strings.Contains(listing, "perf · stopped") || !strings.Contains(listing, `Could not load preset "vanish"`) {
 		t.Errorf("fork ls does not show the failed worker and preset reason:\n%s", listing)
 	}
 	jsonListing := captureStdout(t, func() {

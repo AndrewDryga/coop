@@ -150,6 +150,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [scaffold-config-reads-well](scaffold-config-reads-well.md) — scaffolded config leads every field with its comment and works as-is
 
 **Security**
+- [forks-snapshot-parent-approvals](forks-snapshot-parent-approvals.md) — creation-only snapshots preserve approved inputs with fresh fork identities; later parent grants never carry over
 - [case-exposure-has-persistent-approval](case-exposure-has-persistent-approval.md) — require explicit coop approve --case-exposure for mount-fallback file access without granting future paths or policy writes
 - [restricted-project-builds-are-explicit](restricted-project-builds-are-explicit.md) — only a person approves new project build files; restricted launches rebuild by themselves only the exact files already approved
 - [eval-oracles-outside-agent-authority](eval-oracles-outside-agent-authority.md) — hidden eval material stays outside mounts, Git history, images, caches and every candidate tool path

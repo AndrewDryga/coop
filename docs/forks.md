@@ -31,6 +31,15 @@ account too. You can also name a preset, as in `coop fork perf frontier`, and th
 the fork.
 
 A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.
+At creation, Coop also snapshots the parent's network, service and project-build approvals. They
+keep the same approved inputs and restrictions; changing the fork's rules, Compose file or build
+files still needs approval there. Later parent approvals do not update an existing fork. Coop can
+build a separate fork image from unchanged approved files without asking again. Approved external
+or explicitly named service volumes still refer to the same Docker volumes.
+
+Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
+approval withdrawn at a fork's path stays withdrawn even if you recreate that fork; run
+`coop approve` in the fork to grant access again.
 
 Point a fork at a task queue and it works the queue unattended:
 
@@ -40,6 +49,7 @@ coop fork api codex --loop -d   # loops the repo's task queue(s); -d detaches â€
 
 [The loop](loop.md) explains how iterations work. [Parallel forks](loop.md#parallel-forks) shows
 how to run several at once.
+A refused loop appears as stopped in `coop fork ls`, with the reason beneath it.
 
 ## Isolated-write forks
 

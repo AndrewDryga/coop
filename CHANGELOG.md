@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **New forks carry the parent's existing approvals.** Matching network rules, service permissions
+  and project build files need no repeat approval in each fork. Changed inputs still need approval
+  in the fork, and later parent approvals do not carry over. `coop fork ls` shows a refused loop as
+  stopped with its reason.
+
 - **Forks no longer wait for each other to start their services.** A fork's service start waited
   for every running box in the whole project, so parallel fork loops starved each other for hours.
   A fork starts its own Compose project from its own folder, so its start now waits only for boxes

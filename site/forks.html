@@ -140,12 +140,21 @@ coop fork rm perf        # or discard it (confirms first; inspect task/Git impac
 <code>coop fork perf codex</code>, or a target such as <code>codex:gpt-6-astra@work</code> to choose the model and
 account too. You can also name a preset, as in <code>coop fork perf frontier</code>, and the preset&#39;s lead runs
 the fork.</p>
-<p>A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.</p>
+<p>A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.
+At creation, Coop also snapshots the parent&#39;s network, service and project-build approvals. They
+keep the same approved inputs and restrictions; changing the fork&#39;s rules, Compose file or build
+files still needs approval there. Later parent approvals do not update an existing fork. Coop can
+build a separate fork image from unchanged approved files without asking again. Approved external
+or explicitly named service volumes still refer to the same Docker volumes.</p>
+<p>Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
+approval withdrawn at a fork&#39;s path stays withdrawn even if you recreate that fork; run
+<code>coop approve</code> in the fork to grant access again.</p>
 <p>Point a fork at a task queue and it works the queue unattended:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork api codex --loop -d   # loops the repo&#39;s task queue(s); -d detaches — tail with coop fork logs api -f
 </code></pre></div>
 <p><a href="loop.html">The loop</a> explains how iterations work. <a href="loop.html#parallel-forks">Parallel forks</a> shows
-how to run several at once.</p>
+how to run several at once.
+A refused loop appears as stopped in <code>coop fork ls</code>, with the reason beneath it.</p>
 </section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Isolated-write forks code example" tabindex="0"><code class="language-bash">coop fork research codex --isolated
 coop fork research                 # the host remembers isolation

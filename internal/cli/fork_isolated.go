@@ -7,10 +7,23 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 )
 
-func setupForkBoundary(repo, name string, isolated bool) error {
+func setupForkBoundary(cfg *config.Config, repo, name string, isolated bool) error {
+	if err := cloneForkBoundary(repo, name, isolated); err != nil {
+		return err
+	}
+	ws := forkspace.Workspace(repo, name)
+	if err := box.SnapshotForkApprovals(context.Background(), cfg, repo, ws); err != nil {
+		return errors.Join(fmt.Errorf("copy approvals into new fork: %w", err), os.RemoveAll(ws))
+	}
+	return nil
+}
+
+func cloneForkBoundary(repo, name string, isolated bool) error {
 	if !isolated {
 		_, err := forkspace.Setup(repo, name)
 		return err

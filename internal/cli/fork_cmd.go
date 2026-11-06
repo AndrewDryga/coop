@@ -720,7 +720,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			}
 		}
 		printForkHeader("Creating fork", fa.name, ws, nil)
-		if err := setupForkBoundary(repo, fa.name, fa.isolated); err != nil {
+		if err := setupForkBoundary(a.cfg, repo, fa.name, fa.isolated); err != nil {
 			unlock()
 			return -1, err
 		}
@@ -747,7 +747,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}
 			printForkHeader("Creating fork", fa.name, ws, nil)
-			if err := setupForkBoundary(repo, fa.name, fa.isolated); err != nil {
+			if err := setupForkBoundary(a.cfg, repo, fa.name, fa.isolated); err != nil {
 				unlock()
 				return -1, err
 			}

@@ -221,6 +221,8 @@ func stateWords(state, system string) string {
 		return "merging"
 	case "ready":
 		return "ready to merge"
+	case "failed":
+		return "stopped"
 	case "legacy":
 		return "older fork format"
 	case "cleanup":

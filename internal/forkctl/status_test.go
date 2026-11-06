@@ -65,7 +65,7 @@ func TestStateWordsCoversEveryState(t *testing.T) {
 		"parked":    "waiting",
 		"landing":   "merging",
 		"ready":     "ready to merge",
-		"failed":    "failed",
+		"failed":    "stopped",
 		"legacy":    "older fork format",
 		"cleanup":   "cleanup needed",
 		"unknown":   "status unavailable",

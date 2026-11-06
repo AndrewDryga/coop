@@ -1,0 +1,172 @@
+package networkstate
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// SnapshotForkApprovals carries existing authority to a newly created checkout. The caller owns
+// the unpublished destination under its lifecycle lock. Resuming a fork must never call this:
+// absence is part of the snapshot, and later parent approvals belong only to the parent.
+func (s *Store) SnapshotForkApprovals(ctx context.Context, parent, fork, forkImage string) error {
+	if err := s.intactAuthority(); err != nil {
+		return err
+	}
+	parentID, parent, parentInfo, err := s.projectIdentity(parent)
+	if err != nil {
+		return err
+	}
+	forkID, fork, forkInfo, err := s.projectIdentity(fork)
+	if err != nil {
+		return err
+	}
+	if os.SameFile(parentInfo, forkInfo) {
+		return errors.New("approval snapshot requires a new fork directory")
+	}
+	if !safeRecordToken(forkImage, 256) || strings.Contains(forkImage, ":") {
+		return errors.New("approval snapshot requires the fork's project image name")
+	}
+	var approval *Approval
+	var withdrawn bool
+	var review string
+	err = s.lockRecord(ctx, "approval", parentID, func() error {
+		approval, err = s.approval(parentID)
+		if err != nil {
+			return err
+		}
+		if err := s.checkDirectory(approval, parent); err != nil {
+			return err
+		}
+		withdrawn, err = s.withdrawn(parentID)
+		if err != nil {
+			return err
+		}
+		// Build reviews publish by atomic rename. Copy that record, without waiting on a build
+		// that may take minutes; a later completed build is a later parent approval.
+		review, err = s.projectBuildReview(parent)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	// Release the source lock before publishing: the two IDs can share one flock stripe.
+	return s.lockRecord(ctx, "approval", forkID, func() error {
+		return s.snapshotForkApprovals(fork, forkID, forkImage, approval, withdrawn, review)
+	})
+}
+
+func (s *Store) snapshotForkApprovals(fork, id, image string, approval *Approval, withdrawn bool, review string) (err error) {
+	if _, err := os.Lstat(filepath.Join(fork, ProjectApprovalMarker)); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(errors.New("new fork already has a network approval marker"), err)
+	}
+	prior, err := s.approval(id)
+	if err != nil {
+		return err
+	}
+	// A withdrawal at the destination is still a host refusal, even when the name is reused.
+	if withdrawn {
+		if err := s.recordWithdrawal(id); err != nil {
+			return err
+		}
+		approval = nil
+	}
+	// Reusing a fork name must not reuse the previous checkout's path-keyed build permission.
+	// Its network anchor is stale too: this newly cloned directory has no public half.
+	if err := s.retireProjectAnchor(fork, prior); err != nil {
+		return err
+	}
+	for _, name := range []string{approvalRecord(id), projectBuildReviewName(projectBuildReviewID(fork))} {
+		if err := s.removeRecord(name); err != nil {
+			return err
+		}
+	}
+	if err := s.removeForkImageApprovals(image); err != nil {
+		return err
+	}
+	var copied *Approval
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, s.removeRecord(approvalRecord(id)),
+				s.removeRecord(projectBuildReviewName(projectBuildReviewID(fork))), s.retireProjectAnchor(fork, copied))
+		}
+	}()
+	if approval != nil {
+		anchor, err := s.ensureProjectAnchor(fork, id, true, nil)
+		if err != nil {
+			return err
+		}
+		copied = copyApproval(approval)
+		copied.ProjectID, copied.ProjectAnchor = id, anchor
+		data, err := json.Marshal(copied)
+		if err != nil {
+			return err
+		}
+		if err := s.publish(approvalRecord(id), data, false); err != nil {
+			return fmt.Errorf("snapshot fork network approval: %w", err)
+		}
+	}
+	if review != "" {
+		return s.RecordProjectBuildReview(fork, review)
+	}
+	return nil
+}
+
+// A previous fork at this path may have approved images of its own. They are usable without the
+// reviewed-files record, so a new fork must retire those grants too. This removes no Docker image.
+func (s *Store) removeForkImageApprovals(image string) error {
+	dir, err := s.root.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dir.ReadDir(-1)
+	_ = dir.Close()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "projectbuild-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := s.read(entry.Name())
+		if err != nil {
+			return err
+		}
+		var record projectBuildRecord
+		if json.Unmarshal(data, &record) != nil || !strings.HasPrefix(record.Tag, image+":") {
+			continue
+		}
+		id, err := s.projectBuildID(record.Tag)
+		if err != nil || entry.Name() != projectBuildRecordName(id) {
+			continue
+		}
+		if err := s.removeRecord(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// The reviewed-files digest omits the project path. The image-output record does not: its tag is
+// part of the inputs digest. A fork therefore rebuilds only these already-reviewed files through
+// the ordinary automatic-build path, producing its own image proof.
+func (s *Store) projectBuildReview(project string) (string, error) {
+	id := projectBuildReviewID(project)
+	data, err := s.read(projectBuildReviewName(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var record projectBuildReviewRecord
+	if json.Unmarshal(data, &record) != nil || record.Version != 1 || record.ID != id ||
+		record.Project != project || !lowerHex(record.Review, 64) {
+		return "", errors.New("parent project build review is invalid")
+	}
+	return record.Review, nil
+}
