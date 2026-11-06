@@ -644,7 +644,12 @@ func composeFailure(what string, err error, stderr string) error {
 }
 
 func filteredServiceAddresses(network runtime.DockerNetwork, services []string) (netip.Prefix, map[string]netip.Addr, error) {
-	if network.Name == "" || !network.Internal {
+	// The lookup leaves the name empty when no network has it: say that, since "not internal" sent a
+	// reader looking for a wrong setting on a network that was gone.
+	if network.Name == "" {
+		return netip.Prefix{}, nil, errors.New("filtered service network is missing")
+	}
+	if !network.Internal {
 		return netip.Prefix{}, nil, errors.New("filtered service network is not internal")
 	}
 	for _, subnet := range network.Subnets {

@@ -86,6 +86,13 @@
   one whose finding comes back unchanged after a fix that added no commit, waits for your decision
   with the finding recorded. A fork run that fails after parking a task for a decision now leaves
   it parked instead of reopening it.
+
+- **Forks started at the same moment no longer break each other's services.** Every start removes
+  the Coop networks no container uses, and it missed containers that were created but not started
+  yet. So one fork's start could remove the services network another fork had just prepared, and
+  that fork failed with "filtered service network is not internal" or "Docker container mutation
+  failed; outcome unknown". Containers that have not started yet now count, and a services network
+  that is gone is now reported as missing.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the

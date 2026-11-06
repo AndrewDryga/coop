@@ -677,13 +677,32 @@ func (r Runtime) NetworkLabel(ctx context.Context, id, key string) (string, erro
 }
 
 // ContainerIDsOnNetwork lists every container attached to the network, stopped ones included —
-// a stopped compose service still reconnects to it on the next start.
+// a stopped compose service still reconnects to it on the next start — and created ones that never
+// started. Docker gives a container its network's id only when it starts, so until then only the
+// network's name finds it. By id alone, a sweep removed the network a sibling fork's launch had
+// just prepared with `compose up --no-start`, and that launch failed (2026-11-05).
 func (r Runtime) ContainerIDsOnNetwork(ctx context.Context, id string) ([]string, error) {
+	out, err := r.serviceNetworkOutput(ctx, "network", "inspect", "-f", "{{.Name}}", id)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("run: %s network inspect %s: %w", r.Name, id, commandOutputError(err, out))
+	}
+	// Two filters on one key match either: the id finds a container that ran, the name one that did not.
+	filters := []string{"network=" + id}
+	if name := strings.TrimSpace(string(out)); name != "" {
+		filters = append(filters, "network="+name)
+	}
 	if r.composeEndpoint != "" {
-		out, err := r.serviceNetworkOutput(ctx, "ps", "-q", "-a", "--filter", "network="+id)
+		args := []string{"ps", "-q", "-a"}
+		for _, filter := range filters {
+			args = append(args, "--filter", filter)
+		}
+		out, err := r.serviceNetworkOutput(ctx, args...)
 		return strings.Fields(string(out)), err
 	}
-	return r.containerIDsContext(ctx, true, "network="+id)
+	return r.containerIDsContext(ctx, true, filters...)
 }
 
 // RemoveNetwork removes one network. The runtime refuses while a container is attached; callers

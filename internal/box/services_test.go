@@ -150,6 +150,7 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 		" --filter label=com.docker.compose.project.working_dir=" + filepath.Join(repo, ".agent") + "\n" +
 		"rm -f owned-sidecar\n" +
 		"network ls -q --filter label=com.docker.compose.project=" + ComposeProject(repo) + "\n" +
+		"network inspect -f {{.Name}} net-1\n" +
 		"ps -q -a --filter network=net-1\n" +
 		"network rm net-1\n"
 	if got := string(data); got != want {
@@ -697,8 +698,9 @@ func TestDownServicesCleansOnlyUnusedProjectNetworks(t *testing.T) {
 				t.Fatalf("missing exact-project network inventory %q: %s", want, data)
 			}
 			if tc.failure == "" {
-				want := []string{want, "ps -q -a --filter network=unused", "network rm unused",
-					"ps -q -a --filter network=running", "ps -q -a --filter network=stopped"}
+				want := []string{want, "network inspect -f {{.Name}} unused", "ps -q -a --filter network=unused", "network rm unused",
+					"network inspect -f {{.Name}} running", "ps -q -a --filter network=running",
+					"network inspect -f {{.Name}} stopped", "ps -q -a --filter network=stopped"}
 				if !slices.Equal(calls[1:], want) {
 					t.Fatalf("network cleanup = %q, want %q", calls[1:], want)
 				}

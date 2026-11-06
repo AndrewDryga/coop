@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -248,6 +251,74 @@ volumes:
 	}
 	if got := composeExec(t, rt, repo, source, "", "echo dev"); got != "dev" {
 		t.Fatalf("development project after the sweep = %q", got)
+	}
+}
+
+// Two forks start their services at once, as two `coop fork <name> -d` started together do. Each
+// prepares its services with `compose up --no-start`, as a filtered start does, then sweeps unused
+// networks, as every start does. Each then reads its own network, as a filtered start does to address
+// its services, and starts them. Docker files a created container under its network's name until it
+// starts, so a sweep that counted a network's users by id took the sibling's prepared network, and that
+// sibling failed (2026-11-05). Compose's own `up` makes a missing network again, so only the read
+// between the steps shows the loss. Each sweeps only its sibling's project here, by the same code as
+// the host-wide sweep, so the test leaves other projects' networks alone.
+func TestRuntimeComposeTwoWorkspacesStartTheirServicesTogether(t *testing.T) {
+	rt, err := runtime.Detect(os.Getenv("COOP_RUNTIME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type workspace struct {
+		repo string
+		args []string
+	}
+	var workspaces []workspace
+	for range 2 {
+		repo, source := writeCompose(t, `services:
+  probe:
+    image: alpine:3.24.2
+    command: ["sh", "-c", "sleep 300"]
+`)
+		args, cleanup, _, err := snapshotComposeArgs(repo, source, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(cleanup)
+		t.Cleanup(func() { _ = StopServicesForOwner(context.Background(), rt, repo, repo, "", true) })
+		workspaces = append(workspaces, workspace{repo, args})
+	}
+	var prepared, swept sync.WaitGroup
+	prepared.Add(len(workspaces))
+	swept.Add(len(workspaces))
+	results := make(chan error, len(workspaces))
+	for i, w := range workspaces {
+		sibling := ComposeProject(workspaces[1-i].repo)
+		network := ComposeProject(w.repo) + "_default"
+		go func() {
+			var stderr bytes.Buffer
+			err := runCompose(rt, io.Discard, &stderr, "up --no-start", append(slices.Clone(w.args), "up", "--no-start"))
+			prepared.Done()
+			if err == nil {
+				// Both are prepared, and neither has started, before either sweeps.
+				prepared.Wait()
+				_, err = RemoveProjectNetworks(t.Context(), rt, sibling)
+			}
+			swept.Done()
+			if err != nil {
+				results <- fmt.Errorf("prepare %s: %w: %s", w.repo, err, stderr.String())
+				return
+			}
+			swept.Wait()
+			if code, err := rt.Run(nil, io.Discard, io.Discard, "network", "inspect", network); err != nil || code != 0 {
+				results <- fmt.Errorf("a sibling's sweep removed the prepared network %s: %d, %v", network, code, err)
+				return
+			}
+			results <- runCompose(rt, io.Discard, &stderr, "up", append(slices.Clone(w.args), "up", "-d", "--wait"))
+		}()
+	}
+	for range workspaces {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
 	}
 }
 

@@ -784,6 +784,18 @@ func TestComposeFailureNamesComposesOwnReason(t *testing.T) {
 	}
 }
 
+// A network that is gone is called missing: "not internal" sent a supervisor looking for a wrong setting
+// on a network another start's sweep had removed (2026-11-05). One that exists but is not internal
+// still says so.
+func TestAMissingFilteredServiceNetworkIsCalledMissing(t *testing.T) {
+	if _, _, err := filteredServiceAddresses(runtime.DockerNetwork{}, []string{"db"}); err == nil || err.Error() != "filtered service network is missing" {
+		t.Fatalf("a missing network = %v", err)
+	}
+	if _, _, err := filteredServiceAddresses(runtime.DockerNetwork{Name: "app_filtered"}, []string{"db"}); err == nil || err.Error() != "filtered service network is not internal" {
+		t.Fatalf("a network that is not internal = %v", err)
+	}
+}
+
 // With no Compose file there is nothing to draft: the network COOP_SERVICES_NET names is the whole
 // problem, so the refusal has no rules, and no approval could settle it.
 func TestServicesNetRefusalHasNoRulesToDraft(t *testing.T) {

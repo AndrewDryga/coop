@@ -44,6 +44,7 @@ ps)
 	for f in "$COOP_TEST_BOXES"/*; do
 		[ -e "$f" ] || continue
 		match=1
+		network=
 		for filter in "$@"; do
 			case "$filter" in
 			label=*=*)
@@ -54,10 +55,13 @@ ps)
 				grep -qF "\"${filter#label=}\":" "$f" || match=0
 				;;
 			network=*)
-				grep -qF "\"network\":\"${filter#network=}\"" "$f" || match=0
+				# As Docker does, network filters match any one of them.
+				[ -n "$network" ] || network=0
+				grep -qF "\"network\":\"${filter#network=}\"" "$f" && network=1
 				;;
 			esac
 		done
+		[ "$network" = 0 ] && match=0
 		[ "$match" = 1 ] || continue
 		if [ -z "$format" ]; then
 			printf '%s\n' "$(basename "$f")"
@@ -79,8 +83,9 @@ rm)
 	for id in "$@"; do rm -f "$COOP_TEST_BOXES/$id"; done
 	;;
 network)
-	# One file per network under $COOP_TEST_NETWORKS/<id>: its labels JSON. A container is attached
-	# to a network when its labels carry "network":"<id>" (see the ps filter above).
+	# One file per network under $COOP_TEST_NETWORKS/<id>: its labels JSON, its name under "name". A
+	# container is attached to a network when its labels carry "network":"<id>", as one that ran, or
+	# "network":"<name>", as one only created (see the ps filter above).
 	case "$2" in
 	ls)
 		shift 2
@@ -103,6 +108,7 @@ network)
 		;;
 	inspect)
 		key=$(printf '%s' "$4" | sed 's/.*"\(.*\)".*/\1/')
+		[ "$4" = '{{.Name}}' ] && key=name
 		sed -n "s/.*\"$key\":\"\([^\"]*\)\".*/\1/p" "$COOP_TEST_NETWORKS/$5"
 		;;
 	rm)
@@ -727,6 +733,25 @@ func TestReapOrphanNetworksRemovesOnlyUnusedCoopNetworks(t *testing.T) {
 	}
 	if strings.Contains(events, "network rm used") {
 		t.Errorf("sweep removed a network a stopped container still uses:\n%s", events)
+	}
+}
+
+// Two forks start together: one prepares its services with `compose up --no-start`, whose created
+// containers Docker files under the network's name only, and the other's start sweeps unused networks
+// before the first starts them. The sweep keeps the prepared network; it used to take it, and the first
+// fork failed with "filtered service network is not internal" (2026-11-05).
+func TestReapOrphanNetworksKeepsANetworkWhoseContainersAreOnlyCreated(t *testing.T) {
+	rt, boxes := fakeRuntime(t)
+	addFakeNetwork(t, "prepared", "coop-mcp-a922f3c5-run-c4d5e6f7_filtered", "coop-mcp-a922f3c5-run-c4d5e6f7")
+	addFakeNetwork(t, "unused", "coop-portal-b1c2d3e4_default", "coop-portal-b1c2d3e4")
+	addFakeBox(t, boxes, "created-db", map[string]string{"network": "coop-mcp-a922f3c5-run-c4d5e6f7_filtered"})
+
+	n, err := ReapOrphanNetworks(context.Background(), rt)
+	if err != nil || n != 1 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
+	}
+	if got, want := remainingFakeNetworks(t), []string{"prepared"}; !slices.Equal(got, want) {
+		t.Fatalf("remaining networks = %v, want %v", got, want)
 	}
 }
 

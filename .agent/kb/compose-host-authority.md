@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/service_launch_wait.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
+sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/service_launch_wait.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
 updated: 2026-11-05
 ---
 
@@ -148,9 +148,16 @@ are private but stable across that run's iterations. `StopSessionServices` remov
 ownership label AND the project's unused networks (`RemoveProjectNetworks`); `ReapOrphanNetworks`
 (hooked into the orphan box sweep, once per process) removes unused networks of any project named
 like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" counts stopped
-containers as users (`ps -a --filter network=`), because they reconnect on the next start.
+containers as users (`ps -a --filter network=`), because they reconnect on the next start, and
+created ones that never started (`compose up --no-start`, as a filtered or protected start
+prepares): Docker gives a container its network's id only when it starts, so
+`ContainerIDsOnNetwork` filters by the network's name as well (two filters on one key match either).
+By id alone, one fork's start removed a sibling's just-prepared network (measured on Docker 29.8 /
+Compose 5.5, 2026-11-05; `TestRuntimeComposeTwoWorkspacesStartTheirServicesTogether`).
 
 ## Changelog
+- 2026-11-05: network sweeps count created, never-started containers as users, by network name;
+  the id alone missed them and a fork's start removed the network a sibling had just prepared.
 - 2026-11-05: the project lock is its own file (`.project-launch.lock`), so the main checkout's
   workspace lock no longer doubles as it and the main checkout's `coop up` stops waiting for fork
   loops. Swept every lock caller: approval transitions take both locks, the first service anchor
