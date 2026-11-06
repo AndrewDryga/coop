@@ -338,10 +338,12 @@ func (a *app) cmdNetAccess() (int, error) {
 // this project's network request is actually pending — the same read-only check
 // every launch makes, so a fresh or unchanged project costs zero lines. It
 // needs no Docker and no store: a host that never ran a filtered box has
-// nothing to compare against and stays silent.
+// nothing to compare against and stays silent. Like init's other closing blocks,
+// whatever it prints starts after a blank line.
 func (a *app) netPendingNotice(repo string) {
 	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	if err != nil {
+		ui.Note("")
 		// The error can quote project.yaml or the Compose file, and a box can write both, so it is
 		// shown escaped. yaml lists one problem a line: each keeps a line of its own, escaped by
 		// itself, so a newline inside a key a box chose cannot start a line of its own.
@@ -360,6 +362,7 @@ func (a *app) netPendingNotice(repo string) {
 	if access.Pending == nil {
 		return
 	}
+	ui.Note("")
 	ui.Warn("%s", netPendingHeadline)
 	ui.Note("  %s", access.Pending.Sentence())
 	ui.Note("  %s", netPendingReview)

@@ -22,6 +22,7 @@ Add Go to the box
   → echo "golang 1.26.5" >> .tool-versions
   → coop init --stack asdf
   → coop build
+  Until then, agents' commits skip the Go format check.
 
 Start postgres and redis
   → coop up
@@ -32,6 +33,7 @@ Verify the sandbox
 Start working
   → coop tasks add "Describe your first task"
   → coop loop codex
+
 ⚠ New runs need your approval
   .agent/project.yaml requests changes to network access.
   Review changes: coop approve

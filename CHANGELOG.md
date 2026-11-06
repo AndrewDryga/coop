@@ -31,6 +31,14 @@
   task in a queue the fork was given with `--tasks`; before, it said "No task matching" unless you
   passed the same `--tasks`.
 
+- **`coop init` reads the same from start to end, and an unknown `--stack` is a usage error.**
+  `coop init --stack nix` exited 1; it now exits 2 and says "Choose asdf.", as a bad `--agents`
+  value does. The approval warning at the end of init and the `--services` refusal without a
+  terminal now start after a blank line. The service chooser names an unknown answer the way the
+  language chooser does, and the question it asks again keeps its "(space-separated, or press Enter
+  for none)" hint. The step that adds Go or another language to the box now says agents' commits
+  skip its format check until then, and a monorepo's first run names its subprojects, each with its
+  own task queue, instead of saying "one task queue".
 - **Saying no to Git in `coop init` stops it before it writes anything.** At a terminal in a
   folder outside Git, any answer but yes to "Initialize Git here?" went on to the language and
   service questions, wrote the project files into the plain folder, and a later `coop init` there

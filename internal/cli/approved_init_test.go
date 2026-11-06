@@ -525,23 +525,23 @@ func TestApprovedServiceChooser(t *testing.T) {
 			chosen = promptExactTokens(bufio.NewScanner(strings.NewReader("mysql\nredis\n")), []string{
 				"Choose services to run alongside your agents.",
 				"Existing services and their data will be kept.",
-			}, scaffold.ComposeServices, "Services", unknownServiceBlock)
+			}, scaffold.ComposeServices, "Services", "service")
 		})
 		if len(chosen) != 1 || chosen[0] != "redis" {
 			t.Errorf("chooser = %v, want the retry's answer [redis]", chosen)
 		}
 		for _, want := range []string{
 			"  postgres\n  redis\n",
-			"Services (space-separated, or press Enter for none): ",
-			"✗ Unknown service \"mysql\"\n\n      Choose from: postgres, redis\n",
-			"\nServices: ",
+			// The language prompt's wording, quotes, period and indent.
+			"\n✗ Unknown service “mysql”.\n  Choose from: postgres, redis\n",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("chooser output missing %q:\n%s", want, out)
 			}
 		}
-		if strings.Contains(out, "mysql\n\nServices:") {
-			t.Error("the rejected answer was accepted into the menu")
+		// The question asked again is the same one, hint included.
+		if n := strings.Count(out, "\nServices (space-separated, or press Enter for none): "); n != 2 {
+			t.Errorf("the question with its hint was asked %d times, want 2:\n%s", n, out)
 		}
 	})
 
@@ -609,7 +609,8 @@ func TestApprovedServiceChooser(t *testing.T) {
 		}
 	})
 
-	// Nobody can answer a chooser without a terminal, so it names the explicit form instead.
+	// Nobody can answer a chooser without a terminal, so it names the explicit form instead, on a
+	// project init set up and on one it has not, where it writes nothing.
 	t.Run("13r-services-needs-a-terminal", func(t *testing.T) {
 		repo := initializedProject(t)
 		a, _ := initApp(t, repo)
@@ -619,6 +620,25 @@ func TestApprovedServiceChooser(t *testing.T) {
 			t.Errorf("a chooser without a terminal exited %d, want 2", code)
 		}
 		assertApprovedOutput(t, "13r-services-needs-a-terminal", out)
+	})
+	t.Run("13r-services-needs-a-terminal on a new project", func(t *testing.T) {
+		hermeticGit(t)
+		repo := t.TempDir()
+		gitInit(t, repo)
+		before, err := os.ReadDir(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, _ := initApp(t, repo)
+		var code int
+		out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services"})) })
+		if code != 2 {
+			t.Errorf("a chooser without a terminal exited %d, want 2", code)
+		}
+		assertApprovedOutput(t, "13r-services-needs-a-terminal", out)
+		if after, err := os.ReadDir(repo); err != nil || len(after) != len(before) {
+			t.Errorf("a refused chooser wrote into the project: %v, %v", after, err)
+		}
 	})
 
 	// A service name the project already uses for something else is the project's. Coop refuses
@@ -746,14 +766,18 @@ func TestSettledProjectIgnoresAmbientHooks(t *testing.T) {
 	}
 }
 
-// An unknown --stack names the choices that work; it never suggests running the same value again.
+// An unknown --stack is a bad argument, refused like a bad --agents value: exit 2, with the choice
+// that works. It never suggests running the same value again.
 func TestApprovedInitUnknownStack(t *testing.T) {
 	repo := t.TempDir()
 	a, normalize := initApp(t, repo)
 	var code int
 	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--stack", "node"})) })
-	if code != 1 {
-		t.Errorf("an unknown stack exited %d, want 1", code)
+	if code != 2 {
+		t.Errorf("an unknown stack exited %d, want 2", code)
 	}
 	assertApprovedOutput(t, "13u-stack-unknown", normalize(out))
+	if entries, err := os.ReadDir(repo); err != nil || len(entries) != 0 {
+		t.Errorf("a refused --stack wrote into the folder: %v, %v", entries, err)
+	}
 }

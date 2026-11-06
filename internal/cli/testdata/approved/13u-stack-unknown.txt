@@ -1,7 +1,7 @@
 
-✗ Could not use --stack node
+✗ Invalid value "node" for "--stack" in "coop init"
 
-      Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.
+      Choose asdf.
 
-  Pin the versions in .tool-versions and run coop init, or run coop init --stack asdf.
-  No files were changed.
+  Example: coop init --stack asdf
+  Help:    coop help init

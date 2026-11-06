@@ -57,11 +57,11 @@ func TestPromptExactTokens(t *testing.T) {
 	if !slices.Equal(langs, []string{"go", "rust"}) {
 		t.Errorf("re-prompt answer = %v, want [go rust]", langs)
 	}
-	if !strings.Contains(out, "Unknown language “rustfmt”") || !strings.Contains(out, "Choose from: go, terraform, elixir, rust") {
+	if !strings.Contains(out, "\n✗ Unknown language “rustfmt”.\n  Choose from: go, terraform, elixir, rust\n") {
 		t.Errorf("an unknown token was not named with its choices:\n%s", out)
 	}
-	if strings.Count(out, "Languages") < 2 {
-		t.Errorf("the question did not repeat after an unknown token:\n%s", out)
+	if n := strings.Count(out, "\nLanguages (space-separated, or press Enter for none): "); n != 2 {
+		t.Errorf("the question with its hint was asked %d times, want 2:\n%s", n, out)
 	}
 	// Blank means none. So does a closed stdin — a prompt with nothing left to read stops asking
 	// instead of spinning on its own error.
@@ -514,7 +514,8 @@ func TestInitReportsAPendingNetworkRequestOnlyWhenThereIsOne(t *testing.T) {
 	if err := os.WriteFile(project, []byte("box:\n  egress: filtered\n  egress_rules:\n    - to: {domain: docs.example.com}\n      protocol: tls\n      ports: [443]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want := "⚠ " + netPendingHeadline + "\n  .agent/project.yaml requests changes to network access.\n  " + netPendingReview + "\n"
+	// Set off by a blank line, like init's other closing blocks.
+	want := "\n\n⚠ " + netPendingHeadline + "\n  .agent/project.yaml requests changes to network access.\n  " + netPendingReview + "\n"
 	if out := initOutput(); !strings.HasSuffix(out, want) {
 		t.Errorf("a pending request did not end init with the approval notice:\n%s\nwant to end with:\n%s", out, want)
 	}
@@ -787,6 +788,42 @@ func TestInitEscapesNamesABoxChose(t *testing.T) {
 	}
 }
 
+// A monorepo's first run names the subprojects it found, each with its own task queue, instead of
+// claiming the one queue a single project has. A box can name the folders, so they are escaped.
+func TestInitNamesTheSubprojectsItFound(t *testing.T) {
+	for _, tc := range []struct {
+		members []string
+		want    string
+	}{
+		{[]string{"web", "api", "deep/nested"}, "\n  Subprojects, each with its own task queue: api, deep/nested, web\n"},
+		{[]string{"api", "evil\x1b[2J\nfake"}, "\n  Subprojects, each with its own task queue: api, evil\\u001B[2J\\u000Afake\n"},
+	} {
+		t.Run(tc.members[0], func(t *testing.T) {
+			hermeticGit(t)
+			repo := t.TempDir()
+			gitInit(t, repo)
+			for _, member := range tc.members {
+				if err := os.MkdirAll(filepath.Join(repo, filepath.FromSlash(member), ".agent"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, _ := initApp(t, repo)
+			signIn(t, a, "codex")
+			var code int
+			out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
+			if code != 0 {
+				t.Fatalf("cmdInit = %d:\n%s", code, out)
+			}
+			if !strings.Contains(out, "✓ Coop project created\n  Codex has instructions, skills, and task queues.\n") || !strings.Contains(out, tc.want) {
+				t.Errorf("the result does not name the subprojects as %q:\n%s", tc.want, out)
+			}
+			if strings.Contains(out, "one task queue") || strings.Contains(out, "evil\x1b") {
+				t.Errorf("the result claims one queue or prints a name unescaped:\n%s", out)
+			}
+		})
+	}
+}
+
 // yaml.v3 lists one problem a line. An honest typo in project.yaml keeps its problem on a line of its
 // own under the network-access warning, not escaped onto the warning's line.
 func TestInitNetworkWarningKeepsEachYAMLProblemOnItsOwnLine(t *testing.T) {
@@ -797,8 +834,8 @@ func TestInitNetworkWarningKeepsEachYAMLProblemOnItsOwnLine(t *testing.T) {
 	}
 	a, _ := initApp(t, repo)
 	out := captureTerminal(t, func() { _ = reportExit(a.cmdInit(nil)) })
-	if !strings.Contains(out, "could not be checked: ") || !strings.Contains(out, "\n  line 1: unknown setting ") {
-		t.Errorf("the yaml problem is not on a line of its own:\n%s", out)
+	if !strings.Contains(out, "\n\n⚠ this project's network access could not be checked: ") || !strings.Contains(out, "\n  line 1: unknown setting ") {
+		t.Errorf("the yaml problem is not on a line of its own after a blank line:\n%s", out)
 	}
 	if strings.Contains(out, `\u000A`) {
 		t.Errorf("the warning escaped yaml's own line break:\n%s", out)

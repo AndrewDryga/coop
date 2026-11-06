@@ -18,7 +18,7 @@ Languages (space-separated, or press Enter for none): rustfmt
 ✗ Unknown language “rustfmt”.
   Choose from: go, terraform, elixir, rust
 
-Languages: rust
+Languages (space-separated, or press Enter for none): rust
 
 Coop can run services alongside your agents.
 Choose any this project needs, or press Enter for none.
@@ -41,6 +41,7 @@ Add Rust to the box
   → echo "rust <version>" >> .tool-versions
   → coop init --stack asdf
   → coop build
+  Until then, agents' commits skip the Rust format check.
 
 Verify the sandbox
   → coop doctor

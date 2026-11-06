@@ -185,7 +185,8 @@ func initDockerfile(repo, stack string) (content string, detected bool, err erro
 		detected = true
 	case "asdf":
 	default:
-		return "", false, UnknownStack{Stack: stack}
+		// coop init refuses any other --stack as a bad argument before it gets here.
+		return "", false, fmt.Errorf("unknown stack %q", stack)
 	}
 	toolVersionsPath := filepath.Join(repo, ".tool-versions")
 	if _, err := os.Stat(toolVersionsPath); err != nil {
@@ -199,15 +200,6 @@ func initDockerfile(repo, stack string) (content string, detected bool, err erro
 	}
 	content, err = asdfDockerfile(tools)
 	return content, detected, err
-}
-
-// UnknownStack is a --stack coop has no recipe for. Its fix is a different command, never the same
-// one again, so init draws it apart from a stack whose prerequisites are missing.
-type UnknownStack struct{ Stack string }
-
-func (e UnknownStack) Error() string {
-	return fmt.Sprintf("unknown --stack %q: coop provisions toolchains from .tool-versions now\n"+
-		"  pin versions there and run `coop init` (auto-detected), or `coop init --stack asdf`", e.Stack)
 }
 
 // CheckStack validates a --stack argument and its prerequisites without writing or printing

@@ -138,6 +138,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 			if e != nil {
 				return 2, ui.MissingOptionValue("--stack", "coop init", "coop init --stack asdf")
 			}
+			// asdf is the one stack Coop builds a box from. Any other value is a bad argument,
+			// refused like a bad --agents or --services value before init looks at the project.
+			if v != "" && v != "asdf" {
+				return 2, ui.InvalidOptionValue(v, "--stack", "coop init", "Choose asdf.", "coop init --stack asdf")
+			}
 			stack = v
 			i += n - 1
 			continue
@@ -207,11 +212,6 @@ func (a *app) cmdInit(args []string) (int, error) {
 			}
 			return 1, initFailed("Could not read .tool-versions", sentence(firstLine(err)),
 				"Make .tool-versions a readable regular file of at most 1 MiB, or a link to one inside the project, then run "+rerun+" again.",
-				"No files were changed.")
-		}
-		if errors.As(err, new(scaffold.UnknownStack)) {
-			return 1, initFailed("Could not use --stack "+stack, "Coop sets up a project's tools from its .tool-versions, and the only stack it knows is asdf.",
-				"Pin the versions in .tool-versions and run coop init, or run coop init --stack asdf.",
 				"No files were changed.")
 		}
 		return 1, initFailed("Could not use --stack "+stack, sentence(firstLine(err)),
@@ -336,7 +336,11 @@ func (a *app) cmdInit(args []string) (int, error) {
 		// result, so a first run reads as two paragraphs rather than one wall.
 		ui.Note("")
 		ui.OK("Coop project created")
-		ui.Note("  %s", initSharedLine(agentDirs))
+		ui.Note("  %s", initSharedLine(agentDirs, len(subs) > 0))
+		if len(subs) > 0 {
+			// A box can name the member folders, so they are shown escaped.
+			ui.Note("  Subprojects, each with its own task queue: %s", ui.SafeInline(strings.Join(subs, ", ")))
+		}
 		if len(langs) > 0 {
 			ui.Note("  Formatting checked before every commit: %s", strings.Join(langs, ", "))
 		}
@@ -471,7 +475,7 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		services = promptExactTokens(ask, []string{
 			"Choose services to run alongside your agents.",
 			"Existing services and their data will be kept.",
-		}, scaffold.ComposeServices, "Services", unknownServiceBlock)
+		}, scaffold.ComposeServices, "Services", "service")
 	}
 	p, err := project.Load(repo)
 	if err != nil {
@@ -583,11 +587,13 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 }
 
 // servicesNeedATerminal refuses the bare --services chooser where nobody can answer it, and names
-// the form that works without a terminal.
+// the form that works without a terminal. It is drawn like every other refused input, after a
+// blank line.
 func servicesNeedATerminal() error {
-	return reported("Choosing services requires a terminal", "",
-		"Example: coop init --services postgres,redis",
-		"Help:    coop help init")
+	return &ui.UsageError{
+		Headline: "Choosing services requires a terminal",
+		Rows:     [][2]string{{"Example:", "coop init --services postgres,redis"}, {"Help:", ui.HelpCommand("coop init")}},
+	}
 }
 
 // serviceEgressRule is the rule coop init asked for, in the form coop net and coop approve show.
@@ -626,16 +632,18 @@ func reportDockerSetup(repo string) {
 }
 
 // initAction is one job the user still has to do, with the commands that do it and — when the
-// commands alone would not be enough — the one sentence that frames them.
+// commands alone would not be enough — the one sentence that frames them and the one that says
+// what stays true until they are done.
 type initAction struct {
 	title   string
 	note    string
 	actions []string
+	until   string
 }
 
-// print renders one job: a bold heading, an optional framing line, then each command on a
-// cyan-arrow line. It goes through ui rather than straight to the terminal so a live view can
-// position it like every other line coop writes.
+// print renders one job: a bold heading, an optional framing line, each command on a cyan-arrow
+// line, then the optional line about what waits on them. It goes through ui rather than straight
+// to the terminal so a live view can position it like every other line coop writes.
 func (g initAction) print() {
 	if len(g.actions) == 0 {
 		return
@@ -647,6 +655,9 @@ func (g initAction) print() {
 	}
 	for _, s := range g.actions {
 		ui.Note("  %s %s", ui.Cyan("→"), s)
+	}
+	if g.until != "" {
+		ui.Note("  %s", g.until)
 	}
 }
 
@@ -691,7 +702,7 @@ func initActions(cfg *config.Config, repo string, langs, services, agentDirs []s
 
 // toolchainAction is the setup a language the default box lacks needs: the exact commands that pin
 // it in .tool-versions and build the asdf box from that file, with the version where the
-// repository names one.
+// repository names one, and what agents' commits miss until then.
 func toolchainAction(missing []scaffold.Toolchain) initAction {
 	names := make([]string, 0, len(missing))
 	var actions []string
@@ -709,6 +720,9 @@ func toolchainAction(missing []scaffold.Toolchain) initAction {
 		title:   "Add " + joinAnd(names) + " to the box",
 		note:    fmt.Sprintf("The default box has no %s toolchain. Pin %s, then build this project's box:", ui.List(names, "or"), pronoun),
 		actions: append(actions, "coop init --stack asdf", "coop build"),
+		// The commit hook skips a language whose formatter is not installed, and agents commit in
+		// the box.
+		until: fmt.Sprintf("Until then, agents' commits skip the %s format %s.", joinAnd(names), plural(len(names), "check")),
 	}
 }
 
@@ -734,19 +748,24 @@ func countWord(n int, noun string) string {
 }
 
 // initSharedLine says what the selected agents now share. A repo that scaffolded no per-agent dir
-// still gets the shared set — a box synthesizes a missing agent's artifacts from it on demand.
-func initSharedLine(agentDirs []string) string {
+// still gets the shared set — a box synthesizes a missing agent's artifacts from it on demand. A
+// monorepo has a queue in each subproject as well as its own, so it says queues.
+func initSharedLine(agentDirs []string, monorepo bool) string {
 	names := make([]string, 0, len(agentDirs))
 	for _, name := range agentDirs {
 		names = append(names, titleName(name))
 	}
+	queues := "one task queue"
+	if monorepo {
+		queues = "task queues"
+	}
 	switch len(names) {
 	case 0:
-		return "Instructions, skills, and one task queue are ready for any agent."
+		return "Instructions, skills, and " + queues + " are ready for any agent."
 	case 1:
-		return names[0] + " has instructions, skills, and one task queue."
+		return names[0] + " has instructions, skills, and " + queues + "."
 	default:
-		return joinAnd(names) + " share instructions, skills, and one task queue."
+		return joinAnd(names) + " share instructions, skills, and " + queues + "."
 	}
 }
 
@@ -855,7 +874,7 @@ func promptServices(ask *bufio.Scanner) []string {
 	return promptExactTokens(ask, []string{
 		"Coop can run services alongside your agents.",
 		"Choose any this project needs, or press Enter for none.",
-	}, scaffold.ComposeServices, "Services", unknownServiceBlock)
+	}, scaffold.ComposeServices, "Services", "service")
 }
 
 // promptGateLangs asks (on a tty) which languages the project will use, when coop couldn't detect
@@ -864,29 +883,18 @@ func promptGateLangs(ask *bufio.Scanner) []string {
 	return promptExactTokens(ask, []string{
 		"Coop couldn't detect which languages this project will use.",
 		"Choose one or more. Coop will check their formatting before every commit.",
-	}, scaffold.GateLangs, "Languages", unknownLanguageLine)
-}
-
-// unknownLanguageLine is the approved wording for the first-run language prompt, kept verbatim:
-// a reviewed line stays reviewed, and restyling it to match a newer error shape would be a
-// silent change to something a person already signed off.
-func unknownLanguageLine(unknown string, valid []string) {
-	ui.Error("Unknown language “%s”.", unknown)
-	ui.Note("  Choose from: %s", strings.Join(valid, ", "))
-}
-
-// unknownServiceBlock is the service chooser's rejection, in the ordinary outcome-block shape.
-func unknownServiceBlock(unknown string, valid []string) {
-	failBlock(fmt.Sprintf("Unknown service %q", unknown), "Choose from: "+strings.Join(valid, ", "))
+	}, scaffold.GateLangs, "Languages", "language")
 }
 
 // promptExactTokens asks for a space-separated subset of valid and keeps asking until every token
 // is one of them. The menu lists ONLY accepted tokens: a second word in a choice row (the formatter
 // a language implies, say) reads as selectable even though the parser would reject it. An unknown
-// answer is NAMED and the question repeats — silently dropping half an answer leaves the user
-// believing they chose something they didn't. Blank means none; input order is kept, duplicates
-// dropped. EOF means none too, so a closed stdin can never hang the prompt.
-func promptExactTokens(ask *bufio.Scanner, intro, valid []string, label string, reject func(unknown string, valid []string)) []string {
+// answer is NAMED and the same question repeats, hint included — silently dropping half an answer
+// leaves the user believing they chose something they didn't. Every menu names it in the language
+// prompt's approved wording, with noun ("language", "service") for the thing asked about. Blank
+// means none; input order is kept, duplicates dropped. EOF means none too, so a closed stdin can
+// never hang the prompt.
+func promptExactTokens(ask *bufio.Scanner, intro, valid []string, label, noun string) []string {
 	ui.Note("")
 	for _, line := range intro {
 		ui.Note("%s", line)
@@ -918,8 +926,8 @@ func promptExactTokens(ask *bufio.Scanner, intro, valid []string, label string, 
 			return chosen
 		}
 		ui.Note("")
-		reject(unknown, valid)
-		question = "\n" + label + ": "
+		ui.Error("Unknown %s “%s”.", noun, unknown)
+		ui.Note("  Choose from: %s", strings.Join(valid, ", "))
 	}
 }
 

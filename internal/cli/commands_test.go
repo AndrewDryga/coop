@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -1373,9 +1374,14 @@ func TestInitActions(t *testing.T) {
 	got = initActions(cfg, goRepo, []string{"go"}, nil, []string{"codex"}, false)
 	want := initAction{title: "Add Go to the box",
 		note:    "The default box has no Go toolchain. Pin it, then build this project's box:",
-		actions: []string{`echo "golang 1.26.5" >> .tool-versions`, "coop init --stack asdf", "coop build"}}
-	if len(got) != 2 || got[1].title != want.title || got[1].note != want.note || !slices.Equal(got[1].actions, want.actions) {
+		actions: []string{`echo "golang 1.26.5" >> .tool-versions`, "coop init --stack asdf", "coop build"},
+		until:   "Until then, agents' commits skip the Go format check."}
+	if len(got) != 2 || got[1].title != want.title || got[1].note != want.note || !slices.Equal(got[1].actions, want.actions) || got[1].until != want.until {
 		t.Errorf("Go on the default box: actions = %+v, want sign-in then %+v", got, want)
+	}
+	// Two missing languages are one job, and both checks wait on it.
+	if got := toolchainAction([]scaffold.Toolchain{{Name: "Go", Pins: []string{"golang 1.26.5"}}, {Name: "Rust", Pins: []string{"rust <version>"}}}); got.until != "Until then, agents' commits skip the Go and Rust format checks." {
+		t.Errorf("Go and Rust: until = %q", got.until)
 	}
 	if err := os.MkdirAll(filepath.Join(goRepo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1410,11 +1416,21 @@ func TestInitResultSentences(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := initSharedLine(c.agents); got != c.shared {
+		if got := initSharedLine(c.agents, false); got != c.shared {
 			t.Errorf("initSharedLine(%v) = %q, want %q", c.agents, got, c.shared)
 		}
 		if got := initProviderLine(c.agents); got != c.reach {
 			t.Errorf("initProviderLine(%v) = %q, want %q", c.agents, got, c.reach)
+		}
+	}
+	// A monorepo has a queue in each subproject too, so it never claims just one.
+	for agents, want := range map[string]string{
+		"":             "Instructions, skills, and task queues are ready for any agent.",
+		"claude":       "Claude has instructions, skills, and task queues.",
+		"claude,codex": "Claude and Codex share instructions, skills, and task queues.",
+	} {
+		if got := initSharedLine(strings.FieldsFunc(agents, func(r rune) bool { return r == ',' }), true); got != want {
+			t.Errorf("initSharedLine(%q, monorepo) = %q, want %q", agents, got, want)
 		}
 	}
 }
