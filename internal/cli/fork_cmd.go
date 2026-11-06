@@ -1274,12 +1274,19 @@ func pathsOverlap(left, right string) bool {
 	return contains(left, right) || contains(right, left)
 }
 
-func forkLoopContinueCommand(name, presetName string, target agents.Target, network networkFlags) (string, error) {
+// forkLoopContinueCommand is the command that resumes this fork loop. It repeats the who-runs
+// positional, the one queue --tasks chose (absolute, as the loop runs on it, so it means the same
+// queue from any folder) and the network flags; without --tasks the fork takes every project queue.
+func forkLoopContinueCommand(name, presetName string, target agents.Target, tasksPath string, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
 	}
-	return withNetworkArgs(fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg)), network)
+	command := fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg))
+	if tasksPath != "" {
+		command += " --tasks " + shellWord(tasksPath)
+	}
+	return withNetworkArgs(command, network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
@@ -1350,7 +1357,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if a.preset != nil && a.preset.Name != "" {
 		presetName = a.preset.Name
 	}
-	continueCmd, err := forkLoopContinueCommand(name, presetName, continueTarget, network)
+	continueCmd, err := forkLoopContinueCommand(name, presetName, continueTarget, tasksPath, network)
 	if err != nil {
 		return 2, err
 	}

@@ -3,6 +3,7 @@ name: loop-output-is-task-centered
 description: loop output groups startup and environment work around dim task banners and canonical per-attempt targets
 scope: cli-output
 sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/review.go, internal/box/services.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
+sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/cli/fork_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
 updated: 2026-11-06
 ---
@@ -95,6 +96,13 @@ card. The full transcript and failure matrix are in queued task
   and ordinary services). Pinned by TestCandidateReviewRetriesABoxWhoseServicesDidNotStart and
   TestControllerWorkDoesNotRunWithoutItsRequiredServices (task
   2026-11-05-retry-a-candidate-review-whose-box-failed-to-sta).
+- 2026-11-06 — a fork loop started with `--tasks <path>` printed a Continue line without it, so the
+  pasted resume took every project queue. `coop fork <name> --loop` now repeats its one queue as the
+  absolute path the loop runs on, quoted, and only when one was given. Swept the Continue lines:
+  `coop loop` already repeats each `--tasks`; `coop fork stop`'s hint names only the fork's
+  remembered agent, since nothing records the run's queue or network flags (left for its own task).
+  Pinned by TestForkLoopContinueCommandUsesSelectedTargetOrPreset and
+  TestForkLoopContinueLineKeepsItsChosenQueue.
 - 2026-11-05 — an emisar loop started with four `--allow-domain` hosts printed a Continue line
   without them, so the pasted resume could not reach the Go module proxy or Hex. Swept both
   Continue builders: `coop loop` and `coop fork <name> --loop` now append `networkFlags.args()`,

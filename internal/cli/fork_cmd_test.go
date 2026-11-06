@@ -1592,16 +1592,19 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 	target := agents.Target{Provider: "codex", Model: "gpt-5.6-terra", Effort: "xhigh", Accounts: []string{"work"}}
 	filtered := egress.Filtered
 	for _, tc := range []struct {
-		name, preset, want string
-		network            networkFlags
+		name, preset, tasks, want string
+		network                   networkFlags
 	}{
 		{name: "api-fix", want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop"},
 		{name: "api-fix", preset: "frontier", want: "coop fork api-fix frontier --loop"},
 		{name: "api-fix", network: networkFlags{Mode: &filtered, Domains: []string{"proxy.golang.org", "sum.golang.org"}},
 			want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop --egress filtered --allow-domain proxy.golang.org --allow-domain sum.golang.org"},
+		// A fork loop on a chosen queue resumes on it; pasted without --tasks it would take every queue.
+		{name: "api-fix", preset: "frontier", tasks: "/repo/apps/customer portal/.agent/tasks", network: networkFlags{Mode: &filtered},
+			want: "coop fork api-fix frontier --loop --tasks '/repo/apps/customer portal/.agent/tasks' --egress filtered"},
 	} {
-		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.network); err != nil || got != tc.want {
-			t.Errorf("forkLoopContinueCommand(%q, %q) = %q (%v), want %q", tc.name, tc.preset, got, err, tc.want)
+		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.network); err != nil || got != tc.want {
+			t.Errorf("forkLoopContinueCommand(%q, %q, %q) = %q (%v), want %q", tc.name, tc.preset, tc.tasks, got, err, tc.want)
 		}
 	}
 }

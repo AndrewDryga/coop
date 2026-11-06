@@ -140,6 +140,9 @@
   checkout now names it, as in `COOP_REPO=~/src/app-forks/api coop approve`, and so does the fix
   line `coop tasks watch` shows for that fork's task.
 
+- **A fork loop's Continue line keeps its queue.** `coop fork <name> --loop --tasks <path>` printed
+  a Continue command without `--tasks`, so pasting it resumed the fork on every project queue. It
+  now repeats the queue as a full path, so the command works from any folder.
 - **Removing a fork removes the approvals it holds.** `coop fork rm`, `--fresh` and the cleanup
   after `coop fork merge` left the fork's service, network and build approvals behind in Coop's
   private records, where nothing used or removed them. They now go with the fork. The parent's

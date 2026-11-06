@@ -148,10 +148,34 @@ func TestForkLoopStopsWhenOnlyADecisionIsLeft(t *testing.T) {
 		t.Fatalf("fork worked %v, want only %s\n%s", ran, id, output)
 	}
 	if code != loopDecisionExit || err != nil || !strings.Contains(output, "Fork alone is waiting for your decision.") ||
-		!strings.Contains(output, "Continue:  coop fork alone claude --loop") {
+		!strings.Contains(output, "Continue:  coop fork alone claude --loop\n") { // no --tasks it was not given
 		t.Errorf("fork loop = (%d, %v), want it to stop for the decision and say how to go on:\n%s", code, err, output)
 	}
 	assertForkTaskWaitsForDecision(t, repo, id)
+}
+
+// A fork loop started on a chosen queue says to continue on that queue: pasted without its --tasks,
+// the Continue line would start the fork on every project queue.
+func TestForkLoopContinueLineKeepsItsChosenQueue(t *testing.T) {
+	repo := initRepo(t)
+	seedForkDecisionTask(t, repo, "2026-11-06-fork-continue-queue")
+	commitForkNetworkPreflightFixture(t, repo)
+	a := forkNetworkPreflightApp(t, repo)
+	var ran []string
+	a.forkLoopRun = parkingForkPass(t, &ran)
+	ws, identity := setUpForkForDecision(t, repo, "chosen")
+	queue := filepath.Join(repo, ".agent", "tasks")
+	var code int
+	var err error
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			code, err = a.runForkLoop(repo, ws, identity, "claude", queue, "", "", "", nil, networkFlags{}, false)
+		})
+	})
+	if want := "Continue:  coop fork chosen claude --loop --tasks " + shellWord(queue) + "\n"; code != loopDecisionExit || err != nil || !strings.Contains(stdout+stderr, want) {
+		t.Errorf("fork loop = (%d, %v), want it to stop for the decision and continue with %q:\n%s", code, err, want, stdout+stderr)
+	}
 }
 
 // A task answered in the project goes back to the same fork. If its agent parks it again, the new
