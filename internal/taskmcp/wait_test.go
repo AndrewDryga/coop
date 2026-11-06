@@ -1,11 +1,13 @@
 package taskmcp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -54,6 +56,34 @@ func TestWaitReturnsTheAssignedTaskToTodo(t *testing.T) {
 	}
 	if listed := sess.mustCall("tasks_list", map[string]any{"state": "todo"}); !strings.Contains(listed, `"waits_on": "t2"`) {
 		t.Fatalf("tasks_list = %s", listed)
+	}
+}
+
+// The loop judges what was committed after a wait from the commit tasks_wait started from, so the
+// tool records it only for a wait it accepted, and a base it cannot read refuses the wait.
+func TestWaitRecordsTheCommitItStartsFrom(t *testing.T) {
+	root, _ := committedQueue(t, map[string]string{"t1": tasks.StateInProgress, "t2": tasks.StateTodo})
+	repo := filepath.Dir(filepath.Dir(root))
+	serve := func(base func() (string, error)) *Server {
+		s, err := New(Authority{Workspace: repo, QueueRoots: []string{root}, Assigned: "t1", WaitBase: base,
+			Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	unreadable := serve(func() (string, error) { return "", errors.New("HEAD is gone") })
+	if text := newSession(t, unreadable).mustRefuse("tasks_wait", map[string]any{"id": "t1", "on": "t2", "reason": "order"}); !strings.Contains(text, "HEAD is gone") {
+		t.Fatalf("wait from an unreadable base = %s", text)
+	}
+	if item, _, _ := tasks.CurrentTask(root, "t1"); item.State != tasks.StateInProgress || unreadable.AssignedWaitBase() != "" {
+		t.Fatalf("a refused wait moved the task or kept a base: %+v, %q", item, unreadable.AssignedWaitBase())
+	}
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	s := serve(func() (string, error) { return head, nil })
+	newSession(t, s).mustCall("tasks_wait", map[string]any{"id": "t1", "on": "t2", "reason": "order"})
+	if got := s.AssignedWaitBase(); head == "" || got != head {
+		t.Fatalf("recorded wait base = %q, want %q", got, head)
 	}
 }
 

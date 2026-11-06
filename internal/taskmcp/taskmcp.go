@@ -64,6 +64,11 @@ type Authority struct {
 	// commit; the host's complete post-exit audit still decides whether completion is accepted.
 	// Nil for standalone task-channel probes with no Git completion contract.
 	ValidateAssignedCompletion func(CompletionClaim) error
+	// WaitBase reads the commit the assigned task's tasks_wait starts from, before the task moves.
+	// The server keeps it (AssignedWaitBase), so the loop's post-exit audit refuses only what was
+	// committed after the wait. An error refuses the wait with nothing changed. Nil for task-channel
+	// probes with no Git contract, which check the history HEAD reaches.
+	WaitBase func() (string, error)
 	// ProposalOutbox, when set, is where tasks_propose writes validated proposals instead of
 	// creating queue folders: a fork's one-task projection has no canonical todo/backlog, so the
 	// host imports the outbox when the fork lands (tasks.ImportForkProposals). It lies inside
@@ -95,6 +100,7 @@ type Server struct {
 	// every mutation is a read-check-write on the filesystem.
 	mu              sync.Mutex
 	terminalRefusal AssignedTerminalRefusal
+	waitBase        string
 }
 
 // AssignedTerminalRefusal is the latest tasks_complete or tasks_block refusal for the task this
@@ -110,6 +116,14 @@ func (s *Server) LatestAssignedTerminalRefusal() (AssignedTerminalRefusal, bool)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.terminalRefusal, s.terminalRefusal.Detail != ""
+}
+
+// AssignedWaitBase is the commit the assigned task's first accepted tasks_wait started from, or ""
+// when the task did not wait through the tool. A later wait cannot move it past commits made since.
+func (s *Server) AssignedWaitBase() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.waitBase
 }
 
 // New validates the authority and returns a server for it.

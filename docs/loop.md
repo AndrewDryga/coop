@@ -24,7 +24,9 @@ A task that must not land before another one can wait for it. The agent hands it
 `tasks_wait`, or you add `waits_on: <task-id>` to its `task.md` frontmatter. The task stays in
 `00_todo/` and the loop skips it until the other task is in `99_done/`, then works it. If the
 other task is missing or blocked, the loop blocks the waiting task too, with a decision that says
-why. `coop tasks ls` shows what each task waits for.
+why. If a commit lands after the agent hands a task back, the loop refuses the wait and stops,
+unless the commit carries another task's `Coop-Task` trailer. The task returns to
+`10_in_progress/` with the commit kept. `coop tasks ls` shows what each task waits for.
 
 Choose an agent (`claude`, `codex`, `gemini` or `grok`) or a preset that defines the lead agent.
 To run a custom command for each task, set `work.command` in `.agent/loop.yaml`. It replaces the

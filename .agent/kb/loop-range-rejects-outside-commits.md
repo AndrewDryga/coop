@@ -2,8 +2,8 @@
 name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-11-05
+sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
+updated: 2026-11-06
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -52,6 +52,20 @@ trailers pass there, and their count stays the completion check's job. Without i
 or rewrite a binding in an attempt that then fails, and every later attempt's range would start
 above that commit. A refused attempt stops the run with the same "Task completion rejected" text,
 after returning the task to in progress (from done or blocked) with the rejection note.
+
+**A wait cannot hide a late commit.** `tasks_wait` refuses a task with a binding, and the loop's
+`WaitBase` hook records the commit the wait starts from before the task moves; the worker can still
+commit after the tool returns. After the worker exits, `checkTaskWait` judges only what came after
+that commit. One binding a task this attempt never touched is another session's and passes, as
+everywhere in this card; anything else refuses the wait, and so does a binding for the waiting task
+anywhere, a rewrite of the wait's base, or history Coop cannot read. Commits before the wait are the
+ordinary binding check's, since people and other agents commit in this checkout while loops run.
+That check runs first and its sentences join the refusal, so a forged binding is named. A task
+handed back without the tool is checked from the attempt's start. All of this runs before retry
+handling, failed attempts and background handoffs included. The box can write the queue, so a queue
+Coop cannot read stops the run instead of reading as "no wait", and a failed completion scan takes
+the wait back. `RestoreRejectedWait` returns the task to in progress, clears `waits_on`, keeps its
+commits, `tmp/` and the worker's own resume step, and logs why.
 
 **The refusal names what broke it.** `touched` maps each id to why it counts (`touchedTasks` in
 `internal/loop/completion.go`: moved to done during this attempt, already done before it started,
@@ -167,10 +181,16 @@ out of scope here: it lands work through its own isolated per-session forkspace 
 shared parent checkout this lock protects — the same reason a fork's own rebase doesn't need it. If a
 future change gives it a land-onto-parent step, that step needs this same lock; it currently has none.
 
-See [[task-authority-model]] for the full four-authority map and the lock-ordering invariant (ref
-authority is acquired before lease authority, never the reverse) this ref-authority window is half of.
+See [[task-authority-model]] for the four-authority map and workflow-specific lock ordering. The
+loop holds its iteration lease before entering the short ref window; host completion takes ref
+authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-06 — documented the late-commit wait refusal: judged from the commit `tasks_wait`
+  recorded, another session's bindings tolerated, forged bindings named, unreadable queues fail
+  closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`
+  and `TestCheckTaskWaitJudgesWhatWasCommittedAfterTheWait`. Corrected the old universal lock-order
+  claim against `task-authority-model` and the loop caller.
 - 2026-11-05 — host completion refuses a second binding and loop startup lists multi-bound tasks
   (task 2026-11-05-refuse-a-second-coop-task-binding-when-it-is-mad).
 - 2026-11-05 — the refusal names each offending commit, task id and reason, and the retry command

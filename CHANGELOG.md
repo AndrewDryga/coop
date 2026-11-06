@@ -53,7 +53,9 @@
   blocking it for your decision, or you can add `waits_on: <task-id>` to its `task.md`. The loop
   skips it until the other task is done, then works it in the same run or a later one. A wait on a
   task that is missing or blocked, or that waits for it in turn, becomes your decision, and
-  `coop tasks ls` shows what each task waits for.
+  `coop tasks ls` shows what each task waits for. If a commit lands after the agent hands a task
+  back, unless it carries another task's `Coop-Task` trailer, the loop refuses the wait and stops
+  with "Task wait rejected", and the task goes back to in progress with the commit kept.
 
 - **A fork merge flags only the secrets the fork adds.** `coop fork merge` scanned the whole of
   every file a fork changed, so a fake credential your branch already had, such as a password in a

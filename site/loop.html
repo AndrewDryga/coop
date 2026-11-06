@@ -135,7 +135,9 @@ work from <code>00_todo/</code> or <code>10_in_progress/</code>.</p>
 <code>tasks_wait</code>, or you add <code>waits_on: &lt;task-id&gt;</code> to its <code>task.md</code> frontmatter. The task stays in
 <code>00_todo/</code> and the loop skips it until the other task is in <code>99_done/</code>, then works it. If the
 other task is missing or blocked, the loop blocks the waiting task too, with a decision that says
-why. <code>coop tasks ls</code> shows what each task waits for.</p>
+why. If a commit lands after the agent hands a task back, the loop refuses the wait and stops,
+unless the commit carries another task&#39;s <code>Coop-Task</code> trailer. The task returns to
+<code>10_in_progress/</code> with the commit kept. <code>coop tasks ls</code> shows what each task waits for.</p>
 <p>Choose an agent (<code>claude</code>, <code>codex</code>, <code>gemini</code> or <code>grok</code>) or a preset that defines the lead agent.
 To run a custom command for each task, set <code>work.command</code> in <code>.agent/loop.yaml</code>. It replaces the
 whole iteration command.</p>

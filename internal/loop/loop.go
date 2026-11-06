@@ -902,6 +902,9 @@ reviewAgain:
 					}
 					return checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
 				},
+				WaitBase: func() (string, error) {
+					return forkspace.GitOutErr(repo, "rev-parse", "--verify", "HEAD^{commit}")
+				},
 			})
 			if toolsErr != nil {
 				return 1, errors.Join(toolsErr, lease.Release())
@@ -1001,6 +1004,7 @@ reviewAgain:
 			if completionScanErr != nil {
 				return 1, errors.Join(
 					fmt.Errorf("scan task completions: %w", completionScanErr),
+					restoreUnauditedWait(assigned, completionScanErr),
 					lease.Release(), windows.Abandon(),
 				)
 			}
@@ -1031,8 +1035,56 @@ reviewAgain:
 			// below every later attempt's base. Audit rework rewrites history by design; semantic
 			// replay checks it instead.
 			headAfter := forkspace.GitOut(repo, "rev-parse", "HEAD")
+			var tolerated, refused []string
 			if lease.Reopen == nil {
-				tolerated, refused := tasks.AttemptBindingsRefused(repo, loopStartHead, iterHead, headAfter, assigned.Item.ID, touched)
+				tolerated, refused = tasks.AttemptBindingsRefused(repo, loopStartHead, iterHead, headAfter, assigned.Item.ID, touched)
+			}
+			// Check waits before any retry can advance the iteration base over committed work,
+			// including failed providers, background handoffs and audit rework. A wait is checked from
+			// the commit tasks_wait recorded; one made without the tool, from the attempt's start.
+			waiting, waitingErr := tasks.WaitsForAnotherTask(assigned)
+			if waitingErr != nil {
+				return 1, errors.Join(waitingErr, lease.Release(), windows.Abandon())
+			}
+			if waiting {
+				base := taskTools.AssignedWaitBase()
+				if base == "" {
+					base = iterHead
+				}
+				// The binding check's findings come first: a forged binding is named, not only the commit.
+				problems := slices.Clone(refused)
+				if waitErr := checkTaskWait(repo, base, headAfter, assigned.Item.ID, touched); waitErr != nil {
+					problems = append(problems, waitErr.Error())
+				}
+				if len(problems) > 0 {
+					reason := strings.Join(problems, "; ") + ". Request a wait before committing; finish this task, or use tasks_block if it must not land yet"
+					restoreErr := tasks.RestoreRejectedWait(assigned, reason)
+					departed, departureErr := windows.Departures()
+					if len(departed) > 0 {
+						departureErr = errors.Join(departureErr, fmt.Errorf("work stage reopened unowned archived task(s) %s", strings.Join(departed, ", ")))
+					}
+					var unownedErr error
+					if len(unowned) > 0 {
+						unownedErr = tasks.UnownedCompletionError(unowned, nil)
+					}
+					var windowErr error
+					if restoreErr != nil {
+						windowErr = windows.Abandon()
+					} else {
+						windowErr = windows.Close()
+					}
+					releaseErr := lease.Release()
+					waitErr = fmt.Errorf("task %s wait rejected: %s", assigned.Item.ID, reason)
+					if restoreErr == nil && departureErr == nil && unownedErr == nil && windowErr == nil && releaseErr == nil {
+						ui.Failure("Task wait rejected", capitalize(reason)+".\n"+active+" is still in progress; its work and recovery notes are preserved.",
+							[2]string{"Inspect:", "coop tasks path " + assigned.Item.ID},
+							[2]string{"Retry this task:", continueCmd})
+						return 1, ui.Reported(waitErr)
+					}
+					return 1, errors.Join(waitErr, restoreErr, departureErr, unownedErr, windowErr, releaseErr)
+				}
+			}
+			if lease.Reopen == nil {
 				if len(refused) > 0 {
 					current, ok, restoreErr := tasks.CurrentTask(assigned.Root, assigned.Item.ID)
 					if restoreErr == nil && !ok {
@@ -1565,7 +1617,7 @@ reviewAgain:
 				// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
 				// rather than loop forever (a commit or a block still counts as progress, and so does a
 				// task handed back to wait for another one: the next pick takes other work).
-				if tasks.WaitsForAnotherTask(assigned) {
+				if waiting {
 					stalls = 0
 				}
 				var stop error

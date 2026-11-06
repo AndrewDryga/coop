@@ -43,8 +43,8 @@ func TestTaskWaitIsReleasedWhenTheNamedTaskIsDone(t *testing.T) {
 		state.NextAction != resume || state.DoneSoFar != "drafted the example" {
 		t.Fatalf("state = %+v, %v", state, err)
 	}
-	if !WaitsForAnotherTask(QueuedTask{Root: root, Item: docs}) {
-		t.Fatal("a task handed back to wait does not read as waiting")
+	if waits, err := WaitsForAnotherTask(QueuedTask{Root: root, Item: docs}); err != nil || !waits {
+		t.Fatalf("a task handed back to wait reads as waiting = %v, %v", waits, err)
 	}
 
 	assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
@@ -188,5 +188,66 @@ func TestForkSchedulerSkipsAWaitingTask(t *testing.T) {
 	_, unowned, _, err := forkAssignmentCandidates([]string{root})
 	if err != nil || len(unowned) != 1 || unowned[0].Item.ID != "zeta-bridge" {
 		t.Fatalf("fork candidates = %+v, %v", unowned, err)
+	}
+}
+
+// A refused wait returns the task to in progress with its saved work and the resume step its worker
+// left, and only from the waiting folder the worker left: a task that is not waiting is never moved.
+// A worker that left no step is told to finish the task or block it, not the wait's own "continue
+// once the other task is done".
+func TestRestoreRejectedWaitKeepsTheWorkAndNeedsTheWaitingFolder(t *testing.T) {
+	for _, tc := range []struct{ name, resume, want string }{
+		{name: "worker's step", resume: "apply tmp/example.patch, then run the docs check", want: "apply tmp/example.patch, then run the docs check"},
+		{name: "no step", want: "finish this task, or use tasks_block if it must not land before zeta-bridge"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, StateInProgress, "alpha-docs", "task.md"), "---\nid: alpha-docs\n---\n# Docs\n- [ ] write\n")
+			if tc.resume != "" {
+				writeTaskFile(t, filepath.Join(root, StateInProgress, "alpha-docs", "state.md"), "# State — Docs\n\n**Status:** in progress\n**Done so far:** drafted the example\n**Next action:** "+tc.resume+"\n**Traps:** —\n")
+			}
+			writeTaskFile(t, filepath.Join(root, StateInProgress, "alpha-docs", "tmp", "example.patch"), "saved work\n")
+			writeTaskFile(t, filepath.Join(root, StateTodo, "zeta-bridge", "task.md"), "# Bridge\n- [ ] fix\n")
+			docs, _ := mustCurrentTask(t, root, "alpha-docs")
+			task := QueuedTask{Root: root, Item: docs}
+			if err := RestoreRejectedWait(task, "history changed"); err == nil || !strings.Contains(err.Error(), "no longer present") {
+				t.Fatalf("restore of a task that never waited = %v", err)
+			}
+			if err := WaitForTask([]string{root}, task, "zeta-bridge", "the example must not land before the bridge fix"); err != nil {
+				t.Fatal(err)
+			}
+			if err := RestoreRejectedWait(task, "commit aaa was made after the wait began"); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
+			restored, ok := mustCurrentTask(t, root, "alpha-docs")
+			if !ok || restored.State != StateInProgress || restored.WaitsOn != "" || strings.Contains(readWaitFile(t, filepath.Join(restored.Dir, "task.md")), "waits_on") {
+				t.Fatalf("restored task = %+v, exists=%v", restored, ok)
+			}
+			if saved := readWaitFile(t, filepath.Join(restored.Dir, "tmp", "example.patch")); saved != "saved work\n" {
+				t.Fatalf("tmp/example.patch = %q", saved)
+			}
+			if log := readWaitFile(t, filepath.Join(restored.Dir, "log.md")); !strings.Contains(log, "wait for zeta-bridge rejected: commit aaa was made after the wait began") {
+				t.Fatalf("log.md = %q", log)
+			}
+			if state, err := ReadTaskState(restored.Dir); err != nil || !strings.Contains(state.Status, "wait rejected") || state.NextAction != tc.want {
+				t.Fatalf("state = %+v, %v; want next action %q", state, err, tc.want)
+			}
+			if err := RestoreRejectedWait(task, "again"); err == nil {
+				t.Fatal("a second restore moved a task that no longer waits")
+			}
+		})
+	}
+}
+
+// The box can write the queue, so a queue Coop cannot read must not read as "this task does not wait".
+func TestWaitsForAnotherTaskReportsAnUnreadableQueue(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "alpha-docs", "task.md"), "---\nwaits_on: zeta-bridge\n---\n# Docs\n")
+	docs, _ := mustCurrentTask(t, root, "alpha-docs")
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, StateTodo, "planted")); err != nil {
+		t.Fatal(err)
+	}
+	if waits, err := WaitsForAnotherTask(QueuedTask{Root: root, Item: docs}); err == nil {
+		t.Fatalf("an unreadable queue read as waits=%v with no error", waits)
 	}
 }

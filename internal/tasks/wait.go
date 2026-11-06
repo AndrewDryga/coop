@@ -69,10 +69,42 @@ func (q queueIndex) waiting(item Item) bool {
 }
 
 // WaitsForAnotherTask reports whether task went back to 00_todo/ to wait (tasks_wait). Handing a task
-// back is progress, not a stalled attempt: the loop takes other work next.
-func WaitsForAnotherTask(task QueuedTask) bool {
+// back is progress, not a stalled attempt: the loop takes other work next. A queue it cannot read is
+// an error, not "no wait": the box can write the queue, so it must not be able to hide a wait.
+func WaitsForAnotherTask(task QueuedTask) (bool, error) {
 	current, ok, err := CurrentTask(task.Root, task.Item.ID)
-	return err == nil && ok && current.State == StateTodo && current.WaitsOn != ""
+	if err != nil {
+		return false, fmt.Errorf("read task %s after its attempt: %w", task.Item.ID, err)
+	}
+	return ok && current.State == StateTodo && current.WaitsOn != "", nil
+}
+
+// RestoreRejectedWait returns a task whose wait the loop refused to in progress, with its work and
+// the resume step its worker left, such as applying a patch saved in tmp/. The caller holds the
+// iteration lease until the restoration and completion-window audit finish.
+func RestoreRejectedWait(task QueuedTask, reason string) error {
+	current, ok, err := CurrentTask(task.Root, task.Item.ID)
+	if err != nil {
+		return err
+	}
+	if !ok || current.State != StateTodo || current.WaitsOn == "" {
+		return fmt.Errorf("restore task %s: its waiting folder is no longer present", task.Item.ID)
+	}
+	if err := MoveTaskDir(task.Root, current, StateInProgress); err != nil {
+		return err
+	}
+	dir := filepath.Join(task.Root, StateInProgress, current.ID)
+	guidance := "finish this task, or use tasks_block if it must not land before " + current.WaitsOn
+	next := resumeStep(dir, guidance)
+	if next == waitResumeFallback(current.WaitsOn) { // the wait's own step, not the worker's
+		next = guidance
+	}
+	return errors.Join(
+		setTaskWaitsOn(dir, ""),
+		AppendTaskLogStrict(dir, "wait for "+current.WaitsOn+" rejected: "+reason),
+		NormalizeTaskState(current.ID, dir, "in progress — wait rejected", next,
+			"the wait was rejected; committed work is preserved", "request a wait before committing; never add a second Coop-Task binding"),
+	)
 }
 
 func readQueueIndex(hosts []string) (queueIndex, []QueuedTask, error) {
@@ -133,7 +165,7 @@ func WaitForTask(hosts []string, task QueuedTask, on, reason string) error {
 		err = errors.Join(
 			AppendTaskLogStrict(dir, "waits for "+on+" before it can go on: "+strings.Join(strings.Fields(reason), " ")),
 			NormalizeTaskState(task.Item.ID, dir, "waiting — must not start before "+on+" is done",
-				resumeStep(dir, "continue this task once "+on+" is done"), "—", "—"),
+				resumeStep(dir, waitResumeFallback(on)), "—", "—"),
 		)
 	}
 	if err != nil {
@@ -207,6 +239,9 @@ func releaseWait(item Item) error {
 		NormalizeTaskState(item.ID, item.Dir, "ready — "+item.WaitsOn+", the task it waited for, is done",
 			resumeStep(item.Dir, "continue this task"), "—", "—"))
 }
+
+// waitResumeFallback is the Next action a wait writes for a worker that left none.
+func waitResumeFallback(on string) string { return "continue this task once " + on + " is done" }
 
 // resumeStep is the Next action the worker left in state.md, or fallback when it left none.
 func resumeStep(dir, fallback string) string {

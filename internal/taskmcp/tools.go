@@ -998,13 +998,26 @@ func (s *Server) wait(_ context.Context, args json.RawMessage) *toolResult {
 	if loc.item.ID != s.authority.Assigned {
 		return refusal(fmt.Sprintf("only the task assigned to this run can wait, and %s is not it", loc.item.ID))
 	}
-	if shas, err := tasks.TaskCommits(s.authority.Workspace, "", loc.item.ID); err != nil {
+	// The base is read first and the binding check runs from it, so a commit landing meanwhile is one
+	// the loop's post-exit audit sees as made after the wait.
+	base := ""
+	if s.authority.WaitBase != nil {
+		head, err := s.authority.WaitBase()
+		if err != nil {
+			return refusal(fmt.Sprintf("wait %s: Coop could not read the history to check for its commit: %v", loc.item.ID, err))
+		}
+		base = head
+	}
+	if shas, err := tasks.TaskCommits(s.authority.Workspace, base, loc.item.ID); err != nil {
 		return refusal(fmt.Sprintf("wait %s: Coop could not read the history to check for its commit: %v", loc.item.ID, err))
 	} else if len(shas) > 0 {
 		return refusal(fmt.Sprintf("%s already has a commit with its Coop-Task trailer (%s), and a task completes with one commit, so it cannot wait now: finish it, or park it with tasks_block if it must not land yet", loc.item.ID, strings.Join(shas, ", ")))
 	}
 	if err := tasks.WaitForTask(s.authority.QueueRoots, tasks.QueuedTask{Root: loc.root, Item: loc.item}, in.On, in.Reason); err != nil {
 		return refusal(fmt.Sprintf("wait %s: %v", loc.item.ID, err))
+	}
+	if s.waitBase == "" {
+		s.waitBase = base
 	}
 	return textResult(fmt.Sprintf("%s moved to %s/ and waits for %s — stop working it; the loop works it again once %s is done", loc.item.ID, tasks.StateTodo, in.On, in.On))
 }

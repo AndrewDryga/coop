@@ -125,3 +125,58 @@ func checkNoChangeCompletion(repo, base, id, baseline string) error {
 	}
 	return tasks.NoChangeCompletionAllowed(repo, base, head, id, baseline)
 }
+
+// checkTaskWait runs after the worker exits, since tasks_wait cannot see a commit made after it
+// returns: a wait must not leave committed work behind the next attempt's base. base is the commit
+// the wait started from. What was committed before it is the ordinary binding check's to judge,
+// since another session can commit in this checkout while the attempt runs. After it, only a commit
+// binding a task this attempt never touched is tolerated, as the loop does for any attempt; the
+// waiting task must also have no binding at all.
+func checkTaskWait(repo, base, head, id string, touched map[string]string) error {
+	if base == "" || head == "" {
+		return errors.New("could not read the waiting attempt's Git history")
+	}
+	if base != head {
+		if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", base, head); err != nil {
+			return fmt.Errorf("history was rewritten after the wait began at %.12s", base)
+		}
+		commits, err := tasks.TaskTrailerCommits(repo, base+".."+head, false)
+		if err != nil {
+			return fmt.Errorf("could not read what was committed after the wait: %w", err)
+		}
+		var late []string
+		for _, commit := range commits {
+			if commit.Malformed || len(commit.Values) != 1 || touched[commit.Values[0]] != "" {
+				late = append(late, commit.Info.SHA)
+			}
+		}
+		switch {
+		case len(late) == 1:
+			return fmt.Errorf("commit %s was made after the wait began at %.12s", late[0], base)
+		case len(late) > 1:
+			// A box can make any number of commits, so the refusal names five.
+			if len(late) > 5 {
+				late = append(late[:5], fmt.Sprintf("%d more", len(late)-5))
+			}
+			return fmt.Errorf("commits %s were made after the wait began at %.12s", strings.Join(late, ", "), base)
+		}
+	}
+	commits, err := tasks.TaskCommits(repo, head, id)
+	if err != nil {
+		return fmt.Errorf("could not check the waiting task's commit: %w", err)
+	}
+	if len(commits) > 0 {
+		return fmt.Errorf("the waiting task already has a Coop-Task binding (%s)", strings.Join(commits, ", "))
+	}
+	return nil
+}
+
+// restoreUnauditedWait takes back a wait whose attempt the loop could not audit. The box can make
+// the audit fail, so its hand-back does not stand.
+func restoreUnauditedWait(task tasks.QueuedTask, cause error) error {
+	waiting, err := tasks.WaitsForAnotherTask(task)
+	if err != nil || !waiting {
+		return err
+	}
+	return tasks.RestoreRejectedWait(task, "the loop could not audit the attempt that asked to wait: "+cause.Error())
+}
