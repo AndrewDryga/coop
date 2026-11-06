@@ -518,7 +518,7 @@ exception is Docker&#39;s DNS address, <code>127.0.0.11</code>, which is blocked
 for DNS.</p>
 </section><section class="doc-section reference-section" id="your-projects-image"><h2>Your project&#39;s image</h2>
 <p>You can use your own project image in filtered mode if its <code>.agent/Dockerfile</code> starts with
-<code>ARG COOP_BASE_IMAGE</code> / <code>FROM ${COOP_BASE_IMAGE}</code>. Build it on the host with
+<code>ARG COOP_BASE_IMAGE=coop-box</code> / <code>FROM ${COOP_BASE_IMAGE}</code>. Build it on the host with
 <code>coop build --egress filtered</code>, or with plain <code>coop build</code> when the project&#39;s effective network
 mode is filtered. co:op uses its locked client image as the base and tags the result
 <code>coop-&lt;repo&gt;-&lt;path hash&gt;-filtered:&lt;hash&gt;</code>.</p>
@@ -617,7 +617,7 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 </tr>
 <tr>
 <td>a project image not built on the client image</td>
-<td><code>this project&#39;s .agent/Dockerfile did not build on coop&#39;s client image — start it with ARG COOP_<wbr/>BASE_<wbr/>IMAGE and FROM ${COOP_<wbr/>BASE_<wbr/>IMAGE} …</code></td>
+<td><code>this project&#39;s .agent/Dockerfile did not build on coop&#39;s client image — start it with ARG COOP_<wbr/>BASE_<wbr/>IMAGE=coop-box and FROM ${COOP_<wbr/>BASE_<wbr/>IMAGE} …</code></td>
 </tr>
 <tr>
 <td>a project image that changes a pinned client</td>

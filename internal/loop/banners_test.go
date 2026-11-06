@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -271,6 +273,26 @@ func TestNarrowTaskBannerKeepsCanonicalTargetIntactWhenItFits(t *testing.T) {
 	}
 }
 
+// The loop recognizes the stale-image nudge by its prefix, so it reads the nudge box really writes.
+func TestLoopReadsTheStaleImageNudgeBoxWrites(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	dockerfile := filepath.Join(repo, ".agent", "Dockerfile")
+	writeTaskFile(t, dockerfile, "FROM x\n")
+	box.StampImageInputs(cfg, repo, "coop-test")
+	writeTaskFile(t, dockerfile, "FROM y\n")
+	nudges := box.StalenessNudges(cfg, repo, "coop-test")
+	if len(nudges) != 1 {
+		t.Fatalf("want the stale nudge, got %q", nudges)
+	}
+	got := captureStderr(t, func() { printLoopStaleness(nudges[0]) })
+	if want := "\n  ⚠ Box image is out of date\n" +
+		"    The box Dockerfile or .tool-versions changed since it was built.\n" +
+		"    To rebuild: coop build --egress open\n"; got != want {
+		t.Fatalf("loop staleness = %q, want %q", got, want)
+	}
+}
+
 func TestLoopPreparationAndPreflightUseTheApprovedHierarchy(t *testing.T) {
 	if got := loopConfigLine(true); got != "Using .agent/loop.yaml" {
 		t.Fatalf("configured intro = %q", got)
@@ -281,7 +303,7 @@ func TestLoopPreparationAndPreflightUseTheApprovedHierarchy(t *testing.T) {
 
 	got := captureStderr(t, func() {
 		printLoopPreparation(Preparation{RecoveredFilteredRuns: 4}, []string{
-			"box image is stale — the box Dockerfile/.tool-versions changed since it was built; run 'coop build'",
+			"box image is stale — the box Dockerfile/.tool-versions changed since it was built; run 'coop build --egress open'",
 		}, true)
 	})
 	want := "\nPreparing loop\n" +
@@ -290,7 +312,7 @@ func TestLoopPreparationAndPreflightUseTheApprovedHierarchy(t *testing.T) {
 		"    Details: coop net runs\n" +
 		"\n  ⚠ Box image is out of date\n" +
 		"    The box Dockerfile or .tool-versions changed since it was built.\n" +
-		"    To rebuild: coop build\n" +
+		"    To rebuild: coop build --egress open\n" +
 		"\n" +
 		"  ✓ Keeping this Mac awake using caffeinate\n"
 	if got != want {

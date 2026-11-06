@@ -661,6 +661,20 @@ func TestAProjectBuildRefusalNamesWhatChanged(t *testing.T) {
 	}
 }
 
+// A refusal a run prints ends on a whole sentence, and the base it asks for builds without Docker's
+// InvalidDefaultArgInFrom warning, the way the scaffold writes it (QA, 2026-11-06).
+func TestProjectBuildRefusalsReadWhole(t *testing.T) {
+	required := (&ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "no explicit project build is recorded for this client image"}).Error()
+	if want := "this project's .agent/Dockerfile is not ready: no explicit project build is recorded for this client image. " +
+		"Review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host. " +
+		"Project builds use ordinary networking, not the run's network restrictions."; required != want {
+		t.Errorf("not-ready refusal = %q, want %q", required, want)
+	}
+	if got := notDerived(".agent/Dockerfile").Error(); !strings.Contains(got, "start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`") {
+		t.Errorf("not-derived refusal = %q, want the scaffold's ARG default", got)
+	}
+}
+
 // coop build says when the approval it records covers far more than the image reads, and how to narrow
 // it. Every such file voids the approval when it changes, which is how emisar's loop came to be refused
 // for edits its box never reads (2026-11-05). A context narrowed to what the Dockerfile copies hears

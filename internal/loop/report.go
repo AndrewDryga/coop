@@ -130,11 +130,11 @@ func printLoopStaleness(nudge string) {
 	case strings.HasPrefix(nudge, "box image is stale —"):
 		ui.Caution("Box image is out of date")
 		ui.Note("    The box Dockerfile or .tool-versions changed since it was built.")
-		ui.Note("    To rebuild: coop build")
+		ui.Note("    To rebuild: coop build --egress open")
 	case strings.HasPrefix(nudge, "box image was built by coop "):
 		ui.Caution("Box image does not match this Coop version")
 		ui.Note("    %s", nudge)
-		ui.Note("    To rebuild: coop build")
+		ui.Note("    To rebuild: coop build --egress open")
 	case strings.HasPrefix(nudge, "box image is ") && strings.Contains(nudge, " days old"):
 		ui.Caution("Box image is old")
 		ui.Note("    %s", nudge)

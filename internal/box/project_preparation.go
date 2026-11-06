@@ -37,7 +37,7 @@ type ProjectBuildRequired struct {
 }
 
 func (e *ProjectBuildRequired) Error() string {
-	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run '%s' on the host. Project builds use ordinary networking", e.Dockerfile, e.Reason, e.BuildCommand())
+	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run '%s' on the host. Project builds use ordinary networking, not the run's network restrictions.", e.Dockerfile, e.Reason, e.BuildCommand())
 }
 
 // BuildCommand is the command a person runs on the host to build these files.

@@ -360,7 +360,7 @@ for DNS.
 ## Your project's image
 
 You can use your own project image in filtered mode if its `.agent/Dockerfile` starts with
-`ARG COOP_BASE_IMAGE` / `FROM ${COOP_BASE_IMAGE}`. Build it on the host with
+`ARG COOP_BASE_IMAGE=coop-box` / `FROM ${COOP_BASE_IMAGE}`. Build it on the host with
 `coop build --egress filtered`, or with plain `coop build` when the project's effective network
 mode is filtered. co:op uses its locked client image as the base and tags the result
 `coop-<repo>-<path hash>-filtered:<hash>`.
@@ -436,7 +436,7 @@ base, gateway and client images, but those builds don't run instructions from yo
 | ICMP beyond echo-request | `ICMP N to <dest> is not supported yet — only echo-request is` |
 | `cidr: 0.0.0.0/0` | `a /0 rule allows everything, which is not filtering — use --egress open if that is what you want` |
 | a host, loopback, link-local or metadata range | `<range> is a protected range (your host, loopback, link-local or cloud metadata) — no rule can allow it` |
-| a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE and FROM ${COOP_BASE_IMAGE} …` |
+| a project image not built on the client image | `this project's .agent/Dockerfile did not build on coop's client image — start it with ARG COOP_BASE_IMAGE=coop-box and FROM ${COOP_BASE_IMAGE} …` |
 | a project image that changes a pinned client | `this project's .agent/Dockerfile changes claude's cli client at /opt/coop/bin/claude — a filtered box runs only the clients that coop net setup checked on this host …` |
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker, including a run with no mode set | `restricted networking needs docker; <runtime> cannot run the network gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker` |

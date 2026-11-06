@@ -723,8 +723,8 @@ roles:
               <td>A login shell (<code>sh -lc</code>, <code>bash -l</code>) reads <code>/etc/profile</code>, which resets <code>PATH</code> and drops asdf's shims. The box adds them back with an <code>/etc/profile.d</code> file; rebuild an older box with <code>coop build</code> to get it.</td>
             </tr>
             <tr>
-              <td>"box image is stale … run 'coop build'"</td>
-              <td>You changed <code>.agent/Dockerfile</code> or <code>.tool-versions</code> since the image was built. Run <code>coop build</code>, and the warning goes away.</td>
+              <td>"box image is stale … run 'coop build --egress open'"</td>
+              <td>You changed <code>.agent/Dockerfile</code> or <code>.tool-versions</code> since the image was built. Run <code>coop build --egress open</code>, and the warning goes away.</td>
             </tr>
             <tr>
               <td>A merge refuses</td>

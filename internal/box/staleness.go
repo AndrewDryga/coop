@@ -214,14 +214,16 @@ func ImageBuildAge(cfg *config.Config, img string) (time.Time, bool) {
 // StalenessNudges collects the launch-time staleness warnings for repo's image: per-project
 // input drift, base binary/image skew, and plain old age. Each is one line, best-effort, and
 // never blocks a run; the caller decides where to print them (box.Run for interactive runs,
-// the loop's startup for batch iterations).
+// the loop's startup for batch iterations). Only a run on the ordinary image asks — a filtered
+// run refuses a stale project build itself — so a rebuild is 'coop build --egress open': plain
+// 'coop build' follows the project's network mode and may build only the filtered image.
 func StalenessNudges(cfg *config.Config, repo, img string) []string {
 	var out []string
 	if StaleImageInputs(cfg, repo, img) {
-		out = append(out, "box image is stale — the box Dockerfile/.tool-versions changed since it was built; run 'coop build'")
+		out = append(out, "box image is stale — the box Dockerfile/.tool-versions changed since it was built; run 'coop build --egress open'")
 	}
 	if builtBy, skewed := BaseImageSkew(cfg, img); skewed {
-		out = append(out, fmt.Sprintf("box image was built by coop %s and this coop expects a different box — run 'coop build' to realign them", builtBy))
+		out = append(out, fmt.Sprintf("box image was built by coop %s and this coop expects a different box — run 'coop build --egress open' to realign them", builtBy))
 	}
 	if at, ok := ImageBuildAge(cfg, img); ok {
 		if age := time.Since(at); age >= ImageAgeNudge {

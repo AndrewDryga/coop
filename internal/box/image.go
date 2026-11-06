@@ -564,7 +564,7 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	// an automatic rebuild inside a launch — says only the plain fact, once.
 	if plan.Project && cfg.Egress != "" && cfg.Egress != "open" {
 		mode := egress.Mode(cfg.Egress).Word()
-		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking", mode, plan.Dockerfile, mode)
+		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking, not the run's network restrictions", mode, plan.Dockerfile, mode)
 	}
 	if !plan.Project {
 		ui.Note("building %s (shared base)", cfg.BaseImage)
@@ -627,6 +627,12 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 	content, readErr := readRepositoryRegularFileNoFollow(repo, dfRel, imageInputFileLimit)
 	if errors.Is(readErr, os.ErrNotExist) {
 		return BuildPlan{Image: cfg.BaseImage}, nil
+	}
+	if errors.Is(readErr, syscall.ELOOP) {
+		// The read never follows a link, and the system words that refusal as a loop of links.
+		if info, err := os.Lstat(filepath.Join(repo, dfRel)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return BuildPlan{}, fmt.Errorf("%s is a symbolic link. Replace it with the file it points to", dfRel)
+		}
 	}
 	if readErr != nil {
 		return BuildPlan{}, fmt.Errorf("read project Dockerfile %s: %w", dfRel, readErr)
@@ -712,7 +718,7 @@ func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir strin
 	if automatic {
 		rt = rt.ForApprovedBuild()
 	}
-	code, runErr := rt.RunProjectBuild(ctx, lease, nil, stderr, append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
+	code, runErr := rt.RunProjectBuild(ctx, lease, nil, buildOutput(stderr), append([]string{"build", "--iidfile", idFile.Name()}, args[1:]...)...)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -1103,7 +1109,11 @@ func ignoredBuildPaths(repo string) func(string) bool {
 // runBuild runs one image build and names its failure the way a person reads it: the runtime
 // they invoked, and the status it exited with.
 func runBuild(rt runtime.Runtime, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
-	code, err := rt.Run(stdin, stdout, stderr, args...)
+	out, errOut := buildOutput(stdout), buildOutput(stderr)
+	if stdout == stderr {
+		errOut = out // one log stays one writer, so its lines keep their order and one goroutine writes it
+	}
+	code, err := rt.Run(stdin, out, errOut, args...)
 	if err != nil {
 		return err
 	}

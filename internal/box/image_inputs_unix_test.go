@@ -79,3 +79,29 @@ func TestPlanBuildRefusesFIFODockerfileWithoutBlocking(t *testing.T) {
 		t.Fatal("build plan blocked on a FIFO Dockerfile")
 	}
 }
+
+// A linked Dockerfile is refused in plain words: the read never follows a link, and the system's own
+// word for that refusal is "too many levels of symbolic links" (QA B-31, 2026-11-06).
+func TestPlanBuildNamesALinkedDockerfile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "build", "real.Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../build/real.Dockerfile", filepath.Join(repo, ".agent", "Dockerfile")); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := PlanBuild(runtime.Runtime{Name: shim}, &config.Config{BaseImage: "coop-box:test"}, repo, false)
+	if err == nil || err.Error() != ".agent/Dockerfile is a symbolic link. Replace it with the file it points to" {
+		t.Fatalf("linked Dockerfile refusal = %v", err)
+	}
+}

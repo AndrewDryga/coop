@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Project box build messages name the right fix.** An open or offline run on an out-of-date
+  project image said to run `coop build`, which in a project with filtered networking builds only
+  the filtered image, so the warning never went away. It now says `coop build --egress open`. A
+  filtered build refused for not starting from Coop's image now asks for
+  `ARG COOP_BASE_IMAGE=coop-box`, as `coop init` writes it, which keeps Docker from warning about
+  an empty base image name. Docker's build warnings no longer carry color codes when `NO_COLOR` is
+  set or the output is not a terminal. A linked `.agent/Dockerfile` is refused in plain words
+  rather than "too many levels of symbolic links", and the refusal for a project build that is not
+  ready ends on a whole sentence.
+
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed
@@ -57,6 +67,8 @@
   Compose's advice to add `external: true` is no longer shown, a declined review no longer calls
   the volume external, and without a terminal `coop up` says what the rule is: these services
   start only from a terminal, even after approval.
+
+
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

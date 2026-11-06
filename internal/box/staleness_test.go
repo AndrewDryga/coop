@@ -82,6 +82,27 @@ func TestStaleImageInputs(t *testing.T) {
 	}
 }
 
+// Only a run on the ordinary image hears these nudges, and plain `coop build` builds the filtered
+// image in a project whose mode is filtered, so the warning would never go away (QA B-34, 2026-11-06).
+func TestStaleNudgesNameTheOrdinaryImageBuild(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &config.Config{BoxHome: t.TempDir()}
+	const img = "coop-test"
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM x\n")
+	StampImageInputs(cfg, repo, img)
+	writeRepoFile(t, filepath.Join(repo, ".agent/Dockerfile"), "FROM y\n")
+	writeRepoFile(t, imageMetaPath(cfg, img), "coop v2.0.0\ndef stale\n")
+	nudges := StalenessNudges(cfg, repo, img)
+	if len(nudges) != 2 {
+		t.Fatalf("want the stale and skew nudges, got %q", nudges)
+	}
+	for _, nudge := range nudges {
+		if !strings.Contains(nudge, "run 'coop build --egress open'") {
+			t.Errorf("nudge does not name the ordinary image's build: %q", nudge)
+		}
+	}
+}
+
 func TestBaseImageSkew(t *testing.T) {
 	cfg := &config.Config{BoxHome: t.TempDir()}
 	const img = "coop-box"

@@ -126,7 +126,7 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 			}
 		}
 	}
-	return "", "", fmt.Errorf("this project's %s has no explicit build for its current inputs and client image — review the Dockerfile and copied build files, then run '%s' on the host; project builds use ordinary networking", dfRel, projectBuildCommand(cfg, repo))
+	return "", "", fmt.Errorf("this project's %s has no explicit build for its current inputs and client image — review the Dockerfile and copied build files, then run '%s' on the host; project builds use ordinary networking, not the run's network restrictions", dfRel, projectBuildCommand(cfg, repo))
 }
 
 // BuildFilteredProject is the host-only construction path behind `coop build --egress filtered`, and
@@ -387,7 +387,7 @@ func proveDerivedLayers(ctx context.Context, docker filteredDocker, locked, buil
 }
 
 func notDerived(dfRel string) error {
-	return fmt.Errorf("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
+	return fmt.Errorf("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
 }
 
 // pinnedFile is one path a filtered launch will not accept a change to, and the
