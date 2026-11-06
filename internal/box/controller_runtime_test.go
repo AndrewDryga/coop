@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -72,6 +73,10 @@ func TestControllerWorkDoesNotRunWithoutItsRequiredServices(t *testing.T) {
 	code, err := Run(cfg, runtime.Runtime{Name: script}, RunSpec{Image: "test-box", Repo: repo, Cmd: []string{"true"}, ControllerJob: true, Batch: true, Quiet: true})
 	if err == nil || code == 0 {
 		t.Fatalf("missing required database must refuse job, got %d, %v", code, err)
+	}
+	// An unhealthy service may be healthy on the next attempt, so this is not a refusal to stop at.
+	if !errors.As(err, new(*ServicesNotStarted)) || errors.As(err, new(*LaunchRefused)) {
+		t.Fatalf("Run error = %v, want services that did not start, not a launch refusal", err)
 	}
 	calls, _ := os.ReadFile(recorder)
 	if strings.Contains(string(calls), "run ") {

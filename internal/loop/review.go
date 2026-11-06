@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
@@ -285,8 +286,12 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 				return interruptedReviewResult(last, totalRetries), errReviewInterrupted
 			}
 		case actStop:
-			return last, fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)\nLast attempt: %s",
+			stop := fmt.Errorf("review stage failed %d times — stopping (a review that can't run is never an accept)\nLast attempt: %s",
 				fails, attemptCause(attemptSubject(agent, nil), code, runErr))
+			if errors.As(runErr, new(*box.ServicesNotStarted)) {
+				return last, &reviewNotStarted{stop: stop, cause: runErr}
+			}
+			return last, stop
 		case actAuthStop:
 			// Same rotation as the work stage: without it a between-task audit would hard-stop the
 			// run on the very credential the work stage just routed around.
@@ -302,6 +307,22 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			return last, fmt.Errorf("review stage reached the model output limit %d times — stopping", outputRetries)
 		}
 	}
+}
+
+// reviewNotStarted is a review stage that ran out of attempts while its box's services would not
+// start, so nothing was reviewed. It is a stop, never an accept, and never a failed verdict.
+type reviewNotStarted struct{ stop, cause error }
+
+func (e *reviewNotStarted) Error() string { return e.stop.Error() }
+func (e *reviewNotStarted) Unwrap() error { return e.cause }
+
+// candidateReviewFailure is the headline for a candidate review that ended without a pass. One whose
+// box never started did not review anything, so it must not read as a review that found issues.
+func candidateReviewFailure(err error) string {
+	if errors.As(err, new(*reviewNotStarted)) {
+		return "Candidate review could not start"
+	}
+	return "Candidate review did not pass"
 }
 
 func newReviewSessionID() string {

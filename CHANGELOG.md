@@ -112,6 +112,12 @@
   resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
   now repeat them, quoted for the shell.
 
+- **A review whose services did not start is retried, not failed.** On a busy host a sidecar can
+  miss its health check, and the review box then could not start. A fork's candidate review
+  stopped at once with "Candidate review did not pass", though nothing had been reviewed. Services
+  that do not start are now retried like any failed attempt, in work and review alike, and a
+  candidate review that runs out of attempts this way says it could not start, and why.
+
 - **A fork refused for network access says where to approve it.** A fork's approvals are its own
   once it is created, but its refusal said only "Review it: coop approve", and running that in the
   project reviewed the project, found nothing new and left the fork refused. A launch in another

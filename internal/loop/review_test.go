@@ -228,6 +228,74 @@ func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
 	}
 }
 
+// A candidate review whose box's services did not start reviewed nothing. Its attempt is retried
+// like any failed review attempt; when every attempt fails that way, it says the review could not
+// start, never that it did not pass.
+func TestCandidateReviewRetriesABoxWhoseServicesDidNotStart(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	git("commit", "-qm", "base")
+	task := taskForLease(t, repo, stateDone, "task-a")
+	unhealthy := &box.ServicesNotStarted{Err: errors.New("a filtered box needs this project's approved sidecars running, and starting them failed: compose up exited with status 1: container coop-fs-app-service is unhealthy")}
+	command := func(string, string, string, bool) ([]string, bool, bool) {
+		return []string{"claude", "-p", "review"}, true, true
+	}
+	review := func(t *testing.T, failures int) (reviewRunResult, int, string, error) {
+		c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+		c.net = newNetworkLog()
+		c.runID = "candidate-start-test"
+		launches := 0
+		c.boxRun = func(spec box.RunSpec) (int, error) {
+			launches++
+			if launches <= failures {
+				return -1, unhealthy
+			}
+			spec.OnRuntimeLaunch()
+			verdict := "AUDIT EVIDENCE — task-a — gate: focused tests passed — findings: none\nREVIEW COMPLETE — PASS — reopened: none"
+			_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", verdict)
+			_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1,\"duration_ms\":1,\"session_id\":\"\"}\n")
+			return 0, nil
+		}
+		var run reviewRunResult
+		var err error
+		// Captured outside the bubble: the capture's pipe reader would stop virtual time.
+		output := captureStderr(t, func() {
+			synctest.Test(t, func(t *testing.T) {
+				run, err = c.runCandidateReviewVerdict(context.Background(), repo, "image", ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}}),
+					"fork", "review", "candidate review", command, []string{repo}, []string{task.ID}, io.Discard, nil, nil, nil)
+			})
+		})
+		return run, launches, output, err
+	}
+
+	t.Run("one start failure, then a pass", func(t *testing.T) {
+		run, launches, output, err := review(t, 1)
+		if err != nil || len(run.reopened) != 0 || launches != 2 {
+			t.Fatalf("candidate review = %+v, %v after %d launches, want a pass on the retry\n%s", run, err, launches, output)
+		}
+		if !strings.Contains(output, "Review attempt failed") || !strings.Contains(output, "is unhealthy") || !strings.Contains(output, "attempt 2 of 5") {
+			t.Errorf("the start failure was not retried as a failed attempt naming its cause:\n%s", output)
+		}
+	})
+	t.Run("every start fails", func(t *testing.T) {
+		_, launches, _, err := review(t, maxLoopFailures)
+		if launches != maxLoopFailures || !errors.Is(err, unhealthy) || candidateReviewFailure(err) != "Candidate review could not start" {
+			t.Fatalf("candidate review = %v after %d launches, headline %q; want it to say it could not start", err, launches, candidateReviewFailure(err))
+		}
+		if !strings.Contains(err.Error(), "Last attempt: ") || !strings.Contains(err.Error(), "is unhealthy") {
+			t.Errorf("the stop does not say why the review could not start: %v", err)
+		}
+	})
+	if got := candidateReviewFailure(errors.New("candidate review found unresolved issues in task-a")); got != "Candidate review did not pass" {
+		t.Errorf("a review with findings reads %q, want that it did not pass", got)
+	}
+}
+
 func TestReviewVerdictRejectsSourceChangeBeforeCorrection(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

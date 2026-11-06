@@ -527,11 +527,19 @@ func ctxStep(ctx context.Context, step string) error {
 // check refused it or its setup failed, so no agent ran. A retry repeats the same host setup with
 // nothing changed in between, so a caller that retries attempts (the loop) stops at the first one
 // and shows the cause instead. A canceled setup is never one, and neither is a container runtime
-// that did not answer: those keep their own errors.
+// that did not answer, nor services that did not start: those keep their own errors.
 type LaunchRefused struct{ Err error }
 
 func (e *LaunchRefused) Error() string { return e.Err.Error() }
 func (e *LaunchRefused) Unwrap() error { return e.Err }
+
+// ServicesNotStarted is a launch whose project services did not start: compose up failed, often
+// on a health check a loaded host misses. Like a daemon that did not answer, the next attempt may
+// start them, so it is not a LaunchRefused and a caller that retries attempts retries it.
+type ServicesNotStarted struct{ Err error }
+
+func (e *ServicesNotStarted) Error() string { return e.Err.Error() }
+func (e *ServicesNotStarted) Unwrap() error { return e.Err }
 
 // setupCanceled is ctxStep's refusal: the phase it would have started, and why it did not.
 type setupCanceled struct {
@@ -547,9 +555,10 @@ func (e setupCanceled) Unwrap() error { return e.cause }
 // Run assembles and executes one container run, shadowing secrets and wiring up
 // agent homes + MCP. It returns the container's exit code (with a nil error when
 // the container merely exited non-zero). An error from before the runtime launch
-// boundary (OnRuntimeLaunch) is a *LaunchRefused, except a cancellation or a
-// runtime.ErrDaemonUnavailable: a daemon that did not answer may answer the next
-// attempt, so a caller keeps retrying it.
+// boundary (OnRuntimeLaunch) is a *LaunchRefused, except a cancellation, a
+// runtime.ErrDaemonUnavailable or a *ServicesNotStarted: a daemon that did not
+// answer, or services that did not start, may do so on the next attempt, so a
+// caller keeps retrying them.
 func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	var launched atomic.Bool
 	onLaunch := spec.OnRuntimeLaunch
@@ -561,7 +570,7 @@ func Run(cfg *config.Config, rt runtime.Runtime, spec RunSpec) (int, error) {
 	}
 	code, err := runChecked(cfg, rt, spec)
 	if err != nil && !launched.Load() && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
-		!errors.Is(err, runtime.ErrDaemonUnavailable) {
+		!errors.Is(err, runtime.ErrDaemonUnavailable) && !errors.As(err, new(*ServicesNotStarted)) {
 		err = &LaunchRefused{Err: err}
 	}
 	return code, err

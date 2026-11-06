@@ -551,7 +551,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return 1, reviewErr // the fork controller owns the durable rework transition
 		}
 		if reviewErr != nil {
-			ui.Failure("Candidate review did not pass", reviewErr.Error(), [2]string{"Continue:", continueCmd})
+			ui.Failure(candidateReviewFailure(reviewErr), reviewErr.Error(), [2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(reviewErr)
 		}
 		if len(run.reopened) != 0 {

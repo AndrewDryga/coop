@@ -329,7 +329,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 	upArgs = append(upArgs, s.selected...)
 	stderr.Reset()
 	if err := runCompose(s.runtime, io.Discard, &stderr, "up", upArgs); err != nil {
-		return composeFailure("a filtered box needs this project's approved sidecars running, and starting them failed", err, stderr.String())
+		return &ServicesNotStarted{Err: composeFailure("a filtered box needs this project's approved sidecars running, and starting them failed", err, stderr.String())}
 	}
 	if err := filesystem.retain(); err != nil {
 		return err

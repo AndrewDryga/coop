@@ -170,7 +170,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if err := upErr; err != nil {
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, owner, network, ports)
 		started.ports = observed
-		return started, errors.Join(err, observeErr)
+		return started, &ServicesNotStarted{Err: errors.Join(err, observeErr)}
 	}
 	if err := filesystem.retain(); err != nil {
 		return started, err
