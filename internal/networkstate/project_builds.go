@@ -100,7 +100,14 @@ type projectBuildReviewRecord struct {
 	ID      string `json:"id"`
 	Project string `json:"project"`
 	Review  string `json:"review"`
+	// Files is what the review covered, each staged path's own digest, so a refusal can name the
+	// files that changed. It explains and approves nothing: Review alone is the approval.
+	Files map[string]string `json:"files,omitempty"`
 }
+
+// maxReviewedFilesBytes bounds a review record that lists its files. A context too big to list keeps
+// its approval, and a refusal then names no file.
+const maxReviewedFilesBytes = 2 << 20
 
 func projectBuildReviewID(project string) string {
 	sum := sha256.Sum256([]byte("project-build-review-v1\x00" + project))
@@ -120,17 +127,23 @@ func (s *Store) ProjectBuildReviewed(project, review string) bool {
 	if err != nil {
 		return false
 	}
-	var record projectBuildReviewRecord
+	// Every launch asks, so the file list a record may carry is skipped, not decoded.
+	var record struct {
+		Version int    `json:"version"`
+		ID      string `json:"id"`
+		Project string `json:"project"`
+		Review  string `json:"review"`
+	}
 	if json.Unmarshal(data, &record) != nil {
 		return false
 	}
 	return record.Version == 1 && record.ID == id && record.Project == project && record.Review == review
 }
 
-// RecordProjectBuildReview remembers what a build just approved for project, replacing what was
-// approved before. Callers must report a failure: without this record the next client image waits for
-// a person again.
-func (s *Store) RecordProjectBuildReview(project, review string) error {
+// RecordProjectBuildReview remembers what a build just approved for project, and the files it covered,
+// replacing what was approved before. Callers must report a failure: without this record the next
+// client image waits for a person again.
+func (s *Store) RecordProjectBuildReview(project, review string, files map[string]string) error {
 	if err := s.intactAuthority(); err != nil {
 		return err
 	}
@@ -138,11 +151,35 @@ func (s *Store) RecordProjectBuildReview(project, review string) error {
 		return errors.New("a project build review needs a project directory and a review digest")
 	}
 	id := projectBuildReviewID(project)
-	data, err := json.Marshal(projectBuildReviewRecord{Version: 1, ID: id, Project: project, Review: review})
+	record := projectBuildReviewRecord{Version: 1, ID: id, Project: project, Review: review, Files: files}
+	data, err := json.Marshal(record)
+	if err == nil && len(data) > maxReviewedFilesBytes {
+		record.Files = nil
+		data, err = json.Marshal(record)
+	}
 	if err != nil {
 		return err
 	}
 	return s.publish(projectBuildReviewName(id), data, true)
+}
+
+// ProjectBuildReviewedFiles returns the files the last approved build of project covered, each path's
+// digest, or false when no approval lists them: none was made, or it came from an older build or a
+// context too big to list.
+func (s *Store) ProjectBuildReviewedFiles(project string) (map[string]string, bool) {
+	if s.intactAuthority() != nil || !filepath.IsAbs(project) {
+		return nil, false
+	}
+	id := projectBuildReviewID(project)
+	data, err := s.read(projectBuildReviewName(id))
+	if err != nil {
+		return nil, false
+	}
+	var record projectBuildReviewRecord
+	if json.Unmarshal(data, &record) != nil || record.Version != 1 || record.ID != id || record.Project != project || record.Files == nil {
+		return nil, false
+	}
+	return record.Files, true
 }
 
 // ProjectBuildReviewStamp changes each time a build of project finishes, for a session waiting on one.

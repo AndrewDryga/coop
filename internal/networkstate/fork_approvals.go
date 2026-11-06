@@ -34,6 +34,7 @@ func (s *Store) SnapshotForkApprovals(ctx context.Context, parent, fork, forkIma
 	var approval *Approval
 	var withdrawn bool
 	var review string
+	var reviewedFiles map[string]string
 	err = s.lockRecord(ctx, "approval", parentID, func() error {
 		approval, err = s.approval(parentID)
 		if err != nil {
@@ -48,7 +49,7 @@ func (s *Store) SnapshotForkApprovals(ctx context.Context, parent, fork, forkIma
 		}
 		// Build reviews publish by atomic rename. Copy that record, without waiting on a build
 		// that may take minutes; a later completed build is a later parent approval.
-		review, err = s.projectBuildReview(parent)
+		review, reviewedFiles, err = s.projectBuildReview(parent)
 		return err
 	})
 	if err != nil {
@@ -56,11 +57,11 @@ func (s *Store) SnapshotForkApprovals(ctx context.Context, parent, fork, forkIma
 	}
 	// Release the source lock before publishing: the two IDs can share one flock stripe.
 	return s.lockRecord(ctx, "approval", forkID, func() error {
-		return s.snapshotForkApprovals(fork, forkID, forkImage, approval, withdrawn, review)
+		return s.snapshotForkApprovals(fork, forkID, forkImage, approval, withdrawn, review, reviewedFiles)
 	})
 }
 
-func (s *Store) snapshotForkApprovals(fork, id, image string, approval *Approval, withdrawn bool, review string) (err error) {
+func (s *Store) snapshotForkApprovals(fork, id, image string, approval *Approval, withdrawn bool, review string, reviewedFiles map[string]string) (err error) {
 	if _, err := os.Lstat(filepath.Join(fork, ProjectApprovalMarker)); !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(errors.New("new fork already has a network approval marker"), err)
 	}
@@ -111,7 +112,7 @@ func (s *Store) snapshotForkApprovals(fork, id, image string, approval *Approval
 		}
 	}
 	if review != "" {
-		return s.RecordProjectBuildReview(fork, review)
+		return s.RecordProjectBuildReview(fork, review, reviewedFiles)
 	}
 	return nil
 }
@@ -188,19 +189,19 @@ func (s *Store) removeForkImageApprovals(image string) error {
 // The reviewed-files digest omits the project path. The image-output record does not: its tag is
 // part of the inputs digest. A fork therefore rebuilds only these already-reviewed files through
 // the ordinary automatic-build path, producing its own image proof.
-func (s *Store) projectBuildReview(project string) (string, error) {
+func (s *Store) projectBuildReview(project string) (string, map[string]string, error) {
 	id := projectBuildReviewID(project)
 	data, err := s.read(projectBuildReviewName(id))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return "", nil, nil
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var record projectBuildReviewRecord
 	if json.Unmarshal(data, &record) != nil || record.Version != 1 || record.ID != id ||
 		record.Project != project || !lowerHex(record.Review, 64) {
-		return "", errors.New("parent project build review is invalid")
+		return "", nil, errors.New("parent project build review is invalid")
 	}
-	return record.Review, nil
+	return record.Review, record.Files, nil
 }

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -532,6 +533,126 @@ func TestOnlyTheApprovedFilesRebuildByThemselves(t *testing.T) {
 				t.Fatalf("the builder ran for files nobody approved: %d builds, want %d", x.builds(), before)
 			}
 		})
+	}
+}
+
+// A refusal names the files whose change voided the approval, copied or not, or says that only the
+// build settings or Coop's own inputs changed. emisar's loop was refused three times naming nothing,
+// while the files that changed were ones its Dockerfile never copies (2026-11-05).
+func TestAProjectBuildRefusalNamesWhatChanged(t *testing.T) {
+	newClient := func(x *approvedRebuildFixture) {
+		x.upgradeClient("sha256:"+strings.Repeat("4", 64), "sha256:"+strings.Repeat("5", 64))
+	}
+	for name, test := range map[string]struct {
+		prepare  func(*approvedRebuildFixture)
+		change   func(*approvedRebuildFixture)
+		approved bool
+		want     string
+	}{
+		"a copied file": {
+			change: func(x *approvedRebuildFixture) { x.write("main.go", "package main // edited by an agent\n") },
+			want:   "; files that changed: main.go",
+		},
+		"a file the Dockerfile never copies": {
+			prepare: func(x *approvedRebuildFixture) { x.write("portal/lib/app.ex", "defmodule App do end\n") },
+			change:  func(x *approvedRebuildFixture) { x.write("portal/lib/app.ex", "defmodule App do def x, do: 1 end\n") },
+			want:    "; files that changed: portal/lib/app.ex",
+		},
+		"new and removed files": {
+			prepare: func(x *approvedRebuildFixture) { x.write("old.txt", "x\n") },
+			change: func(x *approvedRebuildFixture) {
+				if err := os.Remove(filepath.Join(x.repo, "old.txt")); err != nil {
+					x.t.Fatal(err)
+				}
+				x.write("tools/new/a.sh", "true\n")
+			},
+			want: "; files that changed: old.txt, tools/new/a.sh",
+		},
+		"only a build setting": {
+			change: func(x *approvedRebuildFixture) { x.t.Setenv("SOURCE_DATE_EPOCH", "1") },
+			want:   "; the files are the approved ones, so the Docker daemon, the Dockerfile in use or a build setting changed",
+		},
+		"only Coop's client image": {
+			change:   newClient,
+			approved: true,
+			want:     "; this project's files and settings are still the approved ones; only Coop's side changed, such as its client image",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			if test.prepare != nil {
+				test.prepare(x)
+			}
+			x.explicitBuild()
+			test.change(x)
+			required := x.miss()
+			if required.Approved != test.approved || !strings.HasSuffix(required.Reason, test.want) {
+				t.Fatalf("refusal = %+v, want approved %v and a reason ending %q", required, test.approved, test.want)
+			}
+			if test.approved {
+				return
+			}
+			newClient(x)
+			var automatic *ProjectBuildRequired
+			if err := x.automaticBuild(); !errors.As(err, &automatic) || !strings.HasSuffix(automatic.Reason, test.want) {
+				t.Fatalf("automatic build refusal = %v, want a reason ending %q", err, test.want)
+			}
+		})
+	}
+}
+
+// coop build says when the approval it records covers far more than the image reads, and how to narrow
+// it. Every such file voids the approval when it changes, which is how emisar's loop came to be refused
+// for edits its box never reads (2026-11-05). A context narrowed to what the Dockerfile copies hears
+// nothing.
+func TestAProjectBuildWarnsOfFilesItsDockerfileNeverCopies(t *testing.T) {
+	x := newApprovedRebuildFixture(t)
+	for i := range broadContextFiles {
+		x.write(filepath.Join("portal", "lib", "module_"+strconv.Itoa(i)+".ex"), "defmodule M do end\n")
+	}
+	var errOut strings.Builder
+	if _, err := buildFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	// The hundred modules and .gitignore; main.go is copied, and the Dockerfile is the build's own.
+	const want = "The build context holds 101 files that .agent/Dockerfile never copies, and a change to any of them asks for another build. List only what it copies in .agent/Dockerfile.dockerignore.\n"
+	if !strings.Contains(errOut.String(), want) {
+		t.Fatalf("coop build said:\n%s\nwant:\n%s", errOut.String(), want)
+	}
+	x.write(".agent/Dockerfile.dockerignore", "portal/\n")
+	errOut.Reset()
+	if _, err := buildFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errOut.String(), "never copies") {
+		t.Fatalf("a narrowed context was still called broad:\n%s", errOut.String())
+	}
+}
+
+// Only what a Dockerfile reads from the context counts as copied: a path, a folder holding it or a
+// pattern. Another stage's files and a URL read none, and a source Coop cannot spell out counts as
+// everything, so the count never runs high.
+func TestUncopiedContextFilesReadsWhatTheDockerfileCopies(t *testing.T) {
+	entries := []contextEntry{{rel: "lib", mode: fs.ModeDir}}
+	for _, rel := range []string{"main.go", "lib/a.ex", "libs/b.ex", "docs/c.md", ".agent/Dockerfile", ".dockerignore"} {
+		entries = append(entries, contextEntry{rel: rel, mode: 0o644})
+	}
+	for name, test := range map[string]struct {
+		dockerfile string
+		want       int
+	}{
+		"one file":                     {"FROM x\nCOPY main.go /app/\n", 3},
+		"a folder":                     {"FROM x\nCOPY lib /app/lib\n", 3},
+		"a pattern":                    {"FROM x\nCOPY [\"lib*\", \"/app/\"]\n", 2},
+		"everything":                   {"FROM x\nCOPY . /app\n", 0},
+		"another stage and a URL":      {"FROM x\nCOPY --from=build /out /app\nADD https://example.com/a /a\n", 4},
+		"a source from a build arg":    {"FROM x\nARG SRC\nCOPY $SRC /app\n", 0},
+		"a continued, flagged copy":    {"FROM x\nCOPY --chown=node \\\n  main.go docs /app/\n", 2},
+		"a heredoc body is not a copy": {"FROM x\nRUN <<EOF\nCOPY . /app\nEOF\n", 4},
+	} {
+		if got := uncopiedContextFiles([]byte(test.dockerfile), entries, ".agent/Dockerfile"); got != test.want {
+			t.Errorf("%s: %d uncopied files, want %d", name, got, test.want)
+		}
 	}
 }
 
@@ -1112,7 +1233,7 @@ func TestEditorBoxStampChangesWhenAPersonMayHaveActed(t *testing.T) {
 	}
 	for name, change := range map[string]func(){
 		"a project build finished": func() {
-			if err := x.f.store.RecordProjectBuildReview(x.repo, strings.Repeat("a", 64)); err != nil {
+			if err := x.f.store.RecordProjectBuildReview(x.repo, strings.Repeat("a", 64), nil); err != nil {
 				t.Fatal(err)
 			}
 		},

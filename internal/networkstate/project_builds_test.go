@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -105,6 +107,36 @@ func TestProjectBuildTreatsADamagedRecordAsAMiss(t *testing.T) {
 	}
 }
 
+// A review keeps the files it covered, so a refusal can name what changed. The list explains and
+// approves nothing: one too big to keep is dropped, and the review it came with still answers.
+func TestProjectBuildReviewKeepsTheFilesItCovered(t *testing.T) {
+	s := openStore(t)
+	project, review := "/work/app", strings.Repeat("a", 64)
+	if _, ok := s.ProjectBuildReviewedFiles(project); ok {
+		t.Fatal("files were listed before any review")
+	}
+	files := map[string]string{"main.go": strings.Repeat("1", 32), ".agent/Dockerfile": strings.Repeat("2", 32)}
+	if err := s.RecordProjectBuildReview(project, review, files); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.ProjectBuildReviewedFiles(project); !ok || !maps.Equal(got, files) {
+		t.Fatalf("reviewed files = %v, %v; want %v", got, ok, files)
+	}
+	huge := map[string]string{}
+	for i := range 40000 {
+		huge[fmt.Sprintf("portal/lib/module_%05d.ex", i)] = strings.Repeat("3", 32)
+	}
+	if err := s.RecordProjectBuildReview(project, review, huge); err != nil {
+		t.Fatal(err)
+	}
+	if !s.ProjectBuildReviewed(project, review) {
+		t.Fatal("a review whose file list was too big to keep did not answer")
+	}
+	if _, ok := s.ProjectBuildReviewedFiles(project); ok {
+		t.Fatal("a file list too big to keep was kept, or an older one stayed")
+	}
+}
+
 // A review answers for one project and exactly one digest. Anything else is a miss, and a miss waits
 // for a person.
 func TestProjectBuildReviewAnswersForOneProjectAndOneDigest(t *testing.T) {
@@ -113,7 +145,7 @@ func TestProjectBuildReviewAnswersForOneProjectAndOneDigest(t *testing.T) {
 	if s.ProjectBuildReviewed(project, review) {
 		t.Fatal("nothing was recorded yet")
 	}
-	if err := s.RecordProjectBuildReview(project, review); err != nil {
+	if err := s.RecordProjectBuildReview(project, review, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !s.ProjectBuildReviewed(project, review) {
@@ -122,7 +154,7 @@ func TestProjectBuildReviewAnswersForOneProjectAndOneDigest(t *testing.T) {
 	if s.ProjectBuildReviewed(project, newer) || s.ProjectBuildReviewed("/work/other", review) {
 		t.Fatal("a review answered for other files or another project")
 	}
-	if err := s.RecordProjectBuildReview(project, newer); err != nil {
+	if err := s.RecordProjectBuildReview(project, newer, nil); err != nil {
 		t.Fatal(err)
 	}
 	if s.ProjectBuildReviewed(project, review) || !s.ProjectBuildReviewed(project, newer) {
@@ -133,7 +165,7 @@ func TestProjectBuildReviewAnswersForOneProjectAndOneDigest(t *testing.T) {
 		"a short digest":     {project, "short"},
 		"an uppercase one":   {project, strings.Repeat("A", 64)},
 	} {
-		if err := s.RecordProjectBuildReview(record[0], record[1]); err == nil {
+		if err := s.RecordProjectBuildReview(record[0], record[1], nil); err == nil {
 			t.Errorf("%s: recorded", name)
 		}
 		if s.ProjectBuildReviewed(record[0], record[1]) {

@@ -935,22 +935,36 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 // gets every entry and a file's content from the same read, so a staged copy and its digest cannot
 // disagree.
 func contextDigest(ctx context.Context, repo string, entries []contextEntry, write func(contextEntry, io.Reader) error) (string, error) {
+	digest, _, err := contextDigestFiles(ctx, repo, entries, write)
+	return digest, err
+}
+
+// contextDigestFiles is contextDigest with each entry's own digest of the same bytes, by path, from the
+// same read. A later tree compared with them can name what changed, where the one digest only says that
+// something did. They explain a refusal and approve nothing.
+func contextDigestFiles(ctx context.Context, repo string, entries []contextEntry, write func(contextEntry, io.Reader) error) (string, map[string]string, error) {
 	root, err := os.OpenRoot(repo)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer root.Close()
 	sum := sha256.New()
+	files := make(map[string]string, len(entries))
+	record := func(rel, line string) {
+		fmt.Fprint(sum, line)
+		entry := sha256.Sum256([]byte(line))
+		files[rel] = hex.EncodeToString(entry[:16])
+	}
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		rel := filepath.ToSlash(entry.rel)
 		if entry.mode.IsDir() || entry.mode&fs.ModeSymlink != 0 {
-			fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", entry.mode.Type(), rel, entry.target)
+			record(rel, fmt.Sprintf("%s\x00%s\x00%s\x00", entry.mode.Type(), rel, entry.target))
 			if write != nil {
 				if err := write(entry, nil); err != nil {
-					return "", err
+					return "", nil, err
 				}
 			}
 			continue
@@ -966,13 +980,13 @@ func contextDigest(ctx context.Context, repo string, entries []contextEntry, wri
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		info, err := file.Stat()
 		if err != nil || !os.SameFile(info, entry.file) {
 			file.Close()
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			continue
 		}
@@ -984,11 +998,11 @@ func contextDigest(ctx context.Context, repo string, entries []contextEntry, wri
 		}
 		file.Close()
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		fmt.Fprintf(sum, "file\x00%s\x00%o\x00%x\x00", rel, entry.mode.Perm(), content.Sum(nil))
+		record(rel, fmt.Sprintf("file\x00%s\x00%o\x00%x\x00", rel, entry.mode.Perm(), content.Sum(nil)))
 	}
-	return hex.EncodeToString(sum.Sum(nil)), nil
+	return hex.EncodeToString(sum.Sum(nil)), files, nil
 }
 
 // stageContextEntries copies entries into a throwaway dir and returns the digest of exactly what it

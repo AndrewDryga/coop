@@ -371,7 +371,11 @@ A filtered launch uses only a project image built from files you approved by run
   works on a private snapshot and compares that snapshot with your approval first.
 - If the build inputs changed, co:op asks you to review and rebuild, and `coop update` leaves that
   to you too. Build inputs include copied scripts and file modes, but not the secrets and Git
-  metadata that co:op leaves out of the build.
+  metadata that co:op leaves out of the build. The message names the files that changed, or says
+  that only a build setting or co:op's own client image did.
+
+`coop build` warns when the build context holds many files the Dockerfile never copies, since a
+change to any of them asks for another build.
 
 To keep unrelated edits from requiring a rebuild, list the files this image doesn't build from in
 `.agent/Dockerfile.dockerignore`, or in an ignore file named after your configured Dockerfile. Its

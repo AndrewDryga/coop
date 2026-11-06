@@ -384,12 +384,12 @@ func TestSnapshotForkApprovalRecreatedPathClearsStaleBuildReview(t *testing.T) {
 				t.Fatal(err)
 			}
 			staleReview := strings.Repeat("a", 64)
-			if err := s.RecordProjectBuildReview(fork, staleReview); err != nil {
+			if err := s.RecordProjectBuildReview(fork, staleReview, nil); err != nil {
 				t.Fatal(err)
 			}
 			if copyParentReview {
 				parentReview := strings.Repeat("b", 64)
-				if err := s.RecordProjectBuildReview(parent, parentReview); err != nil {
+				if err := s.RecordProjectBuildReview(parent, parentReview, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -493,7 +493,7 @@ func TestRetireForkApprovalsLeavesTheParentAndWithdrawals(t *testing.T) {
 			t.Fatal(err)
 		}
 		review := strings.Repeat("c", 64)
-		if err := s.RecordProjectBuildReview(parent, review); err != nil {
+		if err := s.RecordProjectBuildReview(parent, review, nil); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.SnapshotForkApprovals(t.Context(), parent, fork, "coop-fork-filtered"); err != nil {

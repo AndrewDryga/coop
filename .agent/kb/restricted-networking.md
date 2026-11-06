@@ -3,7 +3,7 @@ name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
 sources: [internal/box/fork_approvals.go, internal/networkstate/fork_approvals.go, internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/box/launch_sections.go]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 A filtered box — the built-in default, or `coop <agent> --egress filtered` — runs behind a per-run
@@ -265,7 +265,11 @@ Traps:
   daemon, build settings; no client identity). `AdmitNetwork` rebuilds with no prompt only when that
   digest still matches, which covers a new client image and a lost image, and decides again on the
   snapshot's digest in `buildPreparedFilteredProject` under the project's build lock. A rebuild never
-  writes the review, so it cannot add files. `filteredProjectImage` consumes only a version-2
+  writes the review, so it cannot add files. The review record also lists each staged path's own
+  digest (`contextDigestFiles`, `ProjectBuildReviewedFiles`; dropped above 2 MiB), only so a refusal
+  can name the changed files (`projectBuildChange`) or say that only settings or Coop's client image
+  changed; it grants nothing. A person's build warns when 100+ staged files are never copied
+  (`uncopiedContextFiles`), since each still voids the approval when it changes. `filteredProjectImage` consumes only a version-2
   approval, never building on a miss. Legacy version-1 automatic-build memos are not authority. An
   open editor connection may build a missing project image; ordinary launches do not rebuild changed
   project inputs. `BuildWith` refuses automatic project builds for filtered/offline modes.
@@ -400,6 +404,8 @@ direct runs and remote sessions consume one.
 - 2026-11-06 — a refusal for another checkout's request names it with COOP_REPO; verified the fork
   loop, interactive fork and local fork ACP refusals and the board's fix line (task
   2026-11-05-make-fork-loop-network-approval-recovery-identif).
+- 2026-11-06 — the build review lists each staged path's digest so a refusal names the changed files;
+  `coop build` warns of a context whose files the Dockerfile mostly never copies (emisar, 2026-11-05).
 - 2026-11-05 — removing a fork retires its own approvals and anchors before the checkout goes
   (task 2026-11-05-retire-a-fork-s-private-approval-records-when-it).
 - 2026-11-05 — verified creation-only fork approval snapshots, fresh anchors, build-review reuse

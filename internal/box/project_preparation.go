@@ -67,7 +67,7 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 	if err != nil {
 		return err
 	}
-	tree, err := contextDigest(ctx, repo, entries, nil)
+	tree, files, err := contextDigestFiles(ctx, repo, entries, nil)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 	candidate := networkstate.CandidateSpec{Runtime: binding, ClientImage: client}
 	image, reason := store.ProjectBuildStatus(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel))
 	if image == "" {
-		return required(reason)
+		return required(withProjectBuildChange(reason, store, canonical, files, approved))
 	}
 	if id, _, err := docker.Image(ctx, image); err != nil || id != image {
 		if ctx.Err() != nil {
@@ -117,6 +117,7 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 type PreparedProjectBuild struct {
 	repo, dockerfile, dir, digest, settings string
 	entries                                 []contextEntry
+	files                                   map[string]string // each staged entry's digest, as last verified
 	consumed                                bool
 	automatic                               bool   // no person started this build, so it builds only approved files
 	starting                                func() // called once it has decided to run the builder
@@ -163,13 +164,14 @@ func (b *PreparedProjectBuild) verifySnapshot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	digest, err := contextDigest(ctx, b.dir, entries, nil)
+	digest, files, err := contextDigestFiles(ctx, b.dir, entries, nil)
 	if err != nil {
 		return err
 	}
 	if digest != b.digest {
 		return errors.New("the saved build snapshot changed after preparation — run it again")
 	}
+	b.files = files
 	return nil
 }
 

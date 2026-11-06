@@ -12,6 +12,12 @@
   HEAD, no amend or rebase of the reviewed commits, or no commit at all when only evidence was
   missing.
 
+- **A refused project build names the files that changed.** When a filtered box's project image no
+  longer matched its approval, the refusal said only that "project build inputs or settings
+  changed", even when the files that changed were ones the Dockerfile never copies. It now names
+  them (the first five, and how many more), or says that only a build setting or Coop's own client
+  image changed. `coop build` also warns when the build context holds many files the Dockerfile
+  never copies, and suggests listing only what it copies in `<Dockerfile>.dockerignore`.
 - **`coop fork ls` shows a fork whose box is waiting to start its services.** Such a fork read as
   "background loop running" for as long as its box waited for other boxes, and only the fork's log
   said why nothing happened. It now reads "waiting to start services", with the boxes it waits for

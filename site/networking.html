@@ -528,8 +528,11 @@ mode is filtered. co:op uses its locked client image as the base and tags the re
 works on a private snapshot and compares that snapshot with your approval first.</li>
 <li>If the build inputs changed, co:op asks you to review and rebuild, and <code>coop update</code> leaves that
 to you too. Build inputs include copied scripts and file modes, but not the secrets and Git
-metadata that co:op leaves out of the build.</li>
+metadata that co:op leaves out of the build. The message names the files that changed, or says
+that only a build setting or co:op&#39;s own client image did.</li>
 </ul>
+<p><code>coop build</code> warns when the build context holds many files the Dockerfile never copies, since a
+change to any of them asks for another build.</p>
 <p>To keep unrelated edits from requiring a rebuild, list the files this image doesn&#39;t build from in
 <code>.agent/Dockerfile.dockerignore</code>, or in an ignore file named after your configured Dockerfile. Its
 rules take precedence over the root <code>.dockerignore</code>.</p>

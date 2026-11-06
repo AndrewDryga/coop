@@ -236,7 +236,14 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 		// The last word on running instructions with no person present, on the very bytes about to
 		// build: snapshot verified above, kept outside every mount.
 		if !store.ProjectBuildReviewed(project, review) {
-			return ImageChange{}, &ProjectBuildRequired{Dockerfile: dfRel, Reason: "project build inputs or settings changed since the explicit build"}
+			reason := withProjectBuildChange("project build inputs or settings changed since the explicit build", store, project, prepared.files, false)
+			return ImageChange{}, &ProjectBuildRequired{Dockerfile: dfRel, Reason: reason}
+		}
+	} else if dockerfile, err := readRepositoryRegularFileNoFollow(prepared.dir, dfRel, imageInputFileLimit); err == nil {
+		// A person's build is the moment to say the approval it records covers more than the image reads.
+		if n := uncopiedContextFiles(dockerfile, prepared.entries, filepath.ToSlash(dfRel)); n >= broadContextFiles {
+			fmt.Fprintf(errOut, "The build context holds %s that %s never copies, and a change to any of them asks for another build. List only what it copies in %s.\n",
+				ui.Count(n, "file"), dfRel, dfRel+".dockerignore")
 		}
 	}
 	if prepared.starting != nil {
@@ -272,7 +279,7 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 	// it again only tells a waiting editor session that a build finished (EditorBoxStamp).
 	err = store.ApproveProjectBuild(tag, inputs, built)
 	if err == nil {
-		err = store.RecordProjectBuildReview(project, review)
+		err = store.RecordProjectBuildReview(project, review, prepared.files)
 	}
 	if err != nil {
 		return ImageChange{}, fmt.Errorf("project image built, but its approval could not be saved: %w; fix host state permissions and run 'coop build --egress filtered' again", err)

@@ -19,6 +19,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // projectBuildInputs binds a project build to its staged context, runtime, locked client set and
@@ -82,6 +83,20 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 // cannot bake it in. A plain search would refuse working builds, since a comment, a RUN, a COPY's
 // destination, another stage's file and a heredoc's body can all name it without needing it.
 func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
+	copies := false
+	dockerfileInstructions(dockerfile, func(instruction string) bool {
+		copies = copiesProjectFile(instruction)
+		return !copies
+	})
+	if copies {
+		return fmt.Errorf("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
+	}
+	return nil
+}
+
+// dockerfileInstructions calls each with every instruction of dockerfile, its continued lines joined,
+// until each returns false. Comments, blank lines and heredoc bodies are not instructions.
+func dockerfileInstructions(dockerfile []byte, each func(instruction string) bool) {
 	var instruction strings.Builder
 	var bodies []heredoc
 	for _, raw := range strings.Split(string(dockerfile), "\n") {
@@ -100,27 +115,37 @@ func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
 		if continued {
 			continue
 		}
-		if copiesProjectFile(instruction.String()) {
-			return fmt.Errorf("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
+		if !each(instruction.String()) {
+			return
 		}
 		bodies = heredocsOf(instruction.String())
 		instruction.Reset()
 	}
-	return nil
 }
 
 // copiesProjectFile reads one instruction: a COPY or ADD from the build context with a source that
 // names project.File or is a pattern matching it. A folder holding the file does not count: `COPY . .`
 // asks for whatever the context has, and gets it.
 func copiesProjectFile(instruction string) bool {
+	for _, source := range contextCopySources(instruction) {
+		if matched, _ := path.Match(path.Clean("/" + source)[1:], project.File); matched {
+			return true
+		}
+	}
+	return false
+}
+
+// contextCopySources is what one COPY or ADD instruction reads from the build context: its sources,
+// as written. Another stage's files and any other instruction read none.
+func contextCopySources(instruction string) []string {
 	words := strings.Fields(instruction)
 	if len(words) == 0 || !strings.EqualFold(words[0], "COPY") && !strings.EqualFold(words[0], "ADD") {
-		return false
+		return nil
 	}
 	args := words[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
 		if strings.HasPrefix(args[0], "--from=") {
-			return false // another stage's file, which the context has no say in
+			return nil // another stage's file, which the context has no say in
 		}
 		args = args[1:]
 	}
@@ -128,12 +153,113 @@ func copiesProjectFile(instruction string) bool {
 	if json.Unmarshal([]byte(strings.Join(args, " ")), &sources) != nil {
 		sources = args // as Docker reads it: plain words when the rest is not a JSON list
 	}
-	for i := 0; i < len(sources)-1; i++ { // the last one is the destination
-		if matched, _ := path.Match(path.Clean("/" + sources[i])[1:], project.File); matched {
-			return true
+	if len(sources) < 2 {
+		return nil
+	}
+	return sources[:len(sources)-1] // the last one is the destination
+}
+
+// broadContextFiles is how many staged files a Dockerfile can leave uncopied before a build says so.
+const broadContextFiles = 100
+
+// uncopiedContextFiles counts the staged files that no COPY or ADD of the Dockerfile names, as a path,
+// a folder holding it or a pattern. Each of them still voids the approval when it changes, because the
+// approval covers the whole staged context. A source Coop cannot read, such as one a build argument
+// spells, counts as copying everything, so the count errs low, never high.
+func uncopiedContextFiles(dockerfile []byte, entries []contextEntry, dfRel string) int {
+	var sources []string
+	everything := false
+	dockerfileInstructions(dockerfile, func(instruction string) bool {
+		for _, source := range contextCopySources(instruction) {
+			switch clean := path.Clean("/" + source)[1:]; {
+			case strings.Contains(source, "://"): // ADD from a URL reads no context file
+			case clean == "" || strings.Contains(source, "$"):
+				everything = true
+				return false
+			default:
+				sources = append(sources, clean)
+			}
+		}
+		return true
+	})
+	if everything {
+		return 0
+	}
+	uncopied := 0
+	for _, entry := range entries {
+		rel := filepath.ToSlash(entry.rel)
+		if !entry.mode.IsRegular() || rel == dfRel || path.Base(rel) == ".dockerignore" || rel == dfRel+".dockerignore" {
+			continue
+		}
+		copied := false
+		for p := rel; p != "." && !copied; p = path.Dir(p) {
+			copied = slices.ContainsFunc(sources, func(source string) bool {
+				matched, _ := path.Match(source, p)
+				return matched
+			})
+		}
+		if !copied {
+			uncopied++
 		}
 	}
-	return false
+	return uncopied
+}
+
+// projectBuildChange says what voided a project build approval, from the files the approved build
+// covered, so a refusal sends the person to those files. The approval covers every staged file, and
+// emisar's box built from its whole repository root, so any edit anywhere voided it, and a refusal that
+// named nothing sent its supervisor to suspect a Coop upgrade (2026-11-05). approved is a match of the
+// project's files and settings, which leaves only Coop's own inputs. "" when the reviewed files are not
+// on record.
+func projectBuildChange(store *networkstate.Store, project string, files map[string]string, approved bool) string {
+	if approved {
+		return "this project's files and settings are still the approved ones; only Coop's side changed, such as its client image"
+	}
+	reviewed, ok := store.ProjectBuildReviewedFiles(project)
+	if !ok {
+		return ""
+	}
+	var changed []string
+	for rel, digest := range files {
+		if reviewed[rel] != digest {
+			changed = append(changed, rel)
+		}
+	}
+	for rel := range reviewed {
+		if _, ok := files[rel]; !ok {
+			changed = append(changed, rel)
+		}
+	}
+	if len(changed) == 0 {
+		return "the files are the approved ones, so the Docker daemon, the Dockerfile in use or a build setting changed"
+	}
+	slices.Sort(changed)
+	// A folder that came or went is named by the files in it, which sort right after it.
+	var named []string
+	for i, rel := range changed {
+		if i+1 == len(changed) || !strings.HasPrefix(changed[i+1], rel+"/") {
+			named = append(named, rel)
+		}
+	}
+	changed = named
+	shown := changed[:min(len(changed), 5)]
+	names := make([]string, len(shown))
+	for i, rel := range shown {
+		names[i] = ui.SafeInline(rel)
+	}
+	text := "files that changed: " + strings.Join(names, ", ")
+	if more := len(changed) - len(shown); more > 0 {
+		text += fmt.Sprintf(" and %d more", more)
+	}
+	return text
+}
+
+// withProjectBuildChange is reason followed by what changed, when that is known.
+func withProjectBuildChange(reason string, store *networkstate.Store, project string, files map[string]string, approved bool) string {
+	if change := projectBuildChange(store, project, files, approved); change != "" {
+		return reason + "; " + change
+	}
+	return reason
 }
 
 // heredoc is a body that follows an instruction, up to the line holding only its name. A `<<-` body may
