@@ -81,10 +81,27 @@ host-private like the record, because a person pastes it, and nothing in the wor
 agent writes, may supply it. The start writes it under the lock right after the record, replacing
 the last start's note or, when it cannot, removing it, so a stop never repeats another run's
 command. Stop reads it before its cleanup removes the record, removes it, and prints it as the
-Continue line; a worker with no note, started by an older Coop, gets only the fork's remembered
-agent. `ReadWorkerContinue` returns only one plain line that begins `coop fork <name> `. A worker
-that ends by itself leaves its note for the next start or stop to replace or remove: only a stop
-that finds the record prints it.
+Continue line (with `-d`: only a background loop has a record to stop); a worker with no note,
+started by an older Coop, gets `coop fork <name> --loop -d`, which runs the fork's saved target (see
+below), never the bare agent. `ReadWorkerContinue` returns only one plain line that begins
+`coop fork <name> `. A worker that ends by itself leaves its note for the next start or stop to
+replace or remove: only a stop that finds the record prints it.
+
+What a fork runs when a launch names no target is its saved target, `<workspace>/.coop/target`
+(`forkctl.SaveForkTarget`, `ReadForkTarget`): the whole `provider[:model][/effort][@account]` it was
+made with or last switched to, beside the `.coop/agent` note that keeps the provider alone. Only a
+launch that names a target (or `--fresh`, which makes a new folder) writes it; a resume reads it,
+refuses it by name when its account is gone (`savedForkTargetErr`) and never rewrites it, so no
+resume swaps the model or account for a default. A target that names another agent than the agent
+note is a leftover of a switch and is ignored. The loop no longer notes its resolved target there;
+`coop tasks watch` shows the saved one for a fork that holds no lease. Like the agent note, it is a
+hint in a folder the agent can write: what it names must parse and sign in on this host, or the
+launch stops.
+
+A fork's log `<name>.log` keeps every run's output: `forkspace.OpenLog` appends, and a run that
+starts in a log with output begins with a `── Fork <name> started again at <time> ──` line
+(`LogRunStart`; `lastLoggedError` stops reading at it). A new fork removes the log first
+(`RemoveLog` at creation), so a fork of the same name never shows an earlier fork's output.
 
 A terminal fork-loop result has a separate `<workspace>/.coop/loop-error` hint. `NoteForkLoopExit`
 tags the bounded reason with the current generation and records it under a nonblocking lifecycle
@@ -240,6 +257,11 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-06 — a fork keeps its whole target across reopen, resume and a stopped loop's restart
+  (`.coop/target`, written only by a launch that names a target); the stop's fallback Continue line is
+  `coop fork <name> --loop -d` and a background loop's own Continue lines carry `-d`; the fork log is
+  no longer emptied at each start, and a restart's output follows a "started again" line (task
+  2026-11-06-keep-a-fork-s-model-and-account-on-reopen-and-re).
 - 2026-11-06 — a detached start notes how to continue its loop in `<name>.continue` beside the
   record, and stop prints it: its Continue line named only the fork's remembered agent, without the
   run's `--tasks` queues or network flags (task 2026-11-06-make-coop-fork-loops-honor-configured-queue-orde).

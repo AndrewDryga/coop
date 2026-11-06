@@ -308,9 +308,10 @@ fork generation resumes that task, and another fork can't claim it. A fork recre
 same name is a new generation.
 
 `-d` (`--detach`) runs the worker in the background and saves its output in a private log. Read
-it with `coop fork logs <name>`. When the fork finishes its available work, review and
-[land it](forks.md#land-it) as you would a pull request, then `git push`. Add more agents only
-while you can keep up with reviewing their work.
+it with `coop fork logs <name>`. A restarted loop adds to the same log, after a line that says it
+started again; recreating the fork starts a new log. When the fork finishes its available work,
+review and [land it](forks.md#land-it) as you would a pull request, then `git push`. Add more
+agents only while you can keep up with reviewing their work.
 
 `coop fork merge --all` merges forks in sequence. It rebases each fork onto the result of the
 previous merge and re-runs the configured gate (`gate:` in `.agent/project.yaml`, or

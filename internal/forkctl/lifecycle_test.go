@@ -98,6 +98,57 @@ func TestForkAgentMemory(t *testing.T) {
 	}
 }
 
+// A fork runs, when a launch names no target, the whole target it was made with or last switched to:
+// its model, effort and account, not just its agent. A note that names another agent is a leftover
+// from before a switch, and never decides which model or account the new agent runs.
+func TestForkTargetMemory(t *testing.T) {
+	ws := t.TempDir()
+	if got := ReadForkTarget(ws); got != "" {
+		t.Errorf("ReadForkTarget(no agent) = %q, want none", got)
+	}
+	if err := SaveForkAgent(ws, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadForkTarget(ws); got != "claude" {
+		t.Errorf("ReadForkTarget(agent only) = %q, want the agent alone", got)
+	}
+	for _, target := range []string{"claude:haiku@personal", "claude/high@work", "claude:haiku/low@personal", "claude"} {
+		if err := SaveForkTarget(ws, target); err != nil {
+			t.Fatal(err)
+		}
+		if got := ReadForkTarget(ws); got != target {
+			t.Errorf("ReadForkTarget after saving %q = %q", target, got)
+		}
+	}
+	// Switch to another agent: the agent note is rewritten first, so a target left from the old agent
+	// is ignored until the launch saves the new one.
+	if err := SaveForkTarget(ws, "claude:haiku@personal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkAgent(ws, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadForkTarget(ws); got != "codex" {
+		t.Errorf("ReadForkTarget after a switch that saved no target = %q, want codex alone, never claude's model", got)
+	}
+	if err := SaveForkTarget(ws, "codex:gpt-6-luna@personal"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadForkTarget(ws); got != "codex:gpt-6-luna@personal" {
+		t.Errorf("ReadForkTarget after the switch saved its target = %q", got)
+	}
+	// The note is a hint in a folder the agent can write: one that is empty or past the limit is
+	// ignored, so the agent alone runs.
+	for _, note := range []string{"", strings.Repeat("codex@x", forkMetadataFileLimit)} {
+		if err := os.WriteFile(forkTargetFile(ws), []byte(note), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := ReadForkTarget(ws); got != "codex" {
+			t.Errorf("ReadForkTarget(%d-byte note) = %q, want codex", len(note), got)
+		}
+	}
+}
+
 func TestForkMetadataRefusesSymlinks(t *testing.T) {
 	ws := t.TempDir()
 	outside := t.TempDir()
@@ -1321,9 +1372,43 @@ func TestStopBeforeDestroyGivesNoContinueHint(t *testing.T) {
 		if code != 0 || err != nil {
 			t.Fatalf("destroy=%v: exit %d, %v\n%s", destroy, code, err, stderr)
 		}
-		if hint := strings.Contains(stderr, "Continue: coop fork a claude --loop"); hint == destroy {
+		if hint := strings.Contains(stderr, "Continue: coop fork a --loop -d\n"); hint == destroy {
 			t.Errorf("destroy=%v: Continue hint shown = %v\n%s", destroy, hint, stderr)
 		}
+	}
+}
+
+// A stop that finds no note of how the loop was started (a worker an older Coop started, or a note
+// that could not be written) names no target: a bare coop fork runs the fork's saved target, and a
+// line that named only the agent would switch the fork to that agent's default model and account.
+// The loop it stops ran in the background, so the line says -d.
+func TestForkStopWithoutANoteResumesTheSavedTarget(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkAgent(ws, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkTarget(ws, "claude:haiku@personal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.WriteWorkerState(repo, "a", deadWorkerOf(bindTestFork(t, repo, "a"))); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: runtimeCLI}}
+	var code int
+	stderr := captureStderr(t, func() { code, err = c.ForkStop([]string{"a"}) })
+	if code != 0 || err != nil || !strings.Contains(stderr, "  Continue: coop fork a --loop -d\n") {
+		t.Fatalf("fork stop = (%d, %v), want it to resume the saved target in the background:\n%s", code, err, stderr)
+	}
+	if strings.Contains(stderr, "claude") {
+		t.Errorf("the stop line names an agent, which would switch the fork to its default model:\n%s", stderr)
 	}
 }
 

@@ -264,8 +264,11 @@ recorded for that merge. If it finds unrelated edits, a partly updated checkout,
 an <code>index.lock</code> it can&#39;t account for, recovery stops so you can resolve the mismatch. Never reset,
 stash, delete a lock you cannot identify, or remove and recreate the fork to bypass this check.</p>
 </section><section class="doc-section reference-section" id="re-entry-resumes-the-session"><h2>Re-entry resumes the session</h2>
-<p>A fork remembers the agent you created it with. After <code>coop fork perf codex</code>, <code>coop fork perf</code>
-re-enters with codex and never silently falls back to claude. Pass an agent to switch.
+<p>A fork remembers the target you created it with: its agent, model, effort and account. After
+<code>coop fork perf codex:gpt-6-astra@work</code>, <code>coop fork perf</code> re-enters with that model on that account,
+and so does a loop you resume with <code>coop fork perf --loop -d</code>. It never falls back to another agent,
+model or account on its own. Pass a target to switch, and the fork remembers the new one. If the
+saved account has been removed, co:op names the saved target and says how to pick another.
 <code>coop fork ls</code> shows each fork&#39;s agent.</p>
 <p>Reopening a fork also resumes the last conversation. co:op saves a session ID for each fork,
 provider and account in the fork&#39;s git-excluded <code>.coop/</code> folder, and uses it to resume the exact

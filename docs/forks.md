@@ -186,8 +186,11 @@ stash, delete a lock you cannot identify, or remove and recreate the fork to byp
 
 ## Re-entry resumes the session
 
-A fork remembers the agent you created it with. After `coop fork perf codex`, `coop fork perf`
-re-enters with codex and never silently falls back to claude. Pass an agent to switch.
+A fork remembers the target you created it with: its agent, model, effort and account. After
+`coop fork perf codex:gpt-6-astra@work`, `coop fork perf` re-enters with that model on that account,
+and so does a loop you resume with `coop fork perf --loop -d`. It never falls back to another agent,
+model or account on its own. Pass a target to switch, and the fork remembers the new one. If the
+saved account has been removed, co:op names the saved target and says how to pick another.
 `coop fork ls` shows each fork's agent.
 
 Reopening a fork also resumes the last conversation. co:op saves a session ID for each fork,

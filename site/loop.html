@@ -457,9 +457,10 @@ outside a Git repository.</p>
 fork generation resumes that task, and another fork can&#39;t claim it. A fork recreated under the
 same name is a new generation.</p>
 <p><code>-d</code> (<code>--detach</code>) runs the worker in the background and saves its output in a private log. Read
-it with <code>coop fork logs &lt;name&gt;</code>. When the fork finishes its available work, review and
-<a href="forks.html#land-it">land it</a> as you would a pull request, then <code>git push</code>. Add more agents only
-while you can keep up with reviewing their work.</p>
+it with <code>coop fork logs &lt;name&gt;</code>. A restarted loop adds to the same log, after a line that says it
+started again; recreating the fork starts a new log. When the fork finishes its available work,
+review and <a href="forks.html#land-it">land it</a> as you would a pull request, then <code>git push</code>. Add more
+agents only while you can keep up with reviewing their work.</p>
 <p><code>coop fork merge --all</code> merges forks in sequence. It rebases each fork onto the result of the
 previous merge and re-runs the configured gate (<code>gate:</code> in <code>.agent/project.yaml</code>, or
 <code>COOP_GATE</code>). The merge stops at the first conflict or failed gate and leaves the remaining forks

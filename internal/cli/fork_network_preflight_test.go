@@ -144,7 +144,7 @@ func TestDetachedForkLoopNotesHowToContinueIt(t *testing.T) {
 	if code != 0 || runErr != nil {
 		t.Fatalf("detached start = (%d, %v)\n%s%s", code, runErr, stdout, stderr)
 	}
-	want := "coop fork " + name + " claude --loop --tasks " + shellWord(web) + " --tasks " + shellWord(root) + " --egress open"
+	want := "coop fork " + name + " claude --loop -d --tasks " + shellWord(web) + " --tasks " + shellWord(root) + " --egress open"
 	if got := forkspace.ReadWorkerContinue(repo, name); got != want {
 		t.Errorf("the detached start noted %q, want %q", got, want)
 	}
@@ -215,7 +215,7 @@ func TestDetachedForkLoopTakesTheQueuesCOOPTASKSNames(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "coop fork " + name + " claude --loop"
+			want := "coop fork " + name + " claude --loop -d"
 			for _, queue := range tc.wantQueue(root, filepath.Join(project, "web", ".agent", "tasks"), filepath.Join(project, "api", ".agent", "tasks")) {
 				want += " --tasks " + shellWord(queue)
 			}

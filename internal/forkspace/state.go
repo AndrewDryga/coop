@@ -525,11 +525,48 @@ func createStateFile(repo, base string, flag int) (*os.File, error) {
 	return openStateFile(int(dir.Fd()), base, filepath.Join(dir.Name(), base), flag|os.O_CREATE)
 }
 
-// OpenLog opens a fork's log for a loop's output, emptied. Writes append: a child whose start died
-// before its record still holds an earlier open, and its refusal must land after a newer start's
-// output, not over it.
+// OpenLog opens a fork's log for a loop's output. Earlier runs' output stays, and a run that starts
+// in a log that already holds some begins with a plain line saying so (LogRunStart), so coop fork
+// logs can be read run by run. Writes append: a child whose start died before its record still holds
+// an earlier open, and its refusal must land after a newer start's output, not over it.
 func OpenLog(repo, name string) (*os.File, error) {
-	return createStateFile(repo, name+".log", os.O_WRONLY|os.O_TRUNC|os.O_APPEND)
+	f, err := createStateFile(repo, name+".log", os.O_WRONLY|os.O_APPEND)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err == nil && info.Size() > 0 {
+		_, _ = f.WriteString("\n" + LogRunStart(name, time.Now()) + "\n") // a line only for the reader: the run goes on without it
+	}
+	return f, nil
+}
+
+// LogRunStart is the line that begins a new run's output in a log that already holds an earlier run's.
+func LogRunStart(name string, at time.Time) string {
+	return logRunStartPrefix + name + " started again at " + at.Format("2006-01-02 15:04:05") + " ──"
+}
+
+const logRunStartPrefix = "── Fork "
+
+// IsLogRunStart reports whether line is LogRunStart's, for a reader that wants only the last run.
+func IsLogRunStart(line string) bool {
+	return strings.HasPrefix(line, logRunStartPrefix) && strings.Contains(line, " started again at ")
+}
+
+// RemoveLog removes a fork's log; one that is not there is no error. A fork made new starts with no
+// log, so the output of an earlier fork of the same name never reads as its own.
+func RemoveLog(repo, name string) error {
+	dir, err := openExistingStateDir(repo)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := unix.Unlinkat(int(dir.Fd()), name+".log", 0); err != nil && !errors.Is(err, unix.ENOENT) {
+		return &os.PathError{Op: "remove", Path: LogPath(repo, name), Err: err}
+	}
+	return nil
 }
 
 // notAStateFile says what Coop found at a fork state file's name. It is deliberately not an

@@ -382,26 +382,84 @@ func TestLockAndLogRefuseWhatIsNotTheirFile(t *testing.T) {
 	}
 }
 
-// Each start empties the log and makes it owner-only, whatever mode it had.
-func TestOpenLogEmptiesAndTightensTheLog(t *testing.T) {
+// A restart keeps what the earlier runs printed, so coop fork logs still shows them, and starts its
+// own with a plain line that says where it begins. The first run has no line to open with. The log
+// is owner-only, whatever mode it had.
+func TestOpenLogKeepsEarlierRunsAndTightensTheLog(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "proj")
 	if err := EnsureStateDir(repo); err != nil {
 		t.Fatal(err)
 	}
-	writeModeFile(t, LogPath(repo, "perf"), "old output\n")
+	run := func(output string) {
+		t.Helper()
+		f, err := OpenLog(repo, "perf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(output); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("first run\n")
+	if got, err := os.ReadFile(LogPath(repo, "perf")); err != nil || string(got) != "first run\n" {
+		t.Fatalf("log after the first run = %q, %v; want its output alone", got, err)
+	}
+	if err := os.Chmod(LogPath(repo, "perf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("second run\n")
+	assertForkStatePerm(t, LogPath(repo, "perf"), 0o600)
+	got, err := os.ReadFile(LogPath(repo, "perf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(got), "\n"), "\n")
+	if len(lines) != 4 || lines[0] != "first run" || lines[1] != "" || lines[3] != "second run" ||
+		!IsLogRunStart(lines[2]) || !strings.HasPrefix(lines[2], "── Fork perf started again at ") {
+		t.Fatalf("log = %q; want the first run, a blank line, the line that starts the second run, then its output", got)
+	}
+	if IsLogRunStart("Fork perf is ready to merge") || IsLogRunStart("✗ Fork perf started again") {
+		t.Error("an ordinary loop line reads as the start of a run")
+	}
+}
+
+// A fork made new has no log, so a loop that restarts never shows the output of an earlier fork of the
+// same name as its own. A log that is not there is no error.
+func TestRemoveLogLeavesANewForkWithoutOne(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	if err := RemoveLog(repo, "perf"); err != nil {
+		t.Fatalf("RemoveLog with no records folder = %v, want none", err)
+	}
+	if err := EnsureStateDir(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveLog(repo, "perf"); err != nil {
+		t.Fatalf("RemoveLog with no log = %v, want none", err)
+	}
+	writeModeFile(t, LogPath(repo, "perf"), "an earlier fork's output\n")
+	writeModeFile(t, LogPath(repo, "other"), "another fork's output\n")
+	if err := RemoveLog(repo, "perf"); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(LogPath(repo, "perf")) {
+		t.Error("RemoveLog left the log")
+	}
+	if got, err := os.ReadFile(LogPath(repo, "other")); err != nil || string(got) != "another fork's output\n" {
+		t.Errorf("RemoveLog changed another fork's log: %q, %v", got, err)
+	}
 	f, err := OpenLog(repo, "perf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("new output\n"); err != nil {
+	defer f.Close()
+	if _, err := f.WriteString("new fork\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	assertForkStatePerm(t, LogPath(repo, "perf"), 0o600)
-	if got, err := os.ReadFile(LogPath(repo, "perf")); err != nil || string(got) != "new output\n" {
-		t.Fatalf("log = %q, %v; want only the new start's output", got, err)
+	if got, err := os.ReadFile(LogPath(repo, "perf")); err != nil || string(got) != "new fork\n" {
+		t.Fatalf("log of the new fork = %q, %v; want only its own output", got, err)
 	}
 }
 

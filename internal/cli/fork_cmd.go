@@ -487,13 +487,16 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		return 1, err
 	}
 	existed := pathExists(ws)
-	// Read provider memory before --fresh destroys it, and reject a brand-new provider-less fork
-	// before clone/image work. An explicit target or preset already set agentSet and always wins.
+	// Read the fork's saved target before --fresh destroys it, and reject a brand-new provider-less
+	// fork before clone/image work. An explicit target or preset already set agentSet and always wins.
+	// A saved target that cannot run is refused here, before anything is stopped or recreated.
 	rememberedAgent := false
 	if !fa.agentSet {
-		if remembered := forkctl.ReadForkAgent(ws); remembered != "" {
-			rememberedAgent = existed && !fa.worker && remembered != fa.agent
-			fa.agent = remembered
+		if saved := forkctl.ReadForkTarget(ws); saved != "" {
+			if err := a.useSavedForkTarget(&fa, saved); err != nil {
+				return refusalExit(err), err
+			}
+			rememberedAgent = existed && !fa.worker
 		}
 	}
 	// --loop with no --tasks takes the queues COOP_TASKS names, as coop loop does: inside the project,
@@ -763,6 +766,9 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			}
 		}
 		printForkHeader("Creating fork", fa.name, ws, nil)
+		// A new fork starts with no log: a loop's restarts keep their output, so the one a fork of the
+		// same name left behind would read as this fork's.
+		_ = forkspace.RemoveLog(repo, fa.name)
 		if err := setupForkBoundary(a.cfg, repo, fa.name, fa.isolated); err != nil {
 			unlock()
 			return -1, err
@@ -795,6 +801,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 				return 1, fmt.Errorf("recover missing fork %q before creation: %w", fa.name, recoverErr)
 			}
 			printForkHeader("Creating fork", fa.name, ws, nil)
+			_ = forkspace.RemoveLog(repo, fa.name) // as above: a new fork has no log yet
 			if err := setupForkBoundary(a.cfg, repo, fa.name, fa.isolated); err != nil {
 				unlock()
 				return -1, err
@@ -816,6 +823,14 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 	}
 	if err := forkctl.SaveForkAgent(ws, fa.agent); err != nil {
 		return -1, fmt.Errorf("save fork provider before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
+	}
+	// A launch that names the fork's target saves it, whole: that is how a switch takes. A resume that
+	// named none runs the saved one and leaves it as it is, so no resume can swap the model or account
+	// for a default. --fresh made a new folder with no note, so it saves the one it carried over.
+	if fa.agentSet || fa.fresh {
+		if err := forkctl.SaveForkTarget(ws, forkTarget(fa.agent, fa.model, fa.effort, fa.credential).String()); err != nil {
+			return -1, fmt.Errorf("save fork target before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
+		}
 	}
 	if fa.loop {
 		// A loop reports its own state and keeps its own log, so a note that an earlier interactive
@@ -843,7 +858,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 				flags = append([]string{"--stop-after-review"}, flags...)
 			}
 			// coop fork stop repeats this when it stops the worker, which nothing else could tell it.
-			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, peers, fa.stopAfterReview, fa.network)
+			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, peers, fa.stopAfterReview, true, fa.network)
 			if argErr != nil {
 				return 2, argErr
 			}
@@ -943,6 +958,63 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 	return code, err // propagate the agent's exit code, like every other launch path
 }
 
+// forkTarget is a fork's target as its launch names it: provider, one-off model and effort, and the
+// one account a fork runs (forks take no account list).
+func forkTarget(agent, model, effort, credential string) agents.Target {
+	target := agents.Target{Provider: agent, Model: model, Effort: effort}
+	if credential != "" {
+		target.Accounts = []string{credential}
+	}
+	return target
+}
+
+// useSavedForkTarget makes the target a fork was made with, or last switched to, the one this launch
+// runs, for a launch that named none: provider, model, effort and account.
+func (a *app) useSavedForkTarget(fa *forkArgs, saved string) error {
+	target, err := a.savedForkTarget(fa.name, saved)
+	if err != nil {
+		return err
+	}
+	fa.agent, fa.model, fa.effort, fa.credential = target.Provider, target.Model, target.Effort, target.Account()
+	return nil
+}
+
+// savedForkTarget reads the target saved for fork name (forkctl.ReadForkTarget). One that cannot run
+// now is refused by name, never swapped for another model or account behind the person's back.
+func (a *app) savedForkTarget(name, saved string) (agents.Target, error) {
+	target, err := agents.ParseTarget(saved)
+	if err == nil {
+		_, err = singleAccount(target, "coop fork")
+	}
+	if err == nil && target.Account() != "" {
+		err = a.requireProfile(target.Provider, target.Account())
+	}
+	if err != nil {
+		return agents.Target{}, savedForkTargetErr(name, saved, err)
+	}
+	return target, nil
+}
+
+// savedForkTargetErr refuses a launch whose fork has a saved target that cannot run: the target, why,
+// and how to pick another. Whatever the refusal behind it offers to fix the cause (an account's
+// sign-in) comes first.
+func savedForkTargetErr(name, saved string, cause error) *ui.UsageError {
+	refusal := &ui.UsageError{
+		Headline: fmt.Sprintf("Fork %q cannot use its saved target %q", name, saved),
+		Cause:    safeErrorText(cause),
+		ExitCode: 1,
+	}
+	if usage := asUsage(cause); usage != nil {
+		refusal.Cause = usage.Headline
+		if usage.Cause != "" {
+			refusal.Cause += "\n" + usage.Cause
+		}
+		refusal.Rows = append(refusal.Rows, usage.Rows...)
+	}
+	refusal.Rows = append(refusal.Rows, [2]string{"Pick another:", "coop fork " + name + " <target>"})
+	return refusal
+}
+
 // forkLaunchCmd builds the agent command for entering a fork: resume the fork's prior
 // session on re-entry (when one exists), else start fresh. For agents that honor a
 // coop-owned session id (claude/gemini/grok) coop allocates one per (fork, agent, account), persists
@@ -972,7 +1044,7 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 	}
 	var rows []string
 	if rememberedAgent {
-		rows = append(rows, "Agent: "+fa.agent+" (saved for this fork)")
+		rows = append(rows, "Agent: "+forkTarget(fa.agent, fa.model, fa.effort, fa.credential).String()+" (saved for this fork)")
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
 		// The continuation row is printed only where continuity is PROVEN: a path that falls back
@@ -1084,11 +1156,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 	}
 	// The positional target names the fork's ACP session (coop fork <name> acp claude:opus@work),
-	// like plain `coop acp`. Without one, the fork's own agent starts and the editor's model and
-	// effort selectors choose from there.
+	// like plain `coop acp`. Without one, the fork's own saved target starts and the editor's model
+	// and effort selectors choose from there.
 	var t agents.Target
 	if len(rest) == 0 {
-		if t.Provider, err = a.forkACPAgent(name); err != nil {
+		if t, err = a.forkACPTarget(name); err != nil {
 			return 1, err
 		}
 	} else if t, err = agents.ParseTarget(rest[0]); err != nil {
@@ -1264,21 +1336,22 @@ func forkACPChildEnded(ctx context.Context, code int, err error) (int, error) {
 	return code, err
 }
 
-// forkACPAgent is the agent a target-less `coop fork <name> acp` starts: the one the fork was
+// forkACPTarget is the target a target-less `coop fork <name> acp` starts: the one the fork was
 // created with, as `coop fork <name>` resumes it, else the first signed-in provider.
-func (a *app) forkACPAgent(name string) (string, error) {
+func (a *app) forkACPTarget(name string) (agents.Target, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		return "", err
+		return agents.Target{}, err
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return "", missingACPForkErr(name)
+		return agents.Target{}, missingACPForkErr(name)
 	}
-	if agent := forkctl.ReadForkAgent(ws); agent != "" {
-		return agent, nil
+	if saved := forkctl.ReadForkTarget(ws); saved != "" {
+		return a.savedForkTarget(name, saved)
 	}
-	return a.firstSignedInAgent()
+	agent, err := a.firstSignedInAgent()
+	return agents.Target{Provider: agent}, err
 }
 
 func readOnlySessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {
@@ -1318,15 +1391,18 @@ func pathsOverlap(left, right string) bool {
 }
 
 // forkLoopContinueCommand is the command that resumes this fork loop. It repeats the who-runs
-// positional, each queue --tasks chose, in order (absolute, as the loop runs on them, so they mean the
-// same queues from any folder), the peers, --stop-after-review and the network flags; without --tasks
-// the fork takes every project queue.
-func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, peers []agents.Target, stopAfterReview bool, network networkFlags) (string, error) {
+// positional, -d for a loop that runs in the background, each queue --tasks chose, in order (absolute,
+// as the loop runs on them, so they mean the same queues from any folder), the peers,
+// --stop-after-review and the network flags; without --tasks the fork takes every project queue.
+func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, peers []agents.Target, stopAfterReview, detached bool, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
 	}
 	command := fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg))
+	if detached {
+		command += " -d"
+	}
 	for _, queue := range queues {
 		command += " --tasks " + shellWord(queue)
 	}
@@ -1341,16 +1417,12 @@ func forkLoopContinueCommand(name, presetName string, target agents.Target, queu
 
 // forkLoopContinue is forkLoopContinueCommand for this fork loop: led by the preset it runs under,
 // else by its target with the one-off model, effort and account.
-func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, peers []agents.Target, stopAfterReview bool, network networkFlags) (string, error) {
-	target := agents.Target{Provider: agent, Model: model, Effort: effort}
-	if credential != "" {
-		target.Accounts = []string{credential}
-	}
+func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, peers []agents.Target, stopAfterReview, detached bool, network networkFlags) (string, error) {
 	presetName := ""
 	if a.preset != nil {
 		presetName = a.preset.Name
 	}
-	return forkLoopContinueCommand(name, presetName, target, queues, peers, stopAfterReview, network)
+	return forkLoopContinueCommand(name, presetName, forkTarget(agent, model, effort, credential), queues, peers, stopAfterReview, detached, network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
@@ -1415,7 +1487,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, peers, stopAfterReview, network)
+	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, peers, stopAfterReview, detached, network)
 	if err != nil {
 		return 2, err
 	}
@@ -1462,7 +1534,6 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			return 0, nil
 		}
 		target := loop.RecordedTarget(a.cfg, rot.Active())
-		_ = forkctl.SaveForkTarget(ws, target) // a hint for coop tasks watch; the lease is the authority
 		assignment, err := tasks.AssignForkTask(authorityQueues, tasks.ForkAssignmentRequest{
 			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws, BaselineHead: head,
 			LeaseOwner: tasks.TaskLeaseOwner{

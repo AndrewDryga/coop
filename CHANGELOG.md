@@ -14,6 +14,13 @@
   refusal names `COOP_REPO=<fork path> coop approve`, and every fork command on a missing fork prints
   one block and exits 2.
 
+- **A fork keeps its model and account when you reopen it or restart its loop.** After
+  `coop fork perf claude:haiku@work`, `coop fork perf` and a resumed `coop fork perf --loop -d` ran
+  Claude's default model on the default account, and the loop quietly cost more on every restart.
+  A fork now runs the whole target it was made with, or last switched to by naming another, and its
+  header names it. A saved account that was removed is refused by name, never swapped for another.
+  The Continue line of a stopped background loop resumes the same run (with `-d`), and a restarted
+  loop adds to its log after a "started again" line instead of emptying it.
 - **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
   such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
   that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.

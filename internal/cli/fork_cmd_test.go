@@ -1651,9 +1651,15 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 		tasks              []string
 		peers              []agents.Target
 		stopAfterReview    bool
+		detached           bool
 		network            networkFlags
 	}{
 		{name: "api-fix", want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop"},
+		// A loop that runs in the background resumes there: pasted without -d, the Continue line of a
+		// stopped background loop would tie up the terminal.
+		{name: "api-fix", detached: true, tasks: []string{"/repo/.agent/tasks"},
+			want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop -d --tasks /repo/.agent/tasks"},
+		{name: "api-fix", preset: "frontier", detached: true, want: "coop fork api-fix frontier --loop -d"},
 		// A fork loop that stops after review, resumed without the flag, would take every task before
 		// anything could be merged.
 		{name: "api-fix", preset: "frontier", stopAfterReview: true, network: networkFlags{Mode: &filtered},
@@ -1669,7 +1675,7 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 		{name: "api-fix", preset: "frontier", tasks: []string{"/repo/apps/customer portal/.agent/tasks", "/repo/.agent/tasks"}, network: networkFlags{Mode: &filtered},
 			want: "coop fork api-fix frontier --loop --tasks '/repo/apps/customer portal/.agent/tasks' --tasks /repo/.agent/tasks --egress filtered"},
 	} {
-		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.peers, tc.stopAfterReview, tc.network); err != nil || got != tc.want {
+		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.peers, tc.stopAfterReview, tc.detached, tc.network); err != nil || got != tc.want {
 			t.Errorf("forkLoopContinueCommand(%q, %q, %q) = %q (%v), want %q", tc.name, tc.preset, tc.tasks, got, err, tc.want)
 		}
 	}

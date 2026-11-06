@@ -1138,6 +1138,16 @@ func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	if got := lastLoggedError(log); got != "" {
 		t.Errorf("a loop that stopped for a decision: reason = %q, want none", got)
 	}
+	// A restart keeps the earlier run's output in the log: its error says nothing about the run that
+	// began after it, which printed none, but the error of a run that did print one still reads.
+	write(log, "✗ The first run's failure\n\n"+forkspace.LogRunStart("sweep-b", time.Now())+"\nStarting codex\n")
+	if got := lastLoggedError(log); got != "" {
+		t.Errorf("an error from before the last restart: reason = %q, want none", got)
+	}
+	write(log, "✗ The first run's failure\n\n"+forkspace.LogRunStart("sweep-b", time.Now())+"\n✗ The second run's failure\n")
+	if got := lastLoggedError(log); got != "The second run's failure" {
+		t.Errorf("an error after the last restart: reason = %q, want it", got)
+	}
 }
 
 // A fork's published candidate is one row for the fork, from its real records: how many tasks it

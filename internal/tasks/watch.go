@@ -444,8 +444,8 @@ func readForkTargets(snapshot ProjectSnapshot) forkTargetSet {
 	return set
 }
 
-// of is the fork's target: from its loop's latest lease, else the target its loop noted when it
-// last took a task (forkctl.SaveForkTarget), else the agent coop fork noted (forkctl.SaveForkAgent).
+// of is the fork's target: from its loop's latest lease, else the target coop fork saved for it
+// (forkctl.SaveForkTarget), else the agent coop fork noted (forkctl.SaveForkAgent).
 func (s forkTargetSet) of(repo string, fork forkspace.Identity) string {
 	if t := s[fork].target; t != "" {
 		return t
@@ -517,7 +517,8 @@ const decisionStop = "Stopped for your decision"
 // lastLoggedError is the last error the loop itself printed (ui.Error: "✗ " at the start of the
 // line) in the tail of a fork's log, or "". The agent's own failed commands show indented and quoted
 // ("  ✗ \"make check\" (exit 2): …") and say nothing about why the loop ended, and a loop whose last
-// word is that it stopped for a decision did not fail.
+// word is that it stopped for a decision did not fail. The log keeps earlier runs, so the search
+// stops where the last run began: an error from before it says nothing about this run.
 func lastLoggedError(path string) string {
 	f, err := forkspace.OpenStateFile(path)
 	if err != nil {
@@ -534,7 +535,7 @@ func lastLoggedError(path string) string {
 	lines := strings.Split(string(buf[:n]), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimRight(ansiSequence.ReplaceAllString(lines[i], ""), " \t\r")
-		if strings.HasPrefix(line, decisionStop) {
+		if strings.HasPrefix(line, decisionStop) || forkspace.IsLogRunStart(line) {
 			return ""
 		}
 		if reason, ok := strings.CutPrefix(line, "✗ "); ok && !strings.HasPrefix(reason, `"`) && !strings.HasPrefix(reason, "'") {

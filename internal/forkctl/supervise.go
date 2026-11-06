@@ -679,10 +679,11 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	}
 	ui.Note("")
 	ui.OK("Fork %s stopped", name)
-	// The start noted the command with the loop's own queues and network flags; a worker started
-	// without that note leaves only the fork's remembered agent to name.
-	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); resume == "" && remembered != "" && remembered != "?" {
-		resume = fmt.Sprintf("coop fork %s %s --loop", name, remembered)
+	// The start noted the command with the loop's own queues and network flags. A worker started
+	// without that note resumes as a bare coop fork does: the fork's saved target, in the background.
+	// Naming only its agent here would switch the fork to that agent's default model and account.
+	if resume == "" && ReadForkAgent(forkspace.Workspace(repo, name)) != "" {
+		resume = fmt.Sprintf("coop fork %s --loop -d", name)
 	}
 	if continueHint && resume != "" {
 		ui.Note("")

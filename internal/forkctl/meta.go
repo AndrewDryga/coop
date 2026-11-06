@@ -34,11 +34,37 @@ func ReadForkAgent(ws string) string {
 
 func SaveForkAgent(ws, agent string) error { return saveForkMeta(ws, forkAgentFile(ws), agent) }
 
-// SaveForkTarget notes the full target (provider:model/effort@account) the fork's loop takes its
-// next task with, beside the agent file, so coop tasks watch names every task of the fork the same
-// way, whether or not the loop holds that task's lease right now (tasks.forkTarget reads it).
+func forkTargetFile(ws string) string { return filepath.Join(ws, ".coop", "target") }
+
+// SaveForkTarget notes the full target (provider[:model][/effort][@account]) the fork runs when a
+// launch names none: the one it was made with, or last switched to by naming another. Only a launch
+// that names a target writes it; a resume reads it back and leaves it alone, so no resume can swap
+// the model or account for a default. coop tasks watch shows it for a fork whose loop holds no task
+// right now (tasks.forkTarget reads it).
 func SaveForkTarget(ws, target string) error {
-	return saveForkMeta(ws, filepath.Join(ws, ".coop", "target"), target)
+	return saveForkMeta(ws, forkTargetFile(ws), target)
+}
+
+// ReadForkTarget is the target a launch with no target runs: the saved one, else the saved agent
+// alone. The agent note is rewritten first when a launch switches agents, so a target that names
+// another agent is a leftover and is ignored. "" when the fork has no usable agent note.
+func ReadForkTarget(ws string) string {
+	agent := ReadForkAgent(ws)
+	if agent == "" {
+		return ""
+	}
+	if target := readForkMeta(ws, forkTargetFile(ws)); targetProvider(target) == agent {
+		return target
+	}
+	return agent
+}
+
+// targetProvider is the provider slot of a target: what comes before the first ':', '/' or '@'.
+func targetProvider(target string) string {
+	if i := strings.IndexAny(target, ":/@"); i >= 0 {
+		return target[:i]
+	}
+	return target
 }
 
 // forkStartErrorFile notes why a fork's first start stopped before its agent ran, so coop fork ls
