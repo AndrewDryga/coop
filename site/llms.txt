@@ -1026,6 +1026,7 @@ EXAMPLES
 STOP AND CONTINUE
   Press Ctrl-C to finish the current attempt and its required review, then stop.
   Press it again to stop immediately. Run the same command to continue.
+  Without a terminal, SIGINT does the same. SIGTERM and SIGHUP stop immediately.
   For a background fork loop: coop fork stop <name>
 
 CONFIGURE STEPS: .agent/loop.yaml

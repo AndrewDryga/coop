@@ -1585,6 +1585,52 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertProcessTraceGone(t, trace)
 	})
 
+	// A supervisor running the loop without a terminal gets the same graceful stop as Ctrl-C: the
+	// attempt finishes, the next task never starts, and the summary says how to continue.
+	t.Run("redirected SIGINT finishes the attempt and starts no new task", func(t *testing.T) {
+		resetLoopProcessRepo(t, suite)
+		taskID := "redirected-soft-stop"
+		nextID := taskID + "-next"
+		seedLoopProcessTask(t, suite.layout.Repo, taskID)
+		seedLoopProcessTask(t, suite.layout.Repo, nextID)
+		work := loopRecoveryTarget("claude", "work-model", "personal")
+		writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{loopRecoveryTarget("gemini", "must-not-run", "work")}, nil, 3)
+		attempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "complete-gated"}}
+		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		process, err := procharness.Start(loopReviewCommand(suite, work))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer process.Cleanup()
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		if err := syscall.Kill(process.PID(), syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		awaitLoopProcessOutput(t, process, "Send SIGINT again or SIGTERM to stop immediately.")
+		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
+		result := process.Wait(ctx)
+		cancel()
+		output := visibleProcessText(result.Stdout + result.Stderr)
+		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(output, "Stopped before final review · 1/2 tasks done") ||
+			!strings.Contains(output, "Continue: coop loop ") || strings.Contains(output, "Removing this attempt's box") {
+			t.Fatalf("redirected soft stop = exit %d err %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
+		}
+		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)) ||
+			!pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateTodo, nextID)) {
+			t.Fatal("the soft stop lost the finished task or started the next one")
+		}
+		trace := readProcessTrace(t, suite.layout.Trace)
+		assertLoopReviewContracts(t, suite, trace, taskID, attempts)
+		records := readLoopStageRecords(t, suite)
+		if len(records) != 1 || records[0].Stage != "work" || records[0].Outcome != "success" {
+			t.Fatalf("redirected soft stop telemetry = %#v", records)
+		}
+		assertProcessTraceGone(t, trace)
+	})
+
 	t.Run("hard stop interrupts between audit backoff", func(t *testing.T) {
 		resetLoopProcessRepo(t, suite)
 		taskID := "hard-stop-audit-backoff"

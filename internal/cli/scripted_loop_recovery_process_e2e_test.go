@@ -401,7 +401,8 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		defer process.Cleanup()
 		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		assertProcessLeaseHeld(t, suite.layout, taskID, "codex", target)
-		if err := process.SignalGroup(syscall.SIGINT); err != nil {
+		// SIGTERM is the hard stop; a first SIGINT would let this waiting attempt finish.
+		if err := process.SignalGroup(syscall.SIGTERM); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))

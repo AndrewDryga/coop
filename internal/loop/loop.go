@@ -461,14 +461,14 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		command, streaming := IterationCommand(iterAgent, cmd, nil)
 		return command, streaming, true
 	}
-	// Soft interrupt for any foreground loop that owns a terminal — a plain `coop loop` OR a
-	// foreground `coop fork <name> --loop`: the first Ctrl-C finishes the current iteration then
-	// stops before the next; a second stops now (tears the box down). TERM and HUP are always hard.
-	// A redirected loop — a CI pipe, or a DETACHED fork worker stopped by `coop fork stop`
-	// (SIGTERM) — needs its own watcher: every built-in attempt runs the box in its own cancelable
-	// process group for the provider watchdog, so a delivered signal does not take the box down
-	// with coop. One SIGINT/SIGTERM cancels the box context — the run tears down cleanly instead of
-	// exiting and orphaning it.
+	// Two-stage stop for every loop — a plain `coop loop`, a foreground `coop fork <name> --loop`,
+	// or one a supervisor runs without a terminal: the first SIGINT (Ctrl-C) finishes the current
+	// iteration and its review, then stops before the next; a second stops now (tears the box
+	// down). TERM and HUP are always hard, so `docker stop` and `coop fork stop` (SIGTERM to a
+	// detached worker) still tear down at once. Every built-in attempt runs the box in its own
+	// cancelable process group for the provider watchdog, so a delivered signal does not take the
+	// box down with coop: a hard stop cancels the box context, and the run tears down cleanly
+	// instead of exiting and orphaning it.
 	var softStop atomic.Bool
 	wake := make(chan struct{}) // closed on the first stop signal so any in-progress wait returns at once
 	var wakeOnce sync.Once
@@ -482,30 +482,23 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		ctx, cancel := context.WithCancel(context.Background())
 		iterCtx = ctx
 		defer cancel()
+		// Without a terminal there is no Ctrl-C to press again, so the notices name the signals.
+		again, now := "Press Ctrl-C again to stop immediately.", "Stopping immediately."
+		if !interactive {
+			again, now = "Send SIGINT again or SIGTERM to stop immediately.", "Stop requested. Removing this attempt's box, then exiting."
+		}
 		sig := make(chan os.Signal, 2)
-		if interactive {
-			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-			go watchInterrupt(sig,
-				func() {
-					requestStop()
-					loopInterruptInfo("Finishing this attempt and its review, then stopping.", "Press Ctrl-C again to stop immediately.")
-				},
-				func() {
-					loopInterruptInfo("Stopping immediately.")
-					requestStop()
-					cancel()
-				})
-		} else {
-			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-			go func() {
-				if _, ok := <-sig; !ok {
-					return
-				}
-				loopInterruptInfo("Stop requested. Removing this attempt's box, then exiting.")
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		go watchInterrupt(sig,
+			func() {
+				requestStop()
+				loopInterruptInfo("Finishing this attempt and its review, then stopping.", again)
+			},
+			func() {
+				loopInterruptInfo(now)
 				requestStop()
 				cancel()
-			}()
-		}
+			})
 		defer func() { signal.Stop(sig); close(sig) }()
 	}
 	if interactive && !limit.enabled() {

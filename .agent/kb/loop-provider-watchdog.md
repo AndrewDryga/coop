@@ -3,7 +3,7 @@ name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
 sources: [internal/loop/watchdog.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
-updated: 2026-10-18
+updated: 2026-11-05
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -80,8 +80,10 @@ Traps the code doesn't obviously carry:
   timeout.
 - **The box runs in its own process group for every built-in attempt** (non-nil Ctx →
   `RunInterruptible`, runtime.go). A signal delivered to coop's group no longer reaches the
-  box. The loop therefore watches SIGINT/SIGTERM even without a TTY and cancels the box
-  context (`internal/loop/loop.go`); killing coop with `-9` orphans the box — matching a real container
+  box. The loop therefore watches its stop signals even without a TTY (`internal/loop/loop.go`):
+  a first SIGINT is soft there too (the attempt finishes, no new task starts), and SIGTERM, SIGHUP
+  or a second SIGINT cancels the box context. A scripted test that needs a hard stop of a
+  redirected loop sends SIGTERM. Killing coop with `-9` orphans the box — matching a real container
   outliving its client — and the crash e2e tests reap that orphan explicitly.
 - **Raw stdout lines in a streaming attempt are terminal diagnostics**, not narration — a
   plain `error: rate limited` line WILL rotate targets. Only text inside decoded assistant
@@ -120,6 +122,9 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-11-05 — a redirected loop's first SIGINT is now the same soft stop as Ctrl-C, so a supervisor
+  can let the current attempt finish; SIGTERM/SIGHUP stay hard. The interrupted-resume recovery
+  e2e now stops with SIGTERM.
 - 2026-10-18 — removed the no-tool-lifecycle fallback (every adapter that streams reports tools by
   id, and the watchdog exists only for a stream) and the override's clamp (only the host sets it)
   (task 2026-10-15-delete-branches-that-cannot-run-in-the-loop-acp).

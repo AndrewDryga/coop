@@ -40,6 +40,10 @@
   and fork workers now forbid stash and say how to check a baseline instead: save the committed
   version of a file with `git show HEAD:<path>` and test against that copy.
 
+- **A background `coop loop` can stop after its current attempt.** Without a terminal, the first
+  SIGINT threw away the attempt in progress. It now works like Ctrl-C: the attempt and its required
+  review finish, no new task starts, and the summary prints the command that continues. A second
+  SIGINT, SIGTERM or SIGHUP still stops at once.
 - **The loop's Continue line keeps your network flags.** A run started with `--egress`,
   `--allow-domain` or `--egress-rules` printed a Continue command without them, so pasting it
   resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
