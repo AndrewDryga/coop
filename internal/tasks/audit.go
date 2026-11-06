@@ -2324,10 +2324,11 @@ func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) 
 	return complete[1:], nil
 }
 
-// auditReopenGitBindings refuses when Git's own reading of HEAD's history binds the task, or a task
-// of its History, to anything but the one commit the raw parse binds it to. Git skips trailing
-// comment lines and everything after a scissors line, which the raw parse takes as the message's
-// last paragraph, so a commit can bind a task for Git alone.
+// auditReopenGitBindings refuses when Git's own reading of HEAD's history binds the task, a task of
+// its History, or any task a commit after the baseline names, to anything but the one commit the raw
+// parse binds it to. Git skips trailing comment lines and everything after a scissors line, which
+// the raw parse takes as the message's last paragraph, so a commit can bind a task for Git alone: a
+// repair that names another task above a comment line, say.
 func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw map[string][]string) error {
 	if err := auditShallowRefusal(repo, id); err != nil {
 		return err
@@ -2336,13 +2337,27 @@ func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw
 	if err != nil {
 		return fmt.Errorf("read the commits Git binds to tasks in HEAD's history: %w", err)
 	}
+	later, err := TaskTrailerCommits(repo, record.BaselineHead+".."+head, false)
+	if err != nil {
+		return fmt.Errorf("read the commits Git binds to tasks after the review: %w", err)
+	}
 	tasks := []string{id}
-	for _, later := range record.History {
-		if later.TaskID != "" {
-			tasks = append(tasks, later.TaskID)
+	for _, commit := range record.History {
+		if commit.TaskID != "" {
+			tasks = append(tasks, commit.TaskID)
 		}
 	}
-	for _, task := range tasks {
+	recorded := len(tasks)
+	for _, commit := range later {
+		if commit.Malformed || len(commit.Values) > 1 || slices.Contains(commit.Values, "") {
+			return fmt.Errorf("commit %s, made after the review, has %s trailers Git cannot read as one task id",
+				commit.Info.SHA, CoopTaskTrailer)
+		}
+		if len(commit.Values) == 1 && !slices.Contains(tasks, commit.Values[0]) {
+			tasks = append(tasks, commit.Values[0])
+		}
+	}
+	for i, task := range tasks {
 		var read []string
 		for _, commit := range commits {
 			if !commit.Malformed && len(commit.Values) == 1 && commit.Values[0] == task {
@@ -2355,6 +2370,10 @@ func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw
 		shown := "none"
 		if len(read) > 0 {
 			shown = shortCommits(read)
+		}
+		if i >= recorded {
+			return fmt.Errorf("a commit made after the review binds task %s for Git alone: Git reads %s as %s: %s in HEAD's history",
+				bindingLabel(task), shown, CoopTaskTrailer, bindingLabel(task))
 		}
 		return fmt.Errorf("the review recorded one commit for task %s, but Git reads %s as %s: %s in HEAD's history",
 			bindingLabel(task), shown, CoopTaskTrailer, bindingLabel(task))
@@ -2444,7 +2463,9 @@ func AuditReopenCurrentValid(repo, head, id string, record AuditReopenRecord) bo
 
 // auditReopenAppendedRepair accepts the boring rework shape: keep the reviewed history intact and
 // add one real, unbound repair commit. The host's reopen record supplies task authority, so adding
-// another Coop-Task trailer would only create a duplicate binding.
+// another Coop-Task trailer would only create a duplicate binding. The repair binds no task in
+// either reading: the raw parse is checked here, and Git's, which a comment or scissors line can
+// make differ, by auditReopenCurrentHistory (auditReopenGitBindings).
 func auditReopenAppendedRepair(repo, base, head, id string, record AuditReopenRecord) ([]semanticHistoryCommit, bool) {
 	resolvedBase := forkspace.GitOut(repo, "rev-parse", "--verify", base+"^{commit}")
 	if !validAuditReopenHead(resolvedBase) {

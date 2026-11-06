@@ -426,6 +426,44 @@ func TestOrdinaryAuditAuthorityReadsGitTrailers(t *testing.T) {
 	}
 }
 
+// A repair binds no task in either reading. One that names any other task above a comment line or a
+// scissors line is unbound to the raw parse and that task's binding to Git (the 2026-11-06 probe),
+// so every check of the rework reads Git's trailers in each commit after the baseline too. The same
+// repair without the trailer is still accepted.
+func TestAuditRepairBindsNoOtherTaskForGit(t *testing.T) {
+	const other = "unrelated-task"
+	refusal := "a commit made after the review binds task " + other + " for Git alone: Git reads "
+	for form, tail := range map[string]string{
+		"behind a comment line":  "\n\n# note",
+		"behind a scissors line": "\n\n# ------------------------ >8 ------------------------\nanything",
+	} {
+		t.Run(form, func(t *testing.T) {
+			f := newReanchorFixture(t, true)
+			f.git("reset", "--hard", "-q", f.record.BaselineHead) // no later work, so the record is an ordinary one
+			reviewed := f.head()
+			repair := f.commitVerbatim(t, "Repair the audit finding\n\nCoop-Task: "+other+tail)
+			if bound, err := TaskCommits(f.repo, reviewed+".."+repair, other); err != nil || len(bound) != 1 {
+				t.Fatalf("fixture: Git does not read the repair as %s's binding: %v, %v", other, bound, err)
+			}
+			if err := ValidateLeasedAuditReopen(f.repo, repair, f.id, &f.record); err == nil || !strings.Contains(err.Error(), refusal) {
+				t.Errorf("lease start = %v, want %q", err, refusal)
+			}
+			if missing, _ := CompletionUnbindableTasks(f.repo, reviewed, repair, []string{f.id}, &f.record, nil); !slices.Equal(missing, []string{f.id}) {
+				t.Errorf("completion over the repair = %v, want the task refused", missing)
+			}
+			writeTaskFile(t, filepath.Join(f.task.Dir, "task.md"), "# Task\n- [x] required checks passed\n")
+			if err := CompleteTrustedTask(f.repo, f.root, f.task); err == nil || !strings.Contains(err.Error(), refusal) {
+				t.Errorf("coop tasks done = %v, want %q", err, refusal)
+			}
+			f.git("reset", "--hard", "-q", reviewed)
+			unbound := f.commitVerbatim(t, "Repair the audit finding"+tail)
+			if missing, _ := CompletionUnbindableTasks(f.repo, reviewed, unbound, []string{f.id}, &f.record, nil); len(missing) != 0 {
+				t.Errorf("the same repair without the trailer = refused %v", missing)
+			}
+		})
+	}
+}
+
 // A moved record's baseline is a commit of other work, so the loop signing it, or an amend, can
 // rewrite it. The lease then parks the task, and the next unblock moves the record again from the
 // reviewed history instead of refusing for good.

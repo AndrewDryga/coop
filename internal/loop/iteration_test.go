@@ -271,6 +271,64 @@ func TestReviewReworkCommitsStayUnboundThroughTheHook(t *testing.T) {
 	}
 }
 
+// Review rework gets the binding scan every attempt gets. A rework attempt that forges a binding for
+// an archived task and stops without completing is rejected there, naming the commit, instead of
+// leaving it below every later attempt's base.
+func TestReviewReworkAttemptsGetTheBindingScan(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	git("commit", "--allow-empty", "-m", "Ship it\n\nCoop-Task: shipped")
+	const id = "rework"
+	git("commit", "--allow-empty", "-m", "Implement the task\n\nCoop-Task: "+id)
+	root := filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateDone, "shipped", "task.md"), "# Shipped\n- [x] verified\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# Rework\n- [x] verified\n")
+	writeTaskFile(t, filepath.Join(root, stateInProgress, id, "log.md"), "# Log — Rework\n\n- Repaired the review finding.\n")
+	record, err := tasks.CaptureAuditReopen(repo, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.WriteAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	forged, attempts := "", 0
+	c.boxRun = func(s box.RunSpec) (int, error) {
+		if attempts++; attempts > 1 {
+			t.Fatalf("the loop started attempt %d after the forged binding", attempts)
+		}
+		git("commit", "--allow-empty", "-m", "Repair the finding\n\nCoop-Task: shipped")
+		forged = forkspace.GitOut(repo, "rev-parse", "HEAD")[:12]
+		_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+		return 0, err
+	}
+	var code int
+	output := captureStderr(t, func() {
+		code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+	})
+	if code != 1 || err == nil {
+		t.Fatalf("loop = %d, %v; want the rejection\n%s", code, err, output)
+	}
+	flat := strings.Join(strings.Fields(output), " ")
+	for _, want := range []string{"Task completion rejected", "Commit " + forged + " binds task shipped, which was already done before this attempt started."} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("refusal omitted %q:\n%s", want, output)
+		}
+	}
+	if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != tasks.StateInProgress {
+		t.Fatalf("rejected rework = %v, %v, %v; want it kept in progress", current, ok, err)
+	}
+	if log, err := os.ReadFile(filepath.Join(root, stateInProgress, id, "log.md")); err != nil || !strings.Contains(string(log), "rejected because commit "+forged) {
+		t.Fatalf("the task's log does not name the forged commit: %s, %v", log, err)
+	}
+}
+
 // Before a task has a commit it starts at the head it was leased at. Once its commit is in history it
 // started from that commit's parent — the oldest one's, when the task has several. When history
 // cannot name that parent (a root commit, a history Git cannot read) there is no base: the lease

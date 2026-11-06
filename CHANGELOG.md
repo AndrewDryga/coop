@@ -116,6 +116,10 @@
   `coop approve` replaces it once you review the access again, and `coop net forget` removes it. A
   written-over marker still grants nothing, and no approval moves to another folder.
 
+- **A review repair commit cannot bind another task where only Git sees it.** A reopened task's
+  repair was checked with Coop's own trailer parse alone, so a trailer above a comment or scissors
+  line bound another task for Git. Every commit after the review is now read both ways, and review
+  rework attempts get the same binding check as every other loop attempt.
 - **Only your own answer lets the next worker close a committed, blocked task without a commit.**
   A plain `coop tasks unblock <id>`, which may rest on an answer the box wrote in `decision.md`, now
   leaves such a task under the usual rule, and a commit another session made with the task's
