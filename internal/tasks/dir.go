@@ -665,21 +665,31 @@ func QueueCounts(dir string) (TaskCounts, string, error) {
 	return counts, active, nil
 }
 
-// LatestForkTaskLog reads reviewed execution projections through the generation registry, because
-// a fork owns no copy of the .agent/tasks tree.
-func LatestForkTaskLog(repo, name string, n int) (string, error) {
+// ForkTaskNote is what the worker of one task in a fork's reviewed candidate wrote in its log.md.
+type ForkTaskNote struct {
+	ID    string
+	Title string // the project's own title for the task, never the fork's copy of it
+	Notes string
+}
+
+// ForkTaskNotes reads the reviewed execution projections through the generation registry, because
+// a fork owns no copy of the .agent/tasks tree. Every done task of the fork's candidate comes back
+// with the last n lines of its log.md, oldest log first. A task whose log holds nothing past Coop's
+// own template and notes is left out.
+func ForkTaskNotes(repo, name string, n int) ([]ForkTaskNote, error) {
 	identity, ok, err := forkspace.ReadGeneration(repo, name)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", nil
+	if err != nil || !ok {
+		return nil, err
 	}
 	assignments, err := ForkAssignments(repo, identity)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	newest, newestMod := "", time.Time{}
+	type notedTask struct {
+		ForkTaskNote
+		written time.Time
+	}
+	var found []notedTask
 	for _, assignment := range assignments {
 		owner := assignment.Record.Fork
 		if owner.Phase != ForkAssignmentReviewing && owner.Phase != ForkAssignmentReady {
@@ -687,29 +697,52 @@ func LatestForkTaskLog(repo, name string, n int) (string, error) {
 		}
 		item, ok, err := CurrentTask(owner.Projection, assignment.Item.ID)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if !ok || item.State != StateDone {
 			continue
 		}
-		path := filepath.Join(item.Dir, "log.md")
-		info, err := os.Lstat(path)
-		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.ModTime().After(newestMod) {
-			opened, openErr := OpenTaskMetadataRoot(item.Dir)
-			if openErr != nil {
-				continue
-			}
-			data, readErr := ReadTaskMetadataFile(opened, "log.md")
-			_ = opened.Close()
-			if readErr == nil {
-				newest, newestMod = string(data), info.ModTime()
-			}
+		info, err := os.Lstat(filepath.Join(item.Dir, "log.md"))
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		opened, err := OpenTaskMetadataRoot(item.Dir)
+		if err != nil {
+			continue
+		}
+		data, err := ReadTaskMetadataFile(opened, "log.md")
+		_ = opened.Close()
+		if err != nil {
+			continue
+		}
+		if notes := workerNotes(string(data), n); notes != "" {
+			found = append(found, notedTask{ForkTaskNote{ID: item.ID, Title: assignment.Item.Title, Notes: notes}, info.ModTime()})
 		}
 	}
-	if newest == "" {
-		return "", nil
+	slices.SortFunc(found, func(a, b notedTask) int {
+		if byTime := a.written.Compare(b.written); byTime != 0 {
+			return byTime
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	notes := make([]ForkTaskNote, len(found))
+	for i, task := range found {
+		notes[i] = task.ForkTaskNote
 	}
-	return lastLines(newest, n), nil
+	return notes, nil
+}
+
+// workerNotes is the last n lines of a log.md without Coop's template comment and title line. It is
+// empty when the log holds no entry past the template and the notes Coop writes itself.
+func workerNotes(log string, n int) string {
+	if !LogHasEntry(log) {
+		return ""
+	}
+	body := strings.TrimSpace(withoutHTMLComments(log))
+	if title, rest, _ := strings.Cut(body, "\n"); strings.HasPrefix(title, "# ") {
+		body = strings.TrimSpace(rest)
+	}
+	return lastLines(body, n)
 }
 
 // TaskTreeCounts tallies a task tree into the shared TaskCounts and returns the "active"

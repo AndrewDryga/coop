@@ -442,16 +442,19 @@ func (c *Control) forkBriefAt(repo, authority, into, commits, name, ref string, 
 		say("Commits")
 		say("%s", indent(log))
 	}
-	why, err := tasks.LatestForkTaskLog(authority, name, 12)
+	notes, err := tasks.ForkTaskNotes(authority, name, 12)
 	if err != nil {
 		return err
 	}
-	// Absent notes are omitted: an empty section is not evidence, and the commits above already
-	// say what landed.
-	if strings.TrimSpace(why) != "" {
+	// A task without notes is omitted: an empty section is not evidence, and the commits above
+	// already say what landed. The agent wrote the notes, so they are escaped like its file names.
+	if len(notes) != 0 {
 		say("")
 		say("Agent's notes")
-		say("%s", indent(why))
+		for _, note := range notes {
+			say("%s", indent(ui.SafeInline(note.Title)+":"))
+			say("%s", indent(indent(safeLines(note.Notes))))
+		}
 	}
 	if len(changes) != 0 { // the sections below are diff-derived; an empty diff has nothing to map
 		// The SAME scan `coop fork merge` enforces — surfaced here so findings appear at review,

@@ -222,8 +222,8 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := tasks.LatestForkTaskLog(repo, identity.Name, 12); err != nil || got != strings.Join(lines[2:], "\n") {
-		t.Fatalf("review notes suffix=%q, %v", got, err)
+	if got, err := tasks.ForkTaskNotes(repo, identity.Name, 12); err != nil || len(got) != 1 || got[0].Notes != strings.Join(lines[2:], "\n") {
+		t.Fatalf("review notes suffix=%+v, %v", got, err)
 	}
 	out := captureStdout(t, func() {
 		code, err := c.forkReviewIsolated(repo, ws, identity.Name, identity, true, false, false, false)
@@ -239,8 +239,8 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 	}
 	emptyRepo, emptyWS, emptyIdentity, emptyControl := isolatedTestFork(t)
 	writeTaskFile(t, filepath.Join(emptyWS, tasks.TasksRoot, tasks.StateDone, "copied", "log.md"), "FOREIGN NEWER NOTES\n")
-	if got, err := tasks.LatestForkTaskLog(emptyRepo, emptyIdentity.Name, 12); err != nil || got != "" {
-		t.Fatalf("unreviewed notes=%q %v", got, err)
+	if got, err := tasks.ForkTaskNotes(emptyRepo, emptyIdentity.Name, 12); err != nil || len(got) != 0 {
+		t.Fatalf("unreviewed notes=%+v %v", got, err)
 	}
 	out = captureStdout(t, func() {
 		code, err := emptyControl.forkReviewIsolated(emptyRepo, emptyWS, emptyIdentity.Name, emptyIdentity, true, false, false, false)
@@ -250,6 +250,46 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 	})
 	if strings.Contains(out, "FOREIGN") {
 		t.Fatal("unassigned copied notes reached review", out)
+	}
+}
+
+// A fork that did several tasks shows each task's notes under its own title, oldest log first, and
+// never Coop's template comment. A task whose log holds nothing the worker wrote is left out.
+func TestForkReviewShowsEveryTasksNotesWithoutTheTemplate(t *testing.T) {
+	const template = "<!-- Append progress, decisions and problems here.\n     Keep earlier entries. Put the latest resume summary in state.md. -->\n\n"
+	logs := map[string]string{
+		"task-a": template + "# Log — Canonical task task-a\n\n- Added bye.txt.\n- Ran the focused tests.\n",
+		"task-b": template + "# Log — Canonical task task-b\n\n- Added hello.txt.\n- Kept the existing wording.\n",
+		"task-c": template + "# Log — Canonical task task-c\n",
+	}
+	// task-b's log is older than task-a's, so the order follows the work and not the task ids.
+	written := map[string]time.Time{"task-a": time.Now().Add(-time.Hour), "task-b": time.Now().Add(-2 * time.Hour), "task-c": time.Now()}
+	fill := func(t *testing.T, dir string) {
+		t.Helper()
+		id := filepath.Base(dir)
+		writeTaskFile(t, filepath.Join(dir, "log.md"), logs[id])
+		if err := os.Chtimes(filepath.Join(dir, "log.md"), written[id], written[id]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo, ws, _, identity, c := prepareForkTaskCandidateMode(t, "isolated-notes-many", true, true, fill, "task-a", "task-b", "task-c")
+	out := captureStdout(t, func() {
+		code, err := c.forkReviewIsolated(repo, ws, identity.Name, identity, true, false, false, false)
+		if err != nil || code != 0 {
+			t.Fatalf("review: %d, %v", code, err)
+		}
+	})
+	order := []string{"Agent's notes", "Canonical task task-b:", "Added hello.txt.", "Kept the existing wording.", "Canonical task task-a:", "Added bye.txt.", "Ran the focused tests."}
+	for i, want := range order {
+		at := strings.Index(out, want)
+		if at < 0 || i > 0 && at < strings.Index(out, order[i-1]) {
+			t.Fatalf("review should show %q after %q:\n%s", want, order[i-1], out)
+		}
+	}
+	for _, unwanted := range []string{"Append progress", "<!--", "# Log —", "task-c"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("review shows %q, which is a template or a task with no notes:\n%s", unwanted, out)
+		}
 	}
 }
 

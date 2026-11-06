@@ -45,6 +45,9 @@ type streamDecoder struct {
 	terminalLimitNotice string
 	sessionID           string
 	blindWaitSeconds    int
+	// lastText is the last assistant text copied to the tail. A successful result repeats exactly
+	// that text, and a second copy would make a valid review receipt look like an earlier one.
+	lastText string
 }
 
 func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
@@ -647,6 +650,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 					d.emitAssistant(t) // mark the agent's own voice
 				}
 				d.toTail(t) // the tail (limit detection) always gets the plain text
+				d.lastText = t
 				if agents.ClaudeCreditLimitNotice(t) {
 					d.terminalLimitNotice = t
 				}
@@ -828,8 +832,10 @@ func (d *streamDecoder) result(ev *streamEvent) {
 	}
 	d.last = res
 	d.emit(d.palette.Dim(cleanDiagnosticLine(line)))
-	if t := strings.TrimSpace(ev.Result); t != "" {
-		d.toTail(t) // the final message, in case it carries a limit notice
+	// The final message, in case it carries a limit notice. Claude sends the last assistant text
+	// again as the result, and the tail already holds it.
+	if t := strings.TrimSpace(ev.Result); t != "" && t != d.lastText {
+		d.toTail(t)
 	}
 }
 

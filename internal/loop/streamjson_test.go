@@ -86,6 +86,55 @@ func TestStreamDecoder(t *testing.T) {
 	}
 }
 
+// Claude's result event repeats the last assistant text. Both reached the tail, so every review
+// receipt looked like an earlier one and was refused, whatever the reviewer wrote: a Haiku review
+// with a blank line before the receipt was refused with a perfect-looking tail (QA, 2026-11-06).
+func TestStreamDecoderKeepsOneCopyOfTheFinalMessage(t *testing.T) {
+	const receipt = "REVIEW COMPLETE — PASS — reopened: none"
+	stream := func(blocks []string, result string) string {
+		var lines []string
+		for _, block := range blocks {
+			text, _ := json.Marshal(block)
+			lines = append(lines, `{"type":"assistant","message":{"content":[{"type":"text","text":`+string(text)+`}]}}`)
+		}
+		text, _ := json.Marshal(result)
+		return strings.Join(append(lines, `{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":9,"result":`+string(text)+`}`), "\n") + "\n"
+	}
+	decode := func(events string) string {
+		var out, tail bytes.Buffer
+		d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+		_, _ = d.Write([]byte(events))
+		d.flush()
+		return tail.String()
+	}
+
+	t.Run("a blank line before the receipt", func(t *testing.T) {
+		final := "AUDIT EVIDENCE — task-a — gate: not applicable (QA scratch work) — findings: none\n\n" + receipt
+		got := decode(stream([]string{"I'll review the task.", final}, final))
+		if count := strings.Count(got, receipt); count != 1 {
+			t.Fatalf("the tail holds the receipt %d times, want once:\n%s", count, got)
+		}
+		if _, err := candidateReviewVerdict([]string{"task-a"}, got); err != nil {
+			t.Fatalf("the reviewer's own envelope was refused: %v\n%s", err, got)
+		}
+	})
+
+	t.Run("a result that says something new still reaches the tail", func(t *testing.T) {
+		got := decode(stream([]string{"working"}, "You've hit your limit · resets 3pm"))
+		if !strings.Contains(got, "working") || !strings.Contains(got, "You've hit your limit") {
+			t.Fatalf("tail = %q, want the assistant text and the different result", got)
+		}
+	})
+
+	t.Run("a reviewer's own early receipt is still refused", func(t *testing.T) {
+		final := "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n" + receipt
+		got := decode(stream([]string{receipt, final}, final))
+		if _, err := candidateReviewVerdict([]string{"task-a"}, got); err == nil || !strings.Contains(err.Error(), "an earlier line also contains") {
+			t.Fatalf("an earlier receipt written by the reviewer = %v, want the earlier-line refusal\n%s", err, got)
+		}
+	})
+}
+
 func TestNDJSONDecoderBoundsAndReportsStreamProblems(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

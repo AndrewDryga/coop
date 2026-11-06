@@ -65,6 +65,16 @@ func indent(s string) string {
 	return strings.Join(lines, "\n")
 }
 
+// safeLines escapes the characters an agent could have chosen on every line of s, and keeps the
+// line breaks.
+func safeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = ui.SafeInline(l)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // approve reports whether a destructive step is approved. --yes approves without asking; otherwise
 // it prompts interactively. In a non-interactive run (no TTY) without --yes it refuses rather than
 // silently taking the default — so a pipe or CI job can't land work and delete a fork on its own.

@@ -261,7 +261,9 @@ queues are read-only. It returns a PASS/FAIL receipt listing the exact task IDs 
 co:op checks the whole proposal and reopens those tasks in one transaction.</p>
 <p>If the review finishes successfully but returns the wrong output format, co:op asks for one
 correction. It resumes the same reviewer session for one more turn, with the same tasks and write
-permissions, and asks only for the verdict in the right format. It doesn&#39;t run the review again.</p>
+permissions, and asks only for the verdict in the right format. It doesn&#39;t run the review again.
+The warning and the request both name the rule the reply broke, such as a second
+<code>REVIEW COMPLETE</code> line or a missing <code>AUDIT EVIDENCE</code> line.</p>
 <p>co:op leaves every task unchanged if:</p>
 <ul>
 <li>the corrected verdict is malformed, or the reviewer session can&#39;t be resumed</li>

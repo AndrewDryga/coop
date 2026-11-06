@@ -251,7 +251,7 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			continue
 		}
 		handoffs, timeouts = 0, 0
-		if receipt, ok := reviewReopenReceipt(out); ok && len(receipt.reopened) > 0 && classification.outcome != "success" {
+		if receipt, err := reviewReopenReceipt(out); err == nil && len(receipt.reopened) > 0 && classification.outcome != "success" {
 			verdictErr := fmt.Errorf("failed review stage declared reopen for %s; verdict was not applied", strings.Join(receipt.reopened, ", "))
 			if classification.outcome == "authentication" {
 				return last, fmt.Errorf("%w; %v", iterationAuthenticationError(target), verdictErr)

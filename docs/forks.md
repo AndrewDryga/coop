@@ -230,7 +230,8 @@ different effect of `--force` on `coop fork merge`.
 `coop fork review <name>` shows a review summary before the patch:
 
 - the commits
-- the agent's latest task `log.md`, clearly labeled as the agent's own account of its work
+- the agent's notes, clearly labeled as its own account of its work: each task's `log.md` under the
+  task's title, without the template comment. A task with no notes is left out.
 - findings from the same policy scan that `coop fork merge` uses
 - changed files, starting with config and instructions, then code ordered by amount changed, then
   tests and docs. Each file shows `+N -N`.

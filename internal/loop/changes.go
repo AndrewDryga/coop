@@ -99,6 +99,9 @@ func compactAuditEvidence(s string) string {
 	return string(r[:auditEvidenceFieldLimit-1]) + "…"
 }
 
+// errNoAuditEvidence is the refusal for a reply with no evidence line in front of its receipt.
+var errNoAuditEvidence = errors.New("no AUDIT EVIDENCE line comes right before the receipt")
+
 // parseAuditEvidence finds the structured audit summary closest to the terminal receipt. Blank
 // separators are harmless, but any non-evidence prose ends the block. The summary intentionally
 // contains only a tested gate and unresolved findings: no free-form claim that a task met its
@@ -113,7 +116,7 @@ func parseAuditEvidence(output string) (map[string]auditEvidence, error) {
 		last--
 	}
 	if last < 1 { // there must be an evidence line immediately before the terminal receipt
-		return nil, errors.New("no audit evidence block immediately precedes the terminal receipt")
+		return nil, errNoAuditEvidence
 	}
 	evidence := map[string]auditEvidence{}
 	blockStart := last
@@ -151,7 +154,7 @@ func parseAuditEvidence(output string) (map[string]auditEvidence, error) {
 		}
 	}
 	if len(evidence) == 0 {
-		return nil, errors.New("no audit evidence records were returned")
+		return nil, errNoAuditEvidence
 	}
 	return evidence, nil
 }
@@ -188,8 +191,8 @@ func auditFindingsNone(findings string) bool {
 // independently authoritative signoff.
 func (s *auditEvidenceStore) capture(subjects, actual []string, protected bool, output string) {
 	s.drop(subjects)
-	receipt, haveReceipt := reviewReopenReceipt(output)
-	if reopenVerdictLost(receipt, haveReceipt, actual, subjects) {
+	receipt, receiptErr := reviewReopenReceipt(output)
+	if reopenVerdictLost(receipt, receiptErr == nil, actual, subjects) {
 		return
 	}
 	observations, ok := auditEvidenceFrom(output)

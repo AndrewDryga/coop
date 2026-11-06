@@ -108,6 +108,30 @@ func TestLogHasEntry(t *testing.T) {
 	}
 }
 
+// A fork review shows what the worker wrote, not Coop's scaffold: no template comment, no title line,
+// nothing at all for a log with no entry, and the last lines of a long one.
+func TestWorkerNotes(t *testing.T) {
+	const template = "<!-- Append progress, decisions and problems here.\n     Keep earlier entries. Put the latest resume summary in state.md. -->\n\n# Log — Fix the parser\n"
+	long := "line 1\nline 2\nline 3\nline 4\n"
+	for _, tc := range []struct {
+		name, log, want string
+		n               int
+	}{
+		{"template only", template, "", 12},
+		{"Coop's own notes only", template + "\n- Claimed by claude (PID 101)\n", "", 12},
+		{"empty log", "", "", 12},
+		{"worker entries", template + "\n- Claimed by claude (PID 101)\n- Fixed the fallback.\n", "- Claimed by claude (PID 101)\n- Fixed the fallback.", 12},
+		{"an entry among comments", "<!-- one -->\n# Log — T\n\nNote.\n<!-- two -->\n", "Note.", 12},
+		{"the last lines of a long log", template + long, "line 3\nline 4", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workerNotes(tc.log, tc.n); got != tc.want {
+				t.Fatalf("workerNotes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // lint names a done task whose state.md still holds Coop's template text. It leaves a todo task's
 // untouched scaffold alone, since nobody has worked it yet, and an archived empty log.md too:
 // completion refuses one now, and the archive's old ones would bury findings someone can act on.

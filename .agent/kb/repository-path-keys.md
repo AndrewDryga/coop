@@ -42,7 +42,7 @@ as text and match only the host-owned workspace; `sameForkAssignmentIndex` and t
 match the queue root. The projection is opened under the workspace Coop derives. So a fork that
 took its task while `COOP_REPO` passed through a link above the project still resumes, merges,
 lands, shows once in the snapshot and can be removed. Reads of the recorded queue root, and
-`LatestForkTaskLog`'s read of the projection, still go through the recorded spelling, so that link
+`ForkTaskNotes`'s read of the projection, still go through the recorded spelling, so that link
 has to stay.
 
 Paths a person hands Coop keep their own spelling: the shell's working directory (`os.Getwd` is
@@ -60,6 +60,8 @@ repository through `COOP_REPO` must resolve it first on macOS, where `/var` link
 `/private/var`, or each expectation built from it spells the project differently from Coop.
 
 ## Changelog
+- 2026-11-06 — `LatestForkTaskLog` became `ForkTaskNotes`, which reads every reviewed task's log the
+  same way (task 2026-11-06-say-why-a-loop-review-receipt-was-refused-and-sh).
 - 2026-11-06 — a box launch refuses a `COOP_REPO` at the home folder or above before any Docker work;
   it had failed only while mounts were prepared, with an unrelated private-folder error (task
   2026-11-06-refuse-a-box-launch-on-the-home-folder-up-front).

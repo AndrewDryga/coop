@@ -159,6 +159,8 @@ co:op checks the whole proposal and reopens those tasks in one transaction.
 If the review finishes successfully but returns the wrong output format, co:op asks for one
 correction. It resumes the same reviewer session for one more turn, with the same tasks and write
 permissions, and asks only for the verdict in the right format. It doesn't run the review again.
+The warning and the request both name the rule the reply broke, such as a second
+`REVIEW COMPLETE` line or a missing `AUDIT EVIDENCE` line.
 
 co:op leaves every task unchanged if:
 

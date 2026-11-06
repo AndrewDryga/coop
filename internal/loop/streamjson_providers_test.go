@@ -329,7 +329,7 @@ func TestNormalizeReviewAdapterDispatch(t *testing.T) {
 		if !ok || got != want {
 			t.Errorf("%s normalization = %q/%v", name, got, ok)
 		}
-		if _, ok := reviewReopenReceipt(got); !ok {
+		if _, err := reviewReopenReceipt(got); err != nil {
 			t.Errorf("%s lost existing wrapper-footer acceptance", name)
 		}
 	}
@@ -376,9 +376,9 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 			if !ok || got != tc.block {
 				t.Fatalf("normalizeCodexReviewOutput = %q/%v, want %q/true", got, ok, tc.block)
 			}
-			receipt, ok := reviewReopenReceipt(got)
-			if !ok || (tc.block == pass && receipt.verdict != "PASS") || (tc.block == fail && receipt.verdict != "FAIL") {
-				t.Fatalf("normalized receipt = %+v/%v", receipt, ok)
+			receipt, err := reviewReopenReceipt(got)
+			if err != nil || (tc.block == pass && receipt.verdict != "PASS") || (tc.block == fail && receipt.verdict != "FAIL") {
+				t.Fatalf("normalized receipt = %+v/%v", receipt, err)
 			}
 		})
 	}
@@ -444,7 +444,7 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 			if ok || !strings.Contains(got, "\x00coop-codex-review-envelope-invalid\x00") {
 				t.Fatalf("malformed envelope = %q/%v, want internal rejection marker", got, ok)
 			}
-			if _, ok := reviewReopenReceipt(got); ok {
+			if _, err := reviewReopenReceipt(got); err == nil {
 				t.Fatal("malformed Codex envelope retained a usable receipt")
 			}
 		})

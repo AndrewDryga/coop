@@ -34,9 +34,94 @@ func TestReviewReopenReceipt(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r, ok := reviewReopenReceipt(c.out)
-			if r.verdict != c.verdict || !slices.Equal(r.reopened, c.ids) || ok != c.ok {
-				t.Errorf("reviewReopenReceipt = %+v/%v, want %s,%v/%v", r, ok, c.verdict, c.ids, c.ok)
+			r, err := reviewReopenReceipt(c.out)
+			if r.verdict != c.verdict || !slices.Equal(r.reopened, c.ids) || (err == nil) != c.ok {
+				t.Errorf("reviewReopenReceipt = %+v/%v, want %s,%v/%v", r, err, c.verdict, c.ids, c.ok)
+			}
+		})
+	}
+}
+
+// A refused receipt names the rule it broke. Without that a receipt can look perfect in the quoted
+// tail while an earlier line is what voided it, and the correction request cannot say what to fix.
+func TestReviewReceiptRefusalNamesTheRule(t *testing.T) {
+	const pass = "REVIEW COMPLETE — PASS — reopened: none"
+	for _, tc := range []struct {
+		name, output string
+		want         []string
+	}{
+		{"empty reply", "\n  \n", []string{"the reply is empty: it must end with the receipt line"}},
+		{"prose after the receipt", pass + "\nOne more thought.", []string{`the last line "One more thought." is not a valid receipt: it does not start with "REVIEW COMPLETE — "`}},
+		{"old count receipt", "REVIEW COMPLETE — reopened 2", []string{`it must read "REVIEW COMPLETE — PASS — reopened: none" or "REVIEW COMPLETE — FAIL — reopened: <task IDs>"`}},
+		{"unknown verdict", "REVIEW COMPLETE — MAYBE — reopened: none", []string{`the last line "REVIEW COMPLETE — MAYBE — reopened: none" is not a valid receipt: the verdict must be PASS or FAIL`}},
+		{"pass naming a task", "REVIEW COMPLETE — PASS — reopened: task-a", []string{`a PASS receipt must say "reopened: none"`}},
+		{"fail naming no task", "REVIEW COMPLETE — FAIL — reopened: none", []string{"a FAIL receipt must list the task IDs to reopen"}},
+		{"empty task ID", "REVIEW COMPLETE — FAIL — reopened: task-a,,task-b", []string{`a task ID is empty: write "none", or IDs separated by single commas`}},
+		{"space after a comma", "REVIEW COMPLETE — FAIL — reopened: task-a, task-b", []string{"task IDs must not contain spaces: separate them with commas only"}},
+		{"unsorted task IDs", "REVIEW COMPLETE — FAIL — reopened: task-b,task-a", []string{"task IDs must be sorted"}},
+		{"repeated task ID", "REVIEW COMPLETE — FAIL — reopened: task-a,task-a", []string{"task ID task-a is listed twice"}},
+		{"earlier line holding the prefix", "I will end with REVIEW COMPLETE — PASS — reopened: none\n" + pass, []string{
+			`an earlier line also contains "REVIEW COMPLETE — ": "I will end with REVIEW COMPLETE — PASS — reopened: none"`,
+			"The receipt may appear only once, as the last line",
+		}},
+		{"earlier copy of the whole receipt", pass + "\n" + pass, []string{`an earlier line also contains "REVIEW COMPLETE — ": "` + pass + `"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := reviewReopenReceipt(tc.output)
+			if err == nil {
+				t.Fatalf("receipt was accepted:\n%s", tc.output)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q\nwant it to say %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// The refusal reaches the log and the format-only correction ahead of the tail, so a reviewer told
+// to fix its receipt is told which rule it broke even when the tail looks right.
+func TestMalformedVerdictShowsTheRuleBeforeTheTail(t *testing.T) {
+	const evidence = "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n"
+	output := "I will end with REVIEW COMPLETE — PASS — reopened: none\n\n" + evidence + "REVIEW COMPLETE — PASS — reopened: none"
+	root := t.TempDir()
+	taskForLease(t, root, stateDone, "task-a")
+	_, applyErr := applyReviewVerdictInRepo("", []string{root}, []string{"task-a"}, output)
+	_, candidateErr := candidateReviewVerdict([]string{"task-a"}, output)
+	for name, err := range map[string]error{"final review": applyErr, "candidate review": candidateErr} {
+		if err == nil || !errors.Is(err, errReviewVerdictMalformed) {
+			t.Fatalf("%s: verdict = %v, want a malformed-verdict refusal", name, err)
+		}
+		text := err.Error()
+		rule := strings.Index(text, `an earlier line also contains "REVIEW COMPLETE — ": "I will end with REVIEW COMPLETE — PASS — reopened: none"`)
+		tail := strings.Index(text, "The output tail was ")
+		if rule < 0 || tail < rule {
+			t.Fatalf("%s: refusal = %q, want the broken rule with the quoted line, then the tail", name, text)
+		}
+		correction := reviewVerdictCorrection(err, output, []string{"task-a"})
+		if !strings.Contains(correction, "Validation error: ") || !strings.Contains(correction, "an earlier line also contains") {
+			t.Errorf("%s: correction request does not name the refused rule:\n%s", name, correction)
+		}
+	}
+}
+
+// A reply with no evidence line says so and names the tasks it left unreported, instead of
+// reporting a receipt problem.
+func TestMissingEvidenceNamesTheRuleAndTheTasks(t *testing.T) {
+	for name, output := range map[string]string{
+		"prose before the receipt": "All acceptance criteria are satisfied.\nREVIEW COMPLETE — PASS — reopened: none",
+		"the receipt alone":        "REVIEW COMPLETE — PASS — reopened: none",
+	} {
+		t.Run(name, func(t *testing.T) {
+			want := "no AUDIT EVIDENCE line comes right before the receipt (missing audit evidence for task-a,task-b)"
+			if _, err := candidateReviewVerdict([]string{"task-a", "task-b"}, output); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("candidate verdict = %v, want %q", err, want)
+			}
+			root := t.TempDir()
+			a, b := taskForLease(t, root, stateDone, "task-a"), taskForLease(t, root, stateDone, "task-b")
+			if _, err := applyReviewVerdictInRepo("", []string{root}, []string{a.ID, b.ID}, output); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("final verdict = %v, want %q", err, want)
 			}
 		})
 	}
@@ -82,6 +167,8 @@ func TestReviewVerdictErrorsNameTheRepair(t *testing.T) {
 		{"unknown subject", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — other — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "unknown subjects other"},
 		{"duplicate subject", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nAUDIT EVIDENCE — alpha — gate: x — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "duplicate audit evidence for alpha"},
 		{"split block", "AUDIT EVIDENCE — alpha — gate: x — findings: none\nexplanation\nREVIEW COMPLETE — PASS — reopened: none", "split by prose"},
+		{"no gate field", "AUDIT EVIDENCE — alpha — findings: none\nREVIEW COMPLETE — PASS — reopened: none", "audit evidence line has no task ID or gate field"},
+		{"no findings field", "AUDIT EVIDENCE — alpha — gate: x\nREVIEW COMPLETE — PASS — reopened: none", "audit evidence for alpha has an empty or missing gate/findings field"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -494,9 +581,9 @@ func TestReviewReopenReceiptSurvivesARacingWrapperFooter(t *testing.T) {
 		{"footer separated by blank lines", receipt + "\n\ntokens used\n\n162,824\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := reviewReopenReceipt(tc.output)
-			if !ok {
-				t.Fatalf("a valid receipt was voided by a wrapper footer:\n%q", tc.output)
+			got, err := reviewReopenReceipt(tc.output)
+			if err != nil {
+				t.Fatalf("a valid receipt was voided by a wrapper footer (%v):\n%q", err, tc.output)
 			}
 			if got.verdict != "PASS" || len(got.reopened) != 0 {
 				t.Errorf("receipt = %+v, want PASS with no reopened ids", got)
@@ -506,9 +593,9 @@ func TestReviewReopenReceiptSurvivesARacingWrapperFooter(t *testing.T) {
 
 	// A FAIL must survive the same way — that is the case whose loss was expensive.
 	fail := "REVIEW COMPLETE — FAIL — reopened: a-task,b-task\ntokens used\n1,024"
-	got, ok := reviewReopenReceipt(fail)
-	if !ok || got.verdict != "FAIL" || !slices.Equal(got.reopened, []string{"a-task", "b-task"}) {
-		t.Fatalf("FAIL receipt with a footer = %+v, ok=%v; want FAIL with both ids", got, ok)
+	got, err := reviewReopenReceipt(fail)
+	if err != nil || got.verdict != "FAIL" || !slices.Equal(got.reopened, []string{"a-task", "b-task"}) {
+		t.Fatalf("FAIL receipt with a footer = %+v, err=%v; want FAIL with both ids", got, err)
 	}
 }
 
@@ -522,7 +609,7 @@ func TestReviewReopenReceiptStillVoidsOnTrailingModelContent(t *testing.T) {
 		{"footer then prose", receipt + "\ntokens used\n162,824\nAlso, I skipped the security review."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, ok := reviewReopenReceipt(tc.output); ok {
+			if _, err := reviewReopenReceipt(tc.output); err == nil {
 				t.Errorf("content after the receipt was silently accepted:\n%q", tc.output)
 			}
 		})

@@ -29,38 +29,57 @@ func (f *CandidateReviewFindings) Error() string {
 	return "candidate review found unresolved issues in " + strings.Join(ids, ", ")
 }
 
+// reviewReceiptPrefix opens the terminal receipt line, and any earlier line holding it voids the
+// receipt.
+const reviewReceiptPrefix = "REVIEW COMPLETE — "
+
 // parseReviewReceiptLine parses one strict receipt line. Old count-only receipts are deliberately
 // rejected: only the exact task ids can bind the verdict to the queue delta and distinguish review
-// work from unrelated actionable tasks.
-func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
-	const prefix = "REVIEW COMPLETE — "
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, prefix) {
-		return reviewReceipt{}, false
+// work from unrelated actionable tasks. A refusal says which part of the line is wrong; the text
+// follows "the last line … is not a valid receipt:".
+func parseReviewReceiptLine(line string) (reviewReceipt, error) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(line), reviewReceiptPrefix)
+	if !ok {
+		return reviewReceipt{}, fmt.Errorf("it does not start with %q", reviewReceiptPrefix)
 	}
-	parts := strings.Split(strings.TrimPrefix(line, prefix), " — reopened: ")
-	if len(parts) != 2 || (parts[0] != "PASS" && parts[0] != "FAIL") {
-		return reviewReceipt{}, false
+	const reopened = " — reopened: "
+	verdict, list, ok := strings.Cut(rest, reopened)
+	if !ok || strings.Contains(list, reopened) {
+		return reviewReceipt{}, errors.New(`it must read "REVIEW COMPLETE — PASS — reopened: none" or "REVIEW COMPLETE — FAIL — reopened: <task IDs>"`)
+	}
+	if verdict != "PASS" && verdict != "FAIL" {
+		return reviewReceipt{}, errors.New("the verdict must be PASS or FAIL")
 	}
 	var ids []string
-	if parts[1] != "none" {
-		ids = strings.Split(parts[1], ",")
-		if slices.Contains(ids, "") || !slices.IsSorted(ids) {
-			return reviewReceipt{}, false
-		}
-		if slices.ContainsFunc(ids, func(id string) bool { return strings.ContainsAny(id, " \t\r\n") }) {
-			return reviewReceipt{}, false
+	if list != "none" {
+		ids = strings.Split(list, ",")
+		switch {
+		case slices.Contains(ids, ""):
+			return reviewReceipt{}, errors.New(`a task ID is empty: write "none", or IDs separated by single commas`)
+		case slices.ContainsFunc(ids, func(id string) bool { return strings.ContainsAny(id, " \t\r\n") }):
+			return reviewReceipt{}, errors.New("task IDs must not contain spaces: separate them with commas only")
+		case !slices.IsSorted(ids):
+			return reviewReceipt{}, errors.New("task IDs must be sorted")
 		}
 		for j := 1; j < len(ids); j++ {
 			if ids[j] == ids[j-1] {
-				return reviewReceipt{}, false
+				return reviewReceipt{}, fmt.Errorf("task ID %s is listed twice", ids[j])
 			}
 		}
 	}
-	if (parts[0] == "PASS") != (len(ids) == 0) {
-		return reviewReceipt{}, false
+	if verdict == "PASS" && len(ids) > 0 {
+		return reviewReceipt{}, errors.New(`a PASS receipt must say "reopened: none"`)
 	}
-	return reviewReceipt{verdict: parts[0], reopened: ids}, true
+	if verdict == "FAIL" && len(ids) == 0 {
+		return reviewReceipt{}, errors.New("a FAIL receipt must list the task IDs to reopen")
+	}
+	return reviewReceipt{verdict: verdict, reopened: ids}, nil
+}
+
+// quoteReceiptLine quotes one line of a rejected review output, clipped, so trailing whitespace and
+// stray control bytes are visible rather than invisible.
+func quoteReceiptLine(line string) string {
+	return strconv.Quote(truncate(line, 160))
 }
 
 // receiptFailureTail renders the last few non-empty lines of a rejected review output so the
@@ -71,18 +90,14 @@ func parseReviewReceiptLine(line string) (reviewReceipt, bool) {
 // bytes are visible rather than invisible — those are exactly the shapes that break a parser that
 // requires the receipt to be terminal.
 func receiptFailureTail(output string) string {
-	const maxLines, maxLen = 3, 160
+	const maxLines = 3
 	lines := strings.Split(output, "\n")
 	var tail []string
 	for i := len(lines) - 1; i >= 0 && len(tail) < maxLines; i-- {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
-		line := lines[i]
-		if len(line) > maxLen {
-			line = line[:maxLen] + "…"
-		}
-		tail = append([]string{strconv.Quote(line)}, tail...)
+		tail = append([]string{quoteReceiptLine(lines[i])}, tail...)
 	}
 	if len(tail) == 0 {
 		return "(empty)"
@@ -121,39 +136,40 @@ func normalizeAgentReviewOutput(name, raw string) (string, bool) {
 	return ag.ReviewOutput(raw, agents.ReviewOutputContract{
 		Normalize: normalizeReviewVerdictOutput,
 		ValidOutput: func(output string) bool {
-			_, valid := reviewReopenReceipt(output)
-			return valid
+			_, err := reviewReopenReceipt(output)
+			return err == nil
 		},
 		ValidReceiptLine: func(line string) bool {
-			_, valid := parseReviewReceiptLine(line)
-			return valid
+			_, err := parseReviewReceiptLine(line)
+			return err == nil
 		},
 	})
 }
 
 // reviewReopenReceipt parses the strict terminal receipt emitted by every review. A receipt-looking
 // line earlier in the response is rejected too: otherwise ordinary prose could contain an old
-// verdict while the parser silently trusted a later block.
-func reviewReopenReceipt(output string) (reviewReceipt, bool) {
-	const prefix = "REVIEW COMPLETE — "
+// verdict while the parser silently trusted a later block. A refusal names the rule that broke, so
+// the log and the format-only correction can say exactly what to fix.
+func reviewReopenReceipt(output string) (reviewReceipt, error) {
 	lines := strings.Split(output, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" || wrapperFooterLine(line) {
 			continue
 		}
-		receipt, ok := parseReviewReceiptLine(line)
-		if !ok {
-			return reviewReceipt{}, false
+		receipt, err := parseReviewReceiptLine(line)
+		if err != nil {
+			return reviewReceipt{}, fmt.Errorf("the last line %s is not a valid receipt: %w", quoteReceiptLine(line), err)
 		}
 		for _, earlier := range lines[:i] {
-			if strings.Contains(earlier, prefix) {
-				return reviewReceipt{}, false
+			if strings.Contains(earlier, reviewReceiptPrefix) {
+				return reviewReceipt{}, fmt.Errorf("an earlier line also contains %q: %s. The receipt may appear only once, as the last line",
+					reviewReceiptPrefix, quoteReceiptLine(strings.TrimSpace(earlier)))
 			}
 		}
-		return receipt, true
+		return receipt, nil
 	}
-	return reviewReceipt{}, false
+	return reviewReceipt{}, errors.New("the reply is empty: it must end with the receipt line")
 }
 
 // normalizeReviewVerdictOutput collapses one transport-owned echo of the complete structured
@@ -173,7 +189,7 @@ func normalizeReviewVerdictOutput(output string) string {
 	if last < 1 {
 		return output
 	}
-	if _, ok := parseReviewReceiptLine(lines[last]); !ok {
+	if _, err := parseReviewReceiptLine(lines[last]); err != nil {
 		return output
 	}
 	envelopeStart := last
@@ -256,9 +272,9 @@ func lifecycleTaskSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 // reopen and its resume metadata. A malformed, missing, or out-of-scope verdict mutates nothing.
 func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output string) ([]string, error) {
 	output = normalizeReviewVerdictOutput(output)
-	receipt, ok := reviewReopenReceipt(output)
-	if !ok {
-		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt; output tail was %s", errReviewVerdict, errReviewVerdictMalformed, receiptFailureTail(output))
+	receipt, receiptErr := reviewReopenReceipt(output)
+	if receiptErr != nil {
+		return nil, unreadableReceipt(receiptErr, output)
 	}
 	if len(subjects) == 0 {
 		if len(receipt.reopened) != 0 {
@@ -269,12 +285,9 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 		}
 		return nil, nil
 	}
-	evidence, evidenceErr := parseAuditEvidence(output)
+	evidence, evidenceErr := reviewEvidence(subjects, output)
 	if evidenceErr != nil {
 		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, evidenceErr)
-	}
-	if err := validateAuditEvidenceSubjects(subjects, evidence); err != nil {
-		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, err)
 	}
 	reopenSet := make(map[string]bool, len(receipt.reopened))
 	for _, id := range receipt.reopened {
@@ -396,19 +409,16 @@ func partitionReviewReopens(hosts, rejected []string) (reopened, blocked []strin
 // exact pending candidate before applying rework; only a complete PASS authorizes publication.
 func candidateReviewVerdict(subjects []string, output string) ([]string, error) {
 	output = normalizeReviewVerdictOutput(output)
-	receipt, ok := reviewReopenReceipt(output)
-	if !ok {
-		return nil, fmt.Errorf("%w: %w: missing or malformed terminal receipt; output tail was %s", errReviewVerdict, errReviewVerdictMalformed, receiptFailureTail(output))
+	receipt, receiptErr := reviewReopenReceipt(output)
+	if receiptErr != nil {
+		return nil, unreadableReceipt(receiptErr, output)
 	}
 	if len(subjects) == 0 {
 		return nil, fmt.Errorf("%w: %w: candidate review has no task subjects", errReviewVerdict, errReviewVerdictMalformed)
 	}
-	evidence, evidenceErr := parseAuditEvidence(output)
+	evidence, evidenceErr := reviewEvidence(subjects, output)
 	if evidenceErr != nil {
 		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, evidenceErr)
-	}
-	if err := validateAuditEvidenceSubjects(subjects, evidence); err != nil {
-		return nil, fmt.Errorf("%w: %w: %v", errReviewVerdict, errReviewVerdictMalformed, err)
 	}
 	reopenSet := make(map[string]bool, len(receipt.reopened))
 	for _, id := range receipt.reopened {
@@ -427,6 +437,28 @@ func candidateReviewVerdict(subjects []string, output string) ([]string, error) 
 		}
 	}
 	return slices.Clone(receipt.reopened), nil
+}
+
+// unreadableReceipt is the refusal for output whose terminal receipt broke a rule: the rule first,
+// then the tail, so the log shows what was rejected and a format-only correction names what to fix.
+func unreadableReceipt(reason error, output string) error {
+	return fmt.Errorf("%w: %w: %v. The output tail was %s", errReviewVerdict, errReviewVerdictMalformed, reason, receiptFailureTail(output))
+}
+
+// reviewEvidence reads the evidence block and checks it names exactly the review's subjects. A reply
+// with no evidence line at all also names the subjects it left unreported.
+func reviewEvidence(subjects []string, output string) (map[string]auditEvidence, error) {
+	evidence, err := parseAuditEvidence(output)
+	if errors.Is(err, errNoAuditEvidence) {
+		if missing := validateAuditEvidenceSubjects(subjects, nil); missing != nil {
+			err = fmt.Errorf("%w (%v)", err, missing)
+		}
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	return evidence, validateAuditEvidenceSubjects(subjects, evidence)
 }
 
 func validateAuditEvidenceSubjects(subjects []string, evidence map[string]auditEvidence) error {

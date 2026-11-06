@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/loop/loop.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
+sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/loop/loop.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
 updated: 2026-11-06
 ---
 
@@ -47,6 +47,15 @@ block. Because stdout/stderr collection can place that footer outside the respon
 verdict boundary also collapses one earlier normalized evidence+receipt envelope only when it is
 byte-identical to the terminal envelope. A non-identical, partial, or additional proposal remains
 ambiguous and is rejected.
+
+A refusal names the exact rule it broke, ahead of the quoted tail, and the correction request
+carries the same text: an earlier line also holding `REVIEW COMPLETE — ` (quoted), a last line that
+is not a receipt and why, or no `AUDIT EVIDENCE` line (with the task IDs it left unreported).
+Claude's `result` event repeats its last assistant text. With both copies in the tail, a reply with
+a blank line before its receipt — which the evidence parser allows but the echo collapse above does
+not match — looked like an earlier receipt, and every Haiku review was refused once. The stream
+decoder now skips a result equal to the last assistant text it already copied to the tail
+(`streamDecoder.result`); the anti-spoof rule itself is unchanged.
 
 Each accepted reopen also writes one random generation in the host-only task-authority registry.
 Current records anchor the full baseline HEAD and every ordered later commit, whether task-bound or
@@ -158,6 +167,8 @@ back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-11-06 — a refused receipt names its rule, and Claude's repeated final text no longer voids a
+  valid one (task 2026-11-06-say-why-a-loop-review-receipt-was-refused-and-sh).
 - 2026-11-06 — `writes: repo` works: a filtered launch admits the queue snapshot tree, and the
   completion audit keeps a reviewer's own commits after the binding and range checks instead of
   refusing every commit (task 2026-11-06-make-signoff-writes-repo-work-in-filtered-and-op).

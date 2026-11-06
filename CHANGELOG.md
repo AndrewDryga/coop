@@ -21,6 +21,17 @@
   header names it. A saved account that was removed is refused by name, never swapped for another.
   The Continue line of a stopped background loop resumes the same run (with `-d`), and a restarted
   loop adds to its log after a "started again" line instead of emptying it.
+
+- **A refused loop review receipt says which rule it broke, and Claude's repeated message no longer
+  voids a valid one.** Reviews were refused as `missing or malformed terminal receipt` while the
+  quoted tail ended with a correct receipt: Claude repeats its last message as the result, and a
+  reply with a blank line before the receipt reached the check twice, the first copy voiding the
+  second. Haiku hit this in every final review and paid for a correction each time. The repeat is
+  dropped now. A refusal that remains names its rule in the log and in the format-only correction:
+  an earlier line also containing `REVIEW COMPLETE — ` (quoted), a last line that is not a receipt
+  and why, or no `AUDIT EVIDENCE` line, with the task IDs it left out. `coop fork review` also shows
+  the notes of every task in the fork under its title, without the template comment. It showed only
+  the newest task's.
 - **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
   such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
   that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.

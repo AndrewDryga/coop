@@ -218,6 +218,10 @@ func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
 			if !strings.Contains(commands[1].prompt, "Validation error:") || !strings.Contains(commands[1].prompt, "AUDIT EVIDENCE — task-a") {
 				t.Fatalf("correction prompt lacks precise repair data:\n%s", commands[1].prompt)
 			}
+			// The request names the rule the first reply broke, not just that it was malformed.
+			if want := `the last line "trailing prose" is not a valid receipt: it does not start with "REVIEW COMPLETE — "`; !strings.Contains(commands[1].prompt, want) {
+				t.Fatalf("correction prompt does not name the broken rule %q:\n%s", want, commands[1].prompt)
+			}
 			if observed != 1 || run.retries != 1 {
 				t.Fatalf("recovery episode observer/retries = %d/%d, want 1/1", observed, run.retries)
 			}

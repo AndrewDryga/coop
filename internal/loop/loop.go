@@ -2017,7 +2017,7 @@ reviewAgain:
 			}
 			if errors.Is(verr, errReviewVerdictMalformed) {
 				ui.Alert("The final checks could not be read",
-					"The review result stayed malformed after one corrected attempt.\nThe affected work remains unverified.")
+					fmt.Sprintf("The review result stayed malformed after one corrected attempt.\n%v\nThe affected work remains unverified.", verr))
 			} else if verr != nil {
 				ui.Alert("The final checks could not run",
 					fmt.Sprintf("%v\nThe affected work remains unverified.", verr))

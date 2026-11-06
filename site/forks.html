@@ -315,7 +315,8 @@ different effect of <code>--force</code> on <code>coop fork merge</code>.</p>
 <p><code>coop fork review &lt;name&gt;</code> shows a review summary before the patch:</p>
 <ul>
 <li>the commits</li>
-<li>the agent&#39;s latest task <code>log.md</code>, clearly labeled as the agent&#39;s own account of its work</li>
+<li>the agent&#39;s notes, clearly labeled as its own account of its work: each task&#39;s <code>log.md</code> under the
+task&#39;s title, without the template comment. A task with no notes is left out.</li>
 <li>findings from the same policy scan that <code>coop fork merge</code> uses</li>
 <li>changed files, starting with config and instructions, then code ordered by amount changed, then
 tests and docs. Each file shows <code>+N -N</code>.</li>

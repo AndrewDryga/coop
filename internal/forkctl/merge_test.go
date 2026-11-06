@@ -363,7 +363,7 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 		t.Fatal(err)
 	}
 	for _, id := range ids {
-		writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Canonical task\n- [x] required checks passed\n")
+		writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Canonical task "+id+"\n- [x] required checks passed\n")
 	}
 	var ws string
 	var err error
