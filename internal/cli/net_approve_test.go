@@ -227,11 +227,8 @@ func TestApproveRejectsUnrelatedFlags(t *testing.T) {
 	if code, err := a.cmdApprove([]string{"--case-exposure", "--case-exposure"}); code != 2 || err == nil {
 		t.Fatalf("repeated flag = %d, %v", code, err)
 	}
-	if !ui.IsTerminal(os.Stdin) {
-		if code, err := a.cmdApprove([]string{"--case-exposure"}); code != 1 || err == nil || !strings.Contains(err.Error(), "terminal") {
-			t.Fatalf("explicit file approval bypassed terminal requirement: %d, %v", code, err)
-		}
-	}
+	// Without a terminal, --case-exposure is TestApproveCaseExposureWithoutATerminal's and
+	// TestApproveCaseExposureWithNothingToApproveSaysSo's: it reads the project, which this app has none of.
 	if code, err := a.dispatch([]string{"approve", "extra"}); code != 2 || err == nil {
 		t.Errorf("dispatch coop approve extra = (%d, %v), want a usage error", code, err)
 	}
