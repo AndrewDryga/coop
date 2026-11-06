@@ -2,8 +2,8 @@
 name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the host-wide gate slots share the coop-cache volume
 subsystem: box
-sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-11-05
+sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go]
+updated: 2026-11-06
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -37,12 +37,16 @@ Because `~/.cache` is one volume for every box, `make check` runs under `tools/g
 holds one of two flock slots in `~/.cache/coop-gate/slots` for the whole gate. Flock on a shared
 Docker volume is seen across containers (checked on OrbStack 2026-11-05); a host gate has its own
 `~/.cache`, so host gates and box gates count separately. A per-VM runtime such as Apple container
-was not checked.
+was not checked. Every box also mounts `coop-gate-slot` (internal/box/gateslot.go), a shell helper
+on the same `slot-0`/`slot-1` files, so another project's opted-in gate and the `coop fork merge`
+gate share the limit; keep its slot count equal to `tools/gateslot`'s.
 
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-06 — every box mounts `coop-gate-slot` on the same slot files, and the fork merge gate runs
+  under it (task 2026-11-05-limit-concurrent-full-gates-for-every-project-s).
 - 2026-11-05 — `make check` takes a host-wide gate slot from the shared cache volume (task
   2026-11-05-run-only-a-few-full-gates-at-once-across-a-host).
 - 2026-10-18 — the Dockerfile comment now says storage.googleapis.com is allowed and the host fill is

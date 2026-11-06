@@ -238,6 +238,10 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		if err := validateWrapperMountCardinality(parsed.Run, preset.DelegateWrapperPath, activeScenario.Delegate != nil); err != nil {
 			return errors.New("runtime invocation rejected")
 		}
+		// Every box carries the gate slot helper, so any project's gate can opt in with one word.
+		if err := validateWrapperMountCardinality(parsed.Run, box.GateSlotPath, true); err != nil {
+			return errors.New("runtime invocation rejected")
+		}
 	}
 	if err := record(root, trace, traceRecord{Source: "runtime", Event: "invoke", PID: os.Getpid(), ParentPID: os.Getppid(), Argv: traceRuntimeArgv(root, image, args)}); err != nil {
 		return err
@@ -830,6 +834,12 @@ func validateMountPolicy(root string, run runCommand, providerHomes []string) er
 		}
 		if m.Target == preset.DelegateWrapperPath {
 			if err := validateDelegateWrapperMount(root, m); err != nil {
+				return err
+			}
+			continue
+		}
+		if m.Target == box.GateSlotPath {
+			if err := validateGeneratedWrapperMount(root, m, box.GateSlotPath, box.GateSlotScript(), "gate slot"); err != nil {
 				return err
 			}
 			continue

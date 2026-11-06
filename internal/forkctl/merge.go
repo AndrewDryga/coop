@@ -395,8 +395,10 @@ func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, is
 	if review {
 		activityKind = forkspace.ExecutionReview
 	}
+	// The gate takes a host-wide gate slot first, as a project's own opted-in gate does, so a merge
+	// does not add one more full gate to a host already running its limit.
 	spec := box.RunSpec{
-		Image: img, Repo: treeDir, Cmd: gate, Batch: true,
+		Image: img, Repo: treeDir, Cmd: append([]string{box.GateSlotPath}, gate...), Batch: true,
 		PolicyRepo: gateRepo, IsolatedParent: isolatedParent,
 		Review:    review,
 		Serve:     review,

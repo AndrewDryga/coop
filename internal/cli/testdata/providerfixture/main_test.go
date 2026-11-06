@@ -643,11 +643,16 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every coop box carries the gate slot helper, so the fixture refuses a run without it.
+	slot := filepath.Join(layout.Root, "coop-gate-slot")
+	if err := os.WriteFile(slot, []byte(box.GateSlotScript()), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result := procharness.Run(ctx, procharness.Command{
 		Path: fixture,
-		Args: []string{"run", "-v", layout.Repo + ":" + layout.Repo, "-w", layout.Repo, "fixture-image", "future-provider"},
+		Args: []string{"run", "-v", layout.Repo + ":" + layout.Repo, "-v", slot + ":" + box.GateSlotPath + ":ro", "-w", layout.Repo, "fixture-image", "future-provider"},
 		Dir:  layout.Repo, Env: env, MaxOutput: 64 << 10,
 	})
 	if result.Err != nil || result.ExitCode != 23 {

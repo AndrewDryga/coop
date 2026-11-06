@@ -25,7 +25,8 @@ import (
 	"time"
 )
 
-// slots is how many full gates may run at once on one host.
+// slots is how many full gates may run at once on one host. The coop-gate-slot helper every box
+// mounts (internal/box/gateslot.go) takes the same slot files and must keep the same count.
 const slots = 2
 
 func main() {

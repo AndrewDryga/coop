@@ -224,6 +224,8 @@ type RunSpec struct {
 	// claudeMCPFile is claude's own view of it, mounted for --mcp-config.
 	mcpSnapshot   []byte
 	claudeMCPFile string
+	// gateSlotFile is this run's generated coop-gate-slot helper, mounted at GateSlotPath.
+	gateSlotFile string
 	// MCPHandoffID binds an editor's tool handoff to one child generation without changing
 	// RunID's runtime and service ownership. Remote sessions use their existing RunID instead.
 	MCPHandoffID string
@@ -1401,6 +1403,21 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	spec.ExtraArgs = append(spec.ExtraArgs, proleArgs...)
 	tmpFiles = append(tmpFiles, proleFiles...)
 	tmpDirs = append(tmpDirs, proleDirs...)
+
+	// coop-gate-slot goes in every box but a sign-in one, so any project's full gate can take a
+	// host-wide gate slot by running under it (GateSlotScript). Mounted, not baked into the image: it
+	// needs no rebuild and always matches this coop.
+	if !spec.Login {
+		slot, err := artifacts.writeFile(artifacts.parent, GateSlotScript())
+		if err != nil {
+			return -1, fmt.Errorf("assemble gate slot helper: %w", err)
+		}
+		tmpFiles = append(tmpFiles, slot)
+		if err := artifacts.chmod(slot, 0o755); err != nil {
+			return -1, fmt.Errorf("make gate slot helper executable: %w", err)
+		}
+		spec.gateSlotFile = slot
+	}
 
 	// Every agent gets the box environment note, then the user's instructions (a per-agent
 	// override if present, else the shared INSTRUCTIONS.md), mounted at its native global path
@@ -3425,6 +3442,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	args = append(args, limits...) // resource/privilege caps (docker; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
+	if spec.gateSlotFile != "" {
+		args = append(args, "-v", spec.gateSlotFile+":"+GateSlotPath+":ro")
+	}
 
 	if spec.Homes {
 		// Only the launched agent's credential home plus named consult peers — never every

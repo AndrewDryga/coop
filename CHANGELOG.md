@@ -24,6 +24,12 @@
   beneath it, and goes back to running when the wait ends. `coop fork ls --json` reports the state
   `launch-wait` and the boxes in `launch_wait`.
 
+- **Any project can keep its full gates from overloading the host.** Every box now has
+  `coop-gate-slot`. Tell your agents to run the full gate as `coop-gate-slot make check`, and at
+  most two gates run at once across the host's boxes, coop's own included. Another gate prints
+  "Waiting for another gate to finish" and starts when a slot is free. The `coop fork merge` gate
+  takes a slot too. This works on Docker and OrbStack. It hasn't been tested on Apple container,
+  which runs each box in its own VM.
 - **A task can wait for another task instead of waiting for you.** When a task must not land
   before another one in the queue, the loop's agent now hands it back with `tasks_wait` instead of
   blocking it for your decision, or you can add `waits_on: <task-id>` to its `task.md`. The loop

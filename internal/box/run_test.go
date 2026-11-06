@@ -1743,9 +1743,9 @@ func TestRunUsesOneValidatedMCPSnapshotAfterSourceMutation(t *testing.T) {
 	}
 	generated := 0
 	for i, content := range written[1:] {
-		// Required instruction and Git artifacts now use the same failure-injection seam. This
-		// assertion concerns only adapter configs, identifiable by either MCP server name.
-		if !strings.Contains(content, "before") && !strings.Contains(content, "after") {
+		// Required instruction, Git and gate slot artifacts now use the same failure-injection seam.
+		// This assertion concerns only adapter configs, identifiable by either MCP server name.
+		if content == GateSlotScript() || !strings.Contains(content, "before") && !strings.Contains(content, "after") {
 			continue
 		}
 		generated++
@@ -2885,6 +2885,8 @@ func TestRunDeclaredCompositionArtifactFailuresStopBeforeProvider(t *testing.T) 
 		{"delegate contract", normalSpec(delegatePreset()), `assemble delegate role "fast" contract`, func(content string) bool { return strings.HasPrefix(content, "## fast") }, false, false},
 		{"native role", normalSpec(nativePreset()), "assemble native roles for claude", nil, false, true},
 		{"consult persona", normalSpec(consultPreset()), `assemble consult role "critic" persona`, func(content string) bool { return content == "consult-persona-sentinel" }, false, false},
+		{"gate slot helper write", normalSpec(nil), "assemble gate slot helper", func(content string) bool { return content == GateSlotScript() }, false, false},
+		{"gate slot helper chmod", normalSpec(nil), "make gate slot helper executable", nil, true, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

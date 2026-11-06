@@ -308,6 +308,15 @@ selects an existing queue and doesn't divide it.
 If you run agents at the same time, give them different accounts to avoid competing for the
 same subscription limits. A preset can define a rotation across providers and accounts.
 
+Agents running at the same time also run their full gates at the same time, which can overload
+the host until tests time out. To limit that, tell your agents to run the full gate as
+`coop-gate-slot make check` (or put `coop-gate-slot` in front of your own gate command). Every
+box has this helper. At most two gates run at once on one host; another one prints `Waiting for
+another gate to finish` and starts when a slot is free, so its timeouts start only then. The
+`coop fork merge` gate takes a slot the same way. Boxes share the slots through their common
+`~/.cache` volume on Docker and OrbStack. Apple container runs each box in its own VM, and
+sharing slots there hasn't been tested, so don't count on the limit there.
+
 A stale or crashed worker shows as `cleanup` in `coop fork ls`. Run `coop fork stop <name>` to
 clean it up. If co:op started the worker on another operating system, such as a Linux container
 that shares the folder, the listing says so. Stop that worker on the system where it started,
