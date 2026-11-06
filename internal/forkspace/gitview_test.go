@@ -461,6 +461,32 @@ func TestGitViewRootRefusesATestBinaryWithoutItsOwnRoot(t *testing.T) {
 	}
 }
 
+// Outside tests the views follow XDG_STATE_HOME, beside the network records: a run with its own
+// state folder keeps its views there and writes nothing under HOME, where QA once found a scratch
+// repository's view in the owner's real state.
+func TestGitViewRootFollowsXDGStateHome(t *testing.T) {
+	repo, _ := viewTestRepo(t)
+	home, state := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", state)
+	root, err := defaultGitViewRoot()
+	if want := filepath.Join(state, "coop", "gitviews"); err != nil || root != want {
+		t.Fatalf("default view root = %q, %v; want %q", root, err, want)
+	}
+	// This binary is a test, so it takes the root it would use outside one by name.
+	t.Setenv(GitViewRootEnv, root)
+	CloseGitViews()
+	if _, err := viewRun(t, repo, "status", "--porcelain"); err != nil {
+		t.Fatal(err)
+	}
+	if views, err := os.ReadDir(root); err != nil || len(views) != 1 {
+		t.Fatalf("views under XDG_STATE_HOME = %v, %v; want the one this repository uses", views, err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".local", "state", "coop")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a run with its own XDG_STATE_HOME wrote under HOME: %v", err)
+	}
+}
+
 // With no repository above the folder, GitCommand runs plain git, and git must not search for one
 // when it starts: a box that makes a .git with a filter driver after coop's check would otherwise
 // have host git read its config and run the driver. Here the .git appears between building the

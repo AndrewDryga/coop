@@ -442,11 +442,24 @@ reads <code>COOP_NO_ASDF</code> and <code>COOP_CONSULT_STREAM_LIMIT</code>, so t
 <p><code>~/.config/coop</code> holds your settings and accounts, so you can sync it across machines with Dropbox
 or a similar service. If two machines refresh the same single-use sign-in, one of them can get
 signed out. If that happens, run <code>coop login</code> on that machine.</p>
-<p>Records that belong to one machine, such as each run&#39;s generated files, image records, usage caches and ACP traces,
-live in <code>$XDG_STATE_HOME/coop</code> or <code>~/.local/state/coop</code>. They never need syncing. Of an account, only
+<p>Records that belong to one machine, such as each run&#39;s generated files, image records, usage
+caches, ACP traces, network approvals and Git views, live in <code>$XDG_STATE_HOME/coop</code>, or in
+<code>~/.local/state/coop</code> when <code>XDG_STATE_HOME</code> isn&#39;t set. They never need syncing. Of an account, only
 <code>agents/&lt;agent&gt;/credentials/&lt;account&gt;/authority.json</code> needs to sync. Its other files are journals and
 locks for one machine. With Dropbox, put these rules in <code>rules.dropboxignore</code> at the Dropbox root, and
 <code>coop doctor</code> notes that the folder syncs by them.</p>
+<p>Some records stay in <code>~/.local/state/coop</code> whatever <code>XDG_STATE_HOME</code> says. Every co:op process on
+this machine has to find the same ones, including a process your editor starts without your shell&#39;s
+variables:</p>
+<ul>
+<li>Service approvals, the files co:op hides from services, and the records it uses to clean up after
+a run that stopped without cleaning up. An approval you give in one shell applies in every other.</li>
+<li>Fork records, and the locks that stop two launches from starting a project&#39;s services at once.
+Locks kept in two places couldn&#39;t stop anything.</li>
+<li><a href="loop.html#task-locks-and-claims">Task leases</a>, so two loops never work the same task.</li>
+<li>The <a href="session-api.html">worker&#39;s</a> session store and its control socket, where a worker keeps the
+identity it reconnects with. Use <code>--state</code> to choose another folder.</li>
+</ul>
 <p>co:op also writes a <code>.gitignore</code> in <code>~/.config/coop</code> if there is none, so a dotfiles repository
 keeps only shared settings. Accounts and <code>agents/env</code> stay out of Git.</p>
 <p>Optional <a href="usage-reports.html">provider usage reports</a> use a separate host-only

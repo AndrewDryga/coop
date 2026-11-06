@@ -59,6 +59,8 @@ type ServiceVolumeBinding struct {
 
 // serviceStateRoot is <state>/<name>: host-owned, outside every repo and every box, which is what
 // makes an approval an approval and keeps a mounted decoy from vanishing under a running sidecar.
+// It stays under HOME whatever XDG_STATE_HOME says: every coop process on this machine, one an
+// editor starts without the shell's variables included, must find the same approvals and records.
 func serviceStateRoot(name string) (string, error) {
 	if strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
 		root := os.Getenv(ServiceStateRootEnv)

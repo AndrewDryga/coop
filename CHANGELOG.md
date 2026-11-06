@@ -173,6 +173,13 @@
   lists the signed-in accounts and offers `coop credentials <agent> <account> default` or
   `coop <agent>@<account>` instead of a sign-in.
 
+- **A run with its own `XDG_STATE_HOME` keeps its Git views there.** Coop wrote the private Git
+  view of every repository it touched to `~/.local/state/coop/gitviews`, so a run with a
+  throwaway state folder still wrote into the real one. Git views now live beside the network
+  records in `$XDG_STATE_HOME/coop`, or `~/.local/state/coop` when it isn't set, and no box may
+  mount them wherever they are. The configuration page now lists the records that stay in
+  `~/.local/state/coop` on purpose (service approvals and hidden files, fork records and service
+  locks, task leases, and the worker's session store) and why.
 - **Four pages now say what Coop does.** The exit-code table lists `coop net check`'s `3` (the
   rules block the connection, or new runs need approval first). The loop page says a review with
   the wrong output format gets one correction turn in the same reviewer session, not a second

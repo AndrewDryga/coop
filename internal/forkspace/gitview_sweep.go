@@ -17,16 +17,12 @@ var viewName = regexp.MustCompile(`^[0-9a-f]{16}$`)
 // rebuilt on its next use, so dropping one costs nothing. A test binary sweeps only a root it was
 // pointed at, never the real one.
 func SweepGitViews() (int, error) {
-	path := os.Getenv(GitViewRootEnv)
-	if path == "" {
-		if strings.HasSuffix(os.Args[0], ".test") {
-			return 0, nil
-		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return 0, err
-		}
-		path = filepath.Join(home, ".local", "state", "coop", "gitviews")
+	if os.Getenv(GitViewRootEnv) == "" && strings.HasSuffix(os.Args[0], ".test") {
+		return 0, nil
+	}
+	path, err := GitViewRoot()
+	if err != nil {
+		return 0, err
 	}
 	return sweepGitViews(path)
 }

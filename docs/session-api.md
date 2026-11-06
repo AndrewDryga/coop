@@ -21,10 +21,11 @@ The single-use token identifies the worker to the controller. co:op saves a rene
 the state directory, then removes the token file. To reconnect, use the same controller and state
 directory without `--token-file`. The saved identity works only with the original controller.
 
-The default state directory is `~/.local/state/coop/sessions`, and the daemon listens on the
-internal Unix socket at `<state>/control.sock`. Each connector starts its own daemon and refuses to
-reuse a running one, so stop the existing connection before reconnecting. To run several workers at
-once, give each a separate `--state` directory. Use a process supervisor to keep the worker running.
+The default state directory is `~/.local/state/coop/sessions`, whatever `XDG_STATE_HOME` says, so
+every co:op process on the machine finds the same worker. The daemon listens on the internal Unix
+socket at `<state>/control.sock`. Each connector starts its own daemon and refuses to reuse a
+running one, so stop the existing connection before reconnecting. To run several workers at once,
+give each a separate `--state` directory. Use a process supervisor to keep the worker running.
 Ctrl-C stops both the connector and the daemon it started.
 
 A worker needs Git, Git LFS and a supported container runtime. The bundled worker image includes

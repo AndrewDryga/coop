@@ -607,8 +607,14 @@ func authorityProtection(spec RunSpec, networkState string) (projects, private, 
 		return nil, nil, nil, fmt.Errorf("locate private Coop service state: %w", err)
 	}
 	private = appendUniqueAuthorityPath(private, filepath.Dir(serviceApprovals))
-	if root := os.Getenv(forkspace.GitViewRootEnv); root != "" {
-		private = appendUniqueAuthorityPath(private, root)
+	// Host git trusts the config in a git view, so no box may mount the views, wherever
+	// XDG_STATE_HOME puts them. Only a test binary that names no root runs none.
+	if os.Getenv(forkspace.GitViewRootEnv) != "" || !strings.HasSuffix(filepath.Base(os.Args[0]), ".test") {
+		views, err := forkspace.GitViewRoot()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("locate Coop's git views: %w", err)
+		}
+		private = appendUniqueAuthorityPath(private, views)
 	}
 	policyRepo := projectPolicyRepo(spec)
 	if policyRepo != "" {

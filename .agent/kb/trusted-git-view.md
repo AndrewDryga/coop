@@ -2,8 +2,8 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-04
+sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
+updated: 2026-11-06
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -27,8 +27,11 @@ only when its bytes differ from the ones the view last projected (`gitView.confi
 parse of the same bytes gives the same projection, and each parse is a git process of its own
 (`TestGitViewProjectsAChangedConfigForTheNextCommand`).
 `gc.auto`/`maintenance.auto`/`fetch.prune` are off under the view (a pack-refs rewrite would land
-in the view). Views live under `~/.local/state/coop/gitviews/<hash of git dir>` (`COOP_GITVIEW_ROOT`
-overrides, and a test binary that leaves it unset is refused; see [[test-state-isolation]]). The
+in the view). Views live under `<state>/coop/gitviews/<hash of git dir>`, where `<state>` is
+`$XDG_STATE_HOME` or `~/.local/state`, beside the network records (`GitViewRoot`;
+`COOP_GITVIEW_ROOT` overrides, and a test binary that leaves it unset is refused; see
+[[test-state-isolation]]). `box.authorityProtection` fences that resolved root from every box
+mount, since host git trusts the config a view holds. The
 daily temp sweep calls `SweepGitViews` (`gitview_sweep.go`), which removes a view only when its
 `objects` link names a store that no longer exists: eval, session and temporary repositories left
 theirs behind for good (on one Mac 3,589 were created in the first half of October 2026, and 13,849
@@ -242,6 +245,10 @@ prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` w
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-11-06 — views follow `XDG_STATE_HOME` (`GitViewRoot`, also used by the sweep and the box
+  mount fence), so a run with its own state folder no longer writes a view into the real one; QA
+  found a scratch repository's view in the owner's state (task
+  keep-coop-state-under-xdg-state-home-or-document).
 - 2026-11-04 — dropped the retired `DriverNeutralizer` and the helpers' old per-package copies from
   the body, and named `gitDirsOf` where it said `repositoryOf` (not a function in the code).
   Verified against internal/forkspace/gitview.go and gitcommand.go.

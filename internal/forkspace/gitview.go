@@ -80,9 +80,37 @@ var (
 )
 
 // GitViewRootEnv overrides where views live, and a test binary must set it. Without it, coop uses
-// ~/.local/state/coop/gitviews, where a view outlives the process: an interrupted rebase keeps
-// its state there for the next `coop fork merge` to recover.
+// coop/gitviews in the XDG state folder (GitViewRoot), where a view outlives the process: an
+// interrupted rebase keeps its state there for the next `coop fork merge` to recover.
 const GitViewRootEnv = "COOP_GITVIEW_ROOT"
+
+// GitViewRoot is where views live: GitViewRootEnv, else coop/gitviews in the XDG state folder
+// ($XDG_STATE_HOME, else ~/.local/state), beside the network records. A run with its own
+// XDG_STATE_HOME keeps its views there and writes nothing in the real one. A view is rebuilt on its
+// next use, so a run elsewhere costs only that. No box may mount it (box.authorityProtection fences
+// it): host git trusts the config a view holds.
+func GitViewRoot() (string, error) {
+	if root := os.Getenv(GitViewRootEnv); root != "" {
+		return root, nil
+	}
+	if strings.HasSuffix(os.Args[0], ".test") {
+		// A per-process temporary root could stand in here, but every test binary that never removed
+		// it would leave one behind in the temp directory.
+		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does)", GitViewRootEnv)
+	}
+	return defaultGitViewRoot()
+}
+
+func defaultGitViewRoot() (string, error) {
+	state, err := config.StateHome()
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(state) {
+		return "", errors.New("git views need XDG_STATE_HOME to be an absolute path")
+	}
+	return filepath.Join(state, "coop", "gitviews"), nil
+}
 
 // GitCommand builds `git -C dir <hardening> <args>` under the trusted view of dir's repository.
 // It is the one way host code runs git against a working tree; see the package comment.
@@ -191,19 +219,9 @@ func gitViewRoot() (string, error) {
 	if gitViewsRoot != "" {
 		return gitViewsRoot, nil
 	}
-	root := os.Getenv(GitViewRootEnv)
-	switch {
-	case root != "":
-	case strings.HasSuffix(os.Args[0], ".test"):
-		// A per-process temporary root could stand in here, but every test binary that never removed
-		// it would leave one behind in the temp directory.
-		return "", fmt.Errorf("a test binary must set %s (internal/testutil/teststate does)", GitViewRootEnv)
-	default:
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(home, ".local", "state", "coop", "gitviews")
+	root, err := GitViewRoot()
+	if err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err

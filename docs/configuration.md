@@ -137,11 +137,24 @@ reads `COOP_NO_ASDF` and `COOP_CONSULT_STREAM_LIMIT`, so they belong in `agents/
 or a similar service. If two machines refresh the same single-use sign-in, one of them can get
 signed out. If that happens, run `coop login` on that machine.
 
-Records that belong to one machine, such as each run's generated files, image records, usage caches and ACP traces,
-live in `$XDG_STATE_HOME/coop` or `~/.local/state/coop`. They never need syncing. Of an account, only
+Records that belong to one machine, such as each run's generated files, image records, usage
+caches, ACP traces, network approvals and Git views, live in `$XDG_STATE_HOME/coop`, or in
+`~/.local/state/coop` when `XDG_STATE_HOME` isn't set. They never need syncing. Of an account, only
 `agents/<agent>/credentials/<account>/authority.json` needs to sync. Its other files are journals and
 locks for one machine. With Dropbox, put these rules in `rules.dropboxignore` at the Dropbox root, and
 `coop doctor` notes that the folder syncs by them.
+
+Some records stay in `~/.local/state/coop` whatever `XDG_STATE_HOME` says. Every co:op process on
+this machine has to find the same ones, including a process your editor starts without your shell's
+variables:
+
+- Service approvals, the files co:op hides from services, and the records it uses to clean up after
+  a run that stopped without cleaning up. An approval you give in one shell applies in every other.
+- Fork records, and the locks that stop two launches from starting a project's services at once.
+  Locks kept in two places couldn't stop anything.
+- [Task leases](loop.md#task-locks-and-claims), so two loops never work the same task.
+- The [worker's](session-api.md) session store and its control socket, where a worker keeps the
+  identity it reconnects with. Use `--state` to choose another folder.
 
 co:op also writes a `.gitignore` in `~/.config/coop` if there is none, so a dotfiles repository
 keeps only shared settings. Accounts and `agents/env` stay out of Git.
