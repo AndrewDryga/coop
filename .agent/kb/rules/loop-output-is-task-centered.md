@@ -2,8 +2,7 @@
 name: loop-output-is-task-centered
 description: loop output groups startup and environment work around dim task banners and canonical per-attempt targets
 scope: cli-output
-sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/review.go, internal/box/services.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
-sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/cli/fork_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
+sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/review.go, internal/box/services.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/cli/fork_cmd.go, internal/forkctl/supervise.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
 updated: 2026-11-06
 ---
@@ -90,6 +89,15 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-11-06 — `coop fork stop`'s Continue line named only the fork's remembered agent. A detached
+  start now notes the loop's own Continue command beside its worker record
+  (`forkspace.WriteWorkerContinue`), and stop prints it, every `--tasks` queue and network flag
+  included; a worker an older Coop started keeps the agent-only line. `coop fork` also takes every
+  `--tasks` now, in order, as `coop loop` does, and its Continue lines repeat them all. Swept the
+  Continue builders again: `coop loop`, the fork loop and fork stop now carry the same scope.
+  Merged this card's two `sources:` lines. Pinned by TestForkStopRepeatsHowItsLoopWasStarted,
+  TestDetachedForkLoopNotesHowToContinueIt and TestForkLoopContinueLineKeepsItsChosenQueues (task
+  2026-11-06-make-coop-fork-loops-honor-configured-queue-orde).
 - 2026-11-06 — the emisar fork `runner` reported "Candidate review did not pass" when its review
   box's sidecar was unhealthy on a loaded host, and nothing had been reviewed. `compose up`
   failures are now `box.ServicesNotStarted` and retried; swept both `up -d --wait` sites (filtered

@@ -105,7 +105,7 @@ NETWORK OPTIONS
 LOOP OPTIONS
   --loop                 work through the project's task queue
   -d, --detach           run the loop in the background (implies --loop)
-  -t, --tasks <path>     select one project task queue
+  -t, --tasks <path>     choose a task queue; repeat for more queues
 ` + peerOptionRow + `
 
   Each fork receives one project task at a time. Its task is completed in the
@@ -249,7 +249,7 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      string   // --tasks <path>: one canonical queue to schedule (defaults to every project queue with --loop)
+	tasks      []string // --tasks <path> (repeatable): the canonical queues to schedule, in order (default: every project queue)
 	credential string   // the fork's account, from the positional target's @account (else the ladder default)
 	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
 	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
@@ -262,7 +262,7 @@ type forkArgs struct {
 }
 
 const (
-	forkCreateUsage  = "coop fork <name> [<target|preset>] [--loop --tasks <path> [-d]]"
+	forkCreateUsage  = "coop fork <name> [<target|preset>] [--loop [--tasks <path>]... [-d]]"
 	forkTasksExample = "coop fork myfork claude --loop --tasks .agent/tasks"
 )
 
@@ -330,11 +330,13 @@ func parseForkCreate(args []string) (forkArgs, error) {
 				return fa, ui.MissingOptionValue("--tasks", "coop fork", forkTasksExample)
 			}
 			i++
-			fa.tasks = rest[i]
+			fa.tasks = append(fa.tasks, rest[i])
 		case strings.HasPrefix(x, "--tasks="):
-			if fa.tasks = strings.TrimPrefix(x, "--tasks="); fa.tasks == "" {
+			v := strings.TrimPrefix(x, "--tasks=")
+			if v == "" {
 				return fa, ui.MissingOptionValue("--tasks", "coop fork", forkTasksExample)
 			}
+			fa.tasks = append(fa.tasks, v)
 		case x == "--peer":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, missingForkPeer()
@@ -357,7 +359,7 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if !forkspace.ValidName(fa.name) {
 		return fa, forkctl.InvalidForkName(fa.name, "coop fork")
 	}
-	if !fa.loop && fa.tasks != "" {
+	if !fa.loop && len(fa.tasks) > 0 {
 		return fa, ui.OptionNeedsAnother("--tasks", "--loop", "coop fork")
 	}
 	if fa.cont && fa.newSession {
@@ -474,10 +476,11 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 	}
 	// --loop with no --tasks is the monorepo-aware default: runForkLoop schedules every
 	// project.TaskDirs queue (just .agent/tasks in a single repo). Leaving fa.tasks empty is the
-	// signal for that; an explicit --tasks is the single canonical-queue filter, resolved+validated
-	// just below. Fail fast HERE if the repo has no queue at all — before any
-	// clone — so a queue-less repo can't leave a stray fork behind and its worker error in a log.
-	if fa.loop && fa.tasks == "" {
+	// signal for that; each explicit --tasks is a canonical queue, resolved+validated just below
+	// and taken in the order given, as coop loop takes them. Fail fast HERE if the repo has no queue
+	// at all — before any clone — so a queue-less repo can't leave a stray fork behind and its
+	// worker error in a log.
+	if fa.loop && len(fa.tasks) == 0 {
 		dirs, err := project.TaskDirs(repo)
 		if err != nil {
 			return -1, err
@@ -486,15 +489,15 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(dirs, ", "))
 		}
 	}
-	if fa.tasks != "" { // resolve to an absolute path now, so a detached worker still finds it
-		abs, err := filepath.Abs(fa.tasks)
+	for i, queue := range fa.tasks { // resolve to absolute paths now, so a detached worker still finds them
+		abs, err := filepath.Abs(queue)
 		if err != nil {
 			return -1, err
 		}
 		if !pathExists(abs) {
-			return 2, ui.InvalidOptionValue(fa.tasks, "--tasks", "coop fork", "No such folder.", forkTasksExample)
+			return 2, ui.InvalidOptionValue(queue, "--tasks", "coop fork", "No such folder.", forkTasksExample)
 		}
-		fa.tasks = abs
+		fa.tasks[i] = abs
 	}
 	// Check the loop's own login, and each peer's, before --fresh stops or recreates anything and
 	// before any image or clone work, so an agent that cannot run never costs a fork: the check needs
@@ -796,7 +799,12 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			if argErr != nil {
 				return 2, argErr
 			}
-			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, network, forkIdentity)
+			// coop fork stop repeats this when it stops the worker, which nothing else could tell it.
+			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, fa.network)
+			if argErr != nil {
+				return 2, argErr
+			}
+			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, network, continueCmd, forkIdentity)
 		default:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, false)
 		}
@@ -1275,30 +1283,45 @@ func pathsOverlap(left, right string) bool {
 }
 
 // forkLoopContinueCommand is the command that resumes this fork loop. It repeats the who-runs
-// positional, the one queue --tasks chose (absolute, as the loop runs on it, so it means the same
-// queue from any folder) and the network flags; without --tasks the fork takes every project queue.
-func forkLoopContinueCommand(name, presetName string, target agents.Target, tasksPath string, network networkFlags) (string, error) {
+// positional, each queue --tasks chose, in order (absolute, as the loop runs on them, so they mean the
+// same queues from any folder), and the network flags; without --tasks the fork takes every project
+// queue.
+func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
 	}
 	command := fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg))
-	if tasksPath != "" {
-		command += " --tasks " + shellWord(tasksPath)
+	for _, queue := range queues {
+		command += " --tasks " + shellWord(queue)
 	}
 	return withNetworkArgs(command, network)
+}
+
+// forkLoopContinue is forkLoopContinueCommand for this fork loop: led by the preset it runs under,
+// else by its target with the one-off model, effort and account.
+func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, network networkFlags) (string, error) {
+	target := agents.Target{Provider: agent, Model: model, Effort: effort}
+	if credential != "" {
+		target.Accounts = []string{credential}
+	}
+	presetName := ""
+	if a.preset != nil {
+		presetName = a.preset.Name
+	}
+	return forkLoopContinueCommand(name, presetName, target, queues, network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
 // assigned task inside the fork. The projection runs through the ordinary loop lifecycle, while
 // canonical completion remains host-owned until an exact reviewed generation candidate lands.
 // detached=true means this process IS the background worker (its stdio is already the
-// log, and it owns the pidfile). tasks is an absolute path resolved by the caller
-// (empty = the monorepo-aware default);
+// log, and it owns the pidfile). queues are absolute paths resolved by the caller, taken in
+// their order (none = the monorepo-aware default);
 // credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, tasksPath, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (code int, err error) {
+func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent string, queues []string, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (code int, err error) {
 	name := identity.Name
 	controllerRole := forkspace.ExecutionRoleController
 	if detached {
@@ -1321,7 +1344,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		_ = forkctl.ClearForkLoopError(ws)
 		defer func() { forkctl.NoteForkLoopExit(repo, identity, code, err) }()
 	}
-	authorityQueues, err := forkCanonicalQueues(repo, tasksPath)
+	authorityQueues, err := forkCanonicalQueues(repo, queues)
 	if err != nil {
 		return -1, err
 	}
@@ -1349,15 +1372,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	continueTarget := agents.Target{Provider: agent, Model: model, Effort: effort}
-	if credential != "" {
-		continueTarget.Accounts = []string{credential}
-	}
-	presetName := ""
-	if a.preset != nil && a.preset.Name != "" {
-		presetName = a.preset.Name
-	}
-	continueCmd, err := forkLoopContinueCommand(name, presetName, continueTarget, tasksPath, network)
+	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, network)
 	if err != nil {
 		return 2, err
 	}
@@ -1612,20 +1627,28 @@ func importedForkTask(proposals []tasks.ImportedForkProposal) bool {
 	return false
 }
 
-func forkCanonicalQueues(repo, override string) ([]string, error) {
-	if override != "" {
-		root, err := filepath.Abs(override)
-		if err != nil {
-			return nil, err
+// forkCanonicalQueues is the project queues a fork loop schedules from, in the order coop loop takes
+// them: each --tasks queue as given (overrides), else the project's own queues in project.yaml order.
+func forkCanonicalQueues(repo string, overrides []string) ([]string, error) {
+	if len(overrides) > 0 {
+		var roots []string
+		for _, override := range overrides {
+			root, err := filepath.Abs(override)
+			if err != nil {
+				return nil, err
+			}
+			root = filepath.Clean(root)
+			if _, err := os.Lstat(root); err != nil {
+				return nil, ui.InvalidOptionValue(override, "--tasks", "coop fork", "It is not a task queue.", forkTasksExample)
+			}
+			if _, err := tasks.ReadTaskTree(root); err != nil {
+				return nil, ui.CommandFailed(fmt.Sprintf("Cannot read the task queue %q", override), safeErrorText(err))
+			}
+			if !slices.Contains(roots, root) { // a queue named twice is still one queue
+				roots = append(roots, root)
+			}
 		}
-		root = filepath.Clean(root)
-		if _, err := os.Lstat(root); err != nil {
-			return nil, ui.InvalidOptionValue(override, "--tasks", "coop fork", "It is not a task queue.", forkTasksExample)
-		}
-		if _, err := tasks.ReadTaskTree(root); err != nil {
-			return nil, ui.CommandFailed(fmt.Sprintf("Cannot read the task queue %q", override), safeErrorText(err))
-		}
-		return []string{root}, nil
+		return roots, nil
 	}
 	rels, err := project.TaskDirs(repo)
 	if err != nil {

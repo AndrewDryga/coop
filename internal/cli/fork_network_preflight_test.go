@@ -113,6 +113,44 @@ func assertForkNetworkTaskUnassigned(t *testing.T, repo, taskID string) {
 	}
 }
 
+// A detached start notes the command that continues its loop as the person started it, each --tasks
+// queue in order and the network flags included, for coop fork stop to repeat.
+func TestDetachedForkLoopNotesHowToContinueIt(t *testing.T) {
+	repo := initRepo(t)
+	root, web := filepath.Join(repo, ".agent", "tasks"), filepath.Join(repo, "web", ".agent", "tasks")
+	for _, queue := range []string{root, web} {
+		if err := os.MkdirAll(filepath.Join(queue, tasks.StateTodo), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := forkNetworkPreflightApp(t, repo)
+	name := "noted"
+	t.Setenv(detachedChildEnv, "1") // its worker finds no task, so it ends by itself
+	t.Cleanup(func() {
+		if pathExists(forkspace.PidPath(repo, name)) {
+			if code, err := a.forkctl().ForkStop([]string{name}); code != 0 || err != nil {
+				t.Errorf("cleanup fork stop = (%d, %v)", code, err)
+			}
+		}
+	})
+	var code int
+	var runErr error
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			code, runErr = a.forkCreate([]string{name, "claude", "--loop", "-d", "--tasks", web, "--tasks", root, "--egress", "open"})
+		})
+	})
+	if code != 0 || runErr != nil {
+		t.Fatalf("detached start = (%d, %v)\n%s%s", code, runErr, stdout, stderr)
+	}
+	want := "coop fork " + name + " claude --loop --tasks " + shellWord(web) + " --tasks " + shellWord(root) + " --egress open"
+	if got := forkspace.ReadWorkerContinue(repo, name); got != want {
+		t.Errorf("the detached start noted %q, want %q", got, want)
+	}
+	wait.For(t, "the drained worker to clear its record", func() bool { return !pathExists(forkspace.PidPath(repo, name)) })
+}
+
 func TestDetachedForkLoopChecksNetworkApprovalBeforeStarting(t *testing.T) {
 	repo := initRepo(t)
 	taskID := seedForkNetworkPreflightTask(t, repo)
@@ -188,7 +226,7 @@ func TestRunForkLoopChecksNetworkApprovalBeforeAssigningCanonicalTask(t *testing
 			}
 			identity := bindTestFork(t, repo, forkName)
 
-			code, err := a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, detached)
+			code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, detached)
 			if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 				t.Errorf("runForkLoop(detached=%v) = (%d, %v), want the approval refusal", detached, code, err)
 			}
@@ -213,7 +251,7 @@ func TestRunForkLoopChecksForkWorkspaceNetworkPolicyBeforeAssigning(t *testing.T
 	identity := bindTestFork(t, repo, forkName)
 	writeForkNetworkPreflightProject(t, ws)
 
-	code, err := a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, false)
+	code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false)
 	if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 		t.Errorf("runForkLoop with a workspace-only network request = (%d, %v), want the approval refusal", code, err)
 	}

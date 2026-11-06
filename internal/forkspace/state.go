@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"golang.org/x/sys/unix"
 
@@ -579,19 +580,24 @@ func readWorkerRecord(dirfd int, name, path string) ([]byte, error) {
 }
 
 // WriteWorkerState atomically replaces the record, so a reader sees either the previous complete
-// record or the new one, never a truncated identity. The new record is written, renamed into place
-// and, on failure, removed through openStateDir's handle.
+// record or the new one, never a truncated identity.
 func WriteWorkerState(repo, name string, state WorkerState) error {
 	data, err := state.Marshal()
 	if err != nil {
 		return err
 	}
+	return replaceStateFile(repo, name+".pid", data)
+}
+
+// replaceStateFile atomically replaces the file base in repo's fork records with data: it is written
+// under another name, renamed into place and, on failure, removed, all through openStateDir's handle.
+func replaceStateFile(repo, base string, data []byte) error {
 	dir, err := openStateDir(repo)
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
-	tmp := "." + name + ".pid-" + rand.Text()
+	tmp := "." + base + "-" + rand.Text()
 	f, err := openStateFile(int(dir.Fd()), tmp, filepath.Join(dir.Name(), tmp), os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return err
@@ -608,10 +614,62 @@ func WriteWorkerState(repo, name string, state WorkerState) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := unix.Renameat(int(dir.Fd()), tmp, int(dir.Fd()), name+".pid"); err != nil {
-		return &os.LinkError{Op: "rename", Old: f.Name(), New: PidPath(repo, name), Err: err}
+	if err := unix.Renameat(int(dir.Fd()), tmp, int(dir.Fd()), base); err != nil {
+		return &os.LinkError{Op: "rename", Old: f.Name(), New: filepath.Join(StateDir(repo), base), Err: err}
 	}
 	return nil
+}
+
+// WriteWorkerContinue notes, beside a detached worker's record, the command that continues its loop
+// the way it was started, for coop fork stop to repeat: the stop is the one place a person learns how
+// to go on, and nothing else records the run's queues or network flags. The start writes it under
+// the lifecycle lock, after the record. It replaces the last start's note, and one it cannot write
+// leaves no note at all, so a stop never repeats another run's command.
+func WriteWorkerContinue(repo, name, command string) error {
+	if !validContinue(name, command) {
+		return errors.Join(fmt.Errorf("fork %s: %q is not a coop fork command", name, command), RemoveWorkerContinue(repo, name))
+	}
+	if err := replaceStateFile(repo, name+".continue", []byte(command+"\n")); err != nil {
+		return errors.Join(err, RemoveWorkerContinue(repo, name))
+	}
+	return nil
+}
+
+// ReadWorkerContinue is the command WriteWorkerContinue noted for fork name's worker, or "" when there
+// is none or the file holds anything else.
+func ReadWorkerContinue(repo, name string) string {
+	path := filepath.Join(StateDir(repo), name+".continue")
+	data, err := readWorkerRecord(unix.AT_FDCWD, path, path)
+	if err != nil {
+		return ""
+	}
+	command := strings.TrimSuffix(string(data), "\n")
+	if !validContinue(name, command) {
+		return ""
+	}
+	return command
+}
+
+// RemoveWorkerContinue removes the note; one that is not there is no error.
+func RemoveWorkerContinue(repo, name string) error {
+	dir, err := openExistingStateDir(repo)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := unix.Unlinkat(int(dir.Fd()), name+".continue", 0); err != nil && !errors.Is(err, unix.ENOENT) {
+		return &os.PathError{Op: "remove", Path: filepath.Join(StateDir(repo), name+".continue"), Err: err}
+	}
+	return nil
+}
+
+// validContinue is a note a person may be shown to paste: one line of plain text that continues this
+// fork's loop.
+func validContinue(name, command string) bool {
+	return strings.HasPrefix(command, "coop fork "+name+" ") && !strings.ContainsFunc(command, unicode.IsControl)
 }
 
 // RemoveWorkerState deletes a fork's lifecycle record through openStateDir's handle, never by

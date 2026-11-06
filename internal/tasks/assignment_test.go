@@ -62,6 +62,28 @@ func testAssignmentFork(t *testing.T, repo, name string) (string, forkspace.Iden
 	return workspace, identity
 }
 
+// A fork takes its queues in the order they are configured, as coop loop does, not by folder name: a
+// monorepo lists its root queue, then its members as project.yaml names them.
+func TestForkAssignmentTakesQueuesInTheirConfiguredOrder(t *testing.T) {
+	base := t.TempDir()
+	first, second := filepath.Join(base, "web", ".agent", "tasks"), filepath.Join(base, "api", ".agent", "tasks")
+	taskForLease(t, first, StateTodo, "beta")
+	taskForLease(t, second, StateTodo, "alpha")
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "ordered")
+	assignment, err := AssignForkTask([]string{first, second}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil || assignment.Outcome != ForkAssignmentSelected {
+		t.Fatalf("assign fork task = %+v, %v", assignment, err)
+	}
+	defer assignment.Lease.Release()
+	if assignment.Task.Root != first || assignment.Task.Item.ID != "beta" {
+		t.Fatalf("the fork took %s from %s, want beta from the first configured queue %s", assignment.Task.Item.ID, assignment.Task.Root, first)
+	}
+}
+
 func TestForkAssignmentProjectsOneCanonicalTaskAndDefersCompletion(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".agent", "tasks")
 	first := taskWithCompletedChecklist(t, root, StateTodo, "first")

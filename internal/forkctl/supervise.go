@@ -161,13 +161,10 @@ func recordStartedFork(repo, name string, cmd *exec.Cmd, generation forkspace.Ge
 }
 
 // DetachForkLoop re-execs coop as a session-leader background worker whose stdio is
-// the fork's log, records its pid, and returns immediately. An explicit tasks path
-// (absolute, resolved by the caller) is forwarded so the worker selects the same canonical queue; an
-// empty tasks (the monorepo-aware default) is omitted so the worker re-derives it. The
-// who-runs slot (a preset name or the composed target) and the --peer set are forwarded too,
-// so the worker re-loads the same recipe and scope. network carries the launch's
-// egress flags verbatim, because the worker admits its own policy at loop start.
-func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, effort, presetName string, peers, network []string, identity forkspace.Identity) (int, error) {
+// the fork's log, records its pid, and returns immediately. The worker's command line is
+// detachedWorkerArgs. continueCmd is the command that continues this loop as it was started, noted
+// beside the record for coop fork stop to repeat (forkspace.WriteWorkerContinue).
+func (c *Control) DetachForkLoop(repo, name, agent string, tasks []string, credential, model, effort, presetName string, peers, network []string, continueCmd string, identity forkspace.Identity) (int, error) {
 	if identity.Name != name || !forkspace.ValidGeneration(identity.Generation) {
 		return -1, errors.New("detached fork received an invalid generation identity")
 	}
@@ -205,16 +202,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 			return -1, err
 		}
 	}
-	reExec := []string{"fork", name, who, "--loop", "--_detached"}
-	if tasks != "" {
-		// An explicit --tasks is forwarded; the default (empty) is omitted so the worker re-derives
-		// the monorepo-aware queue set from project.TaskDirs itself.
-		reExec = append(reExec, "--tasks", tasks)
-	}
-	for _, peer := range peers { // one --peer per named peer (repeatable), re-resolved by the worker
-		reExec = append(reExec, "--peer", peer)
-	}
-	reExec = append(reExec, network...) // the worker admits this policy itself, at its own loop start
+	reExec := detachedWorkerArgs(name, who, tasks, peers, network)
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil
@@ -225,6 +213,7 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	if err := recordStartedFork(repo, name, cmd, identity.Generation); err != nil {
 		return -1, fmt.Errorf("record fork %s worker state: %w — the worker was stopped; fix %s, then retry the original coop fork command", name, err, forkspace.StateDir(repo))
 	}
+	_ = forkspace.WriteWorkerContinue(repo, name, continueCmd) // a hint: without it, stop names only the agent
 	// The worker launched. That is all this confirms — the task work itself has not started yet,
 	// so the lines below are the two commands that watch and end it, not a result.
 	ui.OK("Started fork %s in the background", name)
@@ -233,6 +222,22 @@ func (c *Control) DetachForkLoop(repo, name, agent, tasks, credential, model, ef
 	ui.Note("  Logs:  coop fork logs %s --follow", name)
 	ui.Note("  Stop:  coop fork stop %s", name)
 	return 0, nil
+}
+
+// detachedWorkerArgs is the command line a detached start re-executes coop with. The who-runs slot
+// (a preset name or the composed target) and each --peer are forwarded, so the worker re-loads the
+// same recipe and scope, as is each --tasks queue (absolute, resolved by the caller) in its order; no
+// --tasks lets the worker derive the project's queues itself. network carries the launch's egress
+// flags verbatim, because the worker admits its own policy at loop start.
+func detachedWorkerArgs(name, who string, tasks, peers, network []string) []string {
+	args := []string{"fork", name, who, "--loop", "--_detached"}
+	for _, queue := range tasks {
+		args = append(args, "--tasks", queue)
+	}
+	for _, peer := range peers {
+		args = append(args, "--peer", peer)
+	}
+	return append(args, network...)
 }
 
 func (c *Control) ForkLogs(args []string) (int, error) {
@@ -534,6 +539,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 				return 1, fmt.Errorf("fork %s stopped, but pausing its task assignment failed: %w", name, err)
 			}
 		}
+		_ = forkspace.RemoveWorkerContinue(repo, name) // the note of a worker that ended by itself
 		ui.Note("Fork %s is not running.", name)
 		return 0, nil
 	}
@@ -547,6 +553,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	if !hasGeneration || forkIdentity.Generation != state.Generation {
 		return 1, fmt.Errorf("fork %s worker state generation does not match host generation authority", name)
 	}
+	resume := forkspace.ReadWorkerContinue(repo, name) // read before the cleanup below removes it with the record
 	pid, token := state.Pid, state.Token
 	identity := forkspace.ProcessIdentityOf(pid, token)
 	switch identity {
@@ -662,6 +669,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	if err := forkspace.RemoveWorkerState(repo, name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: ls -ld %q %q; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), forkspace.StateDir(repo), name)
 	}
+	_ = forkspace.RemoveWorkerContinue(repo, name)
 	if hasGeneration {
 		if err := pauseForkTaskAssignments(c.cfg, repo, forkIdentity); err != nil {
 			return 1, fmt.Errorf("fork %s worker and box stopped, but pausing its task assignment failed: %w", name, err)
@@ -669,9 +677,14 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	}
 	ui.Note("")
 	ui.OK("Fork %s stopped", name)
-	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); continueHint && remembered != "" && remembered != "?" {
+	// The start noted the command with the loop's own queues and network flags; a worker started
+	// without that note leaves only the fork's remembered agent to name.
+	if remembered := ReadForkAgent(forkspace.Workspace(repo, name)); resume == "" && remembered != "" && remembered != "?" {
+		resume = fmt.Sprintf("coop fork %s %s --loop", name, remembered)
+	}
+	if continueHint && resume != "" {
 		ui.Note("")
-		ui.Note("  Continue: coop fork %s %s --loop", name, remembered)
+		ui.Note("  Continue: %s", resume)
 	}
 	return 0, nil
 }

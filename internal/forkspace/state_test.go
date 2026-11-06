@@ -51,6 +51,44 @@ func TestForkStateRootAndFilesAreOwnerOnly(t *testing.T) {
 	assertForkStatePerm(t, PidPath(repo, "perf"), 0o600)
 }
 
+// coop fork stop prints the note a detached start leaves, for a person to paste, so only a one-line
+// command that continues this fork's loop is ever read back. A start whose note cannot be written
+// leaves no note at all: the stop must not repeat an earlier run's command.
+func TestWorkerContinueNoteHoldsOnlyThisForksCommand(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	const command = "coop fork perf claude --loop --tasks /repo/web/.agent/tasks --egress filtered"
+	if err := WriteWorkerContinue(repo, "perf", command); err != nil {
+		t.Fatal(err)
+	}
+	assertForkStatePerm(t, filepath.Join(StateDir(repo), "perf.continue"), 0o600)
+	if got := ReadWorkerContinue(repo, "perf"); got != command {
+		t.Fatalf("ReadWorkerContinue = %q, want %q", got, command)
+	}
+	if got := ReadWorkerContinue(repo, "other"); got != "" {
+		t.Errorf("another fork read the note %q", got)
+	}
+	for _, planted := range []string{"coop fork other claude --loop\n", "coop fork perf claude --loop\x1b[2J\n", "rm -rf ~\n"} {
+		if err := os.WriteFile(filepath.Join(StateDir(repo), "perf.continue"), []byte(planted), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := ReadWorkerContinue(repo, "perf"); got != "" {
+			t.Errorf("ReadWorkerContinue over %q = %q, want nothing", planted, got)
+		}
+	}
+	if err := WriteWorkerContinue(repo, "perf", command); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorkerContinue(repo, "perf", ""); err == nil {
+		t.Error("WriteWorkerContinue took an empty command")
+	}
+	if got := ReadWorkerContinue(repo, "perf"); got != "" {
+		t.Errorf("a refused note left the earlier one, %q", got)
+	}
+	if err := RemoveWorkerContinue(repo, "perf"); err != nil {
+		t.Errorf("removing a note that is not there = %v", err)
+	}
+}
+
 func TestForkStateRootRefusesUnsafeEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

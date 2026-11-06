@@ -55,6 +55,9 @@ func validateForkAssignmentRequest(request ForkAssignmentRequest) error {
 	return nil
 }
 
+// forkAssignmentCandidates lists the tasks a fork may take from hosts, its queues in the order they are
+// configured, in the order coop loop claims them: tasks in progress first, then todo tasks by a person's
+// priority, each in queue order and then folder order.
 func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, foreign bool, err error) {
 	index := queueIndex{}
 	for _, root := range hosts {
@@ -85,6 +88,12 @@ func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, fore
 			}
 		}
 	}
+	configured := make(map[string]int, len(hosts))
+	for i, root := range hosts {
+		if _, seen := configured[root]; !seen {
+			configured[root] = i
+		}
+	}
 	less := func(a, b QueuedTask) bool {
 		ai, bi := 1, 1
 		if a.Item.State == StateInProgress {
@@ -100,7 +109,7 @@ func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, fore
 			return priorityRank(a.Item) < priorityRank(b.Item) // between todo tasks, a person's priority first
 		}
 		if a.Root != b.Root {
-			return a.Root < b.Root
+			return configured[a.Root] < configured[b.Root] // the queues in the order coop loop takes them
 		}
 		return a.Item.ID < b.Item.ID
 	}

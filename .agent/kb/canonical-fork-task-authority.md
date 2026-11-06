@@ -12,7 +12,10 @@ replacement signal and the reboot-renumbered device diagnostic) for one immutabl
 hardlink-anchored `forkspace.Identity`, moves the canonical folder to in-progress, and materializes only that task
 under `.coop/task-executions/<generation>/<assignment>/tasks`. Existing loop prompts, receipts,
 between-review, and signoff run against this projection; the canonical queue is never mounted into
-the box.
+the box. A fork takes its canonical queues in the order coop loop claims from them
+(`forkCanonicalQueues`, internal/cli/fork_cmd.go; `forkAssignmentCandidates`): every `--tasks`
+queue as given, else project.yaml's, then work in progress first and todo tasks by priority, queue
+order breaking ties before folder order.
 
 Projection state is evidence, not authority. The host opens it with rooted no-follow operations,
 rejects extra tasks/symlinks/hardlinks/oversized trees, snapshots it immutably, then syncs only the
@@ -91,6 +94,8 @@ as a problem, and the service-launch locks beside it stay.
   that a fork-side read failure counted as "brought over later"; both now refuse. The baseline check
   had asked only the project's repository, which lacks a fork's unmerged commits, and `merge-base`
   in a box-written repository follows its shallow file. Verified against landed_fork.go.
+- 2026-11-06 — a fork takes its queues in their configured order, not by folder name, and every
+  `--tasks` it is given (task 2026-11-06-make-coop-fork-loops-honor-configured-queue-orde).
 - 2026-11-06 — the unblock notes itself in the projection's log too, so the canonical "Unblocked:"
   line survives the fork's next acceptance, and `coop fork stop` accepts a copy its worker had just
   parked: paused, the question stayed in the fork and the next pass restored the copy as answered.

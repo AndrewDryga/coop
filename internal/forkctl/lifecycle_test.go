@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 // A marker whose private anchor no longer matches it leaves Coop unable to tell which approvals are
@@ -1317,6 +1319,64 @@ func TestStopBeforeDestroyGivesNoContinueHint(t *testing.T) {
 		if hint := strings.Contains(stderr, "Continue: coop fork a claude --loop"); hint == destroy {
 			t.Errorf("destroy=%v: Continue hint shown = %v\n%s", destroy, hint, stderr)
 		}
+	}
+}
+
+// A detached start forwards every queue to its worker and notes how to continue the loop, queues and
+// network flags included, and coop fork stop repeats that: the stop used to name only the fork's
+// agent, so a pasted resume took every project queue on the default network.
+func TestForkStopRepeatsHowItsLoopWasStarted(t *testing.T) {
+	if !forkspace.StableProcToken(forkspace.ProcStartToken(os.Getpid())) {
+		t.Skip("kernel process identity unavailable")
+	}
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkAgent(ws, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	identity := bindTestFork(t, repo, "a")
+	args := filepath.Join(t.TempDir(), "worker-args")
+	t.Setenv(testWorkerArgsEnv, args)
+	runtimeCLI := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtimeCLI, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: runtimeCLI}}
+	queues := []string{"/repo/web/.agent/tasks", "/repo/.agent/tasks"}
+	network := []string{"--egress", "filtered", "--allow-domain", "proxy.golang.org"}
+	resume := "coop fork a claude --loop --tasks /repo/web/.agent/tasks --tasks /repo/.agent/tasks --egress filtered --allow-domain proxy.golang.org"
+	var code int
+	captureStderr(t, func() {
+		code, err = c.DetachForkLoop(repo, "a", "claude", queues, "", "", "", "", nil, network, resume, identity)
+	})
+	if code != 0 || err != nil {
+		t.Fatalf("detached start = (%d, %v)", code, err)
+	}
+	t.Cleanup(func() {
+		if pathExists(forkspace.PidPath(repo, "a")) {
+			_, _ = c.ForkStop([]string{"a"})
+		}
+	})
+	// A real start exits right after detaching, and the system reaps its worker. Here this test is the
+	// worker's parent, so it reaps it: a worker left a zombie would look alive to the stop.
+	go func() {
+		var status syscall.WaitStatus
+		_, _ = syscall.Wait4(forkspace.RunningPid(repo, "a"), &status, 0, nil)
+	}()
+	wait.For(t, "the worker's command line", func() bool { return pathExists(args) })
+	want := strings.Join(append([]string{"fork", "a", "claude", "--loop", "--_detached", "--tasks", queues[0], "--tasks", queues[1]}, network...), "\n") + "\n"
+	if got, err := os.ReadFile(args); err != nil || string(got) != want {
+		t.Errorf("worker command line = %q (%v), want %q", got, err, want)
+	}
+	stderr := captureStderr(t, func() { code, err = c.ForkStop([]string{"a"}) })
+	if code != 0 || err != nil || !strings.Contains(stderr, "Continue: "+resume+"\n") {
+		t.Fatalf("fork stop = (%d, %v), want it to continue the loop as it was started:\n%s", code, err, stderr)
+	}
+	if note := forkspace.ReadWorkerContinue(repo, "a"); note != "" {
+		t.Errorf("the stop kept the note %q", note)
 	}
 }
 

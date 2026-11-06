@@ -230,6 +230,12 @@
   filtered`. A fork loop also checks its build files before each task, so build files a task changed
   stop the loop before it takes the next task, not in that task's box.
 
+- **A fork loop takes its queues as `coop loop` does.** It took several queues in folder-name
+  order, not in the order you gave them or `project.yaml` lists them, and of two `--tasks` it kept
+  only the last. `coop fork <name> --loop` now takes every `--tasks` queue, in order. `coop fork
+  stop` also ends with the whole command to continue a background loop, its `--tasks` and network
+  flags included; it used to name only the fork's agent.
+
 - **`coop tasks watch` names the agent of an editor session's claim.** A task an agent claims
   through its session's task tools records the full target the session runs, such as
   `claude:opus/high@work`, and the board names the claim by it, as it names a loop's worker. A

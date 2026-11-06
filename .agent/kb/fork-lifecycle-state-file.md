@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/supervise.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -74,6 +74,17 @@ and the listing shows `elsewhere` until the record goes. The task snapshot (`Rea
 fork's task as "running on Linux" (a fork with no task row as "background loop started on Linux")
 and its `--json` matches fork ls. Neither counts that loop as
 running, so it does not hold a drained board open.
+
+Beside the record, the start notes the command that continues the loop as the person started it,
+every `--tasks` queue and network flag included, in `<name>.continue` (`forkspace.WriteWorkerContinue`):
+host-private like the record, because a person pastes it, and nothing in the workspace, where the
+agent writes, may supply it. The start writes it under the lock right after the record, replacing
+the last start's note or, when it cannot, removing it, so a stop never repeats another run's
+command. Stop reads it before its cleanup removes the record, removes it, and prints it as the
+Continue line; a worker with no note, started by an older Coop, gets only the fork's remembered
+agent. `ReadWorkerContinue` returns only one plain line that begins `coop fork <name> `. A worker
+that ends by itself leaves its note for the next start or stop to replace or remove: only a stop
+that finds the record prints it.
 
 A terminal fork-loop result has a separate `<workspace>/.coop/loop-error` hint. `NoteForkLoopExit`
 tags the bounded reason with the current generation and records it under a nonblocking lifecycle
@@ -229,6 +240,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-06 — a detached start notes how to continue its loop in `<name>.continue` beside the
+  record, and stop prints it: its Continue line named only the fork's remembered agent, without the
+  run's `--tasks` queues or network flags (task 2026-11-06-make-coop-fork-loops-honor-configured-queue-orde).
 - 2026-11-05 — the project snapshot carries the loop-error hint as `ProjectForkSnapshot.LoopError`
   (`loop_error` in `coop tasks watch --json`) while the fork's loop is not running; the board reads
   it from there instead of opening the file itself. `coop fork ls` keeps its own reader and JSON.

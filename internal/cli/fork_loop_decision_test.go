@@ -78,7 +78,7 @@ func runForkLoopForDecision(t *testing.T, a *app, repo, ws string, identity fork
 	var stderr string
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() {
-			code, runErr = a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, false)
+			code, runErr = a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false)
 		})
 	})
 	return code, stdout + stderr, runErr
@@ -154,11 +154,15 @@ func TestForkLoopStopsWhenOnlyADecisionIsLeft(t *testing.T) {
 	assertForkTaskWaitsForDecision(t, repo, id)
 }
 
-// A fork loop started on a chosen queue says to continue on that queue: pasted without its --tasks,
-// the Continue line would start the fork on every project queue.
-func TestForkLoopContinueLineKeepsItsChosenQueue(t *testing.T) {
+// A fork loop started on chosen queues says to continue on those queues, in order: pasted without its
+// --tasks, the Continue line would start the fork on every project queue.
+func TestForkLoopContinueLineKeepsItsChosenQueues(t *testing.T) {
 	repo := initRepo(t)
 	seedForkDecisionTask(t, repo, "2026-11-06-fork-continue-queue")
+	web := filepath.Join(repo, "web", ".agent", "tasks")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	commitForkNetworkPreflightFixture(t, repo)
 	a := forkNetworkPreflightApp(t, repo)
 	var ran []string
@@ -170,10 +174,10 @@ func TestForkLoopContinueLineKeepsItsChosenQueue(t *testing.T) {
 	var stderr string
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() {
-			code, err = a.runForkLoop(repo, ws, identity, "claude", queue, "", "", "", nil, networkFlags{}, false)
+			code, err = a.runForkLoop(repo, ws, identity, "claude", []string{web, queue}, "", "", "", nil, networkFlags{}, false)
 		})
 	})
-	if want := "Continue:  coop fork chosen claude --loop --tasks " + shellWord(queue) + "\n"; code != loopDecisionExit || err != nil || !strings.Contains(stdout+stderr, want) {
+	if want := "Continue:  coop fork chosen claude --loop --tasks " + shellWord(web) + " --tasks " + shellWord(queue) + "\n"; code != loopDecisionExit || err != nil || !strings.Contains(stdout+stderr, want) {
 		t.Errorf("fork loop = (%d, %v), want it to stop for the decision and continue with %q:\n%s", code, err, want, stdout+stderr)
 	}
 }

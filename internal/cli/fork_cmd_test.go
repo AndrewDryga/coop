@@ -1551,17 +1551,21 @@ func TestUniquelyNewSessionID(t *testing.T) {
 }
 
 func TestParseForkCreateLoopFlags(t *testing.T) {
+	one := []string{"q.md"}
 	tests := []struct {
 		args                 []string
 		loop, detach, worker bool
-		agent, tasks         string
+		agent                string
+		tasks                []string
 	}{
-		{[]string{"perf", "codex", "--loop", "--tasks", "q.md"}, true, false, false, "codex", "q.md"},
-		{[]string{"perf", "-d", "--tasks", "q.md"}, true, true, false, "", "q.md"},                      // no positional agent → "" (required later)
-		{[]string{"perf", "--loop", "--detach", "--tasks", "q.md"}, true, true, false, "", "q.md"},      // long form of -d
-		{[]string{"perf", "gemini", "--loop", "-d", "-t", "q.md"}, true, true, false, "gemini", "q.md"}, // short -t
-		{[]string{"perf", "--loop", "--tasks=q.md"}, true, false, false, "", "q.md"},                    // --tasks=VALUE form
-		{[]string{"perf", "codex", "--loop", "--_detached", "--tasks", "q.md"}, true, false, true, "codex", "q.md"},
+		{[]string{"perf", "codex", "--loop", "--tasks", "q.md"}, true, false, false, "codex", one},
+		{[]string{"perf", "-d", "--tasks", "q.md"}, true, true, false, "", one},                      // no positional agent → "" (required later)
+		{[]string{"perf", "--loop", "--detach", "--tasks", "q.md"}, true, true, false, "", one},      // long form of -d
+		{[]string{"perf", "gemini", "--loop", "-d", "-t", "q.md"}, true, true, false, "gemini", one}, // short -t
+		{[]string{"perf", "--loop", "--tasks=q.md"}, true, false, false, "", one},                    // --tasks=VALUE form
+		{[]string{"perf", "codex", "--loop", "--_detached", "--tasks", "q.md"}, true, false, true, "codex", one},
+		// Every queue, in order, as coop loop takes them: a later --tasks never replaces an earlier one.
+		{[]string{"perf", "codex", "--loop", "--tasks", "web", "-t", "api", "--tasks=."}, true, false, false, "codex", []string{"web", "api", "."}},
 	}
 	for _, tc := range tests {
 		fa, err := parseForkCreate(tc.args)
@@ -1569,7 +1573,7 @@ func TestParseForkCreateLoopFlags(t *testing.T) {
 			t.Errorf("parseForkCreate(%v) err = %v", tc.args, err)
 			continue
 		}
-		if fa.loop != tc.loop || fa.detach != tc.detach || fa.worker != tc.worker || fa.agent != tc.agent || fa.tasks != tc.tasks {
+		if fa.loop != tc.loop || fa.detach != tc.detach || fa.worker != tc.worker || fa.agent != tc.agent || !slices.Equal(fa.tasks, tc.tasks) {
 			t.Errorf("parseForkCreate(%v) = {loop:%v detach:%v worker:%v agent:%q tasks:%q}, want {loop:%v detach:%v worker:%v agent:%q tasks:%q}",
 				tc.args, fa.loop, fa.detach, fa.worker, fa.agent, fa.tasks, tc.loop, tc.detach, tc.worker, tc.agent, tc.tasks)
 		}
@@ -1592,16 +1596,18 @@ func TestForkLoopContinueCommandUsesSelectedTargetOrPreset(t *testing.T) {
 	target := agents.Target{Provider: "codex", Model: "gpt-5.6-terra", Effort: "xhigh", Accounts: []string{"work"}}
 	filtered := egress.Filtered
 	for _, tc := range []struct {
-		name, preset, tasks, want string
-		network                   networkFlags
+		name, preset, want string
+		tasks              []string
+		network            networkFlags
 	}{
 		{name: "api-fix", want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop"},
 		{name: "api-fix", preset: "frontier", want: "coop fork api-fix frontier --loop"},
 		{name: "api-fix", network: networkFlags{Mode: &filtered, Domains: []string{"proxy.golang.org", "sum.golang.org"}},
 			want: "coop fork api-fix codex:gpt-5.6-terra/xhigh@work --loop --egress filtered --allow-domain proxy.golang.org --allow-domain sum.golang.org"},
-		// A fork loop on a chosen queue resumes on it; pasted without --tasks it would take every queue.
-		{name: "api-fix", preset: "frontier", tasks: "/repo/apps/customer portal/.agent/tasks", network: networkFlags{Mode: &filtered},
-			want: "coop fork api-fix frontier --loop --tasks '/repo/apps/customer portal/.agent/tasks' --egress filtered"},
+		// A fork loop on chosen queues resumes on them, in order; pasted without --tasks it would take
+		// every queue.
+		{name: "api-fix", preset: "frontier", tasks: []string{"/repo/apps/customer portal/.agent/tasks", "/repo/.agent/tasks"}, network: networkFlags{Mode: &filtered},
+			want: "coop fork api-fix frontier --loop --tasks '/repo/apps/customer portal/.agent/tasks' --tasks /repo/.agent/tasks --egress filtered"},
 	} {
 		if got, err := forkLoopContinueCommand(tc.name, tc.preset, target, tc.tasks, tc.network); err != nil || got != tc.want {
 			t.Errorf("forkLoopContinueCommand(%q, %q, %q) = %q (%v), want %q", tc.name, tc.preset, tc.tasks, got, err, tc.want)
@@ -2021,13 +2027,38 @@ func TestForkQueueThatCannotBeReadIsACommandFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, stateTodo), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := forkCanonicalQueues(t.TempDir(), root)
+	_, err := forkCanonicalQueues(t.TempDir(), []string{root})
 	if usage := asUsage(err); usage == nil || !strings.HasPrefix(usage.Headline, "Cannot read the task queue") || refusalExit(err) != 1 {
 		t.Errorf("forkCanonicalQueues over a broken queue = %v (exit %d), want a command failure", err, refusalExit(err))
 	}
-	_, err = forkCanonicalQueues(t.TempDir(), filepath.Join(root, "missing"))
+	_, err = forkCanonicalQueues(t.TempDir(), []string{t.TempDir(), filepath.Join(root, "missing")})
 	if usage := asUsage(err); usage == nil || !strings.HasPrefix(usage.Headline, `Invalid value`) || refusalExit(err) != 2 {
 		t.Errorf("forkCanonicalQueues over a missing folder = %v (exit %d), want rejected input", err, refusalExit(err))
+	}
+}
+
+// A fork loop takes its queues in the order coop loop does: each --tasks queue as given, else the
+// project's own in project.yaml order, never sorted by folder name. A queue named twice is one queue.
+func TestForkCanonicalQueuesKeepTheirConfiguredOrder(t *testing.T) {
+	repo := initRepo(t)
+	for _, dir := range []string{filepath.Join("zeta", ".agent", "tasks"), filepath.Join("alpha", ".agent", "tasks"), ".agent"} {
+		if err := os.MkdirAll(filepath.Join(repo, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, project.File), []byte("subprojects:\n  - zeta\n  - alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zeta, alpha := filepath.Join(repo, "zeta", ".agent", "tasks"), filepath.Join(repo, "alpha", ".agent", "tasks")
+	for name, tc := range map[string]struct {
+		given, want []string
+	}{
+		"project.yaml": {want: []string{zeta, alpha}},
+		"--tasks":      {given: []string{alpha, zeta, alpha}, want: []string{alpha, zeta}},
+	} {
+		if got, err := forkCanonicalQueues(repo, tc.given); err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("%s: forkCanonicalQueues = %q, %v; want %q", name, got, err, tc.want)
+		}
 	}
 }
 

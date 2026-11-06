@@ -434,10 +434,11 @@ coop fork ls                    # worker state, sandbox activity, candidate/task
 coop fork logs -f               # tail every fork at once (compose-style, prefixed)
 coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
 </code></pre></div>
-<p>Without <code>--tasks</code>, a fork takes work from the repo&#39;s <code>.agent/tasks</code> and every
-<a href="#monorepos">monorepo</a> member&#39;s queue. Use <code>--tasks &lt;path&gt;</code> to choose one queue, which can be an
-absolute path outside the project. The fork uses that original queue and doesn&#39;t copy it or change
-its path.</p>
+<p>Without <code>--tasks</code>, a fork takes work from the repo&#39;s <code>.agent/tasks</code> and then every
+<a href="#monorepos">monorepo</a> member&#39;s queue, in <code>project.yaml</code> order. Use <code>--tasks &lt;path&gt;</code> to choose a
+queue, and repeat it for more: like <code>coop loop</code>, the fork takes them in the order you give them. A
+queue can be an absolute path outside the project. The fork uses the original queues and doesn&#39;t
+copy them or change their paths.</p>
 <p>The fork receives only its assigned task under <code>.coop/task-executions/</code>. Restarting the same
 fork generation resumes that task, and another fork can&#39;t claim it. A fork recreated under the
 same name is a new generation.</p>
