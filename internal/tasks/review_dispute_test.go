@@ -78,7 +78,7 @@ func TestReviewDisputeRollbackAndHumanUnblock(t *testing.T) {
 		t.Fatalf("recover dispute: %+v, %v", cohort, err)
 	}
 	current, _ = mustCurrentTask(t, root, done.ID)
-	if err := resolveAndUnblock(repo, root, current, "run the missing checks"); err != nil {
+	if _, err := resolveAndUnblock(repo, root, current, "run the missing checks"); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := ReadAuditReopenRecord(root, done.ID)

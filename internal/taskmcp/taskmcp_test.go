@@ -634,6 +634,36 @@ func TestBlockKeepsAnEarlierAnswer(t *testing.T) {
 	}
 }
 
+// The loop counts only a commit made before the worker blocked its task as the work it blocked on,
+// so tasks_block keeps the HEAD it read when it moved the assigned task: not one from a later
+// question on the blocked task, and none it could not read, which still blocks the task.
+func TestBlockRecordsTheCommitTheTaskBlockedAt(t *testing.T) {
+	serve := func(read func() (string, error)) (*Server, string) {
+		root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+		s, err := New(Authority{Workspace: filepath.Dir(filepath.Dir(root)), QueueRoots: []string{root}, Assigned: "t1", BlockHead: read,
+			Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s, root
+	}
+	block := map[string]any{"id": "t1", "question": "Which region?", "why": "W", "options": []string{"A — eu-west"}, "recommendation": "A"}
+	unreadable, root := serve(func() (string, error) { return "", errors.New("HEAD is gone") })
+	newSession(t, unreadable).mustCall("tasks_block", block)
+	if item, _, _ := tasks.CurrentTask(root, "t1"); item.State != tasks.StateBlocked || unreadable.AssignedBlockHead() != "" {
+		t.Fatalf("block with an unreadable HEAD = %+v, kept %q; want the task blocked and nothing kept", item, unreadable.AssignedBlockHead())
+	}
+	head := "1111111111111111111111111111111111111111"
+	s, _ := serve(func() (string, error) { return head, nil })
+	sess := newSession(t, s)
+	sess.mustCall("tasks_block", block)
+	head = "2222222222222222222222222222222222222222"
+	sess.mustCall("tasks_block", block)
+	if got := s.AssignedBlockHead(); got != "1111111111111111111111111111111111111111" {
+		t.Fatalf("kept block head = %q, want the HEAD read when the task moved to blocked", got)
+	}
+}
+
 // A second question from the box replaces the first only after it is filed: an unanswered question
 // the human may be reading is never simply erased. And text that would forge their answer is refused
 // before the task moves at all.

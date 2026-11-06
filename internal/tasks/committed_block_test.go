@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,23 +49,37 @@ func (f committedBlockFixture) lease(t *testing.T) (*TaskLease, string) {
 	return lease, f.head()
 }
 
-// blockAttempt has the attempt block its task for a person, and the loop record what it left.
-func (f committedBlockFixture) blockAttempt(t *testing.T, lease *TaskLease, base string) {
+// block has the attempt block its task for a person with its task tools, and returns the commit HEAD
+// named then, as taskmcp's AssignedBlockHead does.
+func (f committedBlockFixture) block(t *testing.T) string {
 	t.Helper()
 	current, ok := mustCurrentTask(t, f.root, f.id)
 	if !ok {
 		t.Fatal("the leased task disappeared")
 	}
+	blocked := f.head()
 	if err := MoveTaskDir(f.root, current, StateBlocked); err != nil {
 		t.Fatal(err)
 	}
 	writeTaskFile(t, filepath.Join(f.root, StateBlocked, f.id, "decision.md"), "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
-	if err := lease.RecordCommittedBlock(f.repo, base, f.head()); err != nil {
+	return blocked
+}
+
+// endAttempt has the loop record what the attempt left once the box exits.
+func (f committedBlockFixture) endAttempt(t *testing.T, lease *TaskLease, base, blocked string) {
+	t.Helper()
+	if err := lease.RecordCommittedBlock(f.repo, base, blocked, f.head()); err != nil {
 		t.Fatal(err)
 	}
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// blockAttempt has the attempt block its task for a person and end there.
+func (f committedBlockFixture) blockAttempt(t *testing.T, lease *TaskLease, base string) {
+	t.Helper()
+	f.endAttempt(t, lease, base, f.block(t))
 }
 
 func (f committedBlockFixture) noted(t *testing.T) bool {
@@ -76,11 +91,28 @@ func (f committedBlockFixture) noted(t *testing.T) bool {
 	return ok
 }
 
-func (f committedBlockFixture) unblock(t *testing.T, answer string) {
+// unblock runs coop tasks unblock on the task, with the answer when one is given, and returns what
+// it printed.
+func (f committedBlockFixture) unblock(t *testing.T, answer ...string) string {
 	t.Helper()
-	if code, err := tasksFolderUnblock(f.repo, f.root, []string{f.id, answer}); code != 0 || err != nil {
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = tasksFolderUnblock(f.repo, f.root, append([]string{f.id}, answer...)) })
+	if code != 0 || err != nil {
 		t.Fatalf("unblock = code %d, %v", code, err)
 	}
+	return out
+}
+
+// granted reports whether an answered unblock gave the task re-close authority, failing the test on
+// a registry it cannot read.
+func (f committedBlockFixture) granted(t *testing.T) bool {
+	t.Helper()
+	record, ok, err := ReadAuditReopenRecord(f.root, f.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok && record.Answered
 }
 
 // The 2026-11-05 emisar loop: a worker committed its task, then blocked it because a required gate
@@ -115,7 +147,10 @@ func TestAnsweredCommittedBlockClosesWithoutANewCommit(t *testing.T) {
 		t.Fatalf("pre-flight granted authority: ok=%v err=%v", ok, err)
 	}
 
-	f.unblock(t, "the gate runs now: rerun it and close")
+	// The person sees which commit their answer lets the next worker close the task over.
+	if out := f.unblock(t, "the gate runs now: rerun it and close"); !strings.Contains(out, closesWithoutACommitNote+"\n  "+shortCommit(signed)+" A implementation\n") {
+		t.Errorf("the unblock does not name the commit %s:\n%s", shortCommit(signed), out)
+	}
 	record, ok, err := ReadAuditReopenRecord(f.root, f.id)
 	if err != nil || !ok || !record.Answered || !auditReopenRecordActive(record) ||
 		record.ReviewedHead != signed || record.BaselineHead != head {
@@ -158,8 +193,68 @@ func TestAnsweredCommittedBlockClosesWithoutANewCommit(t *testing.T) {
 	}
 }
 
+// Only an answer given to coop tasks unblock spends the note. A box can write decision.md, so a plain
+// unblock, over a Resolution the box wrote or with no decision.md at all, leaves the note unused and
+// the task under the rule for a bound task, until the person answers on a later unblock.
+func TestCommittedBlockNeedsTheAnswerOnUnblock(t *testing.T) {
+	for name, decision := range map[string]string{
+		"a Resolution the box wrote": "# Decision\n\n**Resolution:** checks only, close\n",
+		"no decision.md":             "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCommittedBlockFixture(t)
+			lease, base := f.lease(t)
+			f.commit(t, "a.txt", "A\n", "A implementation\n\nCoop-Task: "+f.id)
+			f.blockAttempt(t, lease, base)
+			f.commit(t, "other.txt", "other\n", "Other work")
+			decisionFile := filepath.Join(f.root, StateBlocked, f.id, "decision.md")
+			if decision == "" {
+				if err := os.Remove(decisionFile); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeTaskFile(t, decisionFile, decision)
+			}
+			if out := f.unblock(t); f.granted(t) || strings.Contains(out, closesWithoutACommitNote) {
+				t.Fatalf("a plain unblock granted re-close authority:\n%s", out)
+			}
+			if !f.noted(t) {
+				t.Fatal("a plain unblock spent the note")
+			}
+			if resume := ResumePrefixFor(f.repo, f.id, StateInProgress, nil); !strings.Contains(resume, "STOP") {
+				t.Fatalf("the next worker lost the rule for a bound task:\n%s", resume)
+			}
+			// That worker blocks again with nothing new, and the person answers this time.
+			todo, _ := mustCurrentTask(t, f.root, f.id)
+			if err := MoveTaskDir(f.root, todo, StateBlocked); err != nil {
+				t.Fatal(err)
+			}
+			if f.unblock(t, "rerun the gate and close"); !f.granted(t) {
+				t.Fatal("the answer did not spend the note a plain unblock left")
+			}
+		})
+	}
+}
+
+// An answer typed into coop tasks decisions -i is the person's too, and the page names the commit it
+// lets the next worker close the task over.
+func TestDecisionBrowserAnswerNamesTheCommittedBlock(t *testing.T) {
+	f := newCommittedBlockFixture(t)
+	lease, base := f.lease(t)
+	bound := f.commit(t, "a.txt", "A\n", "A implementation\n\nCoop-Task: "+f.id)
+	f.blockAttempt(t, lease, base)
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser(f.repo, []decisionRef{{root: f.root, id: f.id}}, strings.NewReader("rerun the gate and close\n"), &out); code != 0 || err != nil {
+		t.Fatalf("browser = (%d, %v)", code, err)
+	}
+	if !f.granted(t) || !strings.Contains(out.String(), closesWithoutACommitNote+"\n    "+shortCommit(bound)+" A implementation\n") {
+		t.Fatalf("the answer did not grant re-close authority or name the commit %s:\n%s", shortCommit(bound), out.String())
+	}
+}
+
 // Only a commit the blocking attempt made, still unchanged, earns the authority: a crash recovery
-// that blocks, or a commit replaced after the block, keeps the rule that a bound task needs new work.
+// that blocks, a commit replaced after the block, or one another session made after the worker
+// blocked keeps the rule that a bound task needs new work.
 func TestCommittedBlockGrantsNothingForAnotherCommit(t *testing.T) {
 	t.Run("committed before the attempt", func(t *testing.T) {
 		f := newCommittedBlockFixture(t)
@@ -196,6 +291,31 @@ func TestCommittedBlockGrantsNothingForAnotherCommit(t *testing.T) {
 		}
 		if f.noted(t) {
 			t.Fatal("the unblock left the note it answered")
+		}
+	})
+	// Another box sharing the checkout commits with the task's trailer while its worker blocks it
+	// without committing.
+	t.Run("made by another session after the block", func(t *testing.T) {
+		f := newCommittedBlockFixture(t)
+		lease, base := f.lease(t)
+		blocked := f.block(t)
+		f.commit(t, "a.txt", "planted\n", "Planted by another box\n\nCoop-Task: "+f.id)
+		f.endAttempt(t, lease, base, blocked)
+		if f.noted(t) {
+			t.Fatal("the loop noted a commit made after the worker blocked its task")
+		}
+		if out := f.unblock(t, "close it"); f.granted(t) || strings.Contains(out, closesWithoutACommitNote) {
+			t.Fatalf("the unblock granted re-close authority over the planted commit:\n%s", out)
+		}
+	})
+	t.Run("blocked without its task tools", func(t *testing.T) {
+		f := newCommittedBlockFixture(t)
+		lease, base := f.lease(t)
+		f.commit(t, "a.txt", "A\n", "A implementation\n\nCoop-Task: "+f.id)
+		f.block(t)
+		f.endAttempt(t, lease, base, "")
+		if f.noted(t) {
+			t.Fatal("the loop noted a commit with no record of when the task blocked")
 		}
 	})
 }

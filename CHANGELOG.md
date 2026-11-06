@@ -12,6 +12,11 @@
   `coop approve` replaces it once you review the access again, and `coop net forget` removes it. A
   written-over marker still grants nothing, and no approval moves to another folder.
 
+- **Only your own answer lets the next worker close a committed, blocked task without a commit.**
+  A plain `coop tasks unblock <id>`, which may rest on an answer the box wrote in `decision.md`, now
+  leaves such a task under the usual rule, and a commit another session made with the task's
+  trailer after its worker blocked no longer counts as the worker's.
+  `coop tasks unblock <id> "<answer>"` names the commit it lets the next worker close the task over.
 - **A box Docker refuses to create fails cleanly.** Coop called that outcome unknown and left the
   run's filesystem helper running for ten minutes, past `coop net recover`. It now says Docker
   refused to create the container for this run, names the settings to check, and removes the helper

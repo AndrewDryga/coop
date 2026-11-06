@@ -952,9 +952,17 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 			return refusal(fmt.Sprintf("block %s: %v", loc.item.ID, err))
 		}
 	} else if loc.item.State != tasks.StateBlocked {
+		// HEAD is read before the move, so a commit landing meanwhile counts as made after the block.
+		head := ""
+		if s.authority.BlockHead != nil {
+			if read, err := s.authority.BlockHead(); err == nil {
+				head = read
+			}
+		}
 		if err := tasks.MoveTaskDir(loc.root, loc.item, tasks.StateBlocked); err != nil {
 			return refusal(fmt.Sprintf("block %s: %v", loc.item.ID, err))
 		}
+		s.blockHead = head
 	}
 	dir := filepath.Join(loc.root, tasks.StateBlocked, loc.item.ID)
 	earlier, err := tasks.ReplaceDecision(dir, loc.item.ID, loc.item.Title, decision)

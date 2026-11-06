@@ -4678,7 +4678,7 @@ func TestAuditReadsHistoryWhenTheHomeFolderIsTheProject(t *testing.T) {
 			t.Setenv("HOME", f.repo)
 			forkspace.CloseGitViews() // views the fixture opened were resolved under the old HOME
 			t.Cleanup(forkspace.CloseGitViews)
-			transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+			transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 			if err != nil {
 				t.Fatalf("prepare the unblock: %v", err)
 			}
@@ -4786,7 +4786,7 @@ func TestBlockedAuditUnblockRebasesStaleAuthority(t *testing.T) {
 	}
 	f.git("add", "later.txt")
 	f.git("commit", "-q", "-m", "Later implementation\n\nCoop-Task: later-task")
-	if err := resolveAndUnblock(f.repo, f.root, f.task, "external acceptance passed"); err != nil {
+	if _, err := resolveAndUnblock(f.repo, f.root, f.task, "external acceptance passed"); err != nil {
 		t.Fatal(err)
 	}
 	current, ok := mustCurrentTask(t, f.root, f.id)
@@ -4985,7 +4985,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err := os.WriteFile(path, body, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
 			t.Fatal("missing generation was accepted")
 		}
 		assertBlocked(t, f)
@@ -5022,7 +5022,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		}
 		f.git("add", "tamper.txt")
 		f.git("commit", "--amend", "-q", "--no-edit")
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
 			t.Fatal("changed descendant was accepted")
 		}
 		assertBlocked(t, f)
@@ -5041,7 +5041,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		f.git("add", "a.txt")
 		f.git("commit", "-q", "-m", "A repaired\n\nCoop-Task: "+f.id)
 		f.git("cherry-pick", f.descendant)
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
 			t.Fatal("dropped subject parent was accepted")
 		}
 		assertBlocked(t, f)
@@ -5075,7 +5075,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
 			t.Fatal("graft-selected blocked rewrite subject was accepted")
 		}
 		assertBlocked(t, f)
@@ -5128,7 +5128,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err := os.Mkdir(decision, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil {
 			t.Fatal("decision write obstruction was accepted")
 		}
 		if !pathExists(f.task.Dir) {
@@ -5142,7 +5142,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("move failure leaves authority stale", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5165,7 +5165,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("authority write failure restores blocked folder", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5184,7 +5184,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("rollback failure reports unknown state", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5233,7 +5233,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("crash boundary after move cannot grant authority", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5280,7 +5280,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("pending marker plus raw move cannot activate on lease", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5317,7 +5317,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("todo pending inspection error is actionable", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5355,7 +5355,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 
 	t.Run("crash boundary before move is explicitly retryable", func(t *testing.T) {
 		f := newBlockedAuditRebaseFixture(t)
-		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+		transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5371,7 +5371,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 			t.Fatalf("pre-move boundary = record %#v ok=%v blocked=%v err=%v", pending, ok, pathExists(f.task.Dir), err)
 		}
 
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "external acceptance passed"); err != nil {
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "external acceptance passed"); err != nil {
 			t.Fatalf("explicit retry of pending unblock: %v", err)
 		}
 		recovered, ok, err := ReadAuditReopenRecord(f.root, f.id)
@@ -5391,7 +5391,7 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err := WriteAuditReopenRecord(f.root, tampered); err != nil {
 			t.Fatal(err)
 		}
-		if err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil ||
+		if _, err := resolveAndUnblock(f.repo, f.root, f.task, "must not be recorded"); err == nil ||
 			!strings.Contains(err.Error(), "recorded baseline") {
 			t.Fatalf("wrong exact-baseline error = %v", err)
 		}

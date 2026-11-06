@@ -1011,7 +1011,7 @@ func TestForkUnblockReplaysPausedOwnerWhileCanonicalStillBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	canonical, _ := mustCurrentTask(t, root, "assigned")
-	if err := resolveAndUnblock(repo, root, canonical, ""); err != nil {
+	if _, err := resolveAndUnblock(repo, root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
 	canonical, _ = mustCurrentTask(t, root, "assigned")

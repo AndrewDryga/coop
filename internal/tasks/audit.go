@@ -2704,8 +2704,10 @@ func (u *blockedAuditUnblock) finish(operationErr error) error {
 
 // prepareBlockedAuditReopenUnblock validates a blocked task and computes any required authority rebase
 // of the same host generation. The returned transaction holds the authority flock; before moving,
-// it persists a non-authorizing pending form that makes a crash safe and recoverable.
-func prepareBlockedAuditReopenUnblock(project, root string, task Item) (*blockedAuditUnblock, error) {
+// it persists a non-authorizing pending form that makes a crash safe and recoverable. answered says
+// the person gave this unblock their answer. Only then does a task its own attempt committed and
+// then blocked gain authority to close without a new commit, because a box can write decision.md.
+func prepareBlockedAuditReopenUnblock(project, root string, task Item, answered bool) (*blockedAuditUnblock, error) {
 	observed, ok, err := ReadAuditReopenRecord(root, task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("read blocked audit reopen authority for task %s: %w", task.ID, err)
@@ -2723,8 +2725,10 @@ func prepareBlockedAuditReopenUnblock(project, root string, task Item) (*blocked
 		if !currentOK || current.State != StateBlocked || current.Dir != task.Dir {
 			return nil, transition.finish(fmt.Errorf("task %s changed state while its blocked authority was locked", task.ID))
 		}
-		if err := transition.answerCommittedBlock(project, task.ID); err != nil {
-			return nil, transition.finish(err)
+		if answered {
+			if err := transition.answerCommittedBlock(project, task.ID); err != nil {
+				return nil, transition.finish(err)
+			}
 		}
 		return transition, nil
 	}
@@ -4071,9 +4075,9 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 // UnblockResolved is the loop's built-in preflight, run host-side (no box, no model): every
 // ordinary blocked task whose decision.md now carries a filled-in Resolution — the same bar
 // `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
-// Audit-reopened tasks, and tasks their own attempt committed before blocking them, require an
-// explicit host `coop tasks unblock`: provider-writable prose can never invoke the host-authority
-// rebase path or grant re-close authority.
+// Audit-reopened tasks require an explicit host `coop tasks unblock`, and tasks their own attempt
+// committed before blocking them an answer given to it: provider-writable prose can never invoke
+// the host-authority rebase path or grant re-close authority.
 // A task with no decision.md or an unanswered one stays parked. An unreadable decision or queue
 // stops the pass before it can be mistaken for an unanswered/empty state; move failures still
 // warn and skip the affected task.
@@ -4105,13 +4109,13 @@ func UnblockResolved(hosts []string) ([]string, error) {
 				ui.Warn("pre-flight: %s has host audit-reopen authority — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
 				continue
 			}
-			// Only a person's unblock may turn the note into re-close authority, and a box can write
-			// the Resolution this pass reads.
+			// Only a person's answer to coop tasks unblock may turn the note into re-close authority,
+			// and a box can write the Resolution this pass reads.
 			if _, committed, err := readCommittedBlock(host, t.ID); err != nil {
 				ui.Warn("pre-flight: could not inspect host records for %s: %v — task remains blocked; repair the host authority registry, then retry: coop tasks unblock %s", t.ID, err, t.ID)
 				continue
 			} else if committed {
-				ui.Warn("pre-flight: %s was committed before it blocked — unblock it explicitly so the next worker can close it: coop tasks unblock %s", t.ID, t.ID)
+				ui.Warn("pre-flight: %s was committed before it blocked — give your answer so the next worker can close it: coop tasks unblock %s \"<answer>\"", t.ID, t.ID)
 				continue
 			}
 			if err := MoveTaskDir(host, t, StateTodo); err != nil {

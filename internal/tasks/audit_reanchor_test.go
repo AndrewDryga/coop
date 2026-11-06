@@ -558,7 +558,7 @@ func TestPendingUnblockFinishesPastUnrelatedCommits(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newReanchorFixture(t, false)
-			transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task)
+			transition, err := prepareBlockedAuditReopenUnblock(f.repo, f.root, f.task, false)
 			if err != nil {
 				t.Fatal(err)
 			}

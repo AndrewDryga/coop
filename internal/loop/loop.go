@@ -894,6 +894,9 @@ reviewAgain:
 			// A successful binding precheck is not completion: a later checklist
 			// refusal or failed move must not advance the next attempt's base.
 			var completionClaim atomic.Pointer[taskmcp.CompletionClaim]
+			readHead := func() (string, error) {
+				return forkspace.GitOutErr(repo, "rev-parse", "--verify", "HEAD^{commit}")
+			}
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
 				Workspace: repo, QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
 				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: RecordedTarget(c.cfg, target)},
@@ -912,9 +915,8 @@ reviewAgain:
 					}
 					return checkAssignedCompletion(repo, iterHead, assigned.Item.ID, lease.Reopen, snapshot)
 				},
-				WaitBase: func() (string, error) {
-					return forkspace.GitOutErr(repo, "rev-parse", "--verify", "HEAD^{commit}")
-				},
+				WaitBase:  readHead,
+				BlockHead: readHead,
 			})
 			if toolsErr != nil {
 				return 1, errors.Join(toolsErr, lease.Release())
@@ -1443,9 +1445,10 @@ reviewAgain:
 				refRelease()
 				return 1, errors.Join(fmt.Errorf("preserve task %s blocked audit reopen authority: %w", assigned.Item.ID, err), releaseErr)
 			}
-			// A person's explicit unblock turns this note into authority to close the task without a
-			// new commit; nothing the box writes can.
-			if err := lease.RecordCommittedBlock(repo, iterHead, headAfter); err != nil {
+			// A person's answer to coop tasks unblock turns this note into authority to close the task
+			// without a new commit; nothing the box writes can. Only a commit made before the worker
+			// blocked the task counts.
+			if err := lease.RecordCommittedBlock(repo, iterHead, taskTools.AssignedBlockHead(), headAfter); err != nil {
 				releaseErr := errors.Join(lease.Release(), windows.Close())
 				refRelease()
 				return 1, errors.Join(fmt.Errorf("record that task %s was committed before it blocked: %w", assigned.Item.ID, err), releaseErr)

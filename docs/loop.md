@@ -39,8 +39,9 @@ task. A rate limit doesn't count as a failed task attempt.
 Add `--preflight` to check the queue before work starts. This pass unblocks tasks in
 `50_blocked/` when their `decision.md` has an answer. It leaves backlog tasks parked with
 `coop tasks park` alone, does no task work and makes no commits. Preflight is off by default.
-A task its worker committed before blocking it waits for `coop tasks unblock`, which lets the next
-worker close it without a new commit.
+A task its worker committed before blocking it waits for your answer to
+`coop tasks unblock <id> "<answer>"`, which names that commit and lets the next worker close the
+task without a new commit.
 
 ## Exit codes
 

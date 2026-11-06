@@ -2,7 +2,7 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/committed_block.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
+sources: [internal/tasks/audit.go, internal/tasks/committed_block.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
 updated: 2026-11-06
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
@@ -54,11 +54,18 @@ cannot run in the box) left a task no later worker could close once other commit
 bound, so it needs authority, and the case-(a) amend is the STOP case above. The loop now writes
 `<key>.committed-block.json` (`RecordCommittedBlock`, `internal/tasks/committed_block.go`) when
 one attempt both made the task's only binding (raw walk, and Git reads it in that attempt's range)
-and left it blocked. It stores the binding's content, not its id, because host signing rewrites the
-commit right after. Only `coop tasks unblock` turns it into an `Answered` audit-reopen record,
-moved past later commits so it authorizes no rewrite, and only when the task's one binding still
-has that content. The loop's pre-flight skips such a task with a warning, since a box can write the
-Resolution it reads. A crash-recovery attempt that blocks made no binding, so it gets no note.
+and left it blocked. The binding must also be in the range up to the HEAD `tasks_block` read before
+it moved the task (taskmcp's `AssignedBlockHead`): another session sharing the checkout can commit
+with the task's trailer after its worker blocks without committing, and that commit is not the
+worker's. A block without the tool records no HEAD and gets no note. The note stores the binding's
+content, not its id, because host signing rewrites the commit right after. Only an answer given to
+`coop tasks unblock <id> "<answer>"` (or typed into `coop tasks decisions -i`) turns it into an
+`Answered` audit-reopen record, moved past later commits so it authorizes no rewrite, and only when
+the task's one binding still has that content; the command then names that commit (short id and
+subject). A plain unblock, which may rest on a Resolution the box wrote, leaves the note unused, so
+a later answer can still spend it. The loop's pre-flight skips such a task with a warning, since a
+box can write the Resolution it reads. A crash-recovery attempt that blocks made no binding, so it
+gets no note.
 
 The cheap mitigation for a repo whose tests leak browsers is a bounded drain:
 `box: env: {COOP_DESCENDANT_TIMEOUT: "180"}` in `.agent/project.yaml` — coop itself never sets this
@@ -137,6 +144,9 @@ checked nothing" would again diff to nothing. For the same reason a history that
 parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
 
 ## Changelog
+- 2026-11-06 — only an answer given to `coop tasks unblock` spends the committed-block note, the
+  unblock names the commit, and only a binding made before `tasks_block` read HEAD counts (task
+  2026-11-06-grant-re-close-authority-only-for-the-worker-s-o).
 - 2026-11-06 — a task its own attempt committed and blocked gets re-close authority from a person's
   unblock (task 2026-11-05-let-a-loop-worker-close-a-task-that-committed-bl).
 - 2026-11-06 — added the worker's review base (task

@@ -1540,7 +1540,8 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 			Rows:     [][2]string{{"Example:", fmt.Sprintf("coop tasks unblock %s \"<answer>\"", args[0])}, {"Help:", "coop help tasks unblock"}},
 		}
 	}
-	if err := resolveAndUnblock(project, root, t, answer); err != nil {
+	commit, err := resolveAndUnblock(project, root, t, answer)
+	if err != nil {
 		return -1, unblockRetryError(t.ID, answer != "", err)
 	}
 	ui.OK("Unblocked task: %s", t.Title)
@@ -1549,10 +1550,17 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	} else {
 		ui.Note("\n  The task is back in todo.")
 	}
+	if commit != "" {
+		ui.Note("%s\n  %s", closesWithoutACommitNote, commit)
+	}
 	noteBoundTask(project, t.ID)
 	noteForkResume(project, fork)
 	return 0, nil
 }
+
+// closesWithoutACommitNote introduces the commit an answered unblock lets the next worker close the
+// task over, so the person sees which commit their answer covers.
+const closesWithoutACommitNote = "The next worker may close it without a new commit, since its commit is already in history:"
 
 // taskForkName is the fork that holds a task in the project's queue, or "" when none does or its
 // owner record cannot be read: the name only labels what a person sees, and the commands that act
@@ -1744,44 +1752,46 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 //
 // The answer is saved before anything can refuse the unblock, so a refusal never loses what the
 // person typed. A saved answer alone moves no task with audit authority: the loop's pre-flight
-// leaves those to this command (UnblockResolved).
-func resolveAndUnblock(project, root string, t Item, answer string) error {
+// leaves those to this command (UnblockResolved). Only an answer given here lets the next worker
+// close, without a new commit, a task its own attempt committed and then blocked. It returns that
+// commit named for the person, or "" when the unblock allows no such close.
+func resolveAndUnblock(project, root string, t Item, answer string) (string, error) {
 	if answer != "" {
 		decision := filepath.Join(t.Dir, "decision.md")
 		if err := recordResolution(decision, answer); err != nil {
-			return &unblockStageError{stage: "decision write", artifact: decision, state: StateBlocked, err: err}
+			return "", &unblockStageError{stage: "decision write", artifact: decision, state: StateBlocked, err: err}
 		}
 	}
-	err := returnBlockedToTodo(project, root, t)
+	commit, err := returnBlockedToTodo(project, root, t, answer != "")
 	var failure *unblockStageError
 	if answer != "" && errors.As(err, &failure) {
 		failure.answerSaved = true
 	}
-	return err
+	return commit, err
 }
 
 // returnBlockedToTodo is the unblock itself, once any answer is in decision.md.
-func returnBlockedToTodo(project, root string, t Item) error {
-	transition, err := prepareBlockedAuditReopenUnblock(project, root, t)
+func returnBlockedToTodo(project, root string, t Item, answered bool) (string, error) {
+	transition, err := prepareBlockedAuditReopenUnblock(project, root, t, answered)
 	if err != nil {
-		return &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
+		return "", &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
 	}
 	// A fork works from its own copy of the task and reads the answer there, so the answer goes
 	// into that copy too. The lease the transition holds keeps the fork's worker off it meanwhile.
 	// Any other assignment phase is refused below, as before.
 	owner, owned, err := ReadTaskOwnerRecord(root, t.ID)
 	if err != nil {
-		return &unblockStageError{stage: "owner record inspection", state: StateBlocked, err: transition.finish(err)}
+		return "", &unblockStageError{stage: "owner record inspection", state: StateBlocked, err: transition.finish(err)}
 	}
 	if owned && owner.Kind == TaskOwnerFork && owner.Fork != nil &&
 		(owner.Fork.Phase == ForkAssignmentBlocked || owner.Fork.Phase == ForkAssignmentPaused) {
 		if err := syncForkDecision(project, root, t.ID, *owner.Fork, false); err != nil {
 			err = fmt.Errorf("copy the answer into fork %s's copy of the task under %s: %w", owner.Fork.Fork.Name, owner.Fork.Projection, err)
-			return &unblockStageError{stage: "fork decision copy", state: StateBlocked, err: transition.finish(err)}
+			return "", &unblockStageError{stage: "fork decision copy", state: StateBlocked, err: transition.finish(err)}
 		}
 	}
 	if err := moveBlockedAuditUnblock(root, t, transition); err != nil {
-		return err
+		return "", err
 	}
 	// Journal the answer the task came back with. Best-effort: the unblock already holds.
 	dir := filepath.Join(root, StateTodo, t.ID)
@@ -1790,10 +1800,11 @@ func returnBlockedToTodo(project, root string, t Item) error {
 	if note := transition.movedNote(); note != "" {
 		appendTaskLog(dir, note)
 	}
-	if note := transition.answeredNote(); note != "" {
-		appendTaskLog(dir, note)
+	commit := transition.answeredCommit()
+	if commit != "" {
+		appendTaskLog(dir, "Unblock lets the next worker close this task without a new commit, since its commit is already in history: "+commit)
 	}
-	return nil
+	return commit, nil
 }
 
 // unblockedNote is the log line an unblock leaves: the answer the task came back with, if it has one.
@@ -3511,11 +3522,15 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 			// One line says the answer was saved and where that left the task, before the next
 			// question's header: without it the page just changed, and only :q told you anything.
 			if t.State == StateBlocked {
-				if err := resolveAndUnblock(project, ref.root, t, line); err != nil {
+				commit, err := resolveAndUnblock(project, ref.root, t, line)
+				if err != nil {
 					return -1, unblockRetryError(t.ID, true, err)
 				}
 				answered++
 				fmt.Fprintf(out, "%s Saved. %s is back in todo.\n", p.Green("✓"), sanitizeCell(t.Title))
+				if commit != "" {
+					fmt.Fprintf(out, "  %s\n    %s\n", closesWithoutACommitNote, commit)
+				}
 				if fork != "" {
 					fmt.Fprintf(out, "\n  %s\n", forkResumeNote(project, fork))
 				}

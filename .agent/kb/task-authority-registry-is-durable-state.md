@@ -9,8 +9,8 @@ Everything that decides whether a task is *really* finished lives OUTSIDE the re
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
 writer for a task (and which carry the completion receipt in their bytes), `<sha>.json` lease
 metadata, `<sha>.reopen.json` audit-reopen authority, `<sha>.departure.json` trusted-done
-departures, `<sha>.committed-block.json` (the loop saw one attempt commit the task and block it; a
-person's explicit unblock turns it into re-close authority), and `<sha>.windows.json`, the
+departures, `<sha>.committed-block.json` (the loop saw one attempt commit the task and then block
+it; a person's answer to `coop tasks unblock` turns it into re-close authority), and `<sha>.windows.json`, the
 completion-window journal crash recovery replays.
 Filenames are `sha256(resolved-repo-queue-root + "\x00" + task-id)`, so the registry is
 location-independent: moving the registry itself never renames a record.
@@ -66,6 +66,8 @@ collision followed by an unlink also fails the reopen, so it must retry first. T
 2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
 
 ## Changelog
+- 2026-11-06 — only an answer given to `coop tasks unblock` spends `<sha>.committed-block.json`
+  (task 2026-11-06-grant-re-close-authority-only-for-the-worker-s-o).
 - 2026-11-06 — added `<sha>.committed-block.json` (task
   2026-11-05-let-a-loop-worker-close-a-task-that-committed-bl).
 - 2026-11-05 — named the two display records beside the leases, `.holder.json` and the per-queue

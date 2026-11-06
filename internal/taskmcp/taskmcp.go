@@ -69,6 +69,11 @@ type Authority struct {
 	// committed after the wait. An error refuses the wait with nothing changed. Nil for task-channel
 	// probes with no Git contract, which check the history HEAD reaches.
 	WaitBase func() (string, error)
+	// BlockHead reads the commit HEAD names when the assigned task blocks, before it moves. The server
+	// keeps it (AssignedBlockHead), so the loop counts only a commit made before the block as the
+	// work the worker blocked on (tasks.RecordCommittedBlock). An error keeps nothing and blocks the
+	// task all the same. Nil for task-channel probes with no Git contract.
+	BlockHead func() (string, error)
 	// ProposalOutbox, when set, is where tasks_propose writes validated proposals instead of
 	// creating queue folders: a fork's one-task projection has no canonical todo/backlog, so the
 	// host imports the outbox when the fork lands (tasks.ImportForkProposals). It lies inside
@@ -101,6 +106,7 @@ type Server struct {
 	mu              sync.Mutex
 	terminalRefusal AssignedTerminalRefusal
 	waitBase        string
+	blockHead       string
 }
 
 // AssignedTerminalRefusal is the latest tasks_complete or tasks_block refusal for the task this
@@ -124,6 +130,14 @@ func (s *Server) AssignedWaitBase() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.waitBase
+}
+
+// AssignedBlockHead is the commit HEAD named when tasks_block moved the assigned task to blocked, or
+// "" when the tool did not block it or could not read HEAD then.
+func (s *Server) AssignedBlockHead() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.blockHead
 }
 
 // New validates the authority and returns a server for it.

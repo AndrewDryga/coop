@@ -140,7 +140,7 @@ func TestPendingReviewParksABlockedSubjectOutsideTheCohort(t *testing.T) {
 		t.Fatalf("parked record = %v, %v; want it kept", ok, err)
 	}
 	blocked, _ := mustCurrentTask(t, root, done.ID)
-	if err := resolveAndUnblock(repo, root, blocked, "fix the gate"); err != nil {
+	if _, err := resolveAndUnblock(repo, root, blocked, "fix the gate"); err != nil {
 		t.Fatal(err)
 	}
 	cohort, err = LoadPendingReviews(repo, []string{root})

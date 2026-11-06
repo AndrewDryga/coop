@@ -11,11 +11,12 @@ import (
 // history, usually under later work, so the next worker can close it neither with a new binding nor
 // with crash recovery's amend, which is safe only at HEAD.
 //
-// So the loop notes in the host-only registry when one attempt both made the task's binding and
-// blocked it (RecordCommittedBlock), and a person's explicit `coop tasks unblock` turns that note into
-// the review-reopen authority a verification-only re-close already uses (answeredBlockReopen). The
-// answer in decision.md proves no person: a box can write it, so the loop's pre-flight never spends
-// the note (UnblockResolved).
+// So the loop notes in the host-only registry when one attempt made the task's binding and then
+// blocked it (RecordCommittedBlock), and a person's `coop tasks unblock <id> "<answer>"` turns that
+// note into the review-reopen authority a verification-only re-close already uses
+// (answeredBlockReopen), naming the commit it covers. Only an answer given to that command spends the
+// note. The answer in decision.md proves no person, since a box can write it, so neither a plain
+// unblock nor the loop's pre-flight (UnblockResolved) does.
 
 const committedBlockVersion = 1
 
@@ -77,36 +78,43 @@ func removeCommittedBlock(root, id string) error {
 }
 
 // RecordCommittedBlock notes that this attempt, the commits from base to head, made its task's one
-// binding and left the task blocked. A task under review authority keeps that instead
-// (PreserveBlockedAuditReopen). A binding made before the attempt is not its work, so a crash
-// recovery that blocks keeps the crash-recovery rule.
-func (l *TaskLease) RecordCommittedBlock(repo, base, head string) error {
-	if l.Reopen != nil || base == head {
+// binding before it blocked the task. blocked is the commit HEAD named when the worker blocked it
+// with its task tools (taskmcp's AssignedBlockHead), or "" when it did not. A task under review
+// authority keeps that instead (PreserveBlockedAuditReopen). A binding made before the attempt is
+// not its work, so a crash recovery that blocks keeps the crash-recovery rule. Nor is one made after
+// the block: the worker has stopped working the task by then, and another session in this checkout
+// can commit with its trailer.
+func (l *TaskLease) RecordCommittedBlock(repo, base, blocked, head string) error {
+	if l.Reopen != nil || base == head || blocked == "" {
 		return nil
 	}
 	current, ok, err := CurrentTask(l.root, l.id)
 	if err != nil || !ok || current.State != StateBlocked {
 		return err
 	}
-	subject, ok := attemptBinding(repo, base, head, l.id)
+	subject, ok := attemptBinding(repo, base, blocked, head, l.id)
 	if !ok {
 		return nil
 	}
 	return writeCommittedBlock(l.root, committedBlockRecord{Version: committedBlockVersion, TaskID: l.id, Subject: subject})
 }
 
-// attemptBinding is the content of id's one binding when the commits from base to head made it: the
-// raw walk from head finds exactly one, and Git reads that one in base..head.
-func attemptBinding(repo, base, head, id string) (AuditReopenCommit, bool) {
+// attemptBinding is the content of id's one binding when the commits from base to head made it before
+// the task blocked at blocked: the raw walk from head finds exactly one, and Git reads that one in
+// base..head and in base..blocked.
+func attemptBinding(repo, base, blocked, head, id string) (AuditReopenCommit, bool) {
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok || len(bindings[id]) != 1 {
 		return AuditReopenCommit{}, false
 	}
-	made, err := TaskCommits(repo, base+".."+head, id)
-	if err != nil || len(made) != 1 || !strings.HasPrefix(bindings[id][0], made[0]) {
-		return AuditReopenCommit{}, false
+	bound := bindings[id][0]
+	for _, end := range []string{head, blocked} {
+		made, err := TaskCommits(repo, base+".."+end, id)
+		if err != nil || len(made) != 1 || !strings.HasPrefix(bound, made[0]) {
+			return AuditReopenCommit{}, false
+		}
 	}
-	return bindingContent(repo, bindings[id][0])
+	return bindingContent(repo, bound)
 }
 
 func bindingContent(repo, sha string) (AuditReopenCommit, bool) {
@@ -157,9 +165,9 @@ func answeredBlockReopen(repo, head string, block committedBlockRecord) (AuditRe
 	return answered, true
 }
 
-// answerCommittedBlock prepares the authority this unblock grants from the task's committed-block
-// note, and marks the note spent: the unblock answers it whether or not the task's commit still
-// matches it. The caller holds the task's authority lock.
+// answerCommittedBlock prepares the authority an unblock with the person's answer grants from the
+// task's committed-block note, and marks the note spent: the answer is given whether or not the
+// task's commit still matches it. The caller holds the task's authority lock.
 func (u *blockedAuditUnblock) answerCommittedBlock(project, id string) error {
 	block, ok, err := readCommittedBlock(u.root, id)
 	if err != nil || !ok {
@@ -177,12 +185,13 @@ func (u *blockedAuditUnblock) answerCommittedBlock(project, id string) error {
 	return nil
 }
 
-// answeredNote is the task log's account of an unblock that lets the next worker close the task
-// without a new commit, or "" when it did not.
-func (u *blockedAuditUnblock) answeredNote() string {
+// answeredCommit names the commit this unblock lets the next worker close the task over without a new
+// commit, as `git log --oneline` does, or "" when it grants no such authority. A box writes commit
+// messages, so the subject is escaped and cut like a trailer value.
+func (u *blockedAuditUnblock) answeredCommit() string {
 	if u == nil || u.previous != nil || u.replacement == nil || !u.replacement.Answered {
 		return ""
 	}
-	return fmt.Sprintf("Unblock lets the next worker close this task without a new commit: its commit %s is already in history",
-		shortCommit(auditReviewedHead(*u.replacement)))
+	subject, _, _ := strings.Cut(strings.TrimLeft(u.replacement.Subject.CommitMessage, "\n"), "\n")
+	return shortCommit(auditReviewedHead(*u.replacement)) + " " + bindingLabel(strings.TrimSpace(subject))
 }
