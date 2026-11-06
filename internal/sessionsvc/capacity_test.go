@@ -68,14 +68,20 @@ func TestRuntimeCapacityReservationIsAtomicAndCleanupFailureStaysOccupied(t *tes
 	}
 }
 
+// The turn's model budget starts when capacity is granted, not when the turn was queued. The test
+// compares the runner's deadline with the moment capacity was freed rather than with the wall time
+// left at runner entry, so a starved host that is slow to wake the turn cannot spend the margin: a
+// budget started at submit would end before the release, and one started at admission ends a full
+// TurnTimeout after it however late the runner begins.
 func TestRuntimeCapacityWaitDoesNotLeaseOrSpendTurnTimeout(t *testing.T) {
-	started := make(chan time.Duration, 1)
+	type runnerStart struct{ deadline, entered time.Time }
+	started := make(chan runnerStart, 1)
 	var store *session.Store
 	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), "", func(saved *session.Store) Runner {
 		store = saved
 		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
 			deadline, _ := ctx.Deadline()
-			started <- time.Until(deadline)
+			started <- runnerStart{deadline: deadline, entered: time.Now()}
 			if _, err := store.MarkTurnSendIntent(ctx, bound.ID, turn.ID); err != nil {
 				return turn, err
 			}
@@ -94,7 +100,8 @@ func TestRuntimeCapacityWaitDoesNotLeaseOrSpendTurnTimeout(t *testing.T) {
 			t.Fatal("could not fill runtime pool")
 		}
 	}
-	service.Job.Limits.TurnTimeoutMS = 500
+	const budget = 500 * time.Millisecond
+	service.Job.Limits.TurnTimeoutMS = budget.Milliseconds()
 	bound, err := service.CreateRemoteSession(context.Background(), "capacity-create", service.request(t, "capacity"))
 	if err != nil {
 		t.Fatal(err)
@@ -115,14 +122,28 @@ func TestRuntimeCapacityWaitDoesNotLeaseOrSpendTurnTimeout(t *testing.T) {
 	if err != nil || current.State != session.TurnQueued {
 		t.Fatalf("capacity wait leased/failed turn: %+v, %v", current, err)
 	}
+	released := time.Now()
 	service.runtimeCleaned("0")
-	select {
-	case remaining := <-started:
-		if remaining < 300*time.Millisecond {
-			t.Fatalf("capacity wait consumed model budget: %s", remaining)
+	var start runnerStart
+	wait.For(t, "freeing capacity to start or end the queued turn", func() bool {
+		select {
+		case start = <-started:
+			return true
+		default:
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("freeing capacity did not wake the queued turn")
+		current, _ = service.Store().GetTurn(context.Background(), bound.ID, turn.ID)
+		return current.State == session.TurnFailed
+	})
+	if start.deadline.IsZero() {
+		t.Fatalf("capacity wait consumed model budget: turn failed before its runner started: %s %s",
+			current.ErrorCode, current.ErrorDetail)
+	}
+	if start.deadline.Before(released.Add(budget)) {
+		t.Fatalf("capacity wait consumed model budget: deadline %s after capacity freed, want at least %s",
+			start.deadline.Sub(released), budget)
+	}
+	if start.deadline.After(start.entered.Add(budget)) {
+		t.Fatalf("turn got %s of model budget at runner entry, more than its %s", start.deadline.Sub(start.entered), budget)
 	}
 	waitForSessionTest(t, func() bool {
 		current, _ := service.Store().GetTurn(context.Background(), bound.ID, turn.ID)

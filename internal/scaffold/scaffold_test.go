@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -1052,7 +1054,8 @@ func TestWriteNewRepoFileFailsFastOnAFIFOParent(t *testing.T) {
 			_, err := file.Write(data)
 			return err
 		}
-		for range 1000 {
+		for i := range 1000 {
+			reportRound(t, i)
 			if created, _ := writeNewRepoFile(repo, dest, []byte("x"), 0o644, write); created {
 				_ = os.Remove(dest)
 			}
@@ -1111,7 +1114,8 @@ func TestInPlaceEditsFailFastOnAFIFOFolder(t *testing.T) {
 		}
 		stop := swapInFIFOs(agent)
 		defer stop()
-		for range 1000 {
+		for i := range 1000 {
+			reportRound(t, i)
 			for _, err := range edit() {
 				if err != nil && strings.Contains(err.Error(), "/./") {
 					t.Fatalf("edit error names the folder handle: %v", err)
@@ -1357,22 +1361,76 @@ func swapInFIFOs(dir string) (stop func()) {
 	}
 }
 
+// reportRound tells runFIFOChild that a child racing a swapper is still moving, every 100 rounds.
+func reportRound(t *testing.T, round int) {
+	if round%100 == 0 {
+		t.Logf("round %d", round)
+	}
+}
+
 // runFIFOChild runs the calling test again in a child process with COOP_SCAFFOLD_FIFO_REPO set to
-// repo, and fails unless the child passes within wait.Deadline. An open waiting on a FIFO cannot be
-// cancelled in-process, so a hang shows up as the child missing the deadline.
+// repo, and fails if the child fails or goes quiet for wait.Deadline. An open waiting on a FIFO
+// cannot be cancelled in-process, so a hang shows up as a child that stops writing. The deadline
+// restarts with each line the child writes (reportRound), because the races repeat their edits a
+// thousand times and a starved host can stretch that past any fixed bound without anything waiting
+// on a FIFO. A quiet child gets SIGQUIT, so its output shows where each goroutine was stuck.
 func runFIFOChild(t *testing.T, repo, what string) {
 	t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "-test.run=^"+t.Name()+"$", "-test.v")
 	cmd.Env = append(os.Environ(), "COOP_SCAFFOLD_FIFO_REPO="+repo)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %v (deadline: %v)\n%s", what, err, ctx.Err(), output)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) }
+	cmd.WaitDelay = wait.Deadline
+	output := &childOutput{wrote: make(chan struct{}, 1)}
+	cmd.Stdout, cmd.Stderr = output, output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	quiet := time.NewTimer(wait.Deadline)
+	defer quiet.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s: %v (went quiet for %s: %v)\n%s", what, err, wait.Deadline, ctx.Err() != nil, output.String())
+			}
+			return
+		case <-output.wrote:
+			quiet.Reset(wait.Deadline)
+		case <-quiet.C:
+			cancel()
+		}
+	}
+}
+
+// childOutput collects a child's output and signals each write.
+type childOutput struct {
+	mu    sync.Mutex
+	buf   strings.Builder
+	wrote chan struct{}
+}
+
+func (o *childOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	select {
+	case o.wrote <- struct{}{}:
+	default:
+	}
+	return o.buf.Write(p)
+}
+
+func (o *childOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.String()
 }
 
 // The FIFO guard opens the parent as "<dir>/.", which still follows a parent link that stays
