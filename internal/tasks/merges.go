@@ -100,7 +100,11 @@ func fprintMergePage(out io.Writer, p ui.Palette, merge readyMerge) {
 
 // runForkCommand runs coop fork <args> as the person would type it, on this terminal: review shows
 // its diff and merge asks its own questions. Tests replace it.
-var runForkCommand = func(args ...string) error {
+var runForkCommand = execForkCommand
+
+// execForkCommand starts coop's own binary, never git, so the Git boundary test can review it as a
+// named site rather than a constructor hidden in a function value.
+func execForkCommand(args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
