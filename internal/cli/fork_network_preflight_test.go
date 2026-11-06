@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -210,6 +214,99 @@ func TestRunForkLoopChecksForkWorkspaceNetworkPolicyBeforeAssigning(t *testing.T
 	code, err := a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, false)
 	if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 		t.Errorf("runForkLoop with a workspace-only network request = (%d, %v), want the approval refusal", code, err)
+	}
+	assertForkNetworkTaskUnassigned(t, repo, taskID)
+}
+
+// forkBuildPreflightApp is a fork with build files no person approved: a filtered project whose
+// .agent/Dockerfile was never built, on a fixture Docker that answers info and has no images. Any
+// other Docker command fails, so nothing builds.
+func forkBuildPreflightApp(t *testing.T) (*app, string, string) {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
+	}))
+	repo := initRepo(t)
+	taskID := seedForkNetworkPreflightTask(t, repo)
+	for rel, body := range map[string]string{
+		project.File:        "box:\n  egress: filtered\n",
+		".agent/Dockerfile": "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\nRUN echo unapproved\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commitForkNetworkPreflightFixture(t, repo)
+	docker := filepath.Join(t.TempDir(), "docker")
+	script := "#!/bin/sh\n" +
+		"while [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\n" +
+		"case \"$1\" in\n" +
+		"info) printf '%s\\n' '{\"ID\":\"fixture-daemon\",\"ServerVersion\":\"29.4.0\",\"KernelVersion\":\"fixture\",\"OSType\":\"linux\",\"Architecture\":\"aarch64\",\"SecurityOptions\":[]}' ;;\n" +
+		"image) exit 1 ;;\n" +
+		"*) exit 91 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A detached start re-executes this test binary as coop: give it the same settings.
+	configDir := t.TempDir()
+	t.Setenv("COOP_REPO", repo)
+	t.Setenv("COOP_CONFIG_DIR", configDir)
+	t.Setenv("COOP_BASE_IMAGE", "test-image")
+	t.Setenv("COOP_RUNTIME", docker)
+	t.Setenv("COOP_EGRESS", "filtered")
+	cfg := &config.Config{RepoOverride: repo, ConfigDir: configDir, BoxHome: t.TempDir(), BaseImage: "test-image"}
+	signInCred(t, cfg, "claude", "default")
+	return &app{cfg: cfg, rt: runtime.Runtime{Name: docker}, rtSet: true}, repo, taskID
+}
+
+// A detached start reports a build it may not run in the terminal, before a worker starts, with the
+// command that builds the fork's checkout: coop build in the project would build the project.
+func TestDetachedForkLoopChecksTheProjectBuildBeforeStarting(t *testing.T) {
+	a, repo, taskID := forkBuildPreflightApp(t)
+	name := "unbuilt"
+	t.Setenv(detachedChildEnv, "1")
+	t.Cleanup(func() {
+		if pathExists(forkspace.PidPath(repo, name)) {
+			if code, err := a.forkctl().ForkStop([]string{name}); code != 0 || err != nil {
+				t.Errorf("cleanup fork stop = (%d, %v)", code, err)
+			}
+		}
+	})
+	var code int
+	var runErr error
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code, runErr = a.forkCreate([]string{name, "claude", "--loop", "-d"}) })
+	})
+	output := stdout + stderr
+	if strings.Contains(output, "Started fork") {
+		// On the buggy path the worker hits the refusal in the background; let it finish first.
+		wait.For(t, "detached fixture worker build refusal", func() bool {
+			data, err := os.ReadFile(forkspace.LogPath(repo, name))
+			return err == nil && strings.Contains(string(data), "coop build --egress filtered")
+		})
+		wait.For(t, "detached fixture worker pid record to clear", func() bool {
+			return !pathExists(forkspace.PidPath(repo, name))
+		})
+		t.Errorf("detached fork with unapproved build files started a worker:\n%s", output)
+	}
+	workspace, err := filepath.EvalSymlinks(forkspace.Workspace(repo, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := "Build it: COOP_REPO=" + workspace + " coop build --egress filtered"
+	var required *box.ProjectBuildRequired
+	if code != 1 || !errors.As(runErr, &required) || required.Approved || !strings.Contains(runErr.Error(), build) {
+		t.Errorf("detached fork with unapproved build files = (%d, %v), want exit 1 and the refusal ending %q", code, runErr, build)
+	}
+	if pathExists(forkspace.PidPath(repo, name)) {
+		t.Error("refused detached fork left a worker pid record")
 	}
 	assertForkNetworkTaskUnassigned(t, repo, taskID)
 }

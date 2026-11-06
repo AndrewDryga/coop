@@ -782,10 +782,10 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)
 		case fa.detach:
-			if err := box.CheckNetworkApproval(a.cfg, box.RunSpec{
+			if err := a.preflightForkLoop(box.RunSpec{
 				Repo: ws, Image: img, Agent: fa.agent, Preset: a.preset, Peers: peers,
 				Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache, NetworkAdmission: true,
-			}, fa.network.admission()); err != nil {
+			}, fa.network); err != nil {
 				forkctl.NoteForkLoopExit(repo, forkIdentity, 1, err)
 				return 1, err
 			}
@@ -1662,4 +1662,27 @@ func (a *app) forkRunsFiltered(repo string, invocation *egress.Mode) bool {
 	}
 	access, err := box.ProjectNetworkAccess(context.Background(), a.cfg, repo)
 	return err == nil && access.Mode == egress.Filtered
+}
+
+// preflightForkLoop admits a detached fork loop's box the way its worker's loop will, on a copy of
+// the configuration, and lets the capture go. Network access or build files no person approved are
+// refused in the terminal, before a worker starts, and build files a person approved are built here.
+// It grants nothing: the worker admits again, and a capture never crosses to it.
+func (a *app) preflightForkLoop(spec box.RunSpec, network networkFlags) error {
+	capture, err := box.AdmitNetwork(a.cfg.Clone(), a.rt, spec, network.admission())
+	var required *box.ProjectBuildRequired
+	if errors.As(err, &required) {
+		// coop build builds the checkout it runs in, and a detached start runs in the project.
+		folder := spec.Repo
+		if resolved, resolveErr := filepath.EvalSymlinks(folder); resolveErr == nil {
+			folder = resolved
+		}
+		if word, ok := ui.ShellWord(folder); ok {
+			return fmt.Errorf("%w\n\n  Build it: COOP_REPO=%s coop build --egress filtered", err, word)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	return capture.Close()
 }

@@ -274,6 +274,12 @@
   in the fork, and later parent approvals do not carry over. `coop fork ls` shows a refused loop as
   stopped with its reason.
 
+- **A detached fork loop checks its project build before it starts.** `coop fork <name> --loop -d`
+  checked only the fork's network approval, so build files that needed `coop build --egress
+  filtered` stopped its worker in the background, after it had taken a task. The start now refuses
+  them in your terminal, with the command that builds the fork's checkout, and builds the files you
+  already approved first.
+
 - **Forks and the main checkout no longer wait for each other to start their services.** A service
   start waited for every running box in the whole project, so parallel fork loops starved each other
   for hours, and `coop up` in the main checkout waited for a fork's whole loop. Each checkout starts
