@@ -136,7 +136,8 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 			_, err := admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: test.invocation, Domains: test.domains})
 			switch test.want {
 			case "pending":
-				if err == nil || !strings.Contains(err.Error(), "cannot start because this project asks for") || !strings.Contains(err.Error(), "Review it: coop approve") {
+				if err == nil || !strings.Contains(err.Error(), " cannot start because ") || !strings.Contains(err.Error(), " has not been approved") ||
+					!strings.Contains(err.Error(), "Review it: coop approve") {
 					t.Fatal("an unapproved widening was not refused with the review command", err)
 				}
 				if cfg.Egress != before {
@@ -164,7 +165,8 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 // COOP_EGRESS outranks box.egress, as documented, and a launch it gives more access than the
 // project asks for says so: someone who set COOP_EGRESS=open for every project must not believe a
 // project its team keeps offline still is. A one-off --egress is the person's choice for that run,
-// and a saved approval that outranked COOP_EGRESS keeps its own notice.
+// a saved approval that outranked COOP_EGRESS keeps its own notice, and a box.egress changed after
+// that approval waits for a review whose refusal names both.
 func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 	open := egress.Open
 	const offlineProject, filteredProject = "box:\n  egress: offline\n", "box:\n  egress: filtered\n"
@@ -175,6 +177,7 @@ func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 		remembered  bool
 		want        string
 		notice      string
+		refusal     string
 	}{
 		"open over offline": {projectYAML: offlineProject, explicitEnv: "open", want: "open",
 			notice: "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."},
@@ -190,9 +193,13 @@ func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 		"no project mode":               {explicitEnv: "open", want: "open"},
 		"approval keeps filtered": {projectYAML: filteredProject, explicitEnv: "open", remembered: true, want: "filtered",
 			notice: "COOP_EGRESS=open does not apply: this project's approval keeps it filtered. For one run, use --egress open."},
-		// The approval, not COOP_EGRESS, chose filtered here, so only its own notice speaks.
-		"approval over an offline file": {projectYAML: offlineProject, explicitEnv: "open", remembered: true, want: "filtered",
-			notice: "COOP_EGRESS=open does not apply: this project's approval keeps it filtered. For one run, use --egress open."},
+		// The approval outranks COOP_EGRESS, so a box.egress changed after it waits for a review, as it
+		// does without COOP_EGRESS, and the refusal names both rather than the notice an admitted run gets.
+		"approval and an offline file under open": {projectYAML: offlineProject, explicitEnv: "open", remembered: true,
+			refusal: "box.egress: offline in .agent/project.yaml has not been approved, and COOP_EGRESS=open does not override an approval"},
+		"approval and an offline file under filtered": {projectYAML: offlineProject, explicitEnv: "filtered", remembered: true,
+			refusal: "box.egress: offline in .agent/project.yaml has not been approved, and COOP_EGRESS=filtered does not override an approval"},
+		"one-off filtered over a changed file": {projectYAML: offlineProject, explicitEnv: "open", invocation: ptrMode(egress.Filtered), remembered: true, want: "filtered"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, repo, root := admissionFixture(t)
@@ -215,7 +222,11 @@ func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 			printed := captureStderr(t, func() {
 				_, err = admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: test.invocation})
 			})
-			if test.want == "filtered" {
+			if test.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), " cannot start because "+test.refusal+"\n\n  Review it: coop approve") {
+					t.Fatalf("the launch = %v, want it refused because %s", err, test.refusal)
+				}
+			} else if test.want == "filtered" {
 				if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
 					t.Fatal("filtered resolution did not reach the runtime preflight", err)
 				}
@@ -230,6 +241,32 @@ func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 				t.Errorf("the launch printed %q, want %q", printed, want)
 			}
 		})
+	}
+}
+
+// coop approve settles what that refusal waits on: under COOP_EGRESS the review takes the file's
+// mode, and the next launch runs in it, saying that COOP_EGRESS does not apply.
+func TestApprovingAChangedBoxEgressSettlesItUnderCOOPEgress(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), "box:\n  egress: offline\n")
+	rememberFilteredPosture(t, root, repo, nil)
+	t.Setenv("COOP_EGRESS", "open")
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
+	if _, err := admitFixture(t, loaded.Clone(), repo, NetworkAdmission{}); err == nil || !strings.Contains(err.Error(), "box.egress: offline in .agent/project.yaml has not been approved") {
+		t.Fatalf("launch with box.egress changed after its approval = %v, want the review refusal", err)
+	}
+	approveFixture(t, loaded, repo)
+	cfg = loaded.Clone()
+	printed := captureStderr(t, func() { _, err = admitFixture(t, cfg, repo, NetworkAdmission{}) })
+	if err != nil || cfg.Egress != "none" {
+		t.Fatalf("launch after coop approve = %q (%v), want the approved offline", cfg.Egress, err)
+	}
+	if want := "⚠ COOP_EGRESS=open does not apply: this project's approval keeps it offline. For one run, use --egress open.\n"; printed != want {
+		t.Errorf("the launch printed %q, want %q", printed, want)
 	}
 }
 

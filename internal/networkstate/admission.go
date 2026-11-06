@@ -86,9 +86,12 @@ func (p *PendingApproval) Sentence() string {
 // access, or any rule at all. A project asking for filtered or offline access with
 // no rules is inside what coop grants on its own.
 //
-// The mode the file names counts only where it would decide anything: an
-// explicit --egress or COOP_EGRESS outranks it, so under one the
+// The mode the file names counts only where it would decide anything. With no
+// approval, an explicit --egress or COOP_EGRESS outranks it, so under one the
 // file's "open" is moot and refusing the run over it would protect nothing.
+// An approval outranks COOP_EGRESS open or filtered, though, so a box.egress
+// that is not the approved mode is pending with COOP_EGRESS set as without it;
+// only a one-off --egress filtered leaves it moot.
 // The same holds for the whole request under a one-off --egress open or
 // offline: rules only add to filtered access, so that run does not use them.
 // COOP_EGRESS open or filtered is not a one-off: a remembered approval outranks
@@ -104,8 +107,8 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 	}
 	const asks = "this project asks for network access that has not been approved"
 	const requests = ".agent/project.yaml requests changes to network access."
-	overridden := a.InvocationMode != nil || a.HostPreference != nil
 	if approval == nil {
+		overridden := a.InvocationMode != nil || a.HostPreference != nil
 		if a.ProjectMode != nil && *a.ProjectMode == egress.Open && !overridden {
 			return &PendingApproval{Reason: "this project asks for unrestricted internet access, which has not been approved",
 				Cause: ".agent/project.yaml requests unrestricted internet access."}, nil
@@ -119,11 +122,14 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 	// imply filtered, exactly as they do when a launch resolves the mode.
 	mode := approval.Posture
 	switch {
-	case overridden:
+	case a.InvocationMode != nil:
 	case a.ProjectMode != nil:
 		mode = *a.ProjectMode
 	case len(rules) != 0:
 		mode = egress.Filtered
+	}
+	if a.ProjectMode != nil && mode != approval.Posture {
+		return changedProjectMode(mode, a.HostPreference), nil
 	}
 	if mode != approval.Posture || !sameRules(rules, approval.Envelope) {
 		return &PendingApproval{Reason: asks, Cause: requests}, nil
@@ -138,6 +144,21 @@ func (a Admission) pendingApproval(approval *Approval) (*PendingApproval, error)
 		return &PendingApproval{Reason: asks, Cause: requests}, nil
 	}
 	return nil, nil
+}
+
+// changedProjectMode is pending for a box.egress that is not the approved mode. A COOP_EGRESS open
+// or filtered does not decide over an approval, so the refusal names it too: setting it does not
+// settle the change.
+func changedProjectMode(mode egress.Mode, host *egress.Mode) *PendingApproval {
+	pending := &PendingApproval{
+		Reason: "box.egress: " + mode.Word() + " in .agent/project.yaml has not been approved",
+		Cause:  ".agent/project.yaml sets box.egress: " + mode.Word() + ", which has not been approved.",
+	}
+	if host != nil {
+		pending.Reason += ", and COOP_EGRESS=" + host.Word() + " does not override an approval"
+		pending.Cause += " COOP_EGRESS=" + host.Word() + " does not override an approval."
+	}
+	return pending
 }
 
 // sameRules is set equality over canonical rules; both sides are normalized, so

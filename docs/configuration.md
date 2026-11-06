@@ -45,7 +45,8 @@ Choose one of these values for `COOP_EGRESS`:
 
 An `--egress` flag overrides `COOP_EGRESS`, and `COOP_EGRESS=offline` always keeps a run offline
 unless you pass that flag. For `filtered` and `open`, a project's saved `coop approve` decision
-overrides `COOP_EGRESS`, and the run warns. `COOP_EGRESS` itself overrides `box.egress` in
+overrides `COOP_EGRESS`, and the run warns. A `box.egress` changed after that decision waits for
+`coop approve`, with or without `COOP_EGRESS`. `COOP_EGRESS` itself overrides `box.egress` in
 `.agent/project.yaml`, and the run and `coop net` warn when that allows more than the project
 asks for.
 

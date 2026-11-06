@@ -54,7 +54,11 @@ writes nothing) and every launch through `AdmitNetwork` read the same answer, so
 disagree. Without an approval only a widening is pending — `open`, or any rule; filtered/offline
 with no rules is what coop grants on its own, which is why a fresh `coop init` project (explicitly
 `filtered`) launches without a review. The file's mode counts only where it would decide anything:
-under `--egress` or `COOP_EGRESS` the file's `open` is moot and is not pending. `approve` has no
+without an approval, under `--egress` or `COOP_EGRESS` the file's `open` is moot and is not pending.
+An approval outranks `COOP_EGRESS` open/filtered, so a `box.egress` that is not the approved mode is
+pending with `COOP_EGRESS` set as without it, and only a one-off `--egress filtered` leaves it moot;
+its refusal names the file's setting and the `COOP_EGRESS` (`changedProjectMode`), and a refused or
+held launch prints no `ignoredHostEgress` notice. `approve` has no
 `--mode`: to change access you edit the file. An approval binds three things beyond the rules: the
 project directory's private two-link anchor (a replacement or copied marker is pending; allocator
 metadata alone is never trusted), the reviewed Compose stanza of every `service:` grant as a digest
@@ -403,6 +407,11 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-06 — a `box.egress` changed after an approval is pending under `COOP_EGRESS` open or
+  filtered too: the `overridden` exemption had let such a run keep the approved filtered access while
+  the file asked for offline, and `coop approve` already offered the change the launch never asked
+  for (task 2026-11-06-ask-for-approval-when-box-egress-narrows-while-c). Verified against
+  admission.go, network_admission.go and network_approval.go (`approvalMode`).
 - 2026-11-06 — a `COOP_EGRESS` wider than `box.egress` keeps its documented precedence but is
   named at launch and in `coop net` (task 2026-11-06-stop-coop-egress-open-from-silently-opening-a-pr).
 - 2026-11-06 — a refusal for another checkout's request names it with COOP_REPO; verified the fork

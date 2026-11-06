@@ -249,7 +249,8 @@ choose this setting explicitly.</li>
 </ul>
 <p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>, and <code>COOP_EGRESS=offline</code> always keeps a run offline
 unless you pass that flag. For <code>filtered</code> and <code>open</code>, a project&#39;s saved <code>coop approve</code> decision
-overrides <code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in
+overrides <code>COOP_EGRESS</code>, and the run warns. A <code>box.egress</code> changed after that decision waits for
+<code>coop approve</code>, with or without <code>COOP_EGRESS</code>. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in
 <code>.agent/project.yaml</code>, and the run and <code>coop net</code> warn when that allows more than the project
 asks for.</p>
 <p>The resource and privilege limits (<code>COOP_PIDS</code>, <code>COOP_MEMORY</code>, <code>COOP_CPUS</code> and

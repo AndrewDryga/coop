@@ -80,6 +80,49 @@ func TestPendingApprovalIsTheExactRequest(t *testing.T) {
 	}
 }
 
+// An approval outranks COOP_EGRESS open or filtered, so a box.egress that is not the approved mode
+// needs a review with COOP_EGRESS set, as it does without it, and the refusal names both. Only a
+// one-off --egress filtered decides a run without the file's mode.
+func TestPendingApprovalNamesAChangedBoxEgress(t *testing.T) {
+	filtered, none, open := admissionMode(egress.Filtered), admissionMode(egress.None), admissionMode(egress.Open)
+	approved := &Approval{Posture: egress.Filtered}
+	const reason = "box.egress: offline in .agent/project.yaml has not been approved"
+	const cause = ".agent/project.yaml sets box.egress: offline, which has not been approved."
+	for name, tc := range map[string]struct {
+		input         Admission
+		reason, cause string
+	}{
+		"without COOP_EGRESS": {input: Admission{ProjectMode: none}, reason: reason, cause: cause},
+		"COOP_EGRESS=open": {input: Admission{ProjectMode: none, HostPreference: open},
+			reason: reason + ", and COOP_EGRESS=open does not override an approval",
+			cause:  cause + " COOP_EGRESS=open does not override an approval."},
+		"COOP_EGRESS=filtered": {input: Admission{ProjectMode: none, HostPreference: filtered},
+			reason: reason + ", and COOP_EGRESS=filtered does not override an approval",
+			cause:  cause + " COOP_EGRESS=filtered does not override an approval."},
+		"one-off --egress filtered":       {input: Admission{ProjectMode: none, HostPreference: open, InvocationMode: filtered}},
+		"approved mode under COOP_EGRESS": {input: Admission{ProjectMode: filtered, HostPreference: open}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pending, err := tc.input.pendingApproval(approved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.reason == "" {
+				if pending != nil {
+					t.Fatalf("pending = %q, want nothing pending", pending.Reason)
+				}
+				return
+			}
+			if pending == nil {
+				t.Fatalf("nothing pending, want %q", tc.reason)
+			}
+			if pending.Reason != tc.reason || pending.Sentence() != tc.cause {
+				t.Fatalf("pending = %q (%q), want %q (%q)", pending.Reason, pending.Sentence(), tc.reason, tc.cause)
+			}
+		})
+	}
+}
+
 // Host setups serialize: a second process waits for the first instead of
 // building and proving the same images beside it, and gives up only when its
 // own context does.

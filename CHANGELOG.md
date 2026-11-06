@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A changed `box.egress` needs approval again even with `COOP_EGRESS` set.** A project approved
+  for filtered access whose `.agent/project.yaml` later set `box.egress: offline` was refused until
+  `coop approve`, but with `COOP_EGRESS=open` or `filtered` in the environment it kept running with
+  the approved filtered access and never mentioned the offline setting. The approval outranks
+  `COOP_EGRESS`, so the launch now waits for `coop approve` either way, and the refusal and
+  `coop net` name both: `box.egress: offline in .agent/project.yaml has not been approved, and
+  COOP_EGRESS=open does not override an approval`. A one-off `--egress` still decides its own run.
+
 - **A busy host's Docker no longer fails runs it has nothing to do with.** A run's check of
   running Compose services failed with "container mount inventory is incomplete" whenever some
   other project's container was removed while Coop inspected it. A container the listing no longer

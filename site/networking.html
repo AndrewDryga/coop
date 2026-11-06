@@ -186,7 +186,9 @@ apply to that run, approved or not, and its <code>Configuring network access</co
 pass <code>--egress</code>. For <code>filtered</code> and <code>open</code>, a project&#39;s saved approval outranks <code>COOP_EGRESS</code>,
 and the run shows a warning.</li>
 <li>For one project, set <code>box.egress</code>. <code>COOP_EGRESS</code> overrides it, with a warning when that allows
-more than the project asks for. A project&#39;s request for <code>open</code> needs your approval on the host.</li>
+more than the project asks for. A project&#39;s request for <code>open</code> needs your approval on the host.
+Once you approve a project, a changed <code>box.egress</code> needs your approval again, with or without
+<code>COOP_EGRESS</code>, because the approval outranks it.</li>
 </ul>
 <p>When the mode comes from the default, the run&#39;s <code>Configuring network access</code> section starts with
 <code>Filtered by default. Use --egress open for unrestricted access.</code></p>
@@ -653,8 +655,12 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <td><code>a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel</code></td>
 </tr>
 <tr>
-<td>a project file with an unapproved rule, or a changed rule or mode</td>
+<td>a project file with an unapproved rule, or a changed rule</td>
 <td><code>&lt;Agent&gt; cannot start because this project asks for network access that has not been approved</code> · <code>Review it: coop approve</code></td>
+</tr>
+<tr>
+<td>a <code>box.egress</code> changed after the project&#39;s approval</td>
+<td><code>&lt;Agent&gt; cannot start because box.egress: offline in .agent/project.yaml has not been approved</code> · <code>Review it: coop approve</code>. With <code>COOP_<wbr/>EGRESS=open</code> set, it adds <code>, and COOP_<wbr/>EGRESS=open does not override an approval</code></td>
 </tr>
 <tr>
 <td>a project file with a rule that <code>coop approve</code> refuses</td>

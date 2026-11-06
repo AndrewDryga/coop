@@ -339,6 +339,35 @@ func TestPostureNamesACOOPEgressThatWidensTheProject(t *testing.T) {
 	}
 }
 
+// coop net says what a launch refuses on: a box.egress changed after the project's approval waits for
+// a review with COOP_EGRESS set too, since the approval outranks it, and the view names both.
+func TestPostureNamesAChangedBoxEgressUnderCOOPEgress(t *testing.T) {
+	for _, env := range []egress.Mode{egress.Open, egress.Filtered} {
+		cfg, repo, root := postureFixture(t, "box:\n  egress: offline\n")
+		store, err := networkstate.Open(root, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		review, err := store.ReviewApproval(repo, egress.Filtered, nil, nil, nil)
+		if err == nil {
+			err = store.Approve(t.Context(), repo, egress.Filtered, nil, nil, nil, review.Digest)
+		}
+		if err = errors.Join(err, store.Close()); err != nil {
+			t.Fatal(err)
+		}
+		cfg.SetEgress(string(env))
+		access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
+		if err != nil {
+			t.Fatalf("ProjectNetworkAccess: %v", err)
+		}
+		want := ".agent/project.yaml sets box.egress: offline, which has not been approved. COOP_EGRESS=" + env.Word() + " does not override an approval."
+		if access.Pending.Sentence() != want || access.RequestedMode != egress.None || access.Approval == nil || access.Approval.Posture != egress.Filtered {
+			t.Errorf("COOP_EGRESS=%s: pending %q, requested %q, approval %+v; want %q for an offline request over a filtered approval",
+				env.Word(), access.Pending.Sentence(), access.RequestedMode, access.Approval, want)
+		}
+	}
+}
+
 func TestPostureRefusesToDescribeADirectoryThatIsNotThere(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "")
 	if _, err := ProjectNetworkAccess(context.Background(), cfg, filepath.Join(repo, "missing")); err == nil {

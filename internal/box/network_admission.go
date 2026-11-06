@@ -195,11 +195,13 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	mode := preview.Mode
-	if notice := ignoredHostEgress(input, mode); notice != "" && previewed == nil {
-		ui.Warn("%s", notice)
-	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
 		refusal = pendingRefusal(cfg, spec, p, input, root, canonical, exposed, preview.Pending)
+	}
+	// Said only for a launch that goes ahead in this mode, like the widening notice below: a refused or
+	// held one never runs in it, and a refusal over box.egress names COOP_EGRESS itself.
+	if notice := ignoredHostEgress(input, mode); notice != "" && previewed == nil && refusal == nil {
+		ui.Warn("%s", notice)
 	}
 	if refusal != nil {
 		if !options.HoldPending || mode == egress.None {

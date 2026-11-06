@@ -61,6 +61,8 @@ mode decides what it covers:
   and the run shows a warning.
 - For one project, set `box.egress`. `COOP_EGRESS` overrides it, with a warning when that allows
   more than the project asks for. A project's request for `open` needs your approval on the host.
+  Once you approve a project, a changed `box.egress` needs your approval again, with or without
+  `COOP_EGRESS`, because the approval outranks it.
 
 When the mode comes from the default, the run's `Configuring network access` section starts with
 `Filtered by default. Use --egress open for unrestricted access.`
@@ -455,7 +457,8 @@ base, gateway and client images, but those builds don't run instructions from yo
 | `box.network: true` with no `service:` rule | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service. In a terminal, `coop approve` offers to add them |
 | `COOP_AUTO_UP=0` with an approved `service:` rule | `a filtered box starts the project services its approved network rules name, and COOP_AUTO_UP=0 says not to start them — unset COOP_AUTO_UP, or drop the service rules from box.egress_rules and run coop approve`. With `box.auto_up: false` instead, it names that setting |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
-| a project file with an unapproved rule, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| a project file with an unapproved rule, or a changed rule | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
+| a `box.egress` changed after the project's approval | `<Agent> cannot start because box.egress: offline in .agent/project.yaml has not been approved` · `Review it: coop approve`. With `COOP_EGRESS=open` set, it adds `, and COOP_EGRESS=open does not override an approval` |
 | a project file with a rule that `coop approve` refuses | `<Agent> cannot start because this project asks for network access that cannot be approved:` and the reason above · `Change .agent/project.yaml, then review it: coop approve` |
 | an `--egress-rules` file inside the project | `egress rules file <path> is inside <project>, which the box can reach — keep the rules file outside the project` |
 | `--allow-domain` or `--egress-rules` beside `--egress open` or `--egress offline` | `Cannot combine "--egress offline" and "--allow-domain" in "coop run"` · `--allow-domain only adds to filtered access. Use --egress filtered, or leave out --allow-domain.` (exit 2) |
