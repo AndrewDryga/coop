@@ -485,6 +485,35 @@ func TestResolveRepoRefusesTheHomeFolderAsAFallbackProject(t *testing.T) {
 	}
 }
 
+// COOP_REPO may name the home folder for a command that only reads the project, but a box never
+// starts there or above it, however COOP_REPO spells the folder. A folder inside the home folder is a
+// project like any other.
+func TestResolveBoxRepoRefusesTheHomeFolder(t *testing.T) {
+	base := t.TempDir()
+	users := filepath.Join(base, "users")
+	me, project := filepath.Join(users, "me"), filepath.Join(users, "me", "project")
+	mkdirs(t, project)
+	if err := os.Symlink(users, filepath.Join(base, "home")); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "home", "me") // HOME spelled through a link, as /home is on some Linux systems
+	t.Setenv("HOME", home)
+	for _, override := range []string{home, realPath(t, me), realPath(t, users), filepath.Join(base, "home")} {
+		reached, err := ResolveRepo(override)
+		if err != nil {
+			t.Errorf("ResolveRepo(%s) = %v; want the folder, for a command that only reads it", override, err)
+			continue
+		}
+		want := "COOP_REPO, " + reached + ", is your home folder (" + home + ") or above it. Coop never starts a box there"
+		if repo, err := ResolveBoxRepo(override); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ResolveBoxRepo(%s) = %q, %v; want a refusal saying %q", override, repo, err, want)
+		}
+	}
+	if repo, err := ResolveBoxRepo(filepath.Join(home, "project")); err != nil || repo != realPath(t, project) {
+		t.Errorf("ResolveBoxRepo(a folder in the home folder) = %q, %v; want %s", repo, err, realPath(t, project))
+	}
+}
+
 // A box can make .git anything. One that is neither a folder nor a regular file, a FIFO or a
 // device, is passed over as git passes it, and the walk never waits on it; a .git too large to be
 // a pointer to a git dir is refused rather than read.

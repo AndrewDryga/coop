@@ -426,6 +426,11 @@ func (a *app) dispatch(argv []string) (int, error) {
 	// needs a project at all depends on its mode (cmdBuild).
 	switch sub {
 	case "run", "shell", "acp", "up", "down":
+		if sub != "up" && sub != "down" { // each of the others starts a box on the project
+			if _, err := box.ResolveBoxRepo(a.cfg.RepoOverride); err != nil {
+				return -1, err
+			}
+		}
 		// An editor session reads the project's file itself. A child that would run the project's box
 		// stops at a broken one (resolveLaunchImage), and its supervisor and a child that holds prompts are
 		// what keep the editor told about it.

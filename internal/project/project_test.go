@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -203,6 +204,41 @@ func TestLoadInvalid(t *testing.T) {
 	for name, body := range cases {
 		if _, err := Load(writeProject(t, body)); err == nil {
 			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+// box.memory and box.cpus take the forms COOP_MEMORY and COOP_CPUS take, the values below being
+// internal/config's own test values, since Docker refuses any other form only once the box is being
+// created. A refusal names the setting, the value and what to use instead.
+func TestLoadBoxCapsTakeDockersForms(t *testing.T) {
+	for key, values := range map[string][]string{
+		"memory": {"512m", " 512m ", "1.5G", "4GiB", "1073741824", "0"},
+		"cpus":   {"2", " 0.5 ", ".5", "1.500", "0"},
+	} {
+		for _, value := range values {
+			p, err := Load(writeProject(t, "box:\n  "+key+": "+strconv.Quote(value)+"\n"))
+			if err != nil {
+				t.Errorf("box.%s %q: %v, want it accepted", key, value, err)
+				continue
+			}
+			if got := map[string]string{"memory": p.Box.Memory, "cpus": p.Box.CPUs}[key]; got != strings.TrimSpace(value) {
+				t.Errorf("box.%s %q reads as %q, want %q", key, value, got, strings.TrimSpace(value))
+			}
+		}
+	}
+	for key, tc := range map[string]struct {
+		values []string
+		use    string
+	}{
+		"memory": {[]string{"lots", "-1g", "4gg", "4ki", "1.2.3g"}, "use a size such as 512m or 4g"},
+		"cpus":   {[]string{"many", "-1", "1/2", "0.0000000001"}, "use a number of CPUs such as 0.5 or 2"},
+	} {
+		for _, value := range tc.values {
+			_, err := Load(writeProject(t, "box:\n  "+key+": "+strconv.Quote(value)+"\n"))
+			if want := File + ": box." + key + " " + strconv.Quote(value) + " — " + tc.use; err == nil || err.Error() != want {
+				t.Errorf("box.%s %q = %v, want %q", key, value, err, want)
+			}
 		}
 	}
 }

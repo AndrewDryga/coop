@@ -1313,7 +1313,7 @@ func parsePids(value string) (string, error) {
 // size, a number with an optional unit (b, k, m, g, t or p, any case, the last five optionally
 // followed by b or ib), and --cpus a decimal number with at most nine decimal places. Docker reads
 // 0 as no limit for both. Checked here because Docker refuses anything else only once the box is
-// being created.
+// being created. internal/project checks project.yaml's box.memory and box.cpus with its own copy.
 var (
 	memorySize = regexp.MustCompile(`(?i)^(\d+(\.\d*)?|\.\d+) ?([kmgtp](i?b)?|b)?$`)
 	cpuCount   = regexp.MustCompile(`^(\d+(\.\d{0,9})?|\.\d{1,9})$`)

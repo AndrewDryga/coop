@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,6 +43,14 @@ const File = ".agent/project.yaml"
 
 // Bound hostile repository input before YAML allocation or decoding.
 const maxProjectBytes = 1 << 20
+
+// box.memory and box.cpus reach docker run as they are, and Docker refuses any other form only once
+// the box is being created. These are the forms internal/config accepts for COOP_MEMORY and
+// COOP_CPUS, which this package cannot import (internal/importdag_test.go): keep the two in step.
+var (
+	memorySize = regexp.MustCompile(`(?i)^(\d+(\.\d*)?|\.\d+) ?([kmgtp](i?b)?|b)?$`)
+	cpuCount   = regexp.MustCompile(`^(\d+(\.\d{0,9})?|\.\d{1,9})$`)
+)
 
 // Default box-input paths when project.yaml doesn't set box.dockerfile / box.compose. Both live
 // under .agent/ (coop's committed home) — the Dockerfile alongside the sidecar compose file.
@@ -342,6 +351,13 @@ func Parse(data []byte) (*Project, error) {
 		if n, err := strconv.Atoi(p.Box.Pids); err != nil || n < 1 {
 			return nil, fmt.Errorf("%s: box.pids %q — use a positive integer, or 0/unlimited for no cap", File, p.Box.Pids)
 		}
+	}
+	p.Box.Memory, p.Box.CPUs = strings.TrimSpace(p.Box.Memory), strings.TrimSpace(p.Box.CPUs)
+	if p.Box.Memory != "" && !memorySize.MatchString(p.Box.Memory) {
+		return nil, fmt.Errorf("%s: box.memory %q — use a size such as 512m or 4g", File, p.Box.Memory)
+	}
+	if p.Box.CPUs != "" && !cpuCount.MatchString(p.Box.CPUs) {
+		return nil, fmt.Errorf("%s: box.cpus %q — use a number of CPUs such as 0.5 or 2", File, p.Box.CPUs)
 	}
 	if p.Box.Dockerfile, err = projectRelPath("box.dockerfile", p.Box.Dockerfile); err != nil {
 		return nil, err

@@ -76,6 +76,23 @@ func ResolveRepo(override string) (string, error) {
 //lint:ignore ST1005 it ends a sentence, and Coop is a name
 var ErrHomeProject = errors.New("Coop never uses one of those as a project: cd to your project folder (run `git init` there if it is new), or set COOP_REPO to it")
 
+// ResolveBoxRepo is ResolveRepo for a command that starts a box on the project: coop run, shell, acp,
+// loop and an agent. COOP_REPO may name the home folder, or a folder above it, for a command that only
+// reads the project, such as coop tasks, but a box there could read and change all the user's files,
+// so a launch refuses it here, before any Docker work.
+func ResolveBoxRepo(override string) (string, error) {
+	repo, err := ResolveRepo(override)
+	if err != nil {
+		return "", err
+	}
+	if home, above := shadowpath.HomeOrAbove(repo); above {
+		return "", fmt.Errorf("COOP_REPO, %s, is your home folder (%s) or above it. Coop never starts a box there, "+
+			"because the box could read and change all your files. Set COOP_REPO to your project folder instead, "+
+			"or unset it and cd there", repo, home)
+	}
+	return repo, nil
+}
+
 // RepoRelative is path relative to repo, matching folders rather than spellings. repo is the path
 // ResolveRepo gives, which normally holds no link, while a path the user hands Coop, the shell's
 // working directory or an absolute COOP_TASKS, may reach the same folder through one. The lexical

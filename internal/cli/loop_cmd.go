@@ -102,7 +102,7 @@ func (a *app) cmdLoop(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
+	repo, err := box.ResolveBoxRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
 	}

@@ -17,7 +17,7 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 | `COOP_RUNTIME` | auto (Docker preferred) | Picks the runtime: `docker` or `container`. |
 | `COOP_IMAGE` | auto | Forces a specific image, overriding `.agent/Dockerfile` detection. |
 | `COOP_BASE_IMAGE` | `coop-box` | The shared base image. `coop-box` selects co:op's own image, with a `coop-box:<definition>` tag for each box definition. |
-| `COOP_REPO` | the nearest folder with `.git` | Chooses the repo instead of detecting it from the current directory. co:op follows links, but refuses a link that leads to your home folder or any folder above it. With this unset outside a repository, the current folder is the project, unless it's your home folder or above, which co:op refuses. |
+| `COOP_REPO` | the nearest folder with `.git` | Chooses the repo instead of detecting it from the current directory. co:op follows links, but refuses a link that leads to your home folder or any folder above it. With this unset outside a repository, the current folder is the project, unless it's your home folder or above, which co:op refuses. Set to your home folder, it works for commands such as `coop tasks`, but no box starts there. |
 | `COOP_WORKDIR` | the repo's real path | Where the repo mounts in the box, as an absolute path. |
 | `COOP_HOME_IN_BOX` | `/home/node` | Where provider homes and instructions mount in the box. |
 | `COOP_RUN_ARGS` | unset | Extra arguments for the container runtime. Filtered runs accept only bind mounts, `-e KEY=VALUE` and `--label KEY=VALUE`. |

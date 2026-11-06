@@ -123,6 +123,61 @@ func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {
 	}
 }
 
+// A box never starts on the home folder: coop run, shell, acp, loop and an agent each refuse it with
+// one message before any runtime call, whether COOP_REPO names it, a link in COOP_REPO leads there or
+// the working folder is it. A command that only reads the project still takes COOP_REPO=~.
+func TestBoxLaunchesRefuseTheHomeFolderBeforeRuntime(t *testing.T) {
+	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(home, link); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "runtime-called")
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtime, []byte("#!/bin/sh\n: > \""+marker+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	t.Setenv("COOP_RUNTIME", runtime)
+	for _, route := range []struct{ name, repo, want string }{
+		{"COOP_REPO=~", home, "Coop never starts a box there"},
+		{"a link to ~ in COOP_REPO", link, "leads through a link to"},
+		{"the working folder ~", "", "Coop never uses one of those as a project"},
+	} {
+		t.Setenv("COOP_REPO", route.repo)
+		if route.repo == "" {
+			t.Chdir(home)
+		}
+		for _, argv := range [][]string{{"run", "--", "true"}, {"shell"}, {"acp", "claude"}, {"loop", "claude"}, {"claude"}} {
+			command := "coop " + strings.Join(argv, " ")
+			stderr := captureStderr(t, func() {
+				if code := Main(argv); code != 1 {
+					t.Errorf("%s: %s exit = %d, want 1", route.name, command, code)
+				}
+			})
+			if !strings.Contains(stderr, "home folder") || !strings.Contains(stderr, route.want) || strings.Count(stderr, "✗") != 1 {
+				t.Errorf("%s: %s said %q, want one refusal saying %q", route.name, command, stderr, route.want)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("%s: %s reached the runtime (marker: %v)", route.name, command, err)
+			}
+		}
+	}
+	t.Setenv("COOP_REPO", home)
+	var code int
+	captureStderr(t, func() { code = Main([]string{"tasks", "add", "Read the notes"}) })
+	added, _ := filepath.Glob(filepath.Join(home, ".agent", "tasks", "00_todo", "*-read-the-notes", "task.md"))
+	if code != 0 || len(added) != 1 {
+		t.Errorf("coop tasks add with COOP_REPO=~ = %d, added %v; want the task in the home folder's queue", code, added)
+	}
+}
+
 // A broken settings file reads like every other refusal: the headline, then the file and line and
 // the problem on their own lines, then the fix. The QA run saw one line with ".:" between the parts.
 func TestMainDrawsSettingsErrorsAsABlock(t *testing.T) {

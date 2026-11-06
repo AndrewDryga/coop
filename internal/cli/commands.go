@@ -118,6 +118,9 @@ func (a *app) runAgentInBox(cmd []string, agent string, peers []agents.Target) (
 // runAgentCommandInBox runs an agent's autonomous default command with the arguments typed after
 // its name.
 func (a *app) runAgentCommandInBox(agent string, peers []agents.Target, args []string) (int, error) {
+	if _, err := box.ResolveBoxRepo(a.cfg.RepoOverride); err != nil {
+		return -1, err
+	}
 	args = agentArgs(agent, args)
 	cmd := append(append([]string{}, a.defaultCmd(agent)...), args...)
 	// `codex exec` writes source:"exec" rollouts, which discovery excludes. It remains fully
