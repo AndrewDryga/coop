@@ -294,6 +294,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if len(spec.ReviewTasks) > 0 && len(currentCustom) > 0 {
 		return 1, errors.New("--review-task requires the built-in loop review; remove work.command or omit the import")
 	}
+	// An offline run reaches no provider, so a built-in agent there fails every attempt, and the
+	// failure reads like a lost sign-in. This run's own --egress offline is refused as input before
+	// any box starts; an offline mode from COOP_EGRESS or the project runs as before.
+	if mode := spec.Network.InvocationMode; mode != nil && mode.Word() == "offline" && len(custom) == 0 {
+		return 2, offlineLoopRefusal(agent)
+	}
 	limit := loopTaskLimit{max: maxTasks}
 	// A run with no actionable work and no review to settle is a pure host-side no-op: it does not
 	// need an image, must not launch a configured preflight agent, and has no review verdict to

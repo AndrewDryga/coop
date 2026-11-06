@@ -206,6 +206,16 @@ func alreadyCommittedCause(title, commit string) string {
 	return wrappedLoopText(fmt.Sprintf("%s is linked to %s in this branch. Check its work before marking it done.", title, commit), 6)
 }
 
+// offlineLoopRefusal refuses a loop whose own --egress offline would start a built-in agent where it
+// cannot reach its provider. It is rejected input, so the CLI exits 2.
+func offlineLoopRefusal(agent string) error {
+	name, vendor := agent, "its provider"
+	if ag, ok := agents.Get(agent); ok {
+		name, vendor = ag.DisplayName(), ag.Vendor()
+	}
+	return &ui.UsageError{Headline: fmt.Sprintf("An offline run cannot reach %s, which %s needs", vendor, name)}
+}
+
 func extraBindingsCause(e *tasks.ExtraBindingsError) string {
 	return wrappedLoopText(e.Cause()+" A final review cannot reopen it, or any task committed before it, until only one commit carries that trailer. "+e.Remedy()+".", 6)
 }

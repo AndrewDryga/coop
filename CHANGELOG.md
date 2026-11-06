@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop --egress offline` stops before it starts an agent that cannot work offline.** An
+  offline box cannot reach the agent's provider, so every attempt failed, and the loop ended with
+  "No configured agent could sign in" and told you to sign in again, though your account was fine.
+  A loop whose work or review uses a built-in agent now refuses the flag up front with "An offline
+  run cannot reach Anthropic, which Claude Code needs" and exit 2. A loop that only runs a custom
+  `work.command` still runs offline, and a loop made offline by `COOP_EGRESS` is unchanged.
+
 - **`coop tasks claim` and `coop tasks unblock` say when a task's commit is already in history.**
   Someone taking a task up again, often after a partial commit made before a decision, could
   commit more work with the same `Coop-Task` trailer, and nothing said so until a final review

@@ -13,12 +13,14 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The prune nudge fires only once done/ has piled up past the threshold, names the exact command,
@@ -342,6 +344,50 @@ func TestLoopWithNoActionableTaskClaimsNoReview(t *testing.T) {
 			}
 			if !strings.Contains(out, tc.want) || strings.Contains(out, "final review") || strings.Contains(out, "✓") {
 				t.Errorf("idle loop output = %q, want %q and no review verdict", out, tc.want)
+			}
+		})
+	}
+}
+
+// A loop's own --egress offline would start a built-in agent where it cannot reach its provider, so
+// it is refused as input before any box. A loop of custom commands may still run offline, and an
+// offline mode from COOP_EGRESS runs as before: here both go on to the image check this runtime fails.
+func TestLoopRefusesItsOwnOfflineFlagForABuiltInAgent(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	offline := egress.None
+	for _, tc := range []struct {
+		name, loopYAML string
+		flag, refused  bool
+	}{
+		{name: "built-in agent with --egress offline", flag: true, refused: true},
+		{name: "custom command with --egress offline", loopYAML: "work:\n  command: [make, loop-iter]\n", flag: true},
+		{name: "built-in agent with COOP_EGRESS=offline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-x", "task.md"), "# x\n")
+			if tc.loopYAML != "" {
+				writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), tc.loopYAML)
+			}
+			cfg := &config.Config{RepoOverride: repo}
+			var network box.NetworkAdmission
+			if tc.flag {
+				network.InvocationMode = &offline
+			} else {
+				cfg.SetEgress("none") // COOP_EGRESS=offline
+			}
+			c := New(cfg, runtime.Runtime{Name: "false"}, "test", Host{})
+			c.boxRun = func(box.RunSpec) (int, error) { t.Error("a box started"); return 0, nil }
+			code, err := c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, Network: network})
+			var usage *ui.UsageError
+			if tc.refused {
+				if code != 2 || !errors.As(err, &usage) || err.Error() != "An offline run cannot reach Anthropic, which Claude Code needs" {
+					t.Fatalf("offline loop = (%d, %v), want the usage refusal", code, err)
+				}
+				return
+			}
+			if errors.As(err, &usage) || err == nil || !strings.Contains(err.Error(), "not built") {
+				t.Fatalf("offline loop = (%d, %v), want it to go on to the image check", code, err)
 			}
 		})
 	}

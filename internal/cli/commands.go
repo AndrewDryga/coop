@@ -947,13 +947,13 @@ func promptLine(c tasks.TaskCounts, forks, looping int, signWarn bool) string {
 }
 
 // refuseOfflineOnePrompt stops a one-prompt agent run in an offline box: it cannot reach its provider,
-// and every client waits for ever, so a script would hang. An interactive session still starts.
+// and every client waits forever, so a script would hang. An interactive session still starts.
 func refuseOfflineOnePrompt(cfg *config.Config, spec box.RunSpec) error {
 	ag, ok := agents.Get(spec.Agent)
 	if !ok || !spec.AgentCommand || cfg.Egress != "none" || !ag.OnePrompt(spec.Cmd) {
 		return nil
 	}
 	return ui.CommandFailed(ag.DisplayName()+" cannot answer a prompt offline",
-		ag.DisplayName()+" needs to reach "+ag.Vendor()+", and an offline box blocks that, so the run would wait for ever.",
+		ag.DisplayName()+" needs to reach "+ag.Vendor()+", and an offline box blocks that, so the run would wait forever.",
 		[2]string{"", "Run it with --egress filtered, which reaches the provider and nothing you have not approved."})
 }
