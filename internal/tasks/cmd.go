@@ -1027,6 +1027,13 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		if err := RequireCompletedChecklist(t); err != nil && !opts.forceClose {
 			return -1, trustedCompletionError(err, t, opts)
 		}
+		// The record a box's tasks_complete demands, and lint checks in the archive. Not for
+		// --from-fork: the fork kept its notes in its own copy, not in this folder's state.md.
+		if !opts.fromFork {
+			if err := stateTemplateRefusal(t, doneRetry(t, opts)); err != nil {
+				return 1, err
+			}
+		}
 		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
@@ -1207,13 +1214,9 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	})
 }
 
-// trustedCompletionError draws a refused completion. A retry keeps the call's --force and
-// --from-fork; the plain refusal never suggests --force.
-func trustedCompletionError(err error, t Item, opts claimOptions) error {
-	var recovery auditCompletionRecoveryError
-	if errors.As(err, &recovery) {
-		return err
-	}
+// doneRetry is the `coop tasks done` a refusal offers again: it keeps the call's --force and
+// --from-fork, and a plain call's refusal never suggests --force.
+func doneRetry(t Item, opts claimOptions) string {
 	retry := "coop tasks done " + ui.SafeInline(t.ID)
 	if opts.forceClose {
 		retry += " --force"
@@ -1221,6 +1224,16 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	if opts.fromFork {
 		retry += " --from-fork"
 	}
+	return retry
+}
+
+// trustedCompletionError draws a refused completion, with doneRetry as its retry.
+func trustedCompletionError(err error, t Item, opts claimOptions) error {
+	var recovery auditCompletionRecoveryError
+	if errors.As(err, &recovery) {
+		return err
+	}
+	retry := doneRetry(t, opts)
 	var held *forkHeldError
 	if errors.As(err, &held) {
 		return &drawnRefusal{usage: held.completionRefusal(), err: err}
@@ -3700,6 +3713,36 @@ func joinWithAnd(parts []string) string {
 }
 
 func tasksFolderLint(root string) (int, error) {
+	known, err := taskIDsIn([]string{root})
+	if err != nil {
+		return -1, err
+	}
+	return lintTaskQueue(root, known)
+}
+
+// taskIDsIn is every task id the queues at roots hold, backlog included: what a waits_on line may
+// name. Several queues are linted against all of them, as the loop resolves a wait across them.
+func taskIDsIn(roots []string) (map[string]bool, error) {
+	ids := map[string]bool{}
+	for _, root := range roots {
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return nil, err
+		}
+		ideas, err := ReadBacklog(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range append(items, ideas...) {
+			ids[t.ID] = true
+		}
+	}
+	return ids, nil
+}
+
+// lintTaskQueue is coop tasks lint for the queue at root; known holds every task id a waits_on
+// line there may name.
+func lintTaskQueue(root string, known map[string]bool) (int, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return -1, err
@@ -3760,6 +3803,24 @@ func tasksFolderLint(root string) (int, error) {
 		if t.State == StateBlocked && !t.HasDecision {
 			add(t.ID, "blocked but has no decision.md — add one, or unblock it")
 		}
+		// A blocked task waits on its question, so a decision.md with none asks a person nothing:
+		// coop tasks decisions shows it only as a file to write. An answered one waits for unblock.
+		if t.State == StateBlocked && t.HasDecision {
+			decision, _, err := readOptionalTaskMetadataPath(filepath.Join(t.Dir, "decision.md"))
+			if err != nil {
+				return -1, err
+			}
+			const fill = " — write the question, why it is blocked, the options and your recommendation in it"
+			switch body := string(decision); {
+			case strings.TrimSpace(body) == "":
+				add(t.ID, "blocked but its decision.md is empty"+fill)
+			case decisionUnwritten(body) && decisionResolution(body) == "":
+				add(t.ID, "blocked but its decision.md is still the template"+fill)
+			}
+		}
+		if t.WaitsOn != "" && t.State != StateDone && !known[t.WaitsOn] {
+			add(t.ID, "waits_on names "+ui.SafeInline(t.WaitsOn)+", but no task has that id — fix the id, or delete the waits_on line")
+		}
 		if t.State == StateTodo && t.HasDecision {
 			resolved, err := decisionResolved(filepath.Join(t.Dir, "decision.md"))
 			if err != nil {
@@ -3798,7 +3859,7 @@ func tasksFolderLint(root string) (int, error) {
 		if t.State == StateDone {
 			if fields, err := ReadTaskState(t.Dir); err == nil {
 				if labels := StateTemplateFields(fields); len(labels) > 0 {
-					add(t.ID, "state.md still holds template text in "+joinWithAnd(labels)+" — write what the next reader needs, or — when there is nothing")
+					add(t.ID, StateTemplateText(labels)+" — write "+stateTemplateFix)
 				}
 			}
 		}

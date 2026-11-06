@@ -176,6 +176,13 @@
   agent, Coop now sends the editor the agent's own options, and the older model list in the
   session answer names the target model and effort too.
 
+- **`coop tasks done` and `coop tasks lint` catch the same unfinished task files.** `coop tasks done`
+  completed a task whose state.md still held the template's `<…>` text in Traps, and
+  `coop tasks lint` then failed on that done task. It now refuses it, with the check and words an
+  agent's `tasks_complete` already used, and says to write what the next reader needs there, or a
+  dash (—) when there is nothing. Lint now also names a blocked task whose decision.md is empty or
+  still the template, and a `waits_on` line that names no task in any queue or the backlog. Its
+  state.md hint, "or — when there is nothing", now says to write a dash.
 - **`coop tasks decisions -i` shows each question as text and confirms each answer.** The page
   printed a decision's markdown as written, such as `**Why it is blocked:**` and `**Options:**`,
   even with color on. It now prints those labels as plain text, in bold when color is on, as

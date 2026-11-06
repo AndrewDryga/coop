@@ -1244,7 +1244,7 @@ func stateTemplateGaps(fields tasks.TaskStateFields) []string {
 	}
 	var gaps []string
 	for _, label := range tasks.StateTemplateFields(fields) {
-		gaps = append(gaps, fmt.Sprintf("state.md's %s still holds the template's <…> text (%s)", label, repairs[label]))
+		gaps = append(gaps, fmt.Sprintf("%s (%s)", tasks.StateTemplateText([]string{label}), repairs[label]))
 	}
 	return gaps
 }

@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (nine tools:
@@ -195,7 +195,10 @@ the template and Coop's own notes (`tasks.LogHasEntry`; a new host note's openin
 `coopLogNotes`). A no-change outcome needs no entry first, since its closure writes one.
 `tasks_update_state` refuses a complete status with such a field, and `coop tasks lint` names done
 tasks whose state.md does. Lint skips empty logs: the archive held 170 from before the refusal,
-which would bury findings someone can act on.
+which would bury findings someone can act on. The host's `coop tasks done` refuses the same
+state.md fields, through the same check and words (`tasks.StateTemplateText`), so a task a person
+or an outside agent completes cannot reach the archive that way either; `--from-fork` is exempt,
+since a fork keeps its notes in its own copy of the task. It does not demand a log.md entry.
 
 Tool input omissions are classified centrally from the same ordered required fields
 advertised by tools/list. Every missing top-level field is reported together, with its static
@@ -235,6 +238,8 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-06 — the host's `coop tasks done` refuses template text in Done so far/Traps with the check
+  and words `tasks_complete` uses (task 2026-11-06-make-coop-tasks-done-and-lint-catch-the-same-unf).
 - 2026-11-05 — `tasks_wait` (loop boxes only) returns the assigned task to `00_todo/` with a
   `waits_on:` frontmatter line naming the task it must not start before; the loop's host-side
   `SettleTaskWaits` drops a met wait and blocks one nothing will meet, and the picker skips the rest

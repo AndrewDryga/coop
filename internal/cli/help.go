@@ -1182,6 +1182,7 @@ OPTIONS
 
   Finish the checks and commit the task's work first.
   The task must have at least one checklist item, with every item checked.
+  Its state.md must not keep the template's <…> text in Done so far or Traps.
   Leave required checks open if they failed, could not run, or have not run.
   Coop moves the task to done and removes its temporary files.
   The task's instructions, progress and saved evidence stay in the archive.
@@ -1234,7 +1235,7 @@ EXAMPLES
 
 Usage: coop tasks lint [--tasks <path>]...
 
-  Checks the task folders, frontmatter, required sections and decision state.
+  Checks the task folders, frontmatter, required sections, decisions and waits.
   It also names tasks that still hold the template's <…> text. The loop still
   works such a task: its agent fills the text in first. A finished task is
   named when its state.md keeps template text.

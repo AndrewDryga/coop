@@ -370,6 +370,34 @@ func TestDecisionsMarkAnUnwrittenDecision(t *testing.T) {
 	}
 }
 
+// lint names a blocked task whose decision.md asks nothing, empty or still the template nobody
+// filled in, and leaves alone a written decision and a template a person already answered.
+func TestLintNamesABlockedTaskWhoseDecisionAsksNothing(t *testing.T) {
+	root := t.TempDir()
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	for id, decision := range map[string]string{
+		"empty":    "",
+		"blank":    "\n  \n",
+		"template": renderDecisionScaffold("template", "Template"),
+		"answered": strings.Replace(renderDecisionScaffold("answered", "Answered"), decisionResolutionLine, "**Resolution:** Use the disk.\n", 1),
+		"written":  RenderDecision("written", Decision{Question: "Which store?", Why: "W", Options: []string{"A — disk"}, Recommendation: "A"}),
+	} {
+		lintedTask(t, root, StateBlocked, id, "")
+		writeTaskFile(t, filepath.Join(root, StateBlocked, id, "decision.md"), decision)
+	}
+	var code int
+	out := captureStdout(t, func() { _ = captureStderr(t, func() { code, _ = tasksFolderLint(root) }) })
+	const fill = " — write the question, why it is blocked, the options and your recommendation in it\n"
+	want := "  blank: blocked but its decision.md is empty" + fill +
+		"  empty: blocked but its decision.md is empty" + fill +
+		"  template: blocked but its decision.md is still the template" + fill
+	if code != 1 || out != want {
+		t.Fatalf("lint = %d:\n%s\nwant:\n%s", code, out, want)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

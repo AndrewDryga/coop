@@ -762,18 +762,30 @@ func findTaskAcrossQueuesWith(repo string, rels []string, id, listCommand string
 }
 
 // tasksLintAll rolls `coop tasks lint` up across the configured queues, each under its banner.
-// The exit code is the worst of the per-queue runs, so CI still fails on any issue anywhere.
+// The exit code is the worst of the per-queue runs, so CI still fails on any issue anywhere. A
+// waits_on line may name a task in any of them, as the loop resolves it.
 func tasksLintAll(repo string, rels []string) (int, error) {
 	p := ui.For(os.Stdout)
-	worst := 0
-	first := true
+	var roots []string
 	for _, rel := range rels {
 		root := filepath.Join(repo, rel)
 		exists, err := taskQueueExists(root)
 		if err != nil {
 			return -1, err
 		}
-		if !exists {
+		if exists {
+			roots = append(roots, root)
+		}
+	}
+	known, err := taskIDsIn(roots)
+	if err != nil {
+		return -1, err
+	}
+	worst := 0
+	first := true
+	for _, rel := range rels {
+		root := filepath.Join(repo, rel)
+		if !slices.Contains(roots, root) {
 			continue
 		}
 		if !first {
@@ -781,7 +793,7 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 		}
 		first = false
 		fmt.Println(banner(p, rel))
-		code, err := tasksFolderLint(root)
+		code, err := lintTaskQueue(root, known)
 		if err != nil {
 			return code, err
 		}

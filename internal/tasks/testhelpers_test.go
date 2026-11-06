@@ -211,6 +211,15 @@ func tasksFolderAdd(root string, args []string, state, cmdLabel string) (int, er
 	return tasksFolderAddWithProject(root, args, state, cmdLabel, "")
 }
 
+// writeWorkedState replaces the state.md `coop tasks add` seeds, whose Traps is the template's
+// placeholder, with what a worker writes before completing, so `coop tasks done` accepts it.
+func writeWorkedState(t testing.TB, dir string) {
+	t.Helper()
+	if err := WriteTaskState(dir, filepath.Base(dir), TaskStateFields{Status: "in progress", DoneSoFar: "the work", NextAction: "complete it", Traps: "—"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
 // in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
 // to the state it's already in is a no-op note, not an error.

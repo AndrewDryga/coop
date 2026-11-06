@@ -230,6 +230,10 @@ func TestIntegrationLifecycleViaDispatcher(t *testing.T) {
 	if err := tasks.RewriteSubtasks(filepath.Join(root, "10_in_progress", id), []tasks.Subtask{{Text: "required checks passed", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
+	// done refuses the Traps placeholder add seeds, so write state.md as a worker would.
+	if err := tasks.WriteTaskState(filepath.Join(root, "10_in_progress", id), id, tasks.TaskStateFields{Status: "in progress", DoneSoFar: "the work", NextAction: "complete it", Traps: "—"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := a.cmdTasks([]string{"done", id}); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)

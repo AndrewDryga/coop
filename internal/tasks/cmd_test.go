@@ -197,6 +197,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if err := RewriteSubtasks(filepath.Join(root, StateInProgress, id), []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
+	writeWorkedState(t, filepath.Join(root, StateInProgress, id))
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
@@ -2038,6 +2039,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 	if err := RewriteSubtasks(filepath.Join(root, StateTodo, id), []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
+	writeWorkedState(t, filepath.Join(root, StateTodo, id))
 	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}

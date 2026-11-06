@@ -8,6 +8,55 @@ import (
 	"testing"
 )
 
+// lintedTask writes a task.md lint has nothing to say about, waiting for waitsOn when it is set.
+func lintedTask(t *testing.T, root, state, id, waitsOn string) {
+	t.Helper()
+	front := "---\nid: " + id + "\ntitle: " + id + "\n"
+	if waitsOn != "" {
+		front += "waits_on: " + waitsOn + "\n"
+	}
+	writeTaskFile(t, filepath.Join(root, state, id, "task.md"),
+		front+"---\n\n# "+id+"\n\n**Context:** c\n\n**Acceptance criteria:** a\n\n**Approach:** p\n\n## Subtasks\n- [ ] s\n")
+}
+
+// lint names a waits_on line that names no task in any queue or the backlog, a wait the loop could
+// never meet, and leaves alone a wait on a task in any state, in another linted queue too.
+func TestLintNamesAWaitThatNamesNoTask(t *testing.T) {
+	root := t.TempDir()
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	lintedTask(t, root, StateTodo, "lost", "2026-11-06-no-such-task")
+	for state, on := range map[string]string{StateInProgress: "doing", StateBlocked: "asked", StateDone: "shipped", StateBacklog: "idea"} {
+		lintedTask(t, root, state, on, "")
+		lintedTask(t, root, StateTodo, "after-"+on, on)
+	}
+	if err := WriteDecision(filepath.Join(root, StateBlocked, "asked"), "asked", "asked", Decision{Question: "Which?", Why: "W", Options: []string{"A — a"}, Recommendation: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	out := captureStdout(t, func() { _ = captureStderr(t, func() { code, _ = tasksFolderLint(root) }) })
+	want := "  lost: waits_on names 2026-11-06-no-such-task, but no task has that id — fix the id, or delete the waits_on line\n"
+	if code != 1 || out != want {
+		t.Fatalf("lint = %d:\n%q\nwant:\n%q", code, out, want)
+	}
+
+	// Two queues linted together: a wait on the other queue's task is one the loop can meet.
+	repo := t.TempDir()
+	rels := []string{filepath.Join("a", ".agent", "tasks"), filepath.Join("b", ".agent", "tasks")}
+	for _, rel := range rels {
+		if err := ScaffoldStateDirs(filepath.Join(repo, rel)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lintedTask(t, filepath.Join(repo, rels[0]), StateTodo, "first", "second")
+	lintedTask(t, filepath.Join(repo, rels[1]), StateTodo, "second", "")
+	out = captureStdout(t, func() { _ = captureStderr(t, func() { code, _ = tasksLintAll(repo, rels) }) })
+	if code != 0 || strings.Contains(out, "waits_on") {
+		t.Fatalf("lint across queues = %d:\n%s", code, out)
+	}
+}
+
 func readWaitFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

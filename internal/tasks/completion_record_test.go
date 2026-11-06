@@ -1,11 +1,61 @@
 package tasks
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
+
+// coop tasks done refuses a task whose state.md still holds the template's text, with the check
+// and words a box's tasks_complete uses, so lint never finds it in the archive. --force waives the
+// checklist only. Once the field is written, a dash included, the task completes.
+func TestDoneRefusesAStateRecordStillHoldingTheTemplate(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"Fix login retries", "--context", "c", "--acceptance", "a", "--approach", "p", "--subtask", "s"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add = (%d, %v)", code, err)
+	}
+	id := mustReadTaskTree(t, root)[0].ID
+	dir := filepath.Join(root, StateTodo, id)
+	forceAtTerminal(t)
+	if code, err := CmdTasksFolder("", root, []string{"done", id, "--force"}); code != 1 || err == nil ||
+		!strings.Contains(err.Error(), StateTemplateText([]string{"Traps"})) || !strings.Contains(err.Error(), "Then run: coop tasks done "+id+" --force") {
+		t.Fatalf("done --force with template Traps = (%d, %v), want the state.md refusal", code, err)
+	}
+	if err := RewriteSubtasks(dir, []Subtask{{Text: "s", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done")
+	var usage *ui.UsageError
+	if code != 1 || !errors.As(err, &usage) {
+		t.Fatalf("done with template Traps = (%d, %v), want a drawn refusal", code, err)
+	}
+	want := "\n✗ Could not complete " + id + "\n\n" +
+		"      state.md's Traps still holds the template's <…> text.\n" +
+		"      Write what the next reader needs there, or a dash (—) when there is nothing.\n\n" +
+		"  Edit:     " + displayPath(filepath.Join(dir, "state.md")) + "\n" +
+		"  Then run: coop tasks done " + id + "\n"
+	if got := usage.Render(ui.Palette{}); got != want {
+		t.Fatalf("refusal:\n%s\nwant:\n%s", got, want)
+	}
+	if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateTodo {
+		t.Fatalf("the refused task moved: %+v", current)
+	}
+	fields, err := ReadTaskState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields.Traps = "—"
+	if err := WriteTaskState(dir, "Fix login retries", fields); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+		t.Fatalf("done after writing Traps = (%d, %v)", code, err)
+	}
+}
 
 func TestStateTemplateFields(t *testing.T) {
 	for _, tc := range []struct {
@@ -86,7 +136,7 @@ func TestTasksFolderLintNamesDoneTasksWithTemplateRecords(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("lint = %d, want 1:\n%s", code, out)
 	}
-	if want := "2026-01-01-scaffold: state.md still holds template text in Traps — write what the next reader needs, or — when there is nothing"; !strings.Contains(out, want) {
+	if want := "2026-01-01-scaffold: state.md's Traps still holds the template's <…> text — write what the next reader needs there, or a dash (—) when there is nothing"; !strings.Contains(out, want) {
 		t.Errorf("lint lacks %q:\n%s", want, out)
 	}
 	if strings.Contains(out, "filled") || strings.Contains(out, "fix-login-retries") || strings.Contains(out, "log.md") || strings.Count(out, "\n") != 1 {

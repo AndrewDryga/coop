@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // A completed task's state.md and log.md are what the next agent, the final review and a person
@@ -23,6 +25,38 @@ func StateTemplateFields(fields TaskStateFields) []string {
 		labels = append(labels, "Traps")
 	}
 	return labels
+}
+
+// StateTemplateText names the fields StateTemplateFields found, in the words every check that
+// refuses or flags them uses: coop tasks done, a box's tasks_complete and coop tasks lint.
+func StateTemplateText(labels []string) string {
+	verb := "holds"
+	if len(labels) > 1 {
+		verb = "hold"
+	}
+	return "state.md's " + joinWithAnd(labels) + " still " + verb + " the template's <…> text"
+}
+
+// stateTemplateFix is what a person writes in such a field instead. The dash is spelled out: a
+// bare "—" in a hint reads as punctuation, not as the thing to type.
+const stateTemplateFix = "what the next reader needs there, or a dash (—) when there is nothing"
+
+// stateTemplateRefusal is why `coop tasks done` will not complete t: its state.md still holds
+// template text in a field completion keeps, which a box's tasks_complete refuses too. retry is the
+// command to run once it is written. Completion rewrites a state.md it cannot read, so only a
+// readable one is checked.
+func stateTemplateRefusal(t Item, retry string) error {
+	fields, err := ReadTaskState(t.Dir)
+	if err != nil {
+		return nil
+	}
+	labels := StateTemplateFields(fields)
+	if len(labels) == 0 {
+		return nil
+	}
+	return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), StateTemplateText(labels)+".\nWrite "+stateTemplateFix+".",
+		[2]string{"Edit:", ui.SafeInline(displayPath(filepath.Join(t.Dir, "state.md")))},
+		[2]string{"Then run:", retry})
 }
 
 // coopLogNotes open the notes Coop appends to log.md itself (AppendTaskLogStrict callers), and
