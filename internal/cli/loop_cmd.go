@@ -193,12 +193,16 @@ func (a *app) cmdLoop(args []string) (int, error) {
 			return 1, err
 		}
 	}
+	continueCmd, err := loopContinueCommand(t, hasTarget, presetName, flags, a.network)
+	if err != nil {
+		return 2, err
+	}
 	return a.loopctl().Run(loop.RunSpec{ // local loop: no fork label, no fork owner
 		Repo: repo, Image: img, Agent: agent,
 		Rotation: rot, Queues: queues, Preset: a.preset, Peers: peers,
 		DebugOnFail: debugOnFail, Preflight: preflight, MaxTasks: maxTasks,
 		ReviewTasks: reviewTasks,
-		Continue:    loopContinueCommand(t, hasTarget, presetName, flags),
+		Continue:    continueCmd,
 		Network:     a.network.admission(),
 	})
 }
@@ -252,10 +256,10 @@ func resolveReviewTasks(repo string, queues, ids, taskFlags []string) (int, erro
 }
 
 // loopContinueCommand is the command that resumes this run, for the reports that tell the reader
-// how to carry on. It repeats the who-runs positional and explicit queue scope the user typed;
-// options like --max-tasks describe THIS invocation, and repeating them would suggest continuing
-// means pausing again.
-func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, taskFlags []string) string {
+// how to carry on. It repeats the who-runs positional, explicit queue scope and network flags the
+// user typed; options like --max-tasks describe THIS invocation, and repeating them would suggest
+// continuing means pausing again.
+func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, taskFlags []string, network networkFlags) (string, error) {
 	command := "coop loop"
 	switch {
 	case hasTarget:
@@ -266,7 +270,21 @@ func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, tas
 	for _, queue := range taskFlags {
 		command += " --tasks " + shellWord(queue)
 	}
-	return command
+	return withNetworkArgs(command, network)
+}
+
+// withNetworkArgs appends a launch's --egress, --allow-domain and --egress-rules to its Continue
+// command: a pasted resume that dropped an allowed host runs boxes that cannot reach it, so every
+// task that fetches from that host fails on the network.
+func withNetworkArgs(command string, network networkFlags) (string, error) {
+	args, err := network.args()
+	if err != nil {
+		return "", err
+	}
+	for _, arg := range args {
+		command += " " + shellWord(arg)
+	}
+	return command, nil
 }
 
 // shellWord quotes one user-supplied queue path for the POSIX shells Coop supports. Continuation

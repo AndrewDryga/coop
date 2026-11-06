@@ -4,7 +4,7 @@ description: loop output groups startup and environment work around dim task ban
 scope: cli-output
 sources: [internal/loop/report.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/banners.go, internal/box/launch_sections.go, internal/box/run.go, internal/box/filtered_services.go, internal/box/services_note.go, internal/cli/acp_cmd.go, internal/cli/commands.go, internal/cli/boxsweep.go, internal/cli/loop_cmd.go, internal/tasks/dir.go, internal/tasks/cmd.go, internal/cli/help.go, internal/ui/ui.go, internal/ui/wrap.go]
 check: make check
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 # Center loop output on the task and the actual attempt
@@ -63,8 +63,8 @@ updated: 2026-11-03
   surfaces; listing-only documentation and noninteractive reads need not become interactive.
 - Completed-task rows show real checked/total subtasks when defined. Use the parsed checklist,
   never infer full completion from the folder state or invent a 0/0 count for unavailable data.
-- Continue commands retain the actual target/preset and explicitly selected queues, safely
-  quoted; do not imply an exact last-task/review resume or invent a task-ID argument. Durable
+- Continue commands retain the actual target/preset, explicitly selected queues and network
+  flags (`--egress`, `--allow-domain`, `--egress-rules`), safely quoted; do not imply an exact last-task/review resume or invent a task-ID argument. Durable
   pending review needs its own trusted state and cannot be reconstructed from a starting task.
 - An offline mode that prevents the selected provider from working is a RED failure, including
   `⚠ Offline — Claude cannot reach Anthropic`; do not choose severity from the icon alone.
@@ -86,6 +86,11 @@ card. The full transcript and failure matrix are in queued task
 `2026-09-12-polish-loop-output-with-task-banners-and-grouped`.
 
 ## Changelog
+- 2026-11-05 — an emisar loop started with four `--allow-domain` hosts printed a Continue line
+  without them, so the pasted resume could not reach the Go module proxy or Hex. Swept both
+  Continue builders: `coop loop` and `coop fork <name> --loop` now append `networkFlags.args()`,
+  each word quoted. Pinned by TestLoopContinueCommandRepeatsTheNetworkFlags and
+  TestForkLoopContinueCommandUsesSelectedTargetOrPreset.
 - 2026-11-03 — a manual `coop loop claude:haiku` retried a launch refused before the agent started
   ("legacy writer mount cannot be resolved") five times, printing only "Task attempt failed", and
   left the task's log.md untouched. box.Run now marks an error from before its runtime launch

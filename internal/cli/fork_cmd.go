@@ -1274,12 +1274,12 @@ func pathsOverlap(left, right string) bool {
 	return contains(left, right) || contains(right, left)
 }
 
-func forkLoopContinueCommand(name, presetName string, target agents.Target) string {
+func forkLoopContinueCommand(name, presetName string, target agents.Target, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
 	}
-	return fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg))
+	return withNetworkArgs(fmt.Sprintf("coop fork %s %s --loop", shellWord(name), shellWord(continueArg)), network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
@@ -1350,7 +1350,10 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	if a.preset != nil && a.preset.Name != "" {
 		presetName = a.preset.Name
 	}
-	continueCmd := forkLoopContinueCommand(name, presetName, continueTarget)
+	continueCmd, err := forkLoopContinueCommand(name, presetName, continueTarget, network)
+	if err != nil {
+		return 2, err
+	}
 	// Full admission marks its configuration's resolved mode explicit. Keep the original inputs
 	// for these read-only checks so an earlier run cannot hide a later project request.
 	networkCfg := a.cfg.Clone()

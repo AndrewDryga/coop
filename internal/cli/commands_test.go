@@ -257,20 +257,55 @@ func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := loopContinueCommand(target, true, "", []string{
+	got, err := loopContinueCommand(target, true, "", []string{
 		".agent/tasks",
 		"apps/customer portal/.agent/tasks",
 		"queue'; touch nope; '",
-	})
+	}, networkFlags{})
 	want := "coop loop claude:opus@personal --tasks .agent/tasks --tasks 'apps/customer portal/.agent/tasks' --tasks 'queue'\"'\"'; touch nope; '\"'\"''"
-	if got != want {
-		t.Fatalf("continue command = %q, want %q", got, want)
+	if err != nil || got != want {
+		t.Fatalf("continue command = %q (%v), want %q", got, err, want)
 	}
-	if got := loopContinueCommand(agents.Target{}, false, "frontier", []string{"api/.agent/tasks"}); got != "coop loop frontier --tasks api/.agent/tasks" {
-		t.Fatalf("preset continuation = %q", got)
+	if got, err := loopContinueCommand(agents.Target{}, false, "frontier", []string{"api/.agent/tasks"}, networkFlags{}); err != nil || got != "coop loop frontier --tasks api/.agent/tasks" {
+		t.Fatalf("preset continuation = %q (%v)", got, err)
 	}
-	if got := loopContinueCommand(agents.Target{}, false, "", nil); got != "coop loop" {
-		t.Fatalf("default continuation = %q", got)
+	if got, err := loopContinueCommand(agents.Target{}, false, "", nil, networkFlags{}); err != nil || got != "coop loop" {
+		t.Fatalf("default continuation = %q (%v)", got, err)
+	}
+}
+
+// A pasted Continue line resumes under the same network policy: a resume that dropped an
+// --allow-domain host would run boxes that cannot reach it.
+func TestLoopContinueCommandRepeatsTheNetworkFlags(t *testing.T) {
+	launch := []string{"claude", "--egress", "filtered", "--allow-domain", "proxy.golang.org", "--tasks", ".agent/tasks",
+		"--allow-domain", "repo.hex.pm", "--egress-rules", "my rules.yaml"}
+	network, rest, err := extractNetworkFlags(loopCommand, launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := agents.ParseTarget(rest[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := filepath.Abs("my rules.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, network)
+	want := "coop loop claude --tasks .agent/tasks --egress filtered --allow-domain proxy.golang.org --allow-domain repo.hex.pm --egress-rules " + shellWord(rules)
+	if err != nil || got != want {
+		t.Fatalf("continue command = %q (%v), want %q", got, err, want)
+	}
+	if !strings.HasSuffix(got, "'") {
+		t.Errorf("the rules path with a space was not quoted: %q", got)
+	}
+
+	network, _, err = extractNetworkFlags(loopCommand, []string{"claude", "--tasks", ".agent/tasks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loopContinueCommand(target, true, "", []string{".agent/tasks"}, network); err != nil || got != "coop loop claude --tasks .agent/tasks" {
+		t.Fatalf("continue command without network flags = %q (%v)", got, err)
 	}
 }
 

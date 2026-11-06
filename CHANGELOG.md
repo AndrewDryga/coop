@@ -39,6 +39,11 @@
   pop after a stash that saved nothing applies an older, unrelated entry. The instructions for loop
   and fork workers now forbid stash and say how to check a baseline instead: save the committed
   version of a file with `git show HEAD:<path>` and test against that copy.
+
+- **The loop's Continue line keeps your network flags.** A run started with `--egress`,
+  `--allow-domain` or `--egress-rules` printed a Continue command without them, so pasting it
+  resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
+  now repeat them, quoted for the shell.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
