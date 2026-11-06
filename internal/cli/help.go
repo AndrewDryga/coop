@@ -28,6 +28,17 @@ func helpRequested(args []string) bool {
 	return false
 }
 
+// helpAsked reports whether argv asks for Coop's page for its command: -h or --help among the words
+// Coop reads, or help as the second word. coop run reads only the options before its command, so
+// `coop run ls --help` runs ls --help.
+func helpAsked(argv []string) bool {
+	args := argv[1:]
+	if argv[0] == "run" {
+		args = args[:runCommandStart(args)]
+	}
+	return helpRequested(args) || (len(argv) > 1 && argv[1] == "help")
+}
+
 func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 
 // groupHelp prints a command group's focused help (its commandHelp entry) and returns exit
@@ -323,6 +334,7 @@ OPTIONS
 ` + networkOptionRows + `
 
   Put Coop options before --. Everything after it belongs to your command.
+  Without --, Coop options end where your command starts.
 
 EXAMPLES
   coop run -- npm test

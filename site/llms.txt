@@ -88,6 +88,7 @@ OPTIONS
   --egress-rules <path>  add the network rules in this file
 
   Put Coop options before --. Everything after it belongs to your command.
+  Without --, Coop options end where your command starts.
 
 EXAMPLES
   coop run -- npm test

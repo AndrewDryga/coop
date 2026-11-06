@@ -167,7 +167,7 @@ func Main(argv []string) int {
 	// path that was typed — including a registered agent, whose own CLI is reached explicitly with
 	// `coop <agent> -- --help`. It resolves without a runtime, a login, or the command's own
 	// required arguments, because nothing is being run.
-	if helpRequested(argv[1:]) || (len(argv) > 1 && argv[1] == "help") {
+	if helpAsked(argv) {
 		return reportExit(helpForPath(helpPath(argv), cfg, false))
 	}
 

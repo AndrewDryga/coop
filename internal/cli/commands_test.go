@@ -2285,6 +2285,46 @@ func TestCmdRunDelimiterForwardsLeadingOptions(t *testing.T) {
 	}
 }
 
+// Coop reads its options only before the command, as docker run does before its image: a command's
+// own flags reach it unchanged even when Coop has an option by that name, and an option before the
+// command still applies to the box.
+func TestCmdRunStopsReadingOptionsAtTheCommand(t *testing.T) {
+	offline := egress.None
+	for _, tc := range []struct {
+		args    []string
+		command string       // what the box runs
+		mode    *egress.Mode // the mode Coop took; nil leaves the default
+	}{
+		{[]string{"echo", "a", "--egress", "offline"}, "echo a --egress offline", nil},
+		{[]string{"--egress", "offline", "echo", "a"}, "echo a", &offline},
+		{[]string{"--egress=offline", "echo", "--egress", "open", "--allow-domain", "x.example", "--egress-rules", "r.yaml"},
+			"echo --egress open --allow-domain x.example --egress-rules r.yaml", &offline},
+		{[]string{"--egress", "offline", "--", "true"}, "true", &offline},
+		{[]string{"--", "ls", "--help"}, "ls --help", nil},
+		{[]string{"ls", "-h", "--readonly", "--bare"}, "ls -h --readonly --bare", nil},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "calls")
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir(), HomeInBox: "/home/node", BoxHome: t.TempDir(), BaseImage: "test-base", ImageOverride: "test-image"}
+			cfg.SetEgress("none") // offline, as COOP_EGRESS=offline: this fake runtime has no gateway
+			a := &app{cfg: cfg, rt: recordingRuntime(t, recorder), rtSet: true}
+			if code, err := a.cmdRun(tc.args); code != 0 || err != nil {
+				t.Fatalf("run: %d %v", code, err)
+			}
+			raw, err := os.ReadFile(recorder)
+			if err != nil || !strings.Contains(string(raw), " test-image "+tc.command+"\n") {
+				t.Errorf("the box did not run %q:\n%s %v", tc.command, raw, err)
+			}
+			if got := a.network.Mode; (got == nil) != (tc.mode == nil) || (got != nil && *got != *tc.mode) {
+				t.Errorf("Coop took --egress %v, want %v", got, tc.mode)
+			}
+			if len(a.network.Domains) > 0 || a.network.RulesFile != "" {
+				t.Errorf("Coop took the command's network options: %+v", a.network)
+			}
+		})
+	}
+}
+
 // coop run and coop shell hand piped or redirected input to the command, which reads it as it would
 // on the host: the box gets -i without a tty. /dev/null attaches nothing, and an agent session
 // never reads stdin.

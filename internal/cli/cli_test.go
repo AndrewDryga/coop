@@ -268,6 +268,27 @@ func TestMainCommandHelpArg(t *testing.T) {
 	}
 }
 
+// coop run reads -h and --help as a request for its page only before its command; from the command
+// on they are the command's. Other commands take either anywhere before --.
+func TestHelpAskedStopsAtRunsCommand(t *testing.T) {
+	for line, want := range map[string]bool{
+		"run --help":               true,
+		"run -h":                   true,
+		"run --egress open --help": true,
+		"run help":                 true,
+		"run ls --help":            false,
+		"run --egress open ls -h":  false,
+		"run -- --help":            false,
+		"claude --continue --help": true,
+		"claude -- --help":         false,
+		"build help":               true,
+	} {
+		if got := helpAsked(strings.Fields(line)); got != want {
+			t.Errorf("helpAsked(coop %s) = %v, want %v", line, got, want)
+		}
+	}
+}
+
 // TestMainBarePrintsHelp verifies bare `coop` prints help and exits 0 without a
 // container runtime (it returns before runtime detection) — so a stray `coop`
 // never launches an agent; running one is explicit (`coop claude`).

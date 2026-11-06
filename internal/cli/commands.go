@@ -282,9 +282,26 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 	return repositories, nil
 }
 
-// runOptions are the options `coop run` and `coop shell` take; for run, everything else belongs to
-// the command after `--`. They are what a mistyped option is measured against.
+// runOptions are the options `coop run` and `coop shell` take. They are what a mistyped option is
+// measured against, and where coop run's own options end (see runCommandStart).
 var runOptions = []string{"--egress", "--allow-domain", "--egress-rules"}
+
+// runCommandStart is where the command begins in coop run's arguments: at `--`, or at the first word
+// that is neither an option nor an option's value. Coop reads options only before it, as docker run
+// does before its image, so `coop run make test --egress open` hands --egress to make unchanged.
+func runCommandStart(args []string) int {
+	i := 0
+	for i < len(args) && args[i] != "--" && strings.HasPrefix(args[i], "-") {
+		count := 1
+		for _, name := range runOptions {
+			if _, n, match, err := flagValue(args, i, name); match && err == nil {
+				count = n
+			}
+		}
+		i += count
+	}
+	return i
+}
 
 // launchOffers is what a launch command has in place of the removed --readonly and --bare.
 type launchOffers struct {
@@ -329,33 +346,32 @@ func refuseRemovedExposureFlags(command string, args []string, offers launchOffe
 }
 
 func (a *app) cmdRun(args []string) (int, error) {
-	args, err := a.takeNetworkFlags(args)
+	start := runCommandStart(args)
+	options, err := a.takeNetworkFlags(args[:start])
 	if err != nil {
 		return 2, err
 	}
-	if err := refuseRemovedExposureFlags("coop run", args, launchOffers{}); err != nil {
+	if err := refuseRemovedExposureFlags("coop run", options, launchOffers{}); err != nil {
 		return 2, err
 	}
-	// Intercept the meta cases before entering the box. We can't lean on the dispatch's --help
-	// handling here: it's `--`-blind, so it would mistake `coop run -- --help` (run --help in the
-	// box) for a help request. Honor -- ourselves.
-	delimited := len(args) > 0 && args[0] == "--"
-	if delimited {
-		args = args[1:] // everything after -- runs verbatim
-	} else if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		printHelpPage(runHelp) // not forwarded to the box, where it would exec `--help` and crash
-		return 0, nil
+	if len(options) > 0 {
+		if options[0] == "-h" || options[0] == "--help" {
+			printHelpPage(runHelp) // not forwarded to the box, where it would exec `--help` and crash
+			return 0, nil
+		}
+		// An option Coop did not take is a typo, not a program: refuse it HERE, before the box is
+		// checked or built. From the command on, the same token is the command's own.
+		return 2, unknownOptionErr(options[0], "coop run", runOptions)
 	}
-	if len(args) == 0 {
+	command := args[start:]
+	if len(command) > 0 && command[0] == "--" {
+		command = command[1:] // everything after -- runs verbatim
+	}
+	if len(command) == 0 {
 		// `coop run` runs a raw command; it does not default to an agent (use `coop claude`).
 		return 2, ui.MissingArgument("command", "coop run", "coop run [<options>] -- <command> [<args>...]")
 	}
-	// A leading option Coop did not take is a typo, not a program: refuse it HERE, before the box
-	// is checked or built. Past `--` the same token is the command's own and is forwarded verbatim.
-	if !delimited && strings.HasPrefix(args[0], "-") {
-		return 2, unknownOptionErr(args[0], "coop run", runOptions)
-	}
-	return a.runInBox(args, "", nil) // raw command runner — not an agent session
+	return a.runInBox(command, "", nil) // raw command runner — not an agent session
 }
 
 // cmdShell opens the configured shell in the box. It takes only the network options: the shell is

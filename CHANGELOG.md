@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop run` leaves your command's options alone.** Coop reads its own options only before the
+  command, as `docker run` does before its image. `coop run echo a --egress offline` used to take
+  `--egress offline` out of the command and turn the box's network off; now `echo` prints
+  `a --egress offline`. The same holds for `--help` and every other option after the command.
+  Options before the command or before `--` work as before.
+
 - **Project box build messages name the right fix.** An open or offline run on an out-of-date
   project image said to run `coop build`, which in a project with filtered networking builds only
   the filtered image, so the warning never went away. It now says `coop build --egress open`. A
