@@ -30,27 +30,40 @@ const leaseHolderRunPrefix = "lease:"
 // A loop iteration's lease, a holder bound to another identity, or a holder whose process cannot
 // be proved are all left alone — the caller then gets the usual "leased by another controller".
 func stopOwnLeaseHolder(root string, item Item, actor ClaimActor) (bool, error) {
-	if actor.PID == 0 || observeTaskLease(item, time.Now()).State == leaseUnleased {
-		return false, nil
+	holder, err := stopLeaseHolderBoundTo(root, item, actor.PID, actor.StartToken)
+	if holder == 0 || err != nil {
+		return false, err
+	}
+	ui.Note("stopped your lease holder (pid %d) so %s could move", holder, item.ID)
+	return true, nil
+}
+
+// stopLeaseHolderBoundTo stops the `coop tasks lease` holder of item that is bound to the process
+// pid started at start, and waits for its lease to end. It returns the holder's pid, or 0 when no
+// such holder holds the lease: a loop iteration's lease and a holder whose own identity cannot be
+// proved are never signalled. Done stops the caller's own holder this way, and a forced claim the
+// holder of the process it took the task from.
+func stopLeaseHolderBoundTo(root string, item Item, pid int, start string) (int, error) {
+	if pid == 0 || observeTaskLease(item, time.Now()).State == leaseUnleased {
+		return 0, nil
 	}
 	meta, ok := readLeaseAuthorityMetadata(root, item.ID)
 	if !ok || !strings.HasPrefix(meta.RunID, leaseHolderRunPrefix) ||
-		meta.ActorPID != actor.PID || !processidentity.Same(meta.ActorStart, actor.StartToken) ||
+		meta.ActorPID != pid || !processidentity.Same(meta.ActorStart, start) ||
 		processidentity.Inspect(meta.ControllerPID, meta.ControllerStart) != processidentity.Match {
-		return false, nil
+		return 0, nil
 	}
 	if err := syscall.Kill(meta.ControllerPID, syscall.SIGTERM); err != nil {
-		return false, fmt.Errorf("stop own lease holder (pid %d): %w", meta.ControllerPID, err)
+		return 0, fmt.Errorf("stop lease holder (pid %d): %w", meta.ControllerPID, err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for observeTaskLease(item, time.Now()).State != leaseUnleased {
 		if time.Now().After(deadline) {
-			return false, fmt.Errorf("own lease holder (pid %d) did not release within 5s", meta.ControllerPID)
+			return 0, fmt.Errorf("lease holder (pid %d) did not release within 5s", meta.ControllerPID)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	ui.Note("stopped your lease holder (pid %d) so %s could move", meta.ControllerPID, item.ID)
-	return true, nil
+	return meta.ControllerPID, nil
 }
 
 // leaseRequest is what `coop tasks lease` learned from its arguments.
@@ -122,13 +135,20 @@ func tasksFolderLease(root string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	requested := req.actor.PID
-	req.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), req.actor)
+	requested, interactive := req.actor.PID, stdinIsTerminal()
+	req.actor = captureClaimActor(realClaimActorProbe, os.Getppid(), interactive, req.actor)
 	if requested != 0 && req.actor.PID == 0 {
 		return 1, noLiveActorProcess(requested)
 	}
 	if requested == 0 && req.actor.PID == 0 {
 		req = bindLeaseToClaimant(root, req)
+	}
+	if interactive && req.actor.PID == 0 && req.actor.Label == "" {
+		// A person holds this lease at a terminal: name them, as their claim does.
+		user, _ := taskOwnerIdentity()
+		if req.actor.Label = claimActorLabel(user); req.actor.Label == "" {
+			req.actor.Label = "person"
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -163,6 +183,11 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 	if t.State != StateInProgress {
 		return 1, fmt.Errorf("%s is %s — a lease covers work in progress; claim it first: coop tasks claim %s", t.ID, StateLabel(t.State), t.ID)
 	}
+	if record, owned, err := readTaskOwnerRecordOf(root, t); err != nil {
+		return -1, err
+	} else if refused := takenOverRefusal("lease", record, req.actor); owned && refused != nil {
+		return 1, refused
+	}
 	label := req.actor.Label
 	if label == "" {
 		label = "agent"
@@ -183,7 +208,9 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 	}
 	defer func() { _ = lease.Release() }()
 
-	// The lease line and its release line are one pair: "✓ Leased <id>" and "✓ Released <id>: why".
+	// The lease line and its end are one pair: "✓ Leased <id>" and "✓ Lease on <id> ended: why",
+	// then where that leaves the task. "Released" would read as coop tasks release, which a lease
+	// ending is not: the task stays in progress and claimed.
 	ui.OK("Leased %s%s", t.ID, claimSuffix(req.actor))
 	if len(req.command) > 0 {
 		ui.Note("  Running: %s", shellJoin(req.command))
@@ -195,11 +222,17 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 		var exit *exec.ExitError
 		switch {
 		case err == nil:
-			ui.OK("Released %s: the command finished", t.ID)
+			ui.OK("Lease on %s ended: the command finished", t.ID)
+			noteLeaseEnd(root, t.ID, req.actor)
 			return 0, nil
 		case errors.As(err, &exit):
-			// No ✓: the lease is released, but the command failed and its status is coop's exit status.
-			ui.Note("Released %s: the command exited with status %d", t.ID, exit.ExitCode())
+			// No ✓: the lease ended, but the command failed and its status is coop's exit status.
+			if ctx.Err() != nil {
+				ui.Note("Lease on %s ended: this holder was stopped, and its command with it", t.ID)
+			} else {
+				ui.Note("Lease on %s ended: the command exited with status %d", t.ID, exit.ExitCode())
+			}
+			noteLeaseEnd(root, t.ID, req.actor)
 			return exit.ExitCode(), nil
 		default:
 			return 1, fmt.Errorf("run %s: %w", req.command[0], err)
@@ -219,12 +252,14 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 	for {
 		select {
 		case <-ctx.Done():
-			ui.OK("Released %s: this holder was stopped", t.ID)
+			ui.OK("Lease on %s ended: this holder was stopped", t.ID)
+			noteLeaseEnd(root, t.ID, req.actor)
 			return 0, nil
 		case <-ticker.C:
 		}
 		if req.actor.PID != 0 && !ownerProcessLive(TaskOwnerRecord{ActorPID: req.actor.PID, ActorStart: req.actor.StartToken}) {
-			ui.OK("Released %s: %s (PID %d) has exited", t.ID, label, req.actor.PID)
+			ui.OK("Lease on %s ended: %s (PID %d) has exited", t.ID, label, req.actor.PID)
+			noteLeaseEnd(root, t.ID, req.actor)
 			return 0, nil
 		}
 		current, ok, err := CurrentTask(root, t.ID)
@@ -232,12 +267,40 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 			return -1, err
 		}
 		if !ok {
-			ui.OK("Released %s: the task is gone", t.ID)
+			ui.OK("Lease on %s ended: the task is gone", t.ID)
 			return 0, nil
 		}
 		if current.State != StateInProgress {
-			ui.OK("Released %s: the task is now %s", t.ID, strings.ReplaceAll(StateLabel(current.State), "_", " "))
+			ui.OK("Lease on %s ended: the task is now %s", t.ID, stateWords(current.State))
 			return 0, nil
 		}
 	}
 }
+
+// noteLeaseEnd says where a task stands once its lease ended. A lease is not a claim, so a task
+// still in progress stays claimed by whoever claimed it — unless a forced claim took it from this
+// holder's process, which is why the holder was stopped.
+func noteLeaseEnd(root, id string, actor ClaimActor) {
+	current, ok, err := CurrentTask(root, id)
+	if err != nil || !ok {
+		return
+	}
+	if current.State != StateInProgress {
+		ui.Note("  The task is now %s.", stateWords(current.State))
+		return
+	}
+	record, owned, err := readTaskOwnerRecordOf(root, current)
+	switch {
+	case err != nil || !owned:
+		ui.Note("  The task stays in progress.")
+	case takenFrom(record, actor):
+		ui.Note("  %s took the task over.", claimHolder(record, true))
+	case record.Kind == TaskOwnerHuman:
+		ui.Note("  The task stays in progress, claimed by %s.", claimHolder(record, true))
+	default:
+		ui.Note("  The task stays in progress, %s.", TaskOwnerLabel(record))
+	}
+}
+
+// stateWords names a lifecycle state as a sentence says it: "in progress", not "in_progress".
+func stateWords(state string) string { return strings.ReplaceAll(StateLabel(state), "_", " ") }

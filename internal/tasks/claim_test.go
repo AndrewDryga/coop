@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func fakeClaimProbe(tree map[int]int, names, tokens map[int]string) claimActorProbe {
@@ -179,6 +181,181 @@ func TestClaimBindsToAProcessAndRefusesACompetingLiveClaim(t *testing.T) {
 	}
 }
 
+// claim --force over a live claim ends the lease the displaced process holds, so the task has one
+// holder, and says whose claim it took, in its output and in log.md.
+func TestAForcedClaimEndsTheDisplacedLeaseAndNamesItsHolder(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "second", "task.md"), "# Second\n")
+	qa, _ := sleeperActor(t, "qa")
+	me := selfActor(t, "claude")
+	claim := func(actor ClaimActor, force bool) (int, error) {
+		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+	}
+	if code, err := claim(qa, false); code != 0 || err != nil {
+		t.Fatalf("qa's claim = %d, %v", code, err)
+	}
+	item, _ := mustCurrentTask(t, root, "second")
+	holderOutput := startLeaseHolderProcess(t, root, "second", qa)
+
+	out := captureStderr(t, func() {
+		if code, err := claim(me, true); code != 0 || err != nil {
+			t.Fatalf("forced claim = %d, %v", code, err)
+		}
+	})
+	if want := fmt.Sprintf("  Took over from qa (PID %d) and ended its lease.\n", qa.PID); !strings.Contains(out, want) {
+		t.Fatalf("forced claim output =\n%s\nwant it to contain %q", out, want)
+	}
+	if observed := observeTaskLease(item, time.Now()); observed.State != leaseUnleased {
+		t.Fatalf("the displaced lease is still held after the forced claim: %+v", observed)
+	}
+	want := fmt.Sprintf("✓ Lease on second ended: this holder was stopped\n  claude (PID %d) took the task over.\n", me.PID)
+	if got := holderOutput(); !strings.Contains(got, want) {
+		t.Fatalf("displaced holder output =\n%s\nwant it to contain\n%s", got, want)
+	}
+	logWant := fmt.Sprintf("- Claimed by claude (PID %d), taking it over from qa (PID %d)\n", me.PID, qa.PID)
+	if log := readFileString(filepath.Join(item.Dir, "log.md")); !strings.Contains(log, logWant) {
+		t.Fatalf("log.md =\n%s\nwant it to contain %q", log, logWant)
+	}
+	listing := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	if !strings.Contains(listing, fmt.Sprintf("claimed by claude (PID %d)", me.PID)) || strings.Contains(listing, "Reserved by") {
+		t.Fatalf("listing after the forced claim must show one holder:\n%s", listing)
+	}
+}
+
+// A forced claim takes the task from the displaced process for good: that process can no longer
+// complete it, lease it or claim it back without --force, whether an agent forced the claim or a
+// person at a terminal, whose claim binds to no process.
+func TestAProcessAForcedClaimDisplacedCannotCompleteTheTask(t *testing.T) {
+	qa, _ := sleeperActor(t, "qa")
+	for name, forcer := range map[string]ClaimActor{"agent": selfActor(t, "claude"), "person": {}} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("USER", "alice")
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+			claim := func(actor ClaimActor, force bool) (int, error) {
+				return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+			}
+			done := func(actor ClaimActor) (int, error) {
+				return tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", "done", claimOptions{actor: actor})
+			}
+			if code, err := claim(qa, false); code != 0 || err != nil {
+				t.Fatalf("qa's claim = %d, %v", code, err)
+			}
+			item, _ := mustCurrentTask(t, root, "x")
+			if err := RewriteSubtasks(item.Dir, []Subtask{{Text: "the work", Done: true}}); err != nil {
+				t.Fatal(err)
+			}
+			if code, err := claim(forcer, true); code != 0 || err != nil {
+				t.Fatalf("forced claim = %d, %v", code, err)
+			}
+
+			holder := fmt.Sprintf("claude (PID %d)", forcer.PID)
+			if forcer.PID == 0 {
+				holder = "alice"
+			}
+			cause := fmt.Sprintf("      %s took it over from qa (PID %d).\n      It is theirs now, so stop working on it.\n", holder, qa.PID)
+			for verb, try := range map[string]func() (int, error){
+				"complete": func() (int, error) { return done(qa) },
+				"claim":    func() (int, error) { return claim(qa, false) },
+				"lease": func() (int, error) {
+					return holdTaskLease(context.Background(), root, leaseRequest{id: "x", actor: qa}, time.Millisecond)
+				},
+			} {
+				code, err := try()
+				var usage *ui.UsageError
+				if code == 0 || !errors.Is(err, errTaskTakenOver) || !errors.As(err, &usage) {
+					t.Fatalf("%s by the displaced process = %d, %v; want a refusal", verb, code, err)
+				}
+				if want := "\n✗ Could not " + verb + " x\n\n" + cause; usage.Render(ui.Palette{}) != want {
+					t.Fatalf("%s refusal:\n%s\nwant:\n%s", verb, usage.Render(ui.Palette{}), want)
+				}
+			}
+			if current, ok := mustCurrentTask(t, root, "x"); !ok || current.State != StateInProgress {
+				t.Fatalf("a refused completion moved the task: %+v", current)
+			}
+			if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != forcer.PID || rec.TakenFromPID != qa.PID {
+				t.Fatalf("owner after the refusals = %+v, want the forced claim kept", rec)
+			}
+			if code, err := done(forcer); code != 0 || err != nil {
+				t.Fatalf("done by the new holder = %d, %v", code, err)
+			}
+		})
+	}
+}
+
+// A process that lost a task to --force may take it back the same way; the task is then its own.
+func TestADisplacedProcessTakesTheTaskBackOnlyWithForce(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+	qa, _ := sleeperActor(t, "qa")
+	claim := func(actor ClaimActor, force bool) (int, error) {
+		return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+	}
+	for _, step := range []struct {
+		actor ClaimActor
+		force bool
+	}{{qa, false}, {ClaimActor{}, true}, {qa, true}} {
+		if code, err := claim(step.actor, step.force); code != 0 || err != nil {
+			t.Fatalf("claim by %+v (force %t) = %d, %v", step.actor, step.force, code, err)
+		}
+	}
+	if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != qa.PID || rec.TakenFromPID != 0 {
+		t.Fatalf("owner after qa took it back = %+v, want qa's claim with no mark", rec)
+	}
+	item, _ := mustCurrentTask(t, root, "x")
+	if err := RewriteSubtasks(item.Dir, []Subtask{{Text: "the work", Done: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", "done", claimOptions{actor: qa}); code != 0 || err != nil {
+		t.Fatalf("done by qa after taking it back = %d, %v", code, err)
+	}
+}
+
+// A claim or release refused for another live process's claim names that process and offers the
+// one command that gets past it: taking the claim over. Release itself would be refused again.
+func TestLiveClaimRefusalsNameTheHolderAndOfferOnlyTheTakeover(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "second", "task.md"), "# Second\n")
+	qa, _ := sleeperActor(t, "qa")
+	me := selfActor(t, "claude")
+	claim := func(actor ClaimActor, force bool) (int, error) {
+		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+	}
+	if code, err := claim(qa, false); code != 0 || err != nil {
+		t.Fatalf("qa's claim = %d, %v", code, err)
+	}
+	cause := fmt.Sprintf("      It is claimed by qa (PID %d), which is still running.\n", qa.PID)
+	code, err := claim(me, false)
+	var usage *ui.UsageError
+	if code != 1 || !errors.Is(err, errTaskClaimedByOther) || !errors.As(err, &usage) {
+		t.Fatalf("claim over a live claim = %d, %v; want a drawn refusal", code, err)
+	}
+	if want := "\n✗ Could not claim second\n\n" + cause + "\n  Take it over: coop tasks claim second --force\n"; usage.Render(ui.Palette{}) != want {
+		t.Fatalf("claim refusal:\n%s\nwant:\n%s", usage.Render(ui.Palette{}), want)
+	}
+	item, _ := mustCurrentTask(t, root, "second")
+	err = ReleaseTrustedTask(root, item, me)
+	if !errors.Is(err, errTaskClaimedByOther) || !errors.As(err, &usage) {
+		t.Fatalf("release of a live claim = %v; want a drawn refusal", err)
+	}
+	want := "\n✗ Could not release second\n\n" + cause +
+		"\n  Take it over:    coop tasks claim second --force\n  Then release it: coop tasks release second\n"
+	if got := usage.Render(ui.Palette{}); got != want {
+		t.Fatalf("release refusal:\n%s\nwant:\n%s", got, want)
+	}
+	// The commands offered work, in that order.
+	if code, err := claim(me, true); code != 0 || err != nil {
+		t.Fatalf("the offered takeover = %d, %v", code, err)
+	}
+	item, _ = mustCurrentTask(t, root, "second")
+	if err := ReleaseTrustedTask(root, item, me); err != nil {
+		t.Fatalf("the offered release = %v", err)
+	}
+	if current, _ := mustCurrentTask(t, root, "second"); current.State != StateTodo {
+		t.Fatalf("task after the release = %s, want todo", current.State)
+	}
+}
+
 func TestReleaseGoneOwnersReleasesOnlyDeadProcessBoundClaims(t *testing.T) {
 	root := t.TempDir()
 	for _, id := range []string{"dead", "alive", "person"} {
@@ -236,7 +413,7 @@ func TestAClaimFromAnotherSystemIsKept(t *testing.T) {
 		t.Fatalf("owner after the refused claim = %+v, %t", rec, ok)
 	}
 	// Coop cannot tell whether that process still runs, so a release says how to take the task over.
-	take := "which Coop cannot check from here — take it over: coop tasks claim --force far"
+	take := "which Coop cannot check from here. — Take it over: coop tasks claim far --force"
 	if code, err := CmdTasksFolder("", root, []string{"release", "far"}); code == 0 || !errors.Is(err, errTaskClaimedByOther) || !strings.Contains(err.Error(), take) {
 		t.Fatalf("release of another system's claim = %d, %v; want %q", code, err, take)
 	}

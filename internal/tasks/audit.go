@@ -332,7 +332,8 @@ type completionOptions struct {
 	force bool       // close even though the checklist is empty or still open
 	actor ClaimActor // who ran it, named in the log note a forced close leaves
 	// refuse, when set, judges the task's owner record while the lease authority is held: a box's
-	// tools refuse a task someone else holds (CompleteBoxTask).
+	// tools refuse a task someone else holds (CompleteBoxTask), and `coop tasks done` refuses the
+	// process a forced claim took the task from (takenOverRefusal).
 	refuse func(TaskOwnerRecord) error
 	// landed, when set, takes the task from the fork assignment that holds it, whose commit already
 	// reached the project's branch (`coop tasks done --from-fork`), instead of refusing it.

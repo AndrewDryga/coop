@@ -81,18 +81,21 @@ func TestClaimBlockAndUnblockJournalInTheLog(t *testing.T) {
 	}
 }
 
-// The lease names the command it runs the way a shell would read it back, and its release line is
-// the same shape as the line that took the lease.
+// The lease names the command it runs the way a shell would read it back, and the line that ends
+// it pairs with the line that took it. A lease is not a claim, so the end says the task stays
+// claimed, and never "Released", which reads as coop tasks release.
 func TestLeaseOutputQuotesTheCommandAndPairsItsLines(t *testing.T) {
+	t.Setenv("USER", "alice")
 	root := t.TempDir()
 	inProgressTask(t, root, "cmd")
+	const stays = "  The task stays in progress, claimed by alice.\n"
 	for _, tc := range []struct {
 		command []string
 		code    int
 		end     string
 	}{
-		{[]string{"sh", "-c", "echo inside-lease; exit 0"}, 0, "✓ Released cmd: the command finished\n"},
-		{[]string{"sh", "-c", "exit 3"}, 3, "Released cmd: the command exited with status 3\n"},
+		{[]string{"sh", "-c", "echo inside-lease; exit 0"}, 0, "✓ Lease on cmd ended: the command finished\n" + stays},
+		{[]string{"sh", "-c", "exit 3"}, 3, "Lease on cmd ended: the command exited with status 3\n" + stays},
 	} {
 		out := captureStderr(t, func() {
 			code, err := holdTaskLease(context.Background(), root, leaseRequest{id: "cmd", actor: ClaimActor{Label: "codex"}, command: tc.command}, time.Millisecond)

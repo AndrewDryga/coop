@@ -80,6 +80,11 @@ type TaskOwnerRecord struct {
 	// ActorTarget is the full target of the agent session the claim was made for (ClaimActor.Target),
 	// which coop tasks watch names the claim by. Display only; empty for a claim Coop has no session for.
 	ActorTarget string `json:"actor_target,omitempty"`
+	// TakenFromPID and TakenFromStart name the live process a forced claim took the task from
+	// (coop tasks claim --force). That process can no longer complete, lease or plainly re-claim the
+	// task: it is not its own any more (see takenFrom).
+	TakenFromPID   int    `json:"taken_from_pid,omitempty"`
+	TakenFromStart string `json:"taken_from_start,omitempty"`
 
 	Fork *ForkTaskOwner `json:"fork,omitempty"`
 }
@@ -165,10 +170,15 @@ func validateTaskOwnerRecord(record TaskOwnerRecord, id string) error {
 				(record.ActorPID != 0 && (record.ActorPID <= 1 || !processidentity.Stable(record.ActorStart))) {
 				return errors.New("invalid claim actor identity")
 			}
+			if (record.TakenFromPID != 0) != (record.TakenFromStart != "") ||
+				(record.TakenFromPID != 0 && (record.TakenFromPID <= 1 || !processidentity.Stable(record.TakenFromStart))) {
+				return errors.New("invalid taken-over process identity")
+			}
 		case TaskOwnerFork:
 			owner := record.Fork
 			if owner == nil || record.Source != "" || record.User != "" || record.Host != "" ||
 				!record.ClaimedAt.IsZero() || record.Actor != "" || record.ActorPID != 0 || record.ActorStart != "" ||
+				record.TakenFromPID != 0 || record.TakenFromStart != "" ||
 				owner.Fork.Name == "" ||
 				!forkspace.ValidGeneration(owner.Fork.Generation) || !validAssignmentID(owner.AssignmentID) ||
 				!validForkPhase(owner.Phase) || !filepath.IsAbs(owner.Projection) ||
@@ -389,25 +399,52 @@ func taskOwnerLabel(record TaskOwnerRecord, includePID bool) string {
 	if record.Kind == TaskOwnerFork && record.Fork != nil {
 		return "assigned to fork " + record.Fork.Fork.Name + " (" + string(record.Fork.Phase) + ")"
 	}
-	who := record.User
-	if record.Actor != "" {
-		who = record.Actor
-	}
-	if record.ActorPID == 0 {
-		return "claimed by " + who
-	}
-	label := "claimed by " + who
-	if includePID {
-		where := ""
-		if claimantElsewhere(record) {
-			where = " on " + processidentity.System(record.ActorStart)
-		}
-		label += fmt.Sprintf(" (PID %d%s)", record.ActorPID, where)
-	}
+	label := "claimed by " + claimHolder(record, includePID)
 	if !ownerProcessLive(record) {
 		label += " · owner process has stopped"
 	}
 	return label
+}
+
+// claimHolder names who holds a human claim: the claiming agent, with its PID when asked, or the
+// person who claimed it at a terminal.
+func claimHolder(record TaskOwnerRecord, includePID bool) string {
+	who := record.User
+	if record.Actor != "" {
+		who = record.Actor
+	}
+	if record.ActorPID == 0 || !includePID {
+		return who
+	}
+	where := ""
+	if claimantElsewhere(record) {
+		where = " on " + processidentity.System(record.ActorStart)
+	}
+	return fmt.Sprintf("%s (PID %d%s)", who, record.ActorPID, where)
+}
+
+// takenFrom reports whether a forced claim took this task from actor's process. A person at a
+// terminal binds to no process, so it is never the one a task was taken from.
+func takenFrom(record TaskOwnerRecord, actor ClaimActor) bool {
+	return record.TakenFromPID != 0 && record.TakenFromPID == actor.PID &&
+		processidentity.Same(record.TakenFromStart, actor.StartToken)
+}
+
+// errTaskTakenOver is the refusal the process a forced claim displaced gets (takenOverRefusal).
+var errTaskTakenOver = errors.New("task was taken over by a forced claim")
+
+// takenOverRefusal refuses the process a forced claim took a task from, when it tries to complete,
+// lease or plainly re-claim it: the task is the new claimant's now. It is nil for anyone else.
+func takenOverRefusal(verb string, record TaskOwnerRecord, actor ClaimActor) error {
+	if !takenFrom(record, actor) {
+		return nil
+	}
+	id, who := ui.SafeInline(record.TaskID), claimHolder(record, true)
+	return &drawnRefusal{
+		usage: ui.CommandFailed("Could not "+verb+" "+id,
+			who+" took it over from "+claimedBy(actor)+".\nIt is theirs now, so stop working on it."),
+		err: fmt.Errorf("%w: %s took %s over from %s", errTaskTakenOver, who, id, claimedBy(actor)),
+	}
 }
 
 func refuseForkTaskOwner(root, id, action string) error {

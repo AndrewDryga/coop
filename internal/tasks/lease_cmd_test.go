@@ -461,6 +461,95 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	}
 }
 
+// startLeaseHolderProcess runs `coop tasks lease`'s hold loop in a child process bound to actor, as
+// an agent's background holder runs, and waits until it holds the lease. The returned func waits
+// for the child to exit and returns everything it printed.
+func startLeaseHolderProcess(t *testing.T, root, id string, actor ClaimActor) func() string {
+	t.Helper()
+	outputPath := filepath.Join(t.TempDir(), "holder.log")
+	output, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDoneStopsTheCallersOwnLeaseHolderOnly$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"COOP_LEASE_HELPER=1", TestLeaseAuthorityRootEnv+"="+os.Getenv(TestLeaseAuthorityRootEnv),
+		"COOP_TEST_LEASE_HOLDER_ROOT="+root, "COOP_TEST_LEASE_HOLDER_TASK="+id,
+		"COOP_TEST_LEASE_HOLDER_ACTOR_PID="+strconv.Itoa(actor.PID), "COOP_TEST_LEASE_HOLDER_ACTOR_START="+actor.StartToken)
+	cmd.Stdout, cmd.Stderr = output, output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(done) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Error("lease holder did not exit after cleanup")
+		}
+	})
+	read := func() string {
+		body, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	wait.For(t, "holder took its lease", func() bool {
+		if strings.Contains(read(), "  Holding until") {
+			return true
+		}
+		select {
+		case <-done:
+			t.Fatalf("holder exited before taking its lease: %v\n%s", waitErr, read())
+		default:
+		}
+		return false
+	})
+	return func() string {
+		t.Helper()
+		select {
+		case <-done:
+		case <-time.After(wait.Deadline):
+			t.Fatalf("lease holder did not exit:\n%s", read())
+		}
+		return read()
+	}
+}
+
+// A lease a person takes at a terminal names that person, as their claim does, never "agent".
+func TestAPersonsLeaseNamesThePerson(t *testing.T) {
+	t.Setenv("USER", "alice")
+	old := stdinIsTerminal
+	stdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = old })
+	root := t.TempDir()
+	item := inProgressTask(t, root, "mine")
+	out := captureStderr(t, func() {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if code, err := CmdTasksFolder("", root, []string{"lease", "mine", "--", "sleep", "1"}); code != 0 || err != nil {
+				t.Errorf("lease at a terminal = %d, %v", code, err)
+			}
+		}()
+		if observed := waitLease(t, item, leaseBusy); observed.Provider != "alice" {
+			t.Errorf("a person's lease is held by %q, want alice", observed.Provider)
+		}
+		if marker := inProgressMarker(item); !strings.HasSuffix(marker, "Reserved by alice") {
+			t.Errorf("listing of a person's lease = %q, want it reserved by alice", marker)
+		}
+		<-done
+	})
+	if !strings.HasPrefix(out, "✓ Leased mine as alice\n") {
+		t.Fatalf("lease output =\n%s", out)
+	}
+}
+
 func TestListShowsAHeldLeaseBesideTheClaim(t *testing.T) {
 	root := t.TempDir()
 	item := inProgressTask(t, root, "both")

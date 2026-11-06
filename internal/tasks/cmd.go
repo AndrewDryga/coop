@@ -663,7 +663,8 @@ type claimOptions struct {
 	project    string
 }
 
-// stdinIsTerminal is the one terminal check done --force and --from-fork make; tests replace it.
+// stdinIsTerminal is the terminal check done --force and --from-fork make, and the one that tells a
+// person's lease from an agent's; tests replace it.
 var stdinIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
 
 // errForceCloseNeedsTerminal keeps `coop tasks done --force` a person's tool. An agent's shell
@@ -686,49 +687,103 @@ func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	return existing.ActorPID != actor.PID || !processidentity.Same(existing.ActorStart, actor.StartToken)
 }
 
+// claimTakeover is the claim a new claim replaced: one whose process had stopped, or, with --force,
+// one whose process still runs. A nil from replaced nothing worth naming.
+type claimTakeover struct {
+	from *TaskOwnerRecord
+	live bool
+}
+
+// note is the claim result's line about the claim this one replaced.
+func (c claimTakeover) note(leaseEnded bool) string {
+	who := claimHolder(*c.from, true)
+	switch {
+	case !c.live:
+		return "Took over from " + who + ", whose process has stopped."
+	case leaseEnded:
+		return "Took over from " + who + " and ended its lease."
+	}
+	return "Took over from " + who + "."
+}
+
 // claimTaskOwnerRecord writes durable evidence that a HUMAN — not a loop-adopted process — owns
 // this task, so AssignLoopTaskOnly refuses to adopt it even long after the `coop tasks claim`
 // process that called this has exited. Called ONLY from the interactive claim path below: the
 // loop's own todo->in_progress adoption (AssignLoopTaskOnly -> MoveTaskDir) must never call this, or
-// the loop would lock itself out of its own resumed work. It returns the label of a previous owner
-// whose process was gone, so the caller can say the claim was a takeover.
-func claimTaskOwnerRecord(root, id string, opts claimOptions) (string, error) {
+// the loop would lock itself out of its own resumed work. It returns the claim it took over, so the
+// caller can say whose it was and end the lease of a process --force displaced.
+func claimTaskOwnerRecord(root, id string, opts claimOptions) (claimTakeover, error) {
 	lock, err := lockTaskOwner(root, id)
 	if err != nil {
-		return "", err
+		return claimTakeover{}, err
 	}
 	defer lock.Close()
-	replaced := ""
-	if record, ok, err := lock.Read(); err != nil {
-		return "", err
-	} else if ok && record.Kind == TaskOwnerFork {
-		return "", fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(record))
-	} else if ok && !opts.force && competingClaim(record, opts.actor) {
-		return "", fmt.Errorf("%w: %s is %s — release it first (coop tasks release %s) or take it over with --force",
-			errTaskClaimedByOther, id, TaskOwnerLabel(record), id)
-	} else if ok && record.ActorPID != 0 && !ownerProcessLive(record) {
-		replaced = TaskOwnerLabel(record)
-	}
-	item, ok, err := CurrentTask(root, id)
+	previous, ok, err := lock.Read()
 	if err != nil {
-		return "", err
+		return claimTakeover{}, err
 	}
-	if !ok {
-		return "", errors.New("task changed before its claim could be recorded")
+	var takeover claimTakeover
+	switch {
+	case !ok:
+	case previous.Kind == TaskOwnerFork:
+		return claimTakeover{}, fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(previous))
+	case previous.ActorPID != 0 && !ownerProcessLive(previous):
+		takeover = claimTakeover{from: &previous}
+	case !opts.force && takenFrom(previous, opts.actor):
+		return claimTakeover{}, takenOverRefusal("claim", previous, opts.actor)
+	case competingClaim(previous, opts.actor):
+		if !opts.force {
+			return claimTakeover{}, liveClaimRefusal("claim", id, previous)
+		}
+		takeover = claimTakeover{from: &previous, live: true}
+	}
+	item, found, err := CurrentTask(root, id)
+	if err != nil {
+		return claimTakeover{}, err
+	}
+	if !found {
+		return claimTakeover{}, errors.New("task changed before its claim could be recorded")
 	}
 	record, err := humanClaimRecord(root, item, opts.actor)
 	if err != nil {
-		return "", err
+		return claimTakeover{}, err
 	}
-	return replaced, lock.Write(record)
+	switch {
+	case takeover.live:
+		record.TakenFromPID, record.TakenFromStart = previous.ActorPID, previous.ActorStart
+	case ok && !takenFrom(previous, opts.actor):
+		// A later claim keeps the mark, until the marked process takes the task back with --force.
+		record.TakenFromPID, record.TakenFromStart = previous.TakenFromPID, previous.TakenFromStart
+	}
+	return takeover, lock.Write(record)
+}
+
+// liveClaimRefusal refuses to claim or release a task another live process holds. Only --force
+// takes such a claim over, so that is the one command offered; a release can follow it.
+func liveClaimRefusal(verb, id string, record TaskOwnerRecord) error {
+	running := "which is still running"
+	if claimantElsewhere(record) {
+		running = "which Coop cannot check from here"
+	}
+	safe := ui.SafeInline(id)
+	rows := [][2]string{{"Take it over:", "coop tasks claim " + safe + " --force"}}
+	if verb == "release" {
+		rows = append(rows, [2]string{"Then release it:", "coop tasks release " + safe})
+	}
+	return &drawnRefusal{
+		usage: ui.CommandFailed("Could not "+verb+" "+safe, "It is "+TaskOwnerLabel(record)+", "+running+".", rows...),
+		err:   fmt.Errorf("%w: %s is %s", errTaskClaimedByOther, id, TaskOwnerLabel(record)),
+	}
 }
 
 // claimedBy names the actor a claim bound to, for the result's "Claimed by:" row. A claim at a
 // terminal binds to nothing and has no label — the row is omitted rather than filled with a guess.
 func claimedBy(actor ClaimActor) string {
 	switch {
-	case actor.PID != 0:
+	case actor.PID != 0 && actor.Label != "":
 		return fmt.Sprintf("%s (PID %d)", actor.Label, actor.PID)
+	case actor.PID != 0:
+		return fmt.Sprintf("PID %d", actor.PID)
 	case actor.Label != "":
 		return actor.Label
 	}
@@ -839,9 +894,12 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			return 1, err
 		}
 	}
-	completion := completionOptions{force: opts.forceClose, actor: opts.actor}
+	completion := completionOptions{force: opts.forceClose, actor: opts.actor, refuse: func(record TaskOwnerRecord) error {
+		return takenOverRefusal("complete", record, opts.actor)
+	}}
 	var forced *IncompleteChecklistError // what a forced close left open, from the close itself
 	var landed *LandedForkTask           // the fork a --from-fork completion took the task from
+	var takeover claimTakeover           // the claim this claim replaced
 	complete := func() (*IncompleteChecklistError, error) {
 		if !opts.fromFork {
 			return completeTrustedTask(opts.project, root, t, completion)
@@ -869,19 +927,29 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			// Re-claiming a task already in progress (yours, or one the loop currently holds) is a
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
 			// put it there.
-			replaced, err := claimTaskOwnerRecord(root, t.ID, opts)
-			if errors.Is(err, errTaskClaimedByOther) {
+			takeover, err = claimTaskOwnerRecord(root, t.ID, opts)
+			if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskTakenOver) {
 				return 1, err
 			}
 			if err != nil {
 				return -1, fmt.Errorf("%s is already in progress, but recording your claim failed: %w", t.ID, err)
 			}
 			note := "Already in progress; the claim now belongs to you."
-			if replaced != "" {
-				note = "Previous owner: " + replaced
+			var stopErr error
+			if takeover.from != nil {
+				holder := 0
+				if takeover.live {
+					// The displaced process may still hold the task's lease. End it, as the task moving
+					// would, so the task has one holder and that process stops working on it.
+					holder, stopErr = stopLeaseHolderBoundTo(root, t, takeover.from.ActorPID, takeover.from.ActorStart)
+				}
+				note = takeover.note(holder != 0)
 			}
-			logClaim(t.Dir, opts.actor)
+			logClaim(t.Dir, opts.actor, takeover)
 			printClaimResult(t, opts.actor, note)
+			if stopErr != nil {
+				return 1, fmt.Errorf("the claim is yours, but the lease of %s did not end: %w", claimHolder(*takeover.from, true), stopErr)
+			}
 		default:
 			ui.Note("%s is already %s.", t.Title, StateLabel(newState))
 		}
@@ -913,8 +981,8 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		// blocking the loop forever: fail-closed cuts both ways here (no gap while claiming, no
 		// orphan record when claiming fails).
 		if newState == StateInProgress {
-			if _, err := claimTaskOwnerRecord(root, t.ID, opts); err != nil {
-				if errors.Is(err, errTaskClaimedByOther) {
+			if takeover, err = claimTaskOwnerRecord(root, t.ID, opts); err != nil {
+				if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskTakenOver) {
 					return 1, err
 				}
 				return -1, fmt.Errorf("record claim ownership for %s: %w", t.ID, err)
@@ -929,8 +997,12 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 	}
 	switch newState {
 	case StateInProgress:
-		logClaim(filepath.Join(root, StateInProgress, t.ID), opts.actor)
-		printClaimResult(t, opts.actor, "")
+		note := "" // a lease covers only work in progress, so a todo task has none to end
+		if takeover.from != nil {
+			note = takeover.note(false)
+		}
+		logClaim(filepath.Join(root, StateInProgress, t.ID), opts.actor, takeover)
+		printClaimResult(t, opts.actor, note)
 	case StateDone:
 		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
@@ -967,15 +1039,20 @@ func claimRefusal(t Item) error {
 	return nil
 }
 
-// logClaim journals who took the task in its log.md, as park, block and unblock journal theirs.
-// Best-effort: the claim already holds, and a journal line is no reason to undo it.
-func logClaim(dir string, actor ClaimActor) {
+// logClaim journals who took the task in its log.md, as park, block and unblock journal theirs,
+// and whose claim that replaced. Best-effort: the claim already holds, and a journal line is no
+// reason to undo it.
+func logClaim(dir string, actor ClaimActor, takeover claimTakeover) {
 	who := claimedBy(actor)
 	if who == "" {
 		user, host := taskOwnerIdentity()
 		who = user + "@" + host
 	}
-	appendTaskLog(dir, "Claimed by "+who)
+	line := "Claimed by " + who
+	if takeover.from != nil {
+		line += ", taking it over from " + claimHolder(*takeover.from, true)
+	}
+	appendTaskLog(dir, line)
 }
 
 // printClaimResult is the claim's result: who now holds the task, anything exceptional about how
@@ -1054,11 +1131,7 @@ func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 		if !competingClaim(record, actor) {
 			return nil
 		}
-		running := "which is still running"
-		if claimantElsewhere(record) {
-			running = "which Coop cannot check from here — take it over: coop tasks claim --force " + t.ID
-		}
-		return fmt.Errorf("%w: %s is %s, %s", errTaskClaimedByOther, t.ID, TaskOwnerLabel(record), running)
+		return liveClaimRefusal("release", t.ID, record)
 	})
 }
 
@@ -1079,6 +1152,9 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	var held *forkHeldError
 	if errors.As(err, &held) {
 		return &drawnRefusal{usage: held.completionRefusal(), err: err}
+	}
+	if errors.Is(err, errTaskTakenOver) {
+		return err // drawn already, and a retry cannot help: the task is someone else's now
 	}
 	if errors.Is(err, errFinalReviewRunning) {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID),

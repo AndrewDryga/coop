@@ -81,6 +81,16 @@
   fork's Mode said Default. Once those settings apply, and before your first message reaches the
   agent, Coop now sends the editor the agent's own options, and the older model list in the
   session answer names the target model and effort too.
+
+- **`coop tasks claim --force` ends the old holder's lease.** Taking over a claim that another
+  running process held left that process's `coop tasks lease` running, so `coop tasks ls` showed
+  two holders and the old process could still complete the task. The forced claim now ends that
+  lease, says whose claim it took ("Took over from qa (PID 4242) and ended its lease.") and
+  records it in `log.md`. The process it took the task from can no longer complete or lease the
+  task, or claim it back without `--force`. A claim or release refused for another live claim now
+  offers `coop tasks claim <id> --force`, instead of a release that was refused too. A lease ends
+  with "Lease on <id> ended" and who still holds the claim, instead of "Released", and a lease
+  taken at a terminal shows the person, not "agent".
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed
