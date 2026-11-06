@@ -42,6 +42,14 @@
   `XDG_CONFIG_HOME` and `XDG_STATE_HOME` get the same check, `coop.conf` names the line of a
   relative one, and an unset `HOME` no longer puts Coop's settings in `.config` under the current
   folder. An empty `COOP_MCP_FILE` or `COOP_PRESETS_DIR` still means none.
+
+- **The first account you sign in to becomes the default, even when you name it.** After
+  `coop login gemini@work` on a new setup, `coop gemini` said Gemini needed a sign-in and offered
+  another `coop login`, because only an account named "default" counted as the default. Now an
+  agent's first account becomes its default, and later named sign-ins leave the default alone.
+  When a run still finds no default account, for example after its account was deleted by hand, it
+  lists the signed-in accounts and offers `coop credentials <agent> <account> default` or
+  `coop <agent>@<account>` instead of a sign-in.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

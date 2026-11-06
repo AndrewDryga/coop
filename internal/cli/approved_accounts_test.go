@@ -78,6 +78,20 @@ func TestApprovedAccountInputErrors(t *testing.T) {
 			}
 			return err
 		}},
+		// A default that names no account, beside a signed-in one, offers that account rather than
+		// another sign-in; what was typed is fine, so the run fails with 1.
+		{"03i-default-account-missing", func(t *testing.T) error {
+			a := newApp(t)
+			gemini, _ := agents.Get("gemini")
+			if err := box.SaveHostCredential(a.cfg, gemini, "work2", []byte("key")); err != nil {
+				t.Fatal(err)
+			}
+			code, err := a.launchAgent("gemini", nil)
+			if code != 1 {
+				t.Errorf("a missing default exited %d, want 1", code)
+			}
+			return err
+		}},
 		{"05-login-needs-terminal", func(t *testing.T) error {
 			code, err := newApp(t).loginTo("claude", "work")
 			return codeErr(t, code, err)
@@ -137,8 +151,9 @@ func TestApprovedUnauthenticatedNudge(t *testing.T) {
 // handoff before it, and each outcome after it. The provider's output between them is its own.
 func TestApprovedLoginStates(t *testing.T) {
 	assertApprovedOutput(t, "05-login-handoff", captureStderr(t, func() { loginHandoff("claude", "work") }))
-	assertApprovedOutput(t, "05-login-success", captureStderr(t, func() { loginResult("claude", "work", true) }))
-	assertApprovedOutput(t, "05-login-unconfirmed", captureStderr(t, func() { loginResult("claude", "work", false) }))
+	assertApprovedOutput(t, "05-login-success", captureStderr(t, func() { loginResult("claude", "work", true, false) }))
+	assertApprovedOutput(t, "05-login-first-account", captureStderr(t, func() { loginResult("claude", "work", true, true) }))
+	assertApprovedOutput(t, "05-login-unconfirmed", captureStderr(t, func() { loginResult("claude", "work", false, false) }))
 	assertApprovedOutput(t, "05-login-cancelled", captureStderr(t, loginStopped))
 }
 

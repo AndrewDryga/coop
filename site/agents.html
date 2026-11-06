@@ -350,8 +350,9 @@ coop loop claude:opus@work     # or a one-off single target, no preset
 <p>Switching accounts loses no work. Each loop iteration is a fresh run, and the queue and Git carry
 the progress.</p>
 <h3 id="choose-the-default-account">Choose the default account</h3>
-<p>The default account is the login a plain interactive <code>coop claude</code> uses. Account names have no
-special meaning, so choose names that help you recognize them. Use
+<p>The default account is the login a plain interactive <code>coop claude</code> uses. The first account you
+sign in to becomes the default, even when you give it a name. Account names have no special
+meaning, so choose names that help you recognize them. Use
 <code>coop credentials &lt;agent&gt; &lt;credential&gt; default</code> to set the default, or
 <code>coop credentials &lt;agent&gt; &lt;credential&gt; rm</code> to remove an account:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Choose the default account code example" tabindex="0"><code class="language-bash">coop credentials claude personal default  # `coop claude` now runs on the personal account

@@ -3,13 +3,16 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // EffectiveProfiles returns stored profile directories plus one synthetic env-backed default when
@@ -39,6 +42,34 @@ func EffectiveProfiles(cfg *config.Config, agent string) ([]string, error) {
 		})
 	}
 	return profiles, err
+}
+
+// MissingDefaultAccount refuses a run of agent's default account when no account of that name
+// exists but others are signed in, as a default whose account was deleted leaves it. Another
+// sign-in would only add one more account, so the refusal names the signed-in ones and the two
+// commands that use one. It is nil when account is not the default, when the default exists, when
+// the accounts could not all be listed, or when no other account is signed in.
+func MissingDefaultAccount(cfg *config.Config, agent, account string) error {
+	ag, ok := agents.Get(agent)
+	if !ok || account != cfg.DefaultProfileOf(agent) {
+		return nil
+	}
+	profiles, err := EffectiveProfiles(cfg, agent)
+	if err != nil || slices.Contains(profiles, account) {
+		return nil
+	}
+	var signedIn []string
+	for _, profile := range profiles {
+		if ProfileSignIn(cfg, agent, profile, time.Now()) == agents.SignedIn {
+			signedIn = append(signedIn, profile)
+		}
+	}
+	if len(signedIn) == 0 {
+		return nil
+	}
+	return ui.CommandFailed(ag.DisplayName()+" has no default account", "Signed in: "+strings.Join(signedIn, ", "),
+		[2]string{"Choose a default:", fmt.Sprintf("coop credentials %s %s default", agent, signedIn[0])},
+		[2]string{"Use this account:", "coop " + agent + "@" + signedIn[0]})
 }
 
 // ProfileAuthed reports whether the named agent profile has its credential marker file, or is the

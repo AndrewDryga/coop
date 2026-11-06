@@ -1,0 +1,7 @@
+
+✗ Gemini CLI has no default account
+
+      Signed in: work2
+
+  Choose a default: coop credentials gemini work2 default
+  Use this account: coop gemini@work2

@@ -303,6 +303,7 @@ EXAMPLES
 ACCOUNTS
   Without @account, signs in to the agent's default account.
   Use a name such as @work to keep a separate login.
+  An agent's first account becomes its default, named or not.
 
 Show accounts:  coop credentials
 Start an agent: coop claude

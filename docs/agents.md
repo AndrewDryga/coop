@@ -191,8 +191,9 @@ the progress.
 
 ### Choose the default account
 
-The default account is the login a plain interactive `coop claude` uses. Account names have no
-special meaning, so choose names that help you recognize them. Use
+The default account is the login a plain interactive `coop claude` uses. The first account you
+sign in to becomes the default, even when you give it a name. Account names have no special
+meaning, so choose names that help you recognize them. Use
 `coop credentials <agent> <credential> default` to set the default, or
 `coop credentials <agent> <credential> rm` to remove an account:
 

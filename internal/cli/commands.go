@@ -402,6 +402,11 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err := a.applyRunTarget(t, "coop "+tool); err != nil {
 		return refusalExit(err), err
 	}
+	// A default that names no account, beside accounts that are signed in, is refused in every
+	// network mode: an open box would start the agent with no sign-in although one is saved.
+	if err := box.MissingDefaultAccount(a.cfg, tool, a.cfg.ActiveProfile(tool)); err != nil {
+		return refusalExit(err), err
+	}
 	a.nudgeIfUnauthed(tool)
 	peers, err := a.resolvePeers("coop "+tool, peerVals)
 	if err != nil {
@@ -432,6 +437,9 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 		return 2, err // peer forms first, as in launchAgent
 	}
 	if err := a.applyPinnedPreset(p, tool); err != nil {
+		return refusalExit(err), err
+	}
+	if err := box.MissingDefaultAccount(a.cfg, tool, a.cfg.ActiveProfile(tool)); err != nil {
 		return refusalExit(err), err
 	}
 	a.nudgeIfUnauthed(tool)
@@ -740,7 +748,23 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	}
 	// Exiting zero is not proof: the provider may have been dismissed without writing a usable
 	// credential, and a green ✓ over that would send the user into a failing run.
-	loginResult(tool, profile, box.ProfileCredentialReady(originalConfig, tool, profile, time.Now()))
+	return finishLogin(originalConfig, tool, profile)
+}
+
+// finishLogin reports a saved sign-in. The first account an agent gets becomes its default even
+// when it has a name, so coop <agent> runs it; an agent that already has accounts keeps its default.
+func finishLogin(cfg *config.Config, tool, profile string) (int, error) {
+	ready := box.ProfileCredentialReady(cfg, tool, profile, time.Now())
+	madeDefault := false
+	if profiles, err := box.EffectiveProfiles(cfg, tool); ready && err == nil && profile != cfg.DefaultProfileOf(tool) &&
+		slices.Equal(profiles, []string{profile}) {
+		if err := cfg.SetDefaultProfile(tool, profile); err != nil {
+			return -1, ui.CommandFailed(fmt.Sprintf("Signed in to %s as %s, but could not make it the default", titleName(tool), profile),
+				err.Error(), [2]string{"Choose a default:", fmt.Sprintf("coop credentials %s %s default", tool, profile)})
+		}
+		madeDefault = true
+	}
+	loginResult(tool, profile, ready, madeDefault)
 	return 0, nil
 }
 
@@ -760,8 +784,7 @@ func (a *app) loginWithHostCredential(ag agents.Agent, profile string) (int, err
 	if err := box.SaveHostCredential(a.cfg, ag, profile, secret); err != nil {
 		return -1, err
 	}
-	loginResult(ag.Name(), profile, box.ProfileCredentialReady(a.cfg, ag.Name(), profile, time.Now()))
-	return 0, nil
+	return finishLogin(a.cfg, ag.Name(), profile)
 }
 
 // loginHandoff names the sign-in before host setup. Provider guidance belongs at launch.
@@ -777,8 +800,9 @@ func (a *app) loginStartingNotice(tool string) string {
 }
 
 // loginResult reports the sign-in only when a usable credential was actually persisted; ready=false
-// says exactly that much — the provider exited, and coop could not confirm it.
-func loginResult(tool, profile string, ready bool) {
+// says exactly that much — the provider exited, and coop could not confirm it. madeDefault says the
+// sign-in also became the agent's default, so the bare agent starts it.
+func loginResult(tool, profile string, ready, madeDefault bool) {
 	title := titleName(tool)
 	if !ready {
 		warnRows(fmt.Sprintf("%s exited, but Coop could not confirm sign-in", title),
@@ -787,7 +811,12 @@ func loginResult(tool, profile string, ready bool) {
 	}
 	ui.Note("")
 	ui.OK("Signed in to %s%s", title, loginAccountSuffix(tool, profile))
-	ui.Note("\nStart %s:\n  %s", title, "coop "+loginTargetName(tool, profile))
+	start := loginTargetName(tool, profile)
+	if madeDefault {
+		ui.OK("%s will use %s by default", title, profile)
+		start = tool
+	}
+	ui.Note("\nStart %s:\n  %s", title, "coop "+start)
 }
 
 // loginStopped is coop's whole say after an interrupted provider flow.

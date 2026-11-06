@@ -1,0 +1,6 @@
+
+✓ Signed in to Claude as work
+✓ Claude will use work by default
+
+Start Claude:
+  coop claude

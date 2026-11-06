@@ -140,6 +140,9 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 		return bundle, err
 	}
 	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
+		if err := MissingDefaultAccount(cfg, target.Provider, account); err != nil {
+			return egress.Bundle{}, err
+		}
 		login := target.Provider
 		if target.Account() != "" && target.Account() != config.DefaultProfile {
 			login += "@" + target.Account()
