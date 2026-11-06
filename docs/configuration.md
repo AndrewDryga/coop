@@ -248,7 +248,7 @@ Commands use these exit codes so CI and scripts can check the result without par
 | Code | Meaning |
 |---|---|
 | `0` | Success. |
-| `1` | A failure, or findings, like `coop check-secrets` on a hit. |
+| `1` | A failure, or findings, like `coop check-secrets` on a hit. Answering no to a confirmation also exits `1`: nothing changed. |
 | `2` | A usage error: an unknown command or flag, or bad arguments. |
 | `3` | `coop loop` stopped with a task blocked on a human decision. `coop net check` found that the rules block the connection, or that new runs need approval first. `coop sessions check` found data this build would convert. `coop sessions quiescence` found queued or running work. |
 | `4` | `coop sessions check` only: this build can't use the session data. |

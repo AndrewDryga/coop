@@ -1110,16 +1110,21 @@ func claimRefusal(t Item) error {
 // and whose claim that replaced. Best-effort: the claim already holds, and a journal line is no
 // reason to undo it.
 func logClaim(dir string, actor ClaimActor, takeover claimTakeover) {
-	who := claimedBy(actor)
-	if who == "" {
-		user, host := taskOwnerIdentity()
-		who = user + "@" + host
-	}
-	line := "Claimed by " + who
+	line := "Claimed by " + journalActor(actor)
 	if takeover.from != nil {
 		line += ", taking it over from " + claimHolder(*takeover.from, true)
 	}
 	appendTaskLog(dir, line)
+}
+
+// journalActor is who a log.md note names for actor: an agent with its PID, or the person at a
+// terminal, whose claim binds to no process, as user@host.
+func journalActor(actor ClaimActor) string {
+	if who := claimedBy(actor); who != "" {
+		return who
+	}
+	user, host := taskOwnerIdentity()
+	return user + "@" + host
 }
 
 // printClaimResult is the claim's result: who now holds the task, anything exceptional about how
@@ -1379,7 +1384,8 @@ func tasksFolderPark(root string, args []string) (int, error) {
 	if err != nil {
 		return lookupExit(err), err
 	}
-	if err := parkTask(root, t, reason); err != nil {
+	actor := captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})
+	if err := parkTask(root, t, reason, actor); err != nil {
 		var refusal *parkRefusal
 		if errors.As(err, &refusal) {
 			return 1, err
@@ -1396,6 +1402,9 @@ func tasksFolderPark(root string, args []string) (int, error) {
 	return 0, nil
 }
 
+// parkedBy opens the log.md note a park writes, before who parked the task (coopLogNotes).
+const parkedBy = "Parked in the backlog by "
+
 // parkRefusal is a task that can't be parked as it stands; the message says what to do instead.
 type parkRefusal struct{ msg string }
 
@@ -1403,9 +1412,10 @@ func (r *parkRefusal) Error() string { return r.msg }
 
 // parkTask moves a todo or blocked task into the backlog, holding its owner record's lock so a
 // concurrent claim can't land mid-move. It refuses a task with audit authority (only an explicit
-// unblock may spend that) or a live claim, and records the owner's reason in log.md before the move.
-// A todo task needs no decision to be set aside, so none is written.
-func parkTask(root string, t Item, reason string) error {
+// unblock may spend that) or a live claim, and records who parked it (actor, named as a claim names
+// its holder) and their reason in log.md before the move. A todo task needs no decision to be set
+// aside, so none is written.
+func parkTask(root string, t Item, reason string, actor ClaimActor) error {
 	switch t.State {
 	case StateTodo, StateBlocked:
 	case StateInProgress:
@@ -1428,12 +1438,14 @@ func parkTask(root string, t Item, reason string) error {
 	} else if claimed {
 		return &parkRefusal{fmt.Sprintf("%s is claimed: release it first with coop tasks release %s", t.ID, t.ID)}
 	}
-	note := "Parked in the backlog by the owner."
-	if t.State == StateBlocked {
-		note = "Parked in the backlog by the owner; the decision stays open."
-	}
-	if reason != "" {
-		note = "Parked in the backlog by the owner: " + reason
+	note := parkedBy + journalActor(actor)
+	switch {
+	case reason != "":
+		note += ": " + reason
+	case t.State == StateBlocked:
+		note += "; the decision stays open."
+	default:
+		note += "."
 	}
 	if err := AppendTaskLogStrict(t.Dir, note); err != nil {
 		return fmt.Errorf("record the park in %s's log: %w", t.ID, err)
@@ -3449,8 +3461,9 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		}
 		// :b parks the task in the backlog with its decision still open (coop tasks park), so a
 		// "not now" answer doesn't re-queue it. A refused park says why and stays on this decision.
+		// Only a person at a terminal answers here, so the park is theirs, bound to no process.
 		if line == ":b" {
-			if err := parkTask(ref.root, t, ""); err != nil {
+			if err := parkTask(ref.root, t, "", ClaimActor{}); err != nil {
 				var refusal *parkRefusal
 				if !errors.As(err, &refusal) {
 					return -1, err

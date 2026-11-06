@@ -159,8 +159,13 @@ func backlogFolderList(root string) (int, error) {
 	return 0, nil
 }
 
+// confirmIdeaRemoval is ui.DestroyGate; a test answers it the way a person at a terminal would.
+var confirmIdeaRemoval = ui.DestroyGate
+
 // backlogFolderRemove deletes a backlog item (a discarded idea). Reuses the ui.DestroyGate confirmation, so
-// a fat-fingered id can't silently drop an idea and a piped run must opt in with --yes.
+// a fat-fingered id can't silently drop an idea and a piped run must opt in with --yes. A person who
+// answers no gets exit 1, as every declined confirmation does: nothing changed, yet nothing was
+// wrong with the command either, which exit 2 would say.
 func backlogFolderRemove(root string, args []string) (int, error) {
 	yes := hasYes(args)
 	var pos []string
@@ -182,8 +187,12 @@ func backlogFolderRemove(root string, args []string) (int, error) {
 	ui.Note("  %s", displayPath(t.Dir))
 	ui.Note("  Its notes and saved files will be permanently deleted.")
 	ui.Note("")
-	if err := ui.DestroyGate("Delete this idea", yes); err != nil {
-		return 2, backlogCancelled(err)
+	if err := confirmIdeaRemoval("Delete this idea", yes); err != nil {
+		code := 2 // nothing could answer the question: the run needs --yes
+		if errors.Is(err, ui.ErrCancelled) {
+			code = 1
+		}
+		return code, backlogCancelled(err)
 	}
 	if err := removeTaskFolder(root, t); err != nil {
 		return -1, err

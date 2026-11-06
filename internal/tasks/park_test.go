@@ -26,6 +26,48 @@ func addBlocked(t *testing.T, root, title string) string {
 	return id
 }
 
+// parkNoted reports whether log holds a park note that ends with tail, whoever parked the task.
+func parkNoted(log, tail string) bool {
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, parkedBy) && strings.HasSuffix(strings.TrimSpace(line), tail) {
+			return true
+		}
+	}
+	return false
+}
+
+// A park names who parked the task the way a claim names its holder: an agent with its PID, or the
+// person at the terminal as user@host. The note is Coop's own, never a worker's log entry.
+func TestParkRecordsWhoParkedTheTask(t *testing.T) {
+	t.Setenv("USER", "alice")
+	user, host := taskOwnerIdentity()
+	for _, tc := range []struct {
+		name   string
+		actor  ClaimActor
+		reason string
+		want   string
+	}{
+		{"an agent", ClaimActor{Label: "claude", PID: 4242}, "after the release", "Parked in the backlog by claude (PID 4242): after the release"},
+		{"a person", ClaimActor{}, "", "Parked in the backlog by " + user + "@" + host + "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, StateTodo, "2026-11-06-login", "task.md"), "# Login\n")
+			task, _ := mustCurrentTask(t, root, "2026-11-06-login")
+			if err := parkTask(root, task, tc.reason, tc.actor); err != nil {
+				t.Fatal(err)
+			}
+			log, _ := os.ReadFile(filepath.Join(root, StateBacklog, task.ID, "log.md"))
+			if !strings.Contains(string(log), tc.want) {
+				t.Errorf("log.md = %q, want the note %q", log, tc.want)
+			}
+			if !coopLogNote(tc.want) || LogHasEntry(string(log)) {
+				t.Errorf("the park note %q reads as a worker's entry", tc.want)
+			}
+		})
+	}
+}
+
 // Parking answers a decision with "not now": the folder moves to the backlog with its log and open
 // decision, preflight leaves it there, and promote brings it back blocked with the question.
 func TestParkMovesABlockedTaskToTheBacklogAndPromoteBringsTheQuestionBack(t *testing.T) {
@@ -39,7 +81,7 @@ func TestParkMovesABlockedTaskToTheBacklogAndPromoteBringsTheQuestionBack(t *tes
 	if !pathExists(filepath.Join(dir, "decision.md")) || pathExists(filepath.Join(root, StateBlocked, id)) {
 		t.Fatal("the task should sit in the backlog with its decision.md, and nowhere else")
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "log.md")); !strings.Contains(string(data), "Parked in the backlog by the owner: not this quarter") {
+	if data, _ := os.ReadFile(filepath.Join(dir, "log.md")); !parkNoted(string(data), ": not this quarter") {
 		t.Errorf("log.md should record the owner's reason:\n%s", data)
 	}
 	if ids := mustUnblockResolved(t, []string{root}); len(ids) != 0 {
@@ -98,7 +140,7 @@ func TestParkSetsATodoTaskAsideWithoutADecision(t *testing.T) {
 	if pathExists(filepath.Join(dir, "decision.md")) {
 		t.Error("parking a todo task must not invent a decision")
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "log.md")); !strings.Contains(string(data), "Parked in the backlog by the owner: after the release") {
+	if data, _ := os.ReadFile(filepath.Join(dir, "log.md")); !parkNoted(string(data), ": after the release") {
 		t.Errorf("log.md should record the owner's reason:\n%s", data)
 	}
 	if items := mustReadTaskTree(t, root); len(items) != 0 {

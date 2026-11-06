@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The backlog's human views are approved copy, not incidental formatting. These pin the exact
@@ -108,6 +109,30 @@ func TestBacklogRemovePreviewAndCancellation(t *testing.T) {
 	}
 	if got := backlogCancelled(errors.New("refusing to Delete this idea without confirmation")); got == nil {
 		t.Error("a non-TTY refusal must stay an error")
+	}
+}
+
+// A person who answers no keeps the idea and gets exit 1, as every declined confirmation does: the
+// command was fine, so it is no usage error. A run nothing can answer still needs --yes: exit 2.
+func TestBacklogRemoveDeclineExitsOne(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".agent", "tasks")
+	if _, err := cmdBacklogFolder("", root, []string{"add", "Redesign account permissions"}); err != nil {
+		t.Fatal(err)
+	}
+	id := onlyBacklogID(t, root)
+	if code, err := cmdBacklogFolder("", root, []string{"rm", id}); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("rm with nothing to answer = (%d, %v), want exit 2 asking for --yes", code, err)
+	}
+	confirmIdeaRemoval = func(string, bool, ...func(string) bool) error { return ui.ErrCancelled }
+	t.Cleanup(func() { confirmIdeaRemoval = ui.DestroyGate })
+	var code int
+	var err error
+	said := captureBacklog(t, func() { code, err = cmdBacklogFolder("", root, []string{"rm", id}) })
+	if code != 1 || !errors.Is(err, ui.ErrReported) || !strings.Contains(said, "Cancelled. The idea was kept.") {
+		t.Errorf("declined rm = (%d, %v), said %q; want exit 1 and the idea kept", code, err, said)
+	}
+	if !pathExists(filepath.Join(root, StateBacklog, id)) {
+		t.Error("a declined deletion removed the idea")
 	}
 }
 

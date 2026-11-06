@@ -26,6 +26,12 @@
   `coop net blocked example.com` explains it. For a port other than 80 it shows a TLS rule for that
   port as the likely fix. The gateway image changed, so the next filtered run checks the network
   setup again.
+
+- **Answering no to `coop backlog rm` exits 1, and a park says who parked the task.** A declined
+  deletion exited 2, the code for a usage error; it now exits 1, and the exit-code table says that
+  answering no to a confirmation exits 1. `coop tasks park` logged "Parked in the backlog by the
+  owner" even when an agent ran it; it now names who did, as a claim does: an agent with its PID,
+  or you as user@host.
 - **`coop loop` closes with what really happened.** A queue with nothing to work on now ends
   "No tasks ready to work on." without a review checkmark, with or without `--max-tasks`. The stop
   after 5 failed attempts prints the `Continue:` command. The `--debug-on-fail` shell is announced as
