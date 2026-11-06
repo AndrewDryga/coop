@@ -19,7 +19,7 @@ func reviewPacket(repo string, p *project.Project, subjects []string, cs loopCha
 	if p != nil {
 		routes = p.Context.Routes
 	}
-	selected, _ := contextc.Compile(repo, routes, files)
+	selected, _ := contextc.Compile(repo, routes, files, nil)
 	var rules []string
 	for _, doc := range selected {
 		if strings.Contains(doc.File, "/rules/") {

@@ -235,8 +235,11 @@ coop context --changed --rendered # the compiled content itself, canonical first
 ```
 
 co:op chooses paths from your arguments, Git's changed files, the task's declared paths or the
-current subproject, and never guesses them from a prompt. It reports an error if a route includes
-a missing document or a path outside the repo.
+current subproject, and never guesses them from a prompt. Paths are relative to the repository
+root, even when you run it inside a subproject. When the work is inside a subproject, co:op adds
+that subproject's own `AGENTS.md` after the root's, and its `.agent/kb/rules/README.md` after the
+root's when a route includes that. It reports an error if a route includes a missing document or
+a path outside the repo.
 
 Routes come from the committed `project.yaml`, so a fork uses its parent's routes but matches them
 against paths in its own tree.

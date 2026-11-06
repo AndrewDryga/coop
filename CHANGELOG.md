@@ -31,6 +31,11 @@
   port as the likely fix. The gateway image changed, so the next filtered run checks the network
   setup again.
 
+- **`coop context` inside a subproject lists that subproject's own `AGENTS.md`.** It comes right
+  after the root's, with the subproject's rules index after the root's when a route includes that.
+  Paths stay relative to the repository root; in a folder below it, a path that only exists from
+  that folder now gets a warning with the command for that file. The refusal of a path outside the
+  repository shows `coop context src/app.ts` as its example, not a file from Coop's own source.
 - **Answering no to `coop backlog rm` exits 1, and a park says who parked the task.** A declined
   deletion exited 2, the code for a usage error; it now exits 1, and the exit-code table says that
   answering no to a confirmation exits 1. `coop tasks park` logged "Parked in the backlog by the

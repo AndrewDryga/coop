@@ -988,8 +988,9 @@ OPTIONS
   --json          print the selection for scripts
 
   Coop includes shared agent instructions and any matching context routes.
-  Use paths relative to the repository. Inside a subproject, its path is
-  included. You can combine explicit paths, --changed and --task.
+  Use paths relative to the repository root, even inside a subproject.
+  Inside a subproject, its path and its own AGENTS.md are included.
+  You can combine explicit paths, --changed and --task.
   Choose either --rendered or --json for the output format.
 
 EXAMPLES

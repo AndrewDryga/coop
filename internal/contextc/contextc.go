@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/project"
@@ -27,13 +28,19 @@ type Selected struct {
 // to AGENTS.md dedups to the one file (dedup is by symlink-resolved real path).
 var canonicalDocs = []string{"AGENTS.md", "CLAUDE.md"}
 
+// rulesIndex is the index of a project's rule cards, relative to the project's folder.
+const rulesIndex = ".agent/kb/rules/README.md"
+
 // Compile returns the ordered, deduped docs to compile for scope (repo-relative touched paths).
-// Canonical instruction files come first (whichever exist), then each route whose glob matches a
-// scope path contributes its includes, in declaration order. A selected include that is missing or
-// escapes the repo (directly or via a symlink) is an error; a missing canonical file is not (it's
+// Canonical instruction files come first (whichever exist): the repo root's, then those of each of
+// subprojects the scope touches (the nearest member holding a scope path), which the AGENTS.md coop
+// init writes tells an agent working there to honor too. Then each route whose glob matches a scope
+// path contributes its includes, in declaration order; the root's rules index brings the rules
+// index of each touched subproject that has one right after it. A selected include that is missing
+// or escapes the repo (directly or via a symlink) is an error; a missing canonical file is not (it's
 // discovery, not a requirement). Dedup is by real path, so the same file reached two ways appears
 // once, at its earliest (nearest-scope) position.
-func Compile(repo string, routes []project.Route, scope []string) ([]Selected, error) {
+func Compile(repo string, routes []project.Route, scope, subprojects []string) ([]Selected, error) {
 	var out []Selected
 	seen := map[string]bool{} // symlink-resolved abs path → already included
 
@@ -57,6 +64,14 @@ func Compile(repo string, routes []project.Route, scope []string) ([]Selected, e
 			return nil, err
 		}
 	}
+	touched := touchedSubprojects(subprojects, scope)
+	for _, sub := range touched {
+		for _, name := range canonicalDocs {
+			if _, err := add(path.Join(sub, name), "subproject "+sub); err != nil {
+				return nil, err
+			}
+		}
+	}
 	for _, r := range routes {
 		g, sp, ok := firstMatch(r.Paths, scope)
 		if !ok {
@@ -70,9 +85,29 @@ func Compile(repo string, routes []project.Route, scope []string) ([]Selected, e
 			if !present {
 				return nil, fmt.Errorf("context: %s is listed in a context route but does not exist", inc)
 			}
+			if path.Clean(inc) != rulesIndex {
+				continue
+			}
+			for _, sub := range touched {
+				if _, err := add(path.Join(sub, rulesIndex), "subproject "+sub); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	return out, nil
+}
+
+// touchedSubprojects is each of subprojects that holds a scope path, as the nearest member that
+// holds it, in scope order and once each.
+func touchedSubprojects(subprojects, scope []string) []string {
+	var touched []string
+	for _, sp := range scope {
+		if sub, ok := project.NearestSubproject(subprojects, path.Clean(sp)); ok && !slices.Contains(touched, sub) {
+			touched = append(touched, sub)
+		}
+	}
+	return touched
 }
 
 // firstMatch returns the first (glob, scopePath) pair where a glob matches, scanning globs then

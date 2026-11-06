@@ -91,7 +91,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	if err != nil {
 		return refusalExit(err), err
 	}
-	sel, err := contextc.Compile(repo, p.Context.Routes, scope)
+	sel, err := contextc.Compile(repo, p.Context.Routes, scope, p.Subprojects)
 	if err != nil {
 		// A route that names a file nobody wrote is a project-configuration problem, not an empty
 		// selection: say which file, and where the route that names it lives.
@@ -128,9 +128,13 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 	// Members can nest, so a cwd under terraform/environments/va1/blitz-apps is inside two of them;
 	// the NEAREST one is the queue that path belongs to, and only it goes in scope. The shell's cwd
 	// may reach the repository through a link that repo never contains, so match it by folder.
+	here := "" // the working folder below the repository root, repo-relative
 	if rel, err := box.RepoRelative(repo, cwd); err == nil && !strings.HasPrefix(rel, "..") {
 		if sub, ok := project.NearestSubproject(p.Subprojects, rel); ok {
 			add(sub)
+		}
+		if rel != "." {
+			here = rel
 		}
 	}
 	// Explicit paths are repo-relative (that's what --changed/--task emit too). Absolute paths are
@@ -142,12 +146,13 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 				Headline: fmt.Sprintf("Invalid path %q for %q", arg, "coop context"),
 				Cause:    "Use a path inside the repository, relative to its root.",
 				Rows: [][2]string{
-					{"Example:", "coop context internal/cli/help.go"},
+					{"Example:", "coop context src/app.ts"},
 					{"Help:", ui.HelpCommand("coop context")},
 				},
 			}
 		}
 		add(clean)
+		warnFolderRelativePath(repo, here, clean)
 	}
 	// Resolve identity and metadata before optional Git work, but retain the
 	// original append order: scope order also determines route explanations.
@@ -172,6 +177,25 @@ func (a *app) contextScope(repo string, p *project.Project, paths []string, chan
 		add(tp)
 	}
 	return scope, nil
+}
+
+// warnFolderRelativePath warns when path, read from the repository root as coop context reads every
+// path, names nothing there while the same path from the working folder here names something:
+// shell completion offers paths from the working folder, so that is likely the file meant.
+func warnFolderRelativePath(repo, here, path string) {
+	if here == "" {
+		return
+	}
+	if _, err := os.Lstat(filepath.Join(repo, path)); err == nil {
+		return
+	}
+	inFolder := filepath.Join(here, path)
+	if _, err := os.Lstat(filepath.Join(repo, inFolder)); err != nil {
+		return
+	}
+	ui.Warning("Paths are relative to the repository root",
+		filepath.ToSlash(path)+" is read from the root, not from "+filepath.ToSlash(here)+".",
+		"For the file in this folder: coop context "+filepath.ToSlash(inFolder))
 }
 
 // gitChangedPaths returns the repo-relative paths git reports as changed (staged, unstaged, or
@@ -294,6 +318,9 @@ func contextReport(scope []string, sel []contextc.Selected) {
 func selectionReason(reason string, manyPaths bool) string {
 	if reason == "canonical" {
 		return "Shared agent instructions"
+	}
+	if sub, ok := strings.CutPrefix(reason, "subproject "); ok {
+		return "Instructions for the subproject " + sub
 	}
 	rest, ok := strings.CutPrefix(reason, "route ")
 	if !ok {

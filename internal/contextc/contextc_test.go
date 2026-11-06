@@ -68,7 +68,7 @@ func TestCompileOrderingAndDedup(t *testing.T) {
 		{Paths: []string{"portal/**"}, Include: []string{".agent/kb/portal.md"}},
 		{Paths: []string{"**/*.ex"}, Include: []string{".agent/kb/rules/elixir.md", ".agent/kb/portal.md"}},
 	}
-	sel, err := Compile(repo, routes, []string{"portal/lib/user.ex"})
+	sel, err := Compile(repo, routes, []string{"portal/lib/user.ex"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCompileOrderingAndDedup(t *testing.T) {
 func TestCompileCanonicalOnly(t *testing.T) {
 	repo := writeRepo(t)
 	routes := []project.Route{{Paths: []string{"portal/**"}, Include: []string{".agent/kb/portal.md"}}}
-	sel, err := Compile(repo, routes, nil)
+	sel, err := Compile(repo, routes, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCompileCanonicalSymlinkDedup(t *testing.T) {
 	if err := os.Symlink(filepath.Join(repo, "AGENTS.md"), filepath.Join(repo, "CLAUDE.md")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	sel, err := Compile(repo, nil, nil)
+	sel, err := Compile(repo, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestCompileCanonicalSymlinkDedup(t *testing.T) {
 func TestCompileMissingInclude(t *testing.T) {
 	repo := writeRepo(t)
 	routes := []project.Route{{Paths: []string{"**"}, Include: []string{".agent/kb/nope.md"}}}
-	if _, err := Compile(repo, routes, []string{"x"}); err == nil {
+	if _, err := Compile(repo, routes, []string{"x"}, nil); err == nil {
 		t.Error("a missing route include must error")
 	}
 }
@@ -132,7 +132,7 @@ func TestCompileEscapingSymlink(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	routes := []project.Route{{Paths: []string{"**"}, Include: []string{".agent/evil.md"}}}
-	if _, err := Compile(repo, routes, []string{"x"}); err == nil {
+	if _, err := Compile(repo, routes, []string{"x"}, nil); err == nil {
 		t.Error("an escaping-symlink include must be rejected")
 	}
 }
@@ -147,4 +147,48 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Work inside a subproject also gets that subproject's own instructions, right after the root's:
+// the nearest member that holds a scope path, once, and its rules index right after the root's when
+// a route lists that. A member without its own files adds nothing.
+func TestCompileAddsTheTouchedSubprojectsOwnInstructions(t *testing.T) {
+	repo := writeRepo(t)
+	for _, rel := range []string{"web/AGENTS.md", "web/.agent/kb/rules/README.md", ".agent/kb/rules/README.md", "infra/va1/blitz/AGENTS.md", "infra/va1/AGENTS.md"} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subprojects := []string{"web", "api", "infra/va1", "infra/va1/blitz"}
+	rules := []project.Route{{Paths: []string{"web/**"}, Include: []string{".agent/kb/rules/README.md"}}}
+	for _, tc := range []struct {
+		name   string
+		routes []project.Route
+		scope  []string
+		want   []string
+	}{
+		{"the folder of a subproject", nil, []string{"web"}, []string{"AGENTS.md", "web/AGENTS.md"}},
+		{"its rules index after the root's", rules, []string{"web/src/x.ts", "web/y.ts"},
+			[]string{"AGENTS.md", "web/AGENTS.md", ".agent/kb/rules/README.md", "web/.agent/kb/rules/README.md"}},
+		{"outside every subproject", rules, []string{"runner/x.go"}, []string{"AGENTS.md"}},
+		{"a subproject without its own files", nil, []string{"api/x.go"}, []string{"AGENTS.md"}},
+		{"the nearest of nested subprojects", nil, []string{"infra/va1/blitz/main.tf"}, []string{"AGENTS.md", "infra/va1/blitz/AGENTS.md"}},
+	} {
+		sel, err := Compile(repo, tc.routes, tc.scope, subprojects)
+		if err != nil || !equal(fileList(sel), tc.want) {
+			t.Errorf("%s: Compile = %v, %v; want %v", tc.name, fileList(sel), err, tc.want)
+		}
+		for _, s := range sel[1:] {
+			if s.File == "web/AGENTS.md" && s.Reason != "subproject web" {
+				t.Errorf("%s: web/AGENTS.md reason = %q, want subproject web", tc.name, s.Reason)
+			}
+		}
+	}
+	if sel, err := Compile(repo, nil, []string{"web"}, nil); err != nil || !equal(fileList(sel), []string{"AGENTS.md"}) {
+		t.Errorf("without subprojects = %v, %v; want only the root's", fileList(sel), err)
+	}
 }

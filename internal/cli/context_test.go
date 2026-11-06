@@ -219,3 +219,62 @@ func TestContextChangedGitStatusIsHardened(t *testing.T) {
 		t.Fatal("positive control failed: raw git status did not fire the planted fsmonitor")
 	}
 }
+
+// Inside a subproject, coop context lists that subproject's AGENTS.md after the root's. Paths stay
+// relative to the repository root, as documented; one that names nothing there but a file in the
+// working folder gets a warning with the command for that file, since shell completion offers
+// folder-relative paths. The refusal of a path outside the repository shows a generic example.
+func TestContextInsideASubproject(t *testing.T) {
+	repo := t.TempDir()
+	ctxWrite(t, filepath.Join(repo, "AGENTS.md"), "agents")
+	ctxWrite(t, filepath.Join(repo, "web", "AGENTS.md"), "web agents")
+	ctxWrite(t, filepath.Join(repo, "web", "src", "x.ts"), "x")
+	ctxWrite(t, filepath.Join(repo, "web", "src", "both.ts"), "both")
+	ctxWrite(t, filepath.Join(repo, "src", "both.ts"), "both")
+	ctxWrite(t, filepath.Join(repo, ".agent", "kb", "src.md"), "src kb")
+	ctxWrite(t, filepath.Join(repo, ".agent", "project.yaml"),
+		"subprojects: [web]\ncontext:\n  routes:\n    - paths: [src/**]\n      include: [.agent/kb/src.md]\n")
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	t.Chdir(filepath.Join(repo, "web"))
+	run := func(args ...string) (stdout, stderr string) {
+		t.Helper()
+		stderr = captureStderr(t, func() {
+			stdout = captureStdout(t, func() {
+				if code, err := a.cmdContext(args); code != 0 || err != nil {
+					t.Fatalf("coop context %q = (%d, %v)", args, code, err)
+				}
+			})
+		})
+		return stdout, stderr
+	}
+
+	out, warn := run("--json")
+	var r ctxResult
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, out)
+	}
+	if want := []contextcSelected{{"AGENTS.md", "canonical"}, {"web/AGENTS.md", "subproject web"}}; !slices.Equal(r.Files, want) || warn != "" {
+		t.Errorf("files in web = %+v (warned %q), want %+v", r.Files, warn, want)
+	}
+	if out, _ := run(); !strings.Contains(out, "  web/AGENTS.md\n    Instructions for the subproject web\n") {
+		t.Errorf("the report does not explain the subproject's file:\n%s", out)
+	}
+
+	_, warn = run("--json", "src/x.ts")
+	for _, want := range []string{"Paths are relative to the repository root", "src/x.ts is read from the root, not from web.", "coop context web/src/x.ts"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("a folder-relative path warned %q, want it to contain %q", warn, want)
+		}
+	}
+	if _, warn = run("--json", "src/both.ts"); warn != "" {
+		t.Errorf("a path the root has was warned about: %q", warn)
+	}
+	if _, warn = run("--json", "web/src/x.ts"); warn != "" {
+		t.Errorf("a repo-relative path was warned about: %q", warn)
+	}
+
+	_, err := a.cmdContext([]string{"../outside"})
+	if usage := asUsage(err); usage == nil || !slices.Contains(usage.Rows, [2]string{"Example:", "coop context src/app.ts"}) {
+		t.Errorf("outside path refusal = %#v, want the generic example", err)
+	}
+}
