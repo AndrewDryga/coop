@@ -171,18 +171,6 @@ func TaskCommits(repo, rangeExpr, id string) ([]string, error) {
 	return shas, nil
 }
 
-func taskBindingCounts(repo, head string) (map[string]int, bool) {
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok {
-		return nil, false
-	}
-	counts := map[string]int{}
-	for id, shas := range bindings {
-		counts[id] = len(shas)
-	}
-	return counts, true
-}
-
 // gateGuardGlobs name the files that DEFINE what "green" means — the candidate's own verifier: the
 // Makefile/gate, the loop + project config, the hooks, CI. A task that edits these could weaken the
 // gate to pass itself (cross-vendor review is no defense when every reviewer trusts the same mutable
