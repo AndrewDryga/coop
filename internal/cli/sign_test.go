@@ -440,6 +440,10 @@ func TestSignUnpushedStartsAtTheFirstUnsignedCommit(t *testing.T) {
 	if got := forkspace.GitOut(repo, "log", "--format=%T", base+"..HEAD"); got != trees {
 		t.Errorf("signing changed committed trees:\nbefore %s\nafter  %s", trees, got)
 	}
+	// A review maps evidence recorded at the unsigned commits through this reflog line.
+	if got := forkspace.GitOut(repo, "log", "-g", "-1", "--format=%gs", "refs/heads/main"); got != forkspace.ResignReflogMessage {
+		t.Errorf("the signing swap's reflog message = %q, want %q", got, forkspace.ResignReflogMessage)
+	}
 
 	// The whole range is signed now, so a second pass from the same base rewrites nothing.
 	signedHead := forkspace.GitOut(repo, "rev-parse", "HEAD")

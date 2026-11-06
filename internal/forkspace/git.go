@@ -258,6 +258,10 @@ func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error
 // unavailable.
 func gitGlobalOut(args ...string) string { return GlobalGitConfig(args...) }
 
+// ResignReflogMessage is the reflog message of Coop's host re-signing update, which replaces
+// commits with signed copies of the same trees; a review reads it back to map the old ids.
+const ResignReflogMessage = "coop: re-sign commits"
+
 // WantsSigning reports whether you sign commits (commit.gpgsign=true in your git
 // config), so a fork's unsigned box commits can be signed with your key on land.
 func WantsSigning() bool {

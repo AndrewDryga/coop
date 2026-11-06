@@ -248,7 +248,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if err := refusePushedRewrite(repo, branchRef, oldCommits[0]); err != nil {
 		return 0, err
 	}
-	if err := forkspace.GitRefCommand(context.Background(), repo, "update-ref", "-m", "coop: re-sign commits", branchRef, newHead, oldHead).Run(); err != nil {
+	if err := forkspace.GitRefCommand(context.Background(), repo, "update-ref", "-m", forkspace.ResignReflogMessage, branchRef, newHead, oldHead).Run(); err != nil {
 		return 0, ui.CommandFailed("Could not apply the signed commits", "The branch changed while Coop was signing.\n"+err.Error(),
 			[2]string{"", "Review the current branch before running coop sign again."})
 	}

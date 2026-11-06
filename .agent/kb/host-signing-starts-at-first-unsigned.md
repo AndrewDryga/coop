@@ -2,8 +2,8 @@
 name: host-signing-starts-at-first-unsigned
 description: every host signing pass (loop cycle, end-of-run sweep, run-box exit, coop sign) rewrites only from the first unsigned commit and refuses to rewrite a commit the branch's upstream already has; -f stays, and "signed" means a signature header
 subsystem: loop
-sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/cli/commands.go, internal/tasks/pending_review.go]
-updated: 2026-10-17
+sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/loop/review_packet.go, internal/forkspace/git.go, internal/cli/commands.go, internal/tasks/pending_review.go]
+updated: 2026-11-06
 ---
 
 Box commits are unsigned (no key enters a box), so the host signs them through `signUnpushed` in
@@ -51,6 +51,12 @@ Traps:
   reopened task's audit authority to the signed copies (`CarryReopenedReviewsAfterSigning`; a
   failure is a warning, the signing stands). See [[signoff-scope-is-run-anchored]], and
   [[loop-range-rejects-outside-commits]] for the ref-authority lock the compare-and-swap takes.
+- **Evidence recorded at an unsigned ID still holds, by tree.** The swap's reflog message is
+  `forkspace.ResignReflogMessage`; the review packet (`resignedCommits` in
+  `internal/loop/review_packet.go`) reads those reflog entries back, pairs each replaced commit with
+  its signed copy, and lists the pair only when both trees match, so a worker's "tested at <old id>"
+  is recognized. A box can write the reflog too, so the tree check, not the message, is what makes a
+  pair true; the review footer tells reviewers to compare `<id>^{tree}` for anything older.
 
 Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushedSignsAroundASignedMerge`,
 `TestSignUnpushedNeverRewritesPushedCommits` (including a push made while the pass holds the lock),
@@ -58,6 +64,8 @@ Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushed
 `TestCommitSigned`, all in `internal/cli`.
 
 ## Changelog
+- 2026-11-06 — the review packet maps re-signed commits old → new when their trees match, read
+  from the swap's reflog message (task 2026-11-05-keep-gate-evidence-valid-when-coop-re-signs-a-ta).
 - 2026-10-17 — a final-review round now records the reviewed commit content; noted that re-signing
   keeps it, so signing never sends an accepted task back to review.
 - 2026-10-16 — the signing journal is gone: pending review finds commits by trailer, and the pass

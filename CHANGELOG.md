@@ -10,6 +10,20 @@
   `coop tasks ls` lists todo tasks in that order and marks high and low ones, and
   `coop tasks lint` names any other value. A task without the field is normal and keeps its place.
 
+- **Gate results recorded before Coop re-signs a commit still count in review.** Re-signing gives
+  each commit a new ID, so a "tested at <commit>" note named a commit that was no longer in history,
+  and reviewers read the evidence as stale even though the files were identical. The review now
+  lists each commit Coop re-signed next to its signed copy, only when both hold the same tree, and
+  reviewers are told that evidence recorded at an older ID covers any commit with the same tree.
+
+- **A loop worker can finish review rework without stripping a trailer by hand.** After a final
+  review reopened a task, the worker's repair commit had to carry no `Coop-Task` trailer, but the
+  box's commit hook added one to every commit, even with `--amend` or `--no-verify`, so
+  `tasks_complete` refused the repair and the loop stopped for a person. During rework the hook now
+  adds no trailer, and the worker is told the exact shape: one new commit on top of the current
+  HEAD, no amend or rebase of the reviewed commits, or no commit at all when only evidence was
+  missing.
+
 - **`coop tasks done` refuses a task with two commits carrying its `Coop-Task` trailer.** A
   follow-up commit with the same trailer used to be accepted, and the problem only surfaced when a
   later final review tried to reopen that task or an older one: the host refused the verdict and the
