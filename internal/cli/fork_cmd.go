@@ -201,16 +201,8 @@ func (a *app) cmdFork(args []string) (int, error) {
 }
 
 // unknownForkErr refuses a bare fork name with no fork behind it: creating one needs the agent or
-// preset that will work in it. The name already passed forkspace.ValidName, so it is plain text.
-func unknownForkErr(name string) *ui.UsageError {
-	return &ui.UsageError{
-		Headline: fmt.Sprintf("No fork named %q", name),
-		Rows: [][2]string{
-			{"Create it:", "coop fork " + name + " <target|preset>"},
-			{"Forks:", "coop fork ls"},
-		},
-	}
-}
+// preset that will work in it. Every other fork command refuses a missing fork the same way.
+func unknownForkErr(name string) *ui.UsageError { return forkctl.NoSuchFork(name) }
 
 // missingACPForkErr refuses `coop fork <name> acp` for a fork that does not exist yet: an editor
 // session only uses a fork, so the refusal names the command that creates one. It keeps exit 1,

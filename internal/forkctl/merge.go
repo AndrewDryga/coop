@@ -406,7 +406,7 @@ func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, is
 	} else {
 		ui.Note("Running project checks")
 	}
-	ui.Note("  Running: %s", strings.Join(gate, " "))
+	ui.Note("  Running: %s", shellLine(gate))
 	reviewBase := strings.TrimSpace(forkspace.GitOut(treeDir, "rev-parse", "--verify", "refs/coop/session-parent^{commit}"))
 	if reviewBase == "" {
 		if isolatedParent == "" {
@@ -454,18 +454,13 @@ func (c *Control) runGateBoundary(gateRepo, treeDir, img string, review bool, is
 	return code == 0, nil
 }
 
-// runGate preserves merge's existing bool-only contract: a box startup failure is a failed gate.
-func (c *Control) runGate(gateRepo, treeDir, img string) bool {
-	ok, _ := c.runGateMode(gateRepo, treeDir, img, false)
-	return ok
-}
-
-// gatePasses runs the merge gate (or the test seam, when set).
-func (c *Control) gatePasses(gateRepo, treeDir, img string) bool {
+// gatePasses runs the merge gate (or the test seam, when set). A gate that exits non-zero is a
+// normal red result; an error means its box never started, so the checks did not run at all.
+func (c *Control) gatePasses(gateRepo, treeDir, img string) (bool, error) {
 	if c.gateOK != nil {
-		return c.gateOK(gateRepo, treeDir, img)
+		return c.gateOK(gateRepo, treeDir, img), nil
 	}
-	return c.runGate(gateRepo, treeDir, img)
+	return c.runGateMode(gateRepo, treeDir, img, false)
 }
 
 // ReviewGatePasses is the review-only gate path. The disposable candidate may write ignored build
@@ -527,7 +522,7 @@ func fetchForkForMerge(repo, ws, name string) error {
 	}
 	defer unlock()
 	if !pathExists(ws) {
-		return fmt.Errorf("no such fork: %s", name)
+		return NoSuchFork(name)
 	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
@@ -678,7 +673,7 @@ func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOut
 func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (outcome mergeOutcome, retErr error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
+		return mergeOutcome{}, NoSuchFork(name)
 	}
 	unlock, err := lockForkForMerge(repo, name)
 	if err != nil {
@@ -686,7 +681,7 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	}
 	defer unlock()
 	if !pathExists(ws) {
-		return mergeOutcome{}, fmt.Errorf("no such fork: %s", name)
+		return mergeOutcome{}, NoSuchFork(name)
 	}
 	if identity, isolated, err := isolatedForkIdentity(repo, name); err != nil {
 		return mergeOutcome{}, err
@@ -750,6 +745,11 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	if len(warns) > 0 && !force {
 		return mergeOutcome{}, fmt.Errorf("%s: policy flagged risky changes:\n%s\n(use --force to merge anyway)", name, indent(strings.Join(warns, "\n")))
 	}
+	// A rebase refuses over uncommitted changes to tracked files. Say so before "Rebasing onto", which
+	// would read as a rebase that failed, and before the land journal or the rebase touches anything.
+	if err := requireTrackedClean(ws, name); err != nil {
+		return mergeOutcome{}, err
+	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,
 	// so this is your chance to notice you're on the wrong one.
 	target := forkspace.GitOut(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -795,8 +795,14 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	}
 	// Gate the CANDIDATE (the rebased fork), never the live parent — with the parent's own gate
 	// policy. A red gate leaves the parent exactly as it was: no reset --hard of a shared tree.
-	if img != "" && !c.gatePasses(repo, ws, img) {
-		return mergeOutcome{}, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
+	if img != "" {
+		green, gateErr := c.gatePasses(repo, ws, img)
+		if gateErr != nil {
+			return mergeOutcome{}, &gateStartError{name: name, cause: gateErr}
+		}
+		if !green {
+			return mergeOutcome{}, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; fix it in the fork (%s), then re-run", name, ws)
+		}
 	}
 	// Advance the parent by a fast-forward-ONLY merge — an atomic compare-and-swap: it refuses if a
 	// concurrent commit moved the parent since the rebase, so a divergence lands nothing (re-run to
@@ -847,6 +853,11 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	// leaves git's state dir behind, and every later merge then dies on the leftover state instead of
 	// recovering it. Clear it first — under the same ownership rule as every other destructive path.
 	if err := recoverInterruptedRebase(repo, ws, name); err != nil {
+		return err
+	}
+	// The same refusal as mergeOneMode's, for a fork that changed while the merge waited on its prompt
+	// or its journal: git would fail the rebase below with "You have unstaged changes".
+	if err := requireTrackedClean(ws, name); err != nil {
 		return err
 	}
 	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
@@ -1048,7 +1059,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	} else if err := CheckWorkerStateFormat(repo, name); err != nil {
 		return 1, err
 	} else if !pathExists(forkspace.Workspace(repo, name)) {
-		return 1, fmt.Errorf("no such fork: %s", name) // before a dirty tree or a confirmation asks about it
+		return 2, NoSuchFork(name) // before a dirty tree or a confirmation asks about it
 	}
 	if all {
 		for _, n := range names {
@@ -1082,11 +1093,14 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	ws := forkspace.Workspace(repo, name) // name is non-empty here (the !all && name=="" check above returned)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s", name)
+		return 2, NoSuchFork(name)
 	}
 	// Rebasing/deleting a fork whose loop is still mid-iteration corrupts the in-flight work and
 	// orphans the worker. Stop the loop first.
 	if err := fetchForkForMerge(repo, ws, name); err != nil {
+		if block := mergeRefusal(err); block != nil {
+			return blockExit(block), block
+		}
 		if isForkMergeLifecycleError(err) {
 			return 1, err
 		}
@@ -1119,6 +1133,10 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		ui.OK("Merged fork %s into %s", name, gitBranch(repo))
 	}
 	if err != nil {
+		// A refusal draws its block and exits as that block says; the commits stayed where they were.
+		if block := mergeRefusal(err); block != nil && !result.landed {
+			return blockExit(block), block
+		}
 		// A landed fork whose queue reconciliation failed keeps its workspace and its exit code: the
 		// human is being asked to check the queue, so this is no moment to delete anything.
 		ui.Error("%v", err)
@@ -1255,11 +1273,20 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 		result.approval.close()
 		if err != nil {
 			remaining := remainingForks(names, skip, landed, n)
-			cause := fmt.Sprintf("%v\nMerged: %s.", err, mergedList(landed))
-			if len(remaining) > 0 {
-				cause += "\nUntouched: " + ui.List(remaining, "and") + "."
+			// A refusal with a plain form of its own keeps it here, with what the batch did and left.
+			headline, cause := "Could not merge fork "+n, err.Error()
+			var rows [][2]string
+			if block := mergeRefusal(err); block != nil {
+				headline, cause, rows = block.Headline, block.Cause, block.Rows
 			}
-			ui.Failure("Could not merge fork "+n, cause)
+			lines := []string{"Merged: " + mergedList(landed) + "."}
+			if cause != "" {
+				lines = append([]string{cause}, lines...)
+			}
+			if len(remaining) > 0 {
+				lines = append(lines, "Untouched: "+ui.List(remaining, "and")+".")
+			}
+			ui.Failure(headline, strings.Join(lines, "\n"), rows...)
 			return 1, ui.Reported(errors.Join(append(cleanupErrors, err)...))
 		}
 	}

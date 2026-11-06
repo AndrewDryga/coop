@@ -148,6 +148,20 @@ func InvalidForkName(name, command string) *ui.UsageError {
 	}
 }
 
+// NoSuchFork refuses a fork name with no fork behind it, the same way for every fork command: what
+// is missing, how to create it, and how to list the forks that exist. The name already passed
+// forkspace.ValidExistingName, so it is plain text. It is rejected input (exit 2), and a launch that
+// only reuses a fork (an editor session) sets its own exit code.
+func NoSuchFork(name string) *ui.UsageError {
+	return &ui.UsageError{
+		Headline: fmt.Sprintf("No fork named %q", name),
+		Rows: [][2]string{
+			{"Create it:", "coop fork " + name + " <target|preset>"},
+			{"Forks:", "coop fork ls"},
+		},
+	}
+}
+
 // oneForkName returns the single fork name from the positionals, refusing anything else by the
 // shared rule (ui.ExtraArgument): a second name, since acting on only one and printing success is a
 // data-loss footgun (`fork rm a b` looks like it removed both), and a word starting with "-", which
@@ -352,7 +366,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return 1, fmt.Errorf("read missing fork %q generation state: %w", name, generationErr)
 		}
 		if !orphaned {
-			return -1, fmt.Errorf("no such fork: %s", name)
+			return 2, NoSuchFork(name)
 		}
 		if err := c.destroyGate("Remove orphaned fork state "+name, hasYes(args)); err != nil {
 			return ui.DeclineExit(err), ForkCancelled(err, "coop fork rm", "Its state was kept.")
@@ -375,7 +389,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return 1, fmt.Errorf("recover missing fork %q: %w", name, recoverErr)
 		}
 		if !recovered {
-			return -1, fmt.Errorf("no such fork: %s", name)
+			return 2, NoSuchFork(name)
 		}
 		ui.OK("Removed leftover state for fork %s", name)
 		return 0, nil
@@ -527,7 +541,7 @@ func (c *Control) ForkPath(args []string) (int, error) {
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s", name)
+		return 2, NoSuchFork(name)
 	}
 	fmt.Println(ws)
 	return 0, nil
@@ -554,7 +568,7 @@ func (c *Control) ForkOpenEditor(args []string) (int, error) {
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s", name)
+		return 2, NoSuchFork(name)
 	}
 	if _, isolated, err := isolatedForkIdentity(repo, name); err != nil {
 		return 1, err

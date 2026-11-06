@@ -42,6 +42,20 @@ func composeTarget(agent, model, effort, credential string) (string, error) {
 	return target, nil
 }
 
+// shellLine is args as one line a person can paste to run the same command: each argument quoted for
+// a shell. An argument with a control character has no such form, so it shows escaped instead.
+func shellLine(args []string) string {
+	words := make([]string, len(args))
+	for i, arg := range args {
+		word, ok := ui.ShellWord(arg)
+		if !ok {
+			word = ui.SafeInline(arg)
+		}
+		words[i] = word
+	}
+	return strings.Join(words, " ")
+}
+
 // indent prefixes every line of s with two spaces.
 func indent(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")

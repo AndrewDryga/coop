@@ -3,7 +3,7 @@ name: fork-review-scratch-two-copies
 description: forkctl and sessionsvc each keep their own review-scratch clone on purpose — the same 18-line scaffold under opposite anchoring contracts; do not unify them
 subsystem: fork
 sources: [internal/forkctl/review.go, internal/sessionsvc/review.go, internal/forkspace/git.go, internal/forkspace/create.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 Two packages build a disposable rebased clone for a review gate, and they read like copy-paste:
@@ -15,7 +15,9 @@ sessionsvc extraction, ruled again in the fork Stage 1 (ruling 8), then assessed
 
 **What is genuinely identical** — the four-field value (`dir/base/name/conflict`), scratch-directory
 ownership, cleanup and leak assertions. Session review now uses the shared pinned clone/fetch
-primitives with request cancellation; ordinary fork previews retain their own creation path.
+primitives with request cancellation; ordinary fork previews retain their own creation path. The
+forkctl copy also keeps `tip`, the fork's own tip read before the preview rebase: the rebase gives its
+commits ids that exist only in the scratch, so the dossier lists `base..tip` instead.
 
 **What differs is the entire contract** — each one's anchor would be a bug in the other:
 
@@ -59,6 +61,9 @@ HEAD, or a fork preview that verifies a captured intent. Then one type would car
 this note is obsolete. See [[fork-lifecycle-state-file]] for the fork state this machinery reviews.
 
 ## Changelog
+- 2026-11-06 — forkctl's candidate gained `tip` (the fork's own tip before the preview rebase), so a
+  gated review lists the fork's real commits; the "genuinely identical" paragraph says so. Verified
+  against internal/forkctl/review.go.
 - 2026-11-04 — the shared-home paragraph no longer names forkctl's `gitRun` or `gitOut`: forkctl
   calls `forkspace.GitRun` and `forkspace.GitOut` now. It names `detachBase`, a helper forkctl keeps
   to itself, instead. Verified against internal/forkctl/review.go.

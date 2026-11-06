@@ -198,7 +198,7 @@ func TestForkRmUnknownDoesNotPromptForOrphanCleanup(t *testing.T) {
 	repo := t.TempDir()
 	control := &Control{cfg: &config.Config{RepoOverride: repo}}
 	code, err := control.ForkRm([]string{"missing"})
-	if code != -1 || err == nil || !strings.Contains(err.Error(), "no such fork") || strings.Contains(err.Error(), "--yes") {
+	if code != 2 || err == nil || !strings.Contains(err.Error(), `No fork named "missing"`) || strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("unknown fork rm = (%d, %v), want immediate no-such-fork", code, err)
 	}
 }
@@ -1003,11 +1003,11 @@ func TestForkLogsUnknownErrors(t *testing.T) {
 	repo := initRepo(t)
 	a := &Control{cfg: &config.Config{RepoOverride: repo}}
 	code, err := a.ForkLogs([]string{"nope"})
-	if err == nil || code == 0 {
+	if err == nil || code != 2 {
 		t.Fatalf("ForkLogs(unknown) = (%d, %v), want a no-such-fork error", code, err)
 	}
-	if !strings.Contains(err.Error(), "no such fork") {
-		t.Errorf("error = %q, want it to mention 'no such fork'", err)
+	if !strings.Contains(err.Error(), `No fork named "nope"`) {
+		t.Errorf("error = %q, want it to name the missing fork", err)
 	}
 }
 

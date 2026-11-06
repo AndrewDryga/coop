@@ -762,16 +762,40 @@ func RequireNoForkExecutionsLocked(repo string, identity Identity) error {
 		if observation.Record.Fork == nil || *observation.Record.Fork != identity {
 			continue
 		}
-		state := "unverified"
+		state := ActivityUnverified
 		if observation.Running {
-			state = "running"
+			state = ActivityRunning
 		} else if observation.Stale {
-			state = "cleanup-pending"
+			state = ActivityCleanupPending
 		}
-		return fmt.Errorf("fork %s has %s %s activity %s — stop or clean that exact sandbox before changing its workspace",
-			identity.Name, state, observation.Record.Role, observation.Record.ID)
+		return &ForkActivityError{Fork: identity.Name, State: state, Role: observation.Record.Role, ID: observation.Record.ID}
 	}
 	return nil
+}
+
+// ForkActivityState is how a fork's registered sandbox stands: its process runs, it died and its box
+// is left to clean up, or Coop cannot tell.
+type ForkActivityState string
+
+const (
+	ActivityRunning        ForkActivityState = "running"
+	ActivityCleanupPending ForkActivityState = "cleanup-pending"
+	ActivityUnverified     ForkActivityState = "unverified"
+)
+
+// ForkActivityError is RequireNoForkExecutionsLocked's refusal. A command that stops here says it in
+// plain words by State; the text below is for logs and for callers that only wrap it, and names the
+// sandbox by its record.
+type ForkActivityError struct {
+	Fork  string
+	State ForkActivityState
+	Role  ExecutionRole
+	ID    string
+}
+
+func (e *ForkActivityError) Error() string {
+	return fmt.Sprintf("fork %s has %s %s activity %s — stop or clean that exact sandbox before changing its workspace",
+		e.Fork, e.State, e.Role, e.ID)
 }
 
 // RemoveDeadExecutionsBySource removes only exact records whose supervising process is provably

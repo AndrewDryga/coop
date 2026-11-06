@@ -29,9 +29,10 @@ import (
 // no approved service grant. An open box joins the services' network; a
 // filtered one never does, so each service it uses is a rule the person asks
 // for and approves. The refusal drafts those rules from the Compose file, whole,
-// so they can be pasted as they are wherever the file declares a service's port.
-func servicesNeedRules(spec RunSpec, composeFile string) error {
-	refusal := &ServicesNeedRules{name: networkLaunchName(spec)}
+// so they can be pasted as they are wherever the file declares a service's port. review is the command
+// that reviews them (see servicesReviewCommand).
+func servicesNeedRules(spec RunSpec, composeFile, review string) error {
+	refusal := &ServicesNeedRules{name: networkLaunchName(spec), review: review}
 	if composeFile == "" {
 		refusal.Reason = "a filtered box does not join the network COOP_SERVICES_NET names"
 		refusal.TurnOff = "Unset COOP_SERVICES_NET, or set box.network: false in " + project.File
@@ -68,9 +69,21 @@ func (spec RunSpec) forHandshake() RunSpec {
 // checkServicesHaveRules is the refusal itself, shared by the launch and an editor session asking early.
 func checkServicesHaveRules(cfg *config.Config, spec RunSpec, composeFile string, approved []egress.Grant) error {
 	if len(approved) == 0 && spec.Network && (composeFile != "" || cfg.ServicesNet != "") {
-		return servicesNeedRules(spec, composeFile)
+		return servicesNeedRules(spec, composeFile, servicesReviewCommand(cfg, spec))
 	}
 	return nil
+}
+
+// servicesReviewCommand is the command that reviews the rules of the project this run's policy comes
+// from, for the person running coop here: plain `coop approve` for their own project, else the same
+// with COOP_REPO naming the checkout, as the refusal of unapproved network access says it. A fork loop
+// started from its parent is such a run, and the parent's approvals never reach the fork.
+func servicesReviewCommand(cfg *config.Config, spec RunSpec) string {
+	folder := projectPolicyRepo(spec)
+	if canonical, err := canonicalProjectDir(folder); err == nil {
+		folder = canonical
+	}
+	return ApproveCommand(approvingProject(cfg), folder)
 }
 
 // ServicesNeedRules is a filtered box that cannot start until a person gives the project's services
@@ -79,6 +92,7 @@ func checkServicesHaveRules(cfg *config.Config, spec RunSpec, composeFile string
 // Coop's words and validated service names and ports (serviceRuleDrafts).
 type ServicesNeedRules struct {
 	name     string            // who cannot start
+	review   string            // the command that reviews the rules; "" means plain coop approve
 	Reason   string            // why, as a clause that reads after "cannot start because"
 	Ask      string            // where the rules go; "" when there are none
 	Rules    string            // the drafted rules, indented to paste under box.egress_rules; "" with no Compose file
@@ -99,16 +113,25 @@ func (e *ServicesNeedRules) TerminalRemedy() string {
 	if e.Rules == "" {
 		return e.TurnOff
 	}
-	remedy := e.pasteRules() + "  Then review it: coop approve\n"
+	remedy := e.pasteRules() + "  Then review it: " + e.reviewCommand() + "\n"
 	if len(e.Offer()) > 0 {
-		remedy += "  Or run coop approve in a terminal, which offers to add them for you.\n"
+		remedy += "  Or run " + e.reviewCommand() + " in a terminal, which offers to add them for you.\n"
 	}
 	return remedy + "  " + e.TurnOff
 }
 
 // PasteRemedy is TerminalRemedy for a place that has already failed to add the rules itself.
 func (e *ServicesNeedRules) PasteRemedy() string {
-	return e.pasteRules() + "  Then review it: coop approve\n  " + e.TurnOff
+	return e.pasteRules() + "  Then review it: " + e.reviewCommand() + "\n  " + e.TurnOff
+}
+
+// reviewCommand is the command that reviews the rules: coop approve, with COOP_REPO naming the
+// checkout when the person's own is another one (servicesReviewCommand).
+func (e *ServicesNeedRules) reviewCommand() string {
+	if e.review == "" {
+		return "coop approve"
+	}
+	return e.review
 }
 
 func (e *ServicesNeedRules) pasteRules() string {

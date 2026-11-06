@@ -2668,7 +2668,7 @@ func TestForkMergeNamesAMissingForkFirst(t *testing.T) {
 	repo := initRepo(t)
 	writeTaskFile(t, filepath.Join(repo, "dirty.txt"), "x\n")
 	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
-	if code, err := c.ForkMerge([]string{"nosuch"}); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork: nosuch") {
+	if code, err := c.ForkMerge([]string{"nosuch"}); code != 2 || err == nil || !strings.Contains(err.Error(), `No fork named "nosuch"`) {
 		t.Errorf("ForkMerge(nosuch) = (%d, %v), want no such fork", code, err)
 	}
 }

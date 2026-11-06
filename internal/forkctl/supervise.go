@@ -272,7 +272,7 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 	var mu sync.Mutex
 	if name != "" {
 		if !pathExists(forkspace.Workspace(repo, name)) {
-			return -1, fmt.Errorf("no such fork: %s", name) // match fork path/review, not a silent exit 0
+			return 2, NoSuchFork(name) // not a silent exit 0
 		}
 		opened, err := streamLog(forkspace.LogPath(repo, name), "", follow, os.Stdout, &mu)
 		if err != nil {
@@ -445,7 +445,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	stateExists := pathExists(forkspace.PidPath(repo, name))
 	generationExists := pathExists(forkspace.GenerationPath(repo, name))
 	if !workspaceExists && !stateExists && !generationExists {
-		return 1, fmt.Errorf("no such fork: %s", name) // match ls/path/rm, not "not running"
+		return 2, NoSuchFork(name) // not "not running"
 	}
 	if err := CheckWorkerStateFormat(repo, name); err != nil {
 		return 1, err

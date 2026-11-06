@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fork review and merge messages name the real cause and a command that works.** `coop fork review
+  --gate` says `Into: main` instead of `HEAD`, lists the fork's own commits instead of ids of a
+  temporary copy that exist nowhere afterwards, and names the files checks that exited 0 still changed;
+  the `Running:` line quotes each argument, so pasting it runs the same command. `coop fork merge` says
+  `Fork qa1 is still running` and how to go on instead of printing a sandbox id, refuses uncommitted
+  changes to tracked files before it rebases (commit or stash them in the fork), and reports checks
+  whose box could not start with the box's own reason instead of "gate failed". A fork's services
+  refusal names `COOP_REPO=<fork path> coop approve`, and every fork command on a missing fork prints
+  one block and exits 2.
+
 - **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
   such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
   that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.

@@ -200,7 +200,10 @@ func resetLandAfterParentAdvance(repo, ws, name string, intent landIntent, paren
 	return intent, nil
 }
 
-func (c *Control) finishRejectedTaskLand(repo, ws, name string, intent landIntent) (landIntent, bool, error) {
+// finishRejectedTaskLand puts the reviewed candidate back after a gate that did not pass and retires
+// the land journal. gateErr is why the gate's box never started, when that is what happened; a
+// journal replayed after a crash has no such reason, only the red result it recorded.
+func (c *Control) finishRejectedTaskLand(repo, ws, name string, intent landIntent, gateErr error) (landIntent, bool, error) {
 	if err := restoreCandidateWorkspace(repo, ws, name, intent.Candidate); err != nil {
 		return intent, false, errors.Join(errors.New("merge gate failed"), err)
 	}
@@ -212,12 +215,15 @@ func (c *Control) finishRejectedTaskLand(repo, ws, name string, intent landInten
 	if err := removeLandIntent(repo, intent); err != nil {
 		return intent, false, err
 	}
+	if gateErr != nil {
+		return intent, false, &gateStartError{name: name, cause: gateErr}
+	}
 	return intent, false, fmt.Errorf("%s: gate failed on the rebased fork — parent untouched; candidate restored", name)
 }
 
 func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent) (landIntent, bool, error) {
 	if intent.Phase == landRestoring {
-		return c.finishRejectedTaskLand(repo, ws, name, intent)
+		return c.finishRejectedTaskLand(repo, ws, name, intent, nil)
 	}
 	if intent.Phase == landPreparing {
 		parentHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
@@ -252,12 +258,15 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if forkspace.GitOut(ws, "rev-parse", "HEAD") != intent.RebasedHead || forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}") != intent.RebasedTree {
 			return intent, false, errors.New("rebased fork changed before its merge gate")
 		}
-		if img != "" && !c.gatePasses(repo, ws, img) {
-			intent.Phase = landRestoring
-			if err := writeLandIntent(repo, intent); err != nil {
-				return intent, false, err
+		if img != "" {
+			green, gateErr := c.gatePasses(repo, ws, img)
+			if gateErr != nil || !green {
+				intent.Phase = landRestoring
+				if err := writeLandIntent(repo, intent); err != nil {
+					return intent, false, err
+				}
+				return c.finishRejectedTaskLand(repo, ws, name, intent, gateErr)
 			}
-			return c.finishRejectedTaskLand(repo, ws, name, intent)
 		}
 		intent.Phase = landApproved
 		if err := writeLandIntent(repo, intent); err != nil {

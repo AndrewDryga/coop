@@ -37,6 +37,7 @@ type forkReviewCandidate struct {
 	dir      string
 	base     string
 	name     string
+	tip      string // the fork's own tip, before the rebase gave its commits ids that exist only here
 	conflict bool
 }
 
@@ -48,13 +49,22 @@ const (
 	forkReviewGateGreen
 	forkReviewGateRed
 	forkReviewGateConflict
+	forkReviewGateChanged // the checks passed, and left the temporary copy different from the fork's commits
 )
 
 func (o forkReviewGateOutcome) exitCode() int {
-	if o == forkReviewGateRed || o == forkReviewGateConflict {
+	if o == forkReviewGateRed || o == forkReviewGateConflict || o == forkReviewGateChanged {
 		return 1
 	}
 	return 0
+}
+
+// forkReviewGate is what the dossier says of the project's checks: how they ended, whether the
+// project sets any, and the files they changed when that is how they ended.
+type forkReviewGate struct {
+	outcome    forkReviewGateOutcome
+	configured bool
+	changed    []string
 }
 
 func (c forkReviewCandidate) cleanup() { _ = os.RemoveAll(c.dir) }
@@ -97,6 +107,9 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 	c.name = name
 	if err = forkspace.GitRun(c.dir, "fetch", "--quiet", ws, "+"+name+":refs/heads/"+name); err != nil {
 		return c, fmt.Errorf("fetch fork into review scratch: %w", err)
+	}
+	if c.tip = forkspace.GitOut(c.dir, "rev-parse", "--verify", "refs/heads/"+name); c.tip == "" {
+		return c, errors.New("review scratch has no fork tip")
 	}
 	if err = forkspace.GitRun(c.dir, "rebase", c.base, name); err != nil {
 		if abortErr := forkspace.GitRun(c.dir, "rebase", "--abort"); abortErr != nil {
@@ -150,7 +163,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s", name)
+		return 2, NoSuchFork(name)
 	}
 	if identity, isolated, err := isolatedForkIdentity(repo, name); err != nil {
 		return 1, err
@@ -163,7 +176,9 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	}
 	gateConfigured := len(gateCommand) > 0
 	reviewRepo, ref := repo, "review/"+name
+	commits := "HEAD.." + ref // the fork's own commits, which a person can look up afterwards
 	outcome := forkReviewGateUnchecked
+	var changed []string
 	if gate {
 		candidate, err := prepareForkReviewCandidate(repo, ws, name)
 		if err != nil {
@@ -171,6 +186,9 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		}
 		defer candidate.cleanup()
 		reviewRepo, ref = candidate.dir, candidate.name
+		// The copy's commits are the fork's rebased onto the parent, with new ids that exist nowhere
+		// once the copy is gone, so the dossier lists the fork's own, as the review without --gate does.
+		commits = candidate.base + ".." + candidate.tip
 		pinnedCandidateHead := ""
 		if candidate.conflict {
 			outcome = forkReviewGateConflict
@@ -198,7 +216,14 @@ func (c *Control) ForkReview(args []string) (int, error) {
 				}
 			}
 			if !sessionsvc.ReviewCandidateUnchanged(candidate.dir, candidate.name, candidateHead, candidateTree) {
-				outcome = forkReviewGateRed
+				// A red gate is red whatever else it wrote. Checks that passed and still changed the copy
+				// did not check the fork's commits, and which files they changed is the one clue to why.
+				if outcome == forkReviewGateGreen {
+					outcome = forkReviewGateChanged
+					changed = reviewGateChanges(candidate.dir)
+				} else {
+					outcome = forkReviewGateRed
+				}
 				if err := forkspace.GitRun(candidate.dir, "reset", "--hard", candidateHead); err != nil {
 					return -1, fmt.Errorf("restore review scratch after gate mutation: %w", err)
 				}
@@ -224,7 +249,9 @@ func (c *Control) ForkReview(args []string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("inspect fork worktree: %w", err)
 	}
-	if err := c.forkBrief(reviewRepo, name, ref, outcome, gateConfigured); err != nil {
+	// Into names the parent's branch: in the gated copy HEAD is detached, so it could only say "HEAD".
+	if err := c.forkBriefAt(reviewRepo, reviewRepo, gitBranch(repo), commits, name, ref,
+		forkReviewGate{outcome: outcome, configured: gateConfigured, changed: changed}); err != nil {
 		return -1, err
 	}
 	if uncommitted != "" {
@@ -275,6 +302,46 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		}
 		return finish(0, nil)
 	}
+}
+
+// reviewGateChanges names the files a gate's checks left changed in the review copy: tracked files
+// that differ from the commit, and files they added that no ignore rule hides. It reads before the
+// copy is reset. An unreadable status names nothing, because the review fails for the change itself.
+func reviewGateChanges(dir string) []string {
+	out, err := forkspace.GitOutput(dir, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	entries := strings.Split(out, "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
+			continue
+		}
+		names = append(names, entry[3:])
+		if strings.ContainsAny(entry[:2], "RC") {
+			i++ // a rename or copy lists the path it came from as an entry of its own
+		}
+	}
+	return names
+}
+
+// changedFilesPhrase says what the checks changed as the end of a sentence about them, naming up to
+// three files. With none to name, the change was to the copy's Git state rather than to a file.
+func changedFilesPhrase(changed []string) string {
+	if len(changed) == 0 {
+		return "left it different from the fork's commits"
+	}
+	const shown = 3
+	names := make([]string, 0, shown+1)
+	for _, path := range changed[:min(len(changed), shown)] {
+		names = append(names, ui.SafeInline(path))
+	}
+	if more := len(changed) - len(names); more > 0 {
+		names = append(names, ui.Count(more, "more file"))
+	}
+	return "changed " + ui.List(names, "and")
 }
 
 // resolveEditor picks the command used to open a fork for review, in order:
@@ -345,10 +412,12 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 // review through its narrative. It shares stdout with the diff that follows, so a redirected
 // review keeps the dossier attached to the patch it describes.
 func (c *Control) forkBrief(repo, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
-	return c.forkBriefAt(repo, repo, gitBranch(repo), name, ref, gateOutcome, gateConfigured)
+	return c.forkBriefAt(repo, repo, gitBranch(repo), "HEAD.."+ref, name, ref, forkReviewGate{outcome: gateOutcome, configured: gateConfigured})
 }
 
-func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
+// forkBriefAt prints the dossier of ref as the diff HEAD...ref in repo, into the branch it is going
+// to, with the commits range listed as the fork's own commits (a range of repo's history).
+func (c *Control) forkBriefAt(repo, authority, into, commits, name, ref string, gate forkReviewGate) error {
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
 	ins, del := forkspace.ParseShortstat(forkspace.GitOut(repo, "diff", "--shortstat", "HEAD..."+ref))
@@ -364,11 +433,11 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 	if err != nil {
 		return err
 	}
-	ahead, _ := strconv.Atoi(forkspace.GitOut(repo, "rev-list", "--count", "HEAD.."+ref))
+	ahead, _ := strconv.Atoi(forkspace.GitOut(repo, "rev-list", "--count", commits))
 	say("Changes in fork %s", name)
 	say("  Into: %s", into)
 	say("  %s · %s · +%d −%d", ui.Count(ahead, "commit"), ui.Count(len(changes), "file"), ins, del)
-	if log := forkspace.GitOut(repo, "log", "--oneline", "--no-decorate", "HEAD.."+ref); log != "" {
+	if log := forkspace.GitOut(repo, "log", "--oneline", "--no-decorate", commits); log != "" {
 		say("")
 		say("Commits")
 		say("%s", indent(log))
@@ -419,21 +488,26 @@ func (c *Control) forkBriefAt(repo, authority, into, name, ref string, gateOutco
 	// them: a rebase that applied cleanly is not a passing check.
 	say("")
 	switch {
-	case gateOutcome == forkReviewGateUnchecked && !gateConfigured:
+	case gate.outcome == forkReviewGateUnchecked && !gate.configured:
 		say("%s", ui.AlertBlock(p, "No project checks are configured",
 			"Set gate: in "+project.File+", or COOP_GATE, to check a fork before it merges."))
-	case gateOutcome == forkReviewGateUnchecked:
+	case gate.outcome == forkReviewGateUnchecked:
 		say("Project checks will run when you merge.")
-	case gateOutcome == forkReviewGateNone:
+	case gate.outcome == forkReviewGateNone:
 		say("%s", ui.AlertBlock(p, "No project checks are configured",
 			"The fork rebased cleanly onto "+into+", which is not the same as passing checks."))
-	case gateOutcome == forkReviewGateGreen:
+	case gate.outcome == forkReviewGateGreen:
 		say("  %s Project checks passed", p.Green("✓"))
-	case gateOutcome == forkReviewGateRed:
+	case gate.outcome == forkReviewGateRed:
 		say("%s", ui.FailureBlock(p, "Project checks failed for fork "+name,
 			"They ran on a temporary copy rebased onto "+into+".",
 			[2]string{"Open the fork:", "coop fork open " + name}))
-	case gateOutcome == forkReviewGateConflict:
+	case gate.outcome == forkReviewGateChanged:
+		say("%s", ui.FailureBlock(p, "Project checks changed files in fork "+name,
+			"They ran on a temporary copy rebased onto "+into+" and "+changedFilesPhrase(gate.changed)+".\n"+
+				"Make them only read files, or commit what they write, then review again.",
+			[2]string{"Open the fork:", "coop fork open " + name}))
+	case gate.outcome == forkReviewGateConflict:
 		say("%s", ui.FailureBlock(p, "Fork "+name+" conflicts with "+into,
 			"Project checks did not run.",
 			[2]string{"Open the fork:", "coop fork open " + name}))

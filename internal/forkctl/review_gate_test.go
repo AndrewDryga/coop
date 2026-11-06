@@ -211,6 +211,166 @@ func TestForkReviewGateOutcomes(t *testing.T) {
 	}
 }
 
+// The gated review rebases a temporary copy of the fork, whose HEAD is detached and whose commits get
+// new ids that exist nowhere once the copy is gone. The dossier still names the branch the fork is
+// going into, as the review without --gate does, and lists the fork's own commits, which a person can
+// look up in the fork.
+func TestForkReviewGateNamesTheBranchAndListsTheForksOwnCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	for _, tc := range []struct {
+		name       string
+		green      bool
+		unattended bool // no gate configured
+		wantLine   string
+	}{
+		{name: "green", green: true, wantLine: "✓ Project checks passed"},
+		{name: "red", green: false, wantLine: "They ran on a temporary copy rebased onto main."},
+		{name: "none", unattended: true, wantLine: "The fork rebased cleanly onto main, which is not the same as passing checks."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, ws := setupReviewGateFork(t, false)
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			forkTip := forkspace.GitOut(ws, "rev-parse", "HEAD")
+			rebasedTip := ""
+			cfg := &config.Config{RepoOverride: repo, BaseImage: "gate-image"}
+			if !tc.unattended {
+				cfg.Gate = []string{"make", "check"}
+			}
+			c := &Control{cfg: cfg, rt: runtime.Runtime{Name: "true"}, gateOK: func(_, treeDir, _ string) bool {
+				rebasedTip = forkspace.GitOut(treeDir, "rev-parse", "perf")
+				return tc.green
+			}}
+			out, _, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, "  Into: main\n") || strings.Contains(out, "HEAD") || !strings.Contains(out, tc.wantLine) {
+				t.Errorf("the dossier does not name the branch:\n%s", out)
+			}
+			if !strings.Contains(out, "  1 commit · 1 file · +1 −0\n") || !strings.Contains(out, "Commits\n  "+forkTip[:7]+" fork work\n") {
+				t.Errorf("the dossier does not list the fork's own commit %s:\n%s", forkTip[:7], out)
+			}
+			if !tc.unattended {
+				if rebasedTip == "" || rebasedTip == forkTip {
+					t.Fatalf("the gate saw no rebased copy: rebased %q, fork %q", rebasedTip, forkTip)
+				}
+				if strings.Contains(out, rebasedTip[:7]) {
+					t.Errorf("the dossier lists the copy's commit %s, which exists nowhere afterwards:\n%s", rebasedTip[:7], out)
+				}
+			}
+			// The id is one a person can look up in the fork.
+			if kind := forkspace.GitOut(ws, "cat-file", "-t", forkTip[:7]); kind != "commit" {
+				t.Errorf("git cat-file -t %s in the fork = %q", forkTip[:7], kind)
+			}
+		})
+	}
+}
+
+// Checks that exit 0 and still change the temporary copy did not check the fork's commits. The review
+// fails them and names what they changed, instead of the plain failure of checks that ran and passed
+// when run by hand. Checks that failed stay failed, whatever else they wrote.
+func TestForkReviewGateNamesTheFilesTheChecksChanged(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, dir string)
+		green bool
+		want  []string
+		not   []string
+	}{
+		{name: "a tracked file", green: true,
+			write: func(t *testing.T, dir string) {
+				writeTaskFile(t, filepath.Join(dir, "fork.txt"), "changed by the checks\n")
+			},
+			want: []string{"✗ Project checks changed files in fork perf", "and changed fork.txt.", "commit what they write"},
+			not:  []string{"Project checks failed", "Project checks passed"}},
+		{name: "a new file", green: true,
+			write: func(t *testing.T, dir string) {
+				writeTaskFile(t, filepath.Join(dir, "generated.txt"), "made by the checks\n")
+			},
+			want: []string{"✗ Project checks changed files in fork perf", "and changed generated.txt."},
+			not:  []string{"Project checks failed"}},
+		{name: "many files", green: true,
+			write: func(t *testing.T, dir string) {
+				for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"} {
+					writeTaskFile(t, filepath.Join(dir, name), "x\n")
+				}
+			},
+			want: []string{"and changed a.txt, b.txt, c.txt, and 2 more files."}},
+		{name: "a failed gate stays failed", green: false,
+			write: func(t *testing.T, dir string) {
+				writeTaskFile(t, filepath.Join(dir, "fork.txt"), "changed by the checks\n")
+			},
+			want: []string{"✗ Project checks failed for fork perf"},
+			not:  []string{"changed files"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, ws := setupReviewGateFork(t, false)
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+			parentBefore, forkBefore := reviewSourceSnapshot(repo), reviewSourceSnapshot(ws)
+			c := &Control{
+				cfg: &config.Config{RepoOverride: repo, BaseImage: "gate-image", Gate: []string{"make", "check"}},
+				rt:  runtime.Runtime{Name: "true"},
+				gateOK: func(_, treeDir, _ string) bool {
+					tc.write(t, treeDir)
+					return tc.green
+				},
+			}
+			out, code, err := reviewCommandOutput(t, c, "perf", "--gate", "--stat")
+			if err != nil || code != 1 {
+				t.Fatalf("ForkReview = (%d, %v), want (1, nil)\n%s", code, err, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("the dossier lacks %q:\n%s", want, out)
+				}
+			}
+			for _, not := range tc.not {
+				if strings.Contains(out, not) {
+					t.Errorf("the dossier says %q:\n%s", not, out)
+				}
+			}
+			assertReviewSourcesUnchanged(t, repo, ws, parentBefore, forkBefore)
+			assertReviewScratchEmpty(t, tmp)
+		})
+	}
+}
+
+// The line a merge or a review prints for the checks is one a person can paste: each argument quoted
+// so a shell reads the same command back.
+func TestShellLineReadsBackAsTheSameArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"make", "check"},
+		{"sh", "-c", "test -f f.txt"},
+		{"sh", "-c", "echo x >> a.txt"},
+		{"sh", "-c", "uname -s | grep -qx Linux"},
+		{"go", "test", "-run", "^(A|B)$", "./..."},
+		{"echo", "it's", "", `a "quoted" word`, "$HOME", "`id`", "a;b"},
+	} {
+		line := shellLine(args)
+		got, err := exec.Command("sh", "-c", `for arg in `+line+`; do printf '<%s>' "$arg"; done`).Output()
+		want := ""
+		for _, arg := range args {
+			want += "<" + arg + ">"
+		}
+		if err != nil || string(got) != want {
+			t.Errorf("shellLine(%q) = %s reads back as %q, %v; want %q", args, line, got, err, want)
+		}
+	}
+	if got := shellLine([]string{"sh", "-c", "test -f f.txt"}); got != "sh -c 'test -f f.txt'" {
+		t.Errorf("shellLine = %s, want the quoted command", got)
+	}
+	if got := shellLine([]string{"echo", "a\x1bb"}); strings.Contains(got, "\x1b") {
+		t.Errorf("shellLine let a control character through: %q", got)
+	}
+}
+
 func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

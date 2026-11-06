@@ -166,7 +166,7 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 	if into == "" {
 		into = "detached parent " + candidate.parent.Head
 	}
-	if err := c.forkBriefAt(candidate.dir, repo, into, name, ref, outcome, len(configured) > 0); err != nil {
+	if err := c.forkBriefAt(candidate.dir, repo, into, "HEAD.."+ref, name, ref, forkReviewGate{outcome: outcome, configured: len(configured) > 0}); err != nil {
 		return 1, err
 	}
 	uncommitted, err := observed(ws, "status", "--porcelain", "--untracked-files=all")

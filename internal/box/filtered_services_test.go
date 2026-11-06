@@ -824,6 +824,54 @@ func TestServicesNetRefusalHasNoRulesToDraft(t *testing.T) {
 	}
 }
 
+// A fork's approvals are its own, and a fork loop starts from its parent, where plain `coop approve`
+// reviews the parent. So the refusal of a box whose policy is another checkout's names that checkout in
+// the command that reviews its service rules, as the refusal of unapproved network access does; in the
+// person's own project it stays plain.
+func TestServicesRefusalNamesTheCheckoutToReview(t *testing.T) {
+	fork, compose := writeCompose(t, "services:\n  db:\n    image: postgres:18\n    expose: [\"5432\"]\n")
+	fork, err := filepath.EvalSymlinks(fork) // by its real path, as Coop names a checkout, and the file with it
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose = filepath.Join(fork, filepath.FromSlash(project.DefaultCompose))
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal := func(here, policyRepo string) *ServicesNeedRules {
+		t.Helper()
+		err := checkServicesHaveRules(&config.Config{RepoOverride: here}, RunSpec{Repo: fork, PolicyRepo: policyRepo, Network: true}, compose, nil)
+		var refused *ServicesNeedRules
+		if !errors.As(err, &refused) {
+			t.Fatalf("the refusal is a %T: %v", err, err)
+		}
+		return refused
+	}
+	named := "COOP_REPO=" + fork + " coop approve"
+	for _, tc := range []struct {
+		name, here, policy string
+		want               string // the command that reviews the rules
+	}{
+		{"a plain checkout", fork, "", "coop approve"},
+		{"a fork loop started from its parent", parent, "", named},
+		{"a gate in the fork, which the parent's policy governs", parent, parent, "coop approve"},
+	} {
+		refused := refusal(tc.here, tc.policy)
+		for name, text := range map[string]string{"terminal": refused.TerminalRemedy(), "paste": refused.PasteRemedy()} {
+			if !strings.Contains(text, "Then review it: "+tc.want+"\n") {
+				t.Errorf("%s, %s remedy lacks %q:\n%s", tc.name, name, "Then review it: "+tc.want, text)
+			}
+			if tc.want == "coop approve" && strings.Contains(text, "COOP_REPO=") {
+				t.Errorf("%s, %s remedy names a checkout it should not:\n%s", tc.name, name, text)
+			}
+		}
+		if offer := "Or run " + tc.want + " in a terminal"; !strings.Contains(refused.TerminalRemedy(), offer) {
+			t.Errorf("%s: the terminal remedy lacks %q:\n%s", tc.name, offer, refused.TerminalRemedy())
+		}
+	}
+}
+
 // A filtered box never joins the shared services network, so a project with services and no
 // approved service grant is refused before the runtime is touched, and the refusal carries the
 // rules to ask for: whole, drafted from the Compose file, with the port wherever the file says it.
@@ -863,7 +911,8 @@ func TestFilteredServicesRefusalDraftsCompleteRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture := &CapturedEgress{Store: store, Project: repo, Fingerprint: policy.Fingerprint}
-	cfg := &config.Config{Egress: "filtered", ConfigDir: t.TempDir()}
+	// The person's own project is the one refused, so the remedy is plain coop approve.
+	cfg := &config.Config{Egress: "filtered", ConfigDir: t.TempDir(), RepoOverride: repo}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	_, err = prepareFilteredExecution(t.Context(), cfg, recorderRuntime(t, recorder),
 		RunSpec{Repo: repo, Cmd: []string{"true"}, Network: true}, capture, compose, nil, nil)
