@@ -65,8 +65,14 @@ alias coop='nocorrect coop'
 
 // cmdCompletion prints the static completion script for a shell.
 func cmdCompletion(args []string) (int, error) {
-	if len(args) != 1 {
-		return 2, ui.MissingArgument("shell", "coop completion", "coop completion <bash|zsh>")
+	const command, usage = "coop completion", "coop completion <bash|zsh>"
+	for i, arg := range args {
+		if i > 0 || strings.HasPrefix(arg, "-") {
+			return 2, extraArgErr(arg, command, usage, nil)
+		}
+	}
+	if len(args) == 0 {
+		return 2, ui.MissingArgument("shell", command, usage)
 	}
 	switch args[0] {
 	case "bash":
@@ -74,8 +80,7 @@ func cmdCompletion(args []string) (int, error) {
 	case "zsh":
 		fmt.Print(zshCompletion)
 	default:
-		return 2, ui.InvalidOptionValue(args[0], "shell", "coop completion",
-			"Choose bash or zsh.", "coop completion zsh")
+		return 2, ui.InvalidOptionValue(args[0], "shell", command, "Choose bash or zsh.", "coop completion zsh")
 	}
 	return 0, nil
 }

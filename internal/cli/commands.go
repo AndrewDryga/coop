@@ -282,8 +282,8 @@ func sessionCompanionRepositoriesFromEnvironment() ([]box.CompanionRepository, e
 	return repositories, nil
 }
 
-// runOptions are the options `coop run` itself takes; everything else belongs to the command after
-// `--`. They are what a mistyped leading option is measured against.
+// runOptions are the options `coop run` and `coop shell` take; for run, everything else belongs to
+// the command after `--`. They are what a mistyped option is measured against.
 var runOptions = []string{"--egress", "--allow-domain", "--egress-rules"}
 
 // launchOffers is what a launch command has in place of the removed --readonly and --bare.
@@ -356,6 +356,22 @@ func (a *app) cmdRun(args []string) (int, error) {
 		return 2, unknownOptionErr(args[0], "coop run", runOptions)
 	}
 	return a.runInBox(args, "", nil) // raw command runner — not an agent session
+}
+
+// cmdShell opens the configured shell in the box. It takes only the network options: the shell is
+// the command, so any other word is refused rather than dropped.
+func (a *app) cmdShell(args []string) (int, error) {
+	args, err := a.takeNetworkFlags(args)
+	if err != nil {
+		return 2, err
+	}
+	if err := refuseRemovedExposureFlags("coop shell", args, launchOffers{}); err != nil {
+		return 2, err
+	}
+	if len(args) > 0 {
+		return 2, extraArgErr(args[0], "coop shell", "coop shell [<options>]", runOptions)
+	}
+	return a.runInBox([]string{a.cfg.Shell}, "", nil)
 }
 
 // launchAgent runs a named agent target: its autonomous default command, with any extra CLI
@@ -679,7 +695,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	if !validProfileName(profile) {
 		return 2, &ui.UsageError{
 			Headline: fmt.Sprintf("Invalid account name %q", profile),
-			Cause:    "Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".",
+			Cause:    "Use one name, without \":\", \"@\", \"/\", or \"\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".",
 			Rows:     [][2]string{{"Help:", "coop help login"}},
 		}
 	}

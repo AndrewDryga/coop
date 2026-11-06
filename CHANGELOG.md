@@ -14,6 +14,14 @@
   rather than "too many levels of symbolic links", and the refusal for a project build that is not
   ready ends on a whole sentence.
 
+- **A mistyped command gets the refusal that fits it.** In `coop shell`, `up`, `build`,
+  `check-secrets`, `down`, `approve`, `net runs`, `completion`, `sign`, `init`, `update`,
+  `eval inspect` and the commands that take no arguments, a stray word that starts with `-` is now
+  an unknown option and any other stray word an unexpected argument, shown with the usage line
+  `coop help <command>` prints. `coop completion bash zsh` no longer says the shell is missing.
+  `coop fork merg api` and `coop help fork merg` suggest `coop fork merge` instead of reading
+  `merg` as a fork name, `coop fork <name> acp` for a missing fork names the command that creates
+  it, and the account-name rule shows one backslash, not two.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed
@@ -75,6 +83,7 @@
   Compose's advice to add `external: true` is no longer shown, a declined review no longer calls
   the volume external, and without a terminal `coop up` says what the rule is: these services
   start only from a terminal, even after approval.
+
 
 
 - **A changed-files check in a loop worker box still covers the task after it is committed.**

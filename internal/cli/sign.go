@@ -323,7 +323,7 @@ func (a *app) cmdSign(args []string) (int, error) {
 		case "-h", "--help":
 			return helpForPath([]string{"sign"}, a.cfg, false)
 		default:
-			return 2, ui.UnexpectedArgument(args[i], "coop sign", "coop sign [--from <ref>]")
+			return 2, extraArgErr(args[i], "coop sign", "coop sign [--from <ref>]", []string{"--from"})
 		}
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)

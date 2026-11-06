@@ -28,10 +28,7 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	caseExposure := false
 	for _, arg := range args {
 		if arg != "--case-exposure" {
-			if strings.HasPrefix(arg, "-") {
-				return 2, unknownOptionErr(arg, "coop approve", []string{"--case-exposure"})
-			}
-			return 2, ui.UnexpectedArgument(arg, "coop approve", "coop approve [--case-exposure]")
+			return 2, extraArgErr(arg, "coop approve", "coop approve [--case-exposure]", []string{"--case-exposure"})
 		}
 		if caseExposure {
 			return 2, ui.RepeatedOption(arg, "coop approve")

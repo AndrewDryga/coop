@@ -231,7 +231,7 @@ func ParseTarget(s string) (Target, error) {
 			// segment — no separators or traversal, and no leading '-' (would look like a flag).
 			if strings.ContainsAny(a, ":@/\\") || a == "." || a == ".." || strings.HasPrefix(a, "-") {
 				return bad(fmt.Sprintf("Invalid account name %q", a),
-					"Use one name, without \":\", \"@\", \"/\", or \"\\\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".", "login")
+					"Use one name, without \":\", \"@\", \"/\", or \"\\\".\nThe name cannot be \".\", \"..\", or start with \"-\".", "login")
 			}
 			t.Accounts = append(t.Accounts, a)
 		}

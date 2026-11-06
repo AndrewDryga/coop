@@ -73,12 +73,23 @@ func nearestCommand(input string, candidates []string) (string, bool) {
 // rejectArgs returns the shared extra-argument refusal when a command that takes no arguments is
 // given some, so a stray token fails clearly instead of being silently ignored. It names the FIRST
 // extra token, not every one. (A `help`/`--help` arg is intercepted earlier, so it never reaches
-// here.) cmd is the command path without "coop" — "version", "approve".
+// here.) cmd is the command path without "coop" — "version", "doctor".
 func rejectArgs(cmd string, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return ui.UnexpectedArgument(args[0], "coop "+cmd, "coop "+cmd)
+	return extraArgErr(args[0], "coop "+cmd, "coop "+cmd, nil)
+}
+
+// extraArgErr refuses a token its command did not take, by the one rule every command shares: a
+// token that starts with "-" is an option the command does not have, corrected against options when
+// it is a near miss of one, and any other token is an argument with no place, shown with usage, the
+// syntax line of the command's own help page.
+func extraArgErr(arg, command, usage string, options []string) error {
+	if strings.HasPrefix(arg, "-") {
+		return unknownOptionErr(arg, command, options)
+	}
+	return ui.UnexpectedArgument(arg, command, usage)
 }
 
 // padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and

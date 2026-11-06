@@ -204,16 +204,18 @@ func TestMainRefusesRelativeConfigDirBeforeWritingOrAsking(t *testing.T) {
 }
 
 func TestRejectArgs(t *testing.T) {
-	if err := rejectArgs("build", nil); err != nil {
+	if err := rejectArgs("doctor", nil); err != nil {
 		t.Errorf("no args should be ok, got %v", err)
 	}
-	err := rejectArgs("build", []string{"help"})
-	if err == nil {
-		t.Fatal("an unexpected arg should error")
-	}
-	// It names the first extra token, the command it was given to, and that command's own page.
-	if s := err.Error(); !strings.Contains(s, `Unexpected argument "help" for "coop build"`) || !strings.Contains(s, "coop help build") {
-		t.Errorf("error should name the argument, the command and its help: %q", s)
+	// It names the first extra token, the command it was given to, and that command's own page; a
+	// token that starts with "-" is an option the command does not have.
+	for args, want := range map[string]string{
+		"help --bogus": `Unexpected argument "help" for "coop doctor" — Usage: coop doctor — Help: coop help doctor`,
+		"--bogus help": `Unknown option "--bogus" for "coop doctor" — See available options: coop help doctor`,
+	} {
+		if err := rejectArgs("doctor", strings.Fields(args)); err == nil || err.Error() != want {
+			t.Errorf("rejectArgs(doctor, %s) = %v, want %q", args, err, want)
+		}
 	}
 }
 

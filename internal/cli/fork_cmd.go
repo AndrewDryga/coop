@@ -16,10 +16,12 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
@@ -189,10 +191,8 @@ func (a *app) cmdFork(args []string) (int, error) {
 		}
 		// A typo'd subcommand would otherwise become a NEW fork name and silently clone + branch +
 		// launch an agent. Catch a near-miss of a real subcommand and suggest it instead of creating.
-		if repo, err := box.ResolveRepo(a.cfg.RepoOverride); err == nil {
-			if verb, ok := forkVerbNearMiss(args, pathExists(forkspace.Workspace(repo, args[0]))); ok {
-				return 2, forkVerbTypoErr(args[0], verb)
-			}
+		if verb, ok := forkVerbTypo(a.cfg, args); ok {
+			return 2, forkVerbTypoErr(args[0], verb)
 		}
 		return a.forkCreate(args)
 	}
@@ -200,7 +200,7 @@ func (a *app) cmdFork(args []string) (int, error) {
 
 // unknownForkErr refuses a bare fork name with no fork behind it: creating one needs the agent or
 // preset that will work in it. The name already passed forkspace.ValidName, so it is plain text.
-func unknownForkErr(name string) error {
+func unknownForkErr(name string) *ui.UsageError {
 	return &ui.UsageError{
 		Headline: fmt.Sprintf("No fork named %q", name),
 		Rows: [][2]string{
@@ -210,13 +210,33 @@ func unknownForkErr(name string) error {
 	}
 }
 
+// missingACPForkErr refuses `coop fork <name> acp` for a fork that does not exist yet: an editor
+// session only uses a fork, so the refusal names the command that creates one. It keeps exit 1,
+// which an editor reports as a failed agent start.
+func missingACPForkErr(name string) error {
+	refusal := unknownForkErr(name)
+	refusal.ExitCode = 1
+	return refusal
+}
+
+// forkVerbTypo reports the fork command a would-be fork name in args most likely mistypes, for the
+// project cfg names. Outside a project there is no fork to create, so it says nothing.
+func forkVerbTypo(cfg *config.Config, args []string) (string, bool) {
+	repo, err := box.ResolveRepo(cfg.RepoOverride)
+	if err != nil {
+		return "", false
+	}
+	exists := pathExists(forkspace.Workspace(repo, args[0]))
+	return forkVerbNearMiss(args, exists, preset.List(repo, cfg.GlobalPresetsDir()))
+}
+
 // forkVerbNearMiss reports the fork verb that a would-be fork name is a likely typo of, so cmdFork
 // can refuse it (with a suggestion) instead of silently cloning a stray fork. It stays quiet when the
-// name is already an existing fork, or when an explicit target/preset follows it — that positional
-// is the deliberate signal that args[0] really is a new fork name (`coop fork lss claude` creates
-// `lss` on purpose).
-func forkVerbNearMiss(args []string, forkExists bool) (string, bool) {
-	if forkExists || (len(args) >= 2 && !strings.HasPrefix(args[1], "-")) {
+// name is already an existing fork, or when a target or one of presets follows it — that word is the
+// deliberate signal that args[0] really is a new fork name (`coop fork lss claude` creates `lss` on
+// purpose). Any other word is the mistyped command's own argument (`coop fork merg api`).
+func forkVerbNearMiss(args []string, forkExists bool, presets []string) (string, bool) {
+	if forkExists || (len(args) >= 2 && (isTargetHead(args[1]) || slices.Contains(presets, args[1]))) {
 		return "", false
 	}
 	return nearestCommand(args[0], forkspace.VerbList())
@@ -262,7 +282,7 @@ type forkArgs struct {
 }
 
 const (
-	forkCreateUsage  = "coop fork <name> [<target|preset>] [--loop [--tasks <path>]... [-d]]"
+	forkCreateUsage  = "coop fork <name> [<target|preset>] [<options>]"
 	forkTasksExample = "coop fork myfork claude --loop --tasks .agent/tasks"
 )
 
@@ -1084,7 +1104,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return -1, fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
+		return -1, missingACPForkErr(name)
 	}
 	workdir := ws
 	if sessionsvc.RunIDFromEnv() != "" {
@@ -1238,7 +1258,7 @@ func (a *app) forkACPAgent(name string) (string, error) {
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return "", fmt.Errorf("no such fork: %s (open it first: coop fork %s)", name, name)
+		return "", missingACPForkErr(name)
 	}
 	if agent := forkctl.ReadForkAgent(ws); agent != "" {
 		return agent, nil

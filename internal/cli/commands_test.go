@@ -1548,9 +1548,11 @@ func TestValidProfileName(t *testing.T) {
 func TestLoginRejectsBadProfileName(t *testing.T) {
 	// A traversal name must be rejected before any vault/dir work — and before the tty check, so it
 	// fails the same way piped or at a terminal.
+	// The rule shows the backslash once, in the words a target's invalid account gets.
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
-	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.Contains(err.Error(), "Invalid account name") {
-		t.Errorf("loginTo bad credential = (%d, %v), want (2, invalid account name)", code, err)
+	const want = `Invalid account name "../../escape" — Use one name, without ":", "@", "/", or "\".`
+	if code, err := a.loginTo("claude", "../../escape"); code != 2 || err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("loginTo bad credential = (%d, %v), want (2, %q)", code, err, want)
 	}
 }
 

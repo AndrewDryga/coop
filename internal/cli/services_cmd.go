@@ -463,7 +463,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 		case "-y", "--yes":
 			yes = true
 		default:
-			return 2, unknownOptionErr(x, "coop down", downOptions)
+			return 2, extraArgErr(x, "coop down", "coop down [--delete-volumes] [--yes]", downOptions)
 		}
 	}
 	repo, p, err := loadProject(a.cfg.RepoOverride)

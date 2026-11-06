@@ -560,7 +560,7 @@ func parseNetRunsFlags(args []string) (netRunsOptions, error) {
 		case "--json":
 			opts.json = true
 		default:
-			return opts, unknownOptionErr(arg, "coop net runs", []string{"--all", "--all-projects", "--json"})
+			return opts, extraArgErr(arg, "coop net runs", "coop net runs [--all | --all-projects] [--json]", []string{"--all", "--all-projects", "--json"})
 		}
 	}
 	if opts.all && opts.allProjects {

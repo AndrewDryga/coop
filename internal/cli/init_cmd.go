@@ -174,7 +174,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		// An unknown token is a typo — error before doing any scaffold work, rather than
 		// silently ignoring it and acting as if a flag were never passed.
-		return 2, unknownOptionErr(args[i], "coop init", initOptions)
+		return 2, extraArgErr(args[i], "coop init", "coop init [<options>]", initOptions)
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {

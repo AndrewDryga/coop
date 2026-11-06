@@ -14,11 +14,10 @@ import (
 )
 
 func (a *app) evalInspect(args []string) (int, error) {
-	if len(args) > 1 {
-		return 2, rejectArgs("eval inspect", args[1:])
-	}
-	if len(args) == 1 && strings.HasPrefix(args[0], "-") {
-		return 2, unknownOptionErr(args[0], "coop eval inspect", nil)
+	for i, arg := range args {
+		if i > 0 || strings.HasPrefix(arg, "-") {
+			return 2, extraArgErr(arg, "coop eval inspect", "coop eval inspect [<run-id>]", nil)
+		}
 	}
 	root, err := evalStateRoot()
 	if err != nil {

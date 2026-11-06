@@ -148,7 +148,7 @@ func parseBuildMode(args []string) (*egress.Mode, error) {
 	for i := 0; i < len(args); {
 		value, count, match, err := flagValue(args, i, "--egress")
 		if !match {
-			return nil, ui.UnexpectedArgument(args[i], "coop build", "coop build [--egress <mode>]")
+			return nil, extraArgErr(args[i], "coop build", "coop build [--egress <mode>]", []string{"--egress"})
 		}
 		if err != nil {
 			return nil, ui.MissingOptionValue("--egress", "coop build", "coop build --egress filtered")
@@ -519,7 +519,7 @@ func parseUpdateFlags(args []string) (selfOnly, boxOnly, check bool, err error) 
 		case "--check":
 			check = true
 		default:
-			return false, false, false, unknownOptionErr(x, "coop update", updateOptions)
+			return false, false, false, extraArgErr(x, "coop update", "coop update [--self-only | --box-only | --check]", updateOptions)
 		}
 		if !slices.Contains(picked, x) {
 			picked = append(picked, x)

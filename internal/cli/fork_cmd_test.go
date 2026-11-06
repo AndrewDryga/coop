@@ -65,8 +65,10 @@ func TestForkVerbsRejectUnsafeName(t *testing.T) {
 }
 
 // A 3-rune typo of a fork verb (the audit's stray `lss`) must be caught and suggested, not silently
-// cloned — but an explicit agent, or an already-existing fork of that name, is a deliberate create.
+// cloned — but an explicit agent or preset, or an already-existing fork of that name, is a deliberate
+// create. Any other word after the typo is the mistyped command's own argument.
 func TestForkVerbNearMiss(t *testing.T) {
+	presets := []string{"frontier"}
 	cases := []struct {
 		args      []string
 		exists    bool
@@ -75,35 +77,81 @@ func TestForkVerbNearMiss(t *testing.T) {
 	}{
 		{[]string{"lss"}, false, "ls", true},               // distance 1 from `ls` — the most-typed verb
 		{[]string{"stp"}, false, "stop", true},             // 3 runes, distance 1 from `stop`
+		{[]string{"merg", "x"}, false, "merge", true},      // a fork name after the typo, not a target
+		{[]string{"reveiw", "x"}, false, "review", true},   // the same with a transposition
+		{[]string{"merg", "--all"}, false, "merge", true},  // an option after the typo
 		{[]string{"lss", "claude"}, false, "", false},      // explicit target → deliberate create of `lss`
 		{[]string{"lss", "codex:gpt-5"}, false, "", false}, // full target → deliberate create
 		{[]string{"lss", "frontier"}, false, "", false},    // preset → deliberate create
 		{[]string{"lss"}, true, "", false},                 // already a fork → open it, don't second-guess
+		{[]string{"merg", "x"}, true, "", false},           // the same with a trailing word
 		{[]string{"ls"}, false, "", false},                 // 2 runes → below the suggestion floor
 		{[]string{"api"}, false, "", false},                // a real new fork name, far from any verb
+		{[]string{"api", "x"}, false, "", false},           // the same with a word forkCreate refuses
 	}
 	for _, c := range cases {
-		if got, ok := forkVerbNearMiss(c.args, c.exists); ok != c.wantMatch || got != c.want {
+		if got, ok := forkVerbNearMiss(c.args, c.exists, presets); ok != c.wantMatch || got != c.want {
 			t.Errorf("forkVerbNearMiss(%v, exists=%v) = (%q,%v), want (%q,%v)", c.args, c.exists, got, ok, c.want, c.wantMatch)
 		}
 	}
 }
 
-// End-to-end: `coop fork lss` (no agent) is refused before any clone — exit 2 with the suggestion.
+// End-to-end: `coop fork lss` (no agent) is refused before any clone — exit 2 with the suggestion,
+// and so is `coop fork merg x`, whose second word is the fork it meant to merge.
 func TestCmdForkRefusesVerbTypo(t *testing.T) {
-	for _, tc := range []struct{ word, suggestion string }{{"lss", "ls"}, {"reviw", "review"}, {"list", "ls"}} {
-		t.Run(tc.word, func(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		suggestion string
+	}{
+		{[]string{"lss"}, "ls"}, {[]string{"reviw"}, "review"}, {[]string{"list"}, "ls"},
+		{[]string{"merg", "x"}, "merge"}, {[]string{"reveiw", "x"}, "review"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			cfg := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
 			a := &app{cfg: cfg}
-			code, err := a.cmdFork([]string{tc.word})
+			code, err := a.cmdFork(tc.args)
 			if code != 2 || err == nil || !strings.Contains(err.Error(), "Did you mean: coop fork "+tc.suggestion) || !strings.Contains(err.Error(), "To make a fork by that name: coop fork ") {
-				t.Fatalf("cmdFork(%q) = (%d, %v), want a suggestion for %s", tc.word, code, err, tc.suggestion)
+				t.Fatalf("cmdFork(%q) = (%d, %v), want a suggestion for %s", tc.args, code, err, tc.suggestion)
 			}
 			entries, err := os.ReadDir(cfg.BoxHome)
-			if err != nil || len(entries) != 0 || pathExists(forkspace.Workspace(cfg.RepoOverride, tc.word)) {
+			if err != nil || len(entries) != 0 || pathExists(forkspace.Workspace(cfg.RepoOverride, tc.args[0])) {
 				t.Fatalf("refused typo created fork state: %v/%v", entries, err)
 			}
 		})
+	}
+}
+
+// `coop help fork merg` and `coop fork merg --help` refuse the near miss as `coop fork merg` does,
+// rather than printing the page of a fork named "merg". A real fork by that name, or a word that is
+// no command, still gets its page.
+func TestForkHelpRefusesVerbTypo(t *testing.T) {
+	cfg := &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}
+	for _, tc := range []struct {
+		path   []string
+		asHelp bool
+		want   string
+	}{
+		{[]string{"fork", "merg"}, true, "Unknown command \"coop fork merg\" — Did you mean: coop help fork merge"},
+		{[]string{"fork", "merg", "x"}, true, "Unknown command \"coop fork merg\" — Did you mean: coop help fork merge"},
+		{[]string{"fork", "merg"}, false, "Unknown command \"coop fork merg\" — Did you mean: coop fork merge — To make a fork by that name: coop fork merg claude"},
+	} {
+		var code int
+		var err error
+		out := captureStdout(t, func() { code, err = helpForPath(tc.path, cfg, tc.asHelp) })
+		if code != 2 || err == nil || err.Error() != tc.want || out != "" {
+			t.Errorf("helpForPath(%q, asHelp=%v) = (%d, %v) printing %q, want (2, %q) and no page", tc.path, tc.asHelp, code, err, out, tc.want)
+		}
+	}
+	if err := os.MkdirAll(forkspace.Workspace(cfg.RepoOverride, "merg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range [][]string{{"fork", "merg"}, {"fork", "api"}} {
+		var code int
+		var err error
+		out := captureStdout(t, func() { code, err = helpForPath(path, cfg, true) })
+		if code != 0 || err != nil || !strings.Contains(out, "Usage: coop fork "+path[1]+" [<target|preset>]") {
+			t.Errorf("helpForPath(%q) = (%d, %v) printing %q, want the page for fork %s", path, code, err, out, path[1])
+		}
 	}
 }
 
@@ -787,8 +835,10 @@ func TestForkFreshRefusesReplacementAfterConfirmation(t *testing.T) {
 // config changes.
 func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 	a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}}
-	if code, err := a.forkACP("myfork", nil); code != 1 || err == nil || !strings.Contains(err.Error(), "no such fork: myfork") {
-		t.Errorf("fork acp for a missing fork = (%d, %v), want (1, no such fork)", code, err)
+	// A missing fork names the command that creates one, since `coop fork myfork` alone opens nothing.
+	const missing = `No fork named "myfork" — Create it: coop fork myfork <target|preset> — Forks: coop fork ls`
+	if code, err := a.forkACP("myfork", nil); code != 1 || err == nil || err.Error() != missing || refusalExit(err) != 1 {
+		t.Errorf("fork acp for a missing fork = (%d, %v), want (1, %q)", code, err, missing)
 	}
 	code, err := a.forkACP("myfork", []string{"claude@ghost"})
 	if code != 2 || err == nil || !strings.Contains(err.Error(), "ghost") {

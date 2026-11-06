@@ -32,17 +32,11 @@ const maxScanBytes = 5 << 20
 // scan that could not finish (usable in CI / as a pre-flight check).
 func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	includeIgnored := false
-	var rest []string
 	for _, x := range args {
-		switch x {
-		case "--include-ignored":
-			includeIgnored = true
-		default:
-			rest = append(rest, x)
+		if x != "--include-ignored" {
+			return 2, extraArgErr(x, "coop check-secrets", "coop check-secrets [--include-ignored]", []string{"--include-ignored"})
 		}
-	}
-	if err := rejectArgs("check-secrets", rest); err != nil {
-		return 2, err
+		includeIgnored = true
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {

@@ -441,17 +441,7 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "run":
 		return a.cmdRun(rest)
 	case "shell":
-		rest, err := a.takeNetworkFlags(rest)
-		if err != nil {
-			return 2, err
-		}
-		if err := refuseRemovedExposureFlags("coop shell", rest, launchOffers{}); err != nil {
-			return 2, err
-		}
-		if err := rejectArgs("shell", rest); err != nil {
-			return 2, err
-		}
-		return a.runInBox([]string{a.cfg.Shell}, "", nil)
+		return a.cmdShell(rest)
 	case "login":
 		return a.cmdLogin(rest)
 	case "credentials":
@@ -611,9 +601,17 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	switch {
 	case cmd == "fork":
 		// `coop fork myfork --help` is the launch contract for THAT fork; `coop help fork` the family.
+		// A near miss of a fork command is refused as `coop fork <word>` refuses it, never shown as
+		// the page of a fork by that name.
 		name := ""
 		if len(path) > 1 {
 			name = path[1]
+			if verb, ok := forkVerbTypo(cfg, path[1:]); ok {
+				if asHelp {
+					return 2, ui.UnknownCommandPath(path[:2], verb, true)
+				}
+				return 2, forkVerbTypoErr(name, verb)
+			}
 		}
 		code, _ := forkHelp(name)
 		return code, nil
