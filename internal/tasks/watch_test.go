@@ -55,11 +55,9 @@ func renderSections(p ui.Palette, merged []mergedTask, spin, width int) [][]stri
 
 func renderBoardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, width int) [][]string {
 	var out [][]string
-	for _, section := range boardSections(p, merged, merges, spin, width) {
-		out = append(out, section.lines(p, min(listMin, len(section.rows))))
-		if !section.list {
-			out[len(out)-1] = section.lines(p, len(section.rows))
-		}
+	sections := boardSections(p, merged, merges, spin, width)
+	for i, shown := range sectionShown(sections, 0) {
+		out = append(out, sections[i].render(shown))
 	}
 	return out
 }
@@ -299,6 +297,14 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 			[]string{"  ⚑ " + title, "    answered, not yet resumed for 3h"}},
 		{"blocked in a fork", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentBlocked, agent: "codex", since: ago(5 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
 			[]string{"  ⚑ " + title, "    decision pending for 5h"}},
+		// The fork's loop finished this task, then stopped for a decision on its other task: nothing
+		// failed, and answering that decision is what moves this one on.
+		{"done in a fork that stopped for its other task's decision",
+			mergedTask{Item: task, fork: "sweep-c", phase: ForkAssignmentReviewing, agent: "codex", forkBlocked: true, since: ago(time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
+			[]string{"  ⚑ " + title, "    done in fork sweep-c, waiting for the fork's other task"}},
+		{"working in a fork whose other task is blocked, its loop gone",
+			mergedTask{Item: task, fork: "sweep-c", phase: ForkAssignmentWorking, agent: "codex", forkBlocked: true}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-c · loop ended unexpectedly", "    to resume, run: coop fork sweep-c --loop -d"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("COOP_SPINNER", "1")
@@ -391,8 +397,9 @@ func TestTaskWatchCapsTheListsNeverTheWork(t *testing.T) {
 	}
 }
 
-// A live board fills the terminal: Needs you and Up next take the rows the work leaves, Needs you
-// first, and never fewer than three each, even when that runs past the bottom.
+// A live board fills the terminal and never runs past its bottom: Needs you and Up next take the
+// rows the work leaves, Needs you first, after three of Needs you and two of Up next; a terminal
+// too short for those takes Up next away first.
 func TestTaskWatchFillsTheTerminalHeight(t *testing.T) {
 	var merged []mergedTask
 	merged = append(merged, mergedTask{Item: inProgress("now", "Now", 0, 1), lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"}})
@@ -414,7 +421,8 @@ func TestTaskWatchFillsTheTerminalHeight(t *testing.T) {
 		height, asks, todos int
 	}{
 		{0, 3, 3},   // a pipe
-		{10, 3, 3},  // too short: the minimum, past the bottom
+		{10, 1, 0},  // too short even for the minimums
+		{19, 3, 2},  // the minimums
 		{26, 6, 3},  // Needs you takes the room first
 		{36, 10, 6}, // then Up next
 		{60, 10, 10},
@@ -423,7 +431,7 @@ func TestTaskWatchFillsTheTerminalHeight(t *testing.T) {
 		if asks, todos := shown(frame, "  ⚑ Ask"), shown(frame, "  ○ Todo"); asks != tc.asks || todos != tc.todos {
 			t.Errorf("height %d shows %d asks and %d todos, want %d and %d:\n%s", tc.height, asks, todos, tc.asks, tc.todos, strings.Join(frame, "\n"))
 		}
-		if tc.height >= 26 && len(frame) > tc.height {
+		if tc.height > 0 && len(frame) > tc.height {
 			t.Errorf("height %d: frame has %d lines:\n%s", tc.height, len(frame), strings.Join(frame, "\n"))
 		}
 	}
@@ -1079,6 +1087,16 @@ func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	if got := lastLoggedError(log); got != "" {
 		t.Errorf("an error before the tail was read: %q", got)
 	}
+	// The agent's own failed commands are indented and quoted: they say nothing about the loop.
+	write(log, "\x1b[31m✗ The loop's own failure\x1b[0m\n⚙ \"sh -c 'make check-local'\"\n  \x1b[31m✗\x1b[0m \"sh -c 'cd /x' (exit 2): make: *** [Makefile:260: check-local] Error 1\n✗ 'make' (exit 2): failed\n")
+	if got := lastLoggedError(log); got != "The loop's own failure" {
+		t.Errorf("agent tool lines: reason = %q, want the loop's own error line", got)
+	}
+	// A loop whose last word is that it stopped for a decision did not fail.
+	write(log, "✗ The loop's own failure\nmore output\n\x1b[1mStopped for your decision · 0/1 tasks done\x1b[0m\n\n  Answer it: coop tasks decisions -i\n")
+	if got := lastLoggedError(log); got != "" {
+		t.Errorf("a loop that stopped for a decision: reason = %q, want none", got)
+	}
 }
 
 // A fork's published candidate is one row for the fork, from its real records: how many tasks it
@@ -1225,6 +1243,94 @@ func TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines(t *testing.T) {
 	}
 	if lines := failureLines("short error", 64); !reflect.DeepEqual(lines, []string{"short error"}) {
 		t.Errorf("short error = %q", lines)
+	}
+	// A wrap that would leave one short word on a line of its own ends the line before it instead.
+	if lines := failureLines("make: *** [Makefile:260: check-local] Error 1", 44); !reflect.DeepEqual(lines, []string{"make: *** [Makefile:260: check-local] Error…"}) {
+		t.Errorf("lone token = %q", lines)
+	}
+	if lines := failureLines("the box image is missing and could not be built today", 42); !reflect.DeepEqual(lines, []string{"the box image is missing and could not be", "built today"}) {
+		t.Errorf("a two-word last line = %q", lines)
+	}
+}
+
+// Stopped tasks one set of commands moves on form a group: each keeps its title and detail lines,
+// the commands come once after the last, worded for several, and the rows that do not fit read as
+// how many more and what they share. A different fix starts a new group after one blank line.
+func TestTaskWatchGroupsStoppedTasksByTheirFix(t *testing.T) {
+	release := "2026-11-05-build-subscriptions-and-competitive-bot-features"
+	var merged []mergedTask
+	for i, title := range []string{"Verify Gateway takeover by a waiting bot replica", "Verify interrupted log sends across packaged app restart"} {
+		merged = append(merged, mergedTask{Item: inProgress(fmt.Sprintf("a-%d", i), title, 3, 3), since: ago(time.Duration(101+9*i) * time.Hour)})
+	}
+	for i := range 8 {
+		merged = append(merged, mergedTask{Item: inProgress(fmt.Sprintf("b-%d", i), "Later", 3, 3), since: ago(time.Hour)})
+	}
+	merged = append(merged, mergedTask{Item: inProgress(release, "Build subscriptions and competitive bot features", 19, 20), owner: "claimed by claude", agent: "claude"})
+	sections := boardSections(ui.Palette{}, merged, nil, 0, 120)
+	want := []string{
+		"Stopped (11)",
+		"  ✕ Verify Gateway takeover by a waiting bot replica",
+		"    3/3 · worker gone 101h 0m ago",
+		"  ✕ Verify interrupted log sends across packaged app restart",
+		"    3/3 · worker gone 110h 0m ago",
+		"  + 8 more with no worker",
+		"    to resume them, run: coop loop",
+		"",
+		"  ✕ Build subscriptions and competitive bot features",
+		"    19/20 · claude · claim held by a session that has ended",
+		"    to free it, run: coop tasks release " + release,
+	}
+	if got := sections[0].render(3); !reflect.DeepEqual(got, want) {
+		t.Errorf("stopped =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	// Three tasks of one fork whose loop failed: the error once, then the restart.
+	var fork []mergedTask
+	for _, id := range []string{"x", "y", "z"} {
+		fork = append(fork, mergedTask{Item: inProgress(id, "Task "+id, 3, 3), fork: "mcp", phase: ForkAssignmentReviewing, agent: "claude", stopReason: "task x projection changed after review"})
+	}
+	got := renderSections(ui.Palette{}, fork, 0, 120)[0]
+	want = []string{
+		"Stopped (3)",
+		"  ✕ Task x", "    3/3 · claude in fork mcp · loop failed",
+		"  ✕ Task y", "    3/3 · claude in fork mcp · loop failed",
+		"  ✕ Task z", "    3/3 · claude in fork mcp · loop failed",
+		"    task x projection changed after review",
+		"    to resume them, run: coop fork mcp --loop -d",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("one fork's stopped tasks =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if got := sectionShown(boardSections(ui.Palette{}, fork, nil, 0, 120), 8); got[0] != 1 {
+		t.Errorf("a short terminal shows %d of the fork's rows, want 1", got)
+	}
+}
+
+// The live board never runs past the bottom of the terminal: eleven stopped tasks on 24 rows keep
+// the header, a group's commands and the Ctrl-C footer, and the rows that do not fit are counted.
+func TestTaskWatchLiveFrameFitsTheTerminal(t *testing.T) {
+	var merged []mergedTask
+	for i := range 11 {
+		merged = append(merged, mergedTask{Item: inProgress(fmt.Sprintf("stop-%02d", i), fmt.Sprintf("Stopped %d", i), 3, 3), agent: "codex", since: ago(time.Hour)})
+	}
+	merged = append(merged, mergedTask{Item: inProgress("now", "Busy", 0, 1), lease: TaskLeaseObservation{State: leaseBusy, Provider: "codex"}})
+	for i := range 6 {
+		merged = append(merged,
+			mergedTask{Item: Item{ID: fmt.Sprintf("ask-%d", i), Title: fmt.Sprintf("Ask %d", i), State: StateBlocked}},
+			mergedTask{Item: Item{ID: fmt.Sprintf("todo-%d", i), Title: fmt.Sprintf("Todo %d", i), State: StateTodo}})
+	}
+	for _, height := range []int{24, 12, 40} {
+		frame := liveFrame(boardRead{merged: merged}, 0, 80, height)
+		board := strings.Join(frame, "\n")
+		if len(frame) > height {
+			t.Errorf("height %d: frame has %d lines:\n%s", height, len(frame), board)
+		}
+		if !strings.HasPrefix(frame[0], "6 todo · 1 working · 11 stopped") || frame[len(frame)-1] != watchExitFooter || !strings.Contains(board, "Now (1)\n  ") || !strings.Contains(board, " Busy\n") {
+			t.Errorf("height %d lost the header, Now or the footer:\n%s", height, board)
+		}
+		if height == 24 && (!strings.Contains(board, "more with no worker\n    to resume them, run: coop loop") || strings.Contains(board, "Stopped (11)\n\n")) {
+			t.Errorf("height %d: stopped group =\n%s", height, board)
+		}
 	}
 }
 

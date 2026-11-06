@@ -54,6 +54,8 @@ type mergedTask struct {
 	answered bool
 	// folded: the task is in its fork's merge candidate, so the fork's one merge row stands for it.
 	folded bool
+	// forkBlocked: another task of the same fork waits on a decision, which is where its loop stopped.
+	forkBlocked bool
 }
 
 // forkMerge is a fork's finished work as one row: ready to merge (Needs you) or merging (Now).
@@ -105,6 +107,12 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				merges = append(merges, merge)
 			}
 		}
+		blockedForks := map[forkspace.Identity]bool{}
+		for _, task := range snapshot.Tasks {
+			if task.Fork != nil && task.Phase == ForkAssignmentBlocked {
+				blockedForks[*task.Fork] = true
+			}
+		}
 		folded := map[*forkMerge]int{}
 		mergeQueues := map[*forkMerge][]string{}
 		forkTargets := readForkTargets(snapshot)
@@ -138,6 +146,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				m.live = liveForks[*task.Fork] || executionsRunning(task.Executions)
 				m.system = forkSystems[*task.Fork]
 				m.agent = forkTargets.of(repo, *task.Fork)
+				m.forkBlocked = blockedForks[*task.Fork] && m.phase != ForkAssignmentBlocked
 				if task.ownerRecord != nil && task.ownerRecord.Fork != nil {
 					m.since = task.ownerRecord.Fork.UpdatedAt
 					if projection := task.ownerRecord.Fork.Projection; projection != "" && m.live {
@@ -244,13 +253,8 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 	tick := func(spin int) ([]string, bool) {
 		board := cache.get(time.Now())
 		// The Ctrl-C footer belongs to the LIVE view only: a pipe or --json has no keyboard, and a
-		// captured snapshot must not carry an instruction nobody can follow. The board fills the
-		// terminal's height above it.
-		height := ui.TermHeight(os.Stdout)
-		if height > 0 {
-			height = max(height-2, 1)
-		}
-		frame := append(tasksWatchFrame(board, spin, width(), height), "", watchExitFooter)
+		// captured snapshot must not carry an instruction nobody can follow.
+		frame := liveFrame(board, spin, width(), ui.TermHeight(os.Stdout))
 		screen.Frame(frame)
 		if queueErr = board.snapshot.QueueError(); queueErr != nil {
 			return frame, true // settle on the failure so the loop's debounce still bounds the exit
@@ -452,7 +456,13 @@ const forkLogTail = 16 << 10
 
 var ansiSequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
-// lastLoggedError is the last "✗" line (ui.Error) in the tail of a fork's log, or "".
+// decisionStop is how a loop that stopped for a person's decision says so (loop.printFinalVerdict).
+const decisionStop = "Stopped for your decision"
+
+// lastLoggedError is the last error the loop itself printed (ui.Error: "✗ " at the start of the
+// line) in the tail of a fork's log, or "". The agent's own failed commands show indented and quoted
+// ("  ✗ \"make check\" (exit 2): …") and say nothing about why the loop ended, and a loop whose last
+// word is that it stopped for a decision did not fail.
 func lastLoggedError(path string) string {
 	f, err := forkspace.OpenStateFile(path)
 	if err != nil {
@@ -468,8 +478,11 @@ func lastLoggedError(path string) string {
 	n, _ := f.ReadAt(buf, offset)
 	lines := strings.Split(string(buf[:n]), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(ansiSequence.ReplaceAllString(lines[i], ""))
-		if reason, ok := strings.CutPrefix(line, "✗ "); ok {
+		line := strings.TrimRight(ansiSequence.ReplaceAllString(lines[i], ""), " \t\r")
+		if strings.HasPrefix(line, decisionStop) {
+			return ""
+		}
+		if reason, ok := strings.CutPrefix(line, "✗ "); ok && !strings.HasPrefix(reason, `"`) && !strings.HasPrefix(reason, "'") {
 			if reason = oneLineTitle(sanitizeCell(reason)); reason != "" {
 				return reason
 			}
@@ -590,9 +603,8 @@ const watchExitFooter = "Press Ctrl-C to leave this view."
 // no row of their own and the problems the snapshot found. The board is about TASKS: a box or
 // session running without a task of its own is execution data the JSON snapshot still carries (and
 // activity accounting and auto-exit still read), not a second inventory on screen. height is how
-// many rows the board may use: Needs you and Up next fill what the rest leaves, Needs you first and
-// at least listMin rows each. Without one (0: a pipe, or a terminal that cannot say) each shows
-// listMin. Pure, so it unit-tests headless.
+// many rows the board may use, and it never uses more (see sectionShown). Without one (0: a pipe, or
+// a terminal that cannot say) the lists show fixed caps. Pure, so it unit-tests headless.
 func tasksWatchFrame(board boardRead, spin, width, height int) []string {
 	p := ui.For(os.Stdout)
 	out := []string{tasksProgressLine(p, countBoard(board.merged, board.merges), width)}
@@ -608,12 +620,27 @@ func tasksWatchFrame(board boardRead, spin, width, height int) []string {
 	}
 	tail := boardTail(board, width)
 	sections := boardSections(p, board.merged, board.merges, spin, width)
-	shown := listShown(sections, height-len(out)-len(tail))
+	shown := sectionShown(sections, height-len(out)-len(tail))
 	for i, section := range sections {
 		out = append(out, "")
-		out = append(out, section.lines(p, shown[i])...)
+		out = append(out, section.render(shown[i])...)
 	}
-	return append(out, tail...)
+	out = append(out, tail...)
+	if height > 0 && len(out) > height {
+		// Even the fewest rows do not fit: cut the bottom rather than scroll the header away.
+		out = out[:height]
+	}
+	return out
+}
+
+// liveFrame is the live board for a terminal of termHeight rows: the board, then a blank line and
+// the Ctrl-C footer, never taller than the terminal.
+func liveFrame(board boardRead, spin, width, termHeight int) []string {
+	height := 0
+	if termHeight > 0 {
+		height = max(termHeight-2, 1)
+	}
+	return append(tasksWatchFrame(board, spin, width, height), "", watchExitFooter)
 }
 
 // boardTail is what follows the sections: a fork with no row on the board (cleaning up, or between
@@ -747,8 +774,12 @@ type taskRow struct {
 	state   string
 	failure string // the error a stopped fork loop reported, shown under its detail line
 	tone    rowTone
-	fixVerb string   // "to resume, run:", "to fix, run:" or "to free it, run:"
+	waits   bool     // a Needs you row waiting on another task's decision: it has no age of its own
+	fixVerb string   // what the commands do: "resume", "fix" or "free"
 	fix     []string // the complete commands, in order
+	// others is what the stopped rows sharing this fix have in common, in plain words, for the line
+	// that stands for those that do not fit: "+ 8 more with no worker".
+	others string
 }
 
 // classifyTask places a task on the board and says what its detail and fix lines read. Every
@@ -787,13 +818,13 @@ func classifyTask(m mergedTask) taskRow {
 			state += " · idle for " + shortElapsed(sinceOrZero(m.since))
 		}
 		return taskRow{section: sectionStopped, state: state, tone: toneStopped,
-			fixVerb: "to free it, run:", fix: []string{"coop tasks release " + m.ID}}
+			fixVerb: "free", fix: []string{"coop tasks release " + m.ID}}
 	}
 	state := "worker gone"
 	if !m.since.IsZero() {
 		state += " " + shortElapsed(sinceOrZero(m.since)) + " ago"
 	}
-	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: "to resume, run:", fix: []string{"coop loop"}}
+	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: "resume", fix: []string{"coop loop"}, others: "with no worker"}
 }
 
 // classifyForkTask places a task a fork holds. A task in the fork's merge candidate shows only as
@@ -821,9 +852,13 @@ func classifyForkTask(m mergedTask) taskRow {
 			return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
 		}
 		return taskRow{section: sectionNow, state: string(m.phase) + forElapsed(m.since)}
+	case m.forkBlocked && (m.phase == ForkAssignmentReady || m.phase == ForkAssignmentReviewing):
+		// The loop finished this task, then stopped for a decision on another of the fork's tasks:
+		// nothing failed, and answering that decision is what moves this one on.
+		return taskRow{section: sectionNeedsYou, state: "done in fork " + m.fork + ", waiting for the fork's other task", waits: true}
 	}
 	state, failure, verb, fix := forkStopNext(m.fork, m.stopReason)
-	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix}
+	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix, others: "in fork " + m.fork}
 }
 
 // forkStopNext turns why a fork's loop ended into the state a person reads and the complete set of
@@ -835,16 +870,16 @@ func forkStopNext(fork, reason string) (state, failure, verb string, fix []strin
 	restart := "coop fork " + fork + " --loop -d"
 	switch {
 	case reason == "":
-		return "loop ended unexpectedly", "", "to resume, run:", []string{restart}
+		return "loop ended unexpectedly", "", "resume", []string{restart}
 	case strings.Contains(reason, "has not been approved"):
-		return "network access not approved", "", "to fix, run:", []string{"coop approve", restart}
+		return "network access not approved", "", "fix", []string{"coop approve", restart}
 	case strings.Contains(reason, "run coop login"):
-		return "sign-in no longer accepted", "", "to fix, run:", []string{"coop login", restart}
+		return "sign-in no longer accepted", "", "fix", []string{"coop login", restart}
 	}
 	if _, clause, ok := strings.Cut(reason, " cannot start because "); ok && clause != "" {
-		return clause, "", "to resume, run:", []string{restart}
+		return clause, "", "resume", []string{restart}
 	}
-	return "loop failed", reason, "to resume, run:", []string{restart}
+	return "loop failed", reason, "resume", []string{restart}
 }
 
 func workingFor(d time.Duration) string {
@@ -869,9 +904,12 @@ func sinceOrZero(t time.Time) time.Duration {
 	return max(time.Since(t), 0)
 }
 
-// listMin is how many rows Needs you and Up next show at least, and all a pipe shows: the work
-// above them always shows in full, a list only as far as the terminal has room.
+// listMin is how many rows Needs you and Up next show in a pipe, which has no height to fill.
 const listMin = 3
+
+// liveMin is how many task rows a section keeps on a live board before the bottom of the terminal
+// cuts anything: three of Stopped and of Needs you, two of Up next. Now always shows in full.
+var liveMin = map[boardSection]int{sectionStopped: 3, sectionNeedsYou: 3, sectionUpNext: 2}
 
 // headerForm is one way to write the header's counts, from the fullest to the shortest.
 type headerForm struct {
@@ -976,89 +1014,176 @@ func paintSpans(spans []span) string {
 	return b.String()
 }
 
-// watchSection is one of the board's sections: its header and its rows, each row one or more lines.
+// watchSection is one of the board's sections: its kind, how many task rows it has, and how it
+// reads with only the first of them shown.
 type watchSection struct {
-	header string
-	rows   [][]string
-	gap    bool // a blank line sets each row apart from the next
-	list   bool // shows as many rows as fit (see listShown); the others always show in full
-}
-
-// lines is the section with its first shown rows, then how many more there are.
-func (s watchSection) lines(p ui.Palette, shown int) []string {
-	out := []string{s.header}
-	for i, row := range s.rows[:shown] {
-		if i > 0 && s.gap {
-			out = append(out, "")
-		}
-		out = append(out, row...)
-	}
-	if more := len(s.rows) - shown; more > 0 {
-		out = append(out, p.Dim(fmt.Sprintf("  + %d more", more)))
-	}
-	return out
+	kind   boardSection
+	total  int
+	render func(shown int) []string // its header, then its first shown rows and what stands for the rest
 }
 
 // height is how many lines the section takes with its first shown rows, the blank line before it
 // included.
-func (s watchSection) height(shown int) int {
-	n := 2 // the blank line before it and its header
-	for i, row := range s.rows[:shown] {
-		if i > 0 && s.gap {
-			n++
-		}
-		n += len(row)
-	}
-	if shown < len(s.rows) {
-		n++
-	}
-	return n
-}
+func (s watchSection) height(shown int) int { return 1 + len(s.render(shown)) }
 
-// listShown is how many rows each section shows within budget lines: every row of the work
-// sections, and of each list listMin, then as many more as fit, the first list filled first.
-func listShown(sections []watchSection, budget int) []int {
+// sectionShown is how many task rows each section shows within budget lines. Now always shows in
+// full. Stopped and Needs you keep liveMin rows each and Up next its own, then Stopped and Needs you
+// share the room left, a row at a time, and Up next takes what they leave. When even the minimums do
+// not fit, Up next gives way first, then Needs you, then Stopped, down to a row each. Without a
+// budget (a pipe) the work shows in full and each list listMin rows.
+func sectionShown(sections []watchSection, budget int) []int {
 	shown := make([]int, len(sections))
+	for i, s := range sections {
+		shown[i] = s.total
+		if s.kind == sectionNeedsYou || s.kind == sectionUpNext {
+			shown[i] = min(listMin, s.total)
+		}
+	}
+	if budget <= 0 {
+		return shown
+	}
 	used := 0
 	for i, s := range sections {
-		shown[i] = len(s.rows)
-		if s.list {
-			shown[i] = min(listMin, len(s.rows))
+		if n, ok := liveMin[s.kind]; ok {
+			shown[i] = min(n, s.total)
 		}
 		used += s.height(shown[i])
 	}
-	for i, s := range sections {
-		for s.list && shown[i] < len(s.rows) {
-			grown := used - s.height(shown[i]) + s.height(shown[i]+1)
-			if grown > budget {
-				break
+	resize := func(i, n int) {
+		used += sections[i].height(n) - sections[i].height(shown[i])
+		shown[i] = n
+	}
+	for _, kind := range []boardSection{sectionUpNext, sectionNeedsYou, sectionStopped, sectionNow} {
+		for i, s := range sections {
+			for s.kind == kind && used > budget && shown[i] > 1 {
+				resize(i, shown[i]-1)
 			}
-			shown[i]++
-			used = grown
 		}
 	}
+	grow := func(kinds ...boardSection) {
+		for grew := true; grew; {
+			grew = false
+			for i, s := range sections {
+				if slices.Contains(kinds, s.kind) && shown[i] < s.total &&
+					used-s.height(shown[i])+s.height(shown[i]+1) <= budget {
+					resize(i, shown[i]+1)
+					grew = true
+				}
+			}
+		}
+	}
+	grow(sectionStopped, sectionNeedsYou)
+	grow(sectionUpNext)
 	return shown
+}
+
+// listSection is a section whose rows show in order, then how many more there are.
+func listSection(p ui.Palette, kind boardSection, header string, rows [][]string) watchSection {
+	return watchSection{kind: kind, total: len(rows), render: func(shown int) []string {
+		out := []string{header}
+		for _, row := range rows[:shown] {
+			out = append(out, row...)
+		}
+		if more := len(rows) - shown; more > 0 {
+			out = append(out, p.Dim(fmt.Sprintf("  + %d more", more)))
+		}
+		return out
+	}}
+}
+
+// stopGroup is the stopped tasks one set of commands moves on: their rows, then the error they
+// share and the commands, once.
+type stopGroup struct {
+	rows    [][]string
+	others  string
+	failure []string
+	fix     func(n int) []string // the fix line, worded for n tasks
+}
+
+// fixPhrase is what a fix line says before its commands, for n tasks.
+func fixPhrase(verb string, n int) string {
+	switch {
+	case n > 1:
+		return "to " + verb + " them, run:"
+	case verb == "free":
+		return "to free it, run:"
+	}
+	return "to " + verb + ", run:"
+}
+
+// stoppedSection groups stopped tasks by the commands that move them on. Every group shows at least
+// one row while there is room for one each, the first groups then fill first; a group's rows that
+// do not fit read as "+ N more" and what they share. Groups are set apart by one blank line.
+func stoppedSection(p ui.Palette, groups []*stopGroup) watchSection {
+	total := 0
+	for _, g := range groups {
+		total += len(g.rows)
+	}
+	return watchSection{kind: sectionStopped, total: total, render: func(shown int) []string {
+		take := make([]int, len(groups))
+		left := shown
+		for i := range groups {
+			if left > 0 {
+				take[i], left = 1, left-1
+			}
+		}
+		for i, g := range groups {
+			n := min(left, len(g.rows)-take[i])
+			if take[i] > 0 {
+				take[i], left = take[i]+n, left-n
+			}
+		}
+		out := []string{fmt.Sprintf("Stopped (%d)", total)}
+		hidden := 0
+		for i, g := range groups {
+			if take[i] == 0 {
+				hidden += len(g.rows)
+				continue
+			}
+			if len(out) > 1 {
+				out = append(out, "")
+			}
+			for _, row := range g.rows[:take[i]] {
+				out = append(out, row...)
+			}
+			if more := len(g.rows) - take[i]; more > 0 {
+				out = append(out, p.Dim(strings.TrimRight(fmt.Sprintf("  + %d more %s", more, g.others), " ")))
+			}
+			out = append(out, g.failure...)
+			out = append(out, g.fix(len(g.rows))...)
+		}
+		if hidden > 0 {
+			out = append(out, "", p.Dim(fmt.Sprintf("  + %d more", hidden)))
+		}
+		return out
+	}}
 }
 
 // failureLimit is how many lines a stopped loop's error may take on the board.
 const failureLimit = 2
 
 // failureLines is an error wrapped to room at word boundaries, at most failureLimit lines; a
-// longer one ends its last line with an ellipsis after a whole word.
+// longer one ends its last line with an ellipsis after a whole word. A last line that would hold
+// only one short word (the "1" of "Error 1") is left off too, and the line before it ends with the
+// ellipsis: a lone token on a line of its own reads as a separate message.
 func failureLines(text string, room int) []string {
 	if text = oneLineTitle(text); text == "" {
 		return nil
 	}
 	lines := ui.WrapLines(text, room)
-	if len(lines) <= failureLimit {
+	keep := min(len(lines), failureLimit)
+	if last := strings.Fields(lines[keep-1]); keep == len(lines) && keep > 1 && len(last) == 1 && len([]rune(last[0])) < room/3 {
+		keep--
+	}
+	if keep == len(lines) {
 		return lines
 	}
-	lines = lines[:failureLimit]
-	last := strings.Fields(lines[failureLimit-1])
+	lines = lines[:keep]
+	last := strings.Fields(lines[keep-1])
 	for len(last) > 1 && len([]rune(strings.Join(last, " ")))+1 > room {
 		last = last[:len(last)-1]
 	}
-	lines[failureLimit-1] = truncate(strings.Join(last, " "), room-1) + "…"
+	lines[keep-1] = truncate(strings.Join(last, " "), room-1) + "…"
 	return lines
 }
 
@@ -1072,7 +1197,8 @@ func fileLink(path string) string {
 
 // boardSections renders Now, Stopped, Needs you and Up next, leaving out an empty one. Each header
 // carries its count, and Needs you the command that answers its decisions. A section's first row
-// starts right under its header; only Stopped rows are set apart by a blank line. Every row that is
+// starts right under its header; Stopped tasks that one set of commands moves on form a group, the
+// commands printed once after its last row, and only groups are set apart by a blank line. Every row that is
 // not a plain list entry has a detail line in one order:
 // `<queue> · [<done>/<total> · ][<agent>[ in fork <name>] · ]<state> for <duration>`, the queue named
 // only on a board of several. Titles link to the task's folder, a blocked task's decision, or the
@@ -1088,7 +1214,9 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 		since time.Time
 		lines []string
 	}
-	var now, stopped [][]string
+	var now [][]string
+	var stopped []*stopGroup
+	stopIndex := map[string]*stopGroup{}
 	var needsYou []listed
 	var upNext [][]string
 	decisions := false
@@ -1200,15 +1328,26 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 			now = append(now, []string{titleLine(p.Yellow(ui.CompactSpinFrame(spin)), m.Title, taskLink(m)),
 				detailLine(m.queue, taskFacts(m), stateSpan(row))})
 		case sectionStopped:
-			lines := []string{titleLine(p.Red(stoppedMarker), m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))}
-			for _, line := range failureLines(row.failure, lineRoom) {
-				lines = append(lines, lineIndent+p.Dim(p.Red(line)))
+			key := strings.Join(append([]string{row.fixVerb, row.failure}, row.fix...), "\x00")
+			group := stopIndex[key]
+			if group == nil {
+				group = &stopGroup{others: row.others, fix: func(n int) []string {
+					return commandLines(nil, fixPhrase(row.fixVerb, n), row.fix)
+				}}
+				for _, line := range failureLines(row.failure, lineRoom) {
+					group.failure = append(group.failure, lineIndent+p.Dim(p.Red(line)))
+				}
+				stopIndex[key] = group
+				stopped = append(stopped, group)
 			}
-			stopped = append(stopped, append(lines, commandLines(nil, row.fixVerb, row.fix)...))
+			group.rows = append(group.rows, []string{titleLine(p.Red(stoppedMarker), m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))})
 		case sectionNeedsYou:
 			decisions = true
-			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)),
-				detailLine(m.queue, nil, append([]span{stateSpan(row)}, ageSpans(m.since)...)...)}})
+			state := []span{stateSpan(row)}
+			if !row.waits {
+				state = append(state, ageSpans(m.since)...)
+			}
+			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)), detailLine(m.queue, nil, state...)}})
 		case sectionUpNext:
 			var extra []span
 			if m.queue != "" {
@@ -1239,10 +1378,10 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 
 	var sections []watchSection
 	if len(now) > 0 {
-		sections = append(sections, watchSection{header: fmt.Sprintf("Now (%d)", len(now)), rows: now})
+		sections = append(sections, listSection(p, sectionNow, fmt.Sprintf("Now (%d)", len(now)), now))
 	}
 	if len(stopped) > 0 {
-		sections = append(sections, watchSection{header: fmt.Sprintf("Stopped (%d)", len(stopped)), rows: stopped, gap: true})
+		sections = append(sections, stoppedSection(p, stopped))
 	}
 	if len(needsYou) > 0 {
 		// Newest first, as the ages read; a row whose age is unknown goes last.
@@ -1254,14 +1393,14 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 		if decisions {
 			header += p.Gray(" · answer them: coop tasks decisions -i")
 		}
-		section := watchSection{header: header, list: true}
-		for _, row := range needsYou {
-			section.rows = append(section.rows, row.lines)
+		rows := make([][]string, len(needsYou))
+		for i, row := range needsYou {
+			rows[i] = row.lines
 		}
-		sections = append(sections, section)
+		sections = append(sections, listSection(p, sectionNeedsYou, header, rows))
 	}
 	if len(upNext) > 0 {
-		sections = append(sections, watchSection{header: fmt.Sprintf("Up next (%d)", len(upNext)), rows: upNext, list: true})
+		sections = append(sections, listSection(p, sectionUpNext, fmt.Sprintf("Up next (%d)", len(upNext)), upNext))
 	}
 	return sections
 }

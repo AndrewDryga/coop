@@ -28,11 +28,13 @@
   reads `loop failed`, with the error itself on up to two lines below. Every task of a fork names
   the same target, and a task a loop let go still names who worked it. A command is never cut: one
   that does not fit gets a line of its own. A fork's finished work is one row with its task count,
-  its changes and `coop fork merge <name>`, under Now while the merge runs. With several queues
-  every row names its queue, and the project's own queue goes by the project's folder name. Needs
-  you and Up next fill the terminal's height, task titles are links to the task's folder or
-  decision, and a narrow terminal gets a shorter header instead of a cut one. The header counts
-  working and stopped tasks and what finished today.
+  its changes and `coop fork merge <name>`, under Now while the merge runs. A task a fork finished
+  before its loop stopped for a decision on the fork's other task waits under Needs you instead of
+  reading as a failed loop. Stopped tasks one command moves on share that command, printed once.
+  With several queues every row names its queue, and the project's own queue goes by the project's
+  folder name. The board fills the terminal's height and never runs past it, task titles are links
+  to the task's folder or decision, and a narrow terminal gets a shorter header instead of a cut
+  one. The header counts working and stopped tasks and what finished today.
 
 - **An editor thread can build the project's box.** When a filtered session waits on build files
   nobody approved, send `/build` in the thread. Coop saves the files, shows where they are on this
