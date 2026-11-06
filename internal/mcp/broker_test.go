@@ -30,6 +30,30 @@ func TestCredentialReferencesNameEverySecretVariable(t *testing.T) {
 	}
 }
 
+// A file a box does not load still gives up its names whatever shape it is in: a server entry that
+// is not an object hides no other server's, and a file that no longer parses gives every name its
+// text spells. A missing file, or one that references nothing, names nothing.
+func TestReferencedCredentialNamesSurviveABrokenFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	for body, want := range map[string][]string{
+		brokerFixture: {"DOCS_KEY", "EMISAR_TOKEN", "TRACE_ID"},
+		`{"mcpServers":{"note":"see docs","list":[1],"emisar":{"url":"https://emisar.example/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`: {"EMISAR_TOKEN"},
+		`{"mcpServers":{"emisar":{"bearer_token_env_var": "EMISAR_TOKEN",},"docs":{"headers":{"X-Key":"${DOCS_KEY}"}}`:                      {"DOCS_KEY", "EMISAR_TOKEN"},
+		`{"mcpServers":["EMISAR_TOKEN"]}`: nil,
+		`{"mcpServers":{}}`:               nil,
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := ReferencedCredentialNames(path); !slices.Equal(got, want) {
+			t.Fatalf("names in %s = %q, want %q", body, got, want)
+		}
+	}
+	if got := ReferencedCredentialNames(filepath.Join(t.TempDir(), "missing.json")); got != nil {
+		t.Fatalf("a missing file named %q", got)
+	}
+}
+
 // Routing rewrites exactly the named bearer server — its url and its token variable — and keeps
 // every other field and server as it was, numbers included.
 func TestRouteThroughBrokerRewritesOnlyTheRoutedServer(t *testing.T) {

@@ -834,7 +834,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		mcpSource := cfg.MCPFile
 		if cfg.MCPFile != "" {
 			var err error
-			mcpSource, err = validateMCPSourceIsolation(cfg, spec)
+			mcpSource, err = loadedMCPSource(cfg, spec)
 			if err != nil {
 				return -1, err
 			}
@@ -2083,6 +2083,11 @@ func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts co
 // or not-yet-created authority through a repository, companion, or credential home would defeat
 // that boundary; reopening the original spelling would reintroduce a parent-symlink race.
 func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error) {
+	return ResolveMCPSource(cfg.MCPFile, mcpSourceRoots(cfg, spec))
+}
+
+// mcpSourceRoots are the directories this run mounts wholesale, which no MCP source may traverse.
+func mcpSourceRoots(cfg *config.Config, spec RunSpec) []MCPSourceRoot {
 	roots := []MCPSourceRoot{{Kind: "mounted repository", Path: spec.Repo}}
 	for _, companion := range spec.CompanionRepositories {
 		roots = append(roots, MCPSourceRoot{Kind: "mounted companion repository", Path: companion.HostPath})
@@ -2090,7 +2095,23 @@ func validateMCPSourceIsolation(cfg *config.Config, spec RunSpec) (string, error
 	for _, m := range mountedWritables(cfg, spec) {
 		roots = append(roots, MCPSourceRoot{Kind: "mounted " + m.Kind, Path: m.Host})
 	}
-	return ResolveMCPSource(cfg.MCPFile, roots)
+	return roots
+}
+
+// loadedMCPSource is the configured MCP file a launch that loads it reads, proven isolated. A
+// missing default file only means no servers, but a COOP_MCP_FILE that names no file is refused: a
+// mistyped path would otherwise start every box without the servers it meant.
+func loadedMCPSource(cfg *config.Config, spec RunSpec) (string, error) {
+	source, err := validateMCPSourceIsolation(cfg, spec)
+	if err != nil {
+		return "", err
+	}
+	if cfg.MCPFileChosen() {
+		if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("COOP_MCP_FILE names %q, which does not exist; fix the path or create the file", cfg.MCPFile)
+		}
+	}
+	return source, nil
 }
 
 // MCPSourceRoot is a directory exposed wholesale to a less-trusted process. ResolveMCPSource rejects
@@ -2105,11 +2126,19 @@ type MCPSourceRoot struct {
 // endpoint that the caller must pass to mcp.ReadValidatedSnapshot. Reopening source itself would
 // reintroduce the parent-symlink race this resolution closes.
 func ResolveMCPSource(sourcePath string, roots []MCPSourceRoot) (string, error) {
+	return resolveMCPSource(sourcePath, roots, false)
+}
+
+// resolveMCPSource is ResolveMCPSource that, with followLink, also takes a source whose last
+// component is a symbolic link, such as a dotfiles link. That is for a file read only for the token
+// names it spells: nothing is loaded from it, and the link's target and every path to it are held
+// to the same roots.
+func resolveMCPSource(sourcePath string, roots []MCPSourceRoot, followLink bool) (string, error) {
 	source, err := resolveHostFileSource(sourcePath, "mcp.json", roots)
 	if source.overlap != nil {
 		return "", fmt.Errorf("mcp.json source %q is inside %s %q; move the file and set COOP_MCP_FILE to a path outside directories exposed to agents", sourcePath, source.overlap.Kind, source.overlap.Path)
 	}
-	if err != nil {
+	if err != nil && !(followLink && source.link) {
 		return "", err
 	}
 	return source.path, nil

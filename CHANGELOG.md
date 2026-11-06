@@ -90,8 +90,14 @@
   the volume external, and without a terminal `coop up` says what the rule is: these services
   start only from a terminal, even after approval.
 
-
-
+- **MCP tokens in `agents/env` stay out of filtered and offline boxes, whichever MCP file is
+  active.** These boxes dropped only the token variables the active MCP file names. With
+  `COOP_MCP_FILE` pointing at another file, or with MCP turned off, the tokens the default
+  `agents/mcp.json` uses still reached them from `agents/env`. They now keep out the token
+  variables of both files, and a launch that passes one with `-e` stops. Open runs are unchanged.
+  A `COOP_MCP_FILE` that names no file now stops the launch and names the path, where the run used
+  to start without any MCP servers. When an MCP token has no value, the error now says to set it in
+  `agents/env`, because Coop doesn't read MCP tokens from your shell.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

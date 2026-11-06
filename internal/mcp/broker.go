@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -125,22 +126,33 @@ func CredentialReferences(snapshot []byte) ([]string, error) {
 	return slices.Compact(names), nil
 }
 
+// bearerReferenceText finds a bearer_token_env_var's value in text that no longer parses as JSON.
+var bearerReferenceText = regexp.MustCompile(`"bearer_token_env_var"\s*:\s*"([^"\\]+)"`)
+
 // ReferencedCredentialNames is CredentialReferences for a box that never loads the file: read the
 // same bounded, no-follow way, names taken from whatever still parses — a broken file must not stop
-// a sign-in, and a name it still spells is still kept out.
+// a sign-in, and a name it still spells is still kept out. One odd server entry hides no other's
+// names, and from a file that is not JSON at all every name its text spells is taken.
 func ReferencedCredentialNames(path string) []string {
 	data, present, err := readConfigFile(path, "shared MCP config")
 	if err != nil || !present {
 		return nil
 	}
+	var names []string
 	var root struct {
-		MCPServers map[string]map[string]any `json:"mcpServers"`
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
 	}
 	if json.Unmarshal(data, &root) != nil {
-		return nil
+		for _, match := range bearerReferenceText.FindAllSubmatch(data, -1) {
+			names = append(names, string(match[1]))
+		}
+		names = append(names, headerReferences(string(data))...)
 	}
-	var names []string
-	for _, definition := range root.MCPServers {
+	for _, raw := range root.MCPServers {
+		var definition map[string]any
+		if json.Unmarshal(raw, &definition) != nil {
+			continue
+		}
 		if reference, ok := definition["bearer_token_env_var"].(string); ok && reference != "" {
 			names = append(names, reference)
 		}

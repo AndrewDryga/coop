@@ -306,10 +306,20 @@ Set `COOP_MCP_FILE` to the shared file's absolute path. The default is
 credential homes and ACP session stores. co:op mounts those directories in full, which would expose
 the file to the box, so it refuses a `COOP_MCP_FILE` in any of them before launch, even if the file
 is empty or doesn't exist yet. The file must also:
+Set `COOP_MCP_FILE` to choose the shared file. The default is `mcp.json`. If you set
+`COOP_MCP_FILE` to a path with no file, co:op names the path and won't start the run. Keep the
+file outside repositories, companion repositories, agent credential homes and ACP session stores.
+co:op mounts those directories in full, which would expose the file to the box, so it refuses a
+`COOP_MCP_FILE` in any of them before launch, even if the file is empty or doesn't exist yet. The
+file must also:
 
 - be a regular file, not a symlink or special file
 - be 4 MiB or smaller
 - have a canonical path without `..`
+
+When `COOP_MCP_FILE` points to another file or MCP is turned off, co:op still reads the default
+`mcp.json` to keep its token variables out of filtered and offline boxes. Such a launch stops if
+that default file, or the file it links to, sits in a directory co:op mounts in full.
 
 Gemini's native `settings.json` must follow the same file rules. co:op reads it on every Gemini
 launch, Codex's native `config.toml` on every Codex launch, and Grok's native config when the
@@ -350,6 +360,8 @@ and put the value in the env file:
 echo 'SENTRY_TOKEN=…' >> ~/.config/coop/agents/env
 ```
 
+co:op reads the value from this file, not from your shell.
+
 Every agent supports an HTTP server's `headers`. Claude and Grok turn `bearer_token_env_var`
 into an Authorization header using the environment variable's value.
 
@@ -383,9 +395,12 @@ box and sends it to the server. The box gets a modified config that points to a 
 listener and uses a replacement variable, `COOP_MCP_TOKEN_<n>`. That replacement works only for
 this server during this run.
 
-The original variable in co:op's env file (`SENTRY_TOKEN` above) never reaches a filtered box,
-even if that box doesn't load MCP. The ACP adapter receives only the replacement value, not
-the real token.
+The token variables in co:op's env file never reach a filtered box, even if that box doesn't load
+MCP. That covers every variable a shared file names in `bearer_token_env_var` or in a header, such
+as `SENTRY_TOKEN` above. It covers the default `mcp.json` too when `COOP_MCP_FILE` points to
+another file or MCP is turned off, because the env file holds its tokens either way. co:op also
+stops a launch that passes one of these variables with `-e`. The ACP adapter receives only the
+replacement value, not the real token.
 
 A legacy SSE server with a bearer token needs a broader allowed route: `GET` on its stream
 path and `POST` on any clean path at the same host. The token still stays outside the box, and
@@ -417,8 +432,8 @@ Remote sessions with open networking use the same helper and the same fallbacks.
 #### Offline runs
 
 An offline run (`--egress offline`) omits all remote MCP servers because it can't reach them,
-and reports this at launch. Local command servers still work. Tokens for the omitted remote
-servers stay outside the box.
+and reports this at launch. Local command servers still work. The token variables stay outside
+the box, as they do in a filtered run.
 
 ### Playwright
 

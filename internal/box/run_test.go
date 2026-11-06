@@ -2198,6 +2198,77 @@ func TestValidatedMCPSourceCannotBeRetargetedThroughParentSymlink(t *testing.T) 
 	}
 }
 
+// A COOP_MCP_FILE that names no file is refused by name, at network admission and at the launch,
+// before the runtime runs anything: a mistyped path would otherwise start every box without its
+// servers. A missing default file still means no servers, a sign-in box loads none, and a launch
+// whose caller pointed MCPFile elsewhere or turned MCP off has made its own choice.
+func TestAChosenMCPFileThatDoesNotExistIsRefused(t *testing.T) {
+	load := func(t *testing.T) *config.Config {
+		t.Helper()
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Egress = "none"
+		return cfg
+	}
+	launch := func(t *testing.T, cfg *config.Config, spec RunSpec) error {
+		t.Helper()
+		rt, _, _ := envCapturingRuntime(t)
+		code, err := runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
+		if err == nil && code != 0 {
+			err = fmt.Errorf("exit %d", code)
+		}
+		return err
+	}
+	claude, _ := agents.Get("claude")
+	spec := RunSpec{Image: "i", Repo: t.TempDir(), Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+	t.Setenv("COOP_CONFIG_DIR", t.TempDir())
+	t.Setenv("COOP_MCP_FILE", "")
+	if err := os.Unsetenv("COOP_MCP_FILE"); err != nil {
+		t.Fatal(err)
+	}
+	unset := load(t)
+	spec.Cmd = claude.Interactive(unset)
+	if err := launch(t, unset, spec); err != nil {
+		t.Fatalf("a missing default MCP file stopped the launch: %v", err)
+	}
+
+	missing := filepath.Join(t.TempDir(), "nope.json")
+	t.Setenv("COOP_MCP_FILE", missing)
+	cfg := load(t)
+	want := fmt.Sprintf("COOP_MCP_FILE names %q, which does not exist", missing)
+	if _, err := networkMCPSnapshot(cfg, spec); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("admission's MCP read = %v, want %q", err, want)
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime-args")
+	if code, err := Run(cfg, recorderRuntime(t, recorder), spec); code != -1 || err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Run = (%d, %v), want %q", code, err, want)
+	}
+	if _, err := os.Stat(recorder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the runtime ran with a missing MCP file: %v", err)
+	}
+	login := spec
+	login.Login = true
+	if _, err := networkMCPSnapshot(cfg, login); err != nil {
+		t.Fatalf("a sign-in box's admission = %v", err)
+	}
+	if _, err := mcpScrub(cfg, login); err != nil {
+		t.Fatalf("a sign-in box's scrub = %v", err)
+	}
+	for name, path := range map[string]string{"pointed elsewhere": filepath.Join(t.TempDir(), "mcp.json"), "turned off": ""} {
+		other := cfg.Clone()
+		other.MCPFile = path
+		if err := launch(t, other, spec); err != nil {
+			t.Fatalf("MCP %s: %v", name, err)
+		}
+	}
+	writeRepoFile(t, missing, `{"mcpServers":{"local":{"command":"true"}}}`)
+	if err := launch(t, cfg, spec); err != nil {
+		t.Fatalf("the chosen file, once there: %v", err)
+	}
+}
+
 func TestResolvePathTrace(t *testing.T) {
 	tests := []struct {
 		name    string

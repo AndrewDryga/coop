@@ -136,6 +136,17 @@ func TestFilteredRunRefusesAnMCPTokenItCannotBroker(t *testing.T) {
 	}
 }
 
+// A token only exported in the shell never reaches Coop's MCP servers, so the refusal says where it
+// goes: the env file.
+func TestAMissingMCPTokenNamesTheEnvFile(t *testing.T) {
+	cfg, spec := brokerFixture(t, "")
+	t.Setenv("EMISAR_TOKEN", "exported-in-the-shell")
+	_, err := planMCPRoutes(cfg, spec, []byte(`{"mcpServers":{"emisar":{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"EMISAR_TOKEN"}}}`), nil)
+	if err == nil || !strings.Contains(err.Error(), `MCP server "emisar" needs EMISAR_TOKEN`) || !strings.Contains(err.Error(), "set it in "+cfg.EnvFile()) {
+		t.Fatalf("planMCPRoutes = %v, want a refusal naming the env file", err)
+	}
+}
+
 // The legacy SSE transport names its message endpoint at runtime, so its route cannot be an exact
 // one: it admits GET on the stream's own path and POST anywhere on the SAME host, and nothing else.
 // The secret still stays outside the box, which is the whole point of brokering it.
@@ -210,6 +221,111 @@ func TestFilteredBoxWithoutMCPDropsTheConfiguredTokenVariables(t *testing.T) {
 	}
 	if values := EnvFileValues(envFile); values["EMISAR_TOKEN"] != "" || values["SHARED"] != "kept" {
 		t.Fatalf("box environment = %#v", values)
+	}
+}
+
+// The env file holds the default agents/mcp.json's tokens whichever MCP file is active, so a filtered
+// box keeps out every variable either file reads a secret from: with COOP_MCP_FILE on another file,
+// in a box that loads it or loads none, and with MCP turned off. Nor can -e put one in.
+func TestFilteredBoxKeepsTheDefaultMCPFilesTokensOut(t *testing.T) {
+	cfg, base := brokerFixture(t, "DEFAULT_TOKEN=default-secret\nDEFAULT_KEY=header-secret\nQA_TOKEN=qa-secret\nSHARED=kept\n")
+	writeRepoFile(t, filepath.Join(cfg.ConfigDir, "mcp.json"), `{"mcpServers":{
+		"emisar":{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"DEFAULT_TOKEN"},
+		"docs":{"type":"http","url":"https://docs.example/mcp","headers":{"X-Key":"key ${DEFAULT_KEY}"}}}}`)
+	qa := `{"mcpServers":{"qa":{"type":"http","url":"https://qa.example/mcp","bearer_token_env_var":"QA_TOKEN"}}}`
+	qaFile := filepath.Join(t.TempDir(), "qa-mcp.json")
+	writeRepoFile(t, qaFile, qa)
+	every := []string{"DEFAULT_KEY", "DEFAULT_TOKEN", "QA_TOKEN"}
+	for name, c := range map[string]struct {
+		mcpFile      string
+		loads, login bool
+		want         []string
+	}{
+		"a box that loads the other file": {mcpFile: qaFile, loads: true, want: every},
+		"a sign-in box":                   {mcpFile: qaFile, login: true, want: every},
+		"MCP turned off":                  {want: []string{"DEFAULT_KEY", "DEFAULT_TOKEN"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := *cfg
+			run.MCPFile = c.mcpFile
+			spec := base
+			spec.Login = c.login
+			if c.loads {
+				spec.mcpSnapshot = []byte(qa)
+			}
+			names, err := mcpScrub(&run, spec)
+			if err != nil || !slices.Equal(names, c.want) {
+				t.Fatalf("scrub names = %q, %v; want %q", names, err, c.want)
+			}
+			f := &filteredExecution{mcpScrub: names}
+			artifacts := defaultCompositionArtifactOps()
+			artifacts.parent = t.TempDir()
+			envFile, err := f.credentialBrokerEnv(artifacts, run.EnvFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// QA_TOKEN goes only where the active file names it: with MCP off, no file does.
+			env := string(mustReadFile(t, envFile))
+			if strings.Contains(env, "default-secret") || strings.Contains(env, "header-secret") || strings.Contains(env, "qa-secret") != (c.mcpFile == "") || !strings.Contains(env, "SHARED=kept") {
+				t.Fatalf("box environment = %q", env)
+			}
+			for variable, extra := range map[string][]string{"DEFAULT_TOKEN": {"-e", "DEFAULT_TOKEN=smuggled"}, "DEFAULT_KEY": {"--env", "DEFAULT_KEY"}} {
+				spec.ExtraArgs = extra
+				if _, err := mcpScrub(&run, spec); err == nil || !strings.Contains(err.Error(), variable+" holds an MCP server's token") {
+					t.Fatalf("%q = %v, want the token variable refused", extra, err)
+				}
+			}
+		})
+	}
+	// Without homes the box gets no env file, so there is nothing to keep out and -e stays the
+	// caller's, as a controller review's gate passes its job environment.
+	noHomes := base
+	noHomes.Homes, noHomes.ExtraArgs = false, []string{"-e", "DEFAULT_TOKEN=from-the-caller"}
+	if names, err := mcpScrub(cfg, noHomes); err != nil || len(names) != 0 {
+		t.Fatalf("a box without homes: scrub names = %q, %v", names, err)
+	}
+}
+
+// The default file is read the lenient way a file the box does not load always is: a malformed one
+// stops nothing, and a name it still spells is still kept out. It may be a link, such as one into a
+// dotfiles folder, but neither it nor its target may sit in a mounted root, since a box could
+// rewrite a source there. Only a read for names follows the link: a box that loads it refuses it.
+func TestTheDefaultMCPFileIsReadLenientlyButOnlyFromOutsideTheBox(t *testing.T) {
+	cfg, spec := brokerFixture(t, "DEFAULT_TOKEN=default-secret\n")
+	cfg.MCPFile = filepath.Join(t.TempDir(), "qa-mcp.json")
+	defaultFile := filepath.Join(cfg.ConfigDir, "mcp.json")
+	emisar := `"emisar":{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"DEFAULT_TOKEN"}`
+	for body, want := range map[string][]string{
+		`{"mcpServers":`: nil,
+		// Valid JSON the strict validator refuses (a reserved stand-in name beside a real reference).
+		`{"mcpServers":{` + emisar + `,"odd":{"type":"http","url":"https://odd.example/mcp","bearer_token_env_var":"COOP_MCP_TOKEN_9"}}}`: {"COOP_MCP_TOKEN_9", "DEFAULT_TOKEN"},
+		`{"mcpServers":{"old":"disabled",` + emisar + `}}`:                                   {"DEFAULT_TOKEN"},
+		`{"mcpServers":{` + emisar + `,"docs":{"headers":{"X-Key":"key ${DEFAULT_KEY}"}},}}`: {"DEFAULT_KEY", "DEFAULT_TOKEN"},
+	} {
+		writeRepoFile(t, defaultFile, body)
+		if names, err := mcpScrub(cfg, spec); err != nil || !slices.Equal(names, want) {
+			t.Fatalf("scrub names for %q = %q, %v; want %q", body, names, err, want)
+		}
+	}
+	if err := os.Remove(defaultFile); err != nil {
+		t.Fatal(err)
+	}
+	dotfiles := filepath.Join(t.TempDir(), "mcp.json")
+	writeRepoFile(t, dotfiles, `{"mcpServers":{`+emisar+`}}`)
+	if err := os.Symlink(dotfiles, defaultFile); err != nil {
+		t.Fatal(err)
+	}
+	if names, err := mcpScrub(cfg, spec); err != nil || !slices.Equal(names, []string{"DEFAULT_TOKEN"}) {
+		t.Fatalf("a default file linked from outside every mount: scrub names = %q, %v", names, err)
+	}
+	loaded := *cfg
+	loaded.MCPFile = defaultFile
+	if _, err := loadedMCPSource(&loaded, spec); err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Fatalf("a box that loads the linked file = %v, want the link refused", err)
+	}
+	spec.Repo = filepath.Dir(dotfiles)
+	if _, err := mcpScrub(cfg, spec); err == nil || !strings.Contains(err.Error(), "inside mounted repository") || !strings.Contains(err.Error(), defaultFile) {
+		t.Fatalf("a default file linked into the mounted repository = %v, want it refused by name", err)
 	}
 }
 
@@ -485,15 +601,7 @@ func TestOfflineRunLeavesRemoteMCPServersOut(t *testing.T) {
 		"headers":{"type":"http","url":"https://headers.example/mcp","headers":{"X-Key":"${HEADER_KEY}"}}}}`)
 	writeRepoFile(t, filepath.Join(configDir, "env"), "REMOTE_TOKEN=remote-secret\nHEADER_KEY=header-secret\nKEPT=kept\n")
 	cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: "none"}
-	// The runtime keeps the env file the box was handed: it is removed once the run returns.
-	dir := t.TempDir()
-	boxEnv, calls := filepath.Join(dir, "box-env"), filepath.Join(dir, "calls")
-	shim := filepath.Join(dir, "rt")
-	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
-		"prev=\nfor a in \"$@\"; do [ \"$prev\" = --env-file ] && cat \"$a\" > "+strconv.Quote(boxEnv)+"; prev=$a; done\n")
-	if err := os.Chmod(shim, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	rt, boxEnv, calls := envCapturingRuntime(t)
 	claude, _ := agents.Get("claude")
 	spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude", AgentCommand: true, Homes: true,
 		Batch: true, Quiet: true, Peers: []agents.Target{{Provider: "codex"}, {Provider: "gemini"}, {Provider: "grok"}}}
@@ -504,7 +612,7 @@ func TestOfflineRunLeavesRemoteMCPServersOut(t *testing.T) {
 		written = append(written, content)
 		return write(dir, content)
 	}
-	if code, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, artifacts); err != nil || code != 0 {
+	if code, err := runWithCompositionArtifacts(cfg, rt, spec, artifacts); err != nil || code != 0 {
 		t.Fatalf("offline Run = %d, %v", code, err)
 	}
 	sawLocal := false
@@ -525,9 +633,64 @@ func TestOfflineRunLeavesRemoteMCPServersOut(t *testing.T) {
 		t.Fatalf("a secret reached the box's arguments: %s", args)
 	}
 	spec.ExtraArgs = []string{"-e", "REMOTE_TOKEN=smuggled"}
-	if _, err := runWithCompositionArtifacts(cfg, runtime.Runtime{Name: shim}, spec, defaultCompositionArtifactOps()); err == nil ||
+	if _, err := runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps()); err == nil ||
 		!strings.Contains(err.Error(), "cannot enter an agent box through -e") {
 		t.Fatalf("offline Run with the token through -e = %v", err)
+	}
+}
+
+// envCapturingRuntime is a runtime shim that records its arguments in calls and keeps a copy of the
+// env file the box was handed in boxEnv, since the run removes it once it returns.
+func envCapturingRuntime(t *testing.T) (rt runtime.Runtime, boxEnv, calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	boxEnv, calls = filepath.Join(dir, "box-env"), filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "rt")
+	writeRepoFile(t, shim, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+		"prev=\nfor a in \"$@\"; do [ \"$prev\" = --env-file ] && cat \"$a\" > "+strconv.Quote(boxEnv)+"; prev=$a; done\n")
+	if err := os.Chmod(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runtime.Runtime{Name: shim}, boxEnv, calls
+}
+
+// The same holds through a real offline launch: with COOP_MCP_FILE on another file, or MCP turned
+// off, the env file the box is handed holds none of the default file's tokens, and -e of one is
+// refused. An open box is unchanged: the env file reaches it as before.
+func TestOfflineRunKeepsTheDefaultMCPFilesTokensOut(t *testing.T) {
+	configDir := t.TempDir()
+	writeRepoFile(t, filepath.Join(configDir, "mcp.json"), `{"mcpServers":{"emisar":{"type":"http","url":"https://emisar.example/mcp","bearer_token_env_var":"DEFAULT_TOKEN"}}}`)
+	writeRepoFile(t, filepath.Join(configDir, "env"), "DEFAULT_TOKEN=default-secret\nKEPT=kept\n")
+	other := filepath.Join(t.TempDir(), "qa-mcp.json")
+	writeRepoFile(t, other, `{"mcpServers":{"local":{"command":"true"}}}`)
+	for name, c := range map[string]struct {
+		mcpFile, egress string
+		open            bool
+	}{
+		"COOP_MCP_FILE on another file": {mcpFile: other, egress: "none"},
+		"MCP turned off":                {egress: "none"},
+		"an open box":                   {mcpFile: other, egress: "open", open: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: configDir, HomeInBox: "/home/node", MCPFile: c.mcpFile, MCPInBox: "/home/node/.mcp.json", Egress: c.egress}
+			rt, boxEnv, calls := envCapturingRuntime(t)
+			claude, _ := agents.Get("claude")
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: claude.Interactive(cfg), Agent: "claude", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+			if code, err := runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps()); err != nil || code != 0 {
+				t.Fatalf("Run = %d, %v", code, err)
+			}
+			if env := string(mustReadFile(t, boxEnv)); strings.Contains(env, "DEFAULT_TOKEN=default-secret") != c.open || !strings.Contains(env, "KEPT=kept") {
+				t.Fatalf("box env = %q", env)
+			}
+			if args := string(mustReadFile(t, calls)); strings.Contains(args, "default-secret") {
+				t.Fatalf("a secret reached the box's arguments: %s", args)
+			}
+			spec.ExtraArgs = []string{"-e", "DEFAULT_TOKEN=smuggled"}
+			_, err := runWithCompositionArtifacts(cfg, rt, spec, defaultCompositionArtifactOps())
+			if refused := err != nil && strings.Contains(err.Error(), "DEFAULT_TOKEN holds an MCP server's token"); refused == c.open {
+				t.Fatalf("Run with the token through -e = %v", err)
+			}
+		})
 	}
 }
 

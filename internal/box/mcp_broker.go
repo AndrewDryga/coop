@@ -86,7 +86,7 @@ func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *cred
 	}
 	values := effectiveMCPEnv(cfg, spec)
 	for _, server := range servers {
-		route, reason, err := mcpRouteFor(server, values)
+		route, reason, err := mcpRouteFor(server, values, cfg.EnvFile())
 		if err != nil {
 			return nil, err
 		}
@@ -105,8 +105,9 @@ func planMCPRoutes(cfg *config.Config, spec RunSpec, snapshot []byte, plan *cred
 // carry it: a header the broker itself controls cannot carry a secret, and the broker reaches only
 // plain https on 443, at a path it would admit. A legacy SSE server gets the wider same-host route
 // its transport needs (CredentialBrokerMCPSSE). A missing secret is an error its caller decides
-// what to do with.
-func mcpRouteFor(server mcp.SecretServer, values map[string]string) (*mcpRoute, string, error) {
+// what to do with, naming envFile, where the operator's tokens belong: one only exported in the
+// shell never reaches values.
+func mcpRouteFor(server mcp.SecretServer, values map[string]string, envFile string) (*mcpRoute, string, error) {
 	// The gateway holds a secret header to names it does not control, after a bounded literal
 	// prefix; one it would reject is named HERE, so a filtered run refuses by server name instead
 	// of failing the whole launch configuration later, and an open run keeps that server as it is.
@@ -124,7 +125,7 @@ func mcpRouteFor(server mcp.SecretServer, values map[string]string) (*mcpRoute, 
 	}
 	token := values[server.Variable]
 	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\x00\r\n") {
-		return nil, "", fmt.Errorf("MCP server %q needs %s, which has no usable value", server.Name, server.Variable)
+		return nil, "", fmt.Errorf("MCP server %q needs %s, which has no usable value; set it in %s, since Coop does not read MCP tokens from your shell", server.Name, server.Variable, envFile)
 	}
 	escaped := parsed.EscapedPath()
 	if escaped == "" {
@@ -149,8 +150,9 @@ func effectiveMCPEnv(cfg *config.Config, spec RunSpec) map[string]string {
 	return values
 }
 
-// mcpScrub is what a filtered box keeps out of its env: every MCP token variable of the configured
-// file. One set through -e cannot enter it either, whether this box loads MCP or not.
+// mcpScrub is what a filtered or offline box keeps out of its env: every MCP token variable of the
+// configured file and of the default one. One set through -e cannot enter it either, whether this
+// box loads MCP or not.
 func mcpScrub(cfg *config.Config, spec RunSpec) ([]string, error) {
 	names, err := mcpScrubNames(cfg, spec)
 	if err != nil {
@@ -185,25 +187,39 @@ func dropEnvNames(artifacts compositionArtifactOps, source string, names []strin
 	return artifacts.writeFile(artifacts.parent, kept)
 }
 
-// mcpScrubNames are the variables the run's configured MCP file reads a secret from. A box that
-// keeps them out — filtered, or offline — never receives them whether it loads MCP or not, so they
-// come from the configured file itself, not from what this box mounts. A box that loads none
-// (sign-in, a review's format correction) reads that file's CONTENT leniently — a malformed file
-// must not stop it — but its LOCATION is still held to the same isolation rule as a box that loads
-// it: a source inside a mounted root could be rewritten by the box it is being read for. Without
-// homes there is no env file to scrub.
+// mcpScrubNames are the variables an MCP file reads a secret from: the run's configured file, and
+// the default agents/mcp.json too, because the env file beside it holds that file's tokens whichever
+// file is active, or none. A box that keeps them out — filtered, or offline — never receives them
+// whether it loads MCP or not, so they come from the files themselves, not from what this box
+// mounts. A file read only for its names (any but the snapshot this box loads) is read leniently —
+// a malformed file must not stop the box, and it may be a link — but its LOCATION, and its link's
+// target's, is still held to the same isolation rule as a file a box loads: a source inside a
+// mounted root could be rewritten by the box it is being read for. Without homes there is no env
+// file to scrub.
 func mcpScrubNames(cfg *config.Config, spec RunSpec) ([]string, error) {
+	var names []string
+	files := []string{cfg.DefaultMCPFile()}
 	if spec.mcpSnapshot != nil {
-		return mcp.CredentialReferences(spec.mcpSnapshot)
+		active, err := mcp.CredentialReferences(spec.mcpSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		names = active
+	} else if cfg.MCPFile != "" && cfg.MCPFile != files[0] {
+		files = append(files, cfg.MCPFile)
 	}
-	if !spec.Homes || cfg.MCPFile == "" {
-		return nil, nil
+	if !spec.Homes {
+		return names, nil
 	}
-	source, err := validateMCPSourceIsolation(cfg, spec)
-	if err != nil {
-		return nil, err
+	for _, file := range files {
+		source, err := resolveMCPSource(file, mcpSourceRoots(cfg, spec), true)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, mcp.ReferencedCredentialNames(source)...)
 	}
-	return mcp.ReferencedCredentialNames(source), nil
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // writeMCPSnapshots writes the two files every projection reads — the snapshot the generators,

@@ -312,6 +312,16 @@ overrides <code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> 
 <td>Absolute path of the file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full.</td>
 </tr>
 <tr>
+<td><code>COOP_<wbr/>PRESETS_<wbr/>DIR</code></td>
+<td><code>~/.config/coop/presets</code></td>
+<td>The folder for global presets. See <a href="agents.html#where-presets-live">where presets live</a>.</td>
+</tr>
+<tr>
+<td><code>COOP_<wbr/>MCP_<wbr/>FILE</code></td>
+<td><code>~/.config/coop/agents/mcp.json</code></td>
+<td>The file that defines MCP servers. If you set it, the file must exist. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full.</td>
+</tr>
+<tr>
 <td><code>COOP_<wbr/>SHELL</code></td>
 <td><code>bash</code></td>
 <td>The shell <code>coop shell</code> opens.</td>

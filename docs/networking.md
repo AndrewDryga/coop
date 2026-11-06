@@ -234,10 +234,13 @@ The route allows only the server's exact URL path and the methods MCP uses: POST
 It waits for long tool calls to finish. The agent can't bypass the broker by connecting directly to
 that server's host.
 
-Your token variable never enters a filtered box, even if that box doesn't load MCP. A session's ACP
-adapter receives the stand-in too. If the token is missing or supplied through `-e`, co:op stops
-the launch and names the server. Tools supplied by a remote session's controller use the same
-route, restricted to the server's exact path.
+Your token variables never enter a filtered box, even if that box doesn't load MCP. That covers
+every variable the active MCP file reads a secret from, and those of the default
+`~/.config/coop/agents/mcp.json` even when another file is active or MCP is turned off, because the
+env file holds those tokens either way. A session's ACP adapter receives the stand-in too. If a
+token is missing, co:op stops the launch, names the server and says to put the token in
+`agents/env`. A token variable passed with `-e` stops the launch too. Tools supplied by a remote
+session's controller use the same route, restricted to the server's exact path.
 
 ### Legacy SSE servers
 
@@ -258,8 +261,8 @@ server, switch to its streamable HTTP URL.
 
 An offline box can't reach remote MCP servers, so co:op removes them from its MCP configuration.
 The launch reports: "MCP servers that need internet are left out: …". Local command servers remain
-available, and remote-server token variables stay outside the box. An offline remote session's
-editor adapter also receives only the local servers.
+available, and the token variables stay outside the box, as in a filtered run. An offline remote
+session's editor adapter also receives only the local servers.
 
 ### Open runs
 

@@ -230,7 +230,7 @@ func TestChildEnvironmentIsAllowlistOnly(t *testing.T) {
 	joined := strings.Join(env, "\n")
 	for _, required := range []string{
 		"COOP_CONFIG_DIR=" + layout.Config, "COOP_EGRESS=open", "COOP_HOMES=1",
-		"COOP_MCP_FILE=" + filepath.Join(layout.Config, "missing-mcp.json"),
+		"COOP_MCP_FILE=" + layout.MCPFile,
 		"COOP_RUNTIME=docker", "COOP_IMAGE=image", "COOP_TEST_LIVE_TARGET=codex@work",
 		"COOP_TEST_LIVE_WORKFLOW=prompt",
 		"GIT_CONFIG_GLOBAL=" + layout.GitConfig, "HOME=" + layout.Home,

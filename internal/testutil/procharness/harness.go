@@ -31,6 +31,7 @@ type Layout struct {
 	Tmp       string
 	Config    string
 	Conf      string
+	MCPFile   string
 	Repo      string
 	Plans     string
 	State     string
@@ -64,8 +65,10 @@ func NewLayout(root string) (Layout, error) {
 	l.GitConfig = filepath.Join(l.State, "gitconfig")
 	// The explicit COOP_CONF must name an existing file, but it lives beside the other state files,
 	// never inside Config: the live probes publish a credential vault AT Config by rename, which
-	// needs that directory empty and gone first.
+	// needs that directory empty and gone first. COOP_MCP_FILE must name an existing file too, so the
+	// harness's shared MCP file sits there as well, declaring no servers until a test adds one.
 	l.Conf = filepath.Join(l.State, "coop.conf")
+	l.MCPFile = filepath.Join(l.State, "mcp.json")
 	for _, dir := range []string{l.Root, l.Bin, l.Home, l.XDGConfig, l.XDGCache, l.XDGState, l.Tmp, l.Config, l.Repo, l.Plans, l.State} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Layout{}, fmt.Errorf("create process-test state %s: %w", dir, err)
@@ -77,7 +80,7 @@ func NewLayout(root string) (Layout, error) {
 	// The children's global git config holds one setting: no automatic maintenance, which git
 	// starts after every commit (in the background since git 2.47) and which keeps writing in a
 	// repository a test is about to read, such as the live loop's walk of .git.
-	for path, body := range map[string]string{l.Trace: "", l.GitConfig: "[maintenance]\n\tauto = false\n", l.Conf: ""} {
+	for path, body := range map[string]string{l.Trace: "", l.GitConfig: "[maintenance]\n\tauto = false\n", l.Conf: "", l.MCPFile: "{\"mcpServers\":{}}\n"} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			return Layout{}, fmt.Errorf("create process-test file %s: %w", path, err)
 		}
@@ -107,7 +110,7 @@ func Environment(layout Layout, extra map[string]string) ([]string, error) {
 		"GIT_CONFIG_GLOBAL": layout.GitConfig, "GIT_CONFIG_NOSYSTEM": "1",
 		"LANG": "C", "LC_ALL": "C", "TERM": "dumb", "TZ": "UTC",
 		"COOP_CONF": layout.Conf, "COOP_CONFIG_DIR": layout.Config,
-		"COOP_MCP_FILE": filepath.Join(layout.Config, "missing-mcp.json"), "COOP_REPO": layout.Repo,
+		"COOP_MCP_FILE": layout.MCPFile, "COOP_REPO": layout.Repo,
 		"COOP_HOMES": "0", "COOP_NETWORK": "0", "COOP_AUTO_UP": "0", "COOP_CACHE": "0",
 		"COOP_CAFFEINATE": "0", "COOP_EGRESS": "offline", "COOP_NO_UPDATE_CHECK": "1",
 		"COOP_RUN_ARGS": "", "COOP_MEMORY": "", "COOP_CPUS": "",

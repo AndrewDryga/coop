@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-11-04
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
+updated: 2026-11-06
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -34,9 +34,12 @@ serialized definitions and the real editor connection instead.
 
 Every projection crosses the same host-file boundary before parsing. Shared and native config must
 be regular files opened with nonblocking, no-follow semantics; Coop validates and reads the same
-descriptor and retains at most 4 MiB. Only a path absent at the initial observation is inert. A
-symlink, FIFO, directory, open/read failure, replacement with a special file, or content over the
-limit fails before home mutation or provider launch. `box.Run` proves the configured shared source
+descriptor and retains at most 4 MiB. Only a path absent at the initial observation is inert, and
+only for the default file: a `COOP_MCP_FILE` the operator named that is absent refuses the launch
+by path, at admission and in `box.Run` (`loadedMCPSource`, `config.MCPFileChosen` — false once a
+caller repoints or blanks `MCPFile`, as the doctor and `--no-mcp` do). A symlink, FIFO, directory,
+open/read failure, replacement with a special file, or content over the limit fails before home
+mutation or provider launch. `box.Run` proves the configured shared source
 is outside all wholesale mounts before opening it, so a provider-writable repo file cannot block or
 consume memory on the way to an overlap refusal. It checks both the configured spelling and the
 resolved target plus every resolved path prefix, and rejects raw `..` components whose meaning
@@ -129,10 +132,15 @@ unresolved would 401 that server for the whole session. The rewrite happens ONCE
 `mcp.RouteThroughBroker` points each server at `http://127.0.0.1:<port><path>` and renames its
 variable to `COOP_MCP_TOKEN_<i>` (renaming is required — two servers sharing one operator variable
 need two stand-ins), so generated configs, claude's file and a session's ACP list all follow it. The
-operator's variables — every name the CONFIGURED file references, read from the source even for a
-box that loads no MCP (`mcpScrubNames`) — are dropped from a filtered box's env, and the
+operator's variables — every name the CONFIGURED file references and every name the default
+`agents/mcp.json` references, whichever file is active or with MCP off (the env file beside it holds
+its tokens either way), read from the sources even for a box that loads no MCP (`mcpScrubNames`;
+lenient content, strict location: a names-only read follows a final symlink, such as a dotfiles
+link, but every path to its target is held to the mount rule) — are dropped from a filtered box's
+env, and the
 `COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). A missing token
-or one set through `-e` refuses by name; SSE uses the wider route described below. The pinned claude IGNORES
+refuses by server and names the env file (a shell export never reaches `effectiveMCPEnv`), one set
+through `-e` by variable; SSE uses the wider route described below. The pinned claude IGNORES
 `bearer_token_env_var` (captured 2026-09-19: no Authorization at all) and expands `${VAR}` in a
 header, so claude's mount is `mcp.ClaudeView` — the snapshot with each bearer turned into
 `Authorization: Bearer ${NAME}`. A filtered SESSION child writes its lead adapter's
@@ -181,8 +189,9 @@ way.
 before any projection, `mcpScrub`'s names leave the env (and a `-e` of one is refused, as under
 filtered), and the network section names what was left out. An offline session gets no private copy,
 not even the controller-tools binding, so its `session/new` list is empty and it needs no handoff.
-Residual: only names the configured file references are
-scrubbed — a leftover token elsewhere in the env file still rides a filtered box's env.
+Residual: only names the configured or default file references are
+scrubbed — a leftover token under any other name in the env file still rides a filtered box's env.
+Open runs scrub only what their helper brokers, so the default file's tokens still reach an open box.
 
 Credential scope is not proof of command consumption. `credentialScope` answers whose login may be
 mounted, while `nestedAgentCommand` answers whether an explicit peer or a consult/delegate role can
@@ -202,6 +211,11 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-06 — the scrub also takes the default `agents/mcp.json`'s names when `COOP_MCP_FILE`
+  points elsewhere or MCP is off (overnight QA saw the owner's default-file tokens in every filtered
+  box); a names-only read follows a final symlink and survives a file that is not JSON; an absent
+  chosen `COOP_MCP_FILE` refuses the launch; the missing-token refusal names the env file. The
+  scripted harnesses pin an existing empty MCP file in `Layout.State` instead of an absent one.
 - 2026-11-04 — removed the shared-file branch of session projection, which no job could reach:
   `sessionMCPSnapshot` replaced `captureSessionMCP`, and the daemon-side offline list went with it.
 - 2026-11-03 — `coop acp` and `coop <agent>` sessions bind `coop-tasks` too (see [[in-box-task-channel]]); the projection itself is unchanged.

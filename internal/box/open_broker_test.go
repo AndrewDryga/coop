@@ -118,6 +118,9 @@ func TestOpenRunPlansAHelperOnlyForTheSecretsItCanKeepOut(t *testing.T) {
 	if !strings.Contains(strings.Join(kept, "\n"), "DOCS_TOKEN") || slices.Contains(broker.scrub, "DOCS_TOKEN") {
 		t.Fatalf("a server with no token was not left as it is: kept=%v scrub=%v", kept, broker.scrub)
 	}
+	if !strings.Contains(strings.Join(kept, "\n"), "set it in "+blank.cfg.EnvFile()) {
+		t.Fatalf("the launch does not say where DOCS_TOKEN goes: %v", kept)
+	}
 	// The hosts entry is how the box finds the helper; an override in the run's own arguments
 	// would send its stand-ins somewhere else.
 	hijacked := spec

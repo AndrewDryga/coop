@@ -81,7 +81,7 @@ func planOpenBroker(cfg *config.Config, rt runtime.Runtime, spec RunSpec, snapsh
 	values := effectiveMCPEnv(cfg, spec)
 	plan := &credentialPlan{}
 	for _, server := range servers {
-		route, reason, err := mcpRouteFor(server, values)
+		route, reason, err := mcpRouteFor(server, values, cfg.EnvFile())
 		if err != nil {
 			// Even a secret with no value is not this run's to refuse: without a broker that
 			// server simply failed to authenticate, and it still does. A filtered run refuses it

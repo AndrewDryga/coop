@@ -420,10 +420,13 @@ forwards the request.</p>
 <p>The route allows only the server&#39;s exact URL path and the methods MCP uses: POST, GET and DELETE.
 It waits for long tool calls to finish. The agent can&#39;t bypass the broker by connecting directly to
 that server&#39;s host.</p>
-<p>Your token variable never enters a filtered box, even if that box doesn&#39;t load MCP. A session&#39;s ACP
-adapter receives the stand-in too. If the token is missing or supplied through <code>-e</code>, co:op stops
-the launch and names the server. Tools supplied by a remote session&#39;s controller use the same
-route, restricted to the server&#39;s exact path.</p>
+<p>Your token variables never enter a filtered box, even if that box doesn&#39;t load MCP. That covers
+every variable the active MCP file reads a secret from, and those of the default
+<code>~/.config/coop/agents/mcp.json</code> even when another file is active or MCP is turned off, because the
+env file holds those tokens either way. A session&#39;s ACP adapter receives the stand-in too. If a
+token is missing, co:op stops the launch, names the server and says to put the token in
+<code>agents/env</code>. A token variable passed with <code>-e</code> stops the launch too. Tools supplied by a remote
+session&#39;s controller use the same route, restricted to the server&#39;s exact path.</p>
 <h3 id="legacy-sse-servers">Legacy SSE servers</h3>
 <p>Legacy SSE servers need broader access because they choose a message endpoint during each
 connection. co:op allows <code>GET</code> on the stream&#39;s path and <code>POST</code> on any path at the same host. Other
@@ -438,8 +441,8 @@ server, switch to its streamable HTTP URL.</p>
 <h3 id="offline-runs">Offline runs</h3>
 <p>An offline box can&#39;t reach remote MCP servers, so co:op removes them from its MCP configuration.
 The launch reports: &#34;MCP servers that need internet are left out: …&#34;. Local command servers remain
-available, and remote-server token variables stay outside the box. An offline remote session&#39;s
-editor adapter also receives only the local servers.</p>
+available, and the token variables stay outside the box, as in a filtered run. An offline remote
+session&#39;s editor adapter also receives only the local servers.</p>
 <h3 id="open-runs">Open runs</h3>
 <p>With open networking, the box connects directly to the internet, so co:op uses a separate helper
 container to keep supported MCP credentials outside the box.</p>

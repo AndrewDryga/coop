@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecyclebench, tools/servicesbench, Makefile, internal/box/run.go, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-10-17
+updated: 2026-11-06
 ---
 
 `make lifecycle-bench` (`go run ./tools/lifecyclebench`) is the instrument for every start/stop
@@ -93,7 +93,8 @@ export, because consecutive revisions shared the value band the threshold sat in
 bisect, make the predicate itself paired against a fixed reference arm measured in the same round.
 
 **Knob probes overlap.** Turning the warm pool off (`COOP_ACP_WARM=0`) recovered ~0.19 s of that
-0.23 s; pointing `COOP_MCP_FILE` at another absent path, pool still on, recovered ~0.21 s. Those sum
+0.23 s; pointing `COOP_MCP_FILE` at another absent path, pool still on, recovered ~0.21 s (an absent
+`COOP_MCP_FILE` is refused since 2026-11-06; `COOP_MCP_FILE=` turns MCP off). Those sum
 to more than the whole, so they are not two causes — they are two ways of skipping one thing that
 is not yet named. The old revision already fanned the pool out concurrently, so "the fan-out competes
 with the lead" does not explain the difference either. The cause is open.
@@ -155,6 +156,8 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 until 2026-09-20's paired A/B put a number against it. Both now state the number.
 
 ## Changelog
+- 2026-11-06 — an absent `COOP_MCP_FILE` now stops a launch, so the knob-probe note names
+  `COOP_MCP_FILE=` as the way to turn MCP off; the measurements themselves were not rerun.
 - 2026-10-17 — stand-ins are written under syscall.ForkLock and never rewritten, after CI failed on
   "text file busy" (task 2026-10-17-stop-lifecyclebench-s-timeout-cases-failing-on-t).
 - 2026-10-16 — `make tools-test` is gone (the site tests moved to Go, in `make docs-check`), so the bench

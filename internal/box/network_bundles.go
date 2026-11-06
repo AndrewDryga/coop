@@ -314,7 +314,7 @@ func networkMCPSnapshot(cfg *config.Config, spec RunSpec) ([]byte, error) {
 	if !spec.Homes || spec.Login || cfg.MCPFile == "" {
 		return nil, nil
 	}
-	source, err := validateMCPSourceIsolation(cfg, spec)
+	source, err := loadedMCPSource(cfg, spec)
 	if err != nil {
 		return nil, err
 	}

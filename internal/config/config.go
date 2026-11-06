@@ -29,8 +29,9 @@ type Config struct {
 	ConfigDir          string // COOP_CONFIG_DIR — per-agent auth + settings folder
 	nativeAuthorityDir string // daemon-child host reference; never a workload mount or credential copy
 
-	MCPFile  string // COOP_MCP_FILE — the one MCP source of truth
-	MCPInBox string // where MCPFile mounts in the box (Claude's --mcp-config)
+	MCPFile       string // COOP_MCP_FILE — the one MCP source of truth
+	MCPInBox      string // where MCPFile mounts in the box (Claude's --mcp-config)
+	chosenMCPFile string // the path COOP_MCP_FILE named, "" when it fell to the default (MCPFileChosen)
 
 	RuntimeName   string // COOP_RUNTIME — "" means autodetect
 	RepoOverride  string // COOP_REPO — overrides finding the repository from the working directory
@@ -311,7 +312,10 @@ func Load() (*Config, error) {
 		explicit: explicit,
 	}
 
-	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
+	c.MCPFile = get("COOP_MCP_FILE", c.DefaultMCPFile())
+	if explicit["COOP_MCP_FILE"] {
+		c.chosenMCPFile = c.MCPFile
+	}
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
 	// Checked before anything below touches these paths (relativePathError).
 	for _, setting := range [][2]string{{"COOP_CONFIG_DIR", c.ConfigDir}, {"COOP_MCP_FILE", c.MCPFile}, {"COOP_PRESETS_DIR", c.GlobalPresetsDir()}} {
@@ -323,7 +327,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	privateFiles := []string{c.EnvFile(), c.DefaultsFile()}
-	if c.MCPFile == filepath.Join(c.ConfigDir, "mcp.json") {
+	if c.MCPFile == c.DefaultMCPFile() {
 		privateFiles = append(privateFiles, c.MCPFile)
 	}
 	for _, path := range privateFiles {
@@ -364,6 +368,14 @@ func (c *Config) ACPCarryBytes() int {
 
 // EnvFile is the optional file of KEY=VALUE pairs passed into every box.
 func (c *Config) EnvFile() string { return filepath.Join(c.ConfigDir, "env") }
+
+// DefaultMCPFile is the shared MCP file beside EnvFile, the one COOP_MCP_FILE replaces.
+func (c *Config) DefaultMCPFile() string { return filepath.Join(c.ConfigDir, "mcp.json") }
+
+// MCPFileChosen reports whether MCPFile is still the path COOP_MCP_FILE named. A missing default
+// file only means no servers; a chosen path with no file is a mistake a launch must not run past.
+// A caller that points MCPFile elsewhere, or blanks it, has made its own choice.
+func (c *Config) MCPFileChosen() bool { return c.MCPFile != "" && c.MCPFile == c.chosenMCPFile }
 
 // Instructions is the optional shared instruction file wired into each agent.
 func (c *Config) Instructions() string { return filepath.Join(c.ConfigDir, "INSTRUCTIONS.md") }

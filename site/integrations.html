@@ -416,12 +416,21 @@ no servers until you add them:</p>
 <code>~/.config/coop/agents/mcp.json</code>. Keep it outside repositories, companion repositories, agent
 credential homes and ACP session stores. co:op mounts those directories in full, which would expose
 the file to the box, so it refuses a <code>COOP_MCP_FILE</code> in any of them before launch, even if the file
-is empty or doesn&#39;t exist yet. The file must also:</p>
+is empty or doesn&#39;t exist yet. The file must also:
+Set <code>COOP_MCP_FILE</code> to choose the shared file. The default is <code>mcp.json</code>. If you set
+<code>COOP_MCP_FILE</code> to a path with no file, co:op names the path and won&#39;t start the run. Keep the
+file outside repositories, companion repositories, agent credential homes and ACP session stores.
+co:op mounts those directories in full, which would expose the file to the box, so it refuses a
+<code>COOP_MCP_FILE</code> in any of them before launch, even if the file is empty or doesn&#39;t exist yet. The
+file must also:</p>
 <ul>
 <li>be a regular file, not a symlink or special file</li>
 <li>be 4 MiB or smaller</li>
 <li>have a canonical path without <code>..</code></li>
 </ul>
+<p>When <code>COOP_MCP_FILE</code> points to another file or MCP is turned off, co:op still reads the default
+<code>mcp.json</code> to keep its token variables out of filtered and offline boxes. Such a launch stops if
+that default file, or the file it links to, sits in a directory co:op mounts in full.</p>
 <p>Gemini&#39;s native <code>settings.json</code> must follow the same file rules. co:op reads it on every Gemini
 launch, Codex&#39;s native <code>config.toml</code> on every Codex launch, and Grok&#39;s native config when the
 shared file is active. If one of these files is unsafe or can&#39;t be read, co:op stops that launch.</p>
@@ -465,6 +474,7 @@ The values are literal strings, so <code>$VAR</code> is not expanded.</p>
 and put the value in the env file:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Tokens and headers code example" tabindex="0"><code class="language-bash">echo &#39;SENTRY_TOKEN=…&#39; &gt;&gt; ~/.config/coop/agents/env
 </code></pre></div>
+<p>co:op reads the value from this file, not from your shell.</p>
 <p>Every agent supports an HTTP server&#39;s <code>headers</code>. Claude and Grok turn <code>bearer_token_env_var</code>
 into an Authorization header using the environment variable&#39;s value.</p>
 <p>For Codex, a literal value becomes a static header, and a value containing exactly one
@@ -505,9 +515,12 @@ as <code>${…}</code> before launch.</p>
 box and sends it to the server. The box gets a modified config that points to a loopback
 listener and uses a replacement variable, <code>COOP_MCP_TOKEN_&lt;n&gt;</code>. That replacement works only for
 this server during this run.</p>
-<p>The original variable in co:op&#39;s env file (<code>SENTRY_TOKEN</code> above) never reaches a filtered box,
-even if that box doesn&#39;t load MCP. The ACP adapter receives only the replacement value, not
-the real token.</p>
+<p>The token variables in co:op&#39;s env file never reach a filtered box, even if that box doesn&#39;t load
+MCP. That covers every variable a shared file names in <code>bearer_token_env_var</code> or in a header, such
+as <code>SENTRY_TOKEN</code> above. It covers the default <code>mcp.json</code> too when <code>COOP_MCP_FILE</code> points to
+another file or MCP is turned off, because the env file holds its tokens either way. co:op also
+stops a launch that passes one of these variables with <code>-e</code>. The ACP adapter receives only the
+replacement value, not the real token.</p>
 <p>A legacy SSE server with a bearer token needs a broader allowed route: <code>GET</code> on its stream
 path and <code>POST</code> on any clean path at the same host. The token still stays outside the box, and
 co:op reports this compatibility mode at launch. Prefer a streamable HTTP URL when the server
@@ -532,8 +545,8 @@ runtime, <code>--network none</code>, <code>--network container:…</code>)</li>
 <p>Remote sessions with open networking use the same helper and the same fallbacks.</p>
 <h4 id="offline-runs">Offline runs</h4>
 <p>An offline run (<code>--egress offline</code>) omits all remote MCP servers because it can&#39;t reach them,
-and reports this at launch. Local command servers still work. Tokens for the omitted remote
-servers stay outside the box.</p>
+and reports this at launch. Local command servers still work. The token variables stay outside
+the box, as they do in a filtered run.</p>
 <h3 id="playwright">Playwright</h3>
 <p>The image includes Chromium&#39;s system libraries. On first use, the example downloads the
 Playwright package and browser, then keeps the browser in the cache volume. In a filtered run,
