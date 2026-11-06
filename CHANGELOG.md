@@ -11,6 +11,15 @@
   teardown runs out of time checking the host's containers. It prints one line, keeps the box's
   filesystem protection, and the next run in the project removes it.
 
+- **`coop net check` and `coop net blocked` give the right answer for raw traffic.** With TCP to
+  1.1.1.1 on port 80 approved, `coop net check 1.1.1.2 --run <run> --protocol tcp --port 80` said
+  the connection type was unapproved; it now says the address is, and a port miss says the port,
+  in text and in the JSON `reason`. A run that sent only raw traffic reads `Allowed   raw traffic
+  only` instead of "no external connections" above its raw rows. ICMP rules read
+  `1.1.1.1 · ICMP echo-request`, not `1.1.1.1/32 · icmp 8`, and a rule for one address drops the
+  `/32`. `coop net blocked` exits 1 when no recorded block matches, as `grep` does, and its help
+  and the exit-code table say so. The gateway image changed, so the next filtered run checks the
+  network setup again.
 - **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
   to approve, `coop approve` prints "No approval needed: this project's requested access has not
   changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any
@@ -34,6 +43,7 @@
   leaves such a task under the usual rule, and a commit another session made with the task's
   trailer after its worker blocked no longer counts as the worker's.
   `coop tasks unblock <id> "<answer>"` names the commit it lets the next worker close the task over.
+
 - **A box Docker refuses to create fails cleanly.** Coop called that outcome unknown and left the
   run's filesystem helper running for ten minutes, past `coop net recover`. It now says Docker
   refused to create the container for this run, names the settings to check, and removes the helper

@@ -734,7 +734,10 @@ func netRunOutcome(inspection networkstate.Inspection) string {
 	allowed := "connection count unknown"
 	if counters := observed.Counters; counters != nil && counters.Connections != nil {
 		allowed = networkreport.ConnectionCount(counters.Connections)
-		if *counters.Connections == 0 {
+		switch {
+		case *counters.Connections == 0 && networkreport.RawTraffic(observed):
+			allowed = "raw traffic only"
+		case *counters.Connections == 0:
 			allowed = "no external connections"
 		}
 	}

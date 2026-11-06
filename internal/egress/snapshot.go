@@ -354,10 +354,19 @@ func (s Snapshot) Address(ip netip.Addr, protocol string, port, kind, code int, 
 	if s.Mode != Filtered {
 		return Decision{Reason: "protocol_not_allowed"}
 	}
+	// A refusal names the nearest miss: no rule for the address at all, a rule for it with another
+	// protocol, or one with this protocol on other ports.
+	reason := "address_not_allowed"
 	for _, grant := range s.Grants {
 		rule := grant.Rule
 		prefix, err := netip.ParsePrefix(rule.To.CIDR)
-		if err != nil || !prefix.Contains(ip) || rule.Protocol != protocol {
+		if err != nil || !prefix.Contains(ip) {
+			continue
+		}
+		if rule.Protocol != protocol {
+			if reason == "address_not_allowed" {
+				reason = "protocol_not_allowed"
+			}
 			continue
 		}
 		if (protocol == "tcp" || protocol == "udp") && slices.Contains(rule.Ports, port) {
@@ -366,8 +375,14 @@ func (s Snapshot) Address(ip netip.Addr, protocol string, port, kind, code int, 
 		if (protocol == "icmp" || protocol == "icmpv6") && slices.Contains(rule.Types, fmt.Sprint(kind)) && (len(rule.Codes) == 0 || slices.Contains(rule.Codes, code)) {
 			return Decision{Allowed: true, Reason: "rule_allowed", RuleID: grant.ID}
 		}
+		switch {
+		case protocol == "tcp" || protocol == "udp":
+			reason = "port_not_allowed"
+		case reason == "address_not_allowed":
+			reason = "protocol_not_allowed" // an ICMP type its rule does not list
+		}
 	}
-	return Decision{Reason: "protocol_not_allowed"}
+	return Decision{Reason: reason}
 }
 
 var protectedPrefixes = prefixes("0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "100.100.100.200/32", "168.63.129.16/32", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "fe80::/10", "ff00::/8", "fd00:ec2::254/128")

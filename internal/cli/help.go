@@ -1968,7 +1968,12 @@ OPTIONS
 
 EXAMPLES
   coop net blocked registry.npmjs.org
-  coop net blocked registry.npmjs.org --run e644f07a`,
+  coop net blocked registry.npmjs.org --run e644f07a
+
+EXIT STATUS
+  0  a recorded block was found
+  1  no recorded block matched, or the search could not finish
+  2  invalid arguments`,
 
 	"approve": `coop approve: review and approve this project's requested access
 

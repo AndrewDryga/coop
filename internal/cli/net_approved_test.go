@@ -382,7 +382,7 @@ func TestEveryRetainedReasonHasItsOwnSentence(t *testing.T) {
 	seen := map[string]string{}
 	for _, reason := range []string{
 		"open", "rule_allowed", "unapproved_name", "protected_destination", "unsafe_dns_answer",
-		"protocol_not_allowed", "port_not_allowed", "fixed_egress_policy", "tls_name_missing", "tls_name_invalid",
+		"protocol_not_allowed", "port_not_allowed", "address_not_allowed", "fixed_egress_policy", "tls_name_missing", "tls_name_invalid",
 		"tls_ech_unsupported", "tls_malformed", "tls_hello_too_large", "tls_inspection_timeout", "tls_inspection_unavailable",
 		"tls_direct_dial_refused", "tls_name_mismatch", "tls_proxy_request_invalid",
 		"dns_name_invalid", "dns_query_invalid", "dns_type_unsupported", "dns_answer_invalid", "dns_cname_limit", "dns_answer_limit",

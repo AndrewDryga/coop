@@ -410,6 +410,16 @@ func TestInspectZeroTrafficIsStillAResult(t *testing.T) {
 	if got != want {
 		t.Errorf("zero-traffic run:\n%s\nwant:\n%s", got, want)
 	}
+	// Raw traffic is counted per rule, never as a connection: a run that sent only that did reach
+	// the internet, and the line above its rows says so.
+	inspection.Observed.AddressGrants = []networkview.AddressGrantObservation{{RuleID: "aaaa1111bbbb2222cccc3333dddd4444", Packets: 5, Bytes: 340}}
+	inspection.AddressRules = map[string]egress.Rule{"aaaa1111bbbb2222cccc3333dddd4444": {To: egress.Destination{CIDR: "1.1.1.1/32"}, Protocol: "tcp", Ports: []int{80}}}
+	got = renderNetRun(networkreport.View{ID: netTestRun}, inspection)
+	want = "Network run " + netTestRun + "\n\n  Allowed   raw traffic only\n\n  Raw traffic — counted per rule, not per remote address\n" +
+		"    1.1.1.1:80 · TCP · 5 packets · 340 B\n\nFull details: coop net inspect " + netTestRun + " --json\n"
+	if got != want {
+		t.Errorf("a run with only raw traffic:\n%s\nwant:\n%s", got, want)
+	}
 }
 
 // Acceptance: refusals appear only when present, coalesced by destination,
@@ -1554,6 +1564,11 @@ func TestRunOutcomeSaysWhatHappenedInWords(t *testing.T) {
 	if got := netRunOutcome(raw); got != "no external connections · 5 packets blocked" {
 		t.Errorf("raw-only outcome = %q", got)
 	}
+	// Raw traffic an address rule let through is counted per rule, never as a connection.
+	raw.Observed.AddressGrants = []networkview.AddressGrantObservation{{RuleID: "r", Packets: 5, Bytes: 340}}
+	if got := netRunOutcome(raw); got != "raw traffic only · 5 packets blocked" {
+		t.Errorf("an outcome with allowed raw traffic = %q", got)
+	}
 }
 
 func TestRuleTextReadsLikeADestination(t *testing.T) {
@@ -1561,11 +1576,76 @@ func TestRuleTextReadsLikeADestination(t *testing.T) {
 		"(no remote address)":             {},
 		"docs.example.com:443,8443 · TLS": {To: egress.Destination{Domain: "docs.example.com"}, Protocol: "tls", Ports: []int{443, 8443}},
 		"10.42.9.0/24:123 · UDP":          {To: egress.Destination{CIDR: "10.42.9.0/24"}, Protocol: "udp", Ports: []int{123}},
-		"10.42.8.12 · icmp echo-request":  {To: egress.Destination{IP: "10.42.8.12"}, Protocol: "icmp", Types: []string{"echo-request"}},
+		"10.42.8.12 · ICMP echo-request":  {To: egress.Destination{IP: "10.42.8.12"}, Protocol: "icmp", Types: []string{"echo-request"}},
 		"service db:5432 · TCP":           {To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}},
+		// A compiled rule stores one address as a /32 and echo-request as its number; both read
+		// the way the rule was written.
+		"1.1.1.1 · ICMP echo-request":                  {To: egress.Destination{CIDR: "1.1.1.1/32"}, Protocol: "icmp", Types: []string{"8"}},
+		"1.1.1.1:80 · TCP":                             {To: egress.Destination{CIDR: "1.1.1.1/32"}, Protocol: "tcp", Ports: []int{80}},
+		"2001:db8::7 · ICMPv6 echo-request,echo-reply": {To: egress.Destination{CIDR: "2001:db8::7/128"}, Protocol: "icmpv6", Types: []string{"128", "129"}},
+		"10.0.0.0/8 · ICMP 13":                         {To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"13"}},
 	} {
 		if got := networkreport.RuleText(rule); got != want {
 			t.Errorf("RuleText = %q, want %q", got, want)
+		}
+	}
+}
+
+// A refusal of a recorded run's address names what missed — the address, or its port — and not
+// the connection type when the run approved that type, in the sentence and in --json alike.
+func TestNetCheckRunNamesTheAddressOrPortThatMissed(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	mode := egress.Filtered
+	policy, err := store.Admit(project, networkstate.Admission{InvocationMode: &mode, Operator: []egress.Input{{
+		Rules:  []egress.Rule{{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{80}}},
+		Origin: egress.Origin{Kind: "operator", Name: "--allow"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke, err := store.BeginQualification(netTestCandidate, []networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := box.ThisHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{Host: host, Project: project, PolicyFingerprint: policy.Fingerprint,
+		Runtime: "docker", DaemonID: netTestCandidate.Runtime.DaemonID, Endpoint: netTestCandidate.Runtime.Endpoint,
+		GatewayImage: netTestCandidate.GatewayImage, ClientImage: netTestCandidate.ClientImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	short := networkreport.ShortID(record.ID)
+	for _, tc := range []struct {
+		address, port, verdict, reason string
+	}{
+		{"1.1.1.2", "80", "✗ 1.1.1.2:80 over TCP was blocked as an unapproved address in run " + short + ".\n", "address_not_allowed"},
+		{"1.1.1.1", "81", "✗ 1.1.1.1:81 over TCP was blocked as an unapproved port in run " + short + ".\n", "port_not_allowed"},
+	} {
+		args := []string{tc.address, "--run", short, "--protocol", "tcp", "--port", tc.port}
+		var code int
+		out := captureStdout(t, func() {
+			var err error
+			if code, err = a.netDiagnostic("check", args); err != nil {
+				t.Fatalf("coop net check %v: %v", args, err)
+			}
+		})
+		if code != netCheckExit(false) || out != tc.verdict {
+			t.Errorf("coop net check %v = %d:\n%s\nwant:\n%s", args, code, out, tc.verdict)
+		}
+		var answer networkstate.PolicyExplanation
+		if err := json.Unmarshal([]byte(captureStdout(t, func() {
+			if code, err := a.netDiagnostic("check", append(args, "--json")); err != nil || code != netCheckExit(false) {
+				t.Fatalf("coop net check %v --json = (%d, %v)", args, code, err)
+			}
+		})), &answer); err != nil {
+			t.Fatal(err)
+		}
+		if answer.Reason != tc.reason || answer.Message != networkstate.DiagnosticReason(tc.reason) {
+			t.Errorf("coop net check %v --json reason = %q (%q), want %s", args, answer.Reason, answer.Message, tc.reason)
 		}
 	}
 }

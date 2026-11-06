@@ -523,7 +523,7 @@ What the report shows depends on what co:op could record:
   transferred bytes. It also saves an event when it blocks a name. `coop net blocked <host>` finds
   this project's newest run that blocked that host, groups its blocked attempts by cause and counts
   repeats. Use `--run <run>` to choose a run, and with it you can supply an exact event ID instead
-  of a host.
+  of a host. When no recorded block matches, it says so and exits `1`, as `grep` does.
 - A blocked DNS lookup doesn't record which port the program wanted, so `coop net blocked` shows a
   rule for TLS on port 443, labeled as the likely fix.
 - A direct connection to an address the run looked up, such as `http://` to a name approved only
@@ -533,8 +533,9 @@ What the report shows depends on what co:op could record:
   is listed as an address.
 - For raw traffic, the kernel counts packets and bytes for each approved address rule. These
   appear under `Raw traffic` in `coop net inspect`, each row named by its rule, such as
-  `10.42.8.0/24:5432 · TCP`, and as `address_grants` in `--json`. Individual hosts within a CIDR
-  aren't recorded or shown.
+  `10.42.8.0/24:5432 · TCP` or `1.1.1.1 · ICMP echo-request`, and as `address_grants` in `--json`.
+  Raw traffic isn't counted as connections, so a run that sent only raw traffic shows
+  `Allowed   raw traffic only`. Individual hosts within a CIDR aren't recorded or shown.
 - For other blocked packets, the filter counts how many it drops but doesn't record their
   destinations, so the report shows only a count
   (`N packets were blocked, and Coop did not record where they were going`). `coop net blocked`
@@ -579,7 +580,8 @@ with instead. Neither check sends network traffic. The exit status is the answer
 - 2: invalid arguments
 
 To check an IP address, also specify `--protocol tcp|udp --port <n>` (or `--icmp`) and a run,
-because the answer depends on the transport and that run's protected ranges.
+because the answer depends on the transport and that run's protected ranges. A blocked answer
+names what no rule covered: the address, its port, or the connection type.
 
 `coop net export <run>` exports the run's final record as JSON. It leaves out destination names and
 addresses by default, because even a blocked name can contain a secret. Use `--include-addresses` to

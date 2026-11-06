@@ -334,6 +334,7 @@ var diagnosticReasons = map[string]string{
 	"unsafe_dns_answer":                       "The hostname resolved to an address Coop blocks for safety.",
 	"protocol_not_allowed":                    "This run had no approved rule for this protocol.",
 	"port_not_allowed":                        "This run had no approved rule for this port.",
+	"address_not_allowed":                     "This run had no approved rule for this address.",
 	"fixed_egress_policy":                     "This connection is blocked by the run's network policy.",
 	"tls_name_missing":                        "The connection did not provide the server name needed to check a domain rule.",
 	"tls_name_invalid":                        "The connection provided an invalid server name.",

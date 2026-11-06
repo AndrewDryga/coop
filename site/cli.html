@@ -1523,7 +1523,12 @@ OPTIONS
 
 EXAMPLES
   coop net blocked registry.npmjs.org
-  coop net blocked registry.npmjs.org --run e644f07a</code></pre></div></section><section class="doc-section reference-section" id="coop-net-watch-follow-a-runs-network-activity"><h2>coop net watch: follow a run&#39;s network activity</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net watch: follow a run&#39;s network activity code example" tabindex="0"><code>Usage: coop net watch [&lt;run&gt;] [--json]
+  coop net blocked registry.npmjs.org --run e644f07a
+
+EXIT STATUS
+  0  a recorded block was found
+  1  no recorded block matched, or the search could not finish
+  2  invalid arguments</code></pre></div></section><section class="doc-section reference-section" id="coop-net-watch-follow-a-runs-network-activity"><h2>coop net watch: follow a run&#39;s network activity</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop net watch: follow a run&#39;s network activity code example" tabindex="0"><code>Usage: coop net watch [&lt;run&gt;] [--json]
 
 OPTIONS
   --json  stream one JSON record per update

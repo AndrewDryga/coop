@@ -283,7 +283,7 @@ func TestNetworkWhyRawAddressUsesRetainedPolicyAndRedacts(t *testing.T) {
 			reason            string
 		}{
 			{"10.1.2.3", "tcp", 5432, true, "rule_allowed"}, {"10.1.2.3", "udp", 5353, true, "rule_allowed"}, {"10.1.2.3", "icmp", 0, true, "rule_allowed"},
-			{"10.1.2.3", "tcp", 5433, false, "protocol_not_allowed"}, {"127.0.0.1", "tcp", 5432, false, "protected_destination"},
+			{"10.1.2.3", "tcp", 5433, false, "port_not_allowed"}, {"11.1.2.3", "tcp", 5432, false, "address_not_allowed"}, {"127.0.0.1", "tcp", 5432, false, "protected_destination"},
 		} {
 			q := PolicyQuery{Address: netip.MustParseAddr(row.address), Protocol: row.protocol, Port: row.port}
 			got, err := evidence.Why(record.ID, q, true)

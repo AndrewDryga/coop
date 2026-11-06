@@ -488,6 +488,8 @@ func netBlockedClause(reason string) string {
 		return "a protected address"
 	case "unapproved_name":
 		return "an unapproved remote address"
+	case "address_not_allowed":
+		return "an unapproved address"
 	case "protocol_not_allowed":
 		return "an unapproved connection type"
 	case "port_not_allowed":
@@ -609,8 +611,10 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 		}
 		return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetExplanation(b, p, time.Now(), explanation) })
 	}
+	// No match exits 1, as grep does, so a script can tell it from a recorded block without
+	// reading the answer.
 	if opts.json {
-		return 0, netWriteJSON(os.Stdout, netExplanation{Version: networkview.Version, Host: opts.query, Causes: []netExplainCause{}})
+		return 1, netWriteJSON(os.Stdout, netExplanation{Version: networkview.Version, Host: opts.query, Causes: []netExplainCause{}})
 	}
 	// Absence is stated only over a complete search: a partial read means the
 	// block may simply be in a record coop could not open.
@@ -619,7 +623,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 		scope = "in run " + networkreport.ShortID(runs[0])
 	}
 	complete := !page.Incomplete && page.Unreadable == 0
-	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, opts.query, scope, complete) })
+	return 1, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, opts.query, scope, complete) })
 }
 
 // writeNetNoBlock answers "nothing blocked this here" — and only says it as an

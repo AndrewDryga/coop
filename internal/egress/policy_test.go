@@ -323,6 +323,41 @@ func TestProtectedAddressesOverrideGrants(t *testing.T) {
 	}
 }
 
+// A refusal names the nearest miss, so `coop net check --run` says what would have to change: no
+// rule for the address at all, a rule for it with another protocol, or one with this protocol on
+// other ports.
+func TestAddressRefusalsNameTheNearestMiss(t *testing.T) {
+	s, err := Compile("test", Filtered, []Input{{Rules: []Rule{
+		{To: Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{80}},
+		{To: Destination{IP: "8.8.8.8"}, Protocol: "udp", Ports: []int{123}},
+		{To: Destination{IP: "9.9.9.9"}, Protocol: "icmp", Types: []string{"echo-request"}},
+	}, Origin: Origin{Kind: "operator"}}}, nil, false, ownerKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		address, protocol string
+		port, kind        int
+		want              string
+	}{
+		{"1.1.1.1", "tcp", 80, 0, "rule_allowed"},
+		{"1.1.1.1", "tcp", 81, 0, "port_not_allowed"},
+		{"1.1.1.2", "tcp", 80, 0, "address_not_allowed"},
+		{"1.1.1.1", "udp", 80, 0, "protocol_not_allowed"},
+		{"8.8.8.8", "udp", 124, 0, "port_not_allowed"},
+		{"8.8.8.8", "tcp", 123, 0, "protocol_not_allowed"},
+		{"9.9.9.9", "icmp", 0, 8, "rule_allowed"},
+		{"9.9.9.9", "icmp", 0, 13, "protocol_not_allowed"},
+		{"1.1.1.1", "icmp", 0, 8, "protocol_not_allowed"},
+		{"4.4.4.4", "icmp", 0, 8, "address_not_allowed"},
+	} {
+		got := s.Address(netip.MustParseAddr(tc.address), tc.protocol, tc.port, tc.kind, 0, nil)
+		if got.Reason != tc.want || got.Allowed != (tc.want == "rule_allowed") {
+			t.Errorf("%s %s port %d type %d = %+v, want %s", tc.address, tc.protocol, tc.port, tc.kind, got, tc.want)
+		}
+	}
+}
+
 func TestUnsupportedCapabilitiesRejectWholePolicy(t *testing.T) {
 	unsupported := map[string]Rule{
 		"tls on the DNS port":            {To: Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{53}},

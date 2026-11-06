@@ -21,6 +21,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -138,11 +139,22 @@ func allowedAggregate(observed networkview.Snapshot) string {
 		return "UNKNOWN — nothing was recorded for this run"
 	case counters == nil:
 		return "UNKNOWN — no totals were recorded for this run"
+	case counters.Connections != nil && *counters.Connections == 0 && RawTraffic(observed):
+		return "raw traffic only"
 	case counters.Connections != nil && *counters.Connections == 0:
 		return "no external connections"
 	}
 	return ConnectionCount(counters.Connections) + " · " + ByteCount(counters.SentBytes) +
 		" sent · " + ByteCount(counters.ReceivedBytes) + " received"
+}
+
+// RawTraffic reports whether an address rule let any of this run's packets through. That traffic
+// is counted per rule, never as a connection, so a run with no connection can still have reached
+// the internet.
+func RawTraffic(observed networkview.Snapshot) bool {
+	return slices.ContainsFunc(observed.AddressGrants, func(grant networkview.AddressGrantObservation) bool {
+		return grant.Packets != 0 || grant.Bytes != 0
+	})
 }
 
 // WorkloadName is the one provenance test this view turns on. The collector
@@ -327,6 +339,10 @@ func RuleText(rule egress.Rule) string {
 		target = rule.To.IP
 	case rule.To.CIDR != "":
 		target = rule.To.CIDR
+		// A rule for one address, which the grammar stores as a /32, reads as the address it names.
+		if prefix, err := netip.ParsePrefix(rule.To.CIDR); err == nil && prefix.IsSingleIP() {
+			target = prefix.Addr().String()
+		}
 	case rule.To.Service != "":
 		target = "service " + rule.To.Service
 	case rule.To.Provider != "":
@@ -349,7 +365,11 @@ func RuleText(rule egress.Rule) string {
 		target += " · " + TransportLabel(rule.Protocol)
 	}
 	if len(rule.Types) != 0 {
-		target += " " + strings.Join(rule.Types, ",")
+		names := make([]string, 0, len(rule.Types))
+		for _, kind := range rule.Types {
+			names = append(names, egress.ICMPTypeName(rule.Protocol, kind))
+		}
+		target += " " + strings.Join(names, ",")
 	}
 	return target
 }
@@ -458,8 +478,10 @@ func TransportLabel(transport string) string {
 	switch transport {
 	case "":
 		return "UNKNOWN"
-	case "tls", "tcp", "udp", "dns":
+	case "tls", "tcp", "udp", "dns", "icmp":
 		return strings.ToUpper(transport)
+	case "icmpv6":
+		return "ICMPv6"
 	}
 	return transport
 }

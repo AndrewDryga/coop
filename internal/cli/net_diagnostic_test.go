@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -408,21 +409,35 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 	if got := explain(t, "example.org", "--run", older.ID[:8]); !strings.Contains(got, "Run "+networkreport.ShortID(older.ID)+" ") {
 		t.Errorf("--run did not pin the run:\n%s", got)
 	}
-	// A host this project never had blocked is a note, not an invented cause.
+	// A host this project never had blocked is a note, not an invented cause, and it exits 1 the
+	// way grep does when nothing matches — with --run and --json too.
 	note := captureStdout(t, func() {
-		if code, err := a.netDiagnostic("blocked", []string{"never.example"}); code != 0 || err != nil {
+		if code, err := a.netDiagnostic("blocked", []string{"never.example"}); code != 1 || err != nil {
 			t.Fatalf("blocked with an unblocked host = (%d, %v)", code, err)
 		}
 	})
 	if !strings.Contains(note, "No recorded block for never.example in this project's runs.") {
 		t.Errorf("an unblocked host:\n%s", note)
 	}
+	captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"never.example", "--run", newer.ID[:8]}); code != 1 || err != nil {
+			t.Errorf("blocked with an unblocked host in one run = (%d, %v)", code, err)
+		}
+	})
+	var none netExplanation
+	if err := json.Unmarshal([]byte(captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"never.example", "--json"}); code != 1 || err != nil {
+			t.Fatalf("blocked --json with an unblocked host = (%d, %v)", code, err)
+		}
+	})), &none); err != nil || none.Host != "never.example" || none.Causes == nil || len(none.Causes) != 0 {
+		t.Errorf("blocked --json with an unblocked host = %+v, %v", none, err)
+	}
 	// A folder outside Git is the project `coop run` uses there, so it is searched as one; the home
 	// folder is never a project, so there is no scope to search.
 	t.Chdir(netFixtureProject(t))
 	outside := &app{cfg: &config.Config{}}
 	note = captureStdout(t, func() {
-		if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 0 || err != nil {
+		if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 1 || err != nil {
 			t.Fatalf("blocked in a folder outside Git = (%d, %v)", code, err)
 		}
 	})

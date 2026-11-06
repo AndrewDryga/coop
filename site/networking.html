@@ -746,7 +746,7 @@ reason is <code>interrupted by Ctrl-C</code>.</p>
 transferred bytes. It also saves an event when it blocks a name. <code>coop net blocked &lt;host&gt;</code> finds
 this project&#39;s newest run that blocked that host, groups its blocked attempts by cause and counts
 repeats. Use <code>--run &lt;run&gt;</code> to choose a run, and with it you can supply an exact event ID instead
-of a host.</li>
+of a host. When no recorded block matches, it says so and exits <code>1</code>, as <code>grep</code> does.</li>
 <li>A blocked DNS lookup doesn&#39;t record which port the program wanted, so <code>coop net blocked</code> shows a
 rule for TLS on port 443, labeled as the likely fix.</li>
 <li>A direct connection to an address the run looked up, such as <code>http://</code> to a name approved only
@@ -756,8 +756,9 @@ rule for TLS on that port, labeled as the likely fix. An address that two looked
 is listed as an address.</li>
 <li>For raw traffic, the kernel counts packets and bytes for each approved address rule. These
 appear under <code>Raw traffic</code> in <code>coop net inspect</code>, each row named by its rule, such as
-<code>10.42.8.0/24:5432 · TCP</code>, and as <code>address_grants</code> in <code>--json</code>. Individual hosts within a CIDR
-aren&#39;t recorded or shown.</li>
+<code>10.42.8.0/24:5432 · TCP</code> or <code>1.1.1.1 · ICMP echo-request</code>, and as <code>address_grants</code> in <code>--json</code>.
+Raw traffic isn&#39;t counted as connections, so a run that sent only raw traffic shows
+<code>Allowed   raw traffic only</code>. Individual hosts within a CIDR aren&#39;t recorded or shown.</li>
 <li>For other blocked packets, the filter counts how many it drops but doesn&#39;t record their
 destinations, so the report shows only a count
 (<code>N packets were blocked, and Coop did not record where they were going</code>). <code>coop net blocked</code>
@@ -798,7 +799,8 @@ with instead. Neither check sends network traffic. The exit status is the answer
 <li>2: invalid arguments</li>
 </ul>
 <p>To check an IP address, also specify <code>--protocol tcp|udp --port &lt;n&gt;</code> (or <code>--icmp</code>) and a run,
-because the answer depends on the transport and that run&#39;s protected ranges.</p>
+because the answer depends on the transport and that run&#39;s protected ranges. A blocked answer
+names what no rule covered: the address, its port, or the connection type.</p>
 <p><code>coop net export &lt;run&gt;</code> exports the run&#39;s final record as JSON. It leaves out destination names and
 addresses by default, because even a blocked name can contain a secret. Use <code>--include-addresses</code> to
 include them in the export on your machine. The <code>digest</code> is a checksum of the exported content. It

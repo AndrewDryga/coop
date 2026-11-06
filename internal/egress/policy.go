@@ -434,6 +434,18 @@ func canonicalRule(rule Rule) (Rule, error) {
 	return rule, nil
 }
 
+// ICMPTypeName is an ICMP type the way a rule names it: echo-request and echo-reply for the
+// numbers normalizeRule stores them as, any other type as its number.
+func ICMPTypeName(protocol, kind string) string {
+	switch {
+	case protocol == "icmp" && kind == "8", protocol == "icmpv6" && kind == "128":
+		return "echo-request"
+	case protocol == "icmp" && kind == "0", protocol == "icmpv6" && kind == "129":
+		return "echo-reply"
+	}
+	return kind
+}
+
 func normalizeInts(values []int, min, max int, required bool) ([]int, error) {
 	if len(values) > MaxConstraints || (required && len(values) == 0) {
 		return nil, errors.New("missing or excessive transport constraints")

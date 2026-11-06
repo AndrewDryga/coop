@@ -1720,6 +1720,11 @@ EXAMPLES
   coop net blocked registry.npmjs.org
   coop net blocked registry.npmjs.org --run e644f07a
 
+EXIT STATUS
+  0  a recorded block was found
+  1  no recorded block matched, or the search could not finish
+  2  invalid arguments
+
 ==============================================================================
 
 coop net watch: follow a run's network activity

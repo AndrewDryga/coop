@@ -353,7 +353,11 @@ func NetworkRuleText(rule egress.Rule) string {
 		b.WriteString("/" + strings.Join(ports, ","))
 	}
 	if len(rule.Types) != 0 {
-		b.WriteString(" types " + strings.Join(rule.Types, ","))
+		names := make([]string, 0, len(rule.Types))
+		for _, kind := range rule.Types {
+			names = append(names, egress.ICMPTypeName(rule.Protocol, kind))
+		}
+		b.WriteString(" types " + strings.Join(names, ","))
 	}
 	if len(rule.Codes) != 0 {
 		codes := make([]string, 0, len(rule.Codes))

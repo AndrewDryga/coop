@@ -151,7 +151,7 @@ func TestNetworkRuleTextReadsLikeTheConfiguration(t *testing.T) {
 		t.Errorf("NetworkRuleText(wildcard) = %q", got)
 	}
 	ping := egress.Rule{To: egress.Destination{CIDR: "10.0.0.0/8"}, Protocol: "icmp", Types: []string{"8"}, Codes: []int{0}}
-	if got := NetworkRuleText(ping); got != "10.0.0.0/8 icmp types 8 codes 0" {
+	if got := NetworkRuleText(ping); got != "10.0.0.0/8 icmp types echo-request codes 0" {
 		t.Errorf("NetworkRuleText(icmp) = %q", got)
 	}
 	service := egress.Rule{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}
