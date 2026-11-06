@@ -247,6 +247,12 @@ from the ordinary checks on mount hosts, where an unhidden hardlink would reveal
   2026-11-06-keep-busy-host-docker-inventories-from-failing-r). Verified with
   `TestATeardownInventoryThatRunsOutOfTimeKeepsTheRunsStatus` and the churn case of
   `TestDockerCgroupInventoryReconcilesOnlyProvenDisappearance`.
+- 2026-11-06 — the live name check (reason 6) exempts no folder name any more: `walk_step` cleared
+  `named` under any folder called `.git`, and a box can rename any folder into one (`mv sub
+  .git/sub`), so only root-level late secrets were safe; Git writes no name on the list, so nothing
+  needed the exemption. `inode_symlink` passes BLIND like the other create hooks, so `ln -s x .env`
+  works while follow_link/readlink still deny. `TestGuardsPassBlindOnlyWhereNothingIsRevealed` and
+  `TestGuardWalkExemptsNoFolderName` pin both at the source; proved on a real box on the owner's Mac.
 - 2026-11-06 — a refused create no longer stays `Pending`: QA's refused agent creates left
   `coop-fs-…-owner` helpers running until a later launch reaped them.
 - 2026-11-04 — a custody record with a helper image and no controller (written 2026-11-01 and

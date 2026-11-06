@@ -359,11 +359,10 @@ static long walk_step(u32 i, void *data) {
             if (named < 0) { c->result = -1; return 1; }
             int directory = inode && (inode->i_mode & 0170000) == 0040000;
             /* Only a file's own name counts. A box still lists, fills and removes a new folder it
-             * made, such as a package's credentials/; a launch hides one by its name. */
+             * made, such as a package's credentials/; a launch hides one by its name. No folder
+             * name exempts what it holds, .git included: the box can rename any folder into one,
+             * and Git itself writes no name on the list. */
             if (!i && !directory) c->named = named;
-            /* A launch classifies nothing inside a .git folder. */
-            u8 *g = c->s->name;
-            if (c->named && directory && n == 5 && g[0] == '.' && g[1] == 'g' && g[2] == 'i' && g[3] == 't') c->named = 0;
         }
         struct dentry *parent = d->d_parent;
         if (!parent || parent == d) { c->result = 1; return 1; }
@@ -465,7 +464,8 @@ HOOK(inode_link, 3) { return access((void *)ctx[0], MOVE, policy) && access((voi
 HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE | (single((void *)ctx[1]) ? BLIND : 0), policy); }
 HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
-HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE, policy); }
+/* A new symlink named like a secret shows nothing: following it and readlink keep the read rule. */
+HOOK(inode_symlink, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_mknod, 4) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_follow_link, 3) { return access((void *)ctx[0], 0, policy); }
 HOOK(inode_readlink, 1) { return access((void *)ctx[0], 0, policy); }

@@ -100,6 +100,14 @@
   permission, over 4 MiB or not a regular file, now stops the launch and names the file, where its
   tokens used to get through. A byte-order mark at the start of `agents/env` no longer hides the
   key on its first line.
+
+
+- **A box can't read a late secret by moving its folder into `.git`, and it can create a symlink
+  named like a secret.** The kernel guard skipped the name check for every file under any folder
+  named `.git`, so `mv sub .git/sub` let a box read a `late.pem` the host had saved into `sub/`
+  after launch. No folder name exempts what it holds now; Git writes no file name on the list.
+  `ln -s .env.production .env` was refused with `Operation not permitted` although the docs say the
+  box can create such a name; it works now, and following or reading the link stays denied.
 - **A project can be approved again after its approval marker is written over.** Writing
   `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
   Coop's private copy through the hard link. Every run was then refused, and `coop approve` and
