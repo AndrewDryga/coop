@@ -2,8 +2,8 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go]
-updated: 2026-11-04
+sources: [internal/tasks/identity.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go]
+updated: 2026-11-05
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -21,8 +21,11 @@ assignment folder, or one above it, for a link while it runs, so the in-box task
 projection from the fork workspace without following a link and refuse it when a link is on the way,
 and write proposals through the outbox that walk opened. For the projection the walk is a check, not
 a handle: task mutations still reach it by name and can race a swap ([[in-box-task-channel]]).
-Blocked work updates the
-canonical blocked folder. A projected done task becomes `reviewing`; after all signoff and signing,
+Blocked work updates the canonical blocked folder, and the fork scheduler (`runForkLoop`,
+internal/cli/fork_cmd.go) then assigns its next task: a pass that exits 3 is accepted as it is,
+never through `PrepareForkProjectionForRun`, because a resumed (`paused`) assignment's restore would
+unblock the projection again and lose the new decision. A projected done task becomes `reviewing`;
+after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate.
 
@@ -41,6 +44,8 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-05 — a fork loop goes on with its other tasks after one blocks, and a re-blocked resumed
+  task stays blocked (task 2026-11-05-keep-a-fork-loop-working-its-other-tasks-when-on).
 - 2026-11-04 — dropped the "fall back" sentence: the fallback registry reader is retired (task
   2026-11-04-drop-the-old-fork-and-task-record-readers). A copied queue in a fork is no longer
   refused: the snapshot never read one, and the fork loop takes its tasks from the canonical queue.

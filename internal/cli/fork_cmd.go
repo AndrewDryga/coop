@@ -1428,7 +1428,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 				ui.Note("")
 				ui.Note("  Answer it: coop tasks decisions -i")
 				ui.Note("  Continue:  %s", continueCmd)
-				return 0, nil
+				return loopDecisionExit, nil
 			}
 			head = forkspace.GitOut(ws, "rev-parse", "HEAD")
 			tree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
@@ -1454,7 +1454,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 					taskIDs = append(taskIDs, candidateAssignment.Index.Task.Ref.ID)
 				}
 				sort.Strings(taskIDs)
-				code, runErr := a.loopctl().Run(loop.RunSpec{
+				code, runErr := a.forkLoopPass(loop.RunSpec{
 					Repo: ws, Image: img, Agent: agent,
 					ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
 					ForkGeneration: string(identity.Generation), ForkWorker: detached,
@@ -1515,7 +1515,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			QueueID: record.Task.Ref.QueueID, TaskID: record.Task.Ref.TaskID, ID: record.Task.Ref.ID,
 			Assignment: assignment.Owner.AssignmentID,
 		}
-		code, runErr := a.loopctl().Run(loop.RunSpec{
+		code, runErr := a.forkLoopPass(loop.RunSpec{
 			Repo: ws, Image: img, Agent: agent,
 			ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
 			ForkGeneration: string(identity.Generation), ForkWorker: detached,
@@ -1525,7 +1525,11 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			Continue: continueCmd,
 			Network:  network.admission(),
 		})
-		if runErr != nil || code != 0 {
+		// A task parked on a person's decision does not stop the fork. Like coop loop, the fork records
+		// the decision and goes on with its other work: the scheduler never reassigns a blocked task,
+		// so the fork stops for the decision only once nothing else is workable.
+		parked := runErr == nil && code == loopDecisionExit
+		if !parked && (runErr != nil || code != 0) {
 			// A provider or final-signoff failure is never review authority. If the execution-local
 			// queue reached done before the failure surfaced, restore it to in-progress first; then
 			// accept only the paused/blocked metadata so the exact generation can resume safely.
@@ -1536,9 +1540,14 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			}
 			return code, errors.Join(runErr, prepareErr, acceptErr)
 		}
+		// A parked task is accepted as it is: a blocked projection has no completion to restore, and
+		// the restore would unblock a resumed task again.
 		result, acceptErr := tasks.AcceptForkProjection(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
 		if acceptErr != nil {
 			return 1, acceptErr
+		}
+		if parked && result.State != tasks.StateBlocked {
+			return 1, fmt.Errorf("fork %s stopped for a decision, but task %s is %s, not blocked", name, assignment.Task.Item.ID, result.State)
 		}
 		imported, err := tasks.ImportForkProposals(repo, identity)
 		if err != nil {
@@ -1547,10 +1556,27 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 		for _, proposal := range imported {
 			ui.OK("Added discovered task: %s", proposal.TaskID)
 		}
+		if parked {
+			ui.Note("")
+			ui.Note("Fork %s looks for other work while that task waits for your decision.", name)
+		}
 		if result.State == tasks.StateInProgress {
 			return 0, nil
 		}
 	}
+}
+
+// loopDecisionExit is coop loop's documented exit status for a run that stopped with its work
+// blocked on a person's decision and nothing else to do (docs/loop.md, Exit codes).
+const loopDecisionExit = 3
+
+// forkLoopPass runs the loop engine once for the fork scheduler: one assigned task, or the review
+// of the fork's whole candidate.
+func (a *app) forkLoopPass(spec loop.RunSpec) (int, error) {
+	if a.forkLoopRun != nil {
+		return a.forkLoopRun(spec)
+	}
+	return a.loopctl().Run(spec)
 }
 
 func importedForkTask(proposals []tasks.ImportedForkProposal) bool {

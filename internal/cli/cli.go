@@ -23,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -78,6 +79,7 @@ type app struct {
 	acpModels           func(agent string) ([]agents.Model, error)   // test seam for account-scoped model refresh; nil → a real ACP box
 	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
 	admitNetwork        admitNetworkFunc                             // test seam for an ACP supervisor's admission; nil → box.AdmitNetwork
+	forkLoopRun         func(loop.RunSpec) (int, error)              // test seam for a fork scheduler's loop passes; nil → the loop engine
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command

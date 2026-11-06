@@ -48,6 +48,13 @@
   `--allow-domain` or `--egress-rules` printed a Continue command without them, so pasting it
   resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
   now repeat them, quoted for the shell.
+
+- **A fork loop keeps working when one of its tasks needs your decision.** It ended with "Stopped
+  for your decision · 0/1 tasks done" as soon as one task blocked, and sat idle with other tasks
+  ready. The blocked task now waits in `coop tasks decisions` while the fork goes on with its other
+  work, and the fork stops for the decision, with exit status 3 as `coop loop` uses, only when
+  nothing else is left. A task answered and then blocked again in the same fork now shows its new
+  question there too; the fork used to put it back in progress.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the

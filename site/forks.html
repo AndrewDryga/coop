@@ -156,7 +156,9 @@ approval withdrawn at a fork&#39;s path stays withdrawn even if you recreate tha
 </code></pre></div>
 <p><a href="loop.html">The loop</a> explains how iterations work. <a href="loop.html#parallel-forks">Parallel forks</a> shows
 how to run several at once.
-A refused loop appears as stopped in <code>coop fork ls</code>, with the reason beneath it.</p>
+A refused loop appears as stopped in <code>coop fork ls</code>, with the reason beneath it. When a task needs
+your decision, it waits in <code>coop tasks decisions</code> while the fork goes on with its other tasks. The
+fork stops for the decision only when nothing else is left.</p>
 </section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Isolated-write forks code example" tabindex="0"><code class="language-bash">coop fork research codex --isolated
 coop fork research                 # the host remembers isolation
