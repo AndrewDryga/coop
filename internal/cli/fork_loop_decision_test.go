@@ -178,16 +178,25 @@ func TestForkLoopContinueLineKeepsItsChosenQueue(t *testing.T) {
 	}
 }
 
-// A task answered in the project goes back to the same fork. If its agent parks it again, the new
-// question must reach the project's decisions, not be undone by the restore a failed run gets.
+// A task answered in the project goes back to the same fork, whose worker reads the answer in the
+// fork's own copy of the task. If its agent parks it again, the new question must reach the project's
+// decisions, not be undone by the restore a failed run gets.
 func TestForkLoopKeepsAResumedTaskBlockedWhenItParksAgain(t *testing.T) {
 	repo := initRepo(t)
 	id := "2026-11-05-fork-decision-again"
 	seedForkDecisionTask(t, repo, id)
 	commitForkNetworkPreflightFixture(t, repo)
 	a := forkNetworkPreflightApp(t, repo)
-	var ran []string
-	a.forkLoopRun = parkingForkPass(t, &ran)
+	var ran, answers []string
+	park := parkingForkPass(t, &ran)
+	a.forkLoopRun = func(spec loop.RunSpec) (int, error) {
+		answer, err := tasks.TaskResolution(filepath.Join(spec.Repo, spec.Queues[0], tasks.StateInProgress, id))
+		if err != nil {
+			t.Errorf("read the fork's copy of the decision: %v", err)
+		}
+		answers = append(answers, answer)
+		return park(spec)
+	}
 	ws, identity := setUpForkForDecision(t, repo, "again")
 	if code, output, err := runForkLoopForDecision(t, a, repo, ws, identity); code != loopDecisionExit || err != nil {
 		t.Fatalf("first fork loop = (%d, %v)\n%s", code, err, output)
@@ -202,6 +211,9 @@ func TestForkLoopKeepsAResumedTaskBlockedWhenItParksAgain(t *testing.T) {
 	code, output, err := runForkLoopForDecision(t, a, repo, ws, identity)
 	if !slices.Equal(ran, []string{id, id}) || code != loopDecisionExit || err != nil {
 		t.Fatalf("resumed fork loop worked %v = (%d, %v), want the answered task once more and a stop for its new decision\n%s", ran, code, err, output)
+	}
+	if !slices.Equal(answers, []string{"", "Go with this."}) {
+		t.Errorf("answers the fork's passes read = %q, want none and then the project's answer", answers)
 	}
 	assertForkTaskWaitsForDecision(t, repo, id)
 }

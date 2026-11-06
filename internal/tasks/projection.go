@@ -766,6 +766,67 @@ func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName str
 	return nil
 }
 
+// syncForkDecision copies the canonical decision.md, which holds the answer a person gave in the
+// project, into the fork's copy of the task. The caller holds the canonical task's lease, so no
+// worker is on that copy. Only the decision moves: the copy's progress notes, artifacts and scratch
+// stay the fork's own. On resume, a copy that asks another question keeps it: a fork stopped after
+// parking a new question, before acceptance carried it to the project, and the project's answer is
+// to the earlier one.
+func syncForkDecision(authorityRepo, root, id string, owner ForkTaskOwner, resume bool) error {
+	if owner.Phase != ForkAssignmentBlocked && owner.Phase != ForkAssignmentPaused {
+		return fmt.Errorf("fork assignment is not blocked or paused")
+	}
+	canonical, ok, err := CurrentTask(root, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("canonical task %s is missing", id)
+	}
+	body, exists, err := readOptionalTaskMetadataPath(filepath.Join(canonical.Dir, "decision.md"))
+	if err != nil || !exists {
+		return err
+	}
+	projection, err := openAssignedProjection(authorityRepo, owner)
+	if err != nil {
+		return err
+	}
+	defer projection.Close()
+	result, err := validateForkProjectionOpened(root, id, owner, projection)
+	if err != nil {
+		return err
+	}
+	manifest, err := readProjectionManifest(projection)
+	if err != nil {
+		return err
+	}
+	instance, err := ReadTaskInstance(root, canonical)
+	if err != nil {
+		return err
+	}
+	if !sameTaskInstance(instance, manifest.Task) {
+		return fmt.Errorf("the fork's copy is from another task with the id %s", id)
+	}
+	dest, err := openProjectedTask(projection, result.State, id)
+	if err != nil {
+		return err
+	}
+	defer dest.Close()
+	if resume {
+		current, exists, err := readOptionalTaskMetadataFile(dest, "decision.md")
+		if err != nil {
+			return err
+		}
+		if exists && decisionQuestion(string(current)) != decisionQuestion(string(body)) {
+			return nil
+		}
+	}
+	if err := AtomicWriteTaskFile(dest, "decision.md", body); err != nil {
+		return fmt.Errorf("write %s: %w", filepath.Join(result.Item.Dir, "decision.md"), err)
+	}
+	return nil
+}
+
 // PrepareForkProjectionForRun closes the crash window between an execution-local completion and
 // host acceptance. A done folder whose canonical assignment is still working was not known to have
 // passed final signoff, so it is restored for a fresh range-bound loop attempt. Once acceptance has
@@ -791,6 +852,11 @@ func prepareForkProjection(authorityRepo, root, id string, expected ForkTaskOwne
 		return err
 	}
 	if resume && result.State == StateBlocked && expected.Phase == ForkAssignmentPaused {
+		// An unblock that stopped before copying the answer, or one from an older Coop, left this
+		// copy without it. Copy it now, before the worker reads it.
+		if err := syncForkDecision(authorityRepo, root, id, expected, true); err != nil {
+			return fmt.Errorf("copy the answer into the fork's copy of task %s: %w", id, err)
+		}
 		if err := moveProjectedTask(projection, StateBlocked, StateInProgress, id); err != nil {
 			return fmt.Errorf("restore unblocked fork projection: %w", err)
 		}

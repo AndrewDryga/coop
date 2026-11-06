@@ -865,6 +865,13 @@ reviewAgain:
 				)
 			}
 			work := LoopWorkPrompt(repo, assigned.Root, assigned.Item.ID, agent, peers, c.preset, lease.Reopen != nil)
+			decision, decisionErr := decisionResumePrompt(assigned.Item.Dir)
+			if decisionErr != nil {
+				return 1, errors.Join(fmt.Errorf("read task %s resolution: %w", assigned.Item.ID, decisionErr), lease.Release())
+			}
+			if decision != "" {
+				work = decision + "\n\n" + work
+			}
 			iterWork := work
 			if pre := tasks.ResumePrefixFor(repo, assigned.Item.ID, assigned.Item.State, lease.Reopen); pre != "" {
 				iterWork = pre + "\n\n" + work

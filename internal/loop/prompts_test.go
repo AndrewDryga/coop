@@ -1,11 +1,20 @@
 package loop
 
 import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/preset"
+	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // The loop prompts must name the queue AND AGENTS.md as absolute in-box paths: gemini's
@@ -489,5 +498,80 @@ func TestLoopWorkPromptNamesTheProjectNotCoopsPrivateFolder(t *testing.T) {
 		if !strings.Contains(prompt, "The assigned project directory is "+tc.want+".") {
 			t.Errorf("prompt for %q does not name %q", tc.queue, tc.want)
 		}
+	}
+}
+
+func TestDecisionResumePromptIncludesLatestAnswer(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tasks", "10_in_progress", "decision")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{"<!-- HUMAN: answer here -->", "Use the host gate result.", "Run the gate again."} {
+		if err := os.WriteFile(filepath.Join(dir, "decision.md"), []byte("# Decision\n\n**Resolution:** "+answer+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		prompt, err := decisionResumePrompt(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(answer, "<!--") {
+			if prompt != "" {
+				t.Fatalf("unanswered prompt = %q", prompt)
+			}
+		} else if !strings.Contains(prompt, answer) {
+			t.Fatalf("prompt missing latest answer: %q", prompt)
+		}
+	}
+}
+
+// The box the loop starts for an answered task gets the answer in its prompt, and a decision.md the
+// loop cannot read stops the run before any box starts.
+func TestLoopPromptCarriesTheSavedAnswer(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("TERM", "dumb")
+	for _, unreadable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "answered", true: "unreadable"}[unreadable], func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			const id, answer = "answered", "Use the host gate result."
+			dir := filepath.Join(repo, tasksRoot, stateTodo, id)
+			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Answered\n- [ ] Do it\n")
+			decision := "# Decision\n\n**Resolution:** " + answer + "\n"
+			if unreadable {
+				outside := filepath.Join(t.TempDir(), "decision.md")
+				writeTaskFile(t, outside, decision)
+				if err := os.Symlink(outside, filepath.Join(dir, "decision.md")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeTaskFile(t, filepath.Join(dir, "decision.md"), decision)
+			}
+			c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test", Host{})
+			stop := &box.LaunchRefused{Err: errors.New("fixture stop")}
+			var prompts []string
+			c.boxRun = func(spec box.RunSpec) (int, error) {
+				prompts = append(prompts, strings.Join(spec.Cmd, " "))
+				return -1, stop
+			}
+			var runErr error
+			captureStderr(t, func() {
+				_, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+					Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}})})
+			})
+			if unreadable {
+				// The queue scan reads decision.md first; the prompt's own read guards a swap after it.
+				if len(prompts) != 0 || runErr == nil || !strings.Contains(runErr.Error(), `"decision.md" is not a single-link regular file`) {
+					t.Fatalf("unreadable decision = %v after %d boxes, want the run stopped before any box", runErr, len(prompts))
+				}
+				return
+			}
+			if !errors.Is(runErr, stop) || len(prompts) != 1 || !strings.Contains(prompts[0], answer) {
+				t.Fatalf("run = %v with prompts %q, want one box whose prompt carries %q", runErr, prompts, answer)
+			}
+		})
 	}
 }

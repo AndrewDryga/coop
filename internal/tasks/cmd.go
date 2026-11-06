@@ -1501,6 +1501,8 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 			remedy = "restore the unchanged host audit record and reviewed Git baseline named by the error"
 		case "decision write":
 			remedy = fmt.Sprintf("make %q a writable regular decision file", failure.artifact)
+		case "fork decision copy":
+			remedy = "repair the fork's copy of the task named by the error"
 		case "task folder move":
 			remedy = "remove or repair the source/destination task folder named by the error"
 		case "audit authority persistence":
@@ -1529,6 +1531,20 @@ func resolveAndUnblock(project, root string, t Item, answer string) error {
 				stage: "decision write", artifact: decision, state: StateBlocked,
 				err: transition.finish(err),
 			}
+		}
+	}
+	// A fork works from its own copy of the task and reads the answer there, so the answer goes
+	// into that copy too. The lease the transition holds keeps the fork's worker off it meanwhile.
+	// Any other assignment phase is refused below, as before.
+	owner, owned, err := ReadTaskOwnerRecord(root, t.ID)
+	if err != nil {
+		return &unblockStageError{stage: "owner record inspection", state: StateBlocked, err: transition.finish(err)}
+	}
+	if owned && owner.Kind == TaskOwnerFork && owner.Fork != nil &&
+		(owner.Fork.Phase == ForkAssignmentBlocked || owner.Fork.Phase == ForkAssignmentPaused) {
+		if err := syncForkDecision(project, root, t.ID, *owner.Fork, false); err != nil {
+			err = fmt.Errorf("copy the answer into fork %s's copy of the task under %s: %w", owner.Fork.Fork.Name, owner.Fork.Projection, err)
+			return &unblockStageError{stage: "fork decision copy", state: StateBlocked, err: transition.finish(err)}
 		}
 	}
 	if err := moveBlockedAuditUnblock(root, t, transition); err != nil {
@@ -2310,6 +2326,11 @@ func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer
 		return "", fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
 	}
 	return "", WriteDecision(taskDir, id, title, d)
+}
+
+// TaskResolution returns the saved human answer, if any, using the bounded metadata reader.
+func TaskResolution(taskDir string) (string, error) {
+	return recordedAnswer(filepath.Join(taskDir, "decision.md"))
 }
 
 // recordedAnswer is the human's answer in a decision.md (decisionResolution), or "" when it holds none.

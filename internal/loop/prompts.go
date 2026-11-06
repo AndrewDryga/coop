@@ -79,6 +79,15 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		absQueuePath(repo, assignedRoot), assignedID)
 }
 
+// decisionResumePrompt repeats the saved answer so a resumed worker sees it before acting.
+func decisionResumePrompt(taskDir string) (string, error) {
+	answer, err := tasks.TaskResolution(taskDir)
+	if err != nil || answer == "" {
+		return "", err
+	}
+	return "The human resolved this task's decision. Follow this answer when resuming; read decision.md for its context:\n\n" + answer, nil
+}
+
 func loopPeerCapabilities(agent string, peers []agents.Target, p *preset.Preset) string {
 	var consults, delegates []string
 	if p != nil {

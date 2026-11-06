@@ -195,6 +195,12 @@
   nothing else is left. A task answered and then blocked again in the same fork now shows its new
   question there too; the fork used to put it back in progress.
 
+- **An answer given with `coop tasks unblock` reaches the fork working the task.** The fork resumed
+  from its own copy of the task, whose decision.md still had no answer, so its agent never saw it.
+  The answer now goes into the fork's copy as well. If Coop cannot write it there, the task stays
+  blocked and the error names that copy. A loop agent that picks up an answered task also gets the
+  answer at the start of its prompt.
+
 - **`coop tasks watch` names the agent of an editor session's claim.** A task an agent claims
   through its session's task tools records the full target the session runs, such as
   `claude:opus/high@work`, and the board names the claim by it, as it names a loop's worker. A

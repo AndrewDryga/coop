@@ -801,7 +801,8 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 		t.Fatal(err)
 	}
 	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "decision")
-	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** accepted\n")
+	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- HUMAN: answer here -->\n")
+	writeTaskFile(t, filepath.Join(projected.Dir, "artifacts", "proof.txt"), "retained proof")
 	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
 		t.Fatal(err)
 	}
@@ -813,9 +814,16 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 		t.Fatalf("canonical state = %s, want blocked", canonical.State)
 	}
 	assertPausePreservesOwner(t, repo, root, "decision", identity)
-	if err := resolveAndUnblock("", root, canonical, ""); err != nil {
+	if code, err := tasksFolderUnblock(repo, root, []string{"decision", "Do not re-run the box gate; the host gate is green."}); code != 0 || err != nil {
 		t.Fatal(err)
 	}
+	projected, _ = mustCurrentTask(t, assignment.Owner.Projection, "decision")
+	answer, err := recordedAnswer(filepath.Join(projected.Dir, "decision.md"))
+	if err != nil || answer != "Do not re-run the box gate; the host gate is green." {
+		t.Fatalf("projected unblock answer = %q, err=%v", answer, err)
+	}
+	// Older Coop could stop after the canonical unblock with this stale execution copy.
+	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- HUMAN -->\n")
 	resumed, err := AssignForkTask([]string{root}, request)
 	if err != nil || resumed.Outcome != ForkAssignmentSelected {
 		t.Fatalf("resumed assignment = %+v, err=%v", resumed, err)
@@ -825,8 +833,78 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 		t.Fatal(err)
 	}
 	projected, _ = mustCurrentTask(t, resumed.Owner.Projection, "decision")
+	answer, err = recordedAnswer(filepath.Join(projected.Dir, "decision.md"))
+	if err != nil || answer != "Do not re-run the box gate; the host gate is green." {
+		t.Fatalf("resumed answer = %q, err=%v", answer, err)
+	}
+	proof, err := os.ReadFile(filepath.Join(projected.Dir, "artifacts", "proof.txt"))
+	if err != nil || string(proof) != "retained proof" {
+		t.Fatalf("resumed proof = %q, err=%v", proof, err)
+	}
 	if projected.State != StateInProgress {
 		t.Fatalf("unblocked projection state = %s, want in progress", projected.State)
+	}
+}
+
+// A fork stopped after parking a new question but before acceptance carried it to the project. Its
+// next run must not answer the new question with the project's answer to the earlier one.
+func TestResumedForkKeepsAQuestionTheProjectNeverSaw(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	taskForLease(t, root, StateTodo, "decision")
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "stopped-worker")
+	request := ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("b", 40), LeaseOwner: testLeaseOwner(),
+	}
+	park := func(owner ForkTaskOwner, question string) {
+		t.Helper()
+		projected, _ := mustCurrentTask(t, owner.Projection, "decision")
+		if err := WriteDecision(projected.Dir, projected.ID, projected.Title, Decision{
+			Question: question, Why: "Only the owner can choose.", Options: []string{"this", "that"}, Recommendation: "this",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := MoveTaskDir(owner.Projection, projected, StateBlocked); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resume := func() ForkAssignment {
+		t.Helper()
+		resumed, err := AssignForkTask([]string{root}, request)
+		if err != nil || resumed.Outcome != ForkAssignmentSelected {
+			t.Fatalf("resumed assignment = %+v, err=%v", resumed, err)
+		}
+		defer resumed.Lease.Release()
+		if err := PrepareForkProjectionForRun(repo, root, "decision", resumed.Owner); err != nil {
+			t.Fatal(err)
+		}
+		return resumed
+	}
+	assignment, err := AssignForkTask([]string{root}, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	park(assignment.Owner, "Which way first?")
+	if _, err := AcceptForkProjection(repo, root, "decision", assignment.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderUnblock(repo, root, []string{"decision", "Go this way."}); code != 0 || err != nil {
+		t.Fatal(err)
+	}
+	resumed := resume()
+	park(resumed.Owner, "Which way now?")
+	if err := PauseForkAssignments(repo, identity); err != nil { // coop fork stop, before acceptance
+		t.Fatal(err)
+	}
+	resumed = resume()
+	projected, _ := mustCurrentTask(t, resumed.Owner.Projection, "decision")
+	body := readFileString(filepath.Join(projected.Dir, "decision.md"))
+	if decisionQuestion(body) != "Which way now?" || decisionResolution(body) != "" {
+		t.Fatalf("resumed copy asks %q with answer %q, want the fork's new unanswered question", decisionQuestion(body), decisionResolution(body))
 	}
 }
 
@@ -851,7 +929,7 @@ func TestForkUnblockReplaysPausedOwnerWhileCanonicalStillBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	canonical, _ := mustCurrentTask(t, root, "assigned")
-	if err := resolveAndUnblock("", root, canonical, ""); err != nil {
+	if err := resolveAndUnblock(repo, root, canonical, ""); err != nil {
 		t.Fatal(err)
 	}
 	canonical, _ = mustCurrentTask(t, root, "assigned")
@@ -1130,5 +1208,40 @@ func TestTaskRegistriesNeverWriteThroughACoopLink(t *testing.T) {
 				t.Fatalf("%s wrote where the link points: %v, %v", tc.name, entries, err)
 			}
 		})
+	}
+}
+
+func TestForkUnblockRefusesUnsafeProjectionAndKeepsTaskBlocked(t *testing.T) {
+	repo, root, assignment := proposalAssignment(t, "unsafe-unblock")
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), "# Decision\n\n**Resolution:** <!-- HUMAN -->\n")
+	if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcceptForkProjection(repo, root, "assigned", assignment.Owner); err != nil {
+		t.Fatal(err)
+	}
+	projected, _ = mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+	external := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(external, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(projected.Dir, "decision.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(projected.Dir, "decision.md")); err != nil {
+		t.Fatal(err)
+	}
+	code, err := tasksFolderUnblock(repo, root, []string{"assigned", "approved"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), assignment.Owner.Projection) {
+		t.Fatalf("unsafe unblock = %d, %v", code, err)
+	}
+	canonical, _ := mustCurrentTask(t, root, "assigned")
+	if canonical.State != StateBlocked {
+		t.Fatalf("unsafe unblock state = %s", canonical.State)
+	}
+	body, err := os.ReadFile(external)
+	if err != nil || string(body) != "untouched" {
+		t.Fatalf("outside decision = %q, %v", body, err)
 	}
 }

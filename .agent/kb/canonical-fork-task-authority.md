@@ -2,7 +2,7 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go]
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
 updated: 2026-11-06
 ---
 
@@ -24,8 +24,18 @@ a handle: task mutations still reach it by name and can race a swap ([[in-box-ta
 Blocked work updates the canonical blocked folder, and the fork scheduler (`runForkLoop`,
 internal/cli/fork_cmd.go) then assigns its next task: a pass that exits 3 is accepted as it is,
 never through `PrepareForkProjectionForRun`, because a resumed (`paused`) assignment's restore would
-unblock the projection again and lose the new decision. A projected done task becomes `reviewing`;
-after all signoff and signing,
+unblock the projection again and lose the new decision. The worker reads its answer from the
+projection, never the canonical folder, and acceptance copies the projection's decision.md back over
+the canonical one. So `resolveAndUnblock` (internal/tasks/cmd.go) copies the canonical decision.md
+into the validated projection (`syncForkDecision`) under the canonical lease, before the task returns
+to todo, and refuses, leaving the task blocked, when it cannot. The resumed restore repeats the copy
+for an unblock that stopped before it, but only over a copy that asks the same question: a fork
+stopped after parking a new question, before acceptance carried it here, keeps that question (stop
+pauses a working assignment without accepting it). Only decision.md moves; the projection's log,
+artifacts and scratch stay its own. When the task's decision.md holds an answer, the loop prompt starts with it
+(`decisionResumePrompt`, internal/loop/prompts.go), and a decision.md that cannot be read stops the
+launch.
+A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
 is a person's `coop tasks done <id> --from-fork` (internal/tasks/landed_fork.go): with the fork
@@ -50,6 +60,11 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — `coop tasks unblock` copies the answer into the fork's projection, the resumed restore
+  repeats it, and the loop prompt carries it; the fork's worker had resumed from a copy with no
+  answer (task 2026-11-05-carry-a-coop-tasks-unblock-answer-into-the-fork). Acceptance still copies
+  the projection's log.md over the canonical one, so the canonical "Unblocked:" line does not survive
+  the fork's next acceptance.
 - 2026-11-06 — added the person-only `--from-fork` completion of a fork's task whose commit
   already landed (task 2026-11-05-let-the-owner-complete-a-fork-held-task-whose-co).
 - 2026-11-05 — a fork loop goes on with its other tasks after one blocks, and a re-blocked resumed
