@@ -17,7 +17,7 @@ shell `while read` loop, give each `coop run` its own input, as in
 ## Hiding secrets
 
 co:op hides files and directories whose names look like secrets, including `.env`, `*.tfvars`,
-`*.pem`, `secrets/`, `.ssh`, dotfiles ending in `secrets` such as `.shell-secrets`, and config
+`*.pem`, `*.key`, `id_rsa*`, `secrets/`, `.ssh`, dotfiles ending in `secrets` such as `.shell-secrets`, and config
 files such as `secrets.env`. Source and docs like `secrets.go` and `secrets.md` stay readable, and
 templates (`*.example`, `*.sample`, `*.template`) stay visible.
 
@@ -45,6 +45,14 @@ working. It shows the file's real size, times, mode, owner and link count. The b
 read the contents, and extended attributes read as empty. A hidden symlink shows no target, and
 `readlink` on it fails. `stat` fails on a hidden directory and on everything inside it, and `ls -l`
 shows that directory's entry with an error.
+
+For tools that scan the repository, co:op sets `COOP_BOX=1` inside the box. When it is set,
+skip paths that return a permission error (`EPERM` or `EACCES`) during metadata lookup,
+directory traversal or file reads; skip a denied directory's subtree. Report skipped paths so
+the result makes clear which files were checked, and keep reporting other errors normally.
+A denied path is unreadable, not an empty file. Don't rely on a successful `stat` or a list of
+tracked files to mean that their contents can be read. co:op does not expose a hidden-path list
+inside the box; handle the filesystem error rather than trying to reproduce its hiding rules.
 
 co:op builds the eBPF helper inside Docker, so you don't need any host packages, filesystem changes
 or kernel settings.

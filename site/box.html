@@ -145,7 +145,7 @@ shell <code>while read</code> loop, give each <code>coop run</code> its own inpu
 <code>coop run -- make test &lt; /dev/null</code>, or it takes the lines meant for the loop.</p>
 </section><section class="doc-section reference-section" id="hiding-secrets"><h2>Hiding secrets</h2>
 <p>co:op hides files and directories whose names look like secrets, including <code>.env</code>, <code>*.tfvars</code>,
-<code>*.pem</code>, <code>secrets/</code>, <code>.ssh</code>, dotfiles ending in <code>secrets</code> such as <code>.shell-secrets</code>, and config
+<code>*.pem</code>, <code>*.key</code>, <code>id_rsa*</code>, <code>secrets/</code>, <code>.ssh</code>, dotfiles ending in <code>secrets</code> such as <code>.shell-secrets</code>, and config
 files such as <code>secrets.env</code>. Source and docs like <code>secrets.go</code> and <code>secrets.md</code> stay readable, and
 templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible.</p>
 <p>co:op protects these files in one of two ways. On supported Mac Docker runtimes, APFS projects
@@ -168,6 +168,13 @@ working. It shows the file&#39;s real size, times, mode, owner and link count. T
 read the contents, and extended attributes read as empty. A hidden symlink shows no target, and
 <code>readlink</code> on it fails. <code>stat</code> fails on a hidden directory and on everything inside it, and <code>ls -l</code>
 shows that directory&#39;s entry with an error.</p>
+<p>For tools that scan the repository, co:op sets <code>COOP_BOX=1</code> inside the box. When it is set,
+skip paths that return a permission error (<code>EPERM</code> or <code>EACCES</code>) during metadata lookup,
+directory traversal or file reads; skip a denied directory&#39;s subtree. Report skipped paths so
+the result makes clear which files were checked, and keep reporting other errors normally.
+A denied path is unreadable, not an empty file. Don&#39;t rely on a successful <code>stat</code> or a list of
+tracked files to mean that their contents can be read. co:op does not expose a hidden-path list
+inside the box; handle the filesystem error rather than trying to reproduce its hiding rules.</p>
 <p>co:op builds the eBPF helper inside Docker, so you don&#39;t need any host packages, filesystem changes
 or kernel settings.</p>
 <p>Launches don&#39;t test the protection itself, so run <code>coop doctor</code> after you update Docker or OrbStack.
