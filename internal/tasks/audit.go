@@ -3272,8 +3272,9 @@ func auditResumeLine(id string) string {
 		"verification-only completion. A zero-commit re-close of a finding asking for missing evidence must include " +
 		"that evidence in state.md or durable artifacts: run the requested checks and record exact commands, results, " +
 		"and artifact paths. A bare assertion that the finding is false is not evidence. If the finding is real, add exactly one real repair commit WITHOUT a " +
-		"Coop-Task or Coop-Recovery trailer, preserving the reviewed history. The host audit authority binds " +
-		"that repair to this task. Do not rewrite reviewed commits or add a receipt-only commit."
+		"Coop-Task or Coop-Recovery trailer on top of the current HEAD, preserving the reviewed history; Coop's commit hook adds no trailer during rework. " +
+		"The host audit authority binds that repair to this task. Never amend, rebase, squash, or fold the bound commit or any reviewed commit, and do not " +
+		"add a receipt-only commit."
 }
 
 // ResumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the

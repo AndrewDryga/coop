@@ -189,6 +189,7 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 		"exactly one real repair commit",
 		"WITHOUT a Coop-Task or Coop-Recovery trailer",
 		"preserving the reviewed history",
+		"on top of the current HEAD", "Never amend, rebase, squash, or fold", "commit hook adds no trailer during rework",
 		"after the one unbound repair commit only when a real fix was required",
 	} {
 		if !strings.Contains(work, want) {

@@ -902,7 +902,7 @@ func verifyLoopAuditResumePrompt(provider string, argv []string) error {
 		"ZERO new commits",
 		"If the finding is real, add exactly one real repair commit",
 		"WITHOUT a Coop-Task or Coop-Recovery trailer",
-		"Do not rewrite reviewed commits",
+		"Never amend, rebase, squash, or fold the bound commit",
 	} {
 		if !strings.Contains(prompt, want) {
 			return fmt.Errorf("audit re-close work prompt is missing %q", want)

@@ -85,7 +85,11 @@ type iterationRecovery struct {
 	formatCorrection   bool
 	terminalCorrection bool
 	reuseServices      bool
-	completionWindows  *tasks.CompletionWindowSet
+	// reviewRework is an attempt under host audit-reopen authority: its repair commit must carry
+	// no Coop-Task trailer, since the task's one binding is already in history, so the box's commit
+	// hook stamps none.
+	reviewRework      bool
+	completionWindows *tasks.CompletionWindowSet
 }
 
 // stopsTheRun reports an error no later attempt gets past, so the run stops and returns it: a
@@ -245,6 +249,10 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	if correctionOnly {
 		attemptPeers, attemptPreset = nil, nil
 	}
+	stampedTask := assignedTask
+	if recovery.reviewRework {
+		stampedTask = ""
+	}
 	// A structured stream gives the watchdog trustworthy activity, so only then does the
 	// attempt get a child context it may cancel on proven silence. The parent ctx stays
 	// untouched: a user interrupt keeps winning over any watchdog fire. box.Run arms the
@@ -266,7 +274,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		boxCtx = childCtx
 	}
 	code, err = c.runBox(box.RunSpec{
-		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: !recovery.reuseServices, Quiet: recovery.reuseServices, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: attemptPeers, Preset: attemptPreset, RunID: c.runID, AssignedTask: assignedTask, TaskTools: taskTools, FormatCorrection: recovery.formatCorrection, ReuseServices: recovery.reuseServices,
+		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: !recovery.reuseServices, Quiet: recovery.reuseServices, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: attemptPeers, Preset: attemptPreset, RunID: c.runID, AssignedTask: stampedTask, TaskTools: taskTools, FormatCorrection: recovery.formatCorrection, ReuseServices: recovery.reuseServices,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
 		ActivityTask: c.iterationActivityTask(assignedTask), ActivitySource: c.runID,
 		AgentCommand:         agentCommand,

@@ -1,18 +1,26 @@
 package loop
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ladder"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 // TestRunIterationStopsBeforeLaunchOnCompletionWindowSetupFailure and (in loop_test.go)
@@ -131,4 +139,120 @@ func TestLoopIdentityIsCapturedButRawTraceStaysRaw(t *testing.T) {
 			t.Fatalf("%s did not capture exactly one replacement identity: %q", label, output)
 		}
 	}
+}
+
+// Review rework adds one repair commit without a Coop-Task trailer: the task's one binding is
+// already in history. The box's prepare-commit-msg hook stamps the trailer of RunSpec.AssignedTask
+// on every commit, so a rework attempt hands the box none. The fake box commits the way that hook
+// does — the trailer exactly when AssignedTask is set — and closes through tasks_complete: the
+// repair is accepted, and the same repair stamped is refused.
+func TestReviewReworkCommitsStayUnboundThroughTheHook(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	for _, stamp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "the hook stamps nothing", true: "a stamped repair is refused"}[stamp], func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			const id = "rework"
+			git("commit", "--allow-empty", "-m", "Implement the task\n\nCoop-Task: "+id)
+			root := filepath.Join(repo, tasksRoot)
+			writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# Rework\n- [x] verified\n")
+			writeTaskFile(t, filepath.Join(root, stateInProgress, id, "log.md"), "# Log — Rework\n\n- Repaired the review finding.\n")
+			record, err := tasks.CaptureAuditReopen(repo, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tasks.WriteAuditReopenRecord(root, record); err != nil {
+				t.Fatal(err)
+			}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			refused, refusal, attempts := false, "", 0
+			c.boxRun = func(s box.RunSpec) (int, error) {
+				if attempts++; attempts > 1 {
+					t.Fatalf("attempt %d after tasks_complete refused = %v: %s", attempts, refused, refusal)
+				}
+				if s.AssignedTask != "" {
+					t.Errorf("review rework handed the box task %q for its commit hook to stamp", s.AssignedTask)
+				}
+				message := "Repair the finding"
+				if s.AssignedTask != "" || stamp {
+					message += "\n\nCoop-Task: " + id
+				}
+				writeTaskFile(t, filepath.Join(repo, "repair.txt"), "repaired\n")
+				git("add", "repair.txt")
+				git("commit", "-m", message)
+				refused, refusal = completeThroughTools(t, s.TaskTools, id)
+				_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+				return 0, err
+			}
+			var code int
+			output := captureStderr(t, func() {
+				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+			})
+			if refused != stamp {
+				t.Fatalf("tasks_complete refused = %v (%s), want %v\n%s", refused, refusal, stamp, output)
+			}
+			if stamp {
+				// Refused for the trailer, not for a fixture gap another completion rule caught.
+				if !strings.Contains(refusal, "without a Coop-Task trailer") {
+					t.Fatalf("stamped repair refused for another reason: %s", refusal)
+				}
+				return
+			}
+			if code != 0 || err != nil {
+				t.Fatalf("loop = %d, %v\n%s", code, err, output)
+			}
+			if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != tasks.StateDone {
+				t.Fatalf("reworked task = %v, %v, %v; want done", current, ok, err)
+			}
+			if bound := tasks.CommitsForTask(repo, "", id); len(bound) != 1 {
+				t.Fatalf("task bindings after rework = %v, want the original one", bound)
+			}
+		})
+	}
+}
+
+// completeThroughTools calls tasks_complete for id over the box's task tools and reports whether the
+// tool refused it, with its reply.
+func completeThroughTools(t *testing.T, tools box.TaskToolServer, id string) (bool, string) {
+	t.Helper()
+	client, server := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tools.Serve(ctx, server) }()
+	defer func() { cancel(); client.Close(); server.Close(); <-done }()
+	if err := client.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reader, encoder := bufio.NewReader(client), json.NewEncoder(client)
+	var result struct {
+		Result struct {
+			Content []struct{ Text string }
+			IsError bool
+		}
+	}
+	for _, call := range []map[string]any{
+		{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}}},
+		{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id, "unrun_checks": []string{}}}},
+	} {
+		if err := encoder.Encode(call); err != nil {
+			t.Fatal(err)
+		}
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(line, &result); err != nil {
+			t.Fatalf("MCP %v: %s, %v", call["method"], line, err)
+		}
+	}
+	text := ""
+	if len(result.Result.Content) > 0 {
+		text = result.Result.Content[0].Text
+	}
+	return result.Result.IsError, text
 }

@@ -2647,7 +2647,8 @@ func TestAuditResumeLine(t *testing.T) {
 		"my-task", "host-authorized review rework", "NOT crash recovery", "log.md",
 		"independently verify", "ZERO new commits", "99_done/", "verification-only",
 		"exactly one real repair commit", "WITHOUT a Coop-Task or Coop-Recovery trailer",
-		"preserving the reviewed history", "host audit authority binds",
+		"preserving the reviewed history", "host audit authority binds", "on top of the current HEAD",
+		"Never amend, rebase, squash, or fold the bound commit", "commit hook adds no trailer during rework",
 		"missing evidence must include that evidence", "run the requested checks", "A bare assertion",
 	} {
 		if !strings.Contains(l, want) {

@@ -14,7 +14,8 @@ import (
 // prepareCommitMsgHook stamps the two trailers a box commit must carry, from git config values the
 // box gitconfig sets (so the script itself is static): coop.trailer replaces the agent CLI's machine
 // co-author line, so the commit is attributed to coop and the exact target whichever agent made it;
-// coop.task stamps the assigned loop task's Coop-Task binding.
+// coop.task stamps the assigned loop task's Coop-Task binding. Review rework leaves coop.task unset:
+// the task's binding is already in history, so its one repair commit must stay unbound.
 //
 // The task stamp exists because a loop iteration's completion is REJECTED outright when its commit
 // carries no parseable Coop-Task trailer: an agent that simply forgets one loses the whole

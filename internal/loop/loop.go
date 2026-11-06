@@ -889,7 +889,7 @@ reviewAgain:
 			serviceFingerprint := loopServiceFingerprint(repo, c.activityRepo)
 			servicesSeen = servicesSeen || serviceFingerprint != ""
 			c.reuseServices = serviceFingerprint != "" && serviceFingerprint == preparedServices
-			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID]}
+			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID], reviewRework: lease.Reopen != nil}
 			delete(reuseWorkServices, assigned.Item.ID)
 			code, _, res, classification, windows, runErr := c.runIterationWithMode(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools, recovery)
 			c.reuseServices = false

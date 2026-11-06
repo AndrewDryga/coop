@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A loop worker can finish review rework without stripping a trailer by hand.** After a final
+  review reopened a task, the worker's repair commit had to carry no `Coop-Task` trailer, but the
+  box's commit hook added one to every commit, even with `--amend` or `--no-verify`, so
+  `tasks_complete` refused the repair and the loop stopped for a person. During rework the hook now
+  adds no trailer, and the worker is told the exact shape: one new commit on top of the current
+  HEAD, no amend or rebase of the reviewed commits, or no commit at all when only evidence was
+  missing.
+
 - **Give a task a priority.** Add `priority: high` or `priority: low` to a task.md's frontmatter
   and the loop takes high tasks first and low tasks last, in folder order within each. Before, the
   loop always went by folder name, so among tasks filed on the same day it went alphabetically.

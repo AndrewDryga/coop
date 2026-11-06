@@ -264,7 +264,8 @@ type RunSpec struct {
 
 	// AssignedTask is the loop task this iteration owns. The box's prepare-commit-msg hook stamps
 	// its Coop-Task trailer, so an agent that forgets one does not lose the whole completion.
-	// Empty outside a loop work iteration — nothing is assigned, so nothing is stamped.
+	// Empty outside a loop work iteration — nothing is assigned, so nothing is stamped — and under
+	// review rework, whose repair commit must stay unbound: the task's binding is already in history.
 	AssignedTask string
 
 	// TaskTools, when set, gives the box coop's task tools: a run-private channel (taskchannel.go)
