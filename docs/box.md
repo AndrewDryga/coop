@@ -560,7 +560,7 @@ services:
     image: quay.io/keycloak/keycloak
     expose: ["8443"]                     # coop publishes this to a stable, per-workspace localhost port
     labels:
-      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
+      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL
 ```
 
 co:op assigns a stable host port for each development workspace or loop run, so concurrent stacks
@@ -571,10 +571,14 @@ without `host.docker.internal` or broader network access.
 The box receives `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>`, using the scheme from the
 label. Host tools can read all workspace service URLs from `coop fork ls --json`.
 
+The scheme is the label's. A service with no label gets `postgres://` for a `postgres` image,
+`redis://` for a `redis` image and `http://` for any other. co:op never wraps a service's traffic in
+TLS, so `https` means the service serves TLS itself, and only its label can say so.
+
 The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
 the service's name, so it receives `COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443` for each
-`expose` port its rule allows. The services it starts run on a private network with no host port,
-so use open egress for a service your host browser must reach too.
+`expose` port its rule allows, with the same scheme. The services it starts run on a private network
+with no host port, so use open egress for a service your host browser must reach too.
 
 ### What a Compose file may do
 

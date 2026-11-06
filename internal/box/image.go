@@ -631,7 +631,7 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 	if errors.Is(readErr, syscall.ELOOP) {
 		// The read never follows a link, and the system words that refusal as a loop of links.
 		if info, err := os.Lstat(filepath.Join(repo, dfRel)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-			return BuildPlan{}, fmt.Errorf("%s is a symbolic link. Replace it with the file it points to", dfRel)
+			return BuildPlan{}, refusedImage("%s is a symbolic link. Replace it with the file it points to", dfRel)
 		}
 	}
 	if readErr != nil {

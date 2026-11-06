@@ -66,6 +66,9 @@ func (a *app) cmdBuild(args []string) (int, error) {
 		// base-preparation fields do not describe the locked filtered image resolved below.
 		plan, err := box.PlanBuild(a.rt, a.cfg, repo, false)
 		if err != nil {
+			// A build refused here ran nothing, so say why to the next run as well: a run on these files
+			// would only send you back to this build.
+			box.RememberRefusedProjectBuild(context.Background(), a.rt, a.cfg, repo, err)
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		warnUntrackedBuild(plan)

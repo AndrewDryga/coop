@@ -499,8 +499,10 @@ order. It also saves each service&#39;s definition, so a later edit asks again.<
 <p>A filtered run that needs project services waits for every other box in the project to stop before
 starting those services. Each loop run and editor session gets its own Compose project, network and
 volumes. A run started directly uses the project&#39;s development stack. The box gets
-<code>COOP_SERVICE_&lt;NAME&gt;_URL</code> with the service&#39;s name and port, such as <code>https://keycloak:8443</code>, for
-each <code>expose</code> port a rule allows.</p>
+<code>COOP_SERVICE_&lt;NAME&gt;_URL</code> with the service&#39;s name and port, such as <code>postgres://db:5432</code>, for each
+<code>expose</code> port a rule allows. The scheme is the service&#39;s <code>coop.service.scheme</code> label, else the
+image&#39;s own for <code>postgres</code> and <code>redis</code>, else <code>http</code>. The gateway never wraps a service&#39;s traffic in
+TLS. See <a href="box.html#one-url-inside-and-out">one URL inside and out</a>.</p>
 <p>The box reaches only the services co:op starts for it, so it won&#39;t start with <code>COOP_AUTO_UP=0</code> or
 <code>box.auto_up: false</code> while its approved rules name services. Unset the setting, or remove those
 rules and run <code>coop approve</code>.</p>

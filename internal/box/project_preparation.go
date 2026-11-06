@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -131,6 +132,76 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 		return required("the explicitly built project image is missing")
 	}
 	return nil
+}
+
+// rememberRefusalTimeout bounds RememberRefusedProjectBuild: it only explains a refusal the person is
+// already reading, so a slow daemon must not hold that refusal back.
+const rememberRefusalTimeout = 15 * time.Second
+
+// RememberRefusedProjectBuild saves why `coop build --egress filtered` refused repo's files before it
+// ran anything, such as a Dockerfile that is a link (PlanBuild), as it saves a refusal made after the
+// image was built (buildPreparedFilteredProject): a launch on the same files then says why, with the
+// fix, instead of asking for this build again. An error the project's files did not cause is ignored.
+// It only explains, so a step it cannot take, such as a daemon that is gone or a client image not
+// prepared yet, leaves the plain miss and no word of its own.
+func RememberRefusedProjectBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, refusal error) {
+	var refused *projectImageRefusal
+	if repo == "" || !errors.As(refusal, &refused) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, rememberRefusalTimeout)
+	defer cancel()
+	canonical, err := canonicalProjectDir(repo)
+	if err != nil {
+		return
+	}
+	root, err := NetworkStatePath()
+	if err != nil {
+		return
+	}
+	exposed, err := networkExposureRoots(cfg, RunSpec{Repo: repo})
+	if err != nil {
+		return
+	}
+	store, err := networkstate.Open(root, exposed)
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	docker, err := runtime.InspectDocker(ctx, rt)
+	if err != nil {
+		return
+	}
+	defer docker.Close()
+	rememberUnbuiltRefusal(ctx, docker, store, canonical, networkRuntimeBinding(docker.Info(), docker.Endpoint()), refused)
+}
+
+// rememberUnbuiltRefusal files refusal under the tag and inputs checkFilteredProjectReadiness looks up
+// for repo, found the way it finds them, so the next launch on these files reads it.
+func rememberUnbuiltRefusal(ctx context.Context, docker filteredDocker, store *networkstate.Store, repo string, binding networkstate.RuntimeBinding, refusal error) {
+	dfRel := filteredProjectDockerfile(repo)
+	if dfRel == "" {
+		return // a launch with no box Dockerfile never asks for a project build
+	}
+	entries, err := buildContextSelection(ctx, repo)
+	if err != nil {
+		return
+	}
+	tree, err := contextDigest(ctx, repo, entries, nil)
+	if err != nil {
+		return
+	}
+	definition, _, closure, err := lockedImageDefinition(agents.ClientPlatform{OS: binding.OS, Architecture: binding.Architecture, Libc: "glibc"})
+	if err != nil {
+		return
+	}
+	client, _, err := docker.Image(ctx, definition.Tag)
+	if err != nil {
+		return
+	}
+	tag := filteredProjectTag(repo, client)
+	candidate := networkstate.CandidateSpec{Runtime: binding, ClientImage: client}
+	rememberRefusal(store, tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel), refusal)
 }
 
 // PreparedProjectBuild owns one inert, sanitized snapshot under the owner-private network root,

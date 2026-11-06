@@ -18,9 +18,9 @@ type ServePort struct {
 	Taken     bool // something else holds Host, so a link would not reach the box
 }
 
-// ServiceLink is one published port of a project service: the Compose service's name, the scheme its
-// compose file declares (http unless a coop.service.scheme label says otherwise) and the stable
-// localhost port it answers on.
+// ServiceLink is one published port of a project service: the Compose service's name, the scheme it
+// speaks (its coop.service.scheme label, else its image's, else http) and the stable localhost port
+// it answers on.
 type ServiceLink struct {
 	Name, Scheme string
 	Host         int

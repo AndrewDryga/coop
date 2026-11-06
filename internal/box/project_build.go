@@ -63,7 +63,7 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 	for _, rel := range []string{dockerfile, dockerfile + ".dockerignore", ".dockerignore"} {
 		mode, covered := modes[rel]
 		if covered && !mode.IsRegular() || !covered && rel == dockerfile {
-			return fmt.Errorf("%s must be a regular file inside the build context", rel)
+			return refusedImage("%s must be a regular file inside the build context", rel)
 		}
 		info, err := os.Lstat(filepath.Join(dir, rel))
 		if errors.Is(err, fs.ErrNotExist) && rel != dockerfile {
@@ -89,7 +89,7 @@ func refuseCopiedProjectFile(dockerfile []byte, dfRel string) error {
 		return !copies
 	})
 	if copies {
-		return fmt.Errorf("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
+		return refusedImage("%s copies %s, and Coop leaves that file out of every project build so that changing a network rule needs no new image. Copy another file instead", dfRel, project.File)
 	}
 	return nil
 }

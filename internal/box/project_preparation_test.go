@@ -785,6 +785,104 @@ func TestARefusedProjectBuildLeavesNoImageAndTheRunSaysWhy(t *testing.T) {
 	}
 }
 
+// A build Coop refuses before it runs anything is remembered like a refusal of the built image, so the
+// next run says why, with the fix, instead of sending the person back to the build that refused it
+// (QA B-31, 2026-11-06: a linked Dockerfile and a COPY of the project settings). Changing the files ends
+// it, and an error the files did not cause is no reason to remember anything.
+func TestABuildRefusedBeforeItRanIsRememberedAndTheRunSaysWhy(t *testing.T) {
+	for name, test := range map[string]struct {
+		spoil  func(x *approvedRebuildFixture)
+		repair func(x *approvedRebuildFixture)
+		refuse func(x *approvedRebuildFixture, daemon string) error // the way a build finds the refusal
+		want   string
+	}{
+		"a Dockerfile that is a link": {
+			spoil: func(x *approvedRebuildFixture) {
+				x.write("docker/real.Dockerfile", reusableDockerfile)
+				if err := os.Remove(filepath.Join(x.repo, ".agent", "Dockerfile")); err != nil {
+					x.t.Fatal(err)
+				}
+				if err := os.Symlink("../docker/real.Dockerfile", filepath.Join(x.repo, ".agent", "Dockerfile")); err != nil {
+					x.t.Fatal(err)
+				}
+			},
+			repair: func(x *approvedRebuildFixture) {
+				if err := os.Remove(filepath.Join(x.repo, ".agent", "Dockerfile")); err != nil {
+					x.t.Fatal(err)
+				}
+				x.write(".agent/Dockerfile", reusableDockerfile)
+			},
+			refuse: planThenRemember,
+			want:   ".agent/Dockerfile is a symbolic link. Replace it with the file it points to",
+		},
+		"a Dockerfile that copies the project settings": {
+			spoil: func(x *approvedRebuildFixture) {
+				x.write(".agent/Dockerfile", reusableDockerfile+"COPY .agent/project.yaml /opt/project.yaml\n")
+			},
+			repair: func(x *approvedRebuildFixture) { x.write(".agent/Dockerfile", reusableDockerfile) },
+			refuse: planThenRemember,
+			want: ".agent/Dockerfile copies .agent/project.yaml, and Coop leaves that file out of every project build " +
+				"so that changing a network rule needs no new image. Copy another file instead",
+		},
+		// The builder's own refusal of a Dockerfile the context lacks, which runs before the builder does.
+		"a Dockerfile Git ignores": {
+			spoil:  func(x *approvedRebuildFixture) { x.write(".gitignore", "build/\n.agent/Dockerfile\n") },
+			repair: func(x *approvedRebuildFixture) { x.write(".gitignore", "build/\n") },
+			refuse: func(x *approvedRebuildFixture, _ string) error {
+				_, err := buildFilteredProject(x.t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, io.Discard)
+				return err
+			},
+			want: ".agent/Dockerfile must be a regular file inside the build context",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			daemon := filepath.Join(t.TempDir(), "docker")
+			if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			test.spoil(x)
+
+			// Nothing the files did not cause is remembered.
+			rememberUnbuiltRefusal(t.Context(), x.d, x.f.store, x.repo, x.candidate.Runtime, errors.New("Docker is not running"))
+			if required := x.miss(); required.Refused || !strings.Contains(required.Reason, "no explicit project build") {
+				t.Fatalf("an error the files did not cause was remembered: %+v", required)
+			}
+
+			if err := test.refuse(x, daemon); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("refused build = %v, want %q", err, test.want)
+			}
+			if x.builds() != 0 {
+				t.Fatalf("the builder ran %d times, but the files were refused first", x.builds())
+			}
+			required := x.miss()
+			if !required.Refused || required.Approved || required.Reason != test.want {
+				t.Fatalf("readiness on the refused files = %+v, want the refusal %q", required, test.want)
+			}
+			if got, want := required.Error(), "Coop refused the last build of this project's box: "+test.want+". After you fix it, run 'coop build --egress filtered' on the host."; got != want {
+				t.Errorf("run refusal =\n%q\nwant\n%q", got, want)
+			}
+
+			test.repair(x)
+			if required := x.miss(); required.Refused || !strings.Contains(required.Reason, "no explicit project build") {
+				t.Fatalf("readiness on the fixed files = %+v, want the plain miss", required)
+			}
+			x.explicitBuild()
+			if err := x.readiness(); err != nil {
+				t.Fatalf("readiness after a build that passed = %v", err)
+			}
+		})
+	}
+}
+
+// planThenRemember is what `coop build --egress filtered` does with a project it cannot plan: it
+// refuses, and saves why for the next run (cli.cmdBuild).
+func planThenRemember(x *approvedRebuildFixture, daemon string) error {
+	_, err := PlanBuild(runtime.Runtime{Name: daemon}, x.cfg, x.repo, false)
+	rememberUnbuiltRefusal(x.t.Context(), x.d, x.f.store, x.repo, x.candidate.Runtime, err)
+	return err
+}
+
 // coop build says when the approval it records covers far more than the image reads, and how to narrow
 // it. Every such file voids the approval when it changes, which is how emisar's loop came to be refused
 // for edits its box never reads (2026-11-05). A context narrowed to what the Dockerfile copies hears

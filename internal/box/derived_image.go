@@ -263,6 +263,9 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 	// or a container holds it: a refused build leaves neither a tag nor an image behind.
 	built, err := buildStagedProjectOnBase(ctx, rt, prepared.dir, prepared.entries, dfRel, tag, definition.Tag, prepared.automatic, prepared.lease, errOut)
 	if err != nil {
+		// A staged file Coop refuses to build from is refused before the builder runs, and again on the
+		// same files, so it is remembered like a refusal of the image.
+		rememberRefusal(store, tag, inputs, err)
 		return ImageChange{}, fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
 	}
 	named := false
@@ -275,12 +278,7 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 		return ImageChange{}, fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
-		var refusal *projectImageRefusal
-		if errors.As(err, &refusal) {
-			// The same files build the same image, so a launch on them says why instead of asking for
-			// this build again. It is only an explanation: failing to save it leaves the plain miss.
-			_ = store.RecordProjectBuildRefusal(tag, inputs, err.Error())
-		}
+		rememberRefusal(store, tag, inputs, err)
 		return ImageChange{}, err
 	}
 	if prepared.settings != projectBuildSettings() {
@@ -409,8 +407,9 @@ func notDerived(dfRel string) error {
 	return refusedImage("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
 }
 
-// projectImageRefusal is a proof that failed on what the project's own files built, which the same
-// files would build again. A proof that could not run, or Coop's own image failing, is not one.
+// projectImageRefusal is a refusal the project's own files cause, which the same files would cause
+// again: a proof that failed on what they built, or a file Coop will not build from, which it finds
+// before any build runs. A proof that could not run, or Coop's own image failing, is not one.
 type projectImageRefusal struct{ err error }
 
 func (r *projectImageRefusal) Error() string { return r.err.Error() }
@@ -418,6 +417,16 @@ func (r *projectImageRefusal) Unwrap() error { return r.err }
 
 func refusedImage(format string, a ...any) error {
 	return &projectImageRefusal{err: fmt.Errorf(format, a...)}
+}
+
+// rememberRefusal saves why Coop refused these inputs when the project's own files caused it, so a
+// launch on the same files says why, with the fix, instead of asking for a build that is refused
+// again. It is only an explanation: failing to save it leaves the plain miss.
+func rememberRefusal(store *networkstate.Store, tag, inputs string, err error) {
+	var refusal *projectImageRefusal
+	if errors.As(err, &refusal) {
+		_ = store.RecordProjectBuildRefusal(tag, inputs, refusal.Error())
+	}
 }
 
 // pinnedFile is one path a filtered launch will not accept a change to, and the

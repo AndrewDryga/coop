@@ -355,15 +355,15 @@ func checkComposeScheme(service string, labels any) error {
 			}
 		}
 	}
-	if !validServiceScheme(composeServiceScheme(labels)) {
+	if label := composeSchemeLabel(labels); label != "" && !validServiceScheme(label) {
 		return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
 	}
 	return nil
 }
 
-// composeServiceScheme is the scheme a service's coop.service.scheme label names, in the map or the
-// list form of labels, else http: the scheme of its COOP_SERVICE_<NAME>_URL.
-func composeServiceScheme(labels any) string {
+// composeSchemeLabel is what a service's coop.service.scheme label says, in the map or the list form
+// of labels, or "" when it says nothing (see serviceScheme).
+func composeSchemeLabel(labels any) string {
 	var scheme string
 	switch value := labels.(type) {
 	case map[string]any:
@@ -375,9 +375,6 @@ func composeServiceScheme(labels any) string {
 				scheme = found
 			}
 		}
-	}
-	if scheme == "" {
-		return "http"
 	}
 	return scheme
 }

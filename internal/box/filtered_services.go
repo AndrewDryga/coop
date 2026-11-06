@@ -276,7 +276,7 @@ func filteredServiceEnv(composeFile, repo string, repoReadOnly bool, grants []eg
 				return rule.To.Service == name && rule.Protocol == "tcp" && slices.Contains(rule.Ports, port)
 			})
 			if allowed {
-				env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://%s:%d", serviceEnvName(name), composeServiceScheme(service.Labels), name, port))
+				env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://%s:%d", serviceEnvName(name), serviceScheme(composeSchemeLabel(service.Labels), service.Image), name, port))
 			}
 		}
 	}

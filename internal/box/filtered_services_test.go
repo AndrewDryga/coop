@@ -989,6 +989,37 @@ func TestFilteredServiceEnvNamesTheServicesTheRulesAllow(t *testing.T) {
 	}
 }
 
+// The URL carries the scheme the service speaks. Nothing wraps a filtered box's traffic in TLS (it
+// reaches the service's own address, raw), so a database is postgres:// or redis:// with no label, a
+// label always wins, and https appears only where a label puts it: the docs' https://keycloak:8443 is
+// that label's word, not a scheme every filtered URL has (QA B-42 retest, 2026-11-06).
+func TestFilteredServiceEnvSpeaksWhatTheServiceSpeaks(t *testing.T) {
+	body := "services:\n" +
+		"  db:\n    image: postgres:18\n    expose: [5432]\n" +
+		"  cache:\n    image: docker.io/library/redis:8@sha256:" + strings.Repeat("a", 64) + "\n    expose: [\"6379\"]\n" +
+		"  auth-db:\n    image: postgres:18\n    expose: [5432]\n    labels: {coop.service.scheme: postgresql}\n" +
+		"  sso:\n    image: quay.io/keycloak/keycloak\n    expose: [\"8443\"]\n    labels: [\"coop.service.scheme=https\"]\n" +
+		"  web:\n    image: nginx:1\n    expose: [\"8080\"]\n" +
+		"  fork:\n    image: registry.example:5000/team/postgres-extras:1\n    expose: [5432]\n"
+	repo, path := writeCompose(t, body)
+	var grants []egress.Grant
+	for service, port := range map[string]int{"db": 5432, "cache": 6379, "auth-db": 5432, "sso": 8443, "web": 8080, "fork": 5432} {
+		grants = append(grants, egress.Grant{Rule: egress.Rule{To: egress.Destination{Service: service}, Protocol: "tcp", Ports: []int{port}}})
+	}
+	got := filteredServiceEnv(path, repo, false, grants)
+	want := []string{
+		"-e", "COOP_SERVICE_AUTH_DB_URL=postgresql://auth-db:5432",
+		"-e", "COOP_SERVICE_CACHE_URL=redis://cache:6379",
+		"-e", "COOP_SERVICE_DB_URL=postgres://db:5432",
+		"-e", "COOP_SERVICE_FORK_URL=http://fork:5432", // another image, whatever its name starts with
+		"-e", "COOP_SERVICE_SSO_URL=https://sso:8443",
+		"-e", "COOP_SERVICE_WEB_URL=http://web:8080",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("filtered service env =\n%q\nwant\n%q", got, want)
+	}
+}
+
 // A filtered box whose approved rules name services starts them itself, so turning that off, with
 // COOP_AUTO_UP=0 or box.auto_up: false, refuses the box and names the setting that did it.
 func TestFilteredBoxWithServiceRulesHonorsAutoUpOff(t *testing.T) {

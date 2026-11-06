@@ -14,6 +14,18 @@
   loop on a kept merged fork, which takes no new task, refuses up front and names `--fresh` or a new
   fork.
 
+- **A build refused before it starts is remembered too.** `coop build` on a project whose
+  `.agent/Dockerfile` is a link, or copies `.agent/project.yaml`, was refused with the reason, but
+  the next `coop run` still said "no explicit project build is recorded" and sent you back to the
+  same build. Coop now saves that reason as it does for a build refused after the image was made,
+  so a run repeats it with its fix until the build files change.
+
+- **A service's URL names what the service speaks.** `COOP_SERVICE_<NAME>_URL` was `http://…` for a
+  service with no `coop.service.scheme` label, a URL no database client opens, and the docs'
+  `https://keycloak:8443` read as if every filtered URL were TLS. A `postgres` or `redis` image now
+  gets `postgres://` or `redis://`, in open and filtered boxes and in what `coop up` prints. The
+  label still wins, and `https` only ever comes from it: Coop never wraps a service's traffic in TLS.
+
 - **Fork review and merge messages name the real cause and a command that works.** `coop fork review
   --gate` says `Into: main` instead of `HEAD`, lists the fork's own commits instead of ids of a
   temporary copy that exist nowhere afterwards, and names the files checks that exited 0 still changed;

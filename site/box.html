@@ -595,7 +595,7 @@ the app running inside the box. Give the service an <code>expose:</code> port in
     image: quay.io/keycloak/keycloak
     expose: [&#34;8443&#34;]                     # coop publishes this to a stable, per-workspace localhost port
     labels:
-      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL (default http)
+      coop.service.scheme: https         # scheme for COOP_SERVICE_*_URL
 </code></pre></div>
 <p>co:op assigns a stable host port for each development workspace or loop run, so concurrent stacks
 have separate ports. The host port listens only on loopback. Inside the box,
@@ -603,10 +603,13 @@ have separate ports. The host port listens only on loopback. Inside the box,
 without <code>host.docker.internal</code> or broader network access.</p>
 <p>The box receives <code>COOP_SERVICE_KEYCLOAK_URL=https://localhost:&lt;port&gt;</code>, using the scheme from the
 label. Host tools can read all workspace service URLs from <code>coop fork ls --json</code>.</p>
+<p>The scheme is the label&#39;s. A service with no label gets <code>postgres://</code> for a <code>postgres</code> image,
+<code>redis://</code> for a <code>redis</code> image and <code>http://</code> for any other. co:op never wraps a service&#39;s traffic in
+TLS, so <code>https</code> means the service serves TLS itself, and only its label can say so.</p>
 <p>The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
 the service&#39;s name, so it receives <code>COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443</code> for each
-<code>expose</code> port its rule allows. The services it starts run on a private network with no host port,
-so use open egress for a service your host browser must reach too.</p>
+<code>expose</code> port its rule allows, with the same scheme. The services it starts run on a private network
+with no host port, so use open egress for a service your host browser must reach too.</p>
 <h3 id="what-a-compose-file-may-do">What a Compose file may do</h3>
 <p>co:op sends <code>.agent/compose.yml</code> to your host&#39;s Docker daemon to create the service containers, and
 validates the file before <code>coop up</code> and before every networked box launch.</p>

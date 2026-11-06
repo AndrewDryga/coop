@@ -26,7 +26,7 @@ type ServicePort struct {
 	Service       string
 	ContainerPort int
 	HostPort      int
-	Scheme        string // "http" (default) or the service's `coop.service.scheme` compose label
+	Scheme        string // its `coop.service.scheme` label, else its image's, else "http" (serviceScheme)
 }
 
 // ServicePorts returns the per-workspace host-port mapping for a repo's sidecars: it asks the
@@ -130,6 +130,7 @@ func parseServicePorts(configJSON []byte, workspacePath string) []ServicePort {
 func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]ServicePort, error) {
 	var cfg struct {
 		Services map[string]struct {
+			Image  string            `json:"image"`
 			Expose []string          `json:"expose"`
 			Labels map[string]string `json:"labels"`
 		} `json:"services"`
@@ -149,11 +150,8 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 	var out []ServicePort
 	for _, name := range names {
 		svc := cfg.Services[name]
-		scheme := svc.Labels["coop.service.scheme"] // coop.service.scheme: https — else default http
-		if scheme == "" {
-			scheme = "http"
-		}
-		if !validServiceScheme(scheme) {
+		label := svc.Labels["coop.service.scheme"] // coop.service.scheme: https
+		if label != "" && !validServiceScheme(label) {
 			return nil, fmt.Errorf("service %q: coop.service.scheme must be a plain URI scheme", name)
 		}
 		for _, e := range svc.Expose {
@@ -167,11 +165,29 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 				// Key on service+port, so two services sharing a container port — or a sidecar port
 				// equal to a serve.port — never collide on one host port.
 				HostPort: project.HostPortFor(canon, name+":"+strconv.Itoa(port)),
-				Scheme:   scheme,
+				Scheme:   serviceScheme(label, svc.Image),
 			})
 		}
 	}
 	return out, nil
+}
+
+// serviceScheme is the scheme of a service's COOP_SERVICE_<NAME>_URL, in an open box and a filtered
+// one alike: the one its coop.service.scheme label names, else the one its image speaks when Coop
+// knows it, else http. Coop never wraps a service's traffic in TLS, so https is only ever the label's
+// word for a service that serves TLS itself. The postgres and redis images are the ones
+// `coop init --services` writes, and no client of either opens an http URL.
+func serviceScheme(label, image string) string {
+	if label != "" {
+		return label
+	}
+	name, _, _ := strings.Cut(image, "@")        // a digest follows the name
+	name = name[strings.LastIndex(name, "/")+1:] // a registry and a namespace come before it
+	name, _, _ = strings.Cut(name, ":")          // a tag follows it
+	if name == "postgres" || name == "redis" {
+		return name
+	}
+	return "http"
 }
 
 func validServiceScheme(value string) bool {

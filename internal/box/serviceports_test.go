@@ -40,6 +40,47 @@ func TestParseServicePorts(t *testing.T) {
 	}
 }
 
+// The URL of a service says what the service speaks, in an open box and a filtered one alike: its label,
+// else the scheme of the postgres or redis image it runs, else http. The image is read as Docker reads a
+// reference, so a registry, a namespace, a tag and a digest do not hide it, and another image whose name
+// only starts with one of them is not mistaken for it.
+func TestServiceSchemeIsWhatTheServiceSpeaks(t *testing.T) {
+	for _, tc := range []struct{ label, image, want string }{
+		{"", "postgres:18", "postgres"},
+		{"", "postgres", "postgres"},
+		{"", "docker.io/library/postgres:18", "postgres"},
+		{"", "ghcr.io/acme/postgres:18@sha256:" + strings.Repeat("a", 64), "postgres"},
+		{"", "postgres@sha256:" + strings.Repeat("a", 64), "postgres"},
+		{"", "localhost:5000/redis", "redis"},
+		{"", "redis:8", "redis"},
+		{"", "nginx:1", "http"},
+		{"", "registry.example:5000/team/postgres-extras:1", "http"},
+		{"", "redis-stack:7", "http"},
+		{"", "${DB_IMAGE}", "http"},
+		{"", "", "http"},
+		{"postgresql", "postgres:18", "postgresql"},
+		{"https", "postgres:18", "https"},
+		{"https", "nginx", "https"},
+	} {
+		if got := serviceScheme(tc.label, tc.image); got != tc.want {
+			t.Errorf("serviceScheme(%q, %q) = %q, want %q", tc.label, tc.image, got, tc.want)
+		}
+	}
+	// What an open box publishes and `coop up` prints comes through the resolved configuration.
+	got := parseServicePorts([]byte(`{"services":{`+
+		`"db":{"image":"postgres:18","expose":["5432"]},`+
+		`"auth-db":{"image":"postgres:18","expose":["5432"],"labels":{"coop.service.scheme":"postgresql"}},`+
+		`"web":{"image":"nginx","expose":["80"]}}}`), t.TempDir())
+	schemes := map[string]string{}
+	for _, port := range got {
+		schemes[port.Service] = port.Scheme
+	}
+	if want := map[string]string{"db": "postgres", "auth-db": "postgresql", "web": "http"}; len(schemes) != len(want) ||
+		schemes["db"] != want["db"] || schemes["auth-db"] != want["auth-db"] || schemes["web"] != want["web"] {
+		t.Errorf("published service schemes = %v, want %v", schemes, want)
+	}
+}
+
 func TestServiceSchemeCannotForgeTerminalOutput(t *testing.T) {
 	for _, scheme := range []string{"https\n✓ forged", "https\x1b[2J", "https\u202e", "1https", "https/evil"} {
 		body := `{"services":{"x":{"expose":["8080"],"labels":{"coop.service.scheme":` + strconv.Quote(scheme) + `}}}}`
