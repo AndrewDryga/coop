@@ -33,8 +33,10 @@ unblock the projection again and lose the new decision. The worker reads its ans
 projection, never the canonical folder, and acceptance copies the projection's decision.md back over
 the canonical one, but never an answer in it: the box can write that copy, and the canonical
 Resolution line is the person's, so unless the copy is the canonical decision.md byte for byte, its
-every Resolution line, indented or not, arrives as the unanswered placeholder
-(`syncProjectionDecision`, internal/tasks/projection.go, which landing goes through too). So
+every Resolution line, indented or not, arrives as the unanswered placeholder, and the canonical
+answer is written back in while the copy asks the same `# Decision:` question; a copy asking another
+question, or a decision without that heading, waits for a new answer (`syncProjectionDecision`,
+internal/tasks/projection.go, which landing goes through too). So
 `resolveAndUnblock` (internal/tasks/cmd.go) copies the canonical decision.md
 into the validated projection (`syncForkDecision`) under the canonical lease, before the task returns
 to todo, and refuses, leaving the task blocked, when it cannot. The unblock also notes itself in the
@@ -108,6 +110,10 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — a changed copy that still asks the person's question keeps their answer: any byte the
+  fork changed, such as one line it added, had reset the canonical answer to the placeholder and
+  lost it; an old answer still never carries onto a new question (task
+  2026-11-06-keep-the-person-s-answer-when-a-fork-s-decision).
 - 2026-11-06 — unblock run in a fork's own checkout answers the task in the project; it had read
   the checkout's queue, which a fork's clone lacks and its box can write, and the restart it named
   only worked in the project (task 2026-11-06-find-a-fork-s-task-when-coop-tasks-unblock-runs).

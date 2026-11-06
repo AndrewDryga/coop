@@ -1593,36 +1593,39 @@ func noteBoundTask(project, id string) {
 }
 
 // recordResolution writes a human's answer into decision.md's "**Resolution:**" line so that
-// `coop tasks unblock <id> <answer>` resolves the decision in one step. It replaces an existing
-// Resolution line in place (dropping the placeholder), or appends one if the file has none.
+// `coop tasks unblock <id> <answer>` resolves the decision in one step.
 func recordResolution(decPath, answer string) error {
-	line := "**Resolution:** " + answer
 	taskRoot, err := OpenTaskMetadataRoot(filepath.Dir(decPath))
 	if err != nil {
 		return err
 	}
 	defer taskRoot.Close()
-	bodyBytes, _, err := readOptionalTaskMetadataFile(taskRoot, filepath.Base(decPath))
+	body, _, err := readOptionalTaskMetadataFile(taskRoot, filepath.Base(decPath))
 	if err != nil {
 		return err
 	}
-	body := string(bodyBytes)
+	return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(withResolution(string(body), answer)))
+}
+
+// withResolution is a decision.md body with answer on its Resolution line. It replaces the first
+// Resolution line in place (dropping the placeholder), or appends one if the body has none.
+func withResolution(body, answer string) string {
+	line := decisionResolutionPrefix + " " + answer
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
-		if strings.HasPrefix(l, "**Resolution:**") {
+		if strings.HasPrefix(l, decisionResolutionPrefix) {
 			lines[i] = line
 			out := strings.Join(lines, "\n")
 			if !strings.HasSuffix(out, "\n") {
 				out += "\n"
 			}
-			return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(out))
+			return out
 		}
 	}
-	out := line + "\n"
-	if strings.TrimSpace(body) != "" {
-		out = strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
+	if strings.TrimSpace(body) == "" {
+		return line + "\n"
 	}
-	return AtomicWriteTaskFile(taskRoot, filepath.Base(decPath), []byte(out))
+	return strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
 }
 
 // decisionResolved reports whether a decision.md holds a human's answer (decisionResolution). lint

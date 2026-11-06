@@ -131,7 +131,8 @@
   copy of a task's `decision.md`, and when the fork parked the task, that answer reached the
   project's `decision.md` as if you had given it: `coop tasks unblock <id>` sent the task back
   without asking, and `coop loop` in the project unblocked it by itself. The project's copy now
-  takes the fork's question but never its answer, so the task waits for yours.
+  takes the fork's question but never its answer, so the task waits for yours. The answer you give
+  stays there while the fork asks the same question, even if the fork adds to the file.
 
 - **Every check of a reopened task reads Git's own trailers.** Git skips trailing `#` comment
   lines and everything after a scissors line, while Coop's own check reads a message's last

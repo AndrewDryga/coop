@@ -517,10 +517,11 @@ func TestForkAcceptanceNeverTakesTheForksAnswer(t *testing.T) {
 	}
 }
 
-// The person's answer comes back from the fork as it went, and stays the project's. An answer the box
-// writes over it in its copy of the task while it works never reaches the project.
+// The person's answer stays the project's while the fork's copy asks the question it answers: when the
+// copy comes back as it went, and when the fork adds a line to it as it works. An answer the box writes
+// over it in its copy while it works never reaches the project.
 func TestForkAcceptanceKeepsOnlyThePersonsAnswer(t *testing.T) {
-	const answer, forged = "Retry after verifying the marker.", "Retry the write without checking."
+	const answer, followUp, forged = "Retry after verifying the marker.", "Retried once the marker checked out.", "Retry the write without checking."
 	repo, root, assignment := acceptedForkDecision(t, "decision-kept", false)
 	resumed := selectResumedForkDecision(t, repo, root, assignment, answer)
 	if err := PrepareForkProjectionForRun(repo, root, "assigned", resumed.Owner); err != nil {
@@ -538,11 +539,68 @@ func TestForkAcceptanceKeepsOnlyThePersonsAnswer(t *testing.T) {
 		t.Errorf("after the fork's acceptance the project's decision.md is\n%s\nwant the person's answer %q", body, answer)
 	}
 	projected, _ := mustCurrentTask(t, resumed.Owner.Projection, "assigned")
-	if err := recordResolution(filepath.Join(projected.Dir, "decision.md"), forged); err != nil {
+	decision := filepath.Join(projected.Dir, "decision.md")
+	writeTaskFile(t, decision, readFileString(decision)+followUp+"\n")
+	if body := accept(); decisionResolution(body) != answer || !strings.Contains(body, followUp) {
+		t.Errorf("after the fork added a line to its copy, the project's decision.md is\n%s\nwant the person's answer %q and the fork's line", body, answer)
+	}
+	if err := recordResolution(decision, forged); err != nil {
 		t.Fatal(err)
 	}
-	if body := accept(); strings.Contains(body, forged) {
-		t.Errorf("the project's decision.md took the box's answer:\n%s", body)
+	if body := accept(); decisionResolution(body) != answer || strings.Contains(body, forged) {
+		t.Errorf("the project's decision.md took the box's answer:\n%s\nwant the person's answer %q", body, answer)
+	}
+}
+
+// The project takes the fork's copy of decision.md with the answer from its own copy, and only while
+// the fork's copy asks the question that answer is to. The box's answer never comes along, and a
+// question the project's copy does not ask waits for a new answer, as does a decision without a
+// question heading, where nothing says what the answer is to.
+func TestForkDecisionCarriesOnlyThePersonsAnswerToItsQuestion(t *testing.T) {
+	const answer, forged, followUp = "Leave it for manual repair.", "Retry the write without checking.", "Retried once the marker checked out."
+	ask := func(question string) string {
+		return RenderDecision("assigned", Decision{
+			Question: question, Why: "Retrying may duplicate a partial write.",
+			Options: []string{"A — retry the write", "B — leave it for manual repair"}, Recommendation: "A — retry the write",
+		})
+	}
+	asked := ask(forkDecisionQuestion)
+	answered := withResolution(asked, answer)
+	for name, tc := range map[string]struct{ project, fork, want string }{
+		"the copy is the project's":        {project: answered, fork: answered, want: answered},
+		"the copy has not seen the answer": {project: answered, fork: asked, want: answered},
+		"the fork added a line":            {project: answered, fork: answered + followUp + "\n", want: answered + followUp + "\n"},
+		"the fork dropped the line":        {project: answered, fork: strings.TrimSuffix(asked, decisionResolutionLine), want: answered},
+		"the box wrote its own answer": {
+			project: answered,
+			fork:    withResolution(asked, forged) + "  " + decisionResolutionPrefix + " " + forged + "\n",
+			want:    answered + decisionResolutionLine,
+		},
+		"nobody answered":       {project: asked, fork: withResolution(asked, forged), want: asked},
+		"no project decision":   {fork: withResolution(asked, forged), want: asked},
+		"the fork asks another": {project: answered, fork: ask("Which way now?"), want: ask("Which way now?")},
+		"no question to tie it to": {
+			project: "Which way?\n\n" + decisionResolutionPrefix + " " + answer + "\n",
+			fork:    "Which way now?\n\n" + decisionResolutionLine,
+			want:    "Which way now?\n\n" + decisionResolutionLine,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot, task := t.TempDir(), filepath.Join(t.TempDir(), StateBlocked, "assigned")
+			writeTaskFile(t, filepath.Join(snapshot, "decision.md"), tc.fork)
+			if err := os.MkdirAll(task, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.project != "" {
+				writeTaskFile(t, filepath.Join(task, "decision.md"), tc.project)
+			}
+			if err := syncProjectionDecision(snapshot, task); err != nil {
+				t.Fatal(err)
+			}
+			if got := readFileString(filepath.Join(task, "decision.md")); got != tc.want {
+				t.Errorf("the project's decision.md is\n%s\nwant\n%s", got, tc.want)
+			}
+		})
 	}
 }
 

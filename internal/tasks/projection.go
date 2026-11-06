@@ -1051,7 +1051,8 @@ func syncProjectionTree(src, dst string, completed bool) error {
 // an answer the fork wrote. The fork's box can write its copy, and the Resolution line of the
 // project's decision.md is the person's answer, written on the host by hand, by coop tasks unblock or
 // by decisions -i. So unless the copy is the project's decision.md byte for byte, every Resolution
-// line in it reaches the project as the unanswered placeholder; the fork's question still shows.
+// line in it goes back to the unanswered placeholder, and the person's answer is written back in
+// while the copy still asks the question it answers. The fork's question still shows.
 func syncProjectionDecision(src, dst string) error {
 	copied, _, err := openProjectionRoot(src)
 	if err != nil {
@@ -1067,11 +1068,26 @@ func syncProjectionDecision(src, dst string) error {
 		return err
 	}
 	defer project.Close()
-	// A project's decision.md that cannot be read is replaced like any other, without the answer.
-	if current, exists, err := readOptionalTaskMetadataFile(project, "decision.md"); err != nil || !exists || !bytes.Equal(current, body) {
+	// A project's decision.md that cannot be read is replaced like any other, without an answer.
+	if current, exists, err := readOptionalTaskMetadataFile(project, "decision.md"); err != nil || !exists {
 		body = withoutAnswers(body)
+	} else if !bytes.Equal(current, body) {
+		body = withAnswerOf(withoutAnswers(body), current)
 	}
 	return AtomicWriteTaskFile(project, "decision.md", body)
+}
+
+// withAnswerOf writes the person's answer from project, the project's decision.md, into body, the
+// fork's copy without its answers, as coop tasks unblock writes it, but only while the copy asks the
+// question that answer is to. A copy asking another question waits for a new answer, as a decision
+// coop tasks block replaces does. Without a question in the project's file, nothing says what its
+// answer is to, so it stays behind.
+func withAnswerOf(body, project []byte) []byte {
+	question, answer := decisionQuestion(string(project)), decisionResolution(string(project))
+	if answer == "" || question == "" || question != decisionQuestion(string(body)) {
+		return body
+	}
+	return []byte(withResolution(string(body), answer))
 }
 
 // withoutAnswers is a decision.md body with every Resolution line, indented or not, back to the
