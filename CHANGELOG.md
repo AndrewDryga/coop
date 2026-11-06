@@ -16,6 +16,13 @@
   `a --egress offline`. The same holds for `--help` and every other option after the command.
   Options before the command or before `--` work as before.
 
+- **A refused project build leaves no image, and the next run says why.** When the image a filtered
+  `coop build` made failed Coop's checks, for not starting from Coop's client image or for replacing
+  a client, it stayed tagged as the project's image, hundreds of MB each time. A following
+  `coop run` only said "no explicit project build is recorded", which sent you back to the same
+  build. The build now tags its image only after the checks pass and removes one that fails them,
+  unless another tag or a container still uses it. Until the build files change, a run repeats the
+  reason and its fix instead, and no longer offers to build the same files again.
 - **Project box build messages name the right fix.** An open or offline run on an out-of-date
   project image said to run `coop build`, which in a project with filtered networking builds only
   the filtered image, so the warning never went away. It now says `coop build --egress open`. A

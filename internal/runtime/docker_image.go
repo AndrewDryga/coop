@@ -71,3 +71,19 @@ func dockerImageProjectionFits(value any) bool {
 	data, err := json.Marshal(value)
 	return err == nil && len(data) <= 64<<10
 }
+
+// TagImage gives the image with this ID the name tag on this daemon, and reads the tag back. A
+// project build names its image only once the image passed its proofs, so an image Coop refused never
+// takes the project's tag.
+func (d *Docker) TagImage(ctx context.Context, id, tag string) error {
+	if !strings.HasPrefix(id, "sha256:") || !dockerHexID(strings.TrimPrefix(id, "sha256:")) ||
+		!dockerToken(tag, 512) || strings.HasPrefix(tag, "-") {
+		return errors.New("invalid Docker image tag")
+	}
+	_, tagErr := d.output(ctx, 1024, "image", "tag", id, tag)
+	named, _, err := d.Image(ctx, tag)
+	if err == nil && named == id {
+		return nil
+	}
+	return errors.Join(errors.New("Docker did not tag the image"), tagErr, err)
+}

@@ -563,6 +563,8 @@ container that it creates and never starts, so nothing from the image runs to de
 <p>You can add tools to the image, but you can&#39;t replace, wrap or delete a pinned client. The host
 setup checks cover co:op&#39;s own image, and your project image must pass both checks above on every
 launch. co:op rejects <code>COOP_IMAGE</code> because an arbitrary image hasn&#39;t passed those checks.</p>
+<p>A build gets its tag only after both checks pass. co:op removes an image that fails them, unless
+another tag or a container still uses it, and a run on the same files says why it was refused.</p>
 <p>co:op caches what it reads from an image outside every agent mount, tied to the image&#39;s ID.</p>
 <p>The base image uses the non-root box user. To install packages, put <code>USER root</code> before the
 installation commands and <code>USER node</code> after them. Review the Dockerfile and its copied files before

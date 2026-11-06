@@ -714,7 +714,8 @@ func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir strin
 	if project := derivedImageProject(tag); project != "" {
 		labels = append(labels, derivedImageLabel+"="+project)
 	}
-	args := projectBuildArgs(dir, dfRel, tag, base, true, false, labels...)
+	// Built unnamed: the caller tags the image once it has passed its proofs.
+	args := projectBuildArgs(dir, dfRel, "", base, true, false, labels...)
 	if automatic {
 		rt = rt.ForApprovedBuild()
 	}
@@ -732,10 +733,11 @@ func buildStagedProjectOnBase(ctx context.Context, rt runtime.Runtime, dir strin
 }
 
 // projectBuildArgs assembles the `<runtime> build` args for a project Dockerfile at dfRel inside the
-// staged ctx, tagged img. When the Dockerfile inherits coop's base (usesBase), it passes the base as
-// a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local image tag, not a
-// registry ref, so --pull would fail trying to fetch it. The user identity args let standalone
-// Dockerfiles create a matching non-root account. An external FROM still gets --pull on fresh.
+// staged ctx, tagged img unless img is "". When the Dockerfile inherits coop's base (usesBase), it
+// passes the base as a build-arg and, on --fresh, uses --no-cache WITHOUT --pull — the base is a local
+// image tag, not a registry ref, so --pull would fail trying to fetch it. The user identity args let
+// standalone Dockerfiles create a matching non-root account. An external FROM still gets --pull on
+// fresh.
 func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, labels ...string) []string {
 	args := []string{"build"}
 	if fresh {
@@ -752,7 +754,10 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, l
 	for _, label := range labels {
 		args = append(args, "--label", label)
 	}
-	return append(args, "-t", img, "-f", filepath.Join(ctx, dfRel), ctx)
+	if img != "" {
+		args = append(args, "-t", img)
+	}
+	return append(args, "-f", filepath.Join(ctx, dfRel), ctx)
 }
 
 // buildBaseImage builds the shared base for the platform the runtime builds for, from a staged

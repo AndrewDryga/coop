@@ -258,14 +258,29 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 			previous = id
 		}
 	}
+	// The build leaves its image unnamed, and only an image that passes every check below takes the
+	// project's tag. Until then the image is this build's alone, so any failure removes it unless a tag
+	// or a container holds it: a refused build leaves neither a tag nor an image behind.
 	built, err := buildStagedProjectOnBase(ctx, rt, prepared.dir, prepared.entries, dfRel, tag, definition.Tag, prepared.automatic, prepared.lease, errOut)
 	if err != nil {
 		return ImageChange{}, fmt.Errorf("this project's %s did not build on coop's client image: %w", dfRel, err)
 	}
+	named := false
+	defer func() {
+		if !named {
+			removeReplacedImages(ctx, rt, built)
+		}
+	}()
 	if id, _, err := docker.Image(ctx, built); err != nil || id != built {
 		return ImageChange{}, fmt.Errorf("the image %s built from this project's %s cannot be read back — run it again", tag, dfRel)
 	}
 	if err := proveDerivedImage(ctx, docker, store, candidate.ClientImage, built, closure, dfRel); err != nil {
+		var refusal *projectImageRefusal
+		if errors.As(err, &refusal) {
+			// The same files build the same image, so a launch on them says why instead of asking for
+			// this build again. It is only an explanation: failing to save it leaves the plain miss.
+			_ = store.RecordProjectBuildRefusal(tag, inputs, err.Error())
+		}
 		return ImageChange{}, err
 	}
 	if prepared.settings != projectBuildSettings() {
@@ -274,6 +289,10 @@ func buildPreparedFilteredProject(ctx context.Context, rt runtime.Runtime, cfg *
 	if err := prepared.verifySnapshot(ctx); err != nil {
 		return ImageChange{}, err
 	}
+	if err := docker.TagImage(ctx, built, tag); err != nil {
+		return ImageChange{}, fmt.Errorf("the image built from this project's %s could not be tagged %s — run it again", dfRel, tag)
+	}
+	named = true
 	// Bind what was actually staged, not a later read of a concurrently edited checkout. Only a
 	// person's build can change what counts as approved: an automatic one matched it above, so writing
 	// it again only tells a waiting editor session that a build finished (EditorBoxStamp).
@@ -387,7 +406,18 @@ func proveDerivedLayers(ctx context.Context, docker filteredDocker, locked, buil
 }
 
 func notDerived(dfRel string) error {
-	return fmt.Errorf("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
+	return refusedImage("this project's %s did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open", dfRel)
+}
+
+// projectImageRefusal is a proof that failed on what the project's own files built, which the same
+// files would build again. A proof that could not run, or Coop's own image failing, is not one.
+type projectImageRefusal struct{ err error }
+
+func (r *projectImageRefusal) Error() string { return r.err.Error() }
+func (r *projectImageRefusal) Unwrap() error { return r.err }
+
+func refusedImage(format string, a ...any) error {
+	return &projectImageRefusal{err: fmt.Errorf(format, a...)}
 }
 
 // pinnedFile is one path a filtered launch will not accept a change to, and the
@@ -440,11 +470,11 @@ func provePinnedClients(ctx context.Context, docker filteredDocker, store *netwo
 	// here rather than on a digest that differs.
 	observed, err := imageFileDigests(ctx, docker, store, built, files)
 	if err != nil {
-		return fmt.Errorf("the image this project's %s built cannot be checked: %w — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of changing them", dfRel, err)
+		return refusedImage("the image this project's %s built cannot be checked: %w — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of changing them", dfRel, err)
 	}
 	for _, file := range files {
 		if observed[file.path] != pinned[file.path] {
-			return fmt.Errorf("this project's %s changes %s at %s — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of replacing them", dfRel, file.owner, file.path)
+			return refusedImage("this project's %s changes %s at %s — a filtered box runs only the clients that coop net setup checked on this host, so add your tools instead of replacing them", dfRel, file.owner, file.path)
 		}
 	}
 	pinnedTree, err := imageTreeDigest(ctx, docker, store, locked, closure.ClientRoot)
@@ -453,10 +483,10 @@ func provePinnedClients(ctx context.Context, docker filteredDocker, store *netwo
 	}
 	observedTree, err := imageTreeDigest(ctx, docker, store, built, closure.ClientRoot)
 	if err != nil {
-		return fmt.Errorf("the image this project's %s built cannot check the locked JavaScript clients: %w — add tools outside %s", dfRel, err, closure.ClientRoot)
+		return refusedImage("the image this project's %s built cannot check the locked JavaScript clients: %w — add tools outside %s", dfRel, err, closure.ClientRoot)
 	}
 	if observedTree != pinnedTree {
-		return fmt.Errorf("this project's %s changes the locked JavaScript clients below %s — add tools outside Coop's client installation", dfRel, closure.ClientRoot)
+		return refusedImage("this project's %s changes the locked JavaScript clients below %s — add tools outside Coop's client installation", dfRel, closure.ClientRoot)
 	}
 	return nil
 }

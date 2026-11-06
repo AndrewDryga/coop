@@ -675,6 +675,116 @@ func TestProjectBuildRefusalsReadWhole(t *testing.T) {
 	}
 }
 
+// A build Coop refuses leaves no image under the project's name, nor one on disk that nothing else
+// holds, and a launch on the same files says why, with the fix, instead of sending the person back to a
+// build that fails the same way (QA B-31, 2026-11-06). A build that passes takes the tag and supersedes
+// the refusal.
+func TestARefusedProjectBuildLeavesNoImageAndTheRunSaysWhy(t *testing.T) {
+	pinHome(t)
+	for name, test := range map[string]struct {
+		refuse func(*fixtureImage, agents.ClientClosure)
+		want   string
+	}{
+		"not built on the client image": {
+			refuse: func(i *fixtureImage, _ agents.ClientClosure) {
+				i.layers = []string{"sha256:" + strings.Repeat("f", 64)}
+			},
+			want: "this project's .agent/Dockerfile did not build on coop's client image — start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`, or run with --egress open",
+		},
+		"replaces a pinned client": {
+			refuse: func(i *fixtureImage, closure agents.ClientClosure) {
+				file := i.files[closure.Clients[0].Launcher()]
+				file.SHA256 = strings.Repeat("9", 64)
+				i.files[closure.Clients[0].Launcher()] = file
+			},
+			want: "changes claude's cli client at ",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, d, repo, write := projectPreparationFixture(t)
+			closure := derivedImageFixture(t, d)
+			candidate := fixtureCandidate()
+			tag := filteredProjectTag(repo, candidate.ClientImage)
+			good := "sha256:" + strings.Repeat("3", 64)
+			d.mu.Lock()
+			image := d.images[fixtureBuiltImage]
+			image.id = good
+			d.images[good] = image
+			d.mu.Unlock()
+			tamperBuiltImage(d, func(i *fixtureImage) { test.refuse(i, closure) })
+
+			dir := t.TempDir()
+			calls, produced := filepath.Join(dir, "calls"), filepath.Join(dir, "produced")
+			writeRepoFile(t, produced, fixtureBuiltImage+"\n")
+			script := filepath.Join(dir, "docker")
+			writeRepoFile(t, script, "#!/bin/sh\necho \"$@\" >> "+strconv.Quote(calls)+"\n"+
+				"case \"$*\" in "+strconv.Quote(tagCount(fixtureBuiltImage))+") echo 0; exit 0 ;; esac\n"+
+				"while [ $# -gt 0 ]; do\n  if [ \"$1\" = --iidfile ]; then cat "+strconv.Quote(produced)+" > \"$2\"; fi\n  shift\ndone\n")
+			if err := os.Chmod(script, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rt, cfg := frozenProjectRuntime(t, script), &config.Config{BoxHome: t.TempDir()}
+			build := func() error {
+				_, err := buildFilteredProject(t.Context(), rt, cfg, d, f.store, repo, candidate, io.Discard)
+				return err
+			}
+			readiness := func() (*ProjectBuildRequired, error) {
+				var required *ProjectBuildRequired
+				err := checkFilteredProjectReadiness(t.Context(), d, f.store, RunSpec{Repo: repo}, candidate.Runtime)
+				if !errors.As(err, &required) {
+					return nil, err
+				}
+				return required, err
+			}
+
+			if err := build(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("refused build = %v, want %q", err, test.want)
+			}
+			recorded := string(mustReadFile(t, calls))
+			if strings.Contains(recorded, " -t ") {
+				t.Errorf("the build named its image before the proofs:\n%s", recorded)
+			}
+			if _, _, err := d.Image(t.Context(), tag); !errors.Is(err, runtime.ErrDockerImageMissing) {
+				t.Errorf("the refused image took the project's tag %s", tag)
+			}
+			if !strings.Contains(recorded, "image rm "+fixtureBuiltImage+"\n") {
+				t.Errorf("the refused image stayed on disk:\n%s", recorded)
+			}
+
+			required, err := readiness()
+			if required == nil || !required.Refused || required.Approved || !strings.Contains(required.Reason, test.want) {
+				t.Fatalf("readiness on the refused files = %v, want the refusal", err)
+			}
+			if got := err.Error(); !strings.HasPrefix(got, "Coop refused the last build of this project's box: ") ||
+				!strings.HasSuffix(got, ". After you fix it, run 'coop build --egress filtered' on the host.") {
+				t.Errorf("run refusal = %q", got)
+			}
+
+			write("main.go", "package main // fixed\n")
+			if required, err := readiness(); required == nil || required.Refused || !strings.Contains(required.Reason, "no explicit project build") {
+				t.Fatalf("readiness on other files = %v, want the plain miss", err)
+			}
+			writeRepoFile(t, produced, good+"\n")
+			if err := build(); err != nil {
+				t.Fatal(err)
+			}
+			if id, _, err := d.Image(t.Context(), tag); err != nil || id != good {
+				t.Errorf("the tag names %q (%v) after a build that passed, want %s", id, err, good)
+			}
+			if err := checkFilteredProjectReadiness(t.Context(), d, f.store, RunSpec{Repo: repo}, candidate.Runtime); err != nil {
+				t.Fatalf("readiness after a build that passed = %v", err)
+			}
+			write("main.go", "package main\n")
+			if required, err := readiness(); required == nil || required.Refused || !strings.Contains(required.Reason, "changed since the explicit build") {
+				t.Fatalf("readiness back on the refused files = %v, want the change since the last build", err)
+			}
+			if n := strings.Count(string(mustReadFile(t, calls)), "image rm "); n != 1 {
+				t.Errorf("removed %d images, want only the refused one", n)
+			}
+		})
+	}
+}
+
 // coop build says when the approval it records covers far more than the image reads, and how to narrow
 // it. Every such file voids the approval when it changes, which is how emisar's loop came to be refused
 // for edits its box never reads (2026-11-05). A context narrowed to what the Dockerfile copies hears

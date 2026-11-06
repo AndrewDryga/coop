@@ -206,12 +206,12 @@ func familyTag(family, definition string) string {
 	return family + ":" + definition[:32]
 }
 
-// removeReplacedImages removes the images rebuilds took their tags from. Each id is one that a tag
-// Coop builds named just before its rebuild, read only where Coop's ownership of that tag is proven.
-// The rebuild leaves it untagged, so no tag-based reclaim will ever weigh it again. It goes once it
-// really has no tag left (a cache hit keeps the tag on it, and anyone who tagged it since wants it)
-// and no container, running or stopped, was created from it. It is best-effort and silent: the image
-// had no name the user could see, and one that stays is no worse off than before.
+// removeReplacedImages removes images Coop built that no tag names any more: one a rebuild took its tag
+// from, read only where Coop's ownership of that tag is proven, and one a failed project build never
+// named. No tag-based reclaim will ever weigh either. Each goes once it really has no tag left (a cache
+// hit keeps the tag on it, and anyone who tagged it since wants it) and no container, running or
+// stopped, was created from it. It is best-effort and silent: the image had no name the user could
+// see, and one that stays is no worse off than before.
 func removeReplacedImages(ctx context.Context, rt runtime.Runtime, ids ...string) {
 	for _, id := range ids {
 		if id == "" {

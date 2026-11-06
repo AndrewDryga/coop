@@ -166,6 +166,7 @@ type filteredDocker interface {
 	CopyArchive(context.Context, runtime.DockerRef, string, int) ([]byte, error)
 	Image(context.Context, string) (string, map[string]string, error)
 	ImageLayers(context.Context, string) (string, []string, error)
+	TagImage(context.Context, string, string) error
 	FileDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerFile, error)
 	TreeDigest(context.Context, runtime.DockerRef, string, int64) (runtime.DockerTree, error)
 	ExistingNamedVolumeExposure(context.Context, []string) (runtime.VolumeExposure, error)

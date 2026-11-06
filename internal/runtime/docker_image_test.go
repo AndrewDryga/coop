@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -80,6 +82,58 @@ func TestDockerImageReadsFreshTagsWithoutCLI(t *testing.T) {
 		if strings.Contains(string(data), "inert-private-value") {
 			t.Fatal("environment entered observation")
 		}
+	}
+}
+
+// A tag is read back once it is applied: a tag that names another image, or none, is a failure, and an
+// argument that is not an image ID and a tag never reaches the CLI.
+func TestDockerTagImageReadsTheTagBack(t *testing.T) {
+	const tag = "app-filtered:0123456789abcdef"
+	id := "sha256:" + strings.Repeat("d", 64)
+	for name, test := range map[string]struct {
+		id, tag, names string
+		ok, called     bool
+	}{
+		"tagged":              {id: id, tag: tag, names: id, ok: true, called: true},
+		"names another image": {id: id, tag: tag, names: "sha256:" + strings.Repeat("e", 64), called: true},
+		"not tagged":          {id: id, tag: tag, called: true},
+		"not an image ID":     {id: "app:latest", tag: tag},
+		"an option as a tag":  {id: id, tag: "--force"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt, file := fixtureDocker(t, dockerFixture{})
+			ordinary := fixtureDockerAPI(file)
+			endpoint := dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/info" {
+					ordinary.ServeHTTP(w, r)
+					return
+				}
+				if r.URL.Path != "/images/"+tag+"/json" || test.names == "" {
+					http.Error(w, "no such image", http.StatusNotFound)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(fixtureImageAPI(dockerFixture{Execution: &DockerImageExecution{ID: test.names},
+					Layers: []string{"sha256:" + strings.Repeat("1", 64)}}))
+			}))
+			t.Setenv("COOP_DOCKER_FIXTURE_ENDPOINT", endpoint)
+			d, err := BindDocker(t.Context(), rt, endpoint, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			calls := filepath.Join(t.TempDir(), "calls")
+			d.binary = filepath.Join(t.TempDir(), "docker")
+			if err := os.WriteFile(d.binary, []byte("#!/bin/sh\necho \"$@\" >> '"+calls+"'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.TagImage(t.Context(), test.id, test.tag); (err == nil) != test.ok {
+				t.Fatalf("TagImage = %v, want success %v", err, test.ok)
+			}
+			recorded, _ := os.ReadFile(calls)
+			if called := strings.Contains(string(recorded), " image tag "+test.id+" "+test.tag+"\n"); called != test.called {
+				t.Fatalf("tag command run = %v, want %v: %q", called, test.called, recorded)
+			}
+		})
 	}
 }
 

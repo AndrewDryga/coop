@@ -409,6 +409,9 @@ You can add tools to the image, but you can't replace, wrap or delete a pinned c
 setup checks cover co:op's own image, and your project image must pass both checks above on every
 launch. co:op rejects `COOP_IMAGE` because an arbitrary image hasn't passed those checks.
 
+A build gets its tag only after both checks pass. co:op removes an image that fails them, unless
+another tag or a container still uses it, and a run on the same files says why it was refused.
+
 co:op caches what it reads from an image outside every agent mount, tied to the image's ID.
 
 The base image uses the non-root box user. To install packages, put `USER root` before the

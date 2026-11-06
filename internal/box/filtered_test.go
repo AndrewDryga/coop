@@ -254,6 +254,18 @@ func (d *filteredDaemonFixture) ImageLayers(_ context.Context, name string) (str
 	return image.id, slices.Clone(image.layers), nil
 }
 
+// TagImage names an image the fixture has, as `docker image tag` would.
+func (d *filteredDaemonFixture) TagImage(_ context.Context, id, tag string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	image, ok := d.images[id]
+	if !ok || image.id != id {
+		return errors.New("fixture has no image " + id)
+	}
+	d.images[tag] = image
+	return nil
+}
+
 // FileDigest answers from the image the named container was created from, and
 // only for a container that exists — the proof never starts one.
 func (d *filteredDaemonFixture) FileDigest(_ context.Context, ref runtime.DockerRef, source string, limit int64) (runtime.DockerFile, error) {

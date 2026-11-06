@@ -85,7 +85,71 @@ func (s *Store) ApproveProjectBuild(tag, inputs, image string) error {
 	if err != nil {
 		return err
 	}
-	return s.publish(projectBuildRecordName(id), data, true)
+	if err := s.publish(projectBuildRecordName(id), data, true); err != nil {
+		return err
+	}
+	// A build that passed supersedes the tag's last refusal. A refusal left behind only explains, so
+	// failing to remove it is no reason to fail the approval.
+	_ = s.removeRecord(projectBuildRefusalName(id))
+	return nil
+}
+
+// projectBuildRefusalRecord remembers why Coop refused the image the last build of a tag's inputs
+// made, so a launch on those same inputs repeats the reason and its fix instead of asking for a build
+// that would be refused again. It approves nothing: it is only ever read as an explanation.
+type projectBuildRefusalRecord struct {
+	Version int    `json:"version"`
+	ID      string `json:"id"`
+	Tag     string `json:"tag"`
+	Inputs  string `json:"inputs"`
+	Reason  string `json:"reason"`
+}
+
+func projectBuildRefusalName(id string) string { return "projectrefusal-" + id + ".json" }
+
+// maxProjectBuildRefusal bounds a saved reason: one refusal, never a build log.
+const maxProjectBuildRefusal = 4 << 10
+
+// RecordProjectBuildRefusal remembers why Coop refused the image these inputs built, replacing the
+// tag's last refusal.
+func (s *Store) RecordProjectBuildRefusal(tag, inputs, reason string) error {
+	if err := s.intactAuthority(); err != nil {
+		return err
+	}
+	id, err := s.projectBuildID(tag)
+	if err != nil {
+		return err
+	}
+	if !lowerHex(inputs, 64) || reason == "" || len(reason) > maxProjectBuildRefusal {
+		return errors.New("a project build refusal needs an inputs digest and a short reason")
+	}
+	data, err := json.Marshal(projectBuildRefusalRecord{Version: 1, ID: id, Tag: tag, Inputs: inputs, Reason: reason})
+	if err != nil {
+		return err
+	}
+	return s.publish(projectBuildRefusalName(id), data, true)
+}
+
+// ProjectBuildRefusal returns why Coop refused the image the last build of exactly these inputs made,
+// or "" when it refused no build of them.
+func (s *Store) ProjectBuildRefusal(tag, inputs string) string {
+	if s.intactAuthority() != nil || !lowerHex(inputs, 64) {
+		return ""
+	}
+	id, err := s.projectBuildID(tag)
+	if err != nil {
+		return ""
+	}
+	data, err := s.read(projectBuildRefusalName(id))
+	if err != nil {
+		return ""
+	}
+	var record projectBuildRefusalRecord
+	if json.Unmarshal(data, &record) != nil || record.Version != 1 || record.ID != id || record.Tag != tag ||
+		record.Inputs != inputs || len(record.Reason) > maxProjectBuildRefusal {
+		return ""
+	}
+	return record.Reason
 }
 
 // projectBuildLockTry is how long a build waits for the project's lock before saying it is waiting.

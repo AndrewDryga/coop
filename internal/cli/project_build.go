@@ -23,7 +23,7 @@ func projectBuildPromptEligible(spec box.RunSpec, session, terminal bool) bool {
 func (a *app) admitInteractiveNetwork(spec box.RunSpec, session bool) (capture *box.CapturedEgress, result error) {
 	capture, err := box.AdmitNetwork(a.cfg, a.rt, spec, a.network.admission())
 	var required *box.ProjectBuildRequired
-	if !errors.As(err, &required) || !projectBuildPromptEligible(spec, session, ui.IsTerminal(os.Stdin) && ui.IsTerminal(os.Stderr)) {
+	if !errors.As(err, &required) || required.Refused || !projectBuildPromptEligible(spec, session, ui.IsTerminal(os.Stdin) && ui.IsTerminal(os.Stderr)) {
 		return capture, err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -402,7 +402,7 @@ func TestReclaimTakesOnlyThisProjectsOwnDerivedImages(t *testing.T) {
 	}
 }
 
-// The tag a derived build writes and the label it carries are the ones the reclaim looks for.
+// The tag a derived build gets and the label it carries are the ones the reclaim looks for.
 func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
 	pinHome(t)
 	tag := filteredProjectTag("/src/app", "sha256:"+strings.Repeat("e", 64))
@@ -435,8 +435,9 @@ func TestDerivedImagesCarryTheLabelTheReclaimAsksFor(t *testing.T) {
 		".agent/Dockerfile", tag, "coop-clients:"+strings.Repeat("f", 32), false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if built := string(mustReadFile(t, calls)); !strings.Contains(built, "--label coop.derived="+project+" -t "+tag) {
-		t.Errorf("the build does not mark the image as Coop's: %q", built)
+	// The tag comes only after the image's proofs (TestARefusedProjectBuildLeavesNoImageAndTheRunSaysWhy).
+	if built := string(mustReadFile(t, calls)); !strings.Contains(built, "--label coop.derived="+project+" -f ") || strings.Contains(built, " -t ") {
+		t.Errorf("the build does not mark the image as Coop's, or names it before its proofs: %q", built)
 	}
 	// A filtered launch runs this image by ID, so the tag is what it records — and a recorded use
 	// is the only thing that spares an image from the next build.

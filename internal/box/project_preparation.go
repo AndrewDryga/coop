@@ -31,12 +31,18 @@ type ProjectBuildRequired struct {
 	Dockerfile string
 	Reason     string
 	Approved   bool
+	// Refused says Coop built these exact files and refused the image, and Reason is why, with its fix.
+	// The same files would be refused again, so a launch at a terminal does not offer to build them.
+	Refused bool
 	// Command builds these files for the person this process serves (BuildCommand), set where the
 	// miss leaves this package. Empty is the plain coop build --egress filtered.
 	Command string
 }
 
 func (e *ProjectBuildRequired) Error() string {
+	if e.Refused {
+		return fmt.Sprintf("Coop refused the last build of this project's box: %s. After you fix it, run '%s' on the host.", e.Reason, e.BuildCommand())
+	}
 	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run '%s' on the host. Project builds use ordinary networking, not the run's network restrictions.", e.Dockerfile, e.Reason, e.BuildCommand())
 }
 
@@ -106,8 +112,13 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 	}
 	tag := filteredProjectTag(repo, client)
 	candidate := networkstate.CandidateSpec{Runtime: binding, ClientImage: client}
-	image, reason := store.ProjectBuildStatus(tag, projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel))
+	inputs := projectBuildInputs(tree, candidate, closure, definition.Tag, tag, dfRel)
+	image, reason := store.ProjectBuildStatus(tag, inputs)
 	if image == "" {
+		if refusal := store.ProjectBuildRefusal(tag, inputs); refusal != "" {
+			// Not Approved even when a person approved these files: rebuilding them is no way forward.
+			return &ProjectBuildRequired{Dockerfile: dfRel, Reason: refusal, Refused: true}
+		}
 		return required(withProjectBuildChange(reason, store, canonical, files, approved))
 	}
 	if id, _, err := docker.Image(ctx, image); err != nil || id != image {
