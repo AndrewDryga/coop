@@ -76,6 +76,108 @@ func SnapshotForkApprovals(ctx context.Context, cfg *config.Config, parent, fork
 	return store.SnapshotForkApprovals(ctx, parent, fork, ComposeProject(fork)+"-filtered")
 }
 
+// RetireForkApprovals retires the host approvals a fork checkout holds, before Coop deletes it:
+// its service and case-exposure approvals with their private anchor, and its network, build and
+// image grants. Only what the checkout's own markers prove against their private anchors goes, so
+// the parent's grants and any network withdrawal at the path stay. The caller holds the fork's
+// lifecycle lock and has stopped its boxes and services. A failure keeps the checkout, whose
+// markers are what a retry proves ownership with.
+func RetireForkApprovals(ctx context.Context, parent, fork string, exposedRoots ...string) error {
+	if _, err := os.Lstat(fork); errors.Is(err, os.ErrNotExist) {
+		return nil // no checkout, so nothing left to prove ownership with
+	}
+	fork, err := canonicalProjectDir(fork)
+	if err != nil {
+		return err
+	}
+	parent, err = canonicalProjectDir(parent)
+	if err != nil {
+		return err
+	}
+	if SameFolder(parent, fork) {
+		return errors.New("approval retirement requires a fork, not its parent")
+	}
+	exposed := append([]string{fork, parent}, exposedRoots...)
+	serviceRoot, err := serviceApprovalRoot()
+	if err != nil {
+		return err
+	}
+	if err := networkstate.CheckPathExposure(serviceRoot, exposed); err != nil {
+		return err
+	}
+	unlock, err := LockServiceLaunch(ctx, fork)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := retireForkServiceApprovals(fork, serviceRoot); err != nil {
+		return err
+	}
+	root, err := NetworkStatePath()
+	if err != nil {
+		return err
+	}
+	store, err := networkstate.OpenExisting(root, exposed)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	return store.RetireForkApprovals(ctx, fork, ComposeProject(fork)+"-filtered")
+}
+
+// retireForkServiceApprovals removes the service and case-exposure approvals filed under the
+// checkout's service anchor, then the anchor and its marker: an approval whose anchor is gone grants
+// nothing, while an anchor whose approvals are gone would be a private link nothing collects.
+func retireForkServiceApprovals(fork, root string) error {
+	anchor, err := serviceApprovalAnchor(fork, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") || !entry.Type().IsRegular() {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var approval ServiceApproval
+		if json.Unmarshal(raw, &approval) != nil || approval.Anchor != anchor {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("retire fork service approval: %w", err)
+		}
+	}
+	caseExposure, err := caseExposurePath(anchor)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(caseExposure); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("retire fork case-exposure approval: %w", err)
+	}
+	private, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer private.Close()
+	if err := fsidentity.Retire(serviceAnchorBinding(fork, anchor, private)); err != nil {
+		return fmt.Errorf("retire fork service approval identity: %w", err)
+	}
+	return nil
+}
+
 func snapshotForkServiceApprovals(parent, fork, root string) (undo func() error, err error) {
 	undo = func() error { return nil }
 	if _, err := os.Lstat(filepath.Join(fork, serviceApprovalMarker)); !errors.Is(err, os.ErrNotExist) {

@@ -41,7 +41,8 @@ or explicitly named service volumes still refer to the same Docker volumes.
 
 Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
 approval withdrawn at a fork's path stays withdrawn even if you recreate that fork; run
-`coop approve` in the fork to grant access again.
+`coop approve` in the fork to grant access again. Removing a fork removes the approvals it holds,
+and leaves the parent's alone.
 
 Point a fork at a task queue and it works the queue unattended:
 

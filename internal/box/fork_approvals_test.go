@@ -1,6 +1,7 @@
 package box
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -365,5 +366,154 @@ func TestForkBuildApprovalCreationClearsPreviousImage(t *testing.T) {
 	}
 	if got := store.ApprovedProjectBuild(tag, inputs); got != "" {
 		t.Fatalf("creation kept the previous checkout's image approval: %s", got)
+	}
+}
+
+// forkWithSnapshotApprovals approves a service file and network rules in parent, then snapshots them
+// into a new fork the way fork creation does.
+func forkWithSnapshotApprovals(t *testing.T) (parent, fork, parentFile, forkFile string, compose []byte, store *networkstate.Store) {
+	t.Helper()
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	parent, fork = forkApprovalWorkspace(t), forkApprovalWorkspace(t)
+	compose = forkServiceCompose(false, false)
+	parentFile, _ = prepareForkServiceReview(t, parent, compose, false, false)
+	forkFile = writeForkServiceInputs(t, fork, compose, false)
+	root, err := NetworkStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err = networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	requests := []egress.Rule{{To: egress.Destination{Domain: "parent.example.com"}, Protocol: "tls", Ports: []int{443}}}
+	review, err := store.ReviewApproval(parent, egress.Filtered, requests, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Approve(t.Context(), parent, egress.Filtered, requests, nil, nil, review.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := SnapshotForkApprovals(t.Context(), nil, parent, fork); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ApprovedServiceSecrets(fork, forkFile, compose); !ok {
+		t.Fatal("fixture fork did not receive the parent's service approval")
+	}
+	if approval, err := store.Approval(fork); err != nil || approval == nil {
+		t.Fatalf("fixture fork network approval = %+v, %v", approval, err)
+	}
+	return parent, fork, parentFile, forkFile, compose, store
+}
+
+func TestRetireForkApprovalsRetiresOnlyTheForks(t *testing.T) {
+	parent, fork, parentFile, forkFile, compose, store := forkWithSnapshotApprovals(t)
+	other := forkApprovalWorkspace(t)
+	otherFile, _ := prepareForkServiceReview(t, other, compose, false, false)
+	anchor, err := serviceApprovalAnchor(fork, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed := []string{"secrets/.env"}
+	casePath, err := caseExposurePath(anchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(caseExposureApproval{Version: 1, Anchor: anchor, Paths: exposed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(casePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(casePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if pending := UnapprovedCaseExposures(fork, exposed); len(pending) != 0 {
+		t.Fatalf("fixture case-exposure approval is not usable: %v", pending)
+	}
+	inputs, image := strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	tag := filteredProjectTag(fork, "fixture-client")
+	if err := store.ApproveProjectBuild(tag, inputs, image); err != nil {
+		t.Fatal(err)
+	}
+	parentNetwork, err := store.Approval(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 { // a retry after a finished retirement finds nothing left and succeeds
+		if err := RetireForkApprovals(t.Context(), parent, fork); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := ApprovedServiceSecrets(fork, forkFile, compose); ok {
+		t.Error("the fork kept its service approval")
+	}
+	if pending := UnapprovedCaseExposures(fork, exposed); len(pending) != len(exposed) {
+		t.Errorf("the fork kept its case-exposure approval: pending %v", pending)
+	}
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{casePath, filepath.Join(root, "service-"+anchor+".anchor"), filepath.Join(fork, serviceApprovalMarker), filepath.Join(fork, networkstate.ProjectApprovalMarker)} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("retirement left %s: %v", path, err)
+		}
+	}
+	if approval, err := store.Approval(fork); err != nil || approval != nil {
+		t.Errorf("the fork kept its network approval: %+v, %v", approval, err)
+	}
+	if got := store.ApprovedProjectBuild(tag, inputs); got != "" {
+		t.Errorf("the fork kept its image grant: %s", got)
+	}
+	if _, ok := ApprovedServiceSecrets(parent, parentFile, compose); !ok {
+		t.Error("retiring the fork's approvals removed the parent's service approval")
+	}
+	if _, ok := ApprovedServiceSecrets(other, otherFile, compose); !ok {
+		t.Error("retiring the fork's approvals removed another project's service approval")
+	}
+	if got, err := store.Approval(parent); err != nil || !reflect.DeepEqual(got, parentNetwork) {
+		t.Errorf("retiring the fork's approvals changed the parent's network approval: %+v, %v", got, err)
+	}
+}
+
+func TestRetireForkApprovalsKeepsTheForkProvableAfterAFailure(t *testing.T) {
+	parent, fork, parentFile, forkFile, compose, _ := forkWithSnapshotApprovals(t)
+	root, err := serviceApprovalRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+	if err := RetireForkApprovals(t.Context(), parent, fork); err == nil {
+		t.Fatal("retirement in a folder it cannot change reported success")
+	}
+	if _, ok := ApprovedServiceSecrets(fork, forkFile, compose); !ok {
+		t.Fatal("a failed retirement lost the proof a retry needs")
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := RetireForkApprovals(t.Context(), parent, fork); err != nil {
+		t.Fatalf("retry after the failure: %v", err)
+	}
+	if _, ok := ApprovedServiceSecrets(fork, forkFile, compose); ok {
+		t.Error("the retry left the fork's service approval")
+	}
+	if _, ok := ApprovedServiceSecrets(parent, parentFile, compose); !ok {
+		t.Error("the retry removed the parent's service approval")
+	}
+}
+
+func TestRetireForkApprovalsWithoutACheckoutDoesNothing(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	if err := RetireForkApprovals(t.Context(), forkApprovalWorkspace(t), filepath.Join(t.TempDir(), "gone")); err != nil {
+		t.Fatalf("retirement for a missing checkout = %v, want nothing to do", err)
 	}
 }

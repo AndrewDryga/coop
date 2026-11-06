@@ -116,6 +116,40 @@ func (s *Store) snapshotForkApprovals(fork, id, image string, approval *Approval
 	return nil
 }
 
+// RetireForkApprovals retires what a fork checkout Coop is about to delete holds here: its network
+// approval with the private half of its anchor, its reviewed build files and its image grants. A
+// withdrawal at the path stays: it refuses rather than grants, and a fork recreated under the same
+// name keeps it. The caller owns the stopped checkout under its lifecycle lock.
+func (s *Store) RetireForkApprovals(ctx context.Context, fork, forkImage string) error {
+	if err := s.intactAuthority(); err != nil {
+		return err
+	}
+	id, fork, _, err := s.projectIdentity(fork)
+	if err != nil {
+		return err
+	}
+	if !safeRecordToken(forkImage, 256) || strings.Contains(forkImage, ":") {
+		return errors.New("approval retirement requires the fork's project image name")
+	}
+	return s.lockRecord(ctx, "approval", id, func() error {
+		approval, err := s.approval(id)
+		if err != nil {
+			return err
+		}
+		// The anchor goes while its record still names it: removing the record first would leave
+		// a private link nothing could prove or collect.
+		if err := s.retireProjectAnchor(fork, approval); err != nil {
+			return fmt.Errorf("retire fork network approval identity: %w", err)
+		}
+		for _, name := range []string{approvalRecord(id), projectBuildReviewName(projectBuildReviewID(fork))} {
+			if err := s.removeRecord(name); err != nil {
+				return err
+			}
+		}
+		return s.removeForkImageApprovals(forkImage)
+	})
+}
+
 // A previous fork at this path may have approved images of its own. They are usable without the
 // reviewed-files record, so a new fork must retire those grants too. This removes no Docker image.
 func (s *Store) removeForkImageApprovals(image string) error {

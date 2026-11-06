@@ -483,3 +483,85 @@ func TestSnapshotForkApprovalPublishFailureLeavesNoChildAuthority(t *testing.T) 
 		t.Fatalf("failed snapshot changed unrelated authority: got %+v, err %v; want %+v", got, err, unrelatedBefore)
 	}
 }
+
+func TestRetireForkApprovalsLeavesTheParentAndWithdrawals(t *testing.T) {
+	t.Run("grants", func(t *testing.T) {
+		s := openStore(t)
+		parent, fork := forkApprovalDir(t), forkApprovalDir(t)
+		rules := []egress.Rule{rule("approved.example.com")}
+		if err := approve(s, parent, egress.Filtered, rules, nil); err != nil {
+			t.Fatal(err)
+		}
+		review := strings.Repeat("c", 64)
+		if err := s.RecordProjectBuildReview(parent, review); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SnapshotForkApprovals(t.Context(), parent, fork, "coop-fork-filtered"); err != nil {
+			t.Fatal(err)
+		}
+		inputs, image := strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+		for _, tag := range []string{"coop-fork-filtered:built", "coop-parent-filtered:built"} {
+			if err := s.ApproveProjectBuild(tag, inputs, image); err != nil {
+				t.Fatal(err)
+			}
+		}
+		parentBefore, err := s.Approval(parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		child, err := s.Approval(fork)
+		if err != nil || child == nil || !s.ProjectBuildReviewed(fork, review) {
+			t.Fatalf("fork snapshot = %+v, %v; want the parent's network and build grants", child, err)
+		}
+
+		for range 2 { // a retry after a finished retirement finds nothing left and succeeds
+			if err := s.RetireForkApprovals(t.Context(), fork, "coop-fork-filtered"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, err := s.Approval(fork); err != nil || got != nil {
+			t.Fatalf("retired fork approval = %+v, %v; want none", got, err)
+		}
+		if _, err := s.Admit(fork, Admission{Requests: rules}); err == nil {
+			t.Fatal("a retired fork was still admitted")
+		}
+		if _, err := os.Lstat(filepath.Join(fork, ProjectApprovalMarker)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("retired fork kept its approval marker: %v", err)
+		}
+		if _, err := s.root.Lstat(projectAnchorName(child.ProjectID, child.ProjectAnchor)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("retired fork kept its private anchor: %v", err)
+		}
+		if s.ProjectBuildReviewed(fork, review) || s.ApprovedProjectBuild("coop-fork-filtered:built", inputs) != "" {
+			t.Error("retired fork kept its build review or image grant")
+		}
+		if got, err := s.Approval(parent); err != nil || !reflect.DeepEqual(got, parentBefore) {
+			t.Fatalf("retirement changed the parent approval: %+v, %v", got, err)
+		}
+		if _, err := s.Admit(parent, Admission{Requests: rules}); err != nil {
+			t.Fatalf("the parent lost its approval: %v", err)
+		}
+		if !s.ProjectBuildReviewed(parent, review) || s.ApprovedProjectBuild("coop-parent-filtered:built", inputs) != image {
+			t.Error("retirement changed the parent's build review or image grant")
+		}
+	})
+
+	t.Run("withdrawal stays", func(t *testing.T) {
+		s := openStore(t)
+		parent, fork := forkApprovalDir(t), forkApprovalDir(t)
+		if err := approve(s, parent, egress.Filtered, []egress.Rule{rule("withdrawn.example.com")}, nil); err != nil {
+			t.Fatal(err)
+		}
+		withdraw(t, s, parent)
+		if err := s.SnapshotForkApprovals(t.Context(), parent, fork, "coop-fork-filtered"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RetireForkApprovals(t.Context(), fork, "coop-fork-filtered"); err != nil {
+			t.Fatal(err)
+		}
+		for name, project := range map[string]string{"parent": parent, "fork": fork} {
+			if withdrawn, err := s.Withdrawn(project); err != nil || !withdrawn {
+				t.Errorf("%s withdrawal after retirement = %v, %v; want the refusal kept", name, withdrawn, err)
+			}
+		}
+	})
+}

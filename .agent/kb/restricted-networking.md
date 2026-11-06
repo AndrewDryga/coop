@@ -81,6 +81,13 @@ image proof is rebuilt normally. Reusing a fork name retires its old image grant
 build review. Parent and fork network records are locked separately: their IDs can share one
 approval lock stripe. See [[forks-snapshot-parent-approvals]].
 
+Removing a fork (`forkctl.DestroyFork`, and merge's `destroyLandedFork`) calls
+`box.RetireForkApprovals` while the checkout still exists, because its markers are the only proof
+of which records are its own: its service and case-exposure approvals, then its service anchor,
+then its network approval, anchor, build review and image grants. A network withdrawal at the path
+stays. A failure keeps the fork for a retry; `rm --force` deletes it anyway with a warning. A
+marker whose private anchor is missing proves nothing and is skipped.
+
 Approval review has a two-phase concurrency rule. An exact existing marker/private-anchor pair may
 be reviewed read-only without pausing running boxes. Any missing, replaced, or moved binding is a
 transition: `ReviewProjectNetwork` takes the project's exclusive service-launch lock, re-reads the
@@ -382,6 +389,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-05 — removing a fork retires its own approvals and anchors before the checkout goes
+  (task 2026-11-05-retire-a-fork-s-private-approval-records-when-it).
 - 2026-11-05 — verified creation-only fork approval snapshots, fresh anchors, build-review reuse
   and separate approval locks against the new helpers and their happy/denial-path tests.
 - 2026-11-04 — `Store.projectIdentity` now refuses a project that has an old-format approval,

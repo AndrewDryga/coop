@@ -11,12 +11,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
+
+// A marker whose private anchor no longer matches it leaves Coop unable to tell which approvals are
+// the fork's. Removal keeps the fork, the retry handle, unless the operator forces it.
+func TestDestroyForkKeepsAForkWhoseApprovalsCannotBeRetired(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "held")
+	if err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(os.Getenv(box.ServiceStateRootEnv), "service-approvals")
+	if err := os.MkdirAll(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	anchor := strings.Repeat("a", 32)
+	body := []byte("coop-service-approval-v1\n" + anchor + "\n")
+	marker := ".coop-service-approval"
+	for _, path := range []string{filepath.Join(ws, marker), filepath.Join(private, "service-"+anchor+".anchor")} {
+		if err := os.WriteFile(path, body, 0o600); err != nil { // two files, not the one hard link
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(path) })
+	}
+	if err := forkspace.ExcludeIfRepository(ws, "/"+marker); err != nil {
+		t.Fatal(err)
+	}
+
+	err = DestroyFork(runtime.Runtime{}, repo, "held", false)
+	if err == nil || !strings.Contains(err.Error(), "fork held was kept: Coop could not retire its approvals") || !pathExists(ws) {
+		t.Fatalf("DestroyFork = %v, workspace kept %v; want the fork kept for a retry", err, pathExists(ws))
+	}
+	if err := DestroyFork(runtime.Runtime{}, repo, "held", true); err != nil || pathExists(ws) {
+		t.Fatalf("forced DestroyFork = %v, workspace left %v; want it removed anyway", err, pathExists(ws))
+	}
+}
 
 func TestForkAgentMemory(t *testing.T) {
 	ws := t.TempDir()

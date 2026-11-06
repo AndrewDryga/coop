@@ -615,6 +615,9 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 	if err := approval.validateRemoval(repo, name); err != nil {
 		return err
 	}
+	if err := box.RetireForkApprovals(context.Background(), repo, forkspace.Workspace(repo, name), exposedRoots...); err != nil {
+		return fmt.Errorf("kept the merged fork: Coop could not retire its approvals (%w) — fix what this names, then run coop fork rm %s", err, name)
+	}
 	if err := forkspace.Destroy(repo, name); err != nil {
 		return err
 	}

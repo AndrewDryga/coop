@@ -49,6 +49,11 @@
   resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
   now repeat them, quoted for the shell.
 
+- **Removing a fork removes the approvals it holds.** `coop fork rm`, `--fresh` and the cleanup
+  after `coop fork merge` left the fork's service, network and build approvals behind in Coop's
+  private records, where nothing used or removed them. They now go with the fork. The parent's
+  approvals and any network withdrawal at the fork's path stay. If they cannot be removed, the
+  fork is kept so you can run the command again; `coop fork rm --force` removes it anyway.
 - **A fork loop keeps working when one of its tasks needs your decision.** It ended with "Stopped
   for your decision · 0/1 tasks done" as soon as one task blocked, and sat idle with other tasks
   ready. The blocked task now waits in `coop tasks decisions` while the fork goes on with its other

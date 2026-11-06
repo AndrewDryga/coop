@@ -150,7 +150,8 @@ build a separate fork image from unchanged approved files without asking again. 
 or explicitly named service volumes still refer to the same Docker volumes.</p>
 <p>Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
 approval withdrawn at a fork&#39;s path stays withdrawn even if you recreate that fork; run
-<code>coop approve</code> in the fork to grant access again.</p>
+<code>coop approve</code> in the fork to grant access again. Removing a fork removes the approvals it holds,
+and leaves the parent&#39;s alone.</p>
 <p>Point a fork at a task queue and it works the queue unattended:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork api codex --loop -d   # loops the repo&#39;s task queue(s); -d detaches — tail with coop fork logs api -f
 </code></pre></div>

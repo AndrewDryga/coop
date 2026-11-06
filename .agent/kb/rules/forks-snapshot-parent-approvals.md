@@ -2,7 +2,7 @@
 name: forks-snapshot-parent-approvals
 description: new forks snapshot existing host approvals with fresh identities and unchanged reviewed inputs; later parent approvals never carry over
 scope: security
-sources: [internal/cli/fork_isolated.go, internal/cli/fork_cmd.go, internal/box/fork_approvals.go, internal/networkstate/fork_approvals.go, internal/box/project_build.go, internal/cli/fork_approval_snapshot_test.go, internal/box/fork_approvals_test.go, internal/networkstate/fork_approvals_test.go]
+sources: [internal/cli/fork_isolated.go, internal/cli/fork_cmd.go, internal/box/fork_approvals.go, internal/networkstate/fork_approvals.go, internal/box/project_build.go, internal/forkctl/rm.go, internal/forkctl/merge.go, internal/cli/fork_approval_snapshot_test.go, internal/box/fork_approvals_test.go, internal/networkstate/fork_approvals_test.go]
 check: "make check"
 updated: 2026-11-05
 ---
@@ -25,8 +25,13 @@ Retire previous image and review grants when reusing a fork pathname. Capture th
 record under its lock, release it, then publish the fork: different IDs can share one lock stripe.
 Keep controller-job and disposable review-candidate policy ownership separate. A refused detached
 worker must show stopped with its reason, retaining the generation checks and machine state.
+Removing a fork retires what it holds through its own markers before the checkout goes
+(`box.RetireForkApprovals`), keeping withdrawal barriers and the parent's grants.
 
 ## Changelog
+- 2026-11-05 — fork removal retires the fork's own service, case-exposure, network, build and
+  image grants and anchors; swept rm, `--fresh` and merge cleanup (session discards create no
+  snapshot and are unchanged).
 - 2026-11-05 — swept CLI new/fresh/resume/worker paths, fork ACP, review candidates and controller
   workspace creation. Added creation-only snapshots for ordinary/isolated forks and aligned local
   fork ACP build readiness with its admission. Regressions cover unchanged/changed inputs, later

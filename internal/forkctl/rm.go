@@ -96,6 +96,13 @@ func DestroyFork(rt runtime.Runtime, repo, name string, force bool, exposedRoots
 			return fmt.Errorf("fork %s was kept: it has work written while its services stopped (%w) — review it, or delete it anyway with --force", name, err)
 		}
 	}
+	// The checkout's markers are what prove which approvals are its own, so they go before it.
+	if err := box.RetireForkApprovals(context.Background(), repo, forkspace.Workspace(repo, name), exposedRoots...); err != nil {
+		if !force {
+			return fmt.Errorf("fork %s was kept: Coop could not retire its approvals (%w) — fix what this names and run the command again, or delete it anyway with --force", name, err)
+		}
+		ui.Warn("fork %s: some of its approvals could not be retired (%v); deleting it anyway", name, err)
+	}
 	return forkspace.Destroy(repo, name)
 }
 
