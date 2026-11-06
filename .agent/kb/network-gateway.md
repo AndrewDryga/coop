@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -131,6 +131,21 @@ Facts the code cannot say twice, all still true:
   cannot forge a source to reflect an answer off `lo` (`IP_FREEBIND` still fails the route lookup;
   `IP_TRANSPARENT` needs NET_ADMIN); when root forces it, the answer leaves by eth0 and
   `denied_service` counts it.
+
+- **A refused connection is recorded by the filter, not sampled.** With those `lo` answers accepted, a
+  refused IPv4 TCP connect fails in milliseconds, so the one-second socket sample (`connecting` rows)
+  stopped seeing them and `coop net blocked` had nothing to find. Each IPv4 refusal of the agent's TCP
+  (the `protected4` reject and the final deny) is directly preceded by a rule with no verdict that
+  adds `ip daddr . tcp dport . tcp sport` to the dynamic set `refused4` (`MaxRefusedAttempts` 128,
+  `RefusedAttemptLifetime` 10 s). The add must stay a rule of its own: a full dynamic set makes the
+  rule holding the add stop matching (`NFT_BREAK`), so an add inside the reject would turn a full set
+  into a fall-through to the service drops, a hang counted as `denied_service`. The kernel sampler
+  lists the set beside the counters (`KernelCounters.Refused`); the collector keeps one
+  `direct_tcp_attempt` (source `kernel`) per new entry (`recordRefused`) and marks a full set
+  `refused_attempt_capacity`. The socket sample still records IPv6 attempts. A counters reply can
+  carry 512 grant counters plus a full set, so replies read up to `maxControlReplyBytes` (64 KiB);
+  requests stay at 4 KiB. Checked on pinned nft 1.0.2 and the OrbStack 7.2 kernel: refusals are
+  recorded, granted and redirected TLS connections are not, and a full set still refuses.
 
 - The upstream PORT is the kernel's, never the client's. `policy.Domain(name, port)` runs in the
   guard (`Inspect`, given the original destination's port by `Guard.forward`), again in the
@@ -350,6 +365,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — refused agent TCP is recorded by the filter (`refused4`) instead of a socket sample,
+  which stopped seeing it once refusals failed fast; counters replies get their own 64 KiB bound
+  (task 2026-11-06-record-direct-and-unlisted-port-blocks-so-coop-n).
 - 2026-11-05 — a slow counters call waits 3 s before the critical enforcer alert; a deadline-bound
   native document read no longer latches (task 2026-11-05-say-when-a-network-filter-alert-comes-from-host).
 - 2026-11-04 — a closed `::1` port refuses at once too (TCP reset by rule, ICMPv6 error on `lo` for

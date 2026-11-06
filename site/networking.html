@@ -734,8 +734,10 @@ of a host.</li>
 <li>A blocked DNS lookup doesn&#39;t record which port the program wanted, so <code>coop net blocked</code> shows a
 rule for TLS on port 443, labeled as the likely fix.</li>
 <li>A direct connection to an address the run looked up, such as <code>http://</code> to a name approved only
-for TLS, is listed under that name with the address beside it, so <code>coop net blocked &lt;host&gt;</code>
-finds it. An address that two looked-up names share is listed as an address.</li>
+for TLS or <code>https://</code> to a port its rule doesn&#39;t list, is listed under that name with the address
+and port beside it, so <code>coop net blocked &lt;host&gt;</code> finds it. For a port other than 80, it shows a
+rule for TLS on that port, labeled as the likely fix. An address that two looked-up names share
+is listed as an address.</li>
 <li>For raw traffic, the kernel counts packets and bytes for each approved address rule. These
 appear under <code>Raw traffic</code> in <code>coop net inspect</code>, each row named by its rule, such as
 <code>10.42.8.0/24:5432 · TCP</code>, and as <code>address_grants</code> in <code>--json</code>. Individual hosts within a CIDR

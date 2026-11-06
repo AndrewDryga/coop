@@ -18,6 +18,14 @@
   with "The loop stopped making progress" and a `Continue:` line. A first SIGINT during such an
   attempt now ends with "Stopped before final review" and exit 130, as it does at a terminal.
 
+- **`coop net blocked` finds a direct connection or an unlisted port again.** A refused connection
+  fails in milliseconds, too fast for the socket sample that used to record it. With only TLS on 443
+  approved, `curl http://example.com/` or `curl https://example.com:8443/` left just "2 packets were
+  blocked, and Coop did not record where they were going". The network filter now records each
+  refused TCP connection itself, so the report lists it under the name the run looked up, and
+  `coop net blocked example.com` explains it. For a port other than 80 it shows a TLS rule for that
+  port as the likely fix. The gateway image changed, so the next filtered run checks the network
+  setup again.
 - **`coop loop` closes with what really happened.** A queue with nothing to work on now ends
   "No tasks ready to work on." without a review checkmark, with or without `--max-tasks`. The stop
   after 5 failed attempts prints the `Continue:` command. The `--debug-on-fail` shell is announced as

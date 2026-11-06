@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"net/netip"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +36,16 @@ type KernelCounters struct {
 	// its kernel counter name. Bytes are real here — unlike a denial, an
 	// allowed raw flow is a measured volume, not a packet tally alone.
 	Grants map[string]GrantCount `json:"grants,omitempty"`
+	// Refused is the refused4 set: each agent TCP connection the filter refused in the last
+	// RefusedAttemptLifetime, as the kernel recorded it while refusing the first packet.
+	Refused []RefusedAttempt `json:"refused,omitempty"`
+}
+
+// RefusedAttempt is one refused agent TCP connection: where it was going, and the port inside the
+// box it came from, which tells two attempts at the same destination apart.
+type RefusedAttempt struct {
+	Peer       netip.AddrPort `json:"peer"`
+	SourcePort uint16         `json:"source_port"`
 }
 
 type GrantCount struct {
@@ -78,6 +90,7 @@ func (k *kernelEvents) snapshot() KernelSample {
 	if s.Counters != nil {
 		value := *s.Counters
 		value.Grants = maps.Clone(value.Grants)
+		value.Refused = slices.Clone(value.Refused)
 		s.Counters = &value
 	}
 	if s.Sequence == 0 {
@@ -141,15 +154,32 @@ func (k *kernelEvents) after(ctx context.Context, cutoff BootInstant) KernelSamp
 func readKernelCounters(ctx context.Context) (KernelCounters, error) {
 	// nft 1.0.2 does not accept a table argument for "list counters inet".
 	// Filter the exact table and required names after the bounded fixed query.
-	command := exec.CommandContext(ctx, "/usr/sbin/nft", "-j", "list", "counters", "inet")
+	output, err := listNFT(ctx, "counters", "inet")
+	if err != nil {
+		return KernelCounters{}, err
+	}
+	counters, err := parseKernelCounters(output)
+	if err != nil {
+		return KernelCounters{}, err
+	}
+	if output, err = listNFT(ctx, "set", "inet", "coop_net", "refused4"); err != nil {
+		return KernelCounters{}, err
+	}
+	counters.Refused, err = parseRefusedAttempts(output)
+	return counters, err
+}
+
+// listNFT runs one bounded, fixed `nft -j list` query: no shell, and no argument from the agent.
+func listNFT(ctx context.Context, what ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "/usr/sbin/nft", append([]string{"-j", "list"}, what...)...)
 	output := &boundedOutput{limit: MaxKernelCounterBytes}
 	command.Stdout, command.Stderr = output, io.Discard
 	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
 	command.WaitDelay = 250 * time.Millisecond
 	if command.Run() != nil || output.exceeded {
-		return KernelCounters{}, Failure("kernel_counters_unavailable")
+		return nil, Failure("kernel_counters_unavailable")
 	}
-	return parseKernelCounters(output.Bytes())
+	return output.Bytes(), nil
 }
 
 type boundedOutput struct {
@@ -228,6 +258,74 @@ func parseKernelCounters(data []byte) (KernelCounters, error) {
 		return KernelCounters{}, invalid
 	}
 	return result, nil
+}
+
+// parseRefusedAttempts reads the one refused4 set this gateway installed. Pinned nft 1.0.2 prints
+// each element of a set with timeouts as {"elem": {"val": {"concat": [address, port, source
+// port]}, "expires": seconds}}. Port 0 is a value the agent can dial, so it is read, never refused:
+// a malformed set fails the whole sample.
+func parseRefusedAttempts(data []byte) ([]RefusedAttempt, error) {
+	invalid := Failure("kernel_counters_invalid")
+	var envelope struct {
+		Objects []struct {
+			Set *struct {
+				Family   string `json:"family"`
+				Table    string `json:"table"`
+				Name     string `json:"name"`
+				Elements []struct {
+					Elem *struct {
+						Value struct {
+							Concat []json.RawMessage `json:"concat"`
+						} `json:"val"`
+					} `json:"elem"`
+				} `json:"elem"`
+			} `json:"set"`
+		} `json:"nftables"`
+	}
+	if len(data) > MaxKernelCounterBytes || json.Unmarshal(data, &envelope) != nil {
+		return nil, invalid
+	}
+	var out []RefusedAttempt
+	found := false
+	for _, object := range envelope.Objects {
+		set := object.Set
+		if set == nil {
+			continue
+		}
+		if found || set.Family != "inet" || set.Table != "coop_net" || set.Name != "refused4" || len(set.Elements) > MaxRefusedAttempts {
+			return nil, invalid
+		}
+		found = true
+		for _, element := range set.Elements {
+			if element.Elem == nil || len(element.Elem.Value.Concat) != 3 {
+				return nil, invalid
+			}
+			parts := element.Elem.Value.Concat
+			var text string
+			if json.Unmarshal(parts[0], &text) != nil {
+				return nil, invalid
+			}
+			address, err := netip.ParseAddr(text)
+			port, portErr := nftPort(parts[1])
+			source, sourceErr := nftPort(parts[2])
+			if err != nil || !address.Is4() || address.String() != text || portErr != nil || sourceErr != nil {
+				return nil, invalid
+			}
+			out = append(out, RefusedAttempt{Peer: netip.AddrPortFrom(address, port), SourcePort: source})
+		}
+	}
+	if !found {
+		return nil, invalid
+	}
+	return out, nil
+}
+
+func nftPort(raw []byte) (uint16, error) {
+	n, err := strconv.ParseUint(string(raw), 10, 16)
+	if err != nil || strconv.FormatUint(n, 10) != string(raw) {
+		return 0, Failure("kernel_counters_invalid")
+	}
+	return uint16(n), nil
 }
 
 // grantCounterName is the exact spelling the policy derives: "grant_" plus the

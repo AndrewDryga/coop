@@ -1003,6 +1003,8 @@ func evidenceReasonText(reason string) string {
 		return "too many sockets were waiting to be matched"
 	case "socket_history_identity_capacity":
 		return "this run's socket history filled up"
+	case "refused_attempt_capacity":
+		return "connections were refused faster than Coop could record each one"
 	case "socket_inventory_unavailable":
 		return "the socket table could not be read"
 	case "socket_inventory_truncated":

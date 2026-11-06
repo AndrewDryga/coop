@@ -20,7 +20,10 @@ const (
 	HeartbeatTimeout       = 4 * time.Second
 	GuardStartTimeout      = 30 * time.Second
 	maxControlBytes        = 4096
-	maxControlClients      = 64
+	// A counters reply carries every grant counter and refused connection, so it is bounded like
+	// the kernel output it is read from rather than like a request.
+	maxControlReplyBytes = MaxKernelCounterBytes
+	maxControlClients    = 64
 )
 
 type controlRequest struct {
@@ -299,7 +302,7 @@ func (c ControllerClient) exchange(ctx context.Context, request controlRequest, 
 		return empty, Failure("enforcement_unavailable")
 	}
 	var reply controlReply
-	if err := readControl(conn, &reply); err != nil || reply.Version != PrivateProtocolVersion || !reply.Identity.matchesPeer(c.Identity) {
+	if err := readFrame(conn, &reply, maxControlReplyBytes); err != nil || reply.Version != PrivateProtocolVersion || !reply.Identity.matchesPeer(c.Identity) {
 		return empty, Failure("enforcement_unavailable")
 	}
 	if !reply.Ready {
@@ -323,8 +326,12 @@ func (c ControllerClient) exchange(ctx context.Context, request controlRequest, 
 }
 
 func readControl(reader io.Reader, target any) error {
-	line, err := bufio.NewReaderSize(io.LimitReader(reader, maxControlBytes+1), maxControlBytes+1).ReadSlice('\n')
-	if err != nil || len(line) > maxControlBytes {
+	return readFrame(reader, target, maxControlBytes)
+}
+
+func readFrame(reader io.Reader, target any, limit int) error {
+	line, err := bufio.NewReaderSize(io.LimitReader(reader, int64(limit)+1), limit+1).ReadSlice('\n')
+	if err != nil || len(line) > limit {
 		return Failure("controller_message_invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(line))

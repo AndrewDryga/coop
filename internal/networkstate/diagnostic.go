@@ -285,7 +285,8 @@ func validateDiagnosticDenial(d networkview.Denial, fingerprint string) error {
 		} else if d.Port != nil {
 			return bad // DNS and availability evidence did not observe a transport port.
 		}
-	case "socket-inventory":
+	case "kernel", "socket-inventory":
+		// The filter records each IPv4 connection it refuses; a socket caught connecting is the record for the rest.
 		if d.Basis != "observed-socket-and-captured-policy" || d.Kind != "direct_tcp_attempt" || d.Port == nil || *d.Port < 1 || *d.Port > 65535 {
 			return bad
 		}

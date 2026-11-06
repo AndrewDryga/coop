@@ -106,6 +106,8 @@ type Collector struct {
 	inventoryAt                 *time.Time
 	inventoryGap                bool
 	previousAttempts            map[socketAttemptKey]struct{}
+	refused                     map[RefusedAttempt]struct{} // the kernel's refused set as last read
+	refusedFull                 bool                        // the set was full, so a refusal may be unrecorded
 	previousUnknown             map[socketAttemptKey]struct{}
 	pending                     map[socketAttemptKey]pendingSocket
 	boundary                    boundary
@@ -593,6 +595,40 @@ func (c *Collector) socketID(key socketAttemptKey) string {
 	return c.opaque("socket", fmt.Sprintf("%s/%s/%d/%d", key.Tuple.Local, key.Tuple.Peer, key.UID, key.Inode))
 }
 
+// recordRefused turns the kernel's own record of refused agent connections into blocked attempts,
+// once each: an entry stays in the set for RefusedAttemptLifetime, so a later read that still
+// lists it is the same attempt. Port 0 is counted but cannot be a port in a record.
+func (c *Collector) recordRefused(refused []RefusedAttempt, sequence networkview.Count, at time.Time) {
+	current := make(map[RefusedAttempt]struct{}, len(refused))
+	for _, attempt := range refused {
+		current[attempt] = struct{}{}
+		if _, seen := c.refused[attempt]; !seen && attempt.Peer.Port() != 0 {
+			c.recordAttempt(c.opaque("refused-attempt", fmt.Sprintf("%s/%d/%d", attempt.Peer, attempt.SourcePort, sequence)), "kernel", sequence, attempt.Peer, at)
+		}
+	}
+	c.refused = current
+	c.refusedFull = c.refusedFull || len(refused) >= MaxRefusedAttempts
+}
+
+// recordAttempt keeps one blocked direct TCP attempt. An address this run's resolver answered for
+// one name is that name on a port or transport no rule allows (plain HTTP to a TLS-only name, or a
+// port its rule does not list), which is what a person looks the refusal up by. The observed peer
+// stays the evidence beside it.
+func (c *Collector) recordAttempt(id, source string, sequence networkview.Count, peer netip.AddrPort, at time.Time) {
+	port := int(peer.Port())
+	reason := "fixed_egress_policy"
+	if protectedSocketPeer(peer.Addr(), c.resolver.protected) {
+		reason = "protected_destination"
+	}
+	c.denials = append(c.denials, networkview.Denial{ID: id, Source: source, Sequence: sequence, Basis: "observed-socket-and-captured-policy",
+		Kind: "direct_tcp_attempt", Reason: reason, Peer: peer.String(), Port: &port, Name: c.resolver.NameFor(peer.Addr()),
+		DestinationID: c.opaque("peer", peer.String()), At: at})
+	if len(c.denials) > MaxDenialDetails {
+		c.denials = c.denials[1:]
+		c.loseDetail()
+	}
+}
+
 func (c *Collector) firstUnknown(key socketAttemptKey, completeInventory bool) bool {
 	if _, seen := c.previousUnknown[key]; seen {
 		return false
@@ -796,6 +832,9 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 			k, kernel.Counters = &value, &value
 		}
 		s.AddressGrants = c.addressGrants(k.Grants)
+		if kernel.Sequence >= c.lastKernel.Sequence {
+			c.recordRefused(k.Refused, kernel.Sequence, s.AsOf)
+		}
 		denied := k.DeniedAgent
 		if !networkview.Add(&denied, uint64(k.ProtectedAgent)) {
 			c.kernelPartial = true
@@ -829,27 +868,16 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 				return false
 			}
 			current[key] = struct{}{}
-			if _, seen := c.previousAttempts[key]; !seen {
+			// The filter records every IPv4 connection it refuses (recordRefused), so a socket
+			// caught connecting is the record only for the rest.
+			if _, seen := c.previousAttempts[key]; !seen && !row.Tuple.Peer.Addr().Is4() {
 				if !exact {
 					c.loseDetail()
 					c.detailUnknown = true
 					return true
 				}
-				port := int(row.Tuple.Peer.Port())
-				reason := "fixed_egress_policy"
-				if protectedSocketPeer(row.Tuple.Peer.Addr(), c.resolver.protected) {
-					reason = "protected_destination"
-				}
-				// An address this run's resolver answered for one name is that name on a port or
-				// transport no rule allows (plain HTTP to a TLS-only name), which is what a person
-				// looks the refusal up by. The observed peer stays the evidence beside it.
-				c.denials = append(c.denials, networkview.Denial{ID: c.opaque("socket-attempt", fmt.Sprintf("%s/%s/%d/%d/%d", row.Tuple.Local, row.Tuple.Peer, row.UID, row.Inode, c.inventorySequence)),
-					Source: "socket-inventory", Sequence: c.inventorySequence, Basis: "observed-socket-and-captured-policy", Kind: "direct_tcp_attempt", Reason: reason, Peer: row.Tuple.Peer.String(), Port: &port,
-					Name: c.resolver.NameFor(row.Tuple.Peer.Addr()), DestinationID: c.opaque("peer", row.Tuple.Peer.String()), At: s.AsOf})
-				if len(c.denials) > MaxDenialDetails {
-					c.denials = c.denials[1:]
-					c.loseDetail()
-				}
+				c.recordAttempt(c.opaque("socket-attempt", fmt.Sprintf("%s/%s/%d/%d/%d", row.Tuple.Local, row.Tuple.Peer, row.UID, row.Inode, c.inventorySequence)),
+					"socket-inventory", c.inventorySequence, row.Tuple.Peer, s.AsOf)
 			}
 			return true
 		})
@@ -1127,10 +1155,13 @@ func (c *Collector) publish(kernel KernelSample, kernelErr error, rows []SocketR
 	if truncation != nil && !networkview.Add(&omitted, truncation.omitted) {
 		omittedExact = false
 	}
-	s.Loss = networkview.Loss{Records: networkview.Count(c.guardTotals.Lost), Unknown: c.envoyTotals.UnknownLoss || c.proxyPartial || c.detailUnknown || c.boundaryGap != "",
-		DetailTruncated: c.detailLost > 0 || unknown > MaxUnknownDetails || remnants > MaxUnknownDetails || truncation != nil || c.historyIdentityLost}
-	if omittedExact && !c.detailUnknown && !c.historyIdentityLost {
+	s.Loss = networkview.Loss{Records: networkview.Count(c.guardTotals.Lost), Unknown: c.envoyTotals.UnknownLoss || c.proxyPartial || c.detailUnknown || c.boundaryGap != "" || c.refusedFull,
+		DetailTruncated: c.detailLost > 0 || unknown > MaxUnknownDetails || remnants > MaxUnknownDetails || truncation != nil || c.historyIdentityLost || c.refusedFull}
+	if omittedExact && !c.detailUnknown && !c.historyIdentityLost && !c.refusedFull {
 		s.Loss.OmittedDetails = &omitted
+	}
+	if c.refusedFull {
+		s.Loss.Reasons = append(s.Loss.Reasons, "refused_attempt_capacity")
 	}
 	if !networkview.Add(&s.Loss.Records, c.envoyTotals.Lost) {
 		s.Loss.Unknown = true

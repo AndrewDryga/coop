@@ -523,8 +523,10 @@ What the report shows depends on what co:op could record:
 - A blocked DNS lookup doesn't record which port the program wanted, so `coop net blocked` shows a
   rule for TLS on port 443, labeled as the likely fix.
 - A direct connection to an address the run looked up, such as `http://` to a name approved only
-  for TLS, is listed under that name with the address beside it, so `coop net blocked <host>`
-  finds it. An address that two looked-up names share is listed as an address.
+  for TLS or `https://` to a port its rule doesn't list, is listed under that name with the address
+  and port beside it, so `coop net blocked <host>` finds it. For a port other than 80, it shows a
+  rule for TLS on that port, labeled as the likely fix. An address that two looked-up names share
+  is listed as an address.
 - For raw traffic, the kernel counts packets and bytes for each approved address rule. These
   appear under `Raw traffic` in `coop net inspect`, each row named by its rule, such as
   `10.42.8.0/24:5432 · TCP`, and as `address_grants` in `--json`. Individual hosts within a CIDR

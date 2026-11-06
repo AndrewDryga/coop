@@ -263,9 +263,15 @@ func TestCollectorUnavailableEnforcerCannotReportOverallAvailable(t *testing.T) 
 	}
 }
 
+// ipv6Attempt is an agent socket caught connecting to an IPv6 address. The filter records every IPv4
+// connection it refuses itself, so a socket sample is the record only for the rest.
+func ipv6Attempt(inode uint64, local uint16) SocketRow {
+	return SocketRow{UID: 1000, Inode: inode, State: "connecting", Tuple: SocketTuple{Local: netip.AddrPortFrom(netip.MustParseAddr("fd00::2"), local), Peer: netip.MustParseAddrPort("[2001:db8::7]:80")}}
+}
+
 func TestBlockedDirectSocketIsSampledPolicyEvidenceNotExternalTraffic(t *testing.T) {
 	c, now := collectorFixture(t)
-	row := SocketRow{UID: 1000, Inode: 42, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort("169.254.169.254:80")}}
+	row := ipv6Attempt(42, 32000)
 	publishFixture(c, *now, []SocketRow{row})
 	s := c.Snapshot()
 	if len(s.Denials) != 1 || *s.LiveConnections != 0 || *s.UnknownConnections != 0 || s.Coverage.ProxyBytes.Status != "exact" || *s.Counters.DeniedPackets != 0 {
@@ -290,6 +296,106 @@ func TestBlockedDirectSocketIsSampledPolicyEvidenceNotExternalTraffic(t *testing
 	}
 }
 
+// refusedSample is the controller's sample after the filter refused these agent connections.
+func refusedSample(sequence networkview.Count, now BootInstant, refused ...RefusedAttempt) KernelSample {
+	return KernelSample{Sequence: sequence, BootAt: now, At: time.Unix(100, 0), EnforcerReady: true,
+		Counters: &KernelCounters{DeniedAgent: networkview.Count(len(refused)), Refused: refused}}
+}
+
+// A refused connection fails in milliseconds, so no socket sample sees it connecting: the filter's own
+// record of the refusal is the evidence. `curl http://example.com` and `curl https://example.com:8443`,
+// with only TLS on 443 approved, are both found by the name the run resolved, with the address and
+// port; a protected address keeps its own reason.
+func TestCollectorRecordsRefusalsTooFastForASocketSample(t *testing.T) {
+	c, now := collectorFixture(t)
+	c.resolver.cache["example.com"] = cacheEntry{resolution: Resolution{Name: "example.com", Expires: now.Add(time.Minute),
+		Addresses: []netip.Addr{netip.MustParseAddr("104.20.23.154")}}}
+	plain := RefusedAttempt{Peer: netip.MustParseAddrPort("104.20.23.154:80"), SourcePort: 40001}
+	unlisted := RefusedAttempt{Peer: netip.MustParseAddrPort("104.20.23.154:8443"), SourcePort: 40002}
+	metadata := RefusedAttempt{Peer: netip.MustParseAddrPort("169.254.169.254:80"), SourcePort: 40003}
+	sequence := networkview.Count(0)
+	read := func(rows []SocketRow, refused ...RefusedAttempt) []networkview.Denial {
+		t.Helper()
+		sequence++
+		c.publish(refusedSample(sequence, *now, refused...), nil, rows, nil, nil, nil, true)
+		return c.Snapshot().Denials
+	}
+	denials := read(nil, plain, unlisted, metadata)
+	if len(denials) != 3 {
+		t.Fatalf("recorded %d refusals, want 3: %#v", len(denials), denials)
+	}
+	for i, want := range []struct {
+		peer         string
+		port         int
+		name, reason string
+	}{
+		{"104.20.23.154:80", 80, "example.com", "fixed_egress_policy"},
+		{"104.20.23.154:8443", 8443, "example.com", "fixed_egress_policy"},
+		{"169.254.169.254:80", 80, "", "protected_destination"},
+	} {
+		d := denials[i]
+		if d.Source != "kernel" || d.Kind != "direct_tcp_attempt" || d.Basis != "observed-socket-and-captured-policy" || d.Sequence != 1 || d.Peer != want.peer ||
+			d.Port == nil || *d.Port != want.port || d.Name != want.name || d.Reason != want.reason || d.Candidate != nil || d.At.IsZero() {
+			t.Errorf("refusal %d = %#v; want %s named %q for %s", i, d, want.peer, want.name, want.reason)
+		}
+	}
+	// An entry stays in the set for its lifetime, so a later read that still lists it is the same
+	// attempt; another source port to the same place is another attempt, and so is an entry that
+	// expired and came back.
+	if got := read(nil, plain, unlisted, metadata); len(got) != 3 {
+		t.Fatalf("reading the same set again recorded %d refusals, want 3", len(got))
+	}
+	if got := read(nil, plain, RefusedAttempt{Peer: plain.Peer, SourcePort: 40004}); len(got) != 4 {
+		t.Fatalf("a second attempt at one destination recorded %d refusals, want 4", len(got))
+	}
+	read(nil)
+	if got := read(nil, plain); len(got) != 5 || got[4].ID == got[0].ID {
+		t.Fatalf("a refusal that expired and came back = %d refusals (want 5) with a fresh identity", len(got))
+	}
+	// A blocking connect can still be caught connecting: the kernel's record is the one kept.
+	caught := SocketRow{UID: 1000, Inode: 77, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:40005"), Peer: netip.MustParseAddrPort("104.20.23.154:9443")}}
+	got := read([]SocketRow{caught}, plain, RefusedAttempt{Peer: caught.Tuple.Peer, SourcePort: 40005})
+	if len(got) != 6 || got[5].Source != "kernel" || got[5].Peer != "104.20.23.154:9443" {
+		t.Fatalf("a refused connection caught connecting was recorded %d times: %#v", len(got)-5, got[5:])
+	}
+	s := c.Snapshot()
+	if *s.LiveConnections != 0 || *s.UnknownConnections != 0 || s.Loss.DetailTruncated || s.Loss.Unknown || len(s.Loss.Reasons) != 0 {
+		t.Fatalf("recorded refusals became traffic or loss: live=%d unknown=%d loss=%#v", *s.LiveConnections, *s.UnknownConnections, s.Loss)
+	}
+	if private, _ := json.Marshal(c.Snapshot().Project(false)); strings.Contains(string(private), "104.20.23.154") || strings.Contains(string(private), "example.com") {
+		t.Fatal("a recorded refusal leaked its destination through a projection that withholds destinations")
+	}
+	// A sample older than the last one read lists an older set: it cannot retire newer entries.
+	c.publish(refusedSample(sequence-1, *now), nil, nil, nil, nil, nil, true)
+	if got := read(nil, plain); len(got) != 6 {
+		t.Fatalf("an out-of-order sample re-recorded a refusal: %d", len(got))
+	}
+}
+
+// A full set records nothing new until entries expire, and the filter still refuses, so the run
+// says some blocked attempts may be missing — never how many, and never as a proxy gap.
+func TestAFullRefusedSetSaysBlockedAttemptsMayBeMissing(t *testing.T) {
+	c, now := collectorFixture(t)
+	full := make([]RefusedAttempt, MaxRefusedAttempts)
+	for i := range full {
+		full[i] = RefusedAttempt{Peer: netip.AddrPortFrom(netip.MustParseAddr("192.0.2.1"), uint16(1000+i)), SourcePort: 40000}
+	}
+	c.publish(refusedSample(1, *now, full[:MaxRefusedAttempts-1]...), nil, nil, nil, nil, nil, true)
+	if loss := c.Snapshot().Loss; loss.DetailTruncated || loss.Unknown || len(loss.Reasons) != 0 {
+		t.Fatalf("a set with room left claimed loss: %#v", loss)
+	}
+	for sequence, refused := range [][]RefusedAttempt{full, nil} {
+		c.publish(refusedSample(networkview.Count(sequence+2), *now, refused...), nil, nil, nil, nil, nil, true)
+		loss := c.Snapshot().Loss
+		if !loss.DetailTruncated || !loss.Unknown || loss.OmittedDetails != nil || !slices.Equal(loss.Reasons, []string{"refused_attempt_capacity"}) {
+			t.Fatalf("a full refused set (read %d) = %#v; want truncated, unknown, uncounted and named", sequence+2, loss)
+		}
+	}
+	if len(c.denials) != MaxRefusedAttempts {
+		t.Fatalf("recorded %d refusals from a full set, want %d", len(c.denials), MaxRefusedAttempts)
+	}
+}
+
 // A direct connection to an address this run's resolver answered for one name is that name on a
 // port or transport no rule allows — `curl http://example.com` where only TLS is approved — so the
 // refusal carries the name a person asks `coop net blocked` about. An address two names share, or
@@ -311,12 +417,11 @@ func TestBlockedDirectSocketNamesTheHostTheRunResolved(t *testing.T) {
 	answer("shared-a.example.com", false, "198.51.100.7")
 	answer("shared-b.example.com", false, "198.51.100.7")
 	answer("broken.example.com", true, "203.0.113.9")
-	inode := uint64(40)
+	sequence := networkview.Count(0)
 	attempt := func(peer string) networkview.Denial {
 		t.Helper()
-		inode++
-		row := SocketRow{UID: 1000, Inode: inode, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort(peer)}}
-		publishFixture(c, *now, []SocketRow{row})
+		sequence++
+		c.publish(refusedSample(sequence, *now, RefusedAttempt{Peer: netip.MustParseAddrPort(peer), SourcePort: uint16(40000 + sequence)}), nil, nil, nil, nil, nil, true)
 		denials := c.Snapshot().Denials
 		return denials[len(denials)-1]
 	}
@@ -362,7 +467,7 @@ func TestUnknownOpenAgentSocketOrUnavailableEnforcerIsNotCalledBlocked(t *testin
 
 func TestSampledSocketEvidencePreservesDedupeAcrossInventoryFailure(t *testing.T) {
 	c, now := collectorFixture(t)
-	row := SocketRow{UID: 1000, Inode: 42, State: "connecting", Tuple: SocketTuple{Local: netip.MustParseAddrPort("172.17.0.2:32000"), Peer: netip.MustParseAddrPort("169.254.169.254:80")}}
+	row := ipv6Attempt(42, 32000)
 	publishFixture(c, *now, []SocketRow{row})
 	c.publish(KernelSample{Sequence: 1, BootAt: *now, Counters: &KernelCounters{}, EnforcerReady: true}, nil, nil, Failure("socket_inventory_unavailable"), nil, nil, true)
 	publishFixture(c, *now, []SocketRow{row})
@@ -384,7 +489,7 @@ func TestSocketDenialStormBoundsDetailWithoutInventingPacketTotals(t *testing.T)
 	c, now := collectorFixture(t)
 	var rows []SocketRow
 	for i := 0; i < MaxDenialDetails+20; i++ {
-		rows = append(rows, SocketRow{UID: 1000, Inode: uint64(i + 1), State: "connecting", Tuple: SocketTuple{Local: netip.AddrPortFrom(netip.MustParseAddr("172.17.0.2"), uint16(32000+i)), Peer: netip.MustParseAddrPort("169.254.169.254:80")}})
+		rows = append(rows, ipv6Attempt(uint64(i+1), uint16(32000+i)))
 	}
 	publishFixture(c, *now, rows)
 	if len(c.denials) != MaxDenialDetails || c.detailLost != 20 || *c.snapshot.Counters.DeniedPackets != 0 || *c.snapshot.LiveConnections != 0 {

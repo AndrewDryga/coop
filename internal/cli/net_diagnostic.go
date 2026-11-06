@@ -732,9 +732,9 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 		fmt.Fprintf(w, "\nAdd this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(candidate.Rule), p.Cyan("coop approve"))
 		return
 	}
-	if rule, ok := netLikelyRule(explanation); ok {
-		fmt.Fprintf(w, "\nLikely fix: most programs look up a name to connect over HTTPS on port 443.\n"+
-			"If this one did, add this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n", netRuleYAML(rule), p.Cyan("coop approve"))
+	if rule, assumption, ok := netLikelyRule(explanation); ok {
+		fmt.Fprintf(w, "\nLikely fix: %s, add this rule under box.egress_rules in .agent/project.yaml:\n\n%s\nThen run:\n  %s\n",
+			assumption, netRuleYAML(rule), p.Cyan("coop approve"))
 		return
 	}
 	if reason := netNoDraftReason(first); reason != "" {
@@ -742,20 +742,39 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 	}
 }
 
-// netLikelyRule is the one draft a port-less record earns. A lookup refused only because no rule
-// names the host proves the name, not the port, so TLS on 443 — what most lookups are for — is
-// offered as the likely fix rather than as something the record proved. Any other cause beside it
-// (a protected answer, a connection on a known port) leaves the decision to that evidence.
-func netLikelyRule(explanation netExplanation) (egress.Rule, bool) {
-	name := ""
+// netLikelyRule is the one draft a record that cannot prove a rule earns, with what it assumes. A
+// lookup refused only because no rule names the host proves the name, not the port, so TLS on 443
+// — what most lookups are for — is offered as the likely fix rather than as something the record
+// proved. A direct connection to a name the run resolved proves the name and port but not TLS, the
+// one thing a rule for a name allows, so TLS on its port is the likely fix — except on port 80,
+// where plain HTTP is what it almost surely was. Any other cause beside these (a protected answer,
+// a connection the gateway refused) leaves the decision to that evidence.
+func netLikelyRule(explanation netExplanation) (egress.Rule, string, bool) {
+	name, lookups := "", 0
+	var ports []int
 	for _, cause := range explanation.Causes {
 		event := cause.Explanation.Event
-		if event.Kind != "dns_denied" || event.Reason != "unapproved_name" || event.Name == "" || name != "" && event.Name != name {
-			return egress.Rule{}, false
+		if event.Name == "" || name != "" && event.Name != name {
+			return egress.Rule{}, "", false
 		}
 		name = event.Name
+		switch {
+		case event.Kind == "dns_denied" && event.Reason == "unapproved_name":
+			lookups++
+		case event.Kind == "direct_tcp_attempt" && event.Reason == "fixed_egress_policy" && event.Port != nil && *event.Port != 80:
+			ports = append(ports, *event.Port)
+		default:
+			return egress.Rule{}, "", false
+		}
 	}
-	return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: []int{443}}, name != ""
+	switch {
+	case name == "" || lookups != 0 && len(ports) != 0:
+		return egress.Rule{}, "", false
+	case lookups != 0:
+		return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: []int{443}}, "most programs look up a name to connect over HTTPS on port 443.\nIf this one did", true
+	}
+	slices.Sort(ports)
+	return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: slices.Compact(ports)}, "if the program used TLS, as https:// does", true
 }
 
 // netBlockedCause is the sentence one refusal reads as. The retained reason
@@ -782,13 +801,14 @@ func netBlockedCause(explanation networkstate.EventExplanation, grouped bool) st
 	case "protected_destination", "unsafe_dns_answer":
 		return "This address is protected. Project rules cannot allow it."
 	case "fixed_egress_policy":
-		// A direct connection skips the gateway: plain TCP to an address, which a rule for the
-		// name it resolved from never covers. That is the surprise when the name is approved.
+		// A direct connection skips the gateway: TCP to an address on a port the gateway does not
+		// capture, which a rule for the name it resolved from covers only as TLS on a listed port.
+		// That is the surprise when the name is approved.
 		if grouped {
 			return "No approved rule allowed the direct connection."
 		}
 		if event.Name != "" {
-			return "No approved rule allowed this direct connection. A rule for a hostname covers TLS only."
+			return "No approved rule allowed this direct connection. A rule for a hostname covers TLS only, on the ports it lists."
 		}
 		return "No approved rule allowed this direct connection."
 	case "tls_ech_unsupported":

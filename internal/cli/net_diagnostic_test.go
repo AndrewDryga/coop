@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -444,13 +445,61 @@ func TestBlockedFindsADirectConnectionByTheNameTheRunResolved(t *testing.T) {
 		}
 	})
 	for _, want := range []string{"example.com:80 was blocked\n", " · address 104.20.23.154\n",
-		"\nNo approved rule allowed this direct connection. A rule for a hostname covers TLS only.\n"} {
+		"\nNo approved rule allowed this direct connection. A rule for a hostname covers TLS only, on the ports it lists.\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("blocked lost %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "- to:") || strings.Contains(got, "No recorded block") {
 		t.Errorf("an attributed direct connection was missed or drafted a rule:\n%s", got)
+	}
+}
+
+// A connection to a port the name's rule does not list — `curl https://example.com:8443` with only
+// 443 approved — is refused by the filter, which records it with the name the run resolved. TLS on
+// that port is the one rule a hostname can carry, so it is drafted as the likely fix: the record
+// proves the name and port, not that the program spoke TLS.
+func TestBlockedDraftsTheUnlistedPortOfAResolvedName(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	at := time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)
+	refused := func(id string, sequence networkview.Count, port int) networkview.Denial {
+		return networkview.Denial{ID: strings.Repeat(id, 16), Source: "kernel", Basis: "observed-socket-and-captured-policy", Sequence: sequence,
+			Kind: "direct_tcp_attempt", Reason: "fixed_egress_policy", Name: "example.com", Peer: "104.20.23.154:" + strconv.Itoa(port), Port: &port, At: at}
+	}
+	run := netSealRun(t, store, netRecordRun(t, store, project), refused("e1", 1, 8443), refused("e2", 2, 8443))
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	got := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"example.com", "--run", run.ID[:8]}); code != 0 || err != nil {
+			t.Fatalf("coop net blocked example.com --run = (%d, %v)", code, err)
+		}
+	})
+	want := "example.com:8443 was blocked\n  Run " + networkreport.ShortID(run.ID) + " · " + networkreport.WhenAt(time.Now(), at) + " · address 104.20.23.154\n\n" +
+		"No approved rule allowed this direct connection. A rule for a hostname covers TLS only, on the ports it lists. It happened 2 times.\n\n" +
+		"Likely fix: if the program used TLS, as https:// does, add this rule under box.egress_rules in .agent/project.yaml:\n\n" +
+		"  - to: {domain: \"example.com\"}\n    protocol: tls\n    ports: [8443]\n\nThen run:\n  coop approve\n"
+	if got != want {
+		t.Errorf("blocked for an unlisted port:\n%s\nwant:\n%s", got, want)
+	}
+	// Two unlisted ports draft one rule for both; plain HTTP's port 80 beside them drafts nothing,
+	// because no rule for a hostname could have allowed that.
+	var b bytes.Buffer
+	causes := func(ports ...int) netExplanation {
+		explanation := netExplanation{RunID: netTestRun, Host: "example.com"}
+		for i, port := range ports {
+			event := refused("f"+strconv.Itoa(i), networkview.Count(i+1), port)
+			explanation.Causes = append(explanation.Causes, netExplainCause{Count: 1, Explanation: networkstate.EventExplanation{RunID: netTestRun, Event: event}})
+		}
+		return explanation
+	}
+	writeNetExplanation(&b, ui.Palette{}, time.Now(), causes(9443, 8443))
+	if !strings.Contains(b.String(), "  - to: {domain: \"example.com\"}\n    protocol: tls\n    ports: [8443, 9443]\n") {
+		t.Errorf("two unlisted ports did not draft one rule:\n%s", b.String())
+	}
+	b.Reset()
+	writeNetExplanation(&b, ui.Palette{}, time.Now(), causes(8443, 80))
+	if strings.Contains(b.String(), "- to:") {
+		t.Errorf("a plain HTTP attempt beside an unlisted port drafted a rule:\n%s", b.String())
 	}
 }
 

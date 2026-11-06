@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -104,15 +106,39 @@ func TestKernelSamplingIsCachedAndIndependentOfControl(t *testing.T) {
 }
 
 func TestKernelSnapshotIsDetachedAndBounded(t *testing.T) {
-	k := kernelEvents{sample: KernelSample{Sequence: 1, Counters: &KernelCounters{DeniedAgent: 3}}}
+	refused := RefusedAttempt{Peer: netip.MustParseAddrPort("203.0.113.9:8443"), SourcePort: 52396}
+	k := kernelEvents{sample: KernelSample{Sequence: 1, Counters: &KernelCounters{DeniedAgent: 3, Refused: []RefusedAttempt{refused}}}}
 	s := k.snapshot()
 	s.Counters.DeniedAgent = 99
-	if k.snapshot().Counters.DeniedAgent != 3 {
+	s.Counters.Refused[0].SourcePort = 1
+	if k.snapshot().Counters.DeniedAgent != 3 || k.snapshot().Counters.Refused[0] != refused {
 		t.Fatal("caller mutated sampling cache")
 	}
 	data, err := json.Marshal(controlReply{Kernel: &s})
 	if err != nil || len(data) >= maxControlBytes {
 		t.Fatal("counter reply exceeds private frame")
+	}
+	// The widest reply the controller can send — every grant counter and a full refused set at
+	// their largest values — fits the reply frame and reads back whole.
+	most := networkview.Count(^uint64(0))
+	widest := KernelCounters{DeniedAgent: most, ProtectedAgent: most, DeniedService: most, DeniedIngress: most, Grants: map[string]GrantCount{}}
+	for i := range MaxKernelGrantCounters {
+		widest.Grants[fmt.Sprintf("grant_%024x", i)] = GrantCount{Packets: most, Bytes: most}
+	}
+	for i := range MaxRefusedAttempts {
+		widest.Refused = append(widest.Refused, RefusedAttempt{Peer: netip.AddrPortFrom(netip.AddrFrom4([4]byte{255, 255, 255, byte(i)}), 65535), SourcePort: 65535})
+	}
+	reply := controlReply{Identity: Identity{Clock: ClockDomain{BootID: strings.Repeat("f", 36), TimeNamespace: "18446744073709551615", BootOffset: strings.Repeat("9", 40)},
+		RunID: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), PolicyFingerprint: strings.Repeat("c", 64)}, Version: PrivateProtocolVersion, Ready: true,
+		Kernel: &KernelSample{Sequence: most, At: time.Now(), BootAt: BootInstant(1<<62 + 1), StartedBoot: BootInstant(1<<62 + 1), Counters: &widest, EnforcerReady: true}}
+	frame, err := json.Marshal(reply)
+	if err != nil || len(frame)+1 > maxControlReplyBytes {
+		t.Fatalf("the widest counters reply (%d bytes) exceeds the reply frame (%d)", len(frame)+1, maxControlReplyBytes)
+	}
+	var back controlReply
+	if err := readFrame(strings.NewReader(string(frame)+"\n"), &back, maxControlReplyBytes); err != nil || len(back.Kernel.Counters.Refused) != MaxRefusedAttempts ||
+		len(back.Kernel.Counters.Grants) != MaxKernelGrantCounters {
+		t.Fatalf("the widest counters reply did not read back whole: %v", err)
 	}
 	out := &boundedOutput{limit: 5}
 	if _, err := out.Write([]byte("12345")); err != nil {
@@ -198,6 +224,63 @@ func TestKernelTerminalBarrierWakesTheSampler(t *testing.T) {
 	}
 	if took := time.Since(began); took > 500*time.Millisecond {
 		t.Fatalf("the terminal barrier waited %s for the sampler's tick", took)
+	}
+}
+
+// refusedSetFixture is `nft -j list set inet coop_net refused4` as pinned nft 1.0.2 printed it in a
+// box (2026-11-06) after two refused connections; an empty set prints no "elem" at all.
+func refusedSetFixture(elements string) string {
+	set := `{"family": "inet", "name": "refused4", "table": "coop_net", "type": ["ipv4_addr", "inet_service", "inet_service"], "handle": 5, "size": 128, "flags": ["timeout"], "timeout": 10`
+	if elements != "" {
+		set += `, "elem": [` + elements + `]`
+	}
+	return `{"nftables": [{"metainfo": {"version": "1.0.2", "release_name": "Lester Gooch", "json_schema_version": 1}}, {"set": ` + set + `}}]}`
+}
+
+func TestRefusedSetParserReadsOnlyThePinnedShape(t *testing.T) {
+	const two = `{"elem": {"val": {"concat": ["203.0.113.10", 80, 44032]}, "expires": 6}}, {"elem": {"val": {"concat": ["203.0.113.9", 8443, 52396]}, "expires": 5}}`
+	got, err := parseRefusedAttempts([]byte(refusedSetFixture(two)))
+	want := []RefusedAttempt{{Peer: netip.MustParseAddrPort("203.0.113.10:80"), SourcePort: 44032}, {Peer: netip.MustParseAddrPort("203.0.113.9:8443"), SourcePort: 52396}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("refused set = %v, %v; want %v", got, err, want)
+	}
+	if got, err := parseRefusedAttempts([]byte(refusedSetFixture(""))); err != nil || len(got) != 0 {
+		t.Fatalf("an empty set = %v, %v", got, err)
+	}
+	// The agent can dial port 0: it is read, never a reason to lose the sample.
+	if got, err := parseRefusedAttempts([]byte(refusedSetFixture(`{"elem": {"val": {"concat": ["203.0.113.10", 0, 44032]}, "expires": 6}}`))); err != nil || len(got) != 1 || got[0].Peer.Port() != 0 {
+		t.Fatalf("port 0 = %v, %v", got, err)
+	}
+	element := func(i int) string {
+		return fmt.Sprintf(`{"elem": {"val": {"concat": ["192.0.2.1", %d, 40000]}, "expires": 9}}`, i+1)
+	}
+	var full []string
+	for i := range MaxRefusedAttempts + 1 {
+		full = append(full, element(i))
+	}
+	if got, err := parseRefusedAttempts([]byte(refusedSetFixture(strings.Join(full[:MaxRefusedAttempts], ", ")))); err != nil || len(got) != MaxRefusedAttempts {
+		t.Fatalf("a full set = %d, %v", len(got), err)
+	}
+	valid := refusedSetFixture(two)
+	for _, text := range []string{
+		strings.Replace(valid, `"coop_net"`, `"other"`, 1),
+		strings.Replace(valid, `"refused4"`, `"leases4"`, 1),
+		strings.Replace(valid, `"inet"`, `"ip"`, 1),
+		strings.Replace(valid, `"203.0.113.10"`, `"2001:db8::1"`, 1),
+		strings.Replace(valid, `"203.0.113.10"`, `"203.0.113.010"`, 1),
+		strings.Replace(valid, `80, 44032`, `65536, 44032`, 1),
+		strings.Replace(valid, `80, 44032`, `"80", 44032`, 1),
+		strings.Replace(valid, `80, 44032`, `80.0, 44032`, 1),
+		strings.Replace(valid, `80, 44032`, `80`, 1),
+		strings.Replace(valid, `{"elem": {"val": {"concat": ["203.0.113.10", 80, 44032]}, "expires": 6}}`, `{"concat": ["203.0.113.10", 80, 44032]}`, 1),
+		strings.Replace(valid, `]}}]}`, `]}}, {"set": {"family": "inet", "name": "refused4", "table": "coop_net"}}]}`, 1),
+		refusedSetFixture(strings.Join(full, ", ")),
+		`{"nftables": [{"metainfo": {"version": "1.0.2"}}]}`,
+		valid + `{}`, `{}`,
+	} {
+		if got, err := parseRefusedAttempts([]byte(text)); err == nil {
+			t.Errorf("accepted a refused set that is not the one this gateway installed (%v):\n%s", got, text[:min(len(text), 200)])
+		}
 	}
 }
 

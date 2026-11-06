@@ -216,6 +216,31 @@ func TestNetworkExplainKeepsTheRefusedRequestClass(t *testing.T) {
 	}
 }
 
+// The filter records each IPv4 connection it refuses, and a socket caught connecting is the record
+// for the rest: either is a direct TCP attempt, and it carries the port it was refused on.
+func TestDirectAttemptsFromTheFilterOrASocketSampleAreExplainable(t *testing.T) {
+	port := 8443
+	for _, source := range []string{"kernel", "socket-inventory"} {
+		attempt := networkview.Denial{ID: strings.Repeat("d", 32), Source: source, Sequence: 1, Basis: "observed-socket-and-captured-policy",
+			Kind: "direct_tcp_attempt", Reason: "fixed_egress_policy", Name: "example.com", Peer: "104.20.23.154:8443", Port: &port, At: time.Now().UTC()}
+		if err := validateDiagnosticDenial(attempt, strings.Repeat("f", 64)); err != nil {
+			t.Errorf("a %s direct attempt was refused: %v", source, err)
+		}
+		for name, change := range map[string]func(*networkview.Denial){
+			"kind":  func(d *networkview.Denial) { d.Kind = "tls_denied" },
+			"basis": func(d *networkview.Denial) { d.Basis = "observed" },
+			"port":  func(d *networkview.Denial) { d.Port = nil },
+			"peer":  func(d *networkview.Denial) { d.Peer = "104.20.23.154:443" },
+		} {
+			changed := attempt
+			change(&changed)
+			if validateDiagnosticDenial(changed, strings.Repeat("f", 64)) == nil {
+				t.Errorf("a %s direct attempt with a wrong %s was accepted", source, name)
+			}
+		}
+	}
+}
+
 func TestNetworkWhyRawAddressUsesRetainedPolicyAndRedacts(t *testing.T) {
 	s, old := executionFixture(t)
 	mode := egress.Filtered

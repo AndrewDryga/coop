@@ -22,6 +22,12 @@ const (
 	// Qualified amd64/arm64 kernels use HZ >= 100. Account for both timeout
 	// truncation and current-tick phase before claiming a minimum lifetime.
 	KernelTickAllowance = 20 * time.Millisecond
+	// A refused connection fails in milliseconds, before any socket sample can see it, so the
+	// filter records each refused agent TCP connection itself (the refused4 set). An entry lives
+	// long enough for several one-second samples to read it; a full set records nothing new
+	// until entries expire, but still refuses.
+	MaxRefusedAttempts     = 128
+	RefusedAttemptLifetime = 10 * time.Second
 )
 
 // ApplyRules submits one bounded atomic nft transaction. Production uses a
@@ -449,6 +455,11 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
 	// the agent's TCP to ::1, which nothing can reach, is refused with a reset, which the socket
 	// takes at once; the reset is accepted on lo only. Nothing else IPv6 is accepted, and any other
 	// IPv6 packet, or one routed off lo, still falls to the counted drops.
+	//
+	// Each IPv4 refusal of the agent's TCP is preceded by a rule that adds the connection to
+	// refused4 (destination, port and the box's source port), because the refusal is too fast for a
+	// socket sample. The add is a rule of its own: a full set makes only that rule stop matching,
+	// and the refusal after it still applies.
 	rules := fmt.Sprintf(`table inet coop_net {
  counter denied_agent { }
  counter protected_agent { }
@@ -459,6 +470,7 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   elements = { %s }
  }
  set leases4 { type ipv4_addr . inet_service; flags timeout; size 4096; gc-interval 1s; }
+ set refused4 { type ipv4_addr . inet_service . inet_service; size %d; flags dynamic,timeout; timeout %ds; }
  chain shutdown {
   type filter hook output priority -5; policy accept;
  }
@@ -480,8 +492,10 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   oifname "lo" ip protocol icmp icmp type destination-unreachable accept
   meta nfproto ipv6 oifname "lo" tcp flags & rst == rst accept
   meta nfproto ipv6 oifname "lo" icmpv6 type destination-unreachable accept
-%s  meta skuid AGENT_UID ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
-%s  meta skuid AGENT_UID counter name denied_agent reject with icmpx type admin-prohibited
+%s  meta skuid AGENT_UID ip daddr @protected4 meta l4proto tcp add @refused4 { ip daddr . tcp dport . tcp sport }
+  meta skuid AGENT_UID ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited
+%s  meta skuid AGENT_UID meta l4proto tcp add @refused4 { ip daddr . tcp dport . tcp sport }
+  meta skuid AGENT_UID counter name denied_agent reject with icmpx type admin-prohibited
   meta nfproto ipv6 counter name denied_service drop
   ct state invalid counter name denied_service drop
   ip daddr @protected4 counter name denied_service drop
@@ -507,7 +521,8 @@ func (c *Controller) initialRules(maintenance ...netip.Addr) string {
   counter name denied_ingress drop
  }
 }
-`, counters.String(), strings.Join(protected, ", "), capture, serviceEgress.String(), egressRules.String(), addressSet(maintenance),
+`, counters.String(), strings.Join(protected, ", "), MaxRefusedAttempts, int(RefusedAttemptLifetime/time.Second), capture,
+		serviceEgress.String(), egressRules.String(), addressSet(maintenance),
 		serviceIngress.String(), portSet(replies), ingressRules.String())
 	return strings.ReplaceAll(rules, "AGENT_UID", fmt.Sprint(c.agentUID))
 }

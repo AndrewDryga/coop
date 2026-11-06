@@ -3,6 +3,7 @@ package networkgateway
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -256,6 +257,46 @@ func TestOnlyLoopbackIPv6AnswersAreHeardBeforeIPv6IsDropped(t *testing.T) {
 	}
 }
 
+// A refused connection fails in milliseconds, before a socket sample can see it, so the filter
+// records each one where it refuses it: every IPv4 refusal of the agent's TCP is directly preceded
+// by the rule that adds it to refused4. The add is never part of the refusal itself, because a full
+// set stops the rule holding it, and the refusal must still apply.
+func TestEveryIPv4RefusalOfAgentTCPIsRecordedFirst(t *testing.T) {
+	rules := transportController(t, transportPolicy(t,
+		egress.Rule{To: egress.Destination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}},
+		egress.Rule{To: egress.Destination{IP: "1.1.1.1"}, Protocol: "tcp", Ports: []int{853}},
+	), nil, nil).initialRules(netip.MustParseAddr("1.1.1.1"))
+	set := fmt.Sprintf(" set refused4 { type ipv4_addr . inet_service . inet_service; size %d; flags dynamic,timeout; timeout %ds; }\n",
+		MaxRefusedAttempts, int(RefusedAttemptLifetime/time.Second))
+	if !strings.Contains(rules, set) {
+		t.Fatalf("the refused set is missing or unbounded:\n%s", rules)
+	}
+	for _, pair := range [][2]string{
+		{"  meta skuid 1000 ip daddr @protected4 meta l4proto tcp add @refused4 { ip daddr . tcp dport . tcp sport }\n",
+			"  meta skuid 1000 ip daddr @protected4 counter name protected_agent reject with icmpx type admin-prohibited\n"},
+		{"  meta skuid 1000 meta l4proto tcp add @refused4 { ip daddr . tcp dport . tcp sport }\n",
+			"  meta skuid 1000 counter name denied_agent reject with icmpx type admin-prohibited\n"},
+	} {
+		if !strings.Contains(rules, pair[0]+pair[1]) {
+			t.Errorf("refusal is not directly preceded by its record:\n%s%s--- got ---\n%s", pair[0], pair[1], rules)
+		}
+	}
+	output := rules[strings.Index(rules, " chain output {"):strings.Index(rules, " chain input {")]
+	if got := strings.Count(output, "@refused4"); got != 2 {
+		t.Errorf("refused4 appears %d times in the output chain, want the two records:\n%s", got, output)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "@refused4") && (strings.Contains(line, "reject") || strings.Contains(line, "accept") || strings.Contains(line, "drop")) {
+			t.Errorf("a record carries a verdict, so a full set would skip it: %s", line)
+		}
+	}
+	// A granted address is accepted before the record, so an allowed connection is never recorded.
+	grant := strings.Index(rules, "  meta skuid 1000 ip daddr 1.1.1.1/32 tcp dport { 853 }")
+	if record := strings.Index(rules, "  meta skuid 1000 meta l4proto tcp add @refused4"); grant < 0 || record < grant {
+		t.Error("an address grant does not precede the record of refused connections")
+	}
+}
+
 // Docker's resolver at 127.0.0.11 can forward a name it cannot answer from outside the namespace,
 // so the agent's loopback accepts must never reach it, and an attempt counts as one on a protected
 // address; its port 53 still goes to the guard, because the capture rewrites that before this
@@ -298,7 +339,7 @@ func TestATLSOnlyPolicyRendersNoPacketFilterGrants(t *testing.T) {
 	if !strings.Contains(rules, " counter denied_service { }\n set protected4 {") {
 		t.Errorf("the counter block gained a stray line:\n%s", rules)
 	}
-	if !strings.Contains(rules, "protected_agent reject with icmpx type admin-prohibited\n  meta skuid 1000 counter name denied_agent") {
+	if !strings.Contains(rules, "protected_agent reject with icmpx type admin-prohibited\n  meta skuid 1000 meta l4proto tcp add @refused4") {
 		t.Errorf("the agent deny no longer follows the protected drop directly:\n%s", rules)
 	}
 	if !strings.Contains(rules, "tcp sport { 443 } ct state established accept\n  counter name denied_ingress drop") {
