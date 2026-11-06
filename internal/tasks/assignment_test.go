@@ -846,7 +846,8 @@ func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *te
 	}
 }
 
-// A fork stopped after parking a new question but before acceptance carried it to the project. Its
+// A fork's worker died after parking a new question but before acceptance carried it to the project,
+// and no coop fork stop ran (that one carries it: TestForkStopCarriesAQuestionTheForkJustParked). Its
 // next run must not answer the new question with the project's answer to the earlier one.
 func TestResumedForkKeepsAQuestionTheProjectNeverSaw(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
@@ -896,10 +897,7 @@ func TestResumedForkKeepsAQuestionTheProjectNeverSaw(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := resume()
-	park(resumed.Owner, "Which way now?")
-	if err := PauseForkAssignments(repo, identity); err != nil { // coop fork stop, before acceptance
-		t.Fatal(err)
-	}
+	park(resumed.Owner, "Which way now?") // and the worker dies before it accepts the copy
 	resumed = resume()
 	projected, _ := mustCurrentTask(t, resumed.Owner.Projection, "decision")
 	body := readFileString(filepath.Join(projected.Dir, "decision.md"))

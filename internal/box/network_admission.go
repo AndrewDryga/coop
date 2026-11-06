@@ -88,18 +88,19 @@ func AdmitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	// Admission marks the posture it resolved on the configuration it is given, so a second one has to
 	// start from the first's starting point to resolve the same way, and to see an edit made meanwhile.
 	unmarked, first := cfg.Clone(), true
-	return admitRebuildingApproved(options, func() (*CapturedEgress, error) {
+	capture, err := admitRebuildingApproved(options, func() (*CapturedEgress, error) {
 		if first {
 			first = false
-			return admitNetwork(cfg, rt, spec, options, false)
+			return admitNetwork(cfg, rt, spec, options, nil)
 		}
 		again := unmarked.Clone()
-		capture, err := admitNetwork(again, rt, spec, options, false)
+		capture, err := admitNetwork(again, rt, spec, options, nil)
 		if err == nil {
 			cfg.SetEgress(again.Egress)
 		}
 		return capture, err
 	}, func(dfRel string) error { return RebuildApprovedProject(cfg, rt, spec, dfRel) })
+	return capture, withBuildCommand(cfg, spec, err)
 }
 
 // admitRebuildingApproved admits, and when the only thing missing is a project image a person already
@@ -121,15 +122,23 @@ func admitRebuildingApproved(options NetworkAdmission, admit func() (*CapturedEg
 // writing authority, qualifying the host or building images. A successful preview grants nothing:
 // the process that launches the box must still call AdmitNetwork with its complete provider scope.
 func CheckNetworkApproval(cfg *config.Config, spec RunSpec, options NetworkAdmission) error {
-	if cfg == nil {
-		return errors.New("restricted networking needs host configuration")
-	}
-	options.HoldPending = false
-	_, err := admitNetwork(cfg, runtime.Runtime{}, spec, options, true)
+	_, err := previewNetworkMode(cfg, spec, options)
 	return err
 }
 
-func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission, approvalOnly bool) (*CapturedEgress, error) {
+// previewNetworkMode is CheckNetworkApproval returning the mode the launch would resolve.
+func previewNetworkMode(cfg *config.Config, spec RunSpec, options NetworkAdmission) (egress.Mode, error) {
+	if cfg == nil {
+		return "", errors.New("restricted networking needs host configuration")
+	}
+	options.HoldPending = false
+	var mode egress.Mode
+	_, err := admitNetwork(cfg, runtime.Runtime{}, spec, options, &mode)
+	return mode, err
+}
+
+// admitNetwork admits, or with previewed only checks the approval and reports the mode there.
+func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission, previewed *egress.Mode) (*CapturedEgress, error) {
 	policyRepo := projectPolicyRepo(spec)
 	canonical, err := canonicalProjectDir(policyRepo)
 	if err != nil {
@@ -185,7 +194,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		return nil, err
 	}
 	mode := preview.Mode
-	if notice := ignoredHostEgress(input, mode); notice != "" && !approvalOnly {
+	if notice := ignoredHostEgress(input, mode); notice != "" && previewed == nil {
 		ui.Warn("%s", notice)
 	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
@@ -205,7 +214,8 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		options.ExistingQualification = options.ExistingQualification || broken && mode != egress.Filtered
 		mode, input = egress.Filtered, holdingAdmission(input)
 	}
-	if approvalOnly {
+	if previewed != nil {
+		*previewed = mode
 		return nil, nil
 	}
 	cfg.SetEgress(string(mode))
@@ -346,18 +356,53 @@ func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) er
 // person whose coop approve reviews the project here. A fork's approvals are its own, so a launch
 // in another checkout, such as a fork loop started from its parent, names that checkout. COOP_REPO,
 // not cd: the next command a person runs, a fork restart say, belongs in the folder they are in.
-func ApproveCommand(here, folder string) string {
-	if here != "" && SameFolder(here, folder) {
-		return "coop approve"
-	}
-	if word, ok := ui.ShellWord(folder); ok {
-		return "COOP_REPO=" + word + " coop approve"
-	}
-	return "coop approve"
+func ApproveCommand(here, folder string) string { return commandFor(here, folder, "coop approve") }
+
+// BuildCommand is ApproveCommand for `coop build --egress filtered`, which builds the checkout it
+// runs in: a fork's build files, like its approvals, are its own.
+func BuildCommand(here, folder string) string {
+	return commandFor(here, folder, "coop build --egress filtered")
 }
 
-// approvingProject is the project coop approve reviews when this process's person runs it, as
-// cli.netProject finds it: COOP_REPO, else the working folder's checkout. "" when there is none.
+// commandFor is command for the project in folder, run by a person whose coop works on the project
+// here: as it is when that is the same folder, else with COOP_REPO naming folder.
+func commandFor(here, folder, command string) string {
+	if here != "" && SameFolder(here, folder) {
+		return command
+	}
+	if word, ok := ui.ShellWord(folder); ok {
+		return "COOP_REPO=" + word + " " + command
+	}
+	return command
+}
+
+// withBuildCommand has a project build miss name the command that builds its files for this
+// process's person (BuildCommand): a launch in another checkout, such as a fork's started from its
+// parent, needs that checkout's.
+func withBuildCommand(cfg *config.Config, spec RunSpec, err error) error {
+	var required *ProjectBuildRequired
+	if errors.As(err, &required) {
+		required.Command = projectBuildCommand(cfg, projectPolicyRepo(spec))
+	}
+	return err
+}
+
+// projectBuildCommand is BuildCommand for the project in folder, from the project this process's
+// person builds.
+func projectBuildCommand(cfg *config.Config, folder string) string {
+	if canonical, err := canonicalProjectDir(folder); err == nil {
+		folder = canonical
+	}
+	here := ""
+	if cfg != nil {
+		here = approvingProject(cfg)
+	}
+	return BuildCommand(here, folder)
+}
+
+// approvingProject is the project coop approve reviews, and coop build builds, when this process's
+// person runs it, as cli.netProject finds it: COOP_REPO, else the working folder's checkout. "" when
+// there is none.
 func approvingProject(cfg *config.Config) string {
 	if cfg.RepoOverride != "" {
 		here, err := ResolveRepo(cfg.RepoOverride)

@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,4 +254,220 @@ func TestMultiQueueDecisionListingNamesForkOnUnwrittenQuestion(t *testing.T) {
 	if strings.Contains(out, "ordinary · in fork ") {
 		t.Errorf("ordinary task was labeled as fork-owned:\n%s", out)
 	}
+}
+
+// The project's log notes how its task came back, and the fork's next acceptance copies the fork's
+// log over the project's, so the unblock notes it in the fork's copy too, once.
+func TestForkAcceptanceKeepsTheProjectsUnblockedLine(t *testing.T) {
+	const answer = "Retry after verifying the marker."
+	repo, root, assignment := acceptedForkDecision(t, "decision-log", false)
+	resumed := selectResumedForkDecision(t, repo, root, assignment, answer)
+	if err := PrepareForkProjectionForRun(repo, root, "assigned", resumed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	projected, _ := mustCurrentTask(t, resumed.Owner.Projection, "assigned")
+	if err := AppendTaskLogEntry(projected.Dir, "Retried the write once the marker checked out."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcceptForkProjection(repo, root, "assigned", resumed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	canonical, _ := mustCurrentTask(t, root, "assigned")
+	log := readFileString(filepath.Join(canonical.Dir, "log.md"))
+	if strings.Count(log, "- "+unblockedNote(answer)+"\n") != 1 || !strings.Contains(log, "Retried the write") {
+		t.Errorf("project log after the fork's acceptance:\n%s\nwant the fork's entry and one %q line", log, unblockedNote(answer))
+	}
+}
+
+// coop fork stop holds the lock the worker's acceptance waits on, so a stop that lands after the fork
+// parked its task on a question carries that question to the project itself, whether the task was a
+// new one or came back answered. A task answered and waiting for the fork's next pass keeps its copy
+// blocked, with the answer, until that pass restores it: the stop leaves that one alone.
+func TestForkStopCarriesAQuestionTheForkJustParked(t *testing.T) {
+	repo, root, assignment := proposalAssignment(t, "decision-stop")
+	park := func(owner ForkTaskOwner, question string) {
+		t.Helper()
+		projected, _ := mustCurrentTask(t, owner.Projection, "assigned")
+		if err := WriteDecision(projected.Dir, projected.ID, projected.Title, Decision{
+			Question: question, Why: "Only the owner can choose.", Options: []string{"this", "that"}, Recommendation: "this",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := MoveTaskDir(owner.Projection, projected, StateBlocked); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop := func() {
+		t.Helper()
+		if err := PauseForkAssignments(repo, assignment.Owner.Fork); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitsOn := func(question string) {
+		t.Helper()
+		canonical, _ := mustCurrentTask(t, root, "assigned")
+		body := readFileString(filepath.Join(canonical.Dir, "decision.md"))
+		owner, owned, err := ReadTaskOwnerRecord(root, "assigned")
+		if canonical.State != StateBlocked || decisionQuestion(body) != question || decisionResolution(body) != "" ||
+			err != nil || !owned || owner.Fork == nil || owner.Fork.Phase != ForkAssignmentBlocked {
+			t.Fatalf("after the stop the project's task is %s asking %q (answer %q), owner %+v, %v; want blocked on %q",
+				canonical.State, decisionQuestion(body), decisionResolution(body), owner.Fork, err, question)
+		}
+		out := captureStdout(t, func() {
+			if code, err := tasksFolderDecisions(repo, root, nil); code != 0 || err != nil {
+				t.Errorf("tasks decisions = (%d, %v)", code, err)
+			}
+		})
+		if !strings.Contains(out, question) {
+			t.Errorf("coop tasks decisions does not list %q:\n%s", question, out)
+		}
+	}
+
+	park(assignment.Owner, "Which way first?")
+	stop()
+	waitsOn("Which way first?")
+
+	if code, err := tasksFolderUnblock(repo, root, []string{"assigned", "Go this way."}); code != 0 || err != nil {
+		t.Fatalf("tasks unblock = (%d, %v)", code, err)
+	}
+	waiting := func(state string) {
+		t.Helper()
+		stop()
+		canonical, _ := mustCurrentTask(t, root, "assigned")
+		owner, _, err := ReadTaskOwnerRecord(root, "assigned")
+		if canonical.State != state || err != nil || owner.Fork == nil || owner.Fork.Phase != ForkAssignmentPaused {
+			t.Fatalf("the stop left an answered task that waits for its pass %s, owner %+v, %v; want %s and paused", canonical.State, owner.Fork, err, state)
+		}
+	}
+	waiting(StateTodo)
+	resumed, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: assignment.Owner.Fork, WorkspaceRoot: forkspace.Workspace(repo, assignment.Owner.Fork.Name),
+		BaselineHead: assignment.Owner.BaselineHead, LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil || resumed.Outcome != ForkAssignmentSelected {
+		t.Fatalf("resumed assignment = %+v, %v", resumed, err)
+	}
+	waiting(StateInProgress) // between the assignment and the restore of its copy
+	if err := errors.Join(PrepareForkProjectionForRun(repo, root, "assigned", resumed.Owner), resumed.Lease.Release()); err != nil {
+		t.Fatal(err)
+	}
+	park(resumed.Owner, "Which way now?")
+	stop()
+	waitsOn("Which way now?")
+	resumeForkDecision(t, repo, root, assignment, "Go that way.")
+}
+
+// answeredWhileStopped is a fork task a person answered after the fork stopped: in todo, its
+// assignment paused, and its copy still blocked, now asking another question than the project's
+// answered one, as a box that rewrote decision.md would leave it.
+func answeredWhileStopped(t *testing.T, name string) (string, string, ForkAssignment, string) {
+	t.Helper()
+	repo, root, assignment := acceptedForkDecision(t, name, false)
+	if code, err := tasksFolderUnblock(repo, root, []string{"assigned", "Go this way."}); code != 0 || err != nil {
+		t.Fatalf("tasks unblock = (%d, %v)", code, err)
+	}
+	projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+	writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), RenderDecision("assigned", Decision{
+		Question: "Which way now?", Why: "The box wrote it.", Options: []string{"this", "that"}, Recommendation: "this",
+	}))
+	canonical, _ := mustCurrentTask(t, root, "assigned")
+	return repo, root, assignment, readFileString(filepath.Join(canonical.Dir, "decision.md"))
+}
+
+func assertAnsweredTaskUntouched(t *testing.T, root, answered string) {
+	t.Helper()
+	canonical, _ := mustCurrentTask(t, root, "assigned")
+	owner, owned, err := ReadTaskOwnerRecord(root, "assigned")
+	if canonical.State != StateTodo || err != nil || !owned || owner.Fork == nil || owner.Fork.Phase != ForkAssignmentPaused {
+		t.Errorf("the answered task is %s, owner %+v, %v; want todo and paused", canonical.State, owner.Fork, err)
+	}
+	if got := readFileString(filepath.Join(canonical.Dir, "decision.md")); got != answered {
+		t.Errorf("the project's decision.md became\n%s\nwant the person's answer\n%s", got, answered)
+	}
+}
+
+// A stop leaves an answered task that waits for the fork's next pass alone, whatever its copy says:
+// accepting that copy wrote the box's decision.md over the person's answer before it refused todo.
+func TestForkStopLeavesATaskAnsweredWhileStoppedAlone(t *testing.T) {
+	repo, root, assignment, answered := answeredWhileStopped(t, "decision-answered")
+	if err := PauseForkAssignments(repo, assignment.Owner.Fork); err != nil {
+		t.Fatalf("stop over an answered task = %v", err)
+	}
+	assertAnsweredTaskUntouched(t, root, answered)
+}
+
+// Acceptance refuses a blocked copy of a task in todo before any of the copy's files reach the
+// project's folder.
+func TestForkAcceptanceRefusesATaskInTodoBeforeCopyingAnything(t *testing.T) {
+	repo, root, _, answered := answeredWhileStopped(t, "decision-todo")
+	owner, owned, err := ReadTaskOwnerRecord(root, "assigned")
+	if err != nil || !owned || owner.Fork == nil {
+		t.Fatalf("owner = %+v, %v", owner.Fork, err)
+	}
+	if _, err := AcceptForkProjection(repo, root, "assigned", *owner.Fork); err == nil || !strings.Contains(err.Error(), "unsupported state "+StateTodo) {
+		t.Errorf("acceptance over a task in todo = %v, want the refusal", err)
+	}
+	assertAnsweredTaskUntouched(t, root, answered)
+}
+
+// An unblock notes itself in the fork's copy of the log even when it changes no decision.md: the
+// answer was already in both copies (a plain unblock of a pre-answered decision), or the task had no
+// decision.md. The fork's next acceptance copies that log over the project's, and a retried unblock
+// notes itself once.
+func TestForkUnblockNotesItselfWithoutAChangedDecision(t *testing.T) {
+	for name, tc := range map[string]struct {
+		decision, note string
+	}{
+		"answered":    {decision: "# Decision: Which way?\n\n**Resolution:** Go this way.\n", note: unblockedNote("Go this way.")},
+		"no decision": {note: unblockedNote("")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, root, assignment := proposalAssignment(t, "decision-note")
+			projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+			if tc.decision != "" {
+				writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), tc.decision)
+			}
+			if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := AcceptForkProjection(repo, root, "assigned", assignment.Owner); err != nil {
+				t.Fatal(err)
+			}
+			if code, err := tasksFolderUnblock(repo, root, []string{"assigned"}); code != 0 || err != nil {
+				t.Fatalf("plain unblock = (%d, %v)", code, err)
+			}
+			owner, _, err := ReadTaskOwnerRecord(root, "assigned")
+			if err != nil || owner.Fork == nil {
+				t.Fatalf("owner = %+v, %v", owner.Fork, err)
+			}
+			if err := syncForkDecision(repo, root, "assigned", *owner.Fork, false); err != nil { // a retried unblock
+				t.Fatal(err)
+			}
+			resumed := selectResumedForkDecisionAfterUnblock(t, repo, root, assignment)
+			if err := PrepareForkProjectionForRun(repo, root, "assigned", resumed.Owner); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := AcceptForkProjection(repo, root, "assigned", resumed.Owner); err != nil {
+				t.Fatal(err)
+			}
+			canonical, _ := mustCurrentTask(t, root, "assigned")
+			if log := readFileString(filepath.Join(canonical.Dir, "log.md")); strings.Count(log, "- "+tc.note+"\n") != 1 {
+				t.Errorf("project log after the fork's acceptance:\n%s\nwant one %q line", log, tc.note)
+			}
+		})
+	}
+}
+
+// selectResumedForkDecisionAfterUnblock is the fork's next pass taking back a task already unblocked.
+func selectResumedForkDecisionAfterUnblock(t *testing.T, repo, root string, original ForkAssignment) ForkAssignment {
+	t.Helper()
+	resumed, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: original.Owner.Fork, WorkspaceRoot: forkspace.Workspace(repo, original.Owner.Fork.Name),
+		BaselineHead: original.Owner.BaselineHead, LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil || resumed.Outcome != ForkAssignmentSelected {
+		t.Fatalf("resumed assignment = %+v, %v", resumed, err)
+	}
+	t.Cleanup(func() { _ = resumed.Lease.Release() })
+	return resumed
 }

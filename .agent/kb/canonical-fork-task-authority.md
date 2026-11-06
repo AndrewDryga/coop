@@ -28,13 +28,23 @@ unblock the projection again and lose the new decision. The worker reads its ans
 projection, never the canonical folder, and acceptance copies the projection's decision.md back over
 the canonical one. So `resolveAndUnblock` (internal/tasks/cmd.go) copies the canonical decision.md
 into the validated projection (`syncForkDecision`) under the canonical lease, before the task returns
-to todo, and refuses, leaving the task blocked, when it cannot. The resumed restore repeats the copy
-for an unblock that stopped before it, but only over a copy that asks the same question: a fork
-stopped after parking a new question, before acceptance carried it here, keeps that question (stop
-pauses a working assignment without accepting it). Only decision.md moves; the projection's log,
-artifacts and scratch stay its own. When the task's decision.md holds an answer, the loop prompt
-starts with it (`decisionResumePrompt`, internal/loop/prompts.go), and a decision.md that cannot be
-read stops the launch.
+to todo, and refuses, leaving the task blocked, when it cannot. The unblock also notes itself in the
+projection's log.md as the canonical log does (`unblockedNote`), because acceptance copies that log
+over the canonical one: once, and also when it changes no decision.md (the answer was already in
+both copies, or there is none). The resumed restore repeats the copy for an unblock that stopped
+before it, but only over a copy that lacks the answer to its own question: a worker that died after
+parking a new question, before acceptance carried it here, keeps that question. `coop fork stop`
+holds the lifecycle lock that acceptance waits on, so `PauseForkAssignments`
+(internal/tasks/assignment.go) accepts a copy the stopped worker had parked instead of pausing it
+(`forkCopyParked`). A resumed assignment stays `paused` while it works, and its copy stays blocked
+with the answer until the pass restores it, so a paused one counts as parked only once its pass took
+the canonical task back into progress, and only when it asks another question than the canonical
+decision.md. Answered and waiting in todo, it is no new question, and acceptance refuses a blocked
+copy of a todo task before any of the copy's files reach the canonical folder: copied first, the
+copy's decision.md had replaced the person's answer. Otherwise only decision.md moves; the
+projection's other notes, artifacts and scratch stay its own. When the task's decision.md holds an
+answer, the loop prompt starts with it (`decisionResumePrompt`, internal/loop/prompts.go), and a
+decision.md that cannot be read stops the launch.
 A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
@@ -81,6 +91,14 @@ as a problem, and the service-launch locks beside it stay.
   that a fork-side read failure counted as "brought over later"; both now refuse. The baseline check
   had asked only the project's repository, which lacks a fork's unmerged commits, and `merge-base`
   in a box-written repository follows its shallow file. Verified against landed_fork.go.
+- 2026-11-06 — the unblock notes itself in the projection's log too, so the canonical "Unblocked:"
+  line survives the fork's next acceptance, and `coop fork stop` accepts a copy its worker had just
+  parked: paused, the question stayed in the fork and the next pass restored the copy as answered.
+  Found the resumed-but-`paused` phase while fixing the stop. A review found the stop accepting a
+  paused copy of a task answered and waiting in todo, which copied the box's decision.md over the
+  answer before refusing todo: a paused copy now counts only once its task is in progress again, and
+  acceptance checks the canonical state before copying (task
+  2026-11-06-close-the-last-gaps-in-carrying-fork-decisions-a).
 - 2026-11-06 — the project's decision views name the fork, and unblock says how the fork goes on
   (task 2026-11-05-let-a-person-answer-a-fork-s-blocked-decision-fr).
 - 2026-11-06 — `coop tasks unblock` copies the answer into the fork's projection, the resumed restore

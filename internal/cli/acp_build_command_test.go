@@ -126,7 +126,7 @@ func TestBuildCommandShowsTheSavedFilesBeforeBuilding(t *testing.T) {
 		t.Fatalf("the thread heard %q, want both ways to build", said)
 	}
 	threadtext.Check(t, said)
-	threadtext.Check(t, acpBuildableWaitText(true))
+	threadtext.Check(t, acpBuildableWaitText(true, "coop build --egress filtered"))
 	answer := h.send(t, "3", "/build")
 	if !strings.Contains(answer, "/private/coop/review-a/.agent/Dockerfile") || !strings.Contains(answer, "open networking") {
 		t.Fatalf("the review answer is %s", answer)
@@ -340,7 +340,7 @@ func TestBuildCommandAfterCloseBuildsNothing(t *testing.T) {
 	if answer := h.w.buildOffered(code); !strings.Contains(answer, "Nothing was built") {
 		t.Fatalf("a code during close got %q", answer)
 	}
-	if answer := h.w.offerBuild(); !strings.Contains(answer, "closing") {
+	if answer := h.w.offerBuild("coop build --egress filtered"); !strings.Contains(answer, "closing") {
 		t.Fatalf("/build during close got %q", answer)
 	}
 	if len(h.builds()) != 0 {

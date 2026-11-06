@@ -4064,8 +4064,15 @@ func releaseGoneOwner(root, id string, expected TaskOwnerRecord) (bool, error) {
 // AppendTaskLogStrict appends one host note to a task's log.md as a bullet line. A new note's opening
 // words belong in coopLogNotes, so a log holding only Coop's notes still reads as having no entry.
 func AppendTaskLogStrict(taskDir, note string) error {
-	return appendTaskLogChunk(taskDir, "\n- "+note+"\n")
+	return appendTaskLogChunk(taskDir, taskLogNote(note))
 }
+
+// appendTaskLogNoteIn is AppendTaskLogStrict for a task folder already open as root.
+func appendTaskLogNoteIn(root *os.Root, note string) error {
+	return appendTaskLogChunkIn(root, taskLogNote(note))
+}
+
+func taskLogNote(note string) string { return "\n- " + note + "\n" }
 
 // AppendTaskLogEntry appends an agent-authored entry (a heading, bullets, prose — any lines) to a
 // task's log.md, separated from what precedes it by a blank line. The in-box task channel uses it
@@ -4080,6 +4087,11 @@ func appendTaskLogChunk(taskDir, line string) error {
 		return err
 	}
 	defer root.Close()
+	return appendTaskLogChunkIn(root, line)
+}
+
+// appendTaskLogChunkIn is appendTaskLogChunk for a task folder already open as root.
+func appendTaskLogChunkIn(root *os.Root, line string) error {
 	before, statErr := root.Lstat("log.md")
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return statErr

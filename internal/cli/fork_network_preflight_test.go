@@ -4,12 +4,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -218,10 +220,13 @@ func TestRunForkLoopChecksForkWorkspaceNetworkPolicyBeforeAssigning(t *testing.T
 	assertForkNetworkTaskUnassigned(t, repo, taskID)
 }
 
-// forkBuildPreflightApp is a fork with build files no person approved: a filtered project whose
-// .agent/Dockerfile was never built, on a fixture Docker that answers info and has no images. Any
-// other Docker command fails, so nothing builds.
-func forkBuildPreflightApp(t *testing.T) (*app, string, string) {
+// unapprovedDockerfile is build files no person approved: nothing on the fixture Docker built them.
+const unapprovedDockerfile = "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\nRUN echo unapproved\n"
+
+// forkBuildPreflightApp is a filtered project whose .agent/Dockerfile, when dockerfile is not empty,
+// was never built, on a fixture Docker that answers info and has no images. Any other Docker command
+// fails, so nothing builds.
+func forkBuildPreflightApp(t *testing.T, dockerfile string) (*app, string, string) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("DOCKER_CONTEXT", "")
@@ -230,10 +235,11 @@ func forkBuildPreflightApp(t *testing.T) (*app, string, string) {
 	}))
 	repo := initRepo(t)
 	taskID := seedForkNetworkPreflightTask(t, repo)
-	for rel, body := range map[string]string{
-		project.File:        "box:\n  egress: filtered\n",
-		".agent/Dockerfile": "ARG COOP_BASE_IMAGE\nFROM ${COOP_BASE_IMAGE}\nRUN echo unapproved\n",
-	} {
+	files := map[string]string{project.File: "box:\n  egress: filtered\n"}
+	if dockerfile != "" {
+		files[".agent/Dockerfile"] = dockerfile
+	}
+	for rel, body := range files {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, rel)), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +274,7 @@ func forkBuildPreflightApp(t *testing.T) (*app, string, string) {
 // A detached start reports a build it may not run in the terminal, before a worker starts, with the
 // command that builds the fork's checkout: coop build in the project would build the project.
 func TestDetachedForkLoopChecksTheProjectBuildBeforeStarting(t *testing.T) {
-	a, repo, taskID := forkBuildPreflightApp(t)
+	a, repo, taskID := forkBuildPreflightApp(t, unapprovedDockerfile)
 	name := "unbuilt"
 	t.Setenv(detachedChildEnv, "1")
 	t.Cleanup(func() {
@@ -300,13 +306,43 @@ func TestDetachedForkLoopChecksTheProjectBuildBeforeStarting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := "Build it: COOP_REPO=" + workspace + " coop build --egress filtered"
+	build := "run 'COOP_REPO=" + workspace + " coop build --egress filtered' on the host"
 	var required *box.ProjectBuildRequired
 	if code != 1 || !errors.As(runErr, &required) || required.Approved || !strings.Contains(runErr.Error(), build) {
-		t.Errorf("detached fork with unapproved build files = (%d, %v), want exit 1 and the refusal ending %q", code, runErr, build)
+		t.Errorf("detached fork with unapproved build files = (%d, %v), want exit 1 and the refusal to %q", code, runErr, build)
 	}
 	if pathExists(forkspace.PidPath(repo, name)) {
 		t.Error("refused detached fork left a worker pid record")
 	}
 	assertForkNetworkTaskUnassigned(t, repo, taskID)
+}
+
+// A fork loop checks its build files before each task, as it checks its network approval: build files
+// a task added are refused before the next task is assigned, with the fork's own build command, not
+// by the next task's box once the fork holds that task.
+func TestForkLoopChecksItsBuildFilesBeforeEachTask(t *testing.T) {
+	a, repo, first := forkBuildPreflightApp(t, "")
+	second := "2026-11-06-fork-build-second"
+	seedForkDecisionTask(t, repo, second)
+	commitForkNetworkPreflightFixture(t, repo)
+	var ran []string
+	park := parkingForkPass(t, &ran)
+	a.forkLoopRun = func(spec loop.RunSpec) (int, error) {
+		if err := os.WriteFile(filepath.Join(spec.Repo, ".agent", "Dockerfile"), []byte(unapprovedDockerfile), 0o644); err != nil {
+			t.Error(err)
+		}
+		return park(spec)
+	}
+	ws, identity := setUpForkForDecision(t, repo, "rebuilt")
+	code, output, err := runForkLoopForDecision(t, a, repo, ws, identity)
+	workspace, wsErr := filepath.EvalSymlinks(ws)
+	if wsErr != nil {
+		t.Fatal(wsErr)
+	}
+	build := "run 'COOP_REPO=" + workspace + " coop build --egress filtered' on the host"
+	var required *box.ProjectBuildRequired
+	if !slices.Equal(ran, []string{first}) || code != 1 || !errors.As(err, &required) || !strings.Contains(err.Error(), build) {
+		t.Fatalf("fork loop = (%d, %v) after working %v; want it to stop before the next task, refusing with %q\n%s", code, err, ran, build, output)
+	}
+	assertForkNetworkTaskUnassigned(t, repo, second)
 }

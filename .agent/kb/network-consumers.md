@@ -2,7 +2,7 @@
 name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
-sources: [internal/networkstate/execution.go, internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/box/network_admission.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/meta.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/forkctl/ls.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go, internal/networkgateway/resolver.go, internal/networkgateway/collector.go, internal/networkstate/inspection.go]
+sources: [internal/networkstate/execution.go, internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/box/network_admission.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/meta.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/forkctl/ls.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go, internal/networkgateway/resolver.go, internal/networkgateway/collector.go, internal/networkstate/inspection.go, internal/box/project_preparation.go, internal/box/derived_image.go]
 updated: 2026-11-06
 ---
 
@@ -21,18 +21,24 @@ the operator's flags in their exact spelling so the detached worker admits what 
 would have (`cli/network_flags.go`). Before detaching, the parent fully admits the actual fork
 workspace (`preflightForkLoop`, `cli/fork_cmd.go`) on a copy of the configuration and closes the
 capture. It refuses what the worker would, network requests and project build files no person
-approved, naming `COOP_REPO=<fork> coop build --egress filtered` for the build because `coop build`
-builds the checkout it runs in; it rebuilds approved build files and may qualify the host. The
-read-only `box.CheckNetworkApproval` it replaced never saw a build miss, so a detached start reported
-success while its worker stopped later, holding a task. The worker still checks the workspace's
-current policy with that read-only preview before every canonical assignment, since the policy may
-change after the parent's check or an earlier task; a build change after the start is still refused
-only by the next pass, after assignment. A full admission there would also need a runtime that runs
-filtered boxes in the scheduler tests that fake the pass (`app.forkLoopRun`). The capture never
-crosses to the worker, and the ordinary loop still fully admits each run before launching boxes, so
-neither check is a launch grant or a policy identity transfer. `box.Run` reloads project policy
-before its final capture check, so a future caller that misses admission fails before mounts or
-runtime execution.
+approved; it rebuilds approved build files and may qualify the host. The read-only
+`box.CheckNetworkApproval` it replaced never saw a build miss, so a detached start reported success
+while its worker stopped later, holding a task. Before every canonical assignment the worker checks
+the workspace's current policy with that read-only preview, and its build files with
+`box.CheckProjectBuild` (`box/project_preparation.go`), since either may change after the parent's
+check or an earlier task. That check is read-only too: it resolves the mode through the same
+preview, refuses only files no person approved, and lets approved files through for the pass's own
+admission to rebuild, so the scheduler tests that fake the pass (`app.forkLoopRun`) need no runtime
+that runs filtered boxes; with no network state on the host it refuses without asking Docker. Every
+build miss names the command that builds it for this process's person: `withBuildCommand` sets
+`ProjectBuildRequired.Command` to `BuildCommand(approvingProject(cfg), folder)`, the `ApproveCommand`
+rule, in `AdmitNetwork`, `EditorBoxReadiness` and the check, and the launch's last refusal in
+`filteredProjectImage` names it too, so a fork loop, an interactive fork and a fork editor session
+started from the parent all say `COOP_REPO=<fork> coop build --egress filtered`. `coop build` builds
+the checkout it runs in. The capture never crosses to the worker, and the ordinary loop still fully
+admits each run before launching boxes, so neither check is a launch grant or a policy identity
+transfer. `box.Run` reloads project policy before its final capture check, so a future caller that
+misses admission fails before mounts or runtime execution.
 
 **An ACP session** admits in the outer supervisor, before the first child (`cli/acp_cmd.go`
 `cmdACP`): its scope unions every provider the toolbar could switch to, so a provider switch reuses
@@ -198,6 +204,11 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-06 — the fork worker checks its build files before each assignment (`box.CheckProjectBuild`),
+  read-only, and every build miss names `COOP_REPO=<fork> coop build --egress filtered` when the
+  person's coop build would build another checkout; only the detached start's refusal named it. ACP
+  thread texts take the command from the miss. `preflightForkLoop` lost its own "Build it:" row (task
+  2026-11-06-close-the-last-gaps-in-carrying-fork-decisions-a).
 - 2026-11-06 — a detached fork loop's start check is a full admission, so build files no person
   approved stop it in the terminal, before a worker starts, with the fork's own `coop build`
   command (task 2026-11-05-build-a-fork-s-box-image-on-its-first-loop-inste). Approved files, such

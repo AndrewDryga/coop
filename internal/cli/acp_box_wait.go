@@ -433,7 +433,7 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 	case unapproved && w.building:
 		text = acpRebuildingText
 	case unapproved && w.filtered && w.prepareBuild != nil:
-		text = acpBuildableWaitText(w.reviewFailed)
+		text = acpBuildableWaitText(w.reviewFailed, required.BuildCommand())
 	}
 	var stale *acpBuildOffer
 	if !unapproved {
@@ -517,13 +517,13 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 	case required != nil && failed:
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box.",
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,
-			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
+			Command: required.BuildCommand(), Purpose: "in this project, on the host"})
 	case required != nil && required.Approved:
 		return acpRebuildingText
 	case required != nil:
 		return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
 			Detail:  "Nobody approved its build files as they are now, and a build runs them with open networking. Review the Dockerfile and the files it copies. " + waits,
-			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
+			Command: required.BuildCommand(), Purpose: "in this project, on the host"})
 	case errors.As(blocked, &services):
 		return acpServicesWaitText(services, waits)
 	default: // refresh lets nothing else through, and only Coop's own words may reach a thread

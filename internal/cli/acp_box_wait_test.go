@@ -223,6 +223,24 @@ func TestBoxWaitIsSilentWhenTheBoxCanStart(t *testing.T) {
 	}
 }
 
+// coop build builds the checkout it runs in, so a fork's editor session says to run the command its
+// build miss names: the fork's own.
+func TestBoxWaitSaysTheBuildCommandItsMissNames(t *testing.T) {
+	command := "COOP_REPO=/private/coop-forks/review coop build --egress filtered"
+	waits := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "project build inputs or settings changed", Command: command}
+	approved := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "the image is missing", Approved: true, Command: command}
+	for name, text := range map[string]string{
+		"needs a build":  acpBoxWaitText(waits, waits, false),
+		"rebuild failed": acpBoxWaitText(approved, approved, true),
+		"buildable":      acpBuildableWaitText(false, command),
+	} {
+		if !strings.Contains(text, command) {
+			t.Errorf("%s: the thread heard %q, want it to name %q", name, text, command)
+		}
+		threadtext.Check(t, text)
+	}
+}
+
 // Changed files never build by themselves. The session says what to run, and notices when it is done.
 func TestBoxWaitLeavesChangedFilesToAPerson(t *testing.T) {
 	h := newBoxWaitHarness(t)

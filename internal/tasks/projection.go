@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -767,11 +768,14 @@ func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName str
 }
 
 // syncForkDecision copies the canonical decision.md, which holds the answer a person gave in the
-// project, into the fork's copy of the task. The caller holds the canonical task's lease, so no
-// worker is on that copy. Only the decision moves: the copy's progress notes, artifacts and scratch
-// stay the fork's own. On resume, a copy that asks another question keeps it: a fork stopped after
-// parking a new question, before acceptance carried it to the project, and the project's answer is
-// to the earlier one.
+// project, into the fork's copy of the task, and notes the unblock in the copy's log.md as the
+// project's log notes it: the fork's next acceptance copies that log over the project's. An unblock
+// notes itself even when the copy already holds this decision, or there is none, and a retried one
+// only once. The caller holds the canonical task's lease, so no worker is on that copy. The copy's
+// other notes, artifacts and scratch stay the fork's own. On resume, the copy changes only when it
+// lacks the answer to its own question: a copy that asks another question keeps it, since its worker
+// died after parking a new question, before acceptance carried it to the project, and the project's
+// answer is to the earlier one.
 func syncForkDecision(authorityRepo, root, id string, owner ForkTaskOwner, resume bool) error {
 	if owner.Phase != ForkAssignmentBlocked && owner.Phase != ForkAssignmentPaused {
 		return fmt.Errorf("fork assignment is not blocked or paused")
@@ -783,8 +787,8 @@ func syncForkDecision(authorityRepo, root, id string, owner ForkTaskOwner, resum
 	if !ok {
 		return fmt.Errorf("canonical task %s is missing", id)
 	}
-	body, exists, err := readOptionalTaskMetadataPath(filepath.Join(canonical.Dir, "decision.md"))
-	if err != nil || !exists {
+	body, decided, err := readOptionalTaskMetadataPath(filepath.Join(canonical.Dir, "decision.md"))
+	if err != nil || resume && !decided {
 		return err
 	}
 	projection, err := openAssignedProjection(authorityRepo, owner)
@@ -812,19 +816,64 @@ func syncForkDecision(authorityRepo, root, id string, owner ForkTaskOwner, resum
 		return err
 	}
 	defer dest.Close()
-	if resume {
+	if decided {
 		current, exists, err := readOptionalTaskMetadataFile(dest, "decision.md")
 		if err != nil {
 			return err
 		}
-		if exists && decisionQuestion(string(current)) != decisionQuestion(string(body)) {
+		carried := exists && bytes.Equal(current, body)
+		if resume && (carried || exists && decisionQuestion(string(current)) != decisionQuestion(string(body))) {
 			return nil
 		}
+		if !carried {
+			if err := AtomicWriteTaskFile(dest, "decision.md", body); err != nil {
+				return fmt.Errorf("write %s: %w", filepath.Join(result.Item.Dir, "decision.md"), err)
+			}
+		}
 	}
-	if err := AtomicWriteTaskFile(dest, "decision.md", body); err != nil {
-		return fmt.Errorf("write %s: %w", filepath.Join(result.Item.Dir, "decision.md"), err)
+	// Best-effort, as the project's own line is: the answer is what the worker needs.
+	note := unblockedNote(decisionResolution(string(body)))
+	if log, _, err := readOptionalTaskMetadataFile(dest, "log.md"); err == nil && !strings.HasSuffix(string(log), taskLogNote(note)) {
+		_ = appendTaskLogNoteIn(dest, note)
 	}
 	return nil
+}
+
+// forkCopyParked says whether the fork's copy of item is parked on a question its project has not
+// seen. A paused assignment is at work again only once its next pass took item back into progress:
+// until then it waits, answered, in todo, and its blocked copy is no new question. Even at work, its
+// copy stays blocked, holding the project's answer, until the pass restores it, so a paused copy
+// counts only when it asks another question than item's decision.md.
+func forkCopyParked(authorityRepo, root string, item Item, owner ForkTaskOwner) (bool, error) {
+	if owner.Phase == ForkAssignmentPaused && item.State != StateInProgress {
+		return false, nil
+	}
+	projection, err := openAssignedProjection(authorityRepo, owner)
+	if err != nil {
+		return false, err
+	}
+	defer projection.Close()
+	result, err := validateForkProjectionOpened(root, item.ID, owner, projection)
+	if err != nil || result.State != StateBlocked {
+		return false, err
+	}
+	if owner.Phase != ForkAssignmentPaused {
+		return true, nil
+	}
+	copied, err := openProjectedTask(projection, StateBlocked, item.ID)
+	if err != nil {
+		return false, err
+	}
+	defer copied.Close()
+	asked, _, err := readOptionalTaskMetadataFile(copied, "decision.md")
+	if err != nil {
+		return false, err
+	}
+	answered, _, err := readOptionalTaskMetadataPath(filepath.Join(item.Dir, "decision.md"))
+	if err != nil {
+		return false, err
+	}
+	return decisionQuestion(string(asked)) != decisionQuestion(string(answered)), nil
 }
 
 // PrepareForkProjectionForRun closes the crash window between an execution-local completion and
@@ -1180,6 +1229,11 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 	if !exists {
 		return ProjectionResult{}, errors.New("canonical task disappeared before projection acceptance")
 	}
+	// Refused before the copy's files reach the project's folder: one in todo waits, answered, for the
+	// fork's next pass, and its decision.md holds the person's answer.
+	if result.State == StateBlocked && canonical.State != StateInProgress && canonical.State != StateBlocked {
+		return ProjectionResult{}, fmt.Errorf("blocked projection has canonical task in unsupported state %s", canonical.State)
+	}
 	if err := syncProjectionTree(snapshot, canonical.Dir, result.State == StateDone); err != nil {
 		return ProjectionResult{}, err
 	}
@@ -1191,9 +1245,6 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 			return ProjectionResult{}, err
 		}
 	case StateBlocked:
-		if canonical.State != StateInProgress && canonical.State != StateBlocked {
-			return ProjectionResult{}, fmt.Errorf("blocked projection has canonical task in unsupported state %s", canonical.State)
-		}
 		if record.Fork.Phase != ForkAssignmentBlocking {
 			record.Fork.Phase = ForkAssignmentBlocking
 			record.Fork.ProjectionDigest = result.Digest

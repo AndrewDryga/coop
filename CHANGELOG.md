@@ -219,6 +219,17 @@
   too. After you answer, `coop tasks unblock` says the fork picks the task up on its next pass, and
   how to resume the fork if its loop has stopped.
 
+- **A fork's new question survives `coop fork stop`.** When the fork's agent parked a task on a
+  question just before you stopped the fork, the question stayed in the fork: `coop tasks decisions`
+  never showed it, and the next run went on without an answer. The stop now brings the question to
+  the project. A task's log also keeps its `Unblocked:` line after the fork works the task again.
+
+- **Every refusal of a fork's build files names the fork's build command.** A fork loop, an
+  interactive fork and a fork's editor session said to run `coop build --egress filtered`, which in
+  the project builds the project, not the fork. They now say `COOP_REPO=<fork> coop build --egress
+  filtered`. A fork loop also checks its build files before each task, so build files a task changed
+  stop the loop before it takes the next task, not in that task's box.
+
 - **`coop tasks watch` names the agent of an editor session's claim.** A task an agent claims
   through its session's task tools records the full target the session runs, such as
   `claude:opus/high@work`, and the board names the claim by it, as it names a loop's worker. A

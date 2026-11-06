@@ -134,6 +134,66 @@ func TestFilteredAdmissionRefusesProjectBuildBeforeQualification(t *testing.T) {
 	}
 }
 
+// A fork loop asks before each task, building nothing and setting nothing up, whether the box it would
+// launch has its build files ready, and gets the refusal that launch would give, naming the fork's
+// checkout. Files a person approved count as ready: the launch rebuilds those itself.
+func TestCheckProjectBuildRefusesOnlyFilesNobodyApproved(t *testing.T) {
+	cfg, here, root := admissionFixture(t)
+	fork, _ := gitProject(t, reusableDockerfile)
+	fork, err := canonicalProjectDir(fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", dockersock.Serve(t, func() (dockersock.Info, error) {
+		return dockersock.Info{ID: "fixture-daemon", ServerVersion: "29.4.0", KernelVersion: "fixture", OSType: "linux", Architecture: "aarch64"}, nil
+	}))
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\nwhile [ \"$1\" = --host ] || [ \"$1\" = --config ]; do shift 2; done\n" +
+		"case \"$1\" in\ninfo) printf '%s\\n' '{\"ID\":\"fixture-daemon\",\"ServerVersion\":\"29.4.0\",\"KernelVersion\":\"fixture\",\"OSType\":\"linux\",\"Architecture\":\"aarch64\",\"SecurityOptions\":[]}' ;;\nimage) exit 1 ;;\n*) exit 91 ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	filtered, open := egress.Filtered, egress.Open
+	check := func(repo string, mode *egress.Mode) error {
+		return CheckProjectBuild(cfg, runtime.Runtime{Name: script}, RunSpec{Repo: repo}, NetworkAdmission{InvocationMode: mode})
+	}
+	refused := func(reason string) {
+		t.Helper()
+		err := check(fork, &filtered)
+		var required *ProjectBuildRequired
+		want := "run 'COOP_REPO=" + fork + " coop build --egress filtered' on the host"
+		if !errors.As(err, &required) || required.Approved || !strings.Contains(required.Reason, reason) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("check of build files nobody approved = %v, want %q and the command %q", err, reason, want)
+		}
+	}
+	if err := check(here, &filtered); err != nil {
+		t.Fatalf("check of a project without build files = %v", err)
+	}
+	if err := check(fork, &open); err != nil {
+		t.Fatalf("check of an open launch = %v", err)
+	}
+	refused("no explicit project build")
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("the check made network state", err)
+	}
+	store, err := networkstate.Open(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	refused("client image has not been prepared")
+	if err := store.RecordProjectBuildReview(fork, projectBuildReview(projectContextDigest(t, fork), "fixture-daemon", ".agent/Dockerfile"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(fork, &filtered); err != nil {
+		t.Fatalf("check of approved build files = %v, want none: the launch rebuilds them", err)
+	}
+	if got := BuildCommand(fork, fork); got != "coop build --egress filtered" {
+		t.Errorf("BuildCommand(the same checkout) = %q, want plain coop build", got)
+	}
+}
+
 func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 	pinHome(t)
 	f, d, repo, write := projectPreparationFixture(t)

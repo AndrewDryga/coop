@@ -65,7 +65,7 @@ func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 	case building:
 		text = acpRebuildingText
 	case len(args) == 0:
-		text = w.offerBuild()
+		text = w.offerBuild(required.BuildCommand())
 	default:
 		text = w.buildOffered(args[0])
 	}
@@ -73,8 +73,8 @@ func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 }
 
 // offerBuild saves the build files as they are now and says where to review them. A new offer replaces
-// the last one, whose code stops working.
-func (w *acpBoxWait) offerBuild() string {
+// the last one, whose code stops working. command builds them on the host instead.
+func (w *acpBoxWait) offerBuild(command string) string {
 	ctx, cancel := context.WithTimeout(w.ctx, acpBuildPrepareLimit)
 	defer cancel()
 	prepared, err := w.prepareBuild(ctx)
@@ -82,14 +82,14 @@ func (w *acpBoxWait) offerBuild() string {
 		w.log(err)
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not save this project's build files for review.",
 			Detail:  "The reason is in the agent log. Your messages go out once the box is ready.",
-			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
+			Command: command, Purpose: "in this project, on the host"})
 	}
 	dir, dockerfile := prepared.Directory(), prepared.Dockerfile()
 	if strings.Contains(dir+dockerfile, "`") || acpproxy.Visible(dir+dockerfile) != dir+dockerfile {
 		_ = prepared.Close()
 		return acpctl.ProblemText(acpctl.Problem{Title: "Build this project's box on the host.",
 			Detail:  "Coop cannot show where its saved build files are in this thread.",
-			Command: "coop build --egress filtered", Purpose: "in this project, on the host"})
+			Command: command, Purpose: "in this project, on the host"})
 	}
 	code := strings.ToLower(rand.Text()[:8])
 	w.mu.Lock()
@@ -143,7 +143,8 @@ func (w *acpBoxWait) buildOffered(code string) string {
 }
 
 // acpBuildableWaitText is what a filtered session's threads hear while its build files wait for a review.
-func acpBuildableWaitText(failed bool) string {
+// command builds them on the host instead.
+func acpBuildableWaitText(failed bool, command string) string {
 	const waits = "Your messages go out once it is ready."
 	if failed {
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not build this project's box.",
@@ -152,7 +153,7 @@ func acpBuildableWaitText(failed bool) string {
 	return acpctl.ProblemText(acpctl.Problem{Title: "This project's box needs a build.",
 		Detail: "Nobody approved its build files as they are now, and a build runs them with open networking. " +
 			"To review the Dockerfile and the files it copies, then build them from here, send " + acpBuildCommand + ". " + waits,
-		Command: "coop build --egress filtered", Purpose: "in this project, on the host, to do it there instead"})
+		Command: command, Purpose: "in this project, on the host, to do it there instead"})
 }
 
 // acpReviewedBuildText is what threads hear while the box builds from files a person reviewed here.

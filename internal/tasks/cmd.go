@@ -1598,15 +1598,20 @@ func returnBlockedToTodo(project, root string, t Item) error {
 	}
 	// Journal the answer the task came back with. Best-effort: the unblock already holds.
 	dir := filepath.Join(root, StateTodo, t.ID)
-	if recorded, _ := recordedAnswer(filepath.Join(dir, "decision.md")); recorded != "" {
-		appendTaskLog(dir, "Unblocked: "+recorded)
-	} else {
-		appendTaskLog(dir, "Unblocked")
-	}
+	recorded, _ := recordedAnswer(filepath.Join(dir, "decision.md"))
+	appendTaskLog(dir, unblockedNote(recorded))
 	if note := transition.movedNote(); note != "" {
 		appendTaskLog(dir, note)
 	}
 	return nil
+}
+
+// unblockedNote is the log line an unblock leaves: the answer the task came back with, if it has one.
+func unblockedNote(answer string) string {
+	if answer == "" {
+		return "Unblocked"
+	}
+	return "Unblocked: " + answer
 }
 
 // moveBlockedAuditUnblock writes a non-authorizing pending record, moves the folder, then activates

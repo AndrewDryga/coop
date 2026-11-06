@@ -1365,12 +1365,17 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 	// for these read-only checks so an earlier run cannot hide a later project request.
 	networkCfg := a.cfg.Clone()
 	for {
-		// Check the fork's own policy before assigning canonical work, including in the worker:
-		// the file or approval may have changed since its parent's preview or the previous task.
-		if err := box.CheckNetworkApproval(networkCfg, box.RunSpec{
+		// Check the fork's own policy and build files before assigning canonical work, including in
+		// the worker: either may have changed since its parent's preview or the previous task, and a
+		// pass would refuse them only once it holds a task.
+		check := box.RunSpec{
 			Repo: ws, Image: img, Agent: agent, Preset: a.preset, Peers: peers,
 			Homes: networkCfg.Homes, Network: networkCfg.Network, Cache: networkCfg.Cache, NetworkAdmission: true,
-		}, network.admission()); err != nil {
+		}
+		if err := box.CheckNetworkApproval(networkCfg, check, network.admission()); err != nil {
+			return 1, err
+		}
+		if err := box.CheckProjectBuild(networkCfg, a.rt, check, network.admission()); err != nil {
 			return 1, err
 		}
 		head := forkspace.GitOut(ws, "rev-parse", "HEAD")
@@ -1670,17 +1675,6 @@ func (a *app) forkRunsFiltered(repo string, invocation *egress.Mode) bool {
 // It grants nothing: the worker admits again, and a capture never crosses to it.
 func (a *app) preflightForkLoop(spec box.RunSpec, network networkFlags) error {
 	capture, err := box.AdmitNetwork(a.cfg.Clone(), a.rt, spec, network.admission())
-	var required *box.ProjectBuildRequired
-	if errors.As(err, &required) {
-		// coop build builds the checkout it runs in, and a detached start runs in the project.
-		folder := spec.Repo
-		if resolved, resolveErr := filepath.EvalSymlinks(folder); resolveErr == nil {
-			folder = resolved
-		}
-		if word, ok := ui.ShellWord(folder); ok {
-			return fmt.Errorf("%w\n\n  Build it: COOP_REPO=%s coop build --egress filtered", err, word)
-		}
-	}
 	if err != nil {
 		return err
 	}

@@ -31,10 +31,21 @@ type ProjectBuildRequired struct {
 	Dockerfile string
 	Reason     string
 	Approved   bool
+	// Command builds these files for the person this process serves (BuildCommand), set where the
+	// miss leaves this package. Empty is the plain coop build --egress filtered.
+	Command string
 }
 
 func (e *ProjectBuildRequired) Error() string {
-	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host. Project builds use ordinary networking", e.Dockerfile, e.Reason)
+	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run '%s' on the host. Project builds use ordinary networking", e.Dockerfile, e.Reason, e.BuildCommand())
+}
+
+// BuildCommand is the command a person runs on the host to build these files.
+func (e *ProjectBuildRequired) BuildCommand() string {
+	if e.Command == "" {
+		return "coop build --egress filtered"
+	}
+	return e.Command
 }
 
 // BrokenProjectFile is a project file that does not load. Nothing in it applies, and only a person can
@@ -317,7 +328,7 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	}
 	defer docker.Close()
 	if err := checkFilteredProjectReadiness(ctx, docker, capture.Store, spec, q.Candidate.Runtime); err != nil {
-		return err
+		return withBuildCommand(cfg, spec, err)
 	}
 	policy, err := capture.Store.LoadSnapshot(capture.Project, capture.Fingerprint)
 	if err != nil {
@@ -335,6 +346,45 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 		return err
 	}
 	return editorFilteredLaunchBusy(ctx, docker, rt, spec, ComposeFileAt(spec.Repo, p.ComposeRel()), approval, grants)
+}
+
+// CheckProjectBuild asks, ahead of a launch and only reading, whether its project build is ready: nil
+// when the launch is not filtered or has no build files, or when the image they make is built or a
+// person approved them, since the launch rebuilds approved files itself; otherwise the
+// *ProjectBuildRequired the launch would refuse with, naming the command that builds them. Like
+// CheckNetworkApproval it builds nothing, sets the host up for nothing and grants nothing.
+func CheckProjectBuild(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options NetworkAdmission) error {
+	dfRel := projectDockerfileForRun(spec)
+	if dfRel == "" {
+		return nil
+	}
+	if mode, err := previewNetworkMode(cfg, spec, options); err != nil || mode != egress.Filtered {
+		return err
+	}
+	root, err := NetworkStatePath()
+	if err != nil {
+		return err
+	}
+	store, err := networkstate.OpenExisting(root, nil)
+	if errors.Is(err, fs.ErrNotExist) { // no filtered box ever started here, so nobody approved these files
+		return withBuildCommand(cfg, spec, &ProjectBuildRequired{Dockerfile: dfRel, Reason: "no explicit project build is recorded for this client image"})
+	}
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	ctx := networkAdmissionContext(spec)
+	docker, err := runtime.InspectDocker(ctx, rt)
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	err = checkFilteredProjectReadiness(ctx, docker, store, spec, networkRuntimeBinding(docker.Info(), docker.Endpoint()))
+	var required *ProjectBuildRequired
+	if errors.As(err, &required) && required.Approved {
+		return nil
+	}
+	return withBuildCommand(cfg, spec, err)
 }
 
 // editorFilteredLaunchBusy asks about the lock for a filtered box, which may only have to join.

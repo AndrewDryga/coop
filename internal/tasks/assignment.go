@@ -431,15 +431,33 @@ func forkAssignmentsIn(repo string, identity forkspace.Identity, trees map[strin
 	return out, nil
 }
 
+// PauseForkAssignments is how coop fork stop leaves the fork's assignments: those at work are paused,
+// for the fork's next pass to resume. The caller holds the fork's lifecycle lock and has stopped the
+// worker. A task whose copy that worker had just parked on a question is accepted as blocked instead,
+// as the worker would have accepted it had its acceptance not waited on the stop's lock: a paused
+// copy keeps the question in the fork, where coop tasks decisions does not show it, and the next pass
+// would restore the copy as if the project had answered it.
 func PauseForkAssignments(repo string, identity forkspace.Identity) error {
 	assignments, err := ForkAssignments(repo, identity)
 	if err != nil {
 		return err
 	}
+	workspace := forkspace.ValidateGenerationWorkspace(repo, identity) == nil
 	var joined error
 	for _, assignment := range assignments {
 		owner := *assignment.Record.Fork
-		if owner.Phase != ForkAssignmentWorking && owner.Phase != ForkAssignmentPreparing {
+		if owner.Phase != ForkAssignmentWorking && owner.Phase != ForkAssignmentPreparing && owner.Phase != ForkAssignmentPaused {
+			continue
+		}
+		if workspace {
+			// A copy that cannot be read is paused, as before: only a parked one has a question to carry.
+			if parked, _ := forkCopyParked(repo, assignment.Root, assignment.Item, owner); parked {
+				_, acceptErr := acceptForkProjectionLocked(repo, assignment.Root, assignment.Item.ID, owner)
+				joined = errors.Join(joined, acceptErr)
+				continue
+			}
+		}
+		if owner.Phase == ForkAssignmentPaused {
 			continue
 		}
 		_, updateErr := UpdateForkTaskAssignment(assignment.Root, assignment.Item.ID, owner, func(next *ForkTaskOwner) error {

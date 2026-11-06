@@ -126,7 +126,7 @@ func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.C
 			}
 		}
 	}
-	return "", "", fmt.Errorf("this project's %s has no explicit build for its current inputs and client image — review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host; project builds use ordinary networking", dfRel)
+	return "", "", fmt.Errorf("this project's %s has no explicit build for its current inputs and client image — review the Dockerfile and copied build files, then run '%s' on the host; project builds use ordinary networking", dfRel, projectBuildCommand(cfg, repo))
 }
 
 // BuildFilteredProject is the host-only construction path behind `coop build --egress filtered`, and

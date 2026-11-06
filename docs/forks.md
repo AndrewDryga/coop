@@ -37,9 +37,11 @@ At creation, Coop also snapshots the parent's network, service, project-build an
 `coop approve --case-exposure` file approvals. They keep the same approved inputs and
 restrictions; changing the fork's rules, Compose file or build files still needs approval there. A
 fork refused for new network access names the command that reviews it,
-`COOP_REPO=<fork folder> coop approve`, which you can run from the project. Later parent approvals
-do not update an existing fork, and a fork recreated with `--fresh` takes the parent's approvals
-again. Coop can build a separate fork image from unchanged approved files without asking again.
+`COOP_REPO=<fork folder> coop approve`, and one refused for new build files names
+`COOP_REPO=<fork folder> coop build --egress filtered`. You can run both from the project. Later
+parent approvals do not update an existing fork, and a fork recreated with `--fresh` takes the
+parent's approvals again. Coop can build a separate fork image from unchanged approved files without
+asking again.
 Approved external or explicitly named service volumes still refer to the same Docker volumes.
 
 Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
