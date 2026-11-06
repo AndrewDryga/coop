@@ -391,6 +391,11 @@ func (c *Config) DefaultMCPFile() string { return filepath.Join(c.ConfigDir, "mc
 // A caller that points MCPFile elsewhere, or blanks it, has made its own choice.
 func (c *Config) MCPFileChosen() bool { return c.MCPFile != "" && c.MCPFile == c.chosenMCPFile }
 
+// ChosenMCPFile is the path COOP_MCP_FILE named, "" when it fell to the default. Unlike
+// MCPFileChosen it survives a caller that turns MCP off by blanking MCPFile: the env file still
+// holds that file's tokens, so a box that keeps them out still needs its names.
+func (c *Config) ChosenMCPFile() string { return c.chosenMCPFile }
+
 // Instructions is the optional shared instruction file wired into each agent.
 func (c *Config) Instructions() string { return filepath.Join(c.ConfigDir, "INSTRUCTIONS.md") }
 

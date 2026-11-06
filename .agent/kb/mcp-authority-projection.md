@@ -2,7 +2,7 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/cli/eval_loop.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
 updated: 2026-11-06
 ---
 
@@ -132,13 +132,21 @@ unresolved would 401 that server for the whole session. The rewrite happens ONCE
 `mcp.RouteThroughBroker` points each server at `http://127.0.0.1:<port><path>` and renames its
 variable to `COOP_MCP_TOKEN_<i>` (renaming is required — two servers sharing one operator variable
 need two stand-ins), so generated configs, claude's file and a session's ACP list all follow it. The
-operator's variables — every name the CONFIGURED file references and every name the default
-`agents/mcp.json` references, whichever file is active or with MCP off (the env file beside it holds
-its tokens either way), read from the sources even for a box that loads no MCP (`mcpScrubNames`;
-lenient content, strict location: a names-only read follows a final symlink, such as a dotfiles
-link, but every path to its target is held to the mount rule) — are dropped from a filtered box's
-env, and the
-`COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). A missing token
+operator's variables — every name the CONFIGURED file references, every name the file
+`COOP_MCP_FILE` chose references (`config.ChosenMCPFile`, which survives `--no-mcp`, loop.yaml
+`mcp: false`, eval trials and fork-merge reviews blanking `MCPFile`), and every name the default
+`agents/mcp.json` references, whichever file is active or with MCP off (the env file beside them
+holds their tokens either way), read from the sources even for a box that loads no MCP
+(`mcpScrubNames`; lenient content, strict location: a names-only read follows a final symlink, such
+as a dotfiles link, but every path to its target is held to the mount rule; and fail closed: a file
+that is there but cannot be read, over 4 MiB or not a regular file refuses the launch, since
+`mcp.ReferencedCredentialNames` reports it instead of naming nothing) — are dropped from a filtered
+box's env, and the
+`COOP_MCP_TOKEN_` prefix is reserved in operator input (`ReadValidatedSnapshot`). The env-file
+parsers (`filteredEnvContent`, `envFileValues`) drop a leading UTF-8 byte-order mark as Docker does,
+so a token on the first line is still recognized and dropped. Eval loop trials pass `--no-mcp`
+and keep the operator's `COOP_MCP_FILE`, never `COOP_MCP_FILE=`, so the child still knows the
+chosen file. A missing token
 refuses by server and names the env file (a shell export never reaches `effectiveMCPEnv`), one set
 through `-e` by variable; SSE uses the wider route described below. The pinned claude IGNORES
 `bearer_token_env_var` (captured 2026-09-19: no Authorization at all) and expands `${VAR}` in a
@@ -211,6 +219,10 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-06 — security review follow-up: the scrub also reads the file `COOP_MCP_FILE` chose when
+  MCP is turned off (`config.ChosenMCPFile`), an unreadable names-only file refuses the launch
+  instead of naming nothing, the env parsers drop a leading byte-order mark, and eval loop trials
+  stop blanking `COOP_MCP_FILE` (they already pass `--no-mcp`).
 - 2026-11-06 — the scrub also takes the default `agents/mcp.json`'s names when `COOP_MCP_FILE`
   points elsewhere or MCP is off (overnight QA saw the owner's default-file tokens in every filtered
   box); a names-only read follows a final symlink and survives a file that is not JSON; an absent

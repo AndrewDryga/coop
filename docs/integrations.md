@@ -311,9 +311,10 @@ is empty or doesn't exist yet. The file must also:
 - be 4 MiB or smaller
 - have a canonical path without `..`
 
-When `COOP_MCP_FILE` points to another file or MCP is turned off, co:op still reads the default
-`mcp.json` to keep its token variables out of filtered and offline boxes. Such a launch stops if
-that default file, or the file it links to, sits in a directory co:op mounts in full.
+To keep token variables out of filtered and offline boxes, co:op reads the default `mcp.json` and
+the file `COOP_MCP_FILE` names, even when another file is active or MCP is turned off. Such a
+launch stops if one of these files is there but can't be read, or if it, or the file it links to,
+sits in a directory co:op mounts in full.
 
 Gemini's native `settings.json` must follow the same file rules. co:op reads it on every Gemini
 launch, Codex's native `config.toml` on every Codex launch, and Grok's native config when the
@@ -391,8 +392,9 @@ this server during this run.
 
 The token variables in co:op's env file never reach a filtered box, even if that box doesn't load
 MCP. That covers every variable a shared file names in `bearer_token_env_var` or in a header, such
-as `SENTRY_TOKEN` above. It covers the default `mcp.json` too when `COOP_MCP_FILE` points to
-another file or MCP is turned off, because the env file holds its tokens either way. co:op also
+as `SENTRY_TOKEN` above. It covers the default `mcp.json` and the file `COOP_MCP_FILE` names,
+whichever file is active and even with MCP turned off, because the env file holds their tokens
+either way. co:op also
 stops a launch that passes one of these variables with `-e`. The ACP adapter receives only the
 replacement value, not the real token.
 

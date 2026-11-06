@@ -151,8 +151,8 @@ func effectiveMCPEnv(cfg *config.Config, spec RunSpec) map[string]string {
 }
 
 // mcpScrub is what a filtered or offline box keeps out of its env: every MCP token variable of the
-// configured file and of the default one. One set through -e cannot enter it either, whether this
-// box loads MCP or not.
+// configured file, the chosen one and the default one (mcpScrubNames). One set through -e cannot
+// enter it either, whether this box loads MCP or not.
 func mcpScrub(cfg *config.Config, spec RunSpec) ([]string, error) {
 	names, err := mcpScrubNames(cfg, spec)
 	if err != nil {
@@ -187,36 +187,45 @@ func dropEnvNames(artifacts compositionArtifactOps, source string, names []strin
 	return artifacts.writeFile(artifacts.parent, kept)
 }
 
-// mcpScrubNames are the variables an MCP file reads a secret from: the run's configured file, and
-// the default agents/mcp.json too, because the env file beside it holds that file's tokens whichever
-// file is active, or none. A box that keeps them out — filtered, or offline — never receives them
-// whether it loads MCP or not, so they come from the files themselves, not from what this box
-// mounts. A file read only for its names (any but the snapshot this box loads) is read leniently —
-// a malformed file must not stop the box, and it may be a link — but its LOCATION, and its link's
-// target's, is still held to the same isolation rule as a file a box loads: a source inside a
-// mounted root could be rewritten by the box it is being read for. Without homes there is no env
-// file to scrub.
+// mcpScrubNames are the variables an MCP file reads a secret from: the run's configured file, the
+// one COOP_MCP_FILE chose even after MCP was turned off, and the default agents/mcp.json, because
+// the env file beside it holds the tokens of each whichever file is active, or none. A box that
+// keeps them out — filtered, or offline — never receives them whether it loads MCP or not, so they
+// come from the files themselves, not from what this box mounts. A file read only for its names
+// (any but the one this box loaded as its snapshot) is read leniently — a malformed file must not
+// stop the box, and it may be a link — but one that is there and cannot be read stops it, since its
+// tokens would get through. Its LOCATION, and its link's target's, is held to the same isolation
+// rule as a file a box loads: a source inside a mounted root could be rewritten by the box it is
+// being read for. Without homes there is no env file to scrub.
 func mcpScrubNames(cfg *config.Config, spec RunSpec) ([]string, error) {
 	var names []string
-	files := []string{cfg.DefaultMCPFile()}
+	loaded := ""
 	if spec.mcpSnapshot != nil {
 		active, err := mcp.CredentialReferences(spec.mcpSnapshot)
 		if err != nil {
 			return nil, err
 		}
-		names = active
-	} else if cfg.MCPFile != "" && cfg.MCPFile != files[0] {
-		files = append(files, cfg.MCPFile)
+		names, loaded = active, cfg.MCPFile
 	}
 	if !spec.Homes {
 		return names, nil
+	}
+	var files []string
+	for _, file := range []string{cfg.DefaultMCPFile(), cfg.ChosenMCPFile(), cfg.MCPFile} {
+		if file != "" && file != loaded && !slices.Contains(files, file) {
+			files = append(files, file)
+		}
 	}
 	for _, file := range files {
 		source, err := resolveMCPSource(file, mcpSourceRoots(cfg, spec), true)
 		if err != nil {
 			return nil, err
 		}
-		names = append(names, mcp.ReferencedCredentialNames(source)...)
+		found, err := mcp.ReferencedCredentialNames(source)
+		if err != nil {
+			return nil, fmt.Errorf("mcp.json: %w; Coop reads this file to keep the MCP tokens it names out of the box", err)
+		}
+		names = append(names, found...)
 	}
 	slices.Sort(names)
 	return slices.Compact(names), nil

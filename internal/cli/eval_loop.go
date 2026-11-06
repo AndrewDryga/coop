@@ -124,14 +124,15 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	// THEIR OWN CHECKOUT with their credentials — real commits in a real repo — and then grade the
 	// untouched trial workspace. Every knob that could redirect the loop is set explicitly here,
 	// the network included: the candidate network an agent trial gets, since the filtered default
-	// would refuse COOP_IMAGE.
+	// would refuse COOP_IMAGE. --no-mcp keeps operator MCP servers out of the trial, and
+	// COOP_MCP_FILE stays the operator's: an offline or filtered trial box still needs that file to
+	// keep the tokens it names out of its env.
 	network := egress.Mode(evalCandidateEgress(r.app.cfg)).Word()
 	cmd.Env = append(os.Environ(),
 		"COOP_REPO="+workspace, // the trial's repository, never the operator's
 		"COOP_TASKS=",          // the queue we materialized, not a configured one
 		"COOP_IMAGE="+r.image,  // the same image the grader uses, never one built from the fixture
 		"COOP_CACHE=0",         // no shared cache volume between trials
-		"COOP_MCP_FILE=",       // no operator MCP servers inside a trial
 		"COOP_RUN_ARGS=",       // no ambient host mounts or unrecorded runtime flags
 		"COOP_NO_UPDATE_CHECK=1",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",

@@ -274,8 +274,13 @@ func scopedHostCredentialEnv(cfg *config.Config, spec RunSpec, userEnv map[strin
 	return values, nil
 }
 
+// envFileBOM is the byte-order mark an editor may write at the start of the env file. Docker drops
+// it from the first line, so Coop's parsers do too: the key behind it is still that key, to keep out
+// or to read, and a copy of the file keeps no mark that would land mid-file.
+const envFileBOM = "\ufeff"
+
 func filteredEnvContent(data []byte, drop map[string]bool) string {
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(strings.TrimPrefix(string(data), envFileBOM), "\n")
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
@@ -335,7 +340,7 @@ func EnvFileValues(path string) map[string]string {
 
 func envFileValues(data []byte) map[string]string {
 	values := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(strings.TrimPrefix(string(data), envFileBOM), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

@@ -212,6 +212,7 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	t.Setenv("COOP_RUN_ARGS", "-v /the/operators/real/checkout:/leak")
 	t.Setenv("COOP_EVAL_DISABLE_WEB_TOOLS", "0")
 	t.Setenv("COOP_EVAL_LOOP_STARTED_FILE", "/the/operators/real/started")
+	t.Setenv("COOP_MCP_FILE", "/operator/qa-mcp.json")
 
 	out, err := r.runLoopTrial(context.Background(), eval.Trial{
 		Case: suite.Cases[0], Config: eval.FrozenConfig{Kind: eval.ConfigTarget, Label: "codex"},
@@ -228,7 +229,9 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 		"COOP_REPO=" + ws, // the trial's repository, NOT the operator's
 		"COOP_TASKS=[]",   // the queue we materialized, not a configured one
 		"COOP_IMAGE=coop-box:test",
-		"COOP_MCP_FILE=[]", // no operator MCP servers inside a trial
+		// --no-mcp keeps the operator's MCP servers out; their file stays named, so the trial's
+		// offline and filtered boxes still keep the tokens it names out of their env.
+		"COOP_MCP_FILE=[/operator/qa-mcp.json]",
 		"COOP_RUN_ARGS=[]", // no ambient runtime binds inside a trial
 		"COOP_CACHE=0",
 		"COOP_EVAL_DISABLE_WEB_TOOLS=1",
@@ -246,6 +249,9 @@ func TestLoopTrialPinsTheChildToTheTrial(t *testing.T) {
 	}
 	if !strings.Contains(got, "ARGS=loop codex") {
 		t.Errorf("the configuration was not passed to the loop: %s", got)
+	}
+	if !strings.Contains(got, " --no-mcp\n") {
+		t.Errorf("the loop was not told to run without MCP servers: %s", got)
 	}
 	// The child also STARTS in the trial (compared through symlinks: macOS resolves /var to
 	// /private/var, so a literal match would be testing the platform, not the wiring).

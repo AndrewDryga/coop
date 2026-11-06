@@ -236,9 +236,10 @@ It waits for long tool calls to finish. The agent can't bypass the broker by con
 that server's host.
 
 Your token variables never enter a filtered box, even if that box doesn't load MCP. That covers
-every variable the active MCP file reads a secret from, and those of the default
-`~/.config/coop/agents/mcp.json` even when another file is active or MCP is turned off, because the
-env file holds those tokens either way. A session's ACP adapter receives the stand-in too. If a
+every variable the default `~/.config/coop/agents/mcp.json` or your `COOP_MCP_FILE` reads a secret
+from, whichever file is active and even with MCP turned off, because the env file holds those
+tokens either way. If one of these files is there but co:op can't read it, the launch stops and
+names the file. A session's ACP adapter receives the stand-in too. If a
 token is missing, co:op stops the launch, names the server and says to put the token in
 `agents/env`. A token variable passed with `-e` stops the launch too. Tools supplied by a remote
 session's controller use the same route, restricted to the server's exact path.

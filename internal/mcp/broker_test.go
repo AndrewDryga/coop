@@ -32,7 +32,8 @@ func TestCredentialReferencesNameEverySecretVariable(t *testing.T) {
 
 // A file a box does not load still gives up its names whatever shape it is in: a server entry that
 // is not an object hides no other server's, and a file that no longer parses gives every name its
-// text spells. A missing file, or one that references nothing, names nothing.
+// text spells. A missing file, or one that references nothing, names nothing. One that is there but
+// cannot be read is an error naming it, never an empty list its tokens would slip through.
 func TestReferencedCredentialNamesSurviveABrokenFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mcp.json")
 	for body, want := range map[string][]string{
@@ -45,12 +46,22 @@ func TestReferencedCredentialNamesSurviveABrokenFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got := ReferencedCredentialNames(path); !slices.Equal(got, want) {
-			t.Fatalf("names in %s = %q, want %q", body, got, want)
+		if got, err := ReferencedCredentialNames(path); err != nil || !slices.Equal(got, want) {
+			t.Fatalf("names in %s = %q, %v; want %q", body, got, err, want)
 		}
 	}
-	if got := ReferencedCredentialNames(filepath.Join(t.TempDir(), "missing.json")); got != nil {
-		t.Fatalf("a missing file named %q", got)
+	if got, err := ReferencedCredentialNames(filepath.Join(t.TempDir(), "missing.json")); got != nil || err != nil {
+		t.Fatalf("a missing file named %q, %v", got, err)
+	}
+	directory := t.TempDir()
+	oversized := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(oversized, []byte(`{"mcpServers":{"emisar":{"bearer_token_env_var":"EMISAR_TOKEN"}}}`+strings.Repeat(" ", int(maxMCPConfigBytes))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for unreadable, want := range map[string]string{directory: "is not a regular file", oversized: "exceeds the 4194304-byte limit"} {
+		if got, err := ReferencedCredentialNames(unreadable); got != nil || err == nil || !strings.Contains(err.Error(), unreadable) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("names in %s = %q, %v; want an error naming it", unreadable, got, err)
+		}
 	}
 }
 

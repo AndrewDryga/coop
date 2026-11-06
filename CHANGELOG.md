@@ -93,6 +93,13 @@
   reading at the `#`, so it could apply its own default scope or limit. Coop now refuses a query
   with a `#` or any other byte a URL query may not carry. The clients' encoded queries still pass.
 
+- **MCP tokens stay out of filtered and offline boxes with MCP turned off, too.** With `--no-mcp`,
+  loop.yaml `mcp: false`, an eval trial or a fork merge's review, the token variables of the file
+  `COOP_MCP_FILE` names still reached these boxes from `agents/env`. They are now kept out as they
+  are with MCP on. An MCP file that is there but can't be read, such as one without read
+  permission, over 4 MiB or not a regular file, now stops the launch and names the file, where its
+  tokens used to get through. A byte-order mark at the start of `agents/env` no longer hides the
+  key on its first line.
 - **A project can be approved again after its approval marker is written over.** Writing
   `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
   Coop's private copy through the hard link. Every run was then refused, and `coop approve` and

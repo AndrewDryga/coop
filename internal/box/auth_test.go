@@ -452,6 +452,34 @@ func TestWriteMergedEnvFileProjectDefaultsBeforeUserOverrides(t *testing.T) {
 	}
 }
 
+// A byte-order mark an editor wrote at the start of the env file hides no key: Docker drops it from
+// the first line, so Coop reads the key behind it and keeps it out when it must, and no copy carries
+// the mark into the middle of a composed file, where Docker would keep it as part of a name.
+func TestAnEnvFileByteOrderMarkHidesNoKey(t *testing.T) {
+	user := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(user, []byte("\ufeffEMISAR_TOKEN=secret\nSHARED=kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if values := EnvFileValues(user); values["EMISAR_TOKEN"] != "secret" || len(values) != 2 {
+		t.Fatalf("values = %q, want EMISAR_TOKEN read without the mark", values)
+	}
+	drop := map[string]bool{"EMISAR_TOKEN": true}
+	for name, write := range map[string]func() (string, error){
+		"filtered": func() (string, error) { return writeFilteredEnvFile(t.TempDir(), user, drop) },
+		"composed": func() (string, error) {
+			return writeMergedEnvFile(t.TempDir(), map[string]string{"PGHOST": "db"}, user, drop)
+		},
+	} {
+		out, err := write()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(mustReadFile(t, out)); strings.Contains(got, "secret") || strings.Contains(got, "\ufeff") || !strings.Contains(got, "SHARED=kept") {
+			t.Errorf("%s env = %q, want EMISAR_TOKEN dropped and no mark left", name, got)
+		}
+	}
+}
+
 func envKeysOutsideScope(cfg *config.Config, scope []string) map[string]bool {
 	return envKeysOutsideScopeWithMarkers(cfg, scope, nil)
 }

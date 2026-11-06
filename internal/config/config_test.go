@@ -102,11 +102,12 @@ func TestDefaults(t *testing.T) {
 
 // MCPFileChosen answers for a path COOP_MCP_FILE named, in the environment or the conf file, never
 // for the default, and no longer once a caller has pointed MCPFile elsewhere or blanked it.
+// ChosenMCPFile still names that path then, for the boxes that keep its tokens out.
 func TestMCPFileChosenIsThePathTheOperatorNamed(t *testing.T) {
 	clearAgentEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if c := mustLoad(t); c.MCPFileChosen() || c.MCPFile != c.DefaultMCPFile() {
-		t.Fatalf("default: chosen=%v MCPFile=%q", c.MCPFileChosen(), c.MCPFile)
+	if c := mustLoad(t); c.MCPFileChosen() || c.MCPFile != c.DefaultMCPFile() || c.ChosenMCPFile() != "" {
+		t.Fatalf("default: chosen=%v %q MCPFile=%q", c.MCPFileChosen(), c.ChosenMCPFile(), c.MCPFile)
 	}
 	chosen := filepath.Join(t.TempDir(), "qa-mcp.json")
 	t.Setenv("COOP_CONF", writeMainConf(t, "COOP_MCP_FILE="+chosen+"\n"))
@@ -122,8 +123,8 @@ func TestMCPFileChosenIsThePathTheOperatorNamed(t *testing.T) {
 	for _, path := range []string{"", filepath.Join(t.TempDir(), "mcp.json")} {
 		replaced := c.Clone()
 		replaced.MCPFile = path
-		if replaced.MCPFileChosen() {
-			t.Fatalf("MCPFile %q still reads as the operator's choice", path)
+		if replaced.MCPFileChosen() || replaced.ChosenMCPFile() != chosen {
+			t.Fatalf("MCPFile %q: chosen=%v, chosen file %q; want false and %q", path, replaced.MCPFileChosen(), replaced.ChosenMCPFile(), chosen)
 		}
 	}
 }

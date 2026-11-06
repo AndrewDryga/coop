@@ -132,11 +132,13 @@ var bearerReferenceText = regexp.MustCompile(`"bearer_token_env_var"\s*:\s*"([^"
 // ReferencedCredentialNames is CredentialReferences for a box that never loads the file: read the
 // same bounded, no-follow way, names taken from whatever still parses — a broken file must not stop
 // a sign-in, and a name it still spells is still kept out. One odd server entry hides no other's
-// names, and from a file that is not JSON at all every name its text spells is taken.
-func ReferencedCredentialNames(path string) []string {
+// names, and from a file that is not JSON at all every name its text spells is taken. A missing
+// file names nothing, but one that is there and cannot be read is an error: the names it holds
+// would otherwise get through.
+func ReferencedCredentialNames(path string) ([]string, error) {
 	data, present, err := readConfigFile(path, "shared MCP config")
 	if err != nil || !present {
-		return nil
+		return nil, err
 	}
 	var names []string
 	var root struct {
@@ -164,7 +166,7 @@ func ReferencedCredentialNames(path string) []string {
 		}
 	}
 	sort.Strings(names)
-	return slices.Compact(names)
+	return slices.Compact(names), nil
 }
 
 // headerReferences returns the ${NAME} references inside one header value.
