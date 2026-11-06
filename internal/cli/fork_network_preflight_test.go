@@ -303,7 +303,7 @@ func TestRunForkLoopChecksNetworkApprovalBeforeAssigningCanonicalTask(t *testing
 			}
 			identity := bindTestFork(t, repo, forkName)
 
-			code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, detached)
+			code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false, detached)
 			if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 				t.Errorf("runForkLoop(detached=%v) = (%d, %v), want the approval refusal", detached, code, err)
 			}
@@ -328,7 +328,7 @@ func TestRunForkLoopChecksForkWorkspaceNetworkPolicyBeforeAssigning(t *testing.T
 	identity := bindTestFork(t, repo, forkName)
 	writeForkNetworkPreflightProject(t, ws)
 
-	code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false)
+	code, err := a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false, false)
 	if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 		t.Errorf("runForkLoop with a workspace-only network request = (%d, %v), want the approval refusal", code, err)
 	}

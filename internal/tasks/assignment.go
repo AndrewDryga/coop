@@ -25,6 +25,9 @@ type ForkAssignmentRequest struct {
 	WorkspaceRoot string
 	BaselineHead  string
 	LeaseOwner    TaskLeaseOwner
+	// StopAfterReview takes no new task once the fork holds one that passed review, so the fork
+	// finishes what it holds and publishes it for merging (coop fork --stop-after-review).
+	StopAfterReview bool
 }
 
 type ForkAssignment struct {
@@ -185,6 +188,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 			return ForkAssignment{}, err
 		}
 		var candidates []QueuedTask
+		reviewed := false
 		for _, candidate := range owned {
 			record, ok, err := ReadTaskOwnerRecord(candidate.Root, candidate.Item.ID)
 			if err != nil {
@@ -197,14 +201,17 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 			if frozen && !rework[record.Fork.AssignmentID] {
 				continue
 			}
+			// Reviewing, ready and blocked work is settled for this executor and must not be reworked.
 			switch record.Fork.Phase {
 			case ForkAssignmentPreparing, ForkAssignmentWorking, ForkAssignmentPaused:
 				candidates = append(candidates, candidate)
-			default:
-				// reviewing/ready/blocked is settled for this executor and must not be reworked.
+			case ForkAssignmentReviewing, ForkAssignmentReady:
+				reviewed = true
 			}
 		}
-		if !frozen {
+		// A fork asked to stop after review finishes what it holds but takes no new task.
+		takeNew := !frozen && !(request.StopAfterReview && reviewed)
+		if takeNew {
 			candidates = append(candidates, unowned...)
 		}
 		var busy TaskLeaseSummary
@@ -334,7 +341,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 		if busy.Busy+busy.Stalled > 0 {
 			return ForkAssignment{Outcome: ForkAssignmentUnavailable}, nil
 		}
-		if frozen || len(unowned) == 0 || foreign {
+		if !takeNew || len(unowned) == 0 || foreign {
 			return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
 		}
 	}

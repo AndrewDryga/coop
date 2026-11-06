@@ -767,7 +767,7 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			return mergeOutcome{}, errors.Join(problems...)
 		}
 		if len(indexes) > 0 && !hasCandidate {
-			return mergeOutcome{}, fmt.Errorf("%s has sandbox-assigned tasks but no final reviewed candidate — resume its loop before merge", name)
+			return mergeOutcome{}, noReviewedWorkError(repo, name, identity)
 		}
 		if hasCandidate {
 			if err := forkspace.ValidateGenerationWorkspace(repo, identity); err != nil {
@@ -811,6 +811,29 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 	// A fork with no task candidate lands Git only. Canonical task completion is never inferred from
 	// a trailer; generation candidates above carry exact task and projection authority.
 	return finishLand(true, landedHead, nil)
+}
+
+// noReviewedWorkError refuses to merge a fork that holds tasks but has published no reviewed work.
+// A fork loop publishes its work once it takes no other task, so the refusal names the tasks not
+// reviewed yet and the flag that makes the loop stop as soon as they are.
+func noReviewedWorkError(repo, name string, identity forkspace.Identity) error {
+	assignments, err := tasks.ForkAssignments(repo, identity)
+	if err != nil {
+		return err
+	}
+	var open []string
+	for _, assignment := range assignments {
+		if phase := assignment.Record.Fork.Phase; phase != tasks.ForkAssignmentReviewing && phase != tasks.ForkAssignmentReady {
+			open = append(open, assignment.Item.ID)
+		}
+	}
+	cause := "its loop stopped before the final review of all its work"
+	if len(open) == 1 {
+		cause = open[0] + " is not reviewed yet"
+	} else if len(open) > 1 {
+		cause = ui.List(open, "and") + " are not reviewed yet"
+	}
+	return fmt.Errorf("%s has no reviewed work to merge: %s — run its loop again with --stop-after-review, then merge it when it stops", name, cause)
 }
 
 // rebaseForkOntoParent rebases the fork's branch onto the parent's current HEAD inside the fork's

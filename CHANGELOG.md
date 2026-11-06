@@ -65,6 +65,12 @@
   `No Coop release v0.0.0-qa. Release tags look like v12.1.0.`, and installs nothing. Other download
   failures still show curl's error and the URL.
 
+- **A fork loop can stop once a task passes review, so you can merge it.** A fork loop made its
+  reviewed work ready to merge only when it had no other task to take, so with more tasks in the
+  queue `coop fork merge` always refused it, even right after a review passed. Add
+  `--stop-after-review` to `coop fork <name> <agent> --loop`: the fork stops after a task passes
+  review, before it takes another, and `coop fork ls` shows it as ready to merge. The merge refusal
+  now names the task that is not reviewed yet and points to the flag.
 - **`coop run` leaves your command's options alone.** Coop reads its own options only before the
   command, as `docker run` does before its image. `coop run echo a --egress offline` used to take
   `--egress offline` out of the command and turn the box's network off; now `echo` prints

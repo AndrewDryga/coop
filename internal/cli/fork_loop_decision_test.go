@@ -90,7 +90,7 @@ func runForkLoopOnQueues(t *testing.T, a *app, repo, ws string, identity forkspa
 	var stderr string
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() {
-			code, runErr = a.runForkLoop(repo, ws, identity, "claude", queues, "", "", "", nil, networkFlags{}, false)
+			code, runErr = a.runForkLoop(repo, ws, identity, "claude", queues, "", "", "", nil, networkFlags{}, false, false)
 		})
 	})
 	return code, stdout + stderr, runErr
@@ -204,7 +204,7 @@ func TestForkLoopContinueLineKeepsItsChosenQueues(t *testing.T) {
 	var stderr string
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() {
-			code, err = a.runForkLoop(repo, ws, identity, "claude", []string{web, queue}, "", "", "", nil, networkFlags{}, false)
+			code, err = a.runForkLoop(repo, ws, identity, "claude", []string{web, queue}, "", "", "", nil, networkFlags{}, false, false)
 		})
 	})
 	if want := "Continue:  coop fork chosen claude --loop --tasks " + shellWord(web) + " --tasks " + shellWord(queue) + "\n"; code != loopDecisionExit || err != nil || !strings.Contains(stdout+stderr, want) {

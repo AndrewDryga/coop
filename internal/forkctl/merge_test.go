@@ -465,6 +465,69 @@ func TestMergeOneLandsExactCandidateAndCanonicalTask(t *testing.T) {
 	}
 }
 
+// A fork loop that took another task after one passed review has no reviewed work to merge. The
+// refusal names the task still at work, not the reviewed one, and the loop flag that stops once that
+// work is reviewed.
+func TestMergeRefusalNamesTheUnreviewedTaskAndTheStopFlag(t *testing.T) {
+	repo := initRepo(t)
+	root := filepath.Join(repo, tasks.TasksRoot)
+	if err := tasks.ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a-reviewed", "b-working"} {
+		writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Canonical task\n- [x] required checks passed\n")
+	}
+	ws, err := forkspace.Setup(repo, "runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "runner")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assign := func() tasks.ForkAssignment {
+		t.Helper()
+		assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+			BaselineHead: forkspace.GitOut(ws, "rev-parse", "HEAD"),
+			LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		return assignment
+	}
+	reviewed := assign()
+	projected, ok := mustCurrentTask(t, reviewed.Owner.Projection, reviewed.Task.Item.ID)
+	if !ok {
+		t.Fatal("projected task missing")
+	}
+	if err := tasks.MoveTaskDir(reviewed.Owner.Projection, projected, tasks.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.AcceptForkProjection(repo, root, reviewed.Task.Item.ID, reviewed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if working := assign(); working.Task.Item.ID != "b-working" {
+		t.Fatalf("second assignment = %s, want b-working", working.Task.Item.ID)
+	}
+
+	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	landed, err := mergeOneForTest(t, c, repo, "", "runner", false)
+	want := "runner has no reviewed work to merge: b-working is not reviewed yet — run its loop again with --stop-after-review, then merge it when it stops"
+	if landed || err == nil || err.Error() != want {
+		t.Fatalf("merge of a fork with unreviewed work = (%v, %v), want the refusal %q", landed, err, want)
+	}
+}
+
 // A fork that cannot pass its own checks keeps its task paused. A person who brought its commit to
 // the branch, and kept working there, takes the task with `coop tasks done --from-fork`; merging the
 // fork afterwards drops the commit the branch already has instead of conflicting with the later

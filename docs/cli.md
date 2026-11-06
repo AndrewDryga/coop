@@ -1324,6 +1324,7 @@ LOOP OPTIONS
   -t, --tasks <path>     choose a task queue, even one outside the project;
                          repeat for more queues
   --peer <target>        start a read-only peer agent (no @account); repeatable
+  --stop-after-review    stop once a task passes review, ready to merge
 
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.

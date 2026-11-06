@@ -400,7 +400,7 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		return mergeOutcome{}, errors.Join(problems...)
 	}
 	if len(indexes) > 0 && !hasCandidate {
-		return mergeOutcome{}, errors.New("isolated task fork needs its exact final reviewed candidate before land")
+		return mergeOutcome{}, noReviewedWorkError(repo, name, identity)
 	}
 	var original *tasks.ForkCandidate
 	if hasCandidate {

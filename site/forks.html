@@ -172,6 +172,14 @@ resumes with <code>coop fork &lt;name&gt; --loop -d</code>. An answer typed into
 <code>coop tasks unblock &lt;id&gt;</code> to send the task back, and a stopped fork says which of its tasks have
 one. <code>unblock</code> also finds a task in a queue the fork was given with <code>--tasks</code>, and run in the
 fork&#39;s own checkout, it answers the task in the project.</p>
+<p>A fork loop makes its reviewed work ready to merge only when it has no other task to take. To merge
+each task once it&#39;s reviewed, add <code>--stop-after-review</code>. The fork stops after a task passes review,
+before it takes another, and <code>coop fork ls</code> shows it as ready to merge. Merge it and let the merge
+delete the fork, then run the same command again for the next task:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork api codex -d --stop-after-review  # stops once a task passes review
+coop fork merge api --yes                   # merges the reviewed work and deletes the fork
+coop fork api codex -d --stop-after-review  # a new fork takes the next task
+</code></pre></div>
 </section><section class="doc-section reference-section" id="isolated-write-forks"><h2>Isolated-write forks</h2>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Isolated-write forks code example" tabindex="0"><code class="language-bash">coop fork research codex --isolated
 coop fork research                 # the host remembers isolation

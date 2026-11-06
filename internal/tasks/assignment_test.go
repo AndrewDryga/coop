@@ -619,6 +619,68 @@ func TestPublishedForkCandidateFreezesGenerationBeforeAnotherAssignment(t *testi
 	}
 }
 
+// A fork that stops after review takes no new task once it holds a reviewed one, so it can publish
+// that work for merging. It still finishes a task it already holds: the candidate covers them all.
+func TestForkAssignmentStopsAfterReviewButFinishesWhatItHolds(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	for _, id := range []string{"a-reviewed", "b-held", "z-next"} {
+		taskWithCompletedChecklist(t, root, StateTodo, id)
+	}
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "stopper")
+	request := ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+	}
+	stopping := request
+	stopping.StopAfterReview = true
+	assign := func(request ForkAssignmentRequest) ForkAssignment {
+		t.Helper()
+		assignment, err := AssignForkTask([]string{root}, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if assignment.Lease != nil {
+			if err := assignment.Lease.Release(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return assignment
+	}
+	finish := func(assignment ForkAssignment) {
+		t.Helper()
+		projected, _ := mustCurrentTask(t, assignment.Owner.Projection, assignment.Task.Item.ID)
+		if err := MoveTaskDir(assignment.Owner.Projection, projected, StateDone); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := AcceptForkProjection(repo, root, assignment.Task.Item.ID, assignment.Owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	finish(assign(stopping)) // nothing reviewed yet, so the fork takes its first task
+	if held := assign(request); held.Outcome != ForkAssignmentSelected || held.Task.Item.ID != "b-held" {
+		t.Fatalf("fork without the stop took %+v, want b-held", held)
+	}
+	held := assign(stopping)
+	if held.Outcome != ForkAssignmentSelected || held.Task.Item.ID != "b-held" {
+		t.Fatalf("stopping fork took %+v, want the task it already holds, b-held", held)
+	}
+	finish(held)
+	if next := assign(stopping); next.Outcome != ForkAssignmentExecutorDrained {
+		t.Fatalf("stopping fork with reviewed work took %+v, want no new task", next)
+	}
+	if remaining, ok := mustCurrentTask(t, root, "z-next"); !ok || remaining.State != StateTodo {
+		t.Fatalf("next task changed under a fork stopping after review: %+v, ok=%v", remaining, ok)
+	}
+	if _, owned, err := ReadTaskOwnerRecord(root, "z-next"); err != nil || owned {
+		t.Fatalf("next task owner = owned %v, err %v; want it unassigned", owned, err)
+	}
+	if next := assign(request); next.Outcome != ForkAssignmentSelected || next.Task.Item.ID != "z-next" {
+		t.Fatalf("fork without the stop took %+v, want z-next", next)
+	}
+}
+
 func TestForkProjectionRejectsAdditionalTask(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	taskForLease(t, root, StateTodo, "only")

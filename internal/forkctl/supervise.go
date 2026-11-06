@@ -164,7 +164,7 @@ func recordStartedFork(repo, name string, cmd *exec.Cmd, generation forkspace.Ge
 // the fork's log, records its pid, and returns immediately. The worker's command line is
 // detachedWorkerArgs. continueCmd is the command that continues this loop as it was started, noted
 // beside the record for coop fork stop to repeat (forkspace.WriteWorkerContinue).
-func (c *Control) DetachForkLoop(repo, name, agent string, tasks []string, credential, model, effort, presetName string, peers, network []string, continueCmd string, identity forkspace.Identity) (int, error) {
+func (c *Control) DetachForkLoop(repo, name, agent string, tasks []string, credential, model, effort, presetName string, peers, flags []string, continueCmd string, identity forkspace.Identity) (int, error) {
 	if identity.Name != name || !forkspace.ValidGeneration(identity.Generation) {
 		return -1, errors.New("detached fork received an invalid generation identity")
 	}
@@ -202,7 +202,7 @@ func (c *Control) DetachForkLoop(repo, name, agent string, tasks []string, crede
 			return -1, err
 		}
 	}
-	reExec := detachedWorkerArgs(name, who, tasks, peers, network)
+	reExec := detachedWorkerArgs(name, who, tasks, peers, flags)
 	cmd := exec.Command(self, reExec...)
 	cmd.Dir = repo // ResolveRepo finds the parent repo, then the worker resumes the fork
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = logf, logf, nil
@@ -227,9 +227,10 @@ func (c *Control) DetachForkLoop(repo, name, agent string, tasks []string, crede
 // detachedWorkerArgs is the command line a detached start re-executes coop with. The who-runs slot
 // (a preset name or the composed target) and each --peer are forwarded, so the worker re-loads the
 // same recipe and scope, as is each --tasks queue (absolute, resolved by the caller) in its order; no
-// --tasks lets the worker derive the project's queues itself. network carries the launch's egress
-// flags verbatim, because the worker admits its own policy at loop start.
-func detachedWorkerArgs(name, who string, tasks, peers, network []string) []string {
+// --tasks lets the worker derive the project's queues itself. flags carries the launch's other loop
+// flags and its egress flags verbatim, because the worker re-parses them and admits its own policy at
+// loop start.
+func detachedWorkerArgs(name, who string, tasks, peers, flags []string) []string {
 	args := []string{"fork", name, who, "--loop", "--_detached"}
 	for _, queue := range tasks {
 		args = append(args, "--tasks", queue)
@@ -237,7 +238,7 @@ func detachedWorkerArgs(name, who string, tasks, peers, network []string) []stri
 	for _, peer := range peers {
 		args = append(args, "--peer", peer)
 	}
-	return append(args, network...)
+	return append(args, flags...)
 }
 
 func (c *Control) ForkLogs(args []string) (int, error) {

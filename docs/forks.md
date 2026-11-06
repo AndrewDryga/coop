@@ -68,6 +68,17 @@ resumes with `coop fork <name> --loop -d`. An answer typed into `decision.md` by
 one. `unblock` also finds a task in a queue the fork was given with `--tasks`, and run in the
 fork's own checkout, it answers the task in the project.
 
+A fork loop makes its reviewed work ready to merge only when it has no other task to take. To merge
+each task once it's reviewed, add `--stop-after-review`. The fork stops after a task passes review,
+before it takes another, and `coop fork ls` shows it as ready to merge. Merge it and let the merge
+delete the fork, then run the same command again for the next task:
+
+```bash
+coop fork api codex -d --stop-after-review  # stops once a task passes review
+coop fork merge api --yes                   # merges the reviewed work and deletes the fork
+coop fork api codex -d --stop-after-review  # a new fork takes the next task
+```
+
 ## Isolated-write forks
 
 ```bash

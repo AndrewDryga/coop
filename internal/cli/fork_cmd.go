@@ -110,6 +110,7 @@ LOOP OPTIONS
   -t, --tasks <path>     choose a task queue, even one outside the project;
                          repeat for more queues
 ` + peerOptionRow + `
+  --stop-after-review    stop once a task passes review, ready to merge
 
   Each fork receives one project task at a time. Its task is completed in the
   project queue when you merge the reviewed work. Stopping keeps it resumable.
@@ -280,6 +281,9 @@ type forkArgs struct {
 	// network is this fork run's --egress/--allow-domain/--egress-rules. A loop
 	// admits once at its start; an interactive fork admits before its one box.
 	network networkFlags
+	// stopAfterReview (--stop-after-review) stops the loop once a task passes review, before it takes
+	// another, so the reviewed work can be merged.
+	stopAfterReview bool
 }
 
 const (
@@ -346,6 +350,8 @@ func parseForkCreate(args []string) (forkArgs, error) {
 		case x == "-d", x == "--detach":
 			fa.detach = true
 			fa.loop = true
+		case x == "--stop-after-review":
+			fa.stopAfterReview = true
 		case x == "--tasks", x == "-t":
 			if i+1 >= len(rest) || strings.HasPrefix(rest[i+1], "-") {
 				return fa, ui.MissingOptionValue("--tasks", "coop fork", forkTasksExample)
@@ -382,6 +388,9 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	}
 	if !fa.loop && len(fa.tasks) > 0 {
 		return fa, ui.OptionNeedsAnother("--tasks", "--loop", "coop fork")
+	}
+	if !fa.loop && fa.stopAfterReview {
+		return fa, ui.OptionNeedsAnother("--stop-after-review", "--loop", "coop fork")
 	}
 	if fa.cont && fa.newSession {
 		return fa, ui.ConflictingOptions("--continue", "--new", "coop fork")
@@ -822,7 +831,7 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		_ = forkctl.ClearForkStartError(ws)
 		switch {
 		case fa.worker:
-			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, true)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, fa.stopAfterReview, true)
 		case fa.detach:
 			if err := a.preflightForkLoop(box.RunSpec{
 				Repo: ws, Image: img, Agent: fa.agent, Preset: a.preset, Peers: peers,
@@ -834,18 +843,21 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			// The worker admits at its own loop start, exactly like a foreground
 			// loop, so it needs the flags themselves — not a capture the parent
 			// took and could not hand across a process boundary.
-			network, argErr := fa.network.args()
+			flags, argErr := fa.network.args()
 			if argErr != nil {
 				return 2, argErr
+			}
+			if fa.stopAfterReview {
+				flags = append([]string{"--stop-after-review"}, flags...)
 			}
 			// coop fork stop repeats this when it stops the worker, which nothing else could tell it.
-			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, peers, fa.network)
+			continueCmd, argErr := a.forkLoopContinue(fa.name, fa.agent, fa.model, fa.effort, fa.credential, fa.tasks, peers, fa.stopAfterReview, fa.network)
 			if argErr != nil {
 				return 2, argErr
 			}
-			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, network, continueCmd, forkIdentity)
+			return fc.DetachForkLoop(repo, fa.name, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, fa.preset, fa.peers, flags, continueCmd, forkIdentity)
 		default:
-			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, false)
+			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, fa.stopAfterReview, false)
 		}
 	}
 	// Until an agent runs in a fork, a start that stops short (an account that cannot be used, an image
@@ -1323,9 +1335,9 @@ func pathsOverlap(left, right string) bool {
 
 // forkLoopContinueCommand is the command that resumes this fork loop. It repeats the who-runs
 // positional, each queue --tasks chose, in order (absolute, as the loop runs on them, so they mean the
-// same queues from any folder), the peers and the network flags; without --tasks the fork takes every
-// project queue.
-func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, peers []agents.Target, network networkFlags) (string, error) {
+// same queues from any folder), the peers, --stop-after-review and the network flags; without --tasks
+// the fork takes every project queue.
+func forkLoopContinueCommand(name, presetName string, target agents.Target, queues []string, peers []agents.Target, stopAfterReview bool, network networkFlags) (string, error) {
 	continueArg := target.String()
 	if presetName != "" {
 		continueArg = presetName
@@ -1337,12 +1349,15 @@ func forkLoopContinueCommand(name, presetName string, target agents.Target, queu
 	for _, peer := range peers {
 		command += " --peer " + shellWord(peer.String())
 	}
+	if stopAfterReview {
+		command += " --stop-after-review"
+	}
 	return withNetworkArgs(command, network)
 }
 
 // forkLoopContinue is forkLoopContinueCommand for this fork loop: led by the preset it runs under,
 // else by its target with the one-off model, effort and account.
-func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, peers []agents.Target, network networkFlags) (string, error) {
+func (a *app) forkLoopContinue(name, agent, model, effort, credential string, queues []string, peers []agents.Target, stopAfterReview bool, network networkFlags) (string, error) {
 	target := agents.Target{Provider: agent, Model: model, Effort: effort}
 	if credential != "" {
 		target.Accounts = []string{credential}
@@ -1351,7 +1366,7 @@ func (a *app) forkLoopContinue(name, agent, model, effort, credential string, qu
 	if a.preset != nil {
 		presetName = a.preset.Name
 	}
-	return forkLoopContinueCommand(name, presetName, target, queues, peers, network)
+	return forkLoopContinueCommand(name, presetName, target, queues, peers, stopAfterReview, network)
 }
 
 // runForkLoop schedules against the parent project's canonical queue and materializes only its one
@@ -1363,7 +1378,9 @@ func (a *app) forkLoopContinue(name, agent, model, effort, credential string, qu
 // credential/model are the fork target's decomposed one-off (model@account allowed);
 // the fork's preset (already loaded into a.preset by forkCreate) supplies the rotation
 // ladder when neither flag is given; consult opts each iteration into peer consultation.
-func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent string, queues []string, credential, model, effort string, peers []agents.Target, network networkFlags, detached bool) (code int, err error) {
+// stopAfterReview takes no new task once the fork holds a reviewed one: the loop publishes what it
+// has and stops, ready to merge.
+func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent string, queues []string, credential, model, effort string, peers []agents.Target, network networkFlags, stopAfterReview, detached bool) (code int, err error) {
 	name := identity.Name
 	controllerRole := forkspace.ExecutionRoleController
 	if detached {
@@ -1414,7 +1431,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 	if err != nil {
 		return -1, fmt.Errorf("fork %s: %w", name, err)
 	}
-	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, peers, network)
+	continueCmd, err := a.forkLoopContinue(name, agent, model, effort, credential, queues, peers, stopAfterReview, network)
 	if err != nil {
 		return 2, err
 	}
@@ -1468,6 +1485,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 				RunID: "fork-" + name + "-" + string(identity.Generation), PID: os.Getpid(),
 				Provider: agent, Target: target,
 			},
+			StopAfterReview: stopAfterReview,
 		})
 		if err != nil {
 			return 1, err

@@ -2,7 +2,7 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
 updated: 2026-11-06
 ---
 
@@ -56,6 +56,11 @@ answer, the loop prompt starts with it (`decisionResumePrompt`, internal/loop/pr
 decision.md that cannot be read stops the launch.
 A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
+The loop reviews and publishes it only once the scheduler drains, so a fork whose queue has more
+work is never mergeable mid-run: the next task is assigned right after acceptance, before the
+pass's summary prints. `--stop-after-review` (`ForkAssignmentRequest.StopAfterReview`) makes the
+scheduler take no new task once the generation holds a `reviewing` or `ready` assignment, while it
+still resumes one it holds, so the loop goes on to the candidate review and stops ready to merge.
 Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
 is a person's `coop tasks done <id> --from-fork` (internal/tasks/landed_fork.go): with the fork
 stopped, no live candidate and exactly one reachable `Coop-Task` commit on the project's HEAD, it
@@ -106,6 +111,10 @@ as a problem, and the service-launch locks beside it stay.
 - 2026-11-06 — unblock run in a fork's own checkout answers the task in the project; it had read
   the checkout's queue, which a fork's clone lacks and its box can write, and the restart it named
   only worked in the project (task 2026-11-06-find-a-fork-s-task-when-coop-tasks-unblock-runs).
+- 2026-11-06 — added `--stop-after-review`: a looping fork could not be merged until its whole queue
+  drained, and a stop right after a review passed was already too late (task
+  2026-11-05-let-a-fork-merge-its-last-reviewed-work-after-it). The merge refusal names the
+  unreviewed tasks and the flag. Verified against assignment.go, fork_cmd.go and merge.go.
 - 2026-11-06 — acceptance and landing copy the fork's decision.md without its answer unless the
   copy is the project's byte for byte: a Resolution the box wrote had reached the project's file,
   where unblock without an answer and coop loop's pre-flight took it for the person's (task
