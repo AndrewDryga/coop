@@ -2,8 +2,8 @@
 name: acp-target-commit
 description: ACP model and effort choices become controller truth only from the effective provider response
 subsystem: acp
-sources: [internal/acpctl/control.go, internal/acpctl/control_test.go, internal/cli/fork_acp.go, internal/cli/fork_acp_test.go, internal/agent/grok.go]
-updated: 2026-10-17
+sources: [internal/acpctl/control.go, internal/acpctl/control_test.go, internal/cli/fork_acp.go, internal/cli/fork_acp_test.go, internal/agent/grok.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_matrix_e2e_test.go]
+updated: 2026-11-06
 ---
 
 Native and synthesized target requests carry a monotonic provider/field sequence. A provider success
@@ -26,12 +26,27 @@ recreation intent across SIGHUP; prose, near misses, stale responses, and other 
 errors (`modelRestartSuggested`, called from `commitNativeTarget`, and `setModelFromEditor` in
 internal/acpctl/control.go).
 
+The editor's session/new|load|resume answer is forwarded before `SessionReady`'s settings go out, so
+it carries the adapter's defaults. ACP has an adapter answer `session/set_config_option` with its
+complete option list, and when the last setting succeeds the proxy sends that list to the editor as
+a `config_option_update` through `ToEditor`, before a prompt held behind the settings reaches the box
+(`handleInjectedResponseControlled` and `settledConfigLine` in internal/acpproxy/proxy.go). An answer
+without options, such as `session/set_model`'s `{}`, sends nothing. The fork supervisor passes it on
+unchanged, so a fork's editor also sees the mode Coop sets. The older `models` field, which ACP
+dropped in 0.13.5 but codex-acp 2 still sends, changes only in a session answer, so `retargetModels`
+points its `currentModelId` at the model `SessionReady` applies; codex-acp ids name the effort too
+(`gpt-6-luna[high]`). `TestScriptedACPEditorSeesTheTargetTheBoxRuns` compares what the editor shows
+with what the box got.
+
 Live conformance changes a model only when the installed adapter advertises a distinct option. Grok
 0.2.101 can truthfully expose only its current agent model. Coop must not merge the illustrative
 `Agent.Models()` list into native ACP choices: scripted E2E owns the cross-agent migration contract,
 while live E2E still requires a nonempty current model, reload, and a second successful prompt.
 
 ## Changelog
+- 2026-11-06 — the editor now gets the adapter's options after Coop's settings, and the legacy
+  `models.currentModelId` names the target; verified against codex-acp 2.0.1's `ModelId` and
+  `setSessionConfigOption`, and the ACP config-options spec.
 - 2026-10-17 — named `registerNativeTarget`, `commitNativeTarget`, `modelRestartSuggested` and
   `setModelFromEditor` instead of control.go line numbers; re-verified each against
   internal/acpctl/control.go.

@@ -935,10 +935,12 @@ func (c *Control) childReset() {
 // carries NO configOptions (an adapter may expose only `models`, or neither) it still injects Coop's
 // selector, so the credential/preset switcher appears for every agent. Other lines pass through.
 func (c *Control) rewriteToEditor(line []byte) []byte {
-	// Fast path: only session/new|load|resume results (a result WITH a sessionId) and config_option_update
-	// notifications carry a toolbar, so skip parsing the (often large) prompt/tool-call traffic entirely.
+	// Fast path: only session/new|load|resume results (a result WITH a sessionId, or a load's model
+	// state) and config_option_update notifications carry a toolbar, so skip parsing the (often large)
+	// prompt/tool-call traffic entirely.
 	isSessionResult := bytes.Contains(line, []byte(`"sessionId"`)) && bytes.Contains(line, []byte(`"result"`))
-	if !isSessionResult && !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) {
+	if !isSessionResult && !bytes.Contains(line, []byte("configOptions")) && !bytes.Contains(line, []byte(`"modes"`)) &&
+		!bytes.Contains(line, []byte(`"currentModelId"`)) {
 		return line
 	}
 	var m map[string]json.RawMessage
@@ -979,6 +981,12 @@ func (c *Control) rewriteToEditor(line []byte) []byte {
 		} else if rewrote := c.rewriteUpdateConfigOptions(inner["update"], sid); rewrote != nil {
 			inner["update"] = rewrote
 			changed = true
+		}
+		if key == "result" {
+			if models := c.retargetModels(inner["models"]); models != nil {
+				inner["models"] = models
+				changed = true
+			}
 		}
 		if !changed {
 			continue
@@ -2469,6 +2477,60 @@ func (c *Control) synthModelOption(models json.RawMessage, preset, model string)
 	}
 	b, _ := json.Marshal(co)
 	return b
+}
+
+// retargetModels points a session result's models.currentModelId at the model sessionReady applies
+// next, the way rewriteConfigOptions retargets the model option: an editor without config options
+// reads only this field. Codex's ids carry the effort (gpt-6-luna[high]), and a model change keeps
+// the session's effort when the target names none. nil leaves the field as the adapter sent it.
+func (c *Control) retargetModels(models json.RawMessage) json.RawMessage {
+	if len(models) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	target := c.target
+	c.mu.Unlock()
+	a, ok := agents.Get(target.Provider)
+	if !ok || !slices.ContainsFunc(a.ACPSessionSettings(target), func(s agents.ACPSessionSetting) bool {
+		return s.Method == agents.ACPSetModel || s.ConfigID == "model"
+	}) {
+		return nil // nothing will change the model the adapter reported
+	}
+	var state struct {
+		CurrentModelID  string `json:"currentModelId"`
+		AvailableModels []struct {
+			ModelID string `json:"modelId"`
+		} `json:"availableModels"`
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(models, &state) != nil || json.Unmarshal(models, &m) != nil {
+		return nil
+	}
+	effort := target.Effort
+	if _, rest, ok := strings.Cut(state.CurrentModelID, "["); effort == "" && ok && strings.HasSuffix(rest, "]") {
+		effort = strings.TrimSuffix(rest, "]")
+	}
+	wants := []string{target.Model}
+	if effort != "" {
+		wants = []string{target.Model + "[" + effort + "]", target.Model}
+	}
+	for _, want := range wants {
+		for _, offered := range state.AvailableModels {
+			if offered.ModelID != want {
+				continue
+			}
+			if want == state.CurrentModelID {
+				return nil
+			}
+			m["currentModelId"], _ = json.Marshal(want)
+			out, err := json.Marshal(m)
+			if err != nil {
+				return nil
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 // rewriteErrorMessage replaces the message of a JSON-RPC error line, preserving its id + code (so the

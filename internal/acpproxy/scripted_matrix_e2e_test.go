@@ -13,6 +13,8 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/forkctl"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -304,6 +306,209 @@ func TestScriptedACPProviderTargetReplayMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestScriptedACPEditorSeesTheTargetTheBoxRuns: the adapter answers session/new with its own defaults
+// and gets Coop's target settings only after that. Before the first prompt's answer, the editor must
+// show the model and effort the box got, and the older models field must name the target too. A fork
+// keeps the adapter's own options, so its editor also sees the mode Coop sets.
+func TestScriptedACPEditorSeesTheTargetTheBoxRuns(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildDir := t.TempDir()
+	coopBin, fixtureBin := filepath.Join(buildDir, "coop"), filepath.Join(buildDir, "acpfixture")
+	buildTestBinary(t, root, coopBin, ".")
+	buildTestBinary(t, root, fixtureBin, "./internal/acpproxy/testdata/acpfixture")
+	for _, tc := range []struct {
+		name, provider, model, effortID string
+		fork                            bool
+		wantModels                      string // models.currentModelId in session/new; "" when the adapter sends no models
+		wantMode                        string // the mode the editor shows; "" when Coop hides the option
+	}{
+		{name: "codex", provider: "codex", model: "gpt-6-luna", effortID: "reasoning_effort", wantModels: "gpt-6-luna[high]"},
+		{name: "claude", provider: "claude", model: "sonnet", effortID: "effort"},
+		{name: "claude fork", provider: "claude", model: "sonnet", effortID: "effort", fork: true, wantMode: "bypassPermissions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := scriptedTempDir(t)
+			repo := filepath.Join(tmp, "repo")
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			plan := writeMatrixPlan(t, tmp, matrixPlan{Providers: map[string][][]matrixStep{
+				tc.provider: {targetDisplayGeneration(tc.provider, "T1", tc.model, tc.effortID)},
+			}})
+			args := []string{"acp", tc.provider + ":" + tc.model + "/high"}
+			if tc.fork {
+				ws := forkspace.Workspace(repo, "myfork")
+				if err := os.MkdirAll(ws, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := forkctl.SaveForkAgent(ws, tc.provider); err != nil {
+					t.Fatal(err)
+				}
+				args = append([]string{"fork", "myfork"}, args...)
+			}
+			proc := startScriptedACPArgs(t, coopBin, fixtureBin, repo, tmp, plan, args, nil, tc.provider)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := proc.client.req(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}); err != nil {
+				t.Fatalf("initialize: %v\nstderr:\n%s", err, proc.stderr.String())
+			}
+			mark := proc.client.mark()
+			response, err := proc.client.req(ctx, "session/new", map[string]any{"cwd": repo, "mcpServers": []any{}})
+			if err != nil {
+				t.Fatalf("session/new: %v\nstderr:\n%s", err, proc.stderr.String())
+			}
+			result, _ := response["result"].(map[string]any)
+			models, _ := result["models"].(map[string]any)
+			if got, _ := models["currentModelId"].(string); got != tc.wantModels {
+				t.Errorf("session/new models.currentModelId = %q, want %q", got, tc.wantModels)
+			}
+			wire := filepath.Join(tmp, "fixture-state", tc.provider+"-0", "wire.jsonl")
+			promptMatrix(t, ctx, proc, wire, responseSessionID(response), "which target", "target answer")
+
+			frames := proc.client.transcript()[mark:]
+			answered := slices.IndexFunc(frames, func(frame wireFrame) bool { return strings.Contains(string(frame.Raw), "target answer") })
+			if answered < 0 {
+				t.Fatalf("the answer never reached the editor:\n%s", wireDump(frames))
+			}
+			shown, box := editorOptionValues(frames[:answered]), boxConfigValues(t, wire)
+			for _, id := range []string{"model", tc.effortID} {
+				if shown[id] != box[id] || box[id] == "" {
+					t.Errorf("before the first answer the editor shows %s=%q, the box got %q\nwire:\n%s", id, shown[id], box[id], wireDump(frames))
+				}
+			}
+			if shown["model"] != tc.model || shown[tc.effortID] != "high" {
+				t.Errorf("the editor shows model=%q %s=%q, want the target %s/high", shown["model"], tc.effortID, shown[tc.effortID], tc.model)
+			}
+			if mode, ok := shown["mode"]; mode != tc.wantMode || ok != (tc.wantMode != "") {
+				t.Errorf("the editor shows mode=%q (listed %v), want %q", mode, ok, tc.wantMode)
+			}
+			if tc.wantMode != "" && box["mode"] != tc.wantMode {
+				t.Errorf("the box got mode %q, want %q", box["mode"], tc.wantMode)
+			}
+		})
+	}
+}
+
+// targetDisplayGeneration is an adapter that starts a session on its own defaults and lists its
+// complete options after each target setting, as ACP has set_config_option answer.
+func targetDisplayGeneration(provider, sessionID, model, effortID string) []matrixStep {
+	defaultModel, defaultEffort := "default", "default"
+	if provider == "codex" {
+		defaultModel, defaultEffort = "gpt-6.1-sol", "low"
+	}
+	options := func(mode, model, effort string) []any {
+		choice := func(id, current string, values ...string) map[string]any {
+			listed := make([]any, 0, len(values))
+			for _, value := range values {
+				listed = append(listed, map[string]any{"value": value, "name": value})
+			}
+			return map[string]any{"id": id, "name": id, "type": "select", "currentValue": current, "options": listed}
+		}
+		var out []any
+		if provider == "claude" {
+			out = append(out, choice("mode", mode, "default", "bypassPermissions"))
+		}
+		return append(out, choice("model", model, defaultModel, "sonnet", "gpt-6-luna"),
+			choice(effortID, effort, defaultEffort, "high"))
+	}
+	set := func(configID, value string, after []any) matrixStep {
+		return matrixStep{
+			Method: "session/set_config_option",
+			Params: map[string]any{"sessionId": sessionID, "configId": configID, "value": value},
+			Result: map[string]any{"configOptions": after},
+		}
+	}
+	created := map[string]any{"sessionId": sessionID, "configOptions": options("default", defaultModel, defaultEffort)}
+	if provider == "codex" {
+		created["models"] = targetModels(defaultModel+"["+defaultEffort+"]",
+			"gpt-6.1-sol[low]", "gpt-6.1-sol[high]", "gpt-6-luna[low]", "gpt-6-luna[high]")
+	}
+	steps := []matrixStep{
+		{Method: "initialize", Result: map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{}}},
+		{Method: "session/new", Result: created},
+	}
+	mode := "default"
+	if provider == "claude" {
+		mode = "bypassPermissions"
+		steps = append(steps, set("mode", mode, options(mode, defaultModel, defaultEffort)))
+	}
+	return append(steps,
+		set("model", model, options(mode, model, defaultEffort)),
+		set(effortID, "high", options(mode, model, "high")),
+		matrixStep{Method: "session/prompt", Events: []any{matrixAgentChunk(sessionID, "target answer")}, Result: map[string]any{"stopReason": "end_turn"}},
+	)
+}
+
+// editorOptionValues is each option's current value as the editor last saw it: every session result
+// and config_option_update lists the complete set.
+func editorOptionValues(frames []wireFrame) map[string]string {
+	type option struct {
+		ID           string `json:"id"`
+		CurrentValue string `json:"currentValue"`
+	}
+	shown := map[string]string{}
+	for _, frame := range frames {
+		var message struct {
+			Result struct {
+				ConfigOptions []option `json:"configOptions"`
+			} `json:"result"`
+			Params struct {
+				Update struct {
+					Kind          string   `json:"sessionUpdate"`
+					ConfigOptions []option `json:"configOptions"`
+				} `json:"update"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(frame.Raw, &message) != nil {
+			continue
+		}
+		options := message.Result.ConfigOptions
+		if message.Params.Update.Kind == "config_option_update" {
+			options = message.Params.Update.ConfigOptions
+		}
+		if len(options) == 0 {
+			continue
+		}
+		shown = map[string]string{}
+		for _, o := range options {
+			shown[o.ID] = o.CurrentValue
+		}
+	}
+	return shown
+}
+
+// boxConfigValues is the last value the box was set to for each option.
+func boxConfigValues(t *testing.T, path string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record struct {
+			Direction string `json:"direction"`
+			Frame     struct {
+				Method string `json:"method"`
+				Params struct {
+					ConfigID string `json:"configId"`
+					Value    string `json:"value"`
+				} `json:"params"`
+			} `json:"frame"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if record.Direction == "in" && record.Frame.Method == "session/set_config_option" {
+			got[record.Frame.Params.ConfigID] = record.Frame.Params.Value
+		}
+	}
+	return got
 }
 
 func TestScriptedACPGrokModelAgentMigration(t *testing.T) {

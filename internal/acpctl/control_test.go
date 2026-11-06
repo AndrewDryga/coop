@@ -524,6 +524,43 @@ func TestACPControlCodexNativeModelNotSynthesized(t *testing.T) {
 	}
 }
 
+// TestACPControlRetargetsLegacyCurrentModel: an editor without config options reads the model from a
+// session result's models.currentModelId, so it must name what sessionReady applies next, as the model
+// option does. Codex ids carry the effort, and a Codex model change keeps the session's effort.
+func TestACPControlRetargetsLegacyCurrentModel(t *testing.T) {
+	const codexModels = `{"currentModelId":"gpt-6.1-sol[low]","availableModels":[{"modelId":"gpt-6.1-sol[low]","name":"Sol"},{"modelId":"gpt-6-luna[low]","name":"Luna"},{"modelId":"gpt-6-luna[high]","name":"Luna"}]}`
+	for _, tc := range []struct {
+		name, provider, model, effort, models, want string
+	}{
+		{"codex model and effort", "codex", "gpt-6-luna", "high", codexModels, "gpt-6-luna[high]"},
+		{"codex keeps the session effort", "codex", "gpt-6-luna", "", codexModels, "gpt-6-luna[low]"},
+		{"codex model it does not list", "codex", "gpt-7", "high", codexModels, "gpt-6.1-sol[low]"},
+		{"gemini", "gemini", "gemini-2.5-flash", "", `{"currentModelId":"gemini-2.5-pro","availableModels":[{"modelId":"gemini-2.5-pro"},{"modelId":"gemini-2.5-flash"}]}`, "gemini-2.5-flash"},
+		{"grok sets no model in session", "grok", "grok-4.5", "", `{"currentModelId":"grok-4.6","availableModels":[{"modelId":"grok-4.5"},{"modelId":"grok-4.6"}]}`, "grok-4.6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			c := New(&config.Config{ConfigDir: dir}, tc.provider, tc.model, tc.effort, dir, Selection{}, nil, nil, testHost())
+			for _, result := range []string{`{"sessionId":"S","models":` + tc.models + `}`, `{"models":` + tc.models + `}`} {
+				out := toEd(c, []byte(`{"jsonrpc":"2.0","id":2,"result":`+result+`}`+"\n"))
+				var m struct {
+					Result struct {
+						Models struct {
+							CurrentModelID string `json:"currentModelId"`
+						} `json:"models"`
+					} `json:"result"`
+				}
+				if err := json.Unmarshal(out, &m); err != nil {
+					t.Fatalf("decode %s: %v", out, err)
+				}
+				if m.Result.Models.CurrentModelID != tc.want {
+					t.Errorf("%s: currentModelId = %q, want %q", result, m.Result.Models.CurrentModelID, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestACPControlPassthrough: a non-config line (the bulk of ACP traffic) is returned byte-identical.
 func TestACPControlPassthrough(t *testing.T) {
 	c := newTestControl(t)

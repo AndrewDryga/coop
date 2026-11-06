@@ -355,6 +355,78 @@ func TestProxyTargetSettingsAreAcknowledgementGated(t *testing.T) {
 	_ = h.shutdown()
 }
 
+// The editor saw session/new before Coop's settings, so once the last one applies it hears the options
+// the adapter now lists, before the prompt held behind them reaches the box. A setting answered on the
+// way there is not the box's final state, so it shows nothing.
+func TestProxySettledTargetReachesEditorBeforeHeldPrompt(t *testing.T) {
+	modelID, effortID := InjectPrefix+"model", InjectPrefix+"effort"
+	h := newProxyHarness(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
+		return [][]byte{
+			[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"m"}}`+"\n", modelID, sid)),
+			[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"effort","value":"xhigh"}}`+"\n", effortID, sid)),
+		}
+	}})
+	c := h.children[0]
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
+	readLine(t, h.childIn[0])
+	wrote := writeLineAsync(c.outW, `{"jsonrpc":"2.0","id":2,"result":{"sessionId":"S1","configOptions":[{"id":"model","currentValue":"default"},{"id":"effort","currentValue":"low"}]}}`)
+	readLine(t, h.childIn[0]) // model setting
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	readLine(t, h.clientOut) // session/new response, with the adapter's defaults
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"configOptions":[{"id":"model","currentValue":"m"},{"id":"effort","currentValue":"low"}]}}`, modelID))
+	readLine(t, h.childIn[0]) // effort setting
+	writeLine(t, c.outW, fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"result":{"configOptions":[{"id":"model","currentValue":"m"},{"id":"effort","currentValue":"xhigh"}]}}`, effortID))
+	update := readLine(t, h.clientOut)
+	if !strings.Contains(string(update), `"sessionUpdate":"config_option_update"`) || !strings.Contains(string(update), `"sessionId":"S1"`) ||
+		!strings.Contains(string(update), `{"id":"effort","currentValue":"xhigh"}`) || !strings.Contains(string(update), `{"id":"model","currentValue":"m"}`) {
+		t.Fatalf("after the settings the editor got %s, want the box's options", update)
+	}
+	if line := readLine(t, h.childIn[0]); method(t, line) != "session/prompt" || idStr(t, line) != "3" {
+		t.Fatalf("frame after the settled options = %s, want the held prompt", line)
+	}
+	writeLine(t, c.outW, `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`)
+	if response := readLine(t, h.clientOut); idStr(t, response) != "3" {
+		t.Fatalf("prompt response = %s", response)
+	}
+	_ = h.shutdown()
+}
+
+// The settled options name the editor's session, and an answer that lists none, or fails, shows nothing.
+func TestProxySettledTargetNamesTheEditorSession(t *testing.T) {
+	id := InjectPrefix + "settled"
+	request := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":"N2","configId":"effort","value":"xhigh"}}`, id))
+	for _, tc := range []struct {
+		name, answer, want string
+	}{
+		{"options", `"result":{"configOptions":[{"id":"effort","currentValue":"xhigh"}]}`, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S1","update":{"configOptions":[{"id":"effort","currentValue":"xhigh"}],"sessionUpdate":"config_option_update"}}}` + "\n"},
+		{"set_model", `"result":{}`, ""},
+		{"empty", `"result":{"configOptions":[]}`, ""},
+		{"rejected", `"error":{"code":-32602,"message":"unsupported effort"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			chain := &forceChain{session: "N2", requests: [][]byte{request}, next: 1, activeID: id}
+			p := &proxy{
+				out:         &out,
+				sessions:    map[string]*sess{"S1": {adapterID: "N2"}},
+				byAdapter:   map[string]string{"N2": "S1"},
+				injected:    map[string][]byte{id: request},
+				forceByID:   map[string]*forceChain{id: chain},
+				forceBySess: map[string]*forceChain{"N2": chain},
+				forceFailed: map[string]string{},
+			}
+			p.handleInjectedResponse([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,%s}`, id, tc.answer)))
+			if got := out.String(); got != tc.want {
+				t.Fatalf("the editor got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProxyTargetSettingFailureBlocksPrompt(t *testing.T) {
 	modelID, effortID := InjectPrefix+"model", InjectPrefix+"effort"
 	hooks := &Hooks{

@@ -74,6 +74,13 @@
   attempt, and `coop tasks unblock <id> "<answer>"` lets the next worker run the checks and close
   the task with no new commit, or with one repair commit. `--preflight` leaves such a task blocked
   for that command, because a box can write the answer it would read.
+
+- **The editor shows the model, effort and mode the agent runs.** Coop sets a session's model and
+  effort, and Claude's permission mode, only after the agent has answered the editor, so the editor
+  kept the agent's defaults: `coop acp codex:gpt-6-luna/high` showed Reasoning effort Low, and a
+  fork's Mode said Default. Once those settings apply, and before your first message reaches the
+  agent, Coop now sends the editor the agent's own options, and the older model list in the
+  session answer names the target model and effort too.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

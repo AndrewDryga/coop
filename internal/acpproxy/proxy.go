@@ -90,7 +90,8 @@ type Hooks struct {
 	// SessionReady is called with a sessionId once a session is (re)established — a fresh session/new
 	// OR a replayed session/load after a box restart — so coop can force per-session state that the
 	// adapter resets each launch (yolo mode, coop's model). It returns lines to inject to the ADAPTER;
-	// their responses are swallowed (the editor never sent them). Injected requests must use IDs from
+	// their responses are swallowed (the editor never sent them), but the options the last one lists
+	// reach the editor as a config_option_update through ToEditor. Injected requests must use IDs from
 	// InjectPrefix so the proxy can recognize and swallow their responses.
 	SessionReady func(sessionID string) [][]byte
 	// InjectedResponse observes a response together with the synthetic request that caused it before
@@ -1913,6 +1914,7 @@ func (p *proxy) handleInjectedResponseControlled(line []byte, child *Child, gene
 	var next []byte
 	var c *Child
 	var held []clientLine
+	var settled []byte
 	failure := ""
 	if chain != nil && chain.activeID == id {
 		if chain.timer != nil {
@@ -1930,6 +1932,7 @@ func (p *proxy) handleInjectedResponseControlled(line []byte, child *Child, gene
 		} else {
 			delete(p.forceBySess, chain.session)
 			held = append(held, chain.held...)
+			settled = settledConfigLine(chain.session, h.Result)
 		}
 	}
 	p.mu.Unlock()
@@ -1950,8 +1953,28 @@ func (p *proxy) handleInjectedResponseControlled(line []byte, child *Child, gene
 		p.writeForce(c, next)
 		return
 	}
+	p.writeSettledConfig(settled)
 	for _, prompt := range held {
 		p.forwardClientControlled(prompt.line, prompt.origin, true)
+	}
+}
+
+// writeSettledConfig shows the editor what a session's box runs once its target settings applied,
+// before a prompt held behind them reaches the box. The editor saw the session/new|load result, which
+// carries the adapter's defaults from before those settings. controlMu is held.
+func (p *proxy) writeSettledConfig(line []byte) {
+	if len(line) == 0 {
+		return
+	}
+	if line = p.remapToEditor(line); len(line) == 0 {
+		return
+	}
+	if p.hooks != nil && p.hooks.ToEditor != nil {
+		line, _ = p.hooks.ToEditor(line) // a config notification is never a rate limit, so never a restart
+	}
+	if len(line) > 0 {
+		traceLine("box→editor(target-config)", line)
+		_, _ = p.out.Write(p.forEditor(line))
 	}
 }
 
@@ -3159,6 +3182,29 @@ func configOptionUpdateLine(sid string, options, models json.RawMessage) []byte 
 	}
 	b, _ := json.Marshal(upd)
 	return append(b, '\n')
+}
+
+// settledConfigLine is the config_option_update for a session whose last target setting just
+// applied. ACP has an adapter answer session/set_config_option with its complete option list, so these
+// are the values the box now runs. nil when the answer lists none: session/set_model answers {}.
+func settledConfigLine(sid string, result json.RawMessage) []byte {
+	options := resultConfigOptions(result)
+	var list []json.RawMessage
+	if json.Unmarshal(options, &list) != nil || len(list) == 0 {
+		return nil
+	}
+	line, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": sid,
+			"update":    map[string]any{"sessionUpdate": "config_option_update", "configOptions": options},
+		},
+	})
+	if err != nil {
+		return nil
+	}
+	return append(line, '\n')
 }
 
 func stripReplayConfigMetadata(line []byte) []byte {
