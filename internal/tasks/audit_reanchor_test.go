@@ -354,6 +354,60 @@ func TestMovedAuditAuthorityStillFailsClosed(t *testing.T) {
 	})
 }
 
+// The raw parse reads only a message's last paragraph, while Git skips trailing comment lines and
+// everything after a scissors line. So a repair after an ordinary record's baseline, which the raw
+// parse reads as unbound, can bind the task or a task of its History for Git alone. Every check of
+// an ordinary record reads Git's trailers too, as it does for a moved one.
+func TestOrdinaryAuditAuthorityReadsGitTrailers(t *testing.T) {
+	// plant leaves HEAD at a repair after the review's commits that binds named for Git alone, and
+	// returns the last commit the review recorded.
+	plant := func(t *testing.T, named, tail string) (f reanchorFixture, reviewed, planted string) {
+		t.Helper()
+		f = newReanchorFixture(t, true)
+		f.git("reset", "--hard", "-q", f.record.BaselineHead) // no later work, so the record is an ordinary one
+		reviewed = f.head()
+		return f, reviewed, f.commitVerbatim(t, "Repair the audit finding\n\nCoop-Task: "+named+tail)
+	}
+	refusal := func(named string) string {
+		return "the review recorded one commit for task " + named + ", but Git reads "
+	}
+	for form, tail := range map[string]string{
+		"behind a comment line":  "\n\n# note",
+		"behind a scissors line": "\n\n# ------------------------ >8 ------------------------\nanything",
+	} {
+		for _, named := range []string{"reopened-task", reanchorReviewedLater} {
+			t.Run(named+" "+form, func(t *testing.T) {
+				f, reviewed, planted := plant(t, named, tail)
+				if err := ValidateLeasedAuditReopen(f.repo, planted, f.id, &f.record); err == nil || !strings.Contains(err.Error(), refusal(named)) {
+					t.Errorf("lease start = %v, want %q", err, refusal(named))
+				}
+				if missing, _ := CompletionUnbindableTasks(f.repo, reviewed, planted, []string{f.id}, &f.record, nil); !slices.Equal(missing, []string{f.id}) {
+					t.Errorf("completion over the planted repair = %v, want the task refused", missing)
+				}
+				writeTaskFile(t, filepath.Join(f.task.Dir, "task.md"), "# Task\n- [x] required checks passed\n")
+				if err := CompleteTrustedTask(f.repo, f.root, f.task); err == nil || !strings.Contains(err.Error(), refusal(named)) {
+					t.Errorf("coop tasks done = %v, want %q", err, refusal(named))
+				}
+			})
+		}
+		// The host signs every commit, the reviewed ones too, so the record no longer holds at HEAD.
+		// It did not hold before signing either, so the carry leaves it for the lease to park.
+		t.Run("signing carry, "+form, func(t *testing.T) {
+			f, reviewed, planted := plant(t, reanchorReviewedLater, tail)
+			f.git("reset", "--hard", "-q", f.subject+"^")
+			for _, sha := range []string{f.subject, reviewed, planted} {
+				f.git("-c", "user.name=Signer", "-c", "user.email=signer@example.com", "cherry-pick", sha)
+			}
+			if err := carryAuditReopen(f.repo, f.root, f.id, planted, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok, err := ReadAuditReopenRecord(f.root, f.id); err != nil || !ok || !AuditReopenRecordsEqual(got, f.record) {
+				t.Fatalf("the signing carry moved the record over the planted repair: %#v ok=%v err=%v", got, ok, err)
+			}
+		})
+	}
+}
+
 // A moved record's baseline is a commit of other work, so the loop signing it, or an amend, can
 // rewrite it. The lease then parks the task, and the next unblock moves the record again from the
 // reviewed history instead of refusing for good.

@@ -2220,11 +2220,10 @@ func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) 
 			return nil, fmt.Errorf("task %s no longer has exactly one reachable history binding", commit.semantic.TaskID)
 		}
 	}
-	// A moved record never replays the commits it accepted, which the raw parse alone has checked.
-	if record.ReviewedHead != "" {
-		if err := auditReopenGitBindings(repo, resolvedHead, id, record, bindings); err != nil {
-			return nil, err
-		}
+	// The raw parse above judged every commit after the baseline, and a moved record's accepted
+	// commits, by their last paragraph alone; Git, which reads bindings everywhere else, may not agree.
+	if err := auditReopenGitBindings(repo, resolvedHead, id, record, bindings); err != nil {
+		return nil, err
 	}
 	return complete[1:], nil
 }

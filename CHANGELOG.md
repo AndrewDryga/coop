@@ -34,6 +34,13 @@
   project's `decision.md` as if you had given it: `coop tasks unblock <id>` sent the task back
   without asking, and `coop loop` in the project unblocked it by itself. The project's copy now
   takes the fork's question but never its answer, so the task waits for yours.
+
+- **Every check of a reopened task reads Git's own trailers.** Git skips trailing `#` comment
+  lines and everything after a scissors line, while Coop's own check reads a message's last
+  paragraph, so a repair after the review could bind the task, or a task committed after it, for
+  Git alone. Only a record an unblock had moved past other work was checked for this. Starting the
+  rework, completing it, `coop tasks done` and the signing pass now refuse such a commit for every
+  reopened task, and name the commits Git reads.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

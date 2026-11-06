@@ -98,9 +98,10 @@ after the baseline once kept the task blocked for good (2026-11-06: 60 commits, 
 times). A person's unblock now moves the record past them (`movedAuditReopen`) when HEAD reaches
 the end of the reviewed history in a straight line, no commit after it names the task or a task of
 its History in any `Coop-Task` trailer, and Git binds neither of them to any other commit. That last
-check reads Git's own trailers (`auditReopenGitBindings`) on every check of a moved record, not
-only at the move: Git skips trailing `#` comment lines and everything after a scissors line, which
-the raw parse takes as the message's last paragraph, so a commit can bind a task for Git alone.
+check reads Git's own trailers (`auditReopenGitBindings`) on every check of every record, moved or
+not: Git skips trailing `#` comment lines and everything after a scissors line, which the raw parse
+takes as the message's last paragraph, so a commit can bind a task for Git alone, such as a repair
+after an ordinary record's baseline that the raw parse reads as unbound.
 Subject and History stay as reviewed, their end is kept as `ReviewedHead`, and `BaselineHead` moves
 to HEAD. Those accepted commits are never replayed, so a moved record allows only a zero-commit
 re-close or one appended repair, never a rewrite: the rewrite check compares only the history the
@@ -143,6 +144,8 @@ back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-11-06 — every check of an ordinary record reads Git's trailers too, not only a moved
+  record's (task 2026-11-06-make-every-audit-reopen-check-read-git-s-trailer).
 - 2026-11-06 — a person's unblock moves a reopened task's record past commits that leave the task
   alone, again from the reviewed history after its baseline was rewritten, and the signing carry
   follows a moved record; the unblock saves the answer before any check and a stale lease advises
