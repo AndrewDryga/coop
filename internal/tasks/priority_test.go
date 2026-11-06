@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // writePriorityTask writes a todo task whose frontmatter carries priority, or none when it is "".
@@ -49,6 +51,63 @@ func TestAssignLoopTaskClaimsByPriorityThenFolderOrder(t *testing.T) {
 	want := []string{"2026-01-03-c", "2026-01-05-e", "2026-01-02-b", "2026-01-04-d", "2026-01-06-f", "2026-01-01-a"}
 	if !reflect.DeepEqual(order, want) {
 		t.Errorf("the loop claimed %v, want %v", order, want)
+	}
+}
+
+// The board's Up next is the loop's own order: before every claim the task it lists first is the
+// one the loop takes, by priority, then the queues in the order they are configured, then folder
+// order. A high or low task is marked as coop tasks ls marks it; an unknown priority is normal.
+func TestTaskWatchListsUpNextInTheOrderTheLoopClaims(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "shop")
+	root, web, api := filepath.Join(repo, TasksRoot), filepath.Join(repo, "web", TasksRoot), filepath.Join(repo, "api", TasksRoot)
+	hosts := []string{root, web, api} // configured order, which is not the alphabetical one
+	rows := map[string]string{}       // each task's Up next row
+	for _, task := range []struct{ queue, id, priority, row string }{
+		{api, "2026-01-01-a", "low", "  ○ 2026-01-01-a · api · Low priority"},
+		{web, "2026-01-02-b", "", "  ○ 2026-01-02-b · web"},
+		{api, "2026-01-03-c", "", "  ○ 2026-01-03-c · api"},
+		{root, "2026-01-04-d", "", "  ○ 2026-01-04-d · shop"},
+		{api, "2026-01-05-e", "high", "  ○ 2026-01-05-e · api · High priority"},
+		{web, "2026-01-06-f", "high", "  ○ 2026-01-06-f · web · High priority"},
+		{api, "2026-01-07-g", "urgent", "  ○ 2026-01-07-g · api"},
+	} {
+		writePriorityTask(t, task.queue, task.id, task.priority)
+		rows[task.id] = task.row
+	}
+	var order []string
+	for range len(rows) {
+		board := captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, hosts) })
+		_, upNext, _ := strings.Cut(board, "\nUp next (")
+		first := strings.Split(upNext+"\n", "\n")[1]
+		assignment, err := AssignLoopTaskOnly(hosts, testLeaseOwner(), "")
+		if err != nil || assignment.Outcome != assignmentReady {
+			t.Fatalf("assignment = (%+v, %v)", assignment, err)
+		}
+		id := assignment.Task.Item.ID
+		if order = append(order, id); first != rows[id] {
+			t.Errorf("the board listed %q first, but the loop claimed %s:\n%s", first, id, board)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		if err := MoveTaskDir(assignment.Task.Root, assignment.Task.Item, StateDone); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"2026-01-06-f", "2026-01-05-e", "2026-01-04-d", "2026-01-02-b", "2026-01-03-c", "2026-01-07-g", "2026-01-01-a"}
+	if !reflect.DeepEqual(order, want) {
+		t.Errorf("the loop claimed %v, want %v", order, want)
+	}
+
+	// On a board of one queue the mark follows the title, the high one as bright as ls shows it.
+	p := ui.Colored()
+	board := strings.Join(renderSections(p, merge([]Item{
+		{Title: "Ship", State: StateTodo, Priority: "high"}, {Title: "Tidy", State: StateTodo, Priority: "low"},
+	}), 0, 80)[0], "\n")
+	for _, want := range []string{"Ship" + p.Dim(" · ") + "High priority", "Tidy" + p.Dim(" · Low priority")} {
+		if !strings.Contains(board, want) {
+			t.Errorf("board is missing %q:\n%q", want, board)
+		}
 	}
 }
 

@@ -29,6 +29,11 @@
   `coop tasks ls` lists todo tasks in that order and marks high and low ones, and
   `coop tasks lint` names any other value. A task without the field is normal and keeps its place.
 
+- **Up next in `coop tasks watch` follows the loop's order.** It sorted todo tasks by folder name
+  across all queues, so with several queues, or a task with a priority, its first row was not
+  always the task the loop took next. It now lists them in the loop's own order, priority first and
+  then queue by queue as configured, and marks high and low tasks as `coop tasks ls` does.
+
 - **Gate results recorded before Coop re-signs a commit still count in review.** Re-signing gives
   each commit a new ID, so a "tested at <commit>" note named a commit that was no longer in history,
   and reviewers read the evidence as stale even though the files were identical. The review now

@@ -64,6 +64,8 @@ type mergedTask struct {
 	folded bool
 	// forkBlocked: another task of the same fork waits on a decision, which is where its loop stopped.
 	forkBlocked bool
+	// claimRank: a todo task's place in the order the loop claims them (claimRanks), which Up next keeps.
+	claimRank int
 }
 
 // forkMerge is a fork's finished work as one row: ready to merge (Needs you) or merging (Now).
@@ -131,8 +133,9 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		now := time.Now()
 		doneToday := map[string]int{} // by queue label, for the per-source lines
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		claims := claimRanks(snapshot.Tasks, roots)
 		for _, task := range snapshot.Tasks {
-			m := mergedTask{Item: task.Item, phase: task.Phase}
+			m := mergedTask{Item: task.Item, phase: task.Phase, claimRank: claims[task.Item.Dir]}
 			if task.Item.State != StateTodo && task.ownerRecord != nil && task.ownerRecord.Kind != TaskOwnerFork {
 				record := *task.ownerRecord
 				m.owner = taskOwnerLabel(record, false)
@@ -302,6 +305,32 @@ func liveForkGenerations(forks []ProjectForkSnapshot) map[forkspace.Identity]boo
 		}
 	}
 	return live
+}
+
+// claimRanks maps each todo task's folder to its place in the order the loop claims them: the loop
+// reads its queues in the order they are configured (roots), each in folder order as the snapshot
+// lists it, and sorts them with claimOrder. A queue only a fork's assignment brought onto the board
+// comes after them.
+func claimRanks(tasks []ProjectTaskSnapshot, roots []string) map[string]int {
+	var todo []QueuedTask
+	for _, task := range tasks {
+		if task.Item.State == StateTodo {
+			todo = append(todo, QueuedTask{Root: task.Queue, Item: task.Item})
+		}
+	}
+	configured := func(root string) int {
+		if i := slices.Index(roots, root); i >= 0 {
+			return i
+		}
+		return len(roots)
+	}
+	slices.SortStableFunc(todo, func(a, b QueuedTask) int { return configured(a.Root) - configured(b.Root) })
+	claimOrder(todo)
+	ranks := make(map[string]int, len(todo))
+	for i, task := range todo {
+		ranks[task.Item.Dir] = i
+	}
+	return ranks
 }
 
 // changedSince reports whether a done task's folder arrived in or changed in its state directory
@@ -1267,6 +1296,7 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 	var stopped []*stopGroup
 	stopIndex := map[string]*stopGroup{}
 	var needsYou []listed
+	var todo []mergedTask // Up next, rendered once all are known: in claim order, not merged's
 	var upNext [][]string
 	decisions := false
 
@@ -1405,12 +1435,22 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 			}
 			needsYou = append(needsYou, listed{m.since, []string{titleLine(p.Red("⚑"), m.Title, taskLink(m)), detailLine(m.queue, nil, state...)}})
 		case sectionUpNext:
-			var extra []span
-			if m.queue != "" {
-				extra = append(extra, span{" · " + m.queue, p.Dim})
-			}
-			upNext = append(upNext, []string{titleLine(p.Cyan("○"), m.Title, taskLink(m), extra...)})
+			todo = append(todo, m)
 		}
+	}
+	slices.SortStableFunc(todo, func(a, b mergedTask) int { return a.claimRank - b.claimRank })
+	for _, m := range todo {
+		var extra []span
+		if m.queue != "" {
+			extra = append(extra, span{" · " + m.queue, p.Dim})
+		}
+		switch priorityRank(m.Item) { // marked as coop tasks ls marks it
+		case 0:
+			extra = append(extra, span{" · ", p.Dim}, span{"High priority", nil})
+		case 2:
+			extra = append(extra, span{" · Low priority", p.Dim})
+		}
+		upNext = append(upNext, []string{titleLine(p.Cyan("○"), m.Title, taskLink(m), extra...)})
 	}
 	for _, merge := range merges {
 		title := "Merge fork " + merge.fork

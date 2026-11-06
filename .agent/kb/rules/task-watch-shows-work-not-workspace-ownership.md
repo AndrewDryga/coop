@@ -2,9 +2,9 @@
 name: task-watch-shows-work-not-workspace-ownership
 description: tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 scope: cli-output
-sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/loop_note.go, internal/box/service_launch_wait.go, internal/tasks/owner.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go, internal/loop/rotation.go]
-check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles|TestTaskWatchNamesEveryTaskOfAForkTheSameWay|TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines|TestTaskWatchGroupsStoppedTasksByTheirFix|TestTaskWatchLiveFrameFitsTheTerminal|TestTaskWatchRowColors|TestLoopNoteSaysAStopOrAWaitOnlyWhileItIsTrue|TestTheSnapshotReadsTheNoteOfTheLoopThatHeldTheTask|TestTaskWatchSaysWhileATasksBoxWaitsToStartItsServices|TestTaskWatchShowsAForksRecordedLoopFailure|TestASessionClaimNamesTheSessionsTarget'
-updated: 2026-11-05
+sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/dir.go, internal/tasks/priority_test.go, internal/tasks/loop_note.go, internal/box/service_launch_wait.go, internal/tasks/owner.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go, internal/loop/rotation.go]
+check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles|TestTaskWatchNamesEveryTaskOfAForkTheSameWay|TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines|TestTaskWatchGroupsStoppedTasksByTheirFix|TestTaskWatchLiveFrameFitsTheTerminal|TestTaskWatchRowColors|TestLoopNoteSaysAStopOrAWaitOnlyWhileItIsTrue|TestTheSnapshotReadsTheNoteOfTheLoopThatHeldTheTask|TestTaskWatchSaysWhileATasksBoxWaitsToStartItsServices|TestTaskWatchShowsAForksRecordedLoopFailure|TestASessionClaimNamesTheSessionsTarget|TestTaskWatchListsUpNextInTheOrderTheLoopClaims'
+updated: 2026-11-06
 ---
 
 # Show work in tasks watch, not idle workspace ownership
@@ -48,6 +48,10 @@ of several queues every row names its queue, first in its detail line or after a
 the project's own `.agent/tasks` is named by the project's folder name, never `root`. On a board
 of one queue no row names a queue. Preserve custom queue names and diagnostic paths.
 
+Up next lists todo tasks in the order the loop claims them: the loop's own `claimOrder` over the
+queues in their configured order (priority, then queue, then folder name), never a sort of the
+board's own. A high or low task is marked after its title as `coop tasks ls` marks it.
+
 **Why:** After the watcher filled its lower half with idle `remote-* · remote-session remote_*`
 rows, the user said, "I don't see why forks should be shown in tasks watch" (2026-09-02). Those
 opaque ownership ids hid the task queue without describing work.
@@ -66,6 +70,12 @@ and keep standalone fork rows only for lifecycle states that affect task progres
 
 ## Changelog
 
+- 2026-11-06 — Up next listed todo tasks by folder name across all queues while the loop claims
+  by priority, then queue by queue, so the board could name another next task. It now ranks them
+  with the loop's `claimOrder` (`claimRanks`) and marks `High priority` / `Low priority`. Swept
+  the other todo orderings: `coop tasks ls`, `QueueState` and `TaskTreeCounts` already use
+  `byPriority`; a fork loop's candidates order several queues by path, not configuration order
+  (left for its own task). Added TestTaskWatchListsUpNextInTheOrderTheLoopClaims.
 - 2026-11-05 — a claim an agent session makes through its task tools records the session's full
   target (`TaskOwnerRecord.ActorTarget`, from `loop.RecordedTarget` over the session's config), and
   the board names the claim by it. Swept the claim writers: the CLI's `coop tasks claim` (a person,

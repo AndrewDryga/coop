@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,13 @@ func priorityRank(t Item) int {
 
 // byPriority is the stable sort key for todo tasks already in folder order.
 func byPriority(a, b Item) int { return priorityRank(a) - priorityRank(b) }
+
+// claimOrder sorts todo tasks, given in the order the loop reads them (its queues in order, each in
+// folder order), into the order it claims them: a person's priority first, that read order within
+// each. The tasks board lists Up next with it too, so the board cannot name another next task.
+func claimOrder(todo []QueuedTask) {
+	slices.SortStableFunc(todo, func(a, b QueuedTask) int { return byPriority(a.Item, b.Item) })
+}
 
 // doneSubtasks returns how many of the task's subtask checkboxes are checked.
 func (t Item) doneSubtasks() int {
