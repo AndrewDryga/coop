@@ -49,7 +49,7 @@ func gate(dir string, n int, poll time.Duration, stderr io.Writer, argv []string
 	if os.Getenv(held) == "" {
 		start := time.Now()
 		slot, err := acquire(dir, n, poll, func() {
-			fmt.Fprintf(stderr, "Waiting for another gate to finish: %d already run on this host (slots in %s)\n", n, dir)
+			fmt.Fprintf(stderr, "Waiting for another gate to finish: %d already running on this host (slots in %s)\n", n, dir)
 		})
 		if err != nil {
 			fmt.Fprintf(stderr, "gateslot: %v\n", err)

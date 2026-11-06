@@ -665,8 +665,12 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <td><code>egress rules file &lt;path&gt; is inside &lt;project&gt;, which the box can reach — keep the rules file outside the project</code></td>
 </tr>
 <tr>
-<td><code>--allow-domain</code> or <code>--egress-rules</code> on a run that is open or offline</td>
-<td><code>&lt;Agent&gt; cannot start because --allow-domain only adds to filtered access, and this run is offline</code> · <code>Use --egress filtered, or leave out --allow-domain.</code></td>
+<td><code>--allow-domain</code> or <code>--egress-rules</code> beside <code>--egress open</code> or <code>--egress offline</code></td>
+<td><code>Cannot combine &#34;--egress offline&#34; and &#34;--allow-domain&#34; in &#34;coop run&#34;</code> · <code>--allow-domain only adds to filtered access. Use --egress filtered, or leave out --allow-domain.</code> (exit 2)</td>
+</tr>
+<tr>
+<td><code>--allow-domain</code> or <code>--egress-rules</code> on a run that <code>COOP_<wbr/>EGRESS</code>, the project or its approval makes open or offline</td>
+<td><code>&lt;Agent&gt; cannot start because --allow-domain only adds to filtered access, and COOP_<wbr/>EGRESS=offline makes this run offline</code> · <code>Use --egress filtered, or leave out --allow-domain.</code></td>
 </tr>
 <tr>
 <td>a rules file that is a bare list, or nests its rules under <code>box:</code></td>

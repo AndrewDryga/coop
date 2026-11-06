@@ -1205,8 +1205,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// same way a filtered run keeps the pair it was set up with.
 		markImageUsed(cfg, gatewayimage.Tag())
 	}
-	sections.accounts(launchAccounts(cfg, spec, brokerPlan))
-	sections.internet(cfg, spec, policy, brokerPlan.mcpServerNames()...)
+	accounts := launchAccounts(cfg, spec, brokerPlan)
+	sections.accounts(accounts)
+	// A filtered run reaches each account's provider: through Coop's broker, which the policy holds
+	// no grant for, or through the provider's own bundle.
+	var providers []string
+	for _, account := range accounts {
+		providers = append(providers, account.provider)
+	}
+	sections.internet(cfg, spec, policy, providers, brokerPlan.mcpServerNames()...)
 	if policy == nil {
 		sections.projectRulesSetAside(len(p.Box.EgressRules))
 	}

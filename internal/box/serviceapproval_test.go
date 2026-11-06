@@ -823,7 +823,7 @@ func TestHiddenServiceFileNoticeGoesToTheUserNotTheComposeWriter(t *testing.T) {
 	var runErr error
 	seen := captureStderr(t, func() {
 		sections := newLaunchSections(RunSpec{Agent: "gemini"})
-		sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
+		sections.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil, nil)
 		_, runErr = startAutomaticTestServices(runtime.Runtime{Name: shim}, repo, compose, io.Discard, &composeWriter)
 		sections.servicesFailed("Container project-db Running\nContainer project-keycloak Waiting")
 	})

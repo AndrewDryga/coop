@@ -130,7 +130,7 @@ func TestSecondGateWaitsForTheFirst(t *testing.T) {
 	waitUntil(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return strings.Contains(out.String(), "Waiting for another gate to finish: 1 already run on this host")
+		return strings.Contains(out.String(), "Waiting for another gate to finish: 1 already running on this host")
 	})
 	time.Sleep(50 * time.Millisecond)
 	if _, err := os.Stat(second); err == nil {

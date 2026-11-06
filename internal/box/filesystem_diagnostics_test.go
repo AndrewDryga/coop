@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -207,6 +208,25 @@ func TestFilesystemPreparationNarrationStartsBeforeBuild(t *testing.T) {
 		}
 		if strings.Count(out, "Protecting secrets") != 1 || strings.Index(out, "Protecting secrets") > strings.Index(out, "Building the filesystem") || strings.Index(out, "Building the filesystem") > strings.Index(out, "2 secret paths hidden") {
 			t.Fatal(out)
+		}
+	}
+}
+
+// A .coopignore coop cannot read stopped a run with two blocks saying the same thing: the launch's
+// "Could not start" under Protecting secrets, then the CLI's, which also says how to fix it. The
+// launch leaves it to the CLI, which draws it once.
+func TestUnreadableCoopignoreRefusalHasOneRenderer(t *testing.T) {
+	refusal := UnreadableCoopignore{File: ".coopignore", Reason: "is a folder"}
+	for _, err := range []error{refusal, &LaunchRefused{Err: fmt.Errorf("prepare the box: %w", refusal)}} {
+		sections := newLaunchSections(RunSpec{Cmd: []string{"true"}})
+		captureStderr(t, func() { sections.prepareSecrets() })
+		out := captureStderr(t, func() {
+			if got := sections.failed(err); got != err {
+				t.Fatalf("the refusal changed before the CLI drew it: %v", got)
+			}
+		})
+		if out != "" {
+			t.Fatalf("the refusal was drawn before the CLI's block: %s", out)
 		}
 	}
 }

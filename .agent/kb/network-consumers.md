@@ -185,10 +185,13 @@ bold unprefixed sections before agent output — `Protecting secrets` (the exact
 `Connecting account`/`Connecting accounts` (`launchAccounts`: one row per provider in the credential
 scope — display name, the account the box mounts, `API key protected` for a route of the run's
 broker plan else `Signed in` — plus the one-line explanation, once, only when a key is protected;
-no section without an account), `Configuring network access` (filtered: one row per selected provider's endpoints from
-`policy.Dependencies` and each agent's `Vendor()`, `Applied N approved network rules` counted over
-`project`/`operator` origins, the MCP servers over `mcp` origins, an unrecognized origin counted as "other", THEN
-`✓ Everything else blocked`; open/offline: one `⚠` row under the same heading), `Starting <agent>`
+no section without an account), `Configuring network access` (filtered: one row per provider's endpoints by
+each agent's `Vendor()`, from each launch account's provider first, since a brokered one has no grant in
+the agent's policy (`NetworkProviderBundles` leaves it out), then `policy.Dependencies`; `Applied N approved
+network rules` counted over `project` origins and `Applied N network rules for this run only` over
+`operator` origins alone (`--allow-domain`, `--egress-rules`); the MCP servers over `mcp` origins; an
+unrecognized origin counted as "other", THEN `✓ Everything else blocked`, or `Everything blocked` with no
+row above; open/offline: one `⚠` row under the same heading), `Starting <agent>`
 — and `Checking the Coop box` first: in `box.Run` the remaining image nudges (age, a project
 Dockerfile that drifted) as `⚠` rows, and in the cli (`cli/launch_box.go`, after admission and only
 for a run that will use the repo's image — a filtered box runs the qualified client image) the
@@ -204,6 +207,10 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-06 — a signed-in or API-key run printed `Everything blocked` over the provider it used, and
+  one-run rule flags counted as approved (task 2026-11-06-say-which-provider-a-filtered-run-allows-and-fix).
+  The section now takes the launch accounts' providers and counts one-run rules apart. Verified with
+  `TestFilteredRunNamesTheProviderItsAccountReaches` and `TestOneRunRulesAreNeverCalledApproved`.
 - 2026-11-06 — the net views take the project `coop run` uses, a folder outside Git included; `runs`
   marks running runs `live` and its JSON gains `live`, `total`, `more` and per-run project fields
   (task 2026-11-06-fix-coop-net-runs-and-inspect-for-non-git-folder).

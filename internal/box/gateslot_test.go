@@ -145,7 +145,7 @@ func TestGateSlotHoldsAProjectGateUntilASlotIsFree(t *testing.T) {
 	}
 	wait.For(t, "the project gate to wait for a slot", func() bool {
 		data, _ := os.ReadFile(stderr)
-		return strings.Contains(string(data), "Waiting for another gate to finish: 2 already run on this host (slots in "+slots+")")
+		return strings.Contains(string(data), "Waiting for another gate to finish: 2 already running on this host (slots in "+slots+")")
 	})
 	if _, err := os.Stat(mark); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the gate started before it held a slot: %v", err)

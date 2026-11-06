@@ -10,7 +10,9 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const networkRulesFixture = "egress_rules:\n  - to: {domain: EXAMPLE.com}\n    protocol: tls\n    ports: [443]\n"
@@ -178,5 +180,33 @@ func TestNetworkAuthorityRootInsideAnAgentMountRefusesBeforeState(t *testing.T) 
 	}
 	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("exposed authority root was created", err)
+	}
+}
+
+// A rule flag on a run something else made open or offline is refused at the launch, as a failure
+// (exit 1) rather than a usage error, and the refusal names what chose the mode: the person may not
+// know COOP_EGRESS is set, or what the project or its approval says.
+func TestRuleFlagsNameWhatMadeTheRunOpenOrOffline(t *testing.T) {
+	open, offline, filtered := egress.Open, egress.None, egress.Filtered
+	spec, flags := RunSpec{Cmd: []string{"true"}}, NetworkAdmission{Domains: []string{"example.com"}}
+	for _, tc := range []struct {
+		input networkstate.Admission
+		mode  egress.Mode
+		want  string
+	}{
+		{networkstate.Admission{InvocationMode: &open}, open, "and --egress open makes this run open"},
+		{networkstate.Admission{HostPreference: &open, ProjectMode: &offline}, open, "and COOP_EGRESS=open makes this run open"},
+		{networkstate.Admission{HostPreference: &offline}, offline, "and COOP_EGRESS=offline makes this run offline"},
+		{networkstate.Admission{ProjectMode: &offline}, offline, "and box.egress: offline in .agent/project.yaml makes this run offline"},
+		{networkstate.Admission{HostPreference: &filtered}, open, "and this project's approval makes this run open"},
+	} {
+		err := checkRuleFlags(spec, flags, tc.input, tc.mode)
+		var usage *ui.UsageError
+		if err == nil || errors.As(err, &usage) || !strings.Contains(err.Error(), "--allow-domain only adds to filtered access, "+tc.want+"\n") {
+			t.Errorf("%s run refused as %v", tc.mode, err)
+		}
+	}
+	if err := checkRuleFlags(spec, flags, networkstate.Admission{}, filtered); err != nil {
+		t.Fatalf("a filtered run refused its rule flags: %v", err)
 	}
 }

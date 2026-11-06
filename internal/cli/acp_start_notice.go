@@ -102,9 +102,9 @@ func editorNetworkLimit(capture *box.CapturedEgress, brokeredMCP []string) (acpc
 
 // networkLimitOf groups policy's grants, with the brokered MCP servers beside them.
 func networkLimitOf(policy egress.Snapshot, brokeredMCP []string) acpctl.NetworkLimit {
-	allowed := box.NetworkAllowedBy(policy, brokeredMCP...)
+	allowed := box.NetworkAllowedBy(policy, nil, brokeredMCP...)
 	var sites []string
-	for _, site := range allowed.Approved {
+	for _, site := range append(allowed.Approved, allowed.ThisRun...) {
 		if !slices.Contains(sites, site) {
 			sites = append(sites, site)
 		}

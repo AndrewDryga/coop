@@ -182,6 +182,18 @@ func TestServicesRemedyInAThreadIsTextAroundItsBlocks(t *testing.T) {
 	}
 }
 
+// The editor's network limit names every site a session's rules reach, approved or given for that
+// run only.
+func TestNetworkLimitNamesEveryRuleTheSessionReaches(t *testing.T) {
+	rule := func(id, domain, kind string) egress.Grant {
+		return egress.Grant{ID: id, Rule: egress.Rule{To: egress.Destination{Domain: domain}}, Origins: []egress.Origin{{Kind: kind}}}
+	}
+	policy := egress.Snapshot{Grants: []egress.Grant{rule("g1", "proxy.golang.org", "project"), rule("g2", "docs.example", "operator")}}
+	if got := networkLimitOf(policy, nil); !slices.Equal(got.Sites, []string{"proxy.golang.org", "docs.example"}) {
+		t.Errorf("sites = %q, want both rules' sites", got.Sites)
+	}
+}
+
 // The editor's network limit names the MCP servers the credential broker reaches, which hold no
 // grant in the policy, beside those the policy grants; with none, nothing is added.
 func TestNetworkLimitNamesBrokeredMCPServers(t *testing.T) {

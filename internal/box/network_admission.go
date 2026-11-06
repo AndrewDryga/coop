@@ -191,7 +191,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if err != nil {
 		return nil, err
 	}
-	if err := checkRuleFlags(spec, options, preview.Mode); err != nil {
+	if err := checkRuleFlags(spec, options, input, preview.Mode); err != nil {
 		return nil, err
 	}
 	mode := preview.Mode
@@ -346,8 +346,10 @@ func holdingAdmission(input networkstate.Admission) networkstate.Admission {
 // checkRuleFlags refuses the person's own rule flags on a run that is not filtered. They only add
 // to filtered access, so dropping them quietly would start a box that cannot reach what was asked
 // for. The project's own rules are not checked here: a one-off --egress open or offline sets them
-// aside, and any other mode leaves them pending (networkstate.Admission.pendingApproval).
-func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) error {
+// aside, and any other mode leaves them pending (networkstate.Admission.pendingApproval). A command
+// line with both is refused as it is parsed; here the mode came from somewhere else, so the
+// refusal names it.
+func checkRuleFlags(spec RunSpec, options NetworkAdmission, input networkstate.Admission, mode egress.Mode) error {
 	if mode == egress.Filtered {
 		return nil
 	}
@@ -366,8 +368,23 @@ func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) er
 		adds = "add"
 	}
 	named := strings.Join(flags, " and ")
-	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and this run is %s\n\n  Use --egress filtered, or leave out %s",
-		networkLaunchName(spec), named, adds, mode.Word(), named)
+	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and %s makes this run %s\n\n  Use --egress filtered, or leave out %s",
+		networkLaunchName(spec), named, adds, modeSource(input, mode), mode.Word(), named)
+}
+
+// modeSource names what chose a run's network mode, in the words it was set with, by the order
+// networkstate.Admission.resolveMode reads them in. A saved approval is the one source this input
+// does not carry, so it is what is left.
+func modeSource(input networkstate.Admission, mode egress.Mode) string {
+	switch {
+	case input.InvocationMode != nil && *input.InvocationMode == mode:
+		return "--egress " + mode.Word()
+	case input.HostPreference != nil && *input.HostPreference == mode:
+		return "COOP_EGRESS=" + mode.Word()
+	case input.ProjectMode != nil && *input.ProjectMode == mode:
+		return "box.egress: " + mode.Word() + " in " + project.File
+	}
+	return "this project's approval"
 }
 
 // ApproveCommand is the command that reviews the network request of the project in folder, for a

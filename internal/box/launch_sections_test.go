@@ -63,14 +63,15 @@ func TestLaunchSectionsNarrateAFilteredInteractiveLaunch(t *testing.T) {
 	got := captureStderr(t, func() {
 		s := newLaunchSections(spec)
 		s.secrets(8)
-		s.internet(&config.Config{Egress: "filtered"}, spec, &policy)
+		s.internet(&config.Config{Egress: "filtered"}, spec, &policy, nil)
 		s.starting()
 	})
 	want := "Protecting secrets\n" +
 		"  ✓ 8 secret paths hidden from the box\n" +
 		"\nConfiguring network access\n" +
 		"  ✓ OpenAI endpoints allowed\n" +
-		"  ✓ Applied 3 approved network rules\n" +
+		"  ✓ Applied 2 approved network rules\n" +
+		"  ✓ Applied 1 network rule for this run only\n" +
 		"  ✓ 2 configured MCP services allowed\n" +
 		"  ✓ Everything else blocked\n" +
 		"\nStarting Codex\n"
@@ -103,10 +104,52 @@ func TestDefaultFilteredRunSaysSoFirst(t *testing.T) {
 		{"default raw run", RunSpec{Cmd: []string{"true"}, CapturedEgress: &CapturedEgress{Default: true}}, egress.Snapshot{Mode: egress.Filtered},
 			"  Filtered by default. Use --egress open for unrestricted access.\n  ✓ Everything blocked\n"},
 	} {
-		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(cfg, c.spec, &c.policy) })
+		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(cfg, c.spec, &c.policy, nil) })
 		if want := "Configuring network access\n" + c.want; got != want {
 			t.Errorf("%s: rendered %q, want %q", c.name, got, want)
 		}
+	}
+}
+
+// A signed-in or API-key account reaches its provider through Coop's broker, so the agent's own
+// policy grants it nothing, and every such run printed "Everything blocked" over a provider it then
+// used. The section names each account's provider, lead first, before the rest is called blocked,
+// and a raw run that connects no account still reaches nothing.
+func TestFilteredRunNamesTheProviderItsAccountReaches(t *testing.T) {
+	cfg, brokered := &config.Config{Egress: "filtered"}, egress.Snapshot{Mode: egress.Filtered}
+	for _, c := range []struct {
+		name      string
+		spec      RunSpec
+		providers []string
+		want      string
+	}{
+		{"one account", RunSpec{Agent: "claude"}, []string{"claude"}, "  ✓ Anthropic endpoints allowed\n  ✓ Everything else blocked\n"},
+		{"a peer", RunSpec{Agent: "claude"}, []string{"claude", "codex", "claude"},
+			"  ✓ Anthropic endpoints allowed\n  ✓ OpenAI endpoints allowed\n  ✓ Everything else blocked\n"},
+		{"raw run", RunSpec{Cmd: []string{"true"}}, nil, "  ✓ Everything blocked\n"},
+	} {
+		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(cfg, c.spec, &brokered, c.providers) })
+		if want := "Configuring network access\n" + c.want; got != want {
+			t.Errorf("%s: rendered %q, want %q", c.name, got, want)
+		}
+	}
+}
+
+// A rule from --allow-domain or --egress-rules lets this run reach its destination and no other run,
+// and nobody approved it, so it is never counted with the approved rules. A rule the project also
+// asks for, and that was approved, stays approved.
+func TestOneRunRulesAreNeverCalledApproved(t *testing.T) {
+	policy := egress.Snapshot{Grants: []egress.Grant{
+		grant("g1", "docs.example", egress.Origin{Kind: "operator", Name: "allow-domain"}),
+		grant("g2", "files.example", egress.Origin{Kind: "operator", Name: "rules-file"}),
+	}}
+	rows := networkAllowances(policy, nil)
+	if want := []string{"Applied 2 network rules for this run only"}; !slices.Equal(rows, want) {
+		t.Fatalf("one-run rules = %q, want %q", rows, want)
+	}
+	policy.Grants = append(policy.Grants, grant("g3", "proxy.golang.org", egress.Origin{Kind: "operator", Name: "allow-domain"}, egress.Origin{Kind: "project"}))
+	if rows := networkAllowances(policy, nil); !slices.Equal(rows, []string{"Applied 1 approved network rule", "Applied 2 network rules for this run only"}) {
+		t.Fatalf("approved beside one-run rules = %q", rows)
 	}
 }
 
@@ -124,7 +167,7 @@ func TestInternetSectionIsOneHeadingInEveryMode(t *testing.T) {
 		{"offline raw", RunSpec{Cmd: []string{"true"}}, &config.Config{Egress: "none"}, "  ⚠ Offline: nothing outside the box can be reached\n"},
 	}
 	for _, c := range cases {
-		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(c.cfg, c.spec, nil) })
+		got := captureStderr(t, func() { newLaunchSections(c.spec).internet(c.cfg, c.spec, nil, nil) })
 		if got != "Configuring network access\n"+c.want {
 			t.Errorf("%s: rendered %q, want %q", c.name, got, "Configuring network access\n"+c.want)
 		}
@@ -146,7 +189,7 @@ func TestInternetSectionSaysTheProjectRulesDoNotApply(t *testing.T) {
 	} {
 		got := captureStderr(t, func() {
 			s := newLaunchSections(spec)
-			s.internet(&config.Config{Egress: c.egress}, spec, nil)
+			s.internet(&config.Config{Egress: c.egress}, spec, nil, nil)
 			s.projectRulesSetAside(c.rules)
 		})
 		if want := "Configuring network access\n" + c.want; got != want {
@@ -228,7 +271,7 @@ func TestNetworkAllowedByNamesWhatEachApprovalReaches(t *testing.T) {
 			{ID: "g6", Rule: egress.Rule{To: egress.Destination{Service: "db"}}, Origins: []egress.Origin{{Kind: "project"}}},
 		},
 	}
-	got := fmt.Sprintf("%+v", NetworkAllowedBy(policy, "emisar"))
+	got := fmt.Sprintf("%+v", NetworkAllowedBy(policy, nil, "emisar"))
 	want := fmt.Sprintf("%+v", NetworkAllowed{Vendors: []string{"Anthropic"}, Approved: []string{"proxy.golang.org", "sum.golang.org", "the db service"},
 		Servers: []string{"docs", "emisar"}, Other: 1})
 	if got != want {
@@ -291,14 +334,14 @@ func TestNetworkAllowancesNeverOmitAGrant(t *testing.T) {
 		grant("g1", "a.example", egress.Origin{Kind: "session"}),
 		grant("g2", "b.example", egress.Origin{Kind: "provider", Provider: "claude"}, egress.Origin{Kind: "project"}),
 	}}
-	rows := networkAllowances(policy)
+	rows := networkAllowances(policy, nil)
 	want := []string{"Anthropic endpoints allowed", "Applied 1 approved network rule", "1 other destination allowed"}
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("allowances = %q, want %q", rows, want)
 	}
 	// A server reached through the credential broker has no grant of its own, and is still allowed.
 	policy.Grants = append(policy.Grants, grant("g3", "docs.example", egress.Origin{Kind: "mcp", Name: "docs"}))
-	if rows := networkAllowances(policy, "emisar"); !slices.Contains(rows, "2 configured MCP services allowed") {
+	if rows := networkAllowances(policy, nil, "emisar"); !slices.Contains(rows, "2 configured MCP services allowed") {
 		t.Fatalf("allowances with a brokered MCP server = %q", rows)
 	}
 	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).secrets(0) }); got != "Protecting secrets\n  ✓ No secret paths to hide\n" {
@@ -390,7 +433,7 @@ func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {
 		cause := errors.New("no")
 		got := captureStderr(t, func() {
 			s.secrets(3)
-			s.internet(&config.Config{Egress: "open"}, spec, nil)
+			s.internet(&config.Config{Egress: "open"}, spec, nil, nil)
 			s.starting()
 			s.stopping()
 			s.stopped("main process exited with status 0")
@@ -409,7 +452,7 @@ func TestLoopLaunchSectionsNestSetupWithoutChangingBatchSilence(t *testing.T) {
 	got := captureStderr(t, func() {
 		s := newLaunchSections(spec)
 		s.secrets(8)
-		s.internet(&config.Config{Egress: "none"}, spec, nil)
+		s.internet(&config.Config{Egress: "none"}, spec, nil, nil)
 		s.servicesFailed("compose up exited with status 1")
 		s.starting()
 	})
@@ -438,7 +481,7 @@ func TestLoopLaunchSectionsNestSetupWithoutChangingBatchSilence(t *testing.T) {
 	}
 	raw := RunSpec{Agent: "claude", Batch: true, LoopPresentation: true}
 	got = captureStderr(t, func() {
-		newLaunchSections(raw).internet(&config.Config{Egress: "none"}, raw, nil)
+		newLaunchSections(raw).internet(&config.Config{Egress: "none"}, raw, nil, nil)
 	})
 	if got != "Preparing task environment\n  Configuring network access\n  ⚠ Offline: nothing outside the box can be reached\n" {
 		t.Fatalf("offline custom command must remain a caution, got %q", got)
@@ -495,7 +538,7 @@ func TestInteractiveServiceWarningsAreSeparateParagraphs(t *testing.T) {
 	} {
 		got := captureStderr(t, func() {
 			s := newLaunchSections(RunSpec{Agent: "gemini"})
-			s.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil)
+			s.internet(&config.Config{Egress: "open"}, RunSpec{Agent: "gemini"}, nil, nil)
 			report(s)
 		})
 		if !strings.HasPrefix(got, "Configuring network access\n  ⚠ Unrestricted: nothing is blocked\n\n⚠ Project services") {

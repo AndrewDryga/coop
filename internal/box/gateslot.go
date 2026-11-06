@@ -54,7 +54,7 @@ while :; do
 		exec 9<&-
 	done
 	if [ -z "$told" ]; then
-		echo "Waiting for another gate to finish: 2 already run on this host (slots in $dir)" >&2
+		echo "Waiting for another gate to finish: 2 already running on this host (slots in $dir)" >&2
 		told=1
 	fi
 	sleep 1

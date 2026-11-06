@@ -126,3 +126,48 @@ func TestForkLoopForwardsTheEgressFlagsToItsWorker(t *testing.T) {
 		t.Fatalf("interactive fork network flags = %#v, %v", interactive.network, err)
 	}
 }
+
+// Rule flags only add to filtered access, so beside --egress open or offline on the same command line
+// they are refused as they are parsed, as a usage error (exit 2) that says why and what to do. They
+// used to reach the launch and fail there, with exit 1, unlike every other bad flag.
+func TestRuleFlagsBesideOpenOrOfflineAreRefusedAsTheyAreParsed(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		ruleFlag   string
+		modeOption string
+	}{
+		{[]string{"--egress", "open", "--allow-domain", "example.com", "--", "true"}, "--allow-domain", "--egress open"},
+		{[]string{"--allow-domain", "example.com", "--egress=offline"}, "--allow-domain", "--egress offline"},
+		{[]string{"--egress-rules", "rules.yaml", "--egress", "open"}, "--egress-rules", "--egress open"},
+	} {
+		_, _, err := extractNetworkFlags("coop run", tc.args)
+		usage := asUsage(err)
+		if usage == nil || usage.ExitCode != 0 ||
+			usage.Headline != `Cannot combine "`+tc.modeOption+`" and "`+tc.ruleFlag+`" in "coop run"` ||
+			usage.Cause != tc.ruleFlag+" only adds to filtered access. Use --egress filtered, or leave out "+tc.ruleFlag+"." {
+			t.Errorf("%q refused as %#v", tc.args, err)
+		}
+	}
+	if flags, _, err := extractNetworkFlags("coop run", []string{"--egress", "filtered", "--allow-domain", "example.com"}); err != nil || len(flags.Domains) != 1 {
+		t.Fatalf("filtered with a domain = %#v, %v", flags, err)
+	}
+}
+
+// --allow-domain takes one exact hostname. A wildcard or a URL is told what to give instead, in
+// plain words, with an example built from what was typed; other values keep the validator's reason.
+func TestAllowDomainAsksForAnExactHostname(t *testing.T) {
+	for _, tc := range []struct{ value, cause, example string }{
+		{"*.example.com", "Give one exact hostname. For a wildcard, put the rule in a file and pass --egress-rules.", "docs.example.com"},
+		{"https://example.com", "Give the hostname alone, without a scheme, port or path.", "example.com"},
+		{"https://Docs.Example.com:8443/guide?x=1", "Give the hostname alone, without a scheme, port or path.", "docs.example.com"},
+		{"example.com/guide", "Give the hostname alone, without a scheme, port or path.", "example.com"},
+		{"example.com:443", "Give the hostname alone, without a scheme, port or path.", "example.com"},
+		{"1.1.1.1", "Domain cannot be an IP address.", "docs.example.com"},
+	} {
+		_, _, err := extractNetworkFlags("coop run", []string{"--allow-domain", tc.value})
+		usage := asUsage(err)
+		if usage == nil || usage.Cause != tc.cause || len(usage.Rows) == 0 || usage.Rows[0] != [2]string{"Example:", "coop run --allow-domain " + tc.example} {
+			t.Errorf("%q refused as %#v", tc.value, err)
+		}
+	}
+}

@@ -240,9 +240,10 @@ func (s *launchSections) accounts(rows []accountRow) {
 // policy allows and only then claims the rest is blocked; an open run and an offline run get a
 // warning under the same heading, never a green row. A filtered run nothing chose a mode for
 // first says that the default applies and how to leave it.
-// brokeredMCP names the MCP servers the run reaches through its credential broker: allowed like the
-// rest, though the agent's own policy holds no grant for them.
-func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, brokeredMCP ...string) {
+// providers names those whose accounts the run connects and brokeredMCP the MCP servers it reaches
+// through its credential broker: allowed like the rest, though the agent's own policy holds no grant
+// for a brokered one.
+func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egress.Snapshot, providers []string, brokeredMCP ...string) {
 	if !s.on {
 		return
 	}
@@ -254,7 +255,7 @@ func (s *launchSections) internet(cfg *config.Config, spec RunSpec, policy *egre
 		if spec.CapturedEgress != nil && spec.CapturedEgress.Default {
 			ui.Note("  Filtered by default. Use --egress open for unrestricted access.")
 		}
-		rows := networkAllowances(*policy, brokeredMCP...)
+		rows := networkAllowances(*policy, providers, brokeredMCP...)
 		for _, row := range rows {
 			ui.Pass("%s", row)
 		}
@@ -327,19 +328,22 @@ func (s *launchSections) brokerImage() {
 }
 
 // NetworkAllowed is what a filtered policy lets a box reach, grouped in the order a person checks
-// it: each selected provider's vendor, the network rules a human approved (the project's rules and
-// a run's --allow-domain/--egress-rules), the MCP servers coop configured, and a count of anything
-// else. Every grant lands in one group, so "everything else is blocked" never hides an allowance.
+// it: each selected provider's vendor, the network rules a human approved (the project's rules),
+// the rules given for this run only (--allow-domain, --egress-rules), the MCP servers coop
+// configured, and a count of anything else. Every grant lands in one group, so "everything else is
+// blocked" never hides an allowance.
 type NetworkAllowed struct {
 	Vendors  []string
 	Approved []string // one per approved rule, in policy order: what it reaches
+	ThisRun  []string // one per rule given for this run only and not also approved
 	Servers  []string // sorted
 	Other    int
 }
 
-// NetworkAllowedBy groups policy's grants. brokeredMCP names the MCP servers a run reaches through
-// its credential broker: allowed like the rest, though the policy holds no grant for them.
-func NetworkAllowedBy(policy egress.Snapshot, brokeredMCP ...string) NetworkAllowed {
+// NetworkAllowedBy groups policy's grants. providers names those whose accounts a run connects:
+// Coop's broker reaches a brokered one's endpoints for it, so the policy holds no grant for them,
+// and brokeredMCP names the MCP servers it reaches the same way.
+func NetworkAllowedBy(policy egress.Snapshot, providers []string, brokeredMCP ...string) NetworkAllowed {
 	var allowed NetworkAllowed
 	provider := func(name string) {
 		if ag, ok := agents.Get(name); ok {
@@ -349,32 +353,40 @@ func NetworkAllowedBy(policy egress.Snapshot, brokeredMCP ...string) NetworkAllo
 			allowed.Vendors = append(allowed.Vendors, name)
 		}
 	}
-	// The selected bundles come first, lead before peers; a grant with a provider origin the
-	// dependency list somehow lacks still gets its vendor rather than vanishing.
+	// The run's accounts come first and then the selected bundles, lead before peers; a grant with a
+	// provider origin the dependency list somehow lacks still gets its vendor rather than vanishing.
+	for _, name := range providers {
+		provider(name)
+	}
 	for _, dependency := range policy.Dependencies {
 		provider(dependency.Provider)
 	}
-	approved, servers := map[string]bool{}, map[string]bool{}
+	servers := map[string]bool{}
 	for _, name := range brokeredMCP {
 		servers[name] = true
 	}
 	for _, grant := range policy.Grants {
-		represented := false
+		represented, project, operator := false, false, false
 		for _, origin := range grant.Origins {
 			switch origin.Kind {
 			case "provider":
 				provider(origin.Provider)
-			case "project", "operator":
-				if !approved[grant.ID] {
-					approved[grant.ID] = true
-					allowed.Approved = append(allowed.Approved, destinationName(grant.Rule.To))
-				}
+			case "project":
+				project = true
+			case "operator":
+				operator = true // a launch flag, or `coop net setup`: this run's alone, never approved
 			case "mcp":
 				servers[origin.Name] = true
 			default:
 				continue
 			}
 			represented = true
+		}
+		switch {
+		case project:
+			allowed.Approved = append(allowed.Approved, destinationName(grant.Rule.To))
+		case operator:
+			allowed.ThisRun = append(allowed.ThisRun, destinationName(grant.Rule.To))
 		}
 		if !represented {
 			allowed.Other++
@@ -406,8 +418,8 @@ func destinationName(to egress.Destination) string {
 
 // networkAllowances lists what a filtered box may reach, one row per kind of allowance, so the
 // closing "Everything else blocked" is never claimed over an omitted allowance.
-func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
-	allowed := NetworkAllowedBy(policy, brokeredMCP...)
+func networkAllowances(policy egress.Snapshot, providers []string, brokeredMCP ...string) []string {
+	allowed := NetworkAllowedBy(policy, providers, brokeredMCP...)
 	var rows []string
 	for _, vendor := range allowed.Vendors {
 		rows = append(rows, vendor+" endpoints allowed")
@@ -416,6 +428,9 @@ func networkAllowances(policy egress.Snapshot, brokeredMCP ...string) []string {
 		// The count is of normalized approved network rules — not of expanded
 		// addresses, and not of distinct sites a rule might cover.
 		rows = append(rows, "Applied "+ui.Count(n, "approved network rule"))
+	}
+	if n := len(allowed.ThisRun); n > 0 {
+		rows = append(rows, "Applied "+ui.Count(n, "network rule")+" for this run only")
 	}
 	if n := len(allowed.Servers); n > 0 {
 		rows = append(rows, ui.Count(n, "configured MCP service")+" allowed")
@@ -503,9 +518,11 @@ func (s *launchSections) stopping() {
 // top. A cancellation is not explained: the person who pressed Ctrl-C knows why it stopped.
 func (s *launchSections) failed(err error) error {
 	var fallback *FilesystemFallbackError
-	if errors.As(err, &fallback) {
-		// The CLI combines the selection reason with the mount refusal's remedy.
-		// Printing here would duplicate it and expand every hidden path first.
+	var unreadable UnreadableCoopignore
+	if errors.As(err, &fallback) || errors.As(err, &unreadable) {
+		// The CLI combines the selection reason with the mount refusal's remedy, and says how to
+		// fix a .coopignore it cannot read. Printing here would say it twice, the first without the
+		// fix, and expand every hidden path first.
 		return err
 	}
 	if !s.on || !s.opened || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ui.ErrReported) {

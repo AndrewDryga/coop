@@ -9,6 +9,14 @@
   refused to create the container for this run, names the settings to check, and removes the helper
   and its state at once. A create Docker never answered still counts as unknown.
 
+- **A filtered run names the provider it can reach.** A run on a signed-in or API-key account
+  printed "Everything blocked" and then used its provider. It now lists the provider, such as
+  "Anthropic endpoints allowed", before "Everything else blocked". Rules from `--allow-domain` and
+  `--egress-rules` read "for this run only" instead of "approved". Those flags beside
+  `--egress open` or `--egress offline` are refused as the command is parsed (exit 2). When
+  `COOP_EGRESS`, the project or its approval makes the run open or offline, the refusal names it. A
+  wildcard or a URL given to `--allow-domain` is told to give one exact hostname. A `.coopignore`
+  Coop cannot read is reported once, and a waiting gate says "2 already running".
 - **`coop sessions connect` says what is wrong with a token file it refuses.** A token file other
   users could open was refused as "must be a private bounded regular file", with no fix. The
   refusal now names the failed check: a file open to other users (with the `chmod 600` that fixes

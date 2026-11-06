@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +18,8 @@ type networkFlags struct {
 }
 
 // Coop flags end at its first separator. Mode presence is retained: the shared
-// admission boundary, not the parser, resolves remembered posture and conflicts. command is the
+// admission boundary, not the parser, resolves remembered posture and conflicts — except the one
+// this command line settles by itself, rule flags beside --egress open or offline. command is the
 // launch the person typed ("coop run", "coop fork"), so a refused value names the command it came
 // from and points at that command's page — these flags belong to every launch, not to one of them.
 func extractNetworkFlags(command string, args []string) (networkFlags, []string, error) {
@@ -56,8 +58,7 @@ func extractNetworkFlags(command string, args []string) (networkFlags, []string,
 				}
 				domain, err := egress.NormalizeDomain(value, false)
 				if err != nil {
-					return networkFlags{}, nil, ui.InvalidOptionValue(value, "--allow-domain", command,
-						upperFirstSentence(err.Error()), command+" --allow-domain docs.example.com")
+					return networkFlags{}, nil, invalidAllowDomain(value, command, err)
 				}
 				flags.Domains = append(flags.Domains, domain)
 			case "--egress-rules":
@@ -75,7 +76,45 @@ func extractNetworkFlags(command string, args []string) (networkFlags, []string,
 			i++
 		}
 	}
+	if flags.Mode != nil && *flags.Mode != egress.Filtered {
+		for _, rule := range []struct {
+			flag string
+			set  bool
+		}{{"--allow-domain", len(flags.Domains) != 0}, {"--egress-rules", flags.RulesFile != ""}} {
+			if rule.set {
+				refused := ui.ConflictingOptions("--egress "+flags.Mode.Word(), rule.flag, command)
+				refused.Cause = rule.flag + " only adds to filtered access. Use --egress filtered, or leave out " + rule.flag + "."
+				return networkFlags{}, nil, refused
+			}
+		}
+	}
 	return flags, rest, nil
+}
+
+// invalidAllowDomain refuses an --allow-domain value that is not one exact hostname. A wildcard and a
+// URL are the near misses people type, so each is told what to give instead; anything else keeps the
+// validator's own reason.
+func invalidAllowDomain(value, command string, err error) error {
+	cause, example := upperFirstSentence(err.Error()), "docs.example.com"
+	if strings.Contains(value, "*") {
+		cause = "Give one exact hostname. For a wildcard, put the rule in a file and pass --egress-rules."
+	} else if host := urlHost(value); host != "" {
+		cause, example = "Give the hostname alone, without a scheme, port or path.", host
+	}
+	return ui.InvalidOptionValue(value, "--allow-domain", command, cause, command+" --allow-domain "+example)
+}
+
+// urlHost is the hostname a URL-shaped value names, with or without its scheme, when it is one an
+// --allow-domain would take; "" otherwise.
+func urlHost(value string) string {
+	for _, raw := range []string{value, "https://" + value} {
+		if parsed, err := url.Parse(raw); err == nil && parsed.Hostname() != "" && parsed.Hostname() != value {
+			if host, err := egress.NormalizeDomain(parsed.Hostname(), false); err == nil {
+				return host
+			}
+		}
+	}
+	return ""
 }
 
 func (f networkFlags) admission() box.NetworkAdmission {
