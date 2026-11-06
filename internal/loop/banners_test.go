@@ -180,6 +180,10 @@ func TestBusyQueueReport(t *testing.T) {
 	if strings.Contains(got, "done") {
 		t.Errorf("a reserved queue must not read as a result:\n%s", got)
 	}
+	got = captureStderr(t, func() { printBusyQueue(tasks.TaskLeaseSummary{Waiting: 1}) })
+	if got != "No task is available to this loop. 1 task waits for another task to finish: coop tasks ls\n" {
+		t.Errorf("waiting report = %q", got)
+	}
 }
 
 // The task header is the one place a reader learns which task an attempt is working, and with

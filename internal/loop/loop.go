@@ -95,6 +95,12 @@ func (l *loopTaskLimit) observe(snapshot map[string]string) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("task-limited run lost task %s from the queue — inspect `coop tasks` before retrying", l.currentID)
 	}
+	if state == tasks.StateTodo {
+		// Its worker handed it back to wait for another task (tasks_wait). It did not settle, so it
+		// does not count, but the run may take other work meanwhile.
+		l.currentID, l.currentTitle = "", ""
+		return false, nil
+	}
 	if state != tasks.StateDone && state != tasks.StateBlocked {
 		return false, nil
 	}
@@ -777,9 +783,17 @@ reviewAgain:
 			if onlyID == "" && resumingPendingReview && len(pendingReopened) > 0 {
 				onlyID = pendingReopened[0]
 			}
-			assignment, assignErr := tasks.AssignLoopTaskOnly(hosts, tasks.TaskLeaseOwner{
+			owner := tasks.TaskLeaseOwner{
 				RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: RecordedTarget(c.cfg, target),
-			}, onlyID)
+			}
+			// A finished task releases the tasks that wait for it, and a wait nothing will meet goes
+			// to a person, before the next task is chosen.
+			settledWaits, waitErr := tasks.SettleTaskWaits(hosts, owner)
+			if waitErr != nil {
+				return 1, fmt.Errorf("settle the tasks that wait for other tasks: %w", waitErr)
+			}
+			printSettledWaits(settledWaits)
+			assignment, assignErr := tasks.AssignLoopTaskOnly(hosts, owner, onlyID)
 			if assignErr != nil {
 				return 1, assignErr
 			}
@@ -1540,7 +1554,11 @@ reviewAgain:
 			case actContinue:
 				// A clean iteration that neither finishes/blocks a task NOR commits means the agent keeps
 				// continuing an in_progress task it can't complete — advanceStall bails after maxStalls
-				// rather than loop forever (a commit or a block still counts as progress).
+				// rather than loop forever (a commit or a block still counts as progress, and so does a
+				// task handed back to wait for another one: the next pick takes other work).
+				if tasks.WaitsForAnotherTask(assigned) {
+					stalls = 0
+				}
 				var stop error
 				prevHead, settledBaseline, stalls, stop = c.advanceStall(repo, hosts, prevHead, settledBaseline, stalls, active)
 				if stop != nil {

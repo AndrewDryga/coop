@@ -151,17 +151,24 @@ func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
 // CommitsForTask returns the short shas whose sole Coop-Task trailer equals id. rangeExpr limits
 // the search (e.g. "base..HEAD"); empty scans all of HEAD's reachable history.
 func CommitsForTask(repo, rangeExpr, id string) []string {
+	shas, _ := TaskCommits(repo, rangeExpr, id)
+	return shas
+}
+
+// TaskCommits is CommitsForTask for a caller that must tell a task with no commit from a history it
+// could not read.
+func TaskCommits(repo, rangeExpr, id string) ([]string, error) {
 	var shas []string
 	commits, err := TaskTrailerCommits(repo, rangeExpr, false)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, commit := range commits {
 		if !commit.Malformed && len(commit.Values) == 1 && commit.Values[0] == id {
 			shas = append(shas, commit.Info.SHA)
 		}
 	}
-	return shas
+	return shas, nil
 }
 
 func taskBindingCounts(repo, head string) (map[string]int, bool) {
@@ -3547,12 +3554,14 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
 		var counts TaskCounts
 		var inProgress, todo []QueuedTask
+		index := queueIndex{}
 		for _, root := range hosts {
 			items, err := ReadTaskTree(root)
 			if err != nil {
 				return TaskAssignment{}, err
 			}
 			for _, item := range items {
+				index.add(item)
 				switch item.State {
 				case StateTodo:
 					counts.Todo++
@@ -3611,6 +3620,10 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 		}
 
 		for _, candidate := range todo {
+			if index.waiting(candidate.Item) {
+				busy.Waiting++ // SettleTaskWaits releases it, or hands a wait it can never meet to a person
+				continue
+			}
 			if owned, err := skipOwnedCandidate(candidate.Root, candidate.Item.ID, noted); err != nil {
 				return TaskAssignment{}, err
 			} else if owned {
@@ -3656,7 +3669,8 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 		if changed {
 			continue
 		}
-		if onlyID != "" && len(inProgress)+len(todo) == 0 {
+		// A scoped task that waits for another one is not workable now, as a parked one is not.
+		if onlyID != "" && len(inProgress)+len(todo) == busy.Waiting {
 			return TaskAssignment{Counts: counts, Outcome: AssignmentDrained}, nil
 		}
 		if counts.Todo+counts.Doing == 0 {

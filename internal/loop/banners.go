@@ -198,9 +198,30 @@ func taskNoun(n int) string {
 	return "tasks"
 }
 
-// printBusyQueue reports work another live controller owns. A queue somebody else is draining is
-// not a verified-done queue, so this remains a compact availability statement rather than a result.
-func printBusyQueue(_ tasks.TaskLeaseSummary) {
+// printSettledWaits reports each wait the host ended before choosing the next task.
+func printSettledWaits(settled []tasks.SettledWait) {
+	for _, wait := range settled {
+		if wait.Reason == "" {
+			ui.Note("%s no longer waits: %s is done.", wait.Task.Item.ID, wait.WaitsOn)
+			continue
+		}
+		ui.Note("%s is blocked for your decision: it waits for %s, but %s. Answer it: coop tasks decisions -i",
+			wait.Task.Item.ID, wait.WaitsOn, wait.Reason)
+	}
+}
+
+// printBusyQueue reports work another live controller owns, or tasks that wait for unfinished
+// ones. A queue somebody else is draining is not a verified-done queue, so this remains a compact
+// availability statement rather than a result.
+func printBusyQueue(busy tasks.TaskLeaseSummary) {
+	if busy.Waiting > 0 && busy.Owned+busy.Busy+busy.Stalled == 0 {
+		verb := "wait"
+		if busy.Waiting == 1 {
+			verb = "waits"
+		}
+		ui.Note("No task is available to this loop. %s %s for another task to finish: coop tasks ls", ui.Count(busy.Waiting, "task"), verb)
+		return
+	}
 	ui.Note("No task is available to this loop. The remaining work is reserved by another agent.")
 }
 

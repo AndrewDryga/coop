@@ -2840,6 +2840,9 @@ func listMarkers(p ui.Palette, t Item) string {
 			parts = append(parts, p.Dim(m))
 		}
 	}
+	if t.WaitsOn != "" && t.State != StateDone {
+		parts = append(parts, p.Dim("Waits for "+t.WaitsOn))
+	}
 	return strings.Join(parts, p.Dim(" · "))
 }
 

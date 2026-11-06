@@ -862,6 +862,7 @@ type TaskLeaseSummary struct {
 	Owned   int // a durable human claim (TaskOwnerRecord) — never a lease state, so add() can't set it
 	Busy    int
 	Stalled int
+	Waiting int // a todo task whose waits_on task is not done yet (wait.go)
 }
 
 func (s *TaskLeaseSummary) add(o TaskLeaseObservation) {

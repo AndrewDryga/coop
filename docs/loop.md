@@ -20,6 +20,12 @@ Before starting an agent, the loop claims the next task on the host or resumes o
 `10_in_progress/`, and the agent works only on that task. The loop keeps going while it can claim
 work from `00_todo/` or `10_in_progress/`.
 
+A task that must not land before another one can wait for it. The agent hands it back with
+`tasks_wait`, or you add `waits_on: <task-id>` to its `task.md` frontmatter. The task stays in
+`00_todo/` and the loop skips it until the other task is in `99_done/`, then works it. If the
+other task is missing or blocked, the loop blocks the waiting task too, with a decision that says
+why. `coop tasks ls` shows what each task waits for.
+
 Choose an agent (`claude`, `codex`, `gemini` or `grok`) or a preset that defines the lead agent.
 To run a custom command for each task, set `work.command` in `.agent/loop.yaml`. It replaces the
 whole iteration command.

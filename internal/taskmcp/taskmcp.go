@@ -341,7 +341,7 @@ func (s *Server) instructions() string {
 // serverInstructions and sessionInstructions are what a client shows its model about this server,
 // in a loop box and in an interactive session.
 const (
-	serverInstructions  = "coop's task queue for this box. tasks_list / tasks_get read any task; tasks_update_state, tasks_append_log, tasks_set_subtasks keep the assigned task's files current; tasks_complete and tasks_block move it out of 10_in_progress; tasks_propose files newly discovered work. A mutation on a task another live process holds or claims is refused."
+	serverInstructions  = "coop's task queue for this box. tasks_list / tasks_get read any task; tasks_update_state, tasks_append_log, tasks_set_subtasks keep the assigned task's files current; tasks_complete and tasks_block move it out of 10_in_progress, and tasks_wait returns it to 00_todo until another task is done; tasks_propose files newly discovered work. A mutation on a task another live process holds or claims is refused."
 	sessionInstructions = "coop's task queue for this session. The coop CLI is not installed in this box: change task state through these tools, never by moving task folders. tasks_list / tasks_get read any task. tasks_claim a task before you work on it — it moves to 10_in_progress, owned by this session, so a coop loop leaves it alone. Keep its files current with tasks_update_state, tasks_append_log and tasks_set_subtasks; finish with tasks_complete, park a human decision with tasks_block, or hand it back with tasks_release. tasks_propose files newly discovered work. A change to a task someone else holds or claims is refused."
 )
 

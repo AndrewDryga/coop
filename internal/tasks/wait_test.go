@@ -1,0 +1,192 @@
+package tasks
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func readWaitFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// A task told to wait leaves the run's way, the task it waits for is worked first, and finishing that
+// task returns it to ordinary work with its wait removed.
+func TestTaskWaitIsReleasedWhenTheNamedTaskIsDone(t *testing.T) {
+	root := t.TempDir()
+	// The waiting task sorts first, so only the wait keeps the loop from taking it.
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "alpha-docs", "task.md"), "---\nid: alpha-docs\ntitle: Docs\n---\n\n# Docs\n- [ ] write\n")
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "alpha-docs", "state.md"), "# State — Docs\n\n**Status:** in progress\n**Done so far:** drafted the example\n**Next action:** apply tmp/example.patch, then run the docs check\n**Traps:** —\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "zeta-bridge", "task.md"), "# Bridge\n- [ ] fix\n")
+	const resume = "apply tmp/example.patch, then run the docs check"
+	docs, _ := mustCurrentTask(t, root, "alpha-docs")
+	if err := WaitForTask([]string{root}, QueuedTask{Root: root, Item: docs}, "zeta-bridge", "the example must not land before\tthe bridge fix"); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	waiting, ok := mustCurrentTask(t, root, "alpha-docs")
+	if !ok || waiting.State != StateTodo || waiting.WaitsOn != "zeta-bridge" {
+		t.Fatalf("waiting task = %+v, exists=%v", waiting, ok)
+	}
+	if body := readWaitFile(t, filepath.Join(waiting.Dir, "task.md")); !strings.HasPrefix(body, "---\nid: alpha-docs\ntitle: Docs\nwaits_on: zeta-bridge\n---\n") {
+		t.Fatalf("task.md frontmatter = %q", body)
+	}
+	if log := readWaitFile(t, filepath.Join(waiting.Dir, "log.md")); !strings.Contains(log, "waits for zeta-bridge before it can go on: the example must not land before the bridge fix") {
+		t.Fatalf("log.md = %q", log)
+	}
+	if state, err := ReadTaskState(waiting.Dir); err != nil || !strings.Contains(state.Status, "must not start before zeta-bridge is done") ||
+		state.NextAction != resume || state.DoneSoFar != "drafted the example" {
+		t.Fatalf("state = %+v, %v", state, err)
+	}
+	if !WaitsForAnotherTask(QueuedTask{Root: root, Item: docs}) {
+		t.Fatal("a task handed back to wait does not read as waiting")
+	}
+
+	assignment, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "zeta-bridge" {
+		t.Fatalf("assignment while docs waits = %+v, %v", assignment, err)
+	}
+	bridge := assignment.Task.Item
+	// While the bridge is held, the waiting task is not handed out either, and the busy queue says so.
+	held, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if err != nil || held.Outcome != AssignmentUnavailable || held.Busy.Waiting != 1 || held.Lease != nil {
+		t.Fatalf("assignment while the bridge is held = %+v, %v", held, err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if settled, err := SettleTaskWaits([]string{root}, testLeaseOwner()); err != nil || len(settled) != 0 {
+		t.Fatalf("settle before bridge finished = %+v, %v", settled, err)
+	}
+
+	if err := MoveTaskDir(root, bridge, StateDone); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := SettleTaskWaits([]string{root}, testLeaseOwner())
+	if err != nil || len(settled) != 1 || settled[0].Task.Item.ID != "alpha-docs" || settled[0].WaitsOn != "zeta-bridge" || settled[0].Reason != "" {
+		t.Fatalf("settle after bridge finished = %+v, %v", settled, err)
+	}
+	released, _ := mustCurrentTask(t, root, "alpha-docs")
+	if released.State != StateTodo || released.WaitsOn != "" || strings.Contains(readWaitFile(t, filepath.Join(released.Dir, "task.md")), "waits_on") {
+		t.Fatalf("released task = %+v", released)
+	}
+	if state, err := ReadTaskState(released.Dir); err != nil || !strings.Contains(state.Status, "zeta-bridge, the task it waited for, is done") || state.NextAction != resume {
+		t.Fatalf("released state = %+v, %v", state, err)
+	}
+	assignment, err = AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "")
+	if err != nil || assignment.Outcome != assignmentReady || assignment.Task.Item.ID != "alpha-docs" {
+		t.Fatalf("assignment after the wait was met = %+v, %v", assignment, err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A wait the tool can tell is wrong is refused with nothing changed. One that can never be met later,
+// on a task that disappears or is blocked, goes to a person instead of being skipped forever.
+func TestTaskWaitThatCannotBeMetNeedsADecision(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "docs", "task.md"), "# Docs\n- [ ] write\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "loop", "task.md"), "---\nwaits_on: docs\n---\n# Loop\n- [ ] fix\n")
+	writeTaskFile(t, filepath.Join(root, StateDone, "shipped", "task.md"), "# Shipped\n- [x] done\n")
+	docs, _ := mustCurrentTask(t, root, "docs")
+	for on, want := range map[string]string{
+		"missing": "no task missing is in this loop's queues",
+		"docs":    "cannot wait for itself",
+		"shipped": "already done",
+		"loop":    "loop waits for this task in turn",
+	} {
+		if err := WaitForTask([]string{root}, QueuedTask{Root: root, Item: docs}, on, "order"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("wait on %s = %v, want %q", on, err, want)
+		}
+	}
+	if current, _ := mustCurrentTask(t, root, "docs"); current.State != StateInProgress || current.WaitsOn != "" || pathExists(filepath.Join(current.Dir, "log.md")) {
+		t.Fatalf("refused waits changed the task: %+v", current)
+	}
+
+	writeTaskFile(t, filepath.Join(root, StateTodo, "renamed", "task.md"), "---\ntitle: Renamed\nwaits_on: gone\n---\n# Renamed\n- [ ] work\n")
+	writeTaskFile(t, filepath.Join(root, StateBlocked, "question", "task.md"), "# Question\n- [ ] ask\n")
+	writeTaskFile(t, filepath.Join(root, StateBlocked, "question", "decision.md"), "# Decision: which way?\n\n**Resolution:** <your answer>\n")
+	if err := WaitForTask([]string{root}, QueuedTask{Root: root, Item: docs}, "question", "needs the answer first"); err != nil {
+		t.Fatalf("wait on a blocked task: %v", err)
+	}
+	// loop waits for docs, which this same call parks, so it reaches a person in the same call too
+	// instead of being skipped until a later run.
+	settled, err := SettleTaskWaits([]string{root}, testLeaseOwner())
+	if err != nil || len(settled) != 3 {
+		t.Fatalf("settle = %+v, %v", settled, err)
+	}
+	for id, why := range map[string]string{
+		"renamed": "gone is not in the task queues this loop works",
+		"docs":    "question is blocked, waiting for a person's decision",
+		"loop":    "docs is blocked, waiting for a person's decision",
+	} {
+		parked, _ := mustCurrentTask(t, root, id)
+		if parked.State != StateBlocked || !parked.HasDecision || parked.WaitsOn == "" {
+			t.Fatalf("%s after settle = %+v", id, parked)
+		}
+		decision := readWaitFile(t, filepath.Join(parked.Dir, "decision.md"))
+		if !strings.Contains(decision, why) || !strings.Contains(decision, "delete the waits_on line") {
+			t.Fatalf("%s decision = %q, want %q", id, decision, why)
+		}
+	}
+	if settled, err := SettleTaskWaits([]string{root}, testLeaseOwner()); err != nil || len(settled) != 0 {
+		t.Fatalf("second settle = %+v, %v", settled, err)
+	}
+	// A run scoped to a waiting task finds nothing to work rather than reporting the queue busy.
+	writeTaskFile(t, filepath.Join(root, StateTodo, "scoped", "task.md"), "---\nwaits_on: shipped-later\n---\n# Scoped\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "shipped-later", "task.md"), "# Later\n")
+	if scoped, err := AssignLoopTaskOnly([]string{root}, testLeaseOwner(), "scoped"); err != nil || scoped.Outcome != AssignmentDrained {
+		t.Fatalf("scoped assignment of a waiting task = %+v, %v", scoped, err)
+	}
+}
+
+func TestTaskListShowsWhatEachTaskWaitsFor(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "docs", "task.md"), "---\ntitle: Docs\nwaits_on: bridge\n---\n# Docs\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "bridge", "task.md"), "# Bridge\n")
+	out := captureStdout(t, func() {
+		if _, err := printTaskTree(root, "Tasks", false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "Waits for bridge") || strings.Count(out, "Waits for") != 1 {
+		t.Fatalf("listing = %q", out)
+	}
+}
+
+func TestWithFrontmatterFieldKeepsEveryOtherLine(t *testing.T) {
+	for _, tc := range []struct{ name, in, value, want string }{
+		{"add", "---\nid: a\n---\n# A\n", "b", "---\nid: a\nwaits_on: b\n---\n# A\n"},
+		{"replace", "---\nwaits_on: x\nid: a\n---\n# A\n", "b", "---\nwaits_on: b\nid: a\n---\n# A\n"},
+		{"remove", "---\nid: a\nwaits_on: b\n---\n# A\n", "", "---\nid: a\n---\n# A\n"},
+		{"header", "<!-- note -->\n\n---\nid: a\n---\n", "b", "<!-- note -->\n\n---\nid: a\nwaits_on: b\n---\n"},
+		{"none", "# A\n", "b", "---\nwaits_on: b\n---\n\n# A\n"},
+		{"none removed", "# A\n", "", "# A\n"},
+	} {
+		if got := withFrontmatterField(tc.in, waitsOnField, tc.value); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+		if tc.value != "" {
+			if fields, _ := SplitFrontmatter(withFrontmatterField(tc.in, waitsOnField, tc.value)); fields[waitsOnField] != tc.value {
+				t.Errorf("%s: written field reads back as %q", tc.name, fields[waitsOnField])
+			}
+		}
+	}
+}
+
+// A fork takes no task that waits for another; the plain loop settles those waits.
+func TestForkSchedulerSkipsAWaitingTask(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "alpha-docs", "task.md"), "---\nwaits_on: zeta-bridge\n---\n# Docs\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "zeta-bridge", "task.md"), "# Bridge\n")
+	_, unowned, _, err := forkAssignmentCandidates([]string{root})
+	if err != nil || len(unowned) != 1 || unowned[0].Item.ID != "zeta-bridge" {
+		t.Fatalf("fork candidates = %+v, %v", unowned, err)
+	}
+}

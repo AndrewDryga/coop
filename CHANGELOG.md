@@ -23,6 +23,13 @@
   said why nothing happened. It now reads "waiting to start services", with the boxes it waits for
   beneath it, and goes back to running when the wait ends. `coop fork ls --json` reports the state
   `launch-wait` and the boxes in `launch_wait`.
+
+- **A task can wait for another task instead of waiting for you.** When a task must not land
+  before another one in the queue, the loop's agent now hands it back with `tasks_wait` instead of
+  blocking it for your decision, or you can add `waits_on: <task-id>` to its `task.md`. The loop
+  skips it until the other task is done, then works it in the same run or a later one. A wait on a
+  task that is missing or blocked, or that waits for it in turn, becomes your decision, and
+  `coop tasks ls` shows what each task waits for.
 - **Give a task a priority.** Add `priority: high` or `priority: low` to a task.md's frontmatter
   and the loop takes high tasks first and low tasks last, in folder order within each. Before, the
   loop always went by folder name, so among tasks filed on the same day it went alphabetically.

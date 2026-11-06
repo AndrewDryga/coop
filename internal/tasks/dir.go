@@ -57,6 +57,7 @@ type Item struct {
 	SubtaskLabels []string // SubtaskLabels[i] is the text of Subtasks[i]; empty for an Item built in memory
 	HasDecision   bool     // a decision.md is present (must hold iff State == blocked)
 	Priority      string   // frontmatter `priority:` as written, "" without one; see priorityRank
+	WaitsOn       string   // frontmatter `waits_on:`, the task id this one must not start before (wait.go)
 }
 
 // taskPriorities are the values of the optional `priority:` frontmatter field, in the order the
@@ -198,7 +199,17 @@ func FrontmatterList(content, key string) []string {
 // first. Without this a seeded task's title/labels/status field would go unparsed.
 func frontmatterLines(content string) (lines []string, body string, ok bool) {
 	all := strings.Split(content, "\n")
-	start := 0
+	start, end, ok := frontmatterFences(all)
+	if !ok {
+		return nil, content, false
+	}
+	return all[start+1 : end], strings.Join(all[end+1:], "\n"), true
+}
+
+// frontmatterFences finds the indexes of the opening and closing `---` lines frontmatterLines reads
+// between, so a writer edits exactly the block a reader parses.
+func frontmatterFences(all []string) (start, end int, ok bool) {
+	start = 0
 	for start < len(all) && strings.TrimSpace(all[start]) == "" {
 		start++
 	}
@@ -215,19 +226,14 @@ func frontmatterLines(content string) (lines []string, body string, ok bool) {
 		}
 	}
 	if start >= len(all) || strings.TrimSpace(all[start]) != "---" {
-		return nil, content, false
+		return 0, 0, false
 	}
-	end := -1
 	for i := start + 1; i < len(all); i++ {
 		if strings.TrimSpace(all[i]) == "---" {
-			end = i
-			break
+			return start, i, true
 		}
 	}
-	if end < 0 {
-		return nil, content, false // no closing fence — treat the whole thing as body
-	}
-	return all[start+1 : end], strings.Join(all[end+1:], "\n"), true
+	return 0, 0, false // no closing fence — treat the whole thing as body
 }
 
 // unquoteScalar strips a YAML scalar's surrounding quotes. A title that opens with a flow
@@ -358,6 +364,7 @@ func parseTaskFolderIn(root *os.Root, dir, state string) (Item, bool, error) {
 		SubtaskLabels: labels,
 		HasDecision:   hasDecision,
 		Priority:      fields["priority"],
+		WaitsOn:       sanitizeCell(strings.TrimSpace(fields[waitsOnField])),
 	}, true, nil
 }
 

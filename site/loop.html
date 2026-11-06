@@ -131,6 +131,11 @@ and <code>coop tasks</code> shows the clean names.</p>
 <p>Before starting an agent, the loop claims the next task on the host or resumes one left in
 <code>10_in_progress/</code>, and the agent works only on that task. The loop keeps going while it can claim
 work from <code>00_todo/</code> or <code>10_in_progress/</code>.</p>
+<p>A task that must not land before another one can wait for it. The agent hands it back with
+<code>tasks_wait</code>, or you add <code>waits_on: &lt;task-id&gt;</code> to its <code>task.md</code> frontmatter. The task stays in
+<code>00_todo/</code> and the loop skips it until the other task is in <code>99_done/</code>, then works it. If the
+other task is missing or blocked, the loop blocks the waiting task too, with a decision that says
+why. <code>coop tasks ls</code> shows what each task waits for.</p>
 <p>Choose an agent (<code>claude</code>, <code>codex</code>, <code>gemini</code> or <code>grok</code>) or a preset that defines the lead agent.
 To run a custom command for each task, set <code>work.command</code> in <code>.agent/loop.yaml</code>. It replaces the
 whole iteration command.</p>

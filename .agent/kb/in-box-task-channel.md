@@ -2,12 +2,12 @@
 name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
+sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
 updated: 2026-11-05
 ---
 
-A loop work box is told to change task state through the `coop-tasks` MCP server (eight tools:
-`tasks_list/get/update_state/append_log/set_subtasks/complete/block/propose`), not by moving folders
+A loop work box is told to change task state through the `coop-tasks` MCP server (nine tools:
+`tasks_list/get/update_state/append_log/set_subtasks/complete/block/wait/propose`), not by moving folders
 or writing outbox JSON — its prompt says so (internal/loop/prompts.go). Nothing physically stops a
 move: a work box mounts the repository writable, `.agent/tasks` included, and only review stages
 remount the task queues read-only (`RepoReadOnlyPaths`, from `reviewReadOnlyPaths` in
@@ -24,9 +24,9 @@ the session's claims bind to: the ACP supervisor (the inner child's parent under
 `COOP_ACP_SUPERVISOR`; its start token survives the exec a reload does, so claims outlive provider
 switches, refreshes and child restarts) or the `coop <agent>` process. Fork sessions, controller
 jobs, sign-in, `coop run -- <cmd>` and `coop shell` get nothing. A session server adds `tasks_claim`
-and `tasks_release` — a loop box still lists exactly the eight, doctor's contract — and its
-initialize instructions say the coop CLI is absent and these tools are how task state changes; the
-box briefing gains a `# Tasks` note whenever a box serves task tools.
+and `tasks_release` and drops the loop-only `tasks_wait` — a loop box lists exactly the nine,
+doctor's contract — and its initialize instructions say the coop CLI is absent and these tools are
+how task state changes; the box briefing gains a `# Tasks` note whenever a box serves task tools.
 
 - One rule for every box, loop or session (`boxClaimRefusal` in internal/tasks/session_claim.go): a
   box changes, claims or releases only a task that is unclaimed, its own session's, or claimed by a
@@ -235,6 +235,10 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-05 — `tasks_wait` (loop boxes only) returns the assigned task to `00_todo/` with a
+  `waits_on:` frontmatter line naming the task it must not start before; the loop's host-side
+  `SettleTaskWaits` drops a met wait and blocks one nothing will meet, and the picker skips the rest
+  (internal/tasks/wait.go). Refused in forks and once the task has its commit.
 - 2026-11-05 — completion refuses template text in Done so far/Traps and a log.md without an entry;
   lint names done tasks with template text, not old empty logs (task 2026-11-05-keep-template-placeholders-out-of-a-completed-ta).
 - 2026-11-05 — `tasks_complete` takes a required `unrun_checks` list and refuses a nonempty one

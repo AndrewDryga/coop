@@ -249,7 +249,7 @@ func TestHandshakeEchoesAKnownProtocolVersionAndListsExactlyTheToolSet(t *testin
 			t.Fatalf("tool %s schema = %v", m["name"], schema)
 		}
 	}
-	want := []string{"tasks_list", "tasks_get", "tasks_update_state", "tasks_append_log", "tasks_complete", "tasks_block", "tasks_set_subtasks", "tasks_propose"}
+	want := []string{"tasks_list", "tasks_get", "tasks_update_state", "tasks_append_log", "tasks_complete", "tasks_block", "tasks_wait", "tasks_set_subtasks", "tasks_propose"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools/list = %v, want exactly %v", names, want)
 	}

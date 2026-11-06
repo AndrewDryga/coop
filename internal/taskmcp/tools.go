@@ -32,6 +32,8 @@ type tool struct {
 	// session marks a tool only an interactive session (Authority.Session) is offered: a loop box
 	// works the task its iteration assigned, so it never claims or releases one.
 	session bool
+	// loop marks a tool only a loop iteration is offered: it acts on the task the iteration holds.
+	loop bool
 }
 
 // toolTable is THE tool set, in the order tools/list presents it. Adding a tool here is the whole
@@ -111,6 +113,17 @@ var toolTable = []tool{
 			"recommendation": textProp("The option best for the product in the long term, and why.", true, blockLimit),
 		}, "id", "question", "why", "options", "recommendation"),
 		run: (*Server).block,
+	},
+	{
+		name:        "tasks_wait",
+		description: "Return your assigned task to 00_todo/ until another task is done, when this one must not start or land before it. The loop skips it while that task is unfinished and works it again once it is in 99_done/; a person decides only when the task it waits for is blocked. Call it before committing anything for this task, which completes later with its one commit: save unfinished changes as a patch in its tmp/ folder, put the checkout back as you found it, and say in state.md how to resume. Refused for a task that is not in the queue, already done, or waiting for this one in turn. A human choice uses tasks_block instead.",
+		schema: object(map[string]any{
+			"id":     idProp(),
+			"on":     textProp("The exact id of the task this one must wait for, as tasks_list reports it.", false, lineLimit),
+			"reason": textProp("Why this task cannot go on before that one is done, for its log.md.", true, blockLimit),
+		}, "id", "on", "reason"),
+		run:  (*Server).wait,
+		loop: true,
 	},
 	{
 		name:        "tasks_release",
@@ -209,14 +222,15 @@ func withMinProperties(schema map[string]any, count int) map[string]any {
 // ToolNames lists a loop box's tool set in presentation order — the fixed contract doctor asserts.
 func ToolNames() []string { return names(offeredTools(false)) }
 
-// offeredTools is the tool set a server offers, in presentation order: the loop's eight, plus the
-// claim and release pair an interactive session works its own tasks with.
+// offeredTools is the tool set a server offers, in presentation order: the loop's nine, or for an
+// interactive session the shared ones plus the claim and release pair it works its own tasks with.
 func offeredTools(session bool) []tool {
 	out := make([]tool, 0, len(toolTable))
 	for _, t := range toolTable {
-		if !t.session || session {
-			out = append(out, t)
+		if t.session && !session || t.loop && session {
+			continue
 		}
+		out = append(out, t)
 	}
 	return out
 }
@@ -529,8 +543,9 @@ type listedTask struct {
 		Done  int `json:"done"`
 		Total int `json:"total"`
 	} `json:"subtasks"`
-	Assigned    bool `json:"assigned,omitempty"`
-	HasDecision bool `json:"has_decision,omitempty"`
+	Assigned    bool   `json:"assigned,omitempty"`
+	HasDecision bool   `json:"has_decision,omitempty"`
+	WaitsOn     string `json:"waits_on,omitempty"`
 	// Claim, in an interactive session, says who holds a live task: "yours" for the session's own
 	// claim, else its owner, so the agent finds its work again after a provider switch.
 	Claim string `json:"claim,omitempty"`
@@ -538,7 +553,7 @@ type listedTask struct {
 
 func (s *Server) listed(root string, item tasks.Item) listedTask {
 	out := listedTask{ID: item.ID, Title: item.Title, State: tasks.StateLabel(item.State), Queue: root,
-		Assigned: item.ID == s.authority.Assigned, HasDecision: item.HasDecision}
+		Assigned: item.ID == s.authority.Assigned, HasDecision: item.HasDecision, WaitsOn: item.WaitsOn}
 	out.Subtasks.Total = len(item.Subtasks)
 	for _, done := range item.Subtasks {
 		if done {
@@ -953,6 +968,45 @@ func (s *Server) block(_ context.Context, args json.RawMessage) *toolResult {
 		result += fmt.Sprintf(". It had been answered (%q); that decision is kept in its log.md", earlier)
 	}
 	return textResult(result)
+}
+
+// wait hands the task this iteration holds back to the queue until another task is done
+// (tasks.WaitForTask). A fork's projection holds one task and cannot see the queue the other is in,
+// so a fork task finishes or blocks instead.
+func (s *Server) wait(_ context.Context, args json.RawMessage) *toolResult {
+	var in struct {
+		ID     string `json:"id"`
+		On     string `json:"on"`
+		Reason string `json:"reason"`
+	}
+	if r := decodeArgs(args, &in); r != nil {
+		return r
+	}
+	if r := checkText("on", in.On, false, lineLimit); r != nil {
+		return r
+	}
+	if r := checkText("reason", in.Reason, true, blockLimit); r != nil {
+		return r
+	}
+	if s.authority.ProposalOutbox != "" {
+		return refusal("a fork works one task and cannot wait for another: finish it, or park it with tasks_block if it must not land yet")
+	}
+	loc, r := s.locate(in.ID)
+	if r != nil {
+		return r
+	}
+	if loc.item.ID != s.authority.Assigned {
+		return refusal(fmt.Sprintf("only the task assigned to this run can wait, and %s is not it", loc.item.ID))
+	}
+	if shas, err := tasks.TaskCommits(s.authority.Workspace, "", loc.item.ID); err != nil {
+		return refusal(fmt.Sprintf("wait %s: Coop could not read the history to check for its commit: %v", loc.item.ID, err))
+	} else if len(shas) > 0 {
+		return refusal(fmt.Sprintf("%s already has a commit with its Coop-Task trailer (%s), and a task completes with one commit, so it cannot wait now: finish it, or park it with tasks_block if it must not land yet", loc.item.ID, strings.Join(shas, ", ")))
+	}
+	if err := tasks.WaitForTask(s.authority.QueueRoots, tasks.QueuedTask{Root: loc.root, Item: loc.item}, in.On, in.Reason); err != nil {
+		return refusal(fmt.Sprintf("wait %s: %v", loc.item.ID, err))
+	}
+	return textResult(fmt.Sprintf("%s moved to %s/ and waits for %s — stop working it; the loop works it again once %s is done", loc.item.ID, tasks.StateTodo, in.On, in.On))
 }
 
 // claim and release are an interactive session's own lifecycle: it has no task assigned, so it

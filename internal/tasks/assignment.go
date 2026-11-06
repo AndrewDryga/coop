@@ -56,10 +56,14 @@ func validateForkAssignmentRequest(request ForkAssignmentRequest) error {
 }
 
 func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, foreign bool, err error) {
+	index := queueIndex{}
 	for _, root := range hosts {
 		items, readErr := ReadTaskTree(root)
 		if readErr != nil {
 			return nil, nil, false, readErr
+		}
+		for _, item := range items {
+			index.add(item)
 		}
 		for _, item := range items {
 			if item.State != StateInProgress && item.State != StateTodo {
@@ -100,6 +104,10 @@ func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, fore
 		}
 		return a.Item.ID < b.Item.ID
 	}
+	// A fork takes no task that waits for another (wait.go); the plain loop settles those waits.
+	unowned = slices.DeleteFunc(unowned, func(candidate QueuedTask) bool {
+		return candidate.Item.State == StateTodo && index.waiting(candidate.Item)
+	})
 	sort.Slice(owned, func(i, j int) bool { return less(owned[i], owned[j]) })
 	sort.Slice(unowned, func(i, j int) bool { return less(unowned[i], unowned[j]) })
 	return owned, unowned, foreign, nil

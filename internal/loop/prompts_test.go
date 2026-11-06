@@ -50,7 +50,8 @@ func TestLoopWorkPromptSpeaksTaskToolsNotFoldersOrOutboxJSON(t *testing.T) {
 		LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, true),
 	} {
 		for _, want := range []string{
-			"`coop-tasks` MCP server", "tasks_list, tasks_get, tasks_update_state, tasks_append_log, tasks_set_subtasks, tasks_complete, tasks_block, and tasks_propose",
+			"`coop-tasks` MCP server", "tasks_list, tasks_get, tasks_update_state, tasks_append_log, tasks_set_subtasks, tasks_complete, tasks_block, tasks_wait, and tasks_propose",
+			"call tasks_wait on it with that task's id and why, before you commit anything for it",
 			"Change task state ONLY through those tools", "never by moving a task folder yourself",
 			"Read it with tasks_get", "keep that task's state.md current with tasks_update_state", "Send only the fields that changed; omitted fields are preserved", "record your reasoning with tasks_append_log",
 			"tasks_set_subtasks (send the whole list", "then call tasks_complete on your task as the final action",
