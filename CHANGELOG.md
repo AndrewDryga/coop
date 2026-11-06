@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks lint` names folders that hold no task.** A folder in a state folder or the backlog
+  without a task.md never shows in `coop tasks`, so files saved into it went unseen: two loop
+  workers saved their gate logs into folders named `*separate` and `*ignore-local-editor*`, and lint
+  still reported a clean queue. Lint now names each such folder by its path and exits with an
+  error.
+
 - **Set a todo task aside without making up a question.** `coop tasks park <id> ["<reason>"]` now
   takes a todo task too: it moves to the backlog with your reason in its log, and no decision is
   written. `coop backlog promote` returns it to todo. Before, only a blocked task could be parked,

@@ -3297,7 +3297,8 @@ func tasksFolderLint(root string) (int, error) {
 		return -1, err
 	}
 	var findings []string
-	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", id, msg)) }
+	// A box names the folders, so a name is escaped before it reaches the terminal.
+	add := func(id, msg string) { findings = append(findings, fmt.Sprintf("  %s: %s", ui.SafeInline(id), msg)) }
 	// Every queue needs all four state dirs, or the move-a-folder-between-states protocol renames a
 	// task into a missing dir and silently corrupts the queue (see ScaffoldStateDirs). Flag any queue
 	// that lacks one.
@@ -3308,17 +3309,31 @@ func tasksFolderLint(root string) (int, error) {
 			}
 		}
 	}
-	// ReadTaskTree skips a regular file where only task folders belong (a Finder .DS_Store must not
-	// hide the queue), so lint is where a non-dotfile one — most likely a task someone wrote as a
-	// file — becomes visible instead of staying silently unworked.
-	for _, st := range TaskStates {
+	// ReadTaskTree and ReadBacklog skip a regular file where only task folders belong (a Finder
+	// .DS_Store must not hide the queue) and a folder with no task.md, so lint is where either
+	// becomes visible instead of staying silently unread: a task someone wrote as a file, or evidence
+	// saved into a folder that is no task (a shell writes to an unmatched glob as a literal name).
+	// Dot-named entries are tool scratch, Coop's own staging folders included.
+	for _, st := range append(slices.Clone(TaskStates), StateBacklog) {
+		if info, err := os.Lstat(filepath.Join(root, st)); err != nil || !info.IsDir() {
+			continue // a missing state dir is reported above; ReadTaskTree and coop backlog refuse a linked one
+		}
 		entries, err := os.ReadDir(filepath.Join(root, st))
 		if err != nil {
-			continue // a missing state dir is reported above; an unreadable one already failed ReadTaskTree
+			return -1, err
 		}
 		for _, e := range entries {
-			if e.Type().IsRegular() && !strings.HasPrefix(e.Name(), ".") {
-				add(st+"/"+e.Name(), "is a file, not a task folder — every task is a folder holding a task.md; move it into one or remove it")
+			name := e.Name()
+			switch {
+			case strings.HasPrefix(name, "."):
+			case e.Type().IsRegular():
+				add(st+"/"+name, "is a file, not a task folder — every task is a folder holding a task.md; move it into one or remove it")
+			case e.IsDir():
+				if _, err := os.Lstat(filepath.Join(root, st, name, "task.md")); errors.Is(err, os.ErrNotExist) {
+					add(st+"/"+name, "is a folder with no task.md, so Coop does not see it as a task — move its files into the task folder they belong to, or remove it")
+				} else if err != nil {
+					return -1, err
+				}
 			}
 		}
 	}

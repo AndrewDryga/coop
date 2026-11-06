@@ -1263,6 +1263,47 @@ func TestTasksFolderLintFlagsMissingStateDir(t *testing.T) {
 	}
 }
 
+// A folder with no task.md is no task, so nothing lists it: evidence a shell saved into an
+// unmatched glob stays invisible. Lint names each one by its path, in the state folders and the
+// backlog alike, and leaves dot-named scratch such as Coop's own staging folders alone.
+func TestTasksFolderLintNamesFoldersWithNoTaskMD(t *testing.T) {
+	root := t.TempDir()
+	if err := ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(root, StateTodo, "ok", "task.md"), "---\ntitle: OK\n---\n# OK\n**Context:** why\n**Acceptance criteria:** the gate is green\n**Approach:** do it\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, ".controller-task-1", "log.md"), "staging\n")
+	strays := []string{
+		filepath.Join(StateInProgress, "*ignore-local-editor*"),
+		filepath.Join(StateBacklog, "*separate"),
+	}
+	for _, stray := range strays {
+		writeTaskFile(t, filepath.Join(root, stray, "artifacts", "gate-tooling.log"), "gate output\n")
+	}
+	var code int
+	out := captureStdout(t, func() { _ = captureStderr(t, func() { code, _ = tasksFolderLint(root) }) })
+	if code != 1 {
+		t.Fatalf("lint with stray folders = %d, want 1:\n%s", code, out)
+	}
+	for _, stray := range strays {
+		if want := filepath.ToSlash(stray) + ": is a folder with no task.md"; !strings.Contains(out, want) {
+			t.Errorf("lint lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, ".controller-task") || strings.Count(out, "\n") != len(strays) {
+		t.Errorf("lint should name exactly the two strays:\n%s", out)
+	}
+
+	for _, stray := range strays {
+		if err := os.RemoveAll(filepath.Join(root, stray)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, err := tasksFolderLint(root); code != 0 || err != nil {
+		t.Errorf("lint of the clean queue = (%d, %v), want 0", code, err)
+	}
+}
+
 func TestTasksFolderLintRejectsDuplicateIDs(t *testing.T) {
 	root := t.TempDir()
 	if err := ScaffoldStateDirs(root); err != nil {
