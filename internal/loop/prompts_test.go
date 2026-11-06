@@ -236,6 +236,11 @@ func TestLoopWorkPromptPreservesChangeOwnership(t *testing.T) {
 			for _, want := range []string{
 				"`git status --short`, `git diff`, and `git diff --cached`",
 				"Preserve unrelated or uncertain staged, unstaged, and untracked work",
+				// A worker stashed to compare against a clean tree: a no-op push followed by a
+				// pop applies someone else's old entry, and a held stash hides every writer's edits.
+				"`git stash` (push, pop, or apply) is a blanket operation too and is not allowed in this checkout",
+				"a pop after a push that saved nothing applies an older, unrelated entry",
+				"save the HEAD version of a task-owned file with `git show HEAD:<path>` and test against that copy",
 				"Discard only verified task-owned paths/hunks when authorized",
 				"before arming any restoration hook",
 				"restore that captured state, not HEAD",

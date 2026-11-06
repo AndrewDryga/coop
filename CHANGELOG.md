@@ -22,6 +22,11 @@
   so setting work aside meant blocking it on an invented question first. A task in progress is
   refused with the command that releases it.
 
+- **Loop workers no longer stash in your checkout.** A worker ran `git stash` and `git stash pop` to
+  test without its edits. While a stash is held, everyone's unsaved edits are gone from disk, and a
+  pop after a stash that saved nothing applies an older, unrelated entry. The instructions for loop
+  and fork workers now forbid stash and say how to check a baseline instead: save the committed
+  version of a file with `git show HEAD:<path>` and test against that copy.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
