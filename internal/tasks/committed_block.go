@@ -148,17 +148,11 @@ func answeredBlockReopen(repo, head string, block committedBlockRecord) (AuditRe
 	if !ok || subject != block.Subject {
 		return AuditReopenRecord{}, false
 	}
-	landed, err := rawAuditHistoryUntil(repo, head, auditReopenHistoryLimit+1, func(commit rawAuditCommit) bool {
-		return commit.sha == bound
-	})
-	if err != nil {
-		return AuditReopenRecord{}, false
-	}
 	reviewed := AuditReopenRecord{
 		Version: auditReopenVersion, Generation: newAuditReopenGeneration(), TaskID: id,
 		BaselineHead: bound, Subject: subject, History: []AuditReopenCommit{}, Answered: true,
 	}
-	answered, err := movedAuditReopen(repo, id, reviewed, landed[1:])
+	answered, err := movedAuditReopen(repo, id, reviewed, head)
 	if err != nil || !AuditReopenCurrentValid(repo, head, id, answered) {
 		return AuditReopenRecord{}, false
 	}

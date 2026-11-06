@@ -529,8 +529,8 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 }
 
 // ExtraBindingsError refuses to close a task whose history already holds more than one commit with
-// its Coop-Task trailer. A final review can reopen a task only while it, and every task committed
-// after it, has exactly one, so a second binding accepted now loses a later review's verdict.
+// its Coop-Task trailer. A final review can reopen a task only while it has exactly one, so a second
+// binding accepted now loses a later review's verdict.
 type ExtraBindingsError struct {
 	TaskID  string
 	Found   int
@@ -1870,13 +1870,51 @@ func rawReachableAuditCommits(repo, head string) (commits []rawReachableAuditCom
 		auditReachableHistoryLimit,
 		auditReachableEdgeLimit,
 		auditReachableByteLimit,
+		nil,
 	)
 }
 
+// rawAuditCommitsBetween is every commit in base's history that is not in below's, merges included,
+// read from raw objects as rawReachableAuditCommits reads them. It returns errAuditBoundaryMissing
+// when below is not in base's history.
+func rawAuditCommitsBetween(repo, below, base string) ([]rawReachableAuditCommit, error) {
+	older, err := rawReachableAuditCommits(repo, below)
+	if err != nil {
+		return nil, err
+	}
+	below = older[0].sha
+	known := make(map[string]bool, len(older))
+	for _, commit := range older {
+		known[commit.sha] = true
+	}
+	switch base = forkspace.GitOut(repo, "rev-parse", "--verify", base+"^{commit}"); {
+	case base == below:
+		return []rawReachableAuditCommit{}, nil
+	case known[base]:
+		return nil, errAuditBoundaryMissing
+	}
+	reached := false
+	commits, err := rawReachableAuditCommitsLimit(repo, base, auditReachableHistoryLimit, auditReachableEdgeLimit, auditReachableByteLimit,
+		func(parent string) bool {
+			reached = reached || parent == below
+			return known[parent]
+		})
+	if err != nil {
+		return nil, err
+	}
+	if !reached {
+		return nil, errAuditBoundaryMissing
+	}
+	return commits, nil
+}
+
+// rawReachableAuditCommitsLimit walks head's whole history; prune, when set, keeps the walk out of
+// each parent it reports and that parent's own history.
 func rawReachableAuditCommitsLimit(
 	repo, head string,
 	commitLimit, edgeLimit int,
 	byteLimit int64,
+	prune func(parent string) bool,
 ) (commits []rawReachableAuditCommit, err error) {
 	current := forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 	if !validAuditReopenHead(current) {
@@ -1923,6 +1961,9 @@ func rawReachableAuditCommitsLimit(
 			edges++
 			if edges > edgeLimit {
 				return nil, fmt.Errorf("raw reachable audit history exceeds %d parent edges", edgeLimit)
+			}
+			if prune != nil && prune(parents[i]) {
+				continue
 			}
 			if !seen[parents[i]] && !queued[parents[i]] {
 				pending = append(pending, parents[i])
@@ -2070,23 +2111,33 @@ func auditReviewedHead(record AuditReopenRecord) string {
 }
 
 func auditReviewedSubject(repo, id string, record AuditReopenRecord) (rawAuditCommit, error) {
-	rawHistory, err := rawAuditHistoryCount(repo, auditReviewedHead(record), len(record.History)+1)
+	reviewed, err := auditReviewedHistory(repo, record)
 	if err != nil {
 		return rawAuditCommit{}, err
 	}
+	return reviewed[0], nil
+}
+
+// auditReviewedHistory is the raw Subject and History a record pins, oldest first, each matching
+// what the review recorded.
+func auditReviewedHistory(repo string, record AuditReopenRecord) ([]rawAuditCommit, error) {
+	rawHistory, err := rawAuditHistoryCount(repo, auditReviewedHead(record), len(record.History)+1)
+	if err != nil {
+		return nil, err
+	}
 	semantics, err := semanticHistoryCommitsExact(repo, rawHistory)
 	if err != nil || len(semantics) != len(record.History)+1 {
-		return rawAuditCommit{}, errors.New("read raw recorded audit history")
+		return nil, errors.New("read raw recorded audit history")
 	}
 	if semantics[0].semantic != record.Subject {
-		return rawAuditCommit{}, errors.New("raw audit subject does not match its recorded semantic identity")
+		return nil, errors.New("raw audit subject does not match its recorded semantic identity")
 	}
 	for i := range record.History {
 		if semantics[i+1].semantic != record.History[i] {
-			return rawAuditCommit{}, fmt.Errorf("raw audit history commit %d does not match its recorded semantic identity", i+1)
+			return nil, fmt.Errorf("raw audit history commit %d does not match its recorded semantic identity", i+1)
 		}
 	}
-	return rawHistory[0], nil
+	return rawHistory, nil
 }
 
 func auditReviewedSubjectParent(repo, id string, record AuditReopenRecord) (string, error) {
@@ -2171,6 +2222,41 @@ func CaptureAuditReopen(repo, id string) (AuditReopenRecord, error) {
 	}, nil
 }
 
+// captureReviewReopen is CaptureAuditReopen for a review's verdict, checked as every later use of
+// the record checks it. Other work lands in shapes the exact replay refuses, such as one task bound
+// by several commits, one commit closing two tasks, or a merge, and a task an unblock moved past
+// them keeps them after its commit for good, so no later review could reopen it (2026-11-06). Then
+// the record pins the task's commit alone and sets every commit after it aside as other work, as
+// that unblock does (movedAuditReopen): none may name the task, Git must bind the task to its commit
+// alone, and the rework starts at HEAD with a zero-commit re-close or one repair, never a rewrite.
+func captureReviewReopen(repo, id string) (AuditReopenRecord, error) {
+	record, err := CaptureAuditReopen(repo, id)
+	if err == nil {
+		if _, err = auditReopenCurrentHistory(repo, record.BaselineHead, id, record); err == nil {
+			return record, nil
+		}
+	}
+	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
+	bindings, ok := rawTaskBindings(repo, head)
+	if !ok || len(bindings[id]) != 1 {
+		return AuditReopenRecord{}, err
+	}
+	subject, ok := bindingContent(repo, bindings[id][0])
+	if !ok || subject.TaskID != id {
+		return AuditReopenRecord{}, err
+	}
+	reviewed := AuditReopenRecord{
+		Version: auditReopenVersion, Generation: newAuditReopenGeneration(), TaskID: id,
+		BaselineHead: bindings[id][0], Subject: subject, History: []AuditReopenCommit{},
+	}
+	moved, err := movedAuditReopen(repo, id, reviewed, head)
+	if err != nil {
+		return AuditReopenRecord{}, err
+	}
+	moved.Repaired = false // the review saw every commit it set aside, so none is a repair made after it
+	return moved, nil
+}
+
 func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) ([]semanticHistoryCommit, error) {
 	if err := validateAuditReopenRecord(record, id); err != nil {
 		return nil, fmt.Errorf("validate persisted audit authority: %w", err)
@@ -2182,22 +2268,22 @@ func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) 
 	if !validAuditReopenHead(resolvedHead) {
 		return nil, fmt.Errorf("resolve current audit HEAD %s", head)
 	}
-	reviewedSubject, err := auditReviewedSubject(repo, id, record)
+	reviewed, err := auditReviewedHistory(repo, record)
 	if err != nil {
 		return nil, fmt.Errorf("locate recorded raw audit subject: %w", err)
 	}
-	rawCurrent, err := rawAuditHistoryUntil(
+	var rawCurrent []rawAuditCommit
+	if record.ReviewedHead != "" {
+		if rawCurrent, err = auditReopenMovedChain(repo, resolvedHead, id, record, reviewed); err != nil {
+			return nil, err
+		}
+	} else if rawCurrent, err = rawAuditHistoryUntil(
 		repo,
 		resolvedHead,
 		auditReopenHistoryLimit+1,
-		func(commit rawAuditCommit) bool { return commit.sha == reviewedSubject.sha },
-	)
-	if err != nil {
+		func(commit rawAuditCommit) bool { return commit.sha == reviewed[0].sha },
+	); err != nil {
 		return nil, fmt.Errorf("read current raw audit history: %w", err)
-	}
-	rawCurrent, err = auditReopenWithoutAccepted(rawCurrent, id, record)
-	if err != nil {
-		return nil, err
 	}
 	complete, err := semanticHistoryCommitsExact(repo, rawCurrent)
 	if err != nil {
@@ -2243,6 +2329,9 @@ func auditReopenCurrentHistory(repo, head, id string, record AuditReopenRecord) 
 // comment lines and everything after a scissors line, which the raw parse takes as the message's
 // last paragraph, so a commit can bind a task for Git alone.
 func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw map[string][]string) error {
+	if err := auditShallowRefusal(repo, id); err != nil {
+		return err
+	}
 	commits, err := TaskTrailerCommits(repo, head, false)
 	if err != nil {
 		return fmt.Errorf("read the commits Git binds to tasks in HEAD's history: %w", err)
@@ -2273,42 +2362,75 @@ func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw
 	return nil
 }
 
-// auditReopenWithoutAccepted leaves out of chain, the raw history from the reviewed subject to HEAD,
-// the commits a person's unblock accepted after the reviewed history (see reanchoredAuditReopen).
-// They belong to other work and may bind other tasks more than once, so they are never replayed;
-// each must still name neither this task nor a task of its History, and the chain must still pass
-// through BaselineHead, where rework starts. An ordinary record accepted none.
-func auditReopenWithoutAccepted(chain []rawAuditCommit, id string, record AuditReopenRecord) ([]rawAuditCommit, error) {
-	if record.ReviewedHead == "" {
-		return chain, nil
+// auditShallowRefusal refuses a shallow history. Git's log stops at a shallow boundary, which a box
+// can plant in front of a merged commit the raw walks still read, so Git's reading of the trailers
+// would miss that commit. A real shallow clone lacks the objects the raw walks need anyway.
+func auditShallowRefusal(repo, id string) error {
+	if forkspace.GitOut(repo, "rev-parse", "--is-shallow-repository") == "false" {
+		return nil
 	}
-	reviewedEnd := len(record.History)
-	if len(chain) <= reviewedEnd || chain[reviewedEnd].sha != record.ReviewedHead {
-		return nil, fmt.Errorf("recorded history prefix does not terminate at %s", record.ReviewedHead)
+	return fmt.Errorf("Git reads this repository as shallow, so it can miss a commit that binds task %s; "+
+		"fetch the full history (git fetch --unshallow), or remove a .git/shallow file nobody made", bindingLabel(id))
+}
+
+// auditReopenMovedChain is what a moved record replays from its reviewed subject to head: reviewed,
+// the commits the review recorded, then the rework after BaselineHead, which head must reach in a
+// straight line. The commits a person's unblock accepted in between (movedAuditReopen) belong to
+// other work, merges included, and may bind other tasks more than once, so they are never replayed;
+// each must still name neither this task nor a task of its History.
+func auditReopenMovedChain(repo, head, id string, record AuditReopenRecord, reviewed []rawAuditCommit) ([]rawAuditCommit, error) {
+	rework, err := rawAuditHistoryAfter(repo, head, record.BaselineHead, reviewed[0].sha)
+	switch {
+	case errors.Is(err, errAuditBoundaryMissing):
+		return nil, fmt.Errorf("HEAD no longer contains commit %s, where rework on task %s starts", shortCommit(record.BaselineHead), id)
+	case err != nil:
+		return nil, fmt.Errorf("HEAD does not reach commit %s, where rework on task %s starts, through commits Coop can check: %w",
+			shortCommit(record.BaselineHead), id, err)
 	}
-	for i := reviewedEnd + 1; i < len(chain); i++ {
-		if err := auditReopenUnrelated(chain[i], id, record); err != nil {
+	accepted, err := rawAuditCommitsBetween(repo, record.ReviewedHead, record.BaselineHead)
+	switch {
+	case errors.Is(err, errAuditBoundaryMissing):
+		return nil, fmt.Errorf("commit %s, where rework on task %s starts, is not built on the commits the review recorded",
+			shortCommit(record.BaselineHead), id)
+	case err != nil:
+		return nil, fmt.Errorf("read the commits accepted after the review of task %s: %w", id, err)
+	}
+	for _, commit := range accepted {
+		if err := auditReopenUnrelated(commit.sha, commit.taskValues, id, record); err != nil {
 			return nil, err
 		}
-		if chain[i].sha == record.BaselineHead {
-			return slices.Concat(chain[:reviewedEnd+1], chain[i+1:]), nil
-		}
 	}
-	return nil, fmt.Errorf("HEAD no longer contains commit %s, where rework on task %s starts", shortCommit(record.BaselineHead), id)
+	return slices.Concat(reviewed, rework), nil
+}
+
+// rawAuditHistoryAfter is the straight line of commits after base up to head, oldest first: empty when
+// head is base, which is never read as one of them and so may be a merge. Reaching floor, a commit
+// below base, first means base is not in that line (errAuditBoundaryMissing).
+func rawAuditHistoryAfter(repo, head, base, floor string) ([]rawAuditCommit, error) {
+	if head == base {
+		return []rawAuditCommit{}, nil
+	}
+	history, err := rawAuditHistoryUntil(repo, head, auditReopenHistoryLimit+1, func(commit rawAuditCommit) bool {
+		return commit.parent == base || commit.sha == floor
+	})
+	if err == nil && history[0].sha == floor {
+		return nil, errAuditBoundaryMissing
+	}
+	return history, err
 }
 
 // auditReopenUnrelated refuses a commit after a reopened task's reviewed history that names the task,
 // or a task its History records, in any Coop-Task trailer: such a commit is not other work.
-func auditReopenUnrelated(commit rawAuditCommit, id string, record AuditReopenRecord) error {
-	for _, value := range commit.taskValues {
+func auditReopenUnrelated(sha string, values []string, id string, record AuditReopenRecord) error {
+	for _, value := range values {
 		if value == id {
 			return fmt.Errorf("commit %s, made after the review, also carries %s: %s",
-				shortCommit(commit.sha), CoopTaskTrailer, bindingLabel(id))
+				shortCommit(sha), CoopTaskTrailer, bindingLabel(id))
 		}
 		for _, later := range record.History {
 			if later.TaskID != "" && later.TaskID == value {
 				return fmt.Errorf("commit %s, made after the review, also carries %s: %s, a task the review recorded after this one",
-					shortCommit(commit.sha), CoopTaskTrailer, bindingLabel(value))
+					shortCommit(sha), CoopTaskTrailer, bindingLabel(value))
 			}
 		}
 	}
@@ -2460,15 +2582,18 @@ func (e *auditCompletionStateError) Error() string          { return e.message }
 func (*auditCompletionStateError) auditCompletionRecovery() {}
 
 // rebaseBlockedAuditReopen recovers accepted rework from the exact baseline recorded by the host,
-// for a person's explicit unblock only. A single appended repair is preferred. When HEAD still
-// reaches the end of the reviewed history in a straight line, that history is unchanged and the
-// commits after it decide alone (movedAuditReopen). The complete-rewrite path remains for older
-// attempts, never for a moved record.
+// for a person's explicit unblock only. A single appended repair is preferred. When HEAD's history
+// still holds the end of the reviewed history, merges after it included, that history is unchanged
+// and the commits after it decide alone (movedAuditReopen). The complete-rewrite path remains for
+// older attempts, never for a moved record.
 func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (AuditReopenRecord, error) {
 	if validateAuditReopenRecord(record, id) != nil || !auditReopenRecordActive(record) {
 		return AuditReopenRecord{}, fmt.Errorf("invalid audit reopen authority for task %s", id)
 	}
 	reviewed := unmovedAuditReopen(record)
+	if err := auditShallowRefusal(repo, id); err != nil {
+		return AuditReopenRecord{}, err
+	}
 	if !AuditReopenCurrentValid(repo, reviewed.BaselineHead, id, reviewed) {
 		return AuditReopenRecord{}, fmt.Errorf(
 			"the review's record of task %s no longer matches its recorded baseline %s: the record was changed, or that commit is gone",
@@ -2480,27 +2605,19 @@ func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (
 	if _, ok := auditReopenAppendedRepair(repo, record.BaselineHead, head, id, record); ok {
 		return rebasedAuditReopenRecord(repo, record.BaselineHead, head, id, record)
 	}
-	reviewedParent, err := auditReviewedSubjectParent(repo, id, reviewed)
-	if err != nil {
-		return AuditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
-	}
-	// Reaching a child of the reviewed subject's parent first means the reviewed history is not in
-	// HEAD's. Stopping there also keeps a merge below the subject out of this walk.
-	landed, err := rawAuditHistoryUntil(repo, head, auditReopenHistoryLimit+1, func(commit rawAuditCommit) bool {
-		return commit.sha == reviewed.BaselineHead || commit.parent == reviewedParent
-	})
 	where := fmt.Sprintf("commit %s, where the review left task %s", shortCommit(reviewed.BaselineHead), id)
+	moved, err := movedAuditReopen(repo, id, reviewed, head)
 	switch {
-	case errors.Is(err, errAuditBoundaryMissing):
-		return AuditReopenRecord{}, fmt.Errorf("HEAD no longer contains %s, nor the commit the task's commit was built on", where)
-	case err != nil:
-		return AuditReopenRecord{}, fmt.Errorf("HEAD does not reach %s through commits Coop can check: %w", where, err)
-	case landed[0].sha == reviewed.BaselineHead:
-		return movedAuditReopen(repo, id, reviewed, landed[1:])
+	case !errors.Is(err, errAuditBoundaryMissing):
+		return moved, err
 	case record.ReviewedHead != "":
 		return AuditReopenRecord{}, fmt.Errorf(
 			"HEAD no longer contains %s: the task's commit or the commits the review recorded after it were rewritten, "+
 				"and a record moved past other work accepts no rewrite", where)
+	}
+	reviewedParent, err := auditReviewedSubjectParent(repo, id, reviewed)
+	if err != nil {
+		return AuditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
 	}
 	replacement, err := blockedAuditRewrite(repo, head, id, record, reviewedParent)
 	if err != nil {
@@ -2517,31 +2634,34 @@ func unmovedAuditReopen(record AuditReopenRecord) AuditReopenRecord {
 	return record
 }
 
-// movedAuditReopen moves where rework on a reopened task starts to the end of landed: the commits
-// after its reviewed history, which HEAD reaches in a straight line. reviewed is the record as the
-// review left it (unmovedAuditReopen). It refuses when one of those commits names this task or a
-// task of its History, or when Git binds either to any other commit (auditReopenGitBindings).
-// Subject and History stay as reviewed. The commits it accepts belong to other work, so the record
-// authorizes no rewrite from then on (auditReopenCompletionValid), and it moves again from the same
-// reviewed history after anything rewrote them, such as the host signing them or an amend.
-func movedAuditReopen(repo, id string, reviewed AuditReopenRecord, landed []rawAuditCommit) (AuditReopenRecord, error) {
-	if len(landed) == 0 {
-		return reviewed, nil
+// movedAuditReopen moves where rework on a reopened task starts to head, past the commits after its
+// reviewed history, merges included. reviewed is the record as the review left it
+// (unmovedAuditReopen). It returns errAuditBoundaryMissing when head's history no longer holds the
+// end of the reviewed history. Like every later check (auditReopenMovedChain), it refuses when one
+// of those commits names this task or a task of its History, or when Git binds either to any other
+// commit (auditReopenGitBindings). Subject and History stay as reviewed. The commits it accepts
+// belong to other work, so the record authorizes no rewrite from then on
+// (auditReopenCompletionValid), and it moves again from the same reviewed history after anything
+// rewrote them, such as the host signing them or an amend.
+func movedAuditReopen(repo, id string, reviewed AuditReopenRecord, head string) (AuditReopenRecord, error) {
+	landed, err := rawAuditCommitsBetween(repo, reviewed.BaselineHead, head)
+	switch {
+	case errors.Is(err, errAuditBoundaryMissing):
+		return AuditReopenRecord{}, err
+	case err != nil:
+		return AuditReopenRecord{}, fmt.Errorf("HEAD does not reach commit %s, where the review left task %s, through commits Coop can check: %w",
+			shortCommit(reviewed.BaselineHead), id, err)
 	}
-	unbound := false
-	for _, commit := range landed {
-		if err := auditReopenUnrelated(commit, id, reviewed); err != nil {
-			return AuditReopenRecord{}, err
-		}
-		unbound = unbound || len(commit.taskValues) == 0
-	}
-	head := landed[len(landed)-1].sha
 	moved := reviewed
-	moved.ReviewedHead, moved.BaselineHead = reviewed.BaselineHead, head
-	// An unbound commit may be a repair this task's worker made before it blocked, so a re-close
-	// without a commit no longer counts as no work (carryAuditReopen decides the same way).
-	moved.Repaired = reviewed.Repaired || unbound
-	if _, err := auditReopenCurrentHistory(repo, head, id, moved); err != nil {
+	if len(landed) > 0 {
+		moved.ReviewedHead, moved.BaselineHead = reviewed.BaselineHead, forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
+		// An unbound commit may be a repair this task's worker made before it blocked, so a re-close
+		// without a commit no longer counts as no work (carryAuditReopen decides the same way).
+		moved.Repaired = reviewed.Repaired || slices.ContainsFunc(landed, func(commit rawReachableAuditCommit) bool {
+			return len(commit.taskValues) == 0
+		})
+	}
+	if _, err := auditReopenCurrentHistory(repo, moved.BaselineHead, id, moved); err != nil {
 		return AuditReopenRecord{}, err
 	}
 	return moved, nil
@@ -2584,7 +2704,7 @@ func carriedMovedAuditReopen(repo, oldHead, id string, record AuditReopenRecord)
 	if anchor == 0 {
 		return AuditReopenRecord{}, false
 	}
-	moved, err := movedAuditReopen(repo, id, reviewed, after[1:anchor+1])
+	moved, err := movedAuditReopen(repo, id, reviewed, after[anchor].sha)
 	if err != nil {
 		return AuditReopenRecord{}, false
 	}
@@ -2993,7 +3113,7 @@ func unbindableTasks(repo, base, head string, finished []string, touched map[str
 	if base == "" || head == "" || base == head {
 		return slices.Clone(finished), nil
 	}
-	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(finished), touched)
+	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(finished), nil, touched)
 	if !ok {
 		return slices.Clone(finished), nil
 	}
@@ -3024,7 +3144,7 @@ func UnbindableTaskProblems(repo, base, head string, ids []string, touched map[s
 		}
 		return problems
 	}
-	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(ids), touched)
+	scan, ok := scanTaskBindings(repo, base, head, "", allowedTasks(ids), nil, touched)
 	if !ok {
 		return scan.refused
 	}
@@ -3037,18 +3157,22 @@ func UnbindableTaskProblems(repo, base, head string, ids []string, touched map[s
 	return problems
 }
 
-// AttemptBindingsRefused applies unbindableTasks' refusal to one ordinary work attempt, base..head,
-// whether or not it completed its task. Checking only completing attempts let a box forge or
-// rewrite a binding in an attempt that then failed, below every later attempt's base. The assigned
-// task's own bindings are its count check's business, not a refusal here. runBase, the run's
-// recorded base, also counts as a base for rewrites, so a binding rewritten below base outside any
-// checked attempt still refuses a trailer that replaces it. refused is nil when the attempt passes,
-// else one sentence per commit that broke it, naming the commit, the task ids and why they count.
-func AttemptBindingsRefused(repo, runBase, base, head, assigned string, touched map[string]string) (tolerated, refused []string) {
+// AttemptBindingsRefused applies unbindableTasks' refusal to one work attempt, base..head, whether
+// or not it completed its task. Checking only completing attempts let a box forge or rewrite a
+// binding in an attempt that then failed, below every later attempt's base. The assigned task's own
+// bindings are its count check's business, not a refusal here. runBase, the run's recorded base,
+// also counts as a base for rewrites, so a binding rewritten below base outside any checked attempt
+// still refuses a trailer that replaces it. reopen is the host's audit authority when the attempt is
+// review rework, which gets the same check: only a rewrite of its task's commit, which an ordinary
+// record allows, may replace the bindings of the commits after it, by replaying them, and the
+// semantic replay check judges that rewrite (auditReopenCompletionValid). refused is nil when the
+// attempt passes, else one sentence per commit that broke it, naming the commit, the task ids and
+// why they count.
+func AttemptBindingsRefused(repo, runBase, base, head, assigned string, reopen *AuditReopenRecord, touched map[string]string) (tolerated, refused []string) {
 	if base != "" && base == head {
 		return nil, nil
 	}
-	scan, _ := scanTaskBindings(repo, base, head, runBase, map[string]bool{assigned: true}, touched)
+	scan, _ := scanTaskBindings(repo, base, head, runBase, map[string]bool{assigned: true}, auditReopenReplayed(repo, base, head, reopen), touched)
 	return scan.tolerated, scan.refused
 }
 
@@ -3066,7 +3190,7 @@ func ReviewCommits(repo, runBase, base, head string, concurrent []string) ([]str
 	if err != nil {
 		return nil, fmt.Errorf("could not read the review's commits: %w", err)
 	}
-	scan, ok := scanTaskBindings(repo, base, head, runBase, allowedTasks(concurrent), nil)
+	scan, ok := scanTaskBindings(repo, base, head, runBase, allowedTasks(concurrent), nil, nil)
 	if !ok {
 		return nil, errors.New(strings.Join(scan.refused, "; "))
 	}
@@ -3110,6 +3234,27 @@ func ReviewCommits(repo, runBase, base, head string, concurrent []string) ([]str
 		return nil, errors.New(strings.Join(problems, "; "))
 	}
 	return reviewer, nil
+}
+
+// auditReopenReplayed is the tasks bound by the commits after reopen's task commit, which head
+// replays when it is a rewrite of that commit the record accepts (auditReopenCompletionValid). It is
+// empty when there is no record, the record allows no rewrite, or head is no such rewrite, so a
+// commit that replaces a binding without being the exact replay is named.
+func auditReopenReplayed(repo, base, head string, reopen *AuditReopenRecord) map[string]bool {
+	if reopen == nil || reopen.ReviewedHead != "" || !auditReopenCompletionValid(repo, base, head, reopen.TaskID, *reopen) {
+		return nil
+	}
+	history, err := auditReopenCurrentHistory(repo, base, reopen.TaskID, *reopen)
+	if err != nil {
+		return nil
+	}
+	replayed := map[string]bool{}
+	for _, commit := range history {
+		if commit.semantic.TaskID != "" {
+			replayed[commit.semantic.TaskID] = true
+		}
+	}
+	return replayed
 }
 
 // taskBindingScan is what one walk over the Coop-Task trailers head reaches learns about allowed
@@ -3182,9 +3327,10 @@ func bindingLabels(values []string) string {
 // scanTaskBindings walks the history head reaches. ok is false when that history cannot be read or
 // a commit in base..head carries a binding no attempt may add: an invalid or several trailers, or a
 // trailer outside allowed for a touched task or for one whose single bound commit base (or
-// runBase, when set) reached and head no longer does. refused then says why, one sentence per
-// offending commit, so the scan walks on to name each of them.
-func scanTaskBindings(repo, base, head, runBase string, allowed map[string]bool, touched map[string]string) (scan taskBindingScan, ok bool) {
+// runBase, when set) reached and head no longer does, unless replayed names that task: head is then
+// an audit rewrite its record accepts, which replays the commit that bound it. refused then says
+// why, one sentence per offending commit, so the scan walks on to name each of them.
+func scanTaskBindings(repo, base, head, runBase string, allowed, replayed map[string]bool, touched map[string]string) (scan taskBindingScan, ok bool) {
 	unreadable := func(err error) (taskBindingScan, bool) {
 		return taskBindingScan{refused: []string{fmt.Sprintf("Coop could not read this attempt's commits: %v", err)}}, false
 	}
@@ -3246,6 +3392,8 @@ func scanTaskBindings(repo, base, head, runBase string, allowed map[string]bool,
 			if !allowed[id] {
 				if inRange {
 					switch {
+					case rewritten[id] != "" && replayed[id]:
+						// an audit rewrite's replay of the commit that bound it
 					case rewritten[id] != "":
 						refuse("commit %s binds task %s and replaces its bound commit %s, which is no longer in history: another task's history was rewritten",
 							shortCommit(commit.sha), bindingLabel(id), shortCommit(rewritten[id]))
@@ -3337,7 +3485,11 @@ func RestoreQueuedCompletion(task QueuedTask, audit bool, problems ...string) er
 	}
 	normalize := normalizeRejectedTaskState
 	if audit {
-		note = fmt.Sprintf("completion rejected: %s; then re-run `coop loop`", auditBindingRecovery(id))
+		cause := ""
+		if len(problems) > 0 {
+			cause = " because " + strings.Join(problems, "; ")
+		}
+		note = fmt.Sprintf("completion rejected%s: %s; then re-run `coop loop`", cause, auditBindingRecovery(id))
 		normalize = normalizeAuditRejectedTaskState
 	}
 	var errs []error
@@ -3550,8 +3702,14 @@ func auditBindingRecovery(id string) string {
 	)
 }
 
-func AuditCompletionError(id string, restoreErr error) error {
-	msg := fmt.Sprintf("completion rejected for audit-reopened task %s: the host audit authority accepts a zero-commit verification-only re-close or one real unbound repair commit preserving reviewed history; task restored to in_progress — %s; then re-run `coop loop`", id, auditBindingRecovery(id))
+// AuditCompletionError is the refusal of an audit-reopened task's completion; problems, when the
+// caller knows them, name the commits that broke it.
+func AuditCompletionError(id string, problems []string, restoreErr error) error {
+	cause := ""
+	if len(problems) > 0 {
+		cause = " because " + strings.Join(problems, "; ")
+	}
+	msg := fmt.Sprintf("completion rejected for audit-reopened task %s%s: the host audit authority accepts a zero-commit verification-only re-close or one real unbound repair commit preserving reviewed history; task restored to in_progress — %s; then re-run `coop loop`", id, cause, auditBindingRecovery(id))
 	if restoreErr != nil {
 		return fmt.Errorf("%s; recovery bookkeeping also failed: %w", msg, restoreErr)
 	}

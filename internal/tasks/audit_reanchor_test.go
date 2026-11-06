@@ -88,6 +88,24 @@ func (f reanchorFixture) commitVerbatim(t *testing.T, message string) string {
 
 func (f reanchorFixture) head() string { return forkspace.GitOut(f.repo, "rev-parse", "HEAD") }
 
+// merge merges branch, one commit per message, each exactly as given, made on top of the task's own
+// commit, into HEAD with a merge commit, as a person merging other work does, and returns the merge.
+func (f reanchorFixture) merge(t *testing.T, branch string, messages ...string) string {
+	t.Helper()
+	current := forkspace.GitOut(f.repo, "branch", "--show-current")
+	f.git("checkout", "-q", "-b", branch, f.subject)
+	for _, message := range messages {
+		if err := os.WriteFile(filepath.Join(f.repo, branch+".txt"), []byte(message), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f.git("add", branch+".txt")
+		f.git("commit", "-q", "--cleanup=verbatim", "-m", message)
+	}
+	f.git("checkout", "-q", current)
+	f.git("merge", "-q", "--no-ff", "-m", "Merge "+branch, branch)
+	return f.head()
+}
+
 // resign rewrites HEAD the way host signing does: same change, author and message, a new committer.
 func (f reanchorFixture) resign(t *testing.T) string {
 	t.Helper()
@@ -593,4 +611,256 @@ func TestPendingUnblockFinishesPastUnrelatedCommits(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Other work merged after the review is accepted as work in a straight line is: the unblock moves
+// the record to the merge, the rework starts there, and a merge landing after that stops the next
+// lease until a person unblocks the task past it too.
+func TestUnblockMovesAuditAuthorityPastAMerge(t *testing.T) {
+	f := newReanchorFixture(t, true)
+	merged := f.merge(t, "side", "Side work\n\nCoop-Task: side-task")
+	got := f.unblock(t, "go on")
+	if got.ReviewedHead != f.record.BaselineHead || got.BaselineHead != merged || !slices.Equal(got.History, f.record.History) {
+		t.Fatalf("record moved past a merge = %#v, want it at %s", got, merged)
+	}
+	if err := ValidateLeasedAuditReopen(f.repo, merged, f.id, &got); err != nil {
+		t.Fatalf("lease start refused the record moved past a merge: %v", err)
+	}
+	if missing, _ := CompletionUnbindableTasks(f.repo, merged, merged, []string{f.id}, &got, nil); len(missing) != 0 {
+		t.Fatalf("a re-close without a commit was refused: %v", missing)
+	}
+	repair := f.commit(t, "a.txt", "A repaired\n", "Repair the audit finding")
+	if missing, _ := CompletionUnbindableTasks(f.repo, merged, repair, []string{f.id}, &got, nil); len(missing) != 0 {
+		t.Fatalf("one repair on top of the merge was refused: %v", missing)
+	}
+
+	f.git("reset", "--hard", "-q", merged)
+	later := f.merge(t, "later", "Later side work")
+	err := ValidateLeasedAuditReopen(f.repo, later, f.id, &got)
+	if want := "where rework on task " + f.id + " starts, through commits Coop can check"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("lease over a later merge = %v, want %q", err, want)
+	}
+	todo, ok := mustCurrentTask(t, f.root, f.id)
+	if !ok {
+		t.Fatal("unblocked task disappeared")
+	}
+	if err := MoveTaskDir(f.root, todo, StateBlocked); err != nil {
+		t.Fatal(err)
+	}
+	if again := f.unblock(t, "go on again"); again.ReviewedHead != f.record.BaselineHead || again.BaselineHead != later {
+		t.Fatalf("record moved past the later merge = %#v, want it at %s", again, later)
+	}
+}
+
+// A merged commit is other work only while it leaves the task alone, in the raw parse and in Git's.
+// The side branch starts at the task's own commit, below the end of the reviewed history.
+func TestUnblockPastAMergeRefusesWhatNamesTheTask(t *testing.T) {
+	gitOnly := "Side work\n\nCoop-Task: reopened-task\n\n# note"
+	for _, tc := range []struct {
+		name, message, want string
+		shallow             bool // a shallow boundary on the side branch hides the commit from Git's log
+	}{
+		{name: "a merged commit naming the task", message: "Side work\n\nCoop-Task: other-task\nCoop-Task: reopened-task",
+			want: ", made after the review, also carries Coop-Task: reopened-task"},
+		{name: "a merged commit binding the task for Git alone", message: gitOnly,
+			want: "the review recorded one commit for task reopened-task, but Git reads "},
+		{name: "a merged commit binding the task for Git alone behind a shallow boundary", message: gitOnly, shallow: true,
+			want: "Git reads this repository as shallow, so it can miss a commit that binds task reopened-task"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReanchorFixture(t, true)
+			if tc.shallow {
+				f.merge(t, "side", tc.message, "More side work")
+				boundary := forkspace.GitOut(f.repo, "rev-parse", "side")
+				if err := os.WriteFile(filepath.Join(f.repo, ".git", "shallow"), []byte(boundary+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if got := CommitsForTask(f.repo, "HEAD", f.id); len(got) != 1 {
+					t.Fatalf("fixture: Git's log reads %v for the task, want only its own commit", got)
+				}
+			} else {
+				f.merge(t, "side", tc.message)
+			}
+			code, err := tasksFolderUnblock(f.repo, f.root, []string{f.id, "go on"})
+			if code != -1 {
+				t.Errorf("unblock code = %d, want -1", code)
+			}
+			f.assertRefused(t, "go on", err, "failed during audit authority validation", tc.want)
+		})
+	}
+}
+
+// A moved record is spent when its task completes, but the task's history keeps the commits it was
+// moved past, which the exact replay refuses. A later review that fails the task again sets them
+// aside as the unblock did, instead of being unable to reopen it, and the rework is held to a
+// re-close or one repair.
+func TestReviewReopensATaskWhoseRecordMoved(t *testing.T) {
+	f := newReanchorFixture(t, true)
+	f.unblock(t, "go on")
+	todo, ok := mustCurrentTask(t, f.root, f.id)
+	if !ok {
+		t.Fatal("unblocked task disappeared")
+	}
+	if err := MoveTaskDir(f.root, todo, StateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	inProgress, ok := mustCurrentTask(t, f.root, f.id)
+	if !ok {
+		t.Fatal("claimed task disappeared")
+	}
+	f.commit(t, "a.txt", "A repaired\n", "Repair the audit finding")
+	writeTaskFile(t, filepath.Join(inProgress.Dir, "task.md"), "# Task\n- [x] required checks passed\n")
+	if err := CompleteTrustedTask(f.repo, f.root, inProgress); err != nil {
+		t.Fatalf("complete the reworked task: %v", err)
+	}
+	if _, err := CaptureAuditReopen(f.repo, f.id); err == nil {
+		t.Fatal("fixture: the exact replay takes this history, so the review needs nothing set aside")
+	}
+
+	head := f.head()
+	got, _, err := PrepareReviewReopen(f.repo, f.root, f.id, "the repair misses a case")
+	if err != nil {
+		t.Fatalf("a later review could not reopen the task: %v", err)
+	}
+	if got.ReviewedHead != f.subject || got.BaselineHead != head || len(got.History) != 0 || got.Repaired ||
+		got.Subject != f.record.Subject || got.Finding != "the repair misses a case" || got.Generation == f.record.Generation {
+		t.Fatalf("the review's record = %#v, want the task's commit alone, moved to %s", got, head)
+	}
+	if err := ValidateLeasedAuditReopen(f.repo, head, f.id, &got); err != nil {
+		t.Fatalf("lease start refused the review's record: %v", err)
+	}
+	if missing, _ := CompletionUnbindableTasks(f.repo, head, head, []string{f.id}, &got, nil); len(missing) != 0 {
+		t.Fatalf("a re-close without a commit was refused: %v", missing)
+	}
+	repair := f.commit(t, "a.txt", "A repaired again\n", "Repair the case it missed")
+	if missing, _ := CompletionUnbindableTasks(f.repo, head, repair, []string{f.id}, &got, nil); len(missing) != 0 {
+		t.Fatalf("one repair was refused: %v", missing)
+	}
+	f.git("reset", "--hard", "-q", f.subject+"^")
+	rewrite := f.commit(t, "a.txt", "A rewritten\n", "A implementation\n\nCoop-Task: "+f.id)
+	if missing, _ := CompletionUnbindableTasks(f.repo, head, rewrite, []string{f.id}, &got, nil); !slices.Equal(missing, []string{f.id}) {
+		t.Fatalf("a rewrite of the task's commit = %v, want it refused", missing)
+	}
+}
+
+// A review sets other work aside for any task when the exact replay refuses it, a merge included,
+// but never a commit that names the task or binds it for Git alone.
+func TestReviewReopenSetsOtherWorkAside(t *testing.T) {
+	t.Run("a merge", func(t *testing.T) {
+		f := newReanchorFixture(t, false)
+		merged := f.merge(t, "side", "Side work\n\nCoop-Task: side-task")
+		got, _, err := PrepareReviewReopen(f.repo, f.root, f.id, "finding")
+		if err != nil || got.ReviewedHead != f.subject || got.BaselineHead != merged || len(got.History) != 0 || got.Repaired {
+			t.Fatalf("review record across a merge = %#v, %v; want the task's commit alone, at %s", got, err, merged)
+		}
+		if err := ValidateLeasedAuditReopen(f.repo, merged, f.id, &got); err != nil {
+			t.Fatalf("lease start refused the review's record: %v", err)
+		}
+	})
+	gitOnly := "the review recorded one commit for task reopened-task, but Git reads "
+	for _, tc := range []struct {
+		name, message, want string
+		replayable          bool // no other work, so the exact replay takes the history
+	}{
+		{name: "a later commit naming the task", message: "Two tasks\n\nCoop-Task: other-task\nCoop-Task: reopened-task",
+			want: ", made after the review, also carries Coop-Task: reopened-task"},
+		{name: "a later commit binding the task for Git alone", message: "Again\n\nCoop-Task: reopened-task\n\n# note", want: gitOnly},
+		{name: "the exact replay over a commit binding the task for Git alone", message: "Again\n\nCoop-Task: reopened-task\n\n# note",
+			want: gitOnly, replayable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReanchorFixture(t, false)
+			if tc.replayable {
+				f.git("reset", "--hard", "-q", f.subject)
+			}
+			f.commitVerbatim(t, tc.message)
+			if got, _, err := PrepareReviewReopen(f.repo, f.root, f.id, "finding"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("review reopen = %#v, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	// Nothing came after the task's commit, but Git also reads an earlier commit as binding it.
+	t.Run("an earlier commit binding the task for Git alone", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+		git("commit", "-q", "--allow-empty", "--cleanup=verbatim", "-m", "Prepare\n\nCoop-Task: reopened-task\n\n# note")
+		git("commit", "-q", "--allow-empty", "-m", "A implementation\n\nCoop-Task: reopened-task")
+		if got, _, err := PrepareReviewReopen(repo, filepath.Join(repo, TasksRoot), "reopened-task", "finding"); err == nil || !strings.Contains(err.Error(), gitOnly) {
+			t.Fatalf("review reopen = %#v, %v; want %q", got, err, gitOnly)
+		}
+	})
+}
+
+// An audit-rework attempt gets the binding check every attempt gets, so a forged binding is named at
+// once. Only a rewrite of the task's commit, which an ordinary record allows, may replace the
+// bindings of the commits after it, by replaying them; the semantic replay check judges that.
+func TestAuditReworkAttemptBindingsAreChecked(t *testing.T) {
+	touched := map[string]string{
+		"reopened-task":       "is under review rework in this attempt",
+		reanchorReviewedLater: "was already done before this attempt started",
+		"archived-task":       "was already done before this attempt started",
+	}
+	ordinary := func(t *testing.T) (reanchorFixture, string) {
+		t.Helper()
+		f := newReanchorFixture(t, true)
+		f.git("reset", "--hard", "-q", f.record.BaselineHead)
+		return f, f.head()
+	}
+	for name, message := range map[string]string{
+		"a forged binding for an archived task":           "Forged\n\nCoop-Task: archived-task",
+		"a second binding for a task the review recorded": "Again\n\nCoop-Task: " + reanchorReviewedLater,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, base := ordinary(t)
+			forged := f.commitVerbatim(t, message)
+			f.commit(t, "a.txt", "A repaired\n", "Repair the audit finding")
+			_, refused := AttemptBindingsRefused(f.repo, base, base, f.head(), f.id, &f.record, touched)
+			if want := "commit " + shortCommit(forged) + " binds task "; len(refused) != 1 || !strings.HasPrefix(refused[0], want) {
+				t.Fatalf("refused = %v, want one sentence starting %q", refused, want)
+			}
+		})
+	}
+	t.Run("one repair", func(t *testing.T) {
+		f, base := ordinary(t)
+		f.commit(t, "a.txt", "A repaired\n", "Repair the audit finding")
+		if tolerated, refused := AttemptBindingsRefused(f.repo, base, base, f.head(), f.id, &f.record, touched); len(refused)+len(tolerated) != 0 {
+			t.Fatalf("a repair was refused=%v tolerated=%v", refused, tolerated)
+		}
+	})
+	t.Run("a rewrite of the task's commit", func(t *testing.T) {
+		f, base := ordinary(t)
+		f.git("reset", "--hard", "-q", f.subject+"^")
+		f.commit(t, "a.txt", "A rewritten\n", "A implementation\n\nCoop-Task: "+f.id)
+		f.git("cherry-pick", base)
+		if missing, _ := CompletionUnbindableTasks(f.repo, base, f.head(), []string{f.id}, &f.record, touched); len(missing) != 0 {
+			t.Fatalf("fixture: completion refused the rewrite: %v", missing)
+		}
+		if tolerated, refused := AttemptBindingsRefused(f.repo, base, base, f.head(), f.id, &f.record, touched); len(refused)+len(tolerated) != 0 {
+			t.Fatalf("the replay of the review's commits was refused=%v tolerated=%v", refused, tolerated)
+		}
+	})
+	// Not a replay: a new commit takes the place of the one the review recorded, with its trailer.
+	t.Run("a commit in place of one the review recorded", func(t *testing.T) {
+		f, base := ordinary(t)
+		f.git("reset", "--hard", "-q", f.subject)
+		forged := f.commit(t, "b.txt", "B forged\n", "B implementation\n\nCoop-Task: "+reanchorReviewedLater)
+		_, refused := AttemptBindingsRefused(f.repo, base, base, forged, f.id, &f.record, touched)
+		want := "commit " + shortCommit(forged) + " binds task " + reanchorReviewedLater + " and replaces its bound commit"
+		if len(refused) != 1 || !strings.HasPrefix(refused[0], want) {
+			t.Fatalf("refused = %v, want %q", refused, want)
+		}
+	})
+	t.Run("a rewrite under a moved record", func(t *testing.T) {
+		f := newReanchorFixture(t, true)
+		moved := f.unblock(t, "go on")
+		base := f.head()
+		f.git("reset", "--hard", "-q", f.subject+"^")
+		f.commit(t, "a.txt", "A rewritten\n", "A implementation\n\nCoop-Task: "+f.id)
+		f.git("cherry-pick", f.record.BaselineHead)
+		_, refused := AttemptBindingsRefused(f.repo, base, base, f.head(), f.id, &moved, touched)
+		want := "commit " + shortCommit(f.head()) + " binds task " + reanchorReviewedLater + " and replaces its bound commit"
+		if !slices.ContainsFunc(refused, func(problem string) bool { return strings.HasPrefix(problem, want) }) {
+			t.Fatalf("refused = %v, want %q", refused, want)
+		}
+	})
 }

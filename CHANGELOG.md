@@ -43,6 +43,16 @@
   1 and say what was kept. `coop down --delete-volumes` now says "Cancelled. Nothing was stopped or
   deleted.", and declining the removal of a fork's leftover state no longer prints a bare
   "cancelled" error. A run with no terminal and no `--yes` still exits 2.
+
+- **A final review can reopen a task again after other work landed, and unblock works across a
+  merge.** A review could not reopen a task whose later history held commits its exact record
+  refuses, such as one task bound by several commits, one commit closing two tasks, or a merge, so
+  a task an unblock had moved past such commits could never be reviewed again. The review now sets
+  those commits aside as other work, as `coop tasks unblock` does, and the rework is held to a
+  re-close or one repair. `coop tasks unblock` accepts a merge after the review the same way, and
+  a reopened task's checks now refuse a shallow history, where Git can miss a commit. Rework on a
+  reopened task also gets the binding check every loop attempt gets, so a commit that forges
+  another task's trailer stops the run and is named.
 - **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
   to approve, `coop approve` prints "No approval needed: this project's requested access has not
   changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any

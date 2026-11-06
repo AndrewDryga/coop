@@ -217,7 +217,7 @@ func offlineLoopRefusal(agent string) error {
 }
 
 func extraBindingsCause(e *tasks.ExtraBindingsError) string {
-	return wrappedLoopText(e.Cause()+" A final review cannot reopen it, or any task committed before it, until only one commit carries that trailer. "+e.Remedy()+".", 6)
+	return wrappedLoopText(e.Cause()+" A final review cannot reopen it until only one commit carries that trailer. "+e.Remedy()+".", 6)
 }
 
 // printTaskCompleted marks an accepted completion. It says the task finished, not that it passed

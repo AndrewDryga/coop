@@ -86,8 +86,10 @@ task would let a box plant a binding and close that task itself. Note also that 
 so no provenance rule would have saved that completion. The run's
 recorded base (`loopStartHead`) also counts as a base for rewrites, so a binding dropped or rewritten
 below the attempt's start, outside any checked attempt, still refuses a trailer that replaces it.
-Audit rework (a lease holding host audit-reopen authority) is skipped: it rewrites history by design,
-and semantic replay checks it. `TestProviderScriptedLoopPendingReviewRejectsAForgerThatFailsFirst`
+Audit rework (a lease holding host audit-reopen authority) gets the same check. Only a rewrite of
+its task's commit, which an ordinary record allows, may replace the bindings of the commits after it
+by replaying them, and semantic replay checks that (`TestAuditReworkRejectionNamesAForgedBinding`,
+`TestAuditReworkAttemptBindingsAreChecked`). `TestProviderScriptedLoopPendingReviewRejectsAForgerThatFailsFirst`
 proves it end to end: the forging attempt fails, and the loop stops there instead of retrying above
 the forged commit.
 
@@ -105,8 +107,9 @@ because the pending subject was archived before it ran.
 the forging iteration is rejected, and the next loop counts two commits and starts no reviewer.
 
 **One binding per task is checked when a task closes, not when a review fails on it.** A review
-reopen (`CaptureAuditReopen`) needs exactly one reachable binding for its subject and for every task
-committed after it, so a second binding silently accepted at close loses a later review's verdict.
+reopen needs exactly one reachable binding for its subject, so a second binding silently accepted
+at close loses a later review's verdict on that task. A task committed after it with more no longer
+matters: the review sets commits its exact replay refuses aside (`captureReviewReopen`).
 `completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) refuses a
 task with more than one with `ExtraBindingsError`, and the loop's startup names every queued task
 that already has more (`tasks.ExtraBindings`) before any review runs. `coop tasks claim` and
@@ -191,6 +194,8 @@ authority before attempting task-completion authority.
 ## Changelog
 - 2026-11-06 — claim and unblock name a task's existing binding (task
   2026-11-06-catch-a-second-coop-task-binding-before-a-task-c).
+- 2026-11-06 — audit-rework attempts get the attempt binding scan; a review reopen no longer needs
+  one binding for every later task (task 2026-11-06-let-a-later-review-reopen-a-task-whose-record-mo).
 - 2026-11-06 — documented the late-commit wait refusal: judged from the commit `tasks_wait`
   recorded, another session's bindings tolerated, forged bindings named, unreadable queues fail
   closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`

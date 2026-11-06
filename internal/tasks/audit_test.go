@@ -3406,7 +3406,7 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "forge\n\nCoop-Task: archived-task")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) == 0 || len(tolerated) != 0 {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", nil, touched); len(refused) == 0 || len(tolerated) != 0 {
 			t.Fatalf("forged archived binding = refused %v, tolerated %v", refused, tolerated)
 		}
 	})
@@ -3418,11 +3418,11 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		git("commit", "-q", "--allow-empty", "-m", "work before the failure\n\nCoop-Task: task-42")
 		git("commit", "-q", "--allow-empty", "-m", "host work\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched)
+		tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", nil, touched)
 		if len(refused) > 0 || !slices.Equal(tolerated, []string{"task-99"}) {
 			t.Fatalf("own binding = refused %v, tolerated %v; want accepted with task-99 tolerated", refused, tolerated)
 		}
-		if tolerated, refused := AttemptBindingsRefused(repo, base, head, head, "task-42", touched); len(refused) > 0 || len(tolerated) != 0 {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, head, head, "task-42", nil, touched); len(refused) > 0 || len(tolerated) != 0 {
 			t.Fatalf("an attempt without commits = refused %v, tolerated %v", refused, tolerated)
 		}
 	})
@@ -3434,11 +3434,11 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--amend", "--allow-empty", "-m", "task-99's work, reworded\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if _, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) == 0 {
+		if _, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", nil, touched); len(refused) == 0 {
 			t.Fatal("an attempt that rewrote untouched task-99's bound commit was accepted")
 		}
 		git("commit", "-q", "--allow-empty", "-m", "invalid\n\nCoop-Task:")
-		if _, refused := AttemptBindingsRefused(repo, head, head, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-42", touched); len(refused) == 0 {
+		if _, refused := AttemptBindingsRefused(repo, head, head, forkspace.GitOut(repo, "rev-parse", "HEAD"), "task-42", nil, touched); len(refused) == 0 {
 			t.Fatal("an attempt with an invalid trailer was accepted")
 		}
 	})
@@ -3452,13 +3452,13 @@ func TestAttemptBindingsRefused(t *testing.T) {
 		base := forkspace.GitOut(repo, "rev-parse", "HEAD")
 		git("commit", "-q", "--allow-empty", "-m", "a replacement\n\nCoop-Task: task-99")
 		head := forkspace.GitOut(repo, "rev-parse", "HEAD")
-		if _, refused := AttemptBindingsRefused(repo, runBase, base, head, "task-42", touched); len(refused) == 0 {
+		if _, refused := AttemptBindingsRefused(repo, runBase, base, head, "task-42", nil, touched); len(refused) == 0 {
 			t.Fatal("a trailer replacing a binding the run base reached was accepted")
 		}
-		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", touched); len(refused) > 0 || !slices.Equal(tolerated, []string{"task-99"}) {
+		if tolerated, refused := AttemptBindingsRefused(repo, base, base, head, "task-42", nil, touched); len(refused) > 0 || !slices.Equal(tolerated, []string{"task-99"}) {
 			t.Fatalf("without the run base = refused %v, tolerated %v; want the replacement tolerated", refused, tolerated)
 		}
-		if _, refused := AttemptBindingsRefused(repo, strings.Repeat("0", 40), base, head, "task-42", touched); len(refused) == 0 {
+		if _, refused := AttemptBindingsRefused(repo, strings.Repeat("0", 40), base, head, "task-42", nil, touched); len(refused) == 0 {
 			t.Fatal("an unreadable run base was accepted")
 		}
 	})
@@ -3478,7 +3478,7 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 		commit(git, repo, "work\n\nCoop-Task: task-42")
 		both := commit(git, repo, "host work\n\nCoop-Task: task-a\nCoop-Task: task-b")
 		closed := commit(git, repo, "close task-a\n\nCoop-Task: task-a")
-		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", nil, touched)
 		want := []string{
 			"commit " + closed + " binds task task-a, which moved to done during this attempt",
 			"commit " + both + " carries 2 Coop-Task trailers (task-a, task-b); one commit can bind only one task",
@@ -3492,7 +3492,7 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 		commit(git, repo, "base")
 		old := commit(git, repo, "task-99's work\n\nCoop-Task: task-99")
 		git("commit", "-q", "--amend", "--allow-empty", "-m", "task-99's work, reworded\n\nCoop-Task: task-99")
-		_, refused := AttemptBindingsRefused(repo, old, old, "HEAD", "task-42", touched)
+		_, refused := AttemptBindingsRefused(repo, old, old, "HEAD", "task-42", nil, touched)
 		if len(refused) != 1 || !strings.Contains(refused[0], "binds task task-99 and replaces its bound commit "+old) {
 			t.Fatalf("refusal = %q, want the replaced commit %s named", refused, old)
 		}
@@ -3501,7 +3501,7 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 		repo, git := gitRepo(t)
 		base := commit(git, repo, "base")
 		commit(git, repo, "forged\n\nCoop-Task: task-a\nCoop-Task: evil\x1b[31m")
-		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", nil, touched)
 		if len(refused) != 1 || strings.Contains(refused[0], "\x1b") || !strings.Contains(refused[0], `evil\u001B[31m`) {
 			t.Fatalf("refusal = %q, want the hidden character escaped", refused)
 		}
@@ -3512,7 +3512,7 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 		for i := range bindingProblemsShown + 2 {
 			commit(git, repo, fmt.Sprintf("forged %d\n\nCoop-Task: task-a", i))
 		}
-		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", touched)
+		_, refused := AttemptBindingsRefused(repo, base, base, "HEAD", "task-42", nil, touched)
 		if len(refused) != bindingProblemsShown+1 || refused[bindingProblemsShown] != "2 more commits break the binding the same way" {
 			t.Fatalf("refusal = %q, want %d problems and the rest counted", refused, bindingProblemsShown)
 		}
@@ -3959,7 +3959,7 @@ func TestRawAuditHistoryRejectsMalformedParents(t *testing.T) {
 	if err != nil || history[0].parent != root {
 		t.Fatalf("child history = %#v, %v; want parent %s", history, err, root)
 	}
-	if _, err := rawReachableAuditCommitsLimit(repo, child, 10, 10, 1); err == nil ||
+	if _, err := rawReachableAuditCommitsLimit(repo, child, 10, 10, 1, nil); err == nil ||
 		!strings.Contains(err.Error(), "exceeds 1 bytes") {
 		t.Fatalf("raw reachable byte bound error = %v", err)
 	}
@@ -5490,7 +5490,7 @@ func TestRestoreAuditRejectedCompletion(t *testing.T) {
 		}
 	}
 
-	rejectErr := AuditCompletionError(id, nil)
+	rejectErr := AuditCompletionError(id, nil, nil)
 	if rejectErr == nil {
 		t.Fatal("audit-invalid completion must stop the controller")
 	}

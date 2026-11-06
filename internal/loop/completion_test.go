@@ -615,8 +615,65 @@ func TestLoopRejectionNamesTheForeignCommit(t *testing.T) {
 	}
 }
 
+// An audit-rework attempt gets the binding check every attempt gets: a box that forges a binding for
+// an archived task while it reworks a reopened one is named at once, instead of the forgery staying
+// below the next attempt's base.
+func TestAuditReworkRejectionNamesAForgedBinding(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	git("commit", "--allow-empty", "-m", "Implement the task\n\nCoop-Task: rework")
+	root := filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateInProgress, "rework", "task.md"), "# Rework\n- [ ] Fix the review finding\n")
+	writeTaskFile(t, filepath.Join(root, stateDone, "archived", "task.md"), "# Archived\n- [x] shipped\n")
+	record, err := tasks.CaptureAuditReopen(repo, "rework")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.WriteAuditReopenRecord(root, record); err != nil {
+		t.Fatal(err)
+	}
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	forged := ""
+	c.boxRun = func(s box.RunSpec) (int, error) {
+		if forged != "" {
+			t.Fatal("the loop started a second attempt after the rejection")
+		}
+		git("commit", "--allow-empty", "-m", "Close it\n\nCoop-Task: archived")
+		forged = forkspace.GitOut(repo, "rev-parse", "HEAD")[:12]
+		_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+		return 0, err
+	}
+	var code int
+	output := captureStderr(t, func() {
+		code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+	})
+	if code != 1 || err == nil {
+		t.Fatalf("loop = %d, %v; want the rejection\n%s", code, err, output)
+	}
+	flat := strings.Join(strings.Fields(output), " ")
+	for _, want := range []string{"Task completion rejected", "Commit " + forged + " binds task archived, which was already done before this attempt started.", "Retry this task: coop loop"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("refusal omitted %q:\n%s", want, output)
+		}
+	}
+	if current, ok, err := tasks.CurrentTask(root, "rework"); err != nil || !ok || current.State != tasks.StateInProgress {
+		t.Fatalf("rejected task = %v, %v, %v; want it kept in progress", current, ok, err)
+	}
+	log, err := os.ReadFile(filepath.Join(root, stateInProgress, "rework", "log.md"))
+	if err != nil || !strings.Contains(string(log), "completion rejected because commit "+forged) || !strings.Contains(string(log), "host-authorized review rework") {
+		t.Fatalf("the task's log does not name the forged commit under the audit remedy: %s, %v", log, err)
+	}
+}
+
 // The loop names a task with a second binding when it starts, before any review: a final review
-// cannot reopen that task, or any task committed before it, so its verdict would be lost.
+// cannot reopen that task, so its verdict would be lost.
 func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

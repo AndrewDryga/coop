@@ -48,7 +48,7 @@ func normalizedReviewFinding(finding string) string {
 // supplies the returned pending record to the move transaction to reject intervening changes.
 // Oversized findings still reopen normally; a truncated display must never identify a dispute.
 func PrepareReviewReopen(repo, root, id, finding string) (AuditReopenRecord, *PendingReviewRecord, error) {
-	audit, err := CaptureAuditReopen(repo, id)
+	audit, err := captureReviewReopen(repo, id)
 	if err != nil {
 		return audit, nil, err
 	}
