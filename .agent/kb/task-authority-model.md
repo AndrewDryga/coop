@@ -3,7 +3,7 @@ name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
 sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -52,6 +52,8 @@ and took it.
 ## How claim and lease interact — claim wins unconditionally
 
 An outside holder follows the claim, too: `coop tasks lease` binds to the agent above it, and when that ancestry is already gone (a backgrounded holder from a short-lived tool shell) it binds to the live process on the task's owner record, so the claim and the lease name the same agent and `done`/`block` by that agent can stop the holder (`stopOwnLeaseHolder`). A claim bound to a process another operating system recorded (a state folder shared with a Linux container) counts as live, because this kernel cannot check that pid (`processidentity.Foreign`): pre-flight keeps it, `coop tasks ls` shows "PID 4242 on Linux", and a holder never binds to it, since it could never see that process exit.
+
+A forced takeover (`coop tasks claim --force` over a live claim) ends the displaced process's work on both authorities. On the owner record it writes `taken_from_pid`/`taken_from_start`, the displaced process's identity (`claimTaskOwnerRecord`). `done`, `block`, `release`, `lease` and a plain re-claim on the host, and every box task tool through `boxClaimRefusal`, refuse exactly that process with one message naming the new holder (`takenOver`), whoever forced the claim, while that claim stands: its process runs, or a person holds it. A person's claim binds to no process, so a liveness rule alone could never protect it: the host takes an unbound claim over silently, and `release` only refused a live process's claim. On the lease, the takeover stops that process's `coop tasks lease` holder the way `done` stops your own (`stopLeaseHolderBoundTo`, verified controller identity, never a loop iteration), so `coop tasks ls` shows one holder. Ending the lease alone is not enough: `done` by the displaced process used to stop its own holder and complete the task it no longer owned. The mark survives later claims until the displaced process takes the task back with `--force`; a forcer whose own process stopped protects nothing, as any stopped claim.
 
 `skipOwnedCandidate` (`internal/tasks/audit.go`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
@@ -167,3 +169,5 @@ decide who may act on it.
 - 2026-09-06 — an agent's claim is bound to its process identity and released by pre-flight once that process is gone; a person's claim (made at a terminal) stays unbound. The lease stays the only live-work authority.
 - 2026-09-06 — `coop tasks lease` lets an outside agent hold the iteration lock; the loop treats it like another iteration (skip, then resume once released).
 - 2026-09-06 — a `coop tasks lease` holder that finds no agent above itself (its tool-call shell exited right after the fork, so it was reparented to init before it looked) follows the task's live claimant instead (`bindLeaseToClaimant`, `internal/tasks/lease_cmd.go`); only a person's claim or a gone claimant leaves it unbound. Found when `done` refused a holder started with `nohup … &`.
+- 2026-11-06 — a forced claim marks the displaced process on the owner record (`taken_from_pid`/`taken_from_start`) and stops its `coop tasks lease` holder; `done`, `lease` and a plain re-claim by that process are refused (`takenOverRefusal`). Found by QA: the old holder kept its lease beside the new claim, and its `done` stopped its own holder and completed the task (task 2026-11-06-make-a-forced-task-claim-end-the-old-lease-and-f).
+- 2026-11-06 — `block` and `release`, on the host and through the box task tools, refuse the displaced process too, with the same message (`takenOver`, `boxClaimRefusal`); the refusal holds only while the forced claim stands (task 2026-11-06-stop-a-displaced-process-from-blocking-or-releas).

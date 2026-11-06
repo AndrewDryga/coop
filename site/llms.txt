@@ -666,7 +666,7 @@ OPTIONS
   Moves a todo task to in progress. An agent's claim normally follows its
   process. A claim made at a terminal stays until you release or finish it.
   Taking over with --force ends the other process's lease, and that
-  process can no longer finish the task.
+  process can no longer finish, block or release the task.
 
   A blocked task must return to todo first, through coop tasks unblock, even
   when its decision is answered. Completed tasks stay in the archive.

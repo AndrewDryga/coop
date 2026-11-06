@@ -82,8 +82,8 @@ leaves your task alone and shows the owner and the `coop tasks release <id>` com
 never expires: only an explicit `release`, `block`, `unblock` or `done` clears it.
 
 `coop tasks claim <id> --force` takes over a claim that another running process holds. It ends that
-process's `coop tasks lease`, and that process can no longer complete or lease the task, or claim
-it back without `--force`.
+process's `coop tasks lease`, and that process can no longer complete, block, release or lease the
+task, or claim it back without `--force`, from the host or from a box.
 
 Stop every running co:op process, such as `coop loop`, before a major-version upgrade. Processes
 from different major versions can't share a task queue.

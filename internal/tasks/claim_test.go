@@ -263,7 +263,7 @@ func TestAProcessAForcedClaimDisplacedCannotCompleteTheTask(t *testing.T) {
 			} {
 				code, err := try()
 				var usage *ui.UsageError
-				if code == 0 || !errors.Is(err, errTaskTakenOver) || !errors.As(err, &usage) {
+				if code == 0 || !errors.Is(err, ErrTaskTakenOver) || !errors.As(err, &usage) {
 					t.Fatalf("%s by the displaced process = %d, %v; want a refusal", verb, code, err)
 				}
 				if want := "\n✗ Could not " + verb + " x\n\n" + cause; usage.Render(ui.Palette{}) != want {
@@ -308,6 +308,82 @@ func TestADisplacedProcessTakesTheTaskBackOnlyWithForce(t *testing.T) {
 	}
 	if code, err := tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", "done", claimOptions{actor: qa}); code != 0 || err != nil {
 		t.Fatalf("done by qa after taking it back = %d, %v", code, err)
+	}
+}
+
+// After a forced claim the displaced process can no longer block or release the task either, whether
+// an agent forced it or a person, whose claim binds to no process and so is no live claim to refuse
+// for. It is told who holds the task now, in done's words, and takes it back only with --force.
+func TestAProcessAForcedClaimDisplacedCannotBlockOrReleaseTheTask(t *testing.T) {
+	qa, _ := sleeperActor(t, "qa")
+	for name, forcer := range map[string]ClaimActor{"agent": selfActor(t, "claude"), "person": {}} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("USER", "alice")
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+			claim := func(actor ClaimActor, force bool) {
+				t.Helper()
+				if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
+					t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
+				}
+			}
+			claim(qa, false)
+			claim(forcer, true)
+			holder := fmt.Sprintf("claude (PID %d)", forcer.PID)
+			if forcer.PID == 0 {
+				holder = "alice"
+			}
+			cause := fmt.Sprintf("      %s took it over from qa (PID %d).\n      It is theirs now, so stop working on it.\n", holder, qa.PID)
+			item, _ := mustCurrentTask(t, root, "x")
+			for verb, try := range map[string]func() error{
+				"block":   func() error { return BlockTrustedTask(root, item, qa) },
+				"release": func() error { return ReleaseTrustedTask(root, item, qa) },
+			} {
+				err := try()
+				var usage *ui.UsageError
+				if !errors.Is(err, ErrTaskTakenOver) || !errors.As(err, &usage) {
+					t.Fatalf("%s by the displaced process = %v; want the takeover refusal", verb, err)
+				}
+				if want := "\n✗ Could not " + verb + " x\n\n" + cause; usage.Render(ui.Palette{}) != want {
+					t.Fatalf("%s refusal:\n%s\nwant:\n%s", verb, usage.Render(ui.Palette{}), want)
+				}
+			}
+			if current, ok := mustCurrentTask(t, root, "x"); !ok || current.State != StateInProgress {
+				t.Fatalf("a refused block or release moved the task: %+v", current)
+			}
+			if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != forcer.PID || rec.TakenFromPID != qa.PID {
+				t.Fatalf("owner after the refusals = %+v, want the forced claim kept", rec)
+			}
+			claim(qa, true)
+			if err := BlockTrustedTask(root, item, qa); err != nil {
+				t.Fatalf("block after taking the task back = %v", err)
+			}
+		})
+	}
+}
+
+// A forced claim whose own process has stopped protects nothing, like any stopped claim, so the
+// process it displaced may hand the task back as anyone may.
+func TestADisplacedProcessMayReleaseOnceTheForcedClaimStopped(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+	qa, _ := sleeperActor(t, "qa")
+	forcer, stop := sleeperActor(t, "claude")
+	for _, step := range []struct {
+		actor ClaimActor
+		force bool
+	}{{qa, false}, {forcer, true}} {
+		if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: step.actor, force: step.force}); code != 0 || err != nil {
+			t.Fatalf("claim by %+v = %d, %v", step.actor, code, err)
+		}
+	}
+	stop()
+	item, _ := mustCurrentTask(t, root, "x")
+	if err := ReleaseTrustedTask(root, item, qa); err != nil {
+		t.Fatalf("release once the forced claim stopped = %v", err)
+	}
+	if current, _ := mustCurrentTask(t, root, "x"); current.State != StateTodo {
+		t.Fatalf("task after the release = %s, want todo", current.State)
 	}
 }
 

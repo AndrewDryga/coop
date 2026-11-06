@@ -787,14 +787,18 @@ func claimTaskOwnerRecord(root, id string, opts claimOptions) (claimTakeover, er
 		return claimTakeover{}, err
 	}
 	var takeover claimTakeover
+	var refused error // read once, as it checks liveness: the switch must not see it change
+	if ok && !opts.force {
+		refused = takenOverRefusal("claim", previous, opts.actor)
+	}
 	switch {
 	case !ok:
 	case previous.Kind == TaskOwnerFork:
 		return claimTakeover{}, fmt.Errorf("%w: %s", ErrTaskSandboxOwned, TaskOwnerLabel(previous))
 	case previous.ActorPID != 0 && !ownerProcessLive(previous):
 		takeover = claimTakeover{from: &previous}
-	case !opts.force && takenFrom(previous, opts.actor):
-		return claimTakeover{}, takenOverRefusal("claim", previous, opts.actor)
+	case refused != nil:
+		return claimTakeover{}, refused
 	case competingClaim(previous, opts.actor):
 		if !opts.force {
 			return claimTakeover{}, liveClaimRefusal("claim", id, previous)
@@ -993,7 +997,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 			// legitimate take-over, not a no-op: it (re)asserts durable ownership regardless of who
 			// put it there.
 			takeover, err = claimTaskOwnerRecord(root, t.ID, opts)
-			if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskTakenOver) {
+			if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, ErrTaskTakenOver) {
 				return 1, err
 			}
 			if err != nil {
@@ -1055,7 +1059,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		// orphan record when claiming fails).
 		if newState == StateInProgress {
 			if takeover, err = claimTaskOwnerRecord(root, t.ID, opts); err != nil {
-				if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskTakenOver) {
+				if errors.Is(err, errTaskClaimedByOther) || errors.Is(err, ErrTaskTakenOver) {
 					return 1, err
 				}
 				return -1, fmt.Errorf("record claim ownership for %s: %w", t.ID, err)
@@ -1176,8 +1180,8 @@ func tasksFolderRelease(root string, args []string) (int, error) {
 		return 1, fmt.Errorf("%s is %s. %s", t.Title, StateLabel(t.State), releaseStateRemedy(t.State))
 	}
 	if err := ReleaseTrustedTask(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
-		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) ||
-			errors.Is(err, errTaskClaimedByOther) || errors.Is(err, errTaskChangedBeforeRelease) {
+		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) || errors.Is(err, errTaskClaimedByOther) ||
+			errors.Is(err, ErrTaskTakenOver) || errors.Is(err, errTaskChangedBeforeRelease) {
 			return 1, err
 		}
 		return -1, err
@@ -1199,14 +1203,18 @@ var errTaskChangedBeforeRelease = errors.New("task changed before it could be re
 
 // ReleaseTrustedTask returns a live task to 00_todo/ under host task authority — the release
 // counterpart of BlockTrustedTask, and deliberately the same shape (releaseUnderAuthority). It
-// stands down an own lease helper first. A fork-owned task, a task another controller leases, and a
-// claim held by another live process are refused — release gives up YOUR claim; it never overrides
-// someone else's, never stops a box, and never clears a fork assignment.
+// stands down an own lease helper first. A fork-owned task, a task another controller leases, a
+// claim held by another live process, and a task a forced claim took from the caller are refused —
+// release gives up YOUR claim; it never overrides someone else's, never stops a box, and never
+// clears a fork assignment.
 func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
 	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
 		return err
 	}
 	return releaseUnderAuthority(root, t, func(record TaskOwnerRecord) error {
+		if err := takenOverRefusal("release", record, actor); err != nil {
+			return err
+		}
 		if !competingClaim(record, actor) {
 			return nil
 		}
@@ -1238,7 +1246,7 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	if errors.As(err, &held) {
 		return &drawnRefusal{usage: held.completionRefusal(), err: err}
 	}
-	if errors.Is(err, errTaskTakenOver) {
+	if errors.Is(err, ErrTaskTakenOver) {
 		return err // drawn already, and a retry cannot help: the task is someone else's now
 	}
 	if errors.Is(err, errFinalReviewRunning) {
@@ -2265,10 +2273,13 @@ var errTaskChangedBeforeBlock = errors.New("task changed before it could be bloc
 // BlockTrustedTask moves a live (non-done) task into 50_blocked/ under host task authority: it
 // stands down an own lease holder, takes the authority flock, and holds it together with the owner
 // lock through check, move, and owner-record removal, so an assignment cannot appear after a stale
-// precheck and become stranded in blocked. Shared by `coop tasks block` and the in-box task
-// channel; a task another controller leases is refused with ErrTaskLeased.
+// precheck and become stranded in blocked. Used by `coop tasks block`; a task another controller
+// leases is refused with ErrTaskLeased, and a task a forced claim took from the caller with
+// ErrTaskTakenOver.
 func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
-	return blockTrustedTask(root, t, actor, nil)
+	return blockTrustedTask(root, t, actor, func(record TaskOwnerRecord) error {
+		return takenOverRefusal("block", record, actor)
+	})
 }
 
 // blockTrustedTask is BlockTrustedTask with refuse, when set, judging an existing owner record under
@@ -2463,7 +2474,8 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			return -1, err
 		}
 	} else if err := BlockTrustedTask(root, t, captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})); err != nil {
-		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) || errors.Is(err, errTaskChangedBeforeBlock) {
+		if errors.Is(err, ErrTaskLeased) || errors.Is(err, ErrTaskSandboxOwned) || errors.Is(err, ErrTaskTakenOver) ||
+			errors.Is(err, errTaskChangedBeforeBlock) {
 			return 1, err
 		}
 		return -1, err

@@ -31,8 +31,9 @@ how task state changes; the box briefing gains a `# Tasks` note whenever a box s
 - One rule for every box, loop or session (`boxClaimRefusal` in internal/tasks/session_claim.go): a
   box changes, claims or releases only a task that is unclaimed, its own session's, or claimed by a
   process that provably stopped. A fork assignment, a person's claim and any other live claim
-  refuse it, so `coop tasks claim --force` at a terminal stops a session at once; a loop box owns
-  no claim, so every live claim keeps it off. `underLease` checks before the per-call lease and
+  refuse it, so `coop tasks claim --force` at a terminal stops a session at once; the session it
+  displaced is told who holds the task now, in the CLI's words (`takenOver`). A loop box owns no
+  claim, so every live claim keeps it off. `underLease` checks before the per-call lease and
   again once it holds it, and complete and block judge the claim under the locks they take
   (`CompleteBoxTask`, `BlockBoxTask`): a session claim needs that same lease authority, so a claim
   that lands after the first check still wins. Host `coop tasks claim` takes no flock, so a host
@@ -238,6 +239,8 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-06 — a session a forced claim displaced gets the CLI's takeover message from every box task
+  tool (`takenOver` in `boxClaimRefusal`) (task 2026-11-06-stop-a-displaced-process-from-blocking-or-releas).
 - 2026-11-06 — the host's `coop tasks done` refuses template text in Done so far/Traps with the check
   and words `tasks_complete` uses (task 2026-11-06-make-coop-tasks-done-and-lint-catch-the-same-unf).
 - 2026-11-05 — `tasks_wait` (loop boxes only) returns the assigned task to `00_todo/` with a

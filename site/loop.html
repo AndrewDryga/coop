@@ -203,8 +203,8 @@ passed. It can also resume an in-progress task that no co:op process, such as a 
 leaves your task alone and shows the owner and the <code>coop tasks release &lt;id&gt;</code> command. Your claim
 never expires: only an explicit <code>release</code>, <code>block</code>, <code>unblock</code> or <code>done</code> clears it.</p>
 <p><code>coop tasks claim &lt;id&gt; --force</code> takes over a claim that another running process holds. It ends that
-process&#39;s <code>coop tasks lease</code>, and that process can no longer complete or lease the task, or claim
-it back without <code>--force</code>.</p>
+process&#39;s <code>coop tasks lease</code>, and that process can no longer complete, block, release or lease the
+task, or claim it back without <code>--force</code>, from the host or from a box.</p>
 <p>Stop every running co:op process, such as <code>coop loop</code>, before a major-version upgrade. Processes
 from different major versions can&#39;t share a task queue.</p>
 <h3 id="completion-records">Completion records</h3>

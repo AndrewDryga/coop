@@ -524,10 +524,14 @@ func (s *Server) boxActor() tasks.ClaimActor {
 // boxWriteRefusal keeps the box off a task someone else holds — a live claim, a person's claim or a
 // fork's assignment (tasks.BoxWriteRefusal) — with a reason it can relay to the person.
 func (s *Server) boxWriteRefusal(loc located, verb string) *toolResult {
-	if err := tasks.BoxWriteRefusal(loc.root, loc.item.ID, s.boxActor()); err != nil {
-		return refusal(fmt.Sprintf("%s %s refused: %v — leave it to its owner, who can release it", verb, loc.item.ID, err))
+	err := tasks.BoxWriteRefusal(loc.root, loc.item.ID, s.boxActor())
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, tasks.ErrTaskTakenOver):
+		return refusal(fmt.Sprintf("%s %s refused: %v", verb, loc.item.ID, err)) // it already names the new holder
 	}
-	return nil
+	return refusal(fmt.Sprintf("%s %s refused: %v — leave it to its owner, who can release it", verb, loc.item.ID, err))
 }
 
 func heldRefusal(id, verb, holder string) *toolResult {

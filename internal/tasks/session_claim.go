@@ -216,13 +216,17 @@ func SessionClaimLabel(root, id string, actor ClaimActor) (string, error) {
 // process that provably stopped. A fork assignment, a person's claim (bound to no process) and a
 // live claim stay with their owner, so a person taking a task back with `coop tasks claim --force`
 // stops the session at once — unlike the host CLI, which takes a claim bound to nothing as the
-// person's own to re-take.
+// person's own to re-take. The session a forced claim displaced is told who holds the task now, in
+// the words the CLI uses (takenOver).
 func boxClaimRefusal(id string, record TaskOwnerRecord, actor ClaimActor) error {
 	switch {
 	case record.Kind == TaskOwnerFork:
 		return fmt.Errorf("%w: %s is %s", ErrTaskSandboxOwned, id, TaskOwnerLabel(record))
 	case sameClaimant(record, actor), record.ActorPID != 0 && !ownerProcessLive(record):
 		return nil
+	}
+	if taken := takenOver(record, actor); taken != nil {
+		return taken
 	}
 	return fmt.Errorf("%w: %s is %s", errTaskClaimedByOther, id, TaskOwnerLabel(record))
 }

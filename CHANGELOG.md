@@ -56,6 +56,22 @@
   blocks at a one-round limit reads "after 1 round" and "1 time" in its `decision.md` and the
   closing banner.
 
+- **A process a forced claim displaced can no longer block or release the task.** After a person
+  took a task over with `coop tasks claim <id> --force`, the agent it was taken from could still
+  run `coop tasks block` or `coop tasks release` on it and undo the takeover. Both now refuse that
+  agent, on the host and through a box's `tasks_block` and `tasks_release`, with the message
+  `coop tasks done` gives it: who took the task over, and that it is theirs now. Only `--force`
+  takes it back. A box's task tools say the same, where they said the task was claimed by another
+  live process.
+
+- **`coop tasks done` and `coop tasks lint` catch the same unfinished task files.** `coop tasks done`
+  completed a task whose state.md still held the template's `<…>` text in Traps, and
+  `coop tasks lint` then failed on that done task. It now refuses it, with the check and words an
+  agent's `tasks_complete` already used, and says to write what the next reader needs there, or a
+  dash (—) when there is nothing. Lint now also names a blocked task whose decision.md is empty or
+  still the template, and a `waits_on` line that names no task in any queue or the backlog. Its
+  state.md hint, "or — when there is nothing", now says to write a dash.
+
 - **`coop tasks claim` and `coop tasks unblock` say when a task's commit is already in history.**
   Someone taking a task up again, often after a partial commit made before a decision, could
   commit more work with the same `Coop-Task` trailer, and nothing said so until a final review

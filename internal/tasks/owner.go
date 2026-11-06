@@ -430,21 +430,44 @@ func takenFrom(record TaskOwnerRecord, actor ClaimActor) bool {
 		processidentity.Same(record.TakenFromStart, actor.StartToken)
 }
 
-// errTaskTakenOver is the refusal the process a forced claim displaced gets (takenOverRefusal).
-var errTaskTakenOver = errors.New("task was taken over by a forced claim")
+// ErrTaskTakenOver matches every refusal of the process a forced claim took a task from.
+var ErrTaskTakenOver = errors.New("task was taken over by a forced claim")
 
-// takenOverRefusal refuses the process a forced claim took a task from, when it tries to complete,
-// lease or plainly re-claim it: the task is the new claimant's now. It is nil for anyone else.
-func takenOverRefusal(verb string, record TaskOwnerRecord, actor ClaimActor) error {
-	if !takenFrom(record, actor) {
+// takenOverError is why the process a forced claim took a task from may not act on it: who holds
+// the task now, and that it is theirs. Its Error is the plain text a box's tools relay;
+// takenOverRefusal draws the same two sentences for a person at the CLI.
+type takenOverError struct{ id, holder, from string }
+
+func (e *takenOverError) sentences() (string, string) {
+	return e.holder + " took it over from " + e.from + ".", "It is theirs now, so stop working on it."
+}
+
+func (e *takenOverError) Error() string {
+	took, theirs := e.sentences()
+	return took + " " + theirs
+}
+
+func (e *takenOverError) Unwrap() error { return ErrTaskTakenOver }
+
+// takenOver refuses actor's process when a forced claim took the task from it and that claim still
+// stands: its process runs, or a person holds it. A claim whose process stopped protects nothing,
+// as everywhere else, so then the displaced process may act like anyone. Nil for anyone else.
+func takenOver(record TaskOwnerRecord, actor ClaimActor) *takenOverError {
+	if !takenFrom(record, actor) || !ownerProcessLive(record) {
 		return nil
 	}
-	id, who := ui.SafeInline(record.TaskID), claimHolder(record, true)
-	return &drawnRefusal{
-		usage: ui.CommandFailed("Could not "+verb+" "+id,
-			who+" took it over from "+claimedBy(actor)+".\nIt is theirs now, so stop working on it."),
-		err: fmt.Errorf("%w: %s took %s over from %s", errTaskTakenOver, who, id, claimedBy(actor)),
+	return &takenOverError{id: record.TaskID, holder: claimHolder(record, true), from: claimedBy(actor)}
+}
+
+// takenOverRefusal is takenOver drawn for the CLI, under "Could not <verb> <id>": complete, block,
+// release, lease, or a plain claim. Only --force takes the task back.
+func takenOverRefusal(verb string, record TaskOwnerRecord, actor ClaimActor) error {
+	e := takenOver(record, actor)
+	if e == nil {
+		return nil
 	}
+	took, theirs := e.sentences()
+	return &drawnRefusal{usage: ui.CommandFailed("Could not "+verb+" "+ui.SafeInline(e.id), took+"\n"+theirs), err: e}
 }
 
 func refuseForkTaskOwner(root, id, action string) error {

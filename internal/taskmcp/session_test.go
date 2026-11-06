@@ -1,10 +1,12 @@
 package taskmcp
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,6 +189,34 @@ func TestSessionClaimAndReleaseRefuseWhatTheSessionDoesNotOwn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, tasks.StateTodo, "mine")); err != nil {
 		t.Fatalf("released task is not in todo: %v", err)
+	}
+}
+
+// A session a forced claim displaced is refused block and release with the words coop tasks done
+// uses, naming who holds the task now, and the task stays theirs.
+func TestADisplacedSessionCannotBlockOrReleaseTheTask(t *testing.T) {
+	root := queue(t, map[string]string{"work": tasks.StateTodo})
+	displaced := sessionActor(t, "codex", liveProcess(t))
+	sess := newSession(t, newSessionServer(t, root, displaced))
+	sess.mustCall("tasks_claim", map[string]any{"id": "work"})
+	forcer := liveProcess(t)
+	if code, err := tasks.CmdTasksFolder("", root, []string{"claim", "work", "--force", "--as", "alice", "--pid", strconv.Itoa(forcer)}); code != 0 || err != nil {
+		t.Fatalf("forced claim = (%d, %v)", code, err)
+	}
+	want := fmt.Sprintf("alice (PID %d) took it over from codex (PID %d). It is theirs now, so stop working on it.", forcer, displaced.PID)
+	for name, args := range map[string]map[string]any{
+		"tasks_block":   {"id": "work", "question": "q", "why": "W", "options": []string{"A"}, "recommendation": "A"},
+		"tasks_release": {"id": "work"},
+	} {
+		if text := sess.mustRefuse(name, args); !strings.Contains(text, want) || strings.Contains(text, "leave it to its owner") {
+			t.Fatalf("%s by the displaced session = %s\nwant it to say %q", name, text, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, tasks.StateInProgress, "work")); err != nil {
+		t.Fatalf("a refused block or release moved the task: %v", err)
+	}
+	if record, owned, err := tasks.ReadTaskOwnerRecord(root, "work"); err != nil || !owned || record.ActorPID != forcer {
+		t.Fatalf("owner after the refusals = %+v, %t, %v; want alice's forced claim", record, owned, err)
 	}
 }
 
