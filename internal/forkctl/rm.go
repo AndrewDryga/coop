@@ -196,11 +196,12 @@ func rmGuardRefusal(name string, unmerged, dirty bool) error {
 
 // ForkCancelled turns a declined confirmation into the plain sentence a person expects, and refuses
 // a gate nothing could answer (a pipe with no --yes) in the shared block, pointing at command's
-// page. It is emitted only BEFORE any mutation, so it can truthfully say the fork was kept.
-func ForkCancelled(err error, command string) error {
+// page. It is emitted only BEFORE any mutation, so it can truthfully say what was kept. The caller
+// exits ui.DeclineExit(err).
+func ForkCancelled(err error, command, kept string) error {
 	if err != nil && err.Error() == "cancelled" {
 		ui.Note("")
-		ui.Note("Cancelled. The fork was kept.")
+		ui.Note("Cancelled. %s", kept)
 		return ui.Reported(err)
 	}
 	if errors.Is(err, ui.ErrNeedsConfirmation) {
@@ -351,10 +352,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return -1, fmt.Errorf("no such fork: %s", name)
 		}
 		if err := c.destroyGate("Remove orphaned fork state "+name, hasYes(args)); err != nil {
-			if errors.Is(err, ui.ErrNeedsConfirmation) {
-				return 2, ui.ConfirmationRequired("coop fork rm")
-			}
-			return 2, err
+			return ui.DeclineExit(err), ForkCancelled(err, "coop fork rm", "Its state was kept.")
 		}
 		if !hasYes(args) {
 			ui.Note("") // an answered question is a section of its own; --yes asked nothing
@@ -419,7 +417,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	PrintForkDestroyPreview(fmt.Sprintf("Delete fork %q", name), ws,
 		ForkDestroyDescription(needsStop, initialDirty, initialUnmerged, initialTaskState))
 	if err := c.destroyGate("Delete this fork", hasYes(args)); err != nil {
-		return 2, ForkCancelled(err, "coop fork rm")
+		return ui.DeclineExit(err), ForkCancelled(err, "coop fork rm", "The fork was kept.")
 	}
 	// One blank line closes every section, so the result below needs none of its own: the preview
 	// closed with one, an answered question gets one here (--yes asked nothing), and a forced stop's

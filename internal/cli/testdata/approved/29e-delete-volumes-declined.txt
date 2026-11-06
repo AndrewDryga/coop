@@ -5,4 +5,4 @@ Stop this project's services and permanently delete these volumes and their data
 
 Continue? [y/N]
 
-Cancelled.
+Cancelled. Nothing was stopped or deleted.

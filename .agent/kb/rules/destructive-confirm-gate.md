@@ -4,7 +4,7 @@ description: "every unrecoverable delete routes through the one shared `ui.Destr
 scope: security
 sources: [internal/ui/confirm.go, internal/box/reclaim.go, internal/box/derived_image.go, internal/box/sweep.go, internal/box/network_recover.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/box/image.go, internal/box/network_setup.go]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-06
 ---
 
 # Every unrecoverable delete goes through the one shared confirmation gate
@@ -27,7 +27,10 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 
 **How to apply:**
 - A new destructive verb → gate it with `ui.DestroyGate(<blast-radius phrase>, hasYes(args))` immediately
-  before the delete; return its error as `(2, err)`. Add `--yes`/`-y` to the command's accepted flags.
+  before the delete; return `ui.DeclineExit(err)` with its error: 1 when the person answered no
+  (nothing changed, and the command itself was fine), 2 only when nothing could answer and the run
+  needs `--yes`. Print what was kept ("Cancelled. The fork was kept."). Add `--yes`/`-y` to the
+  command's accepted flags. A test answers the gate through `ui.AnswerConfirmationsFrom`.
 - It lives in `internal/ui` — the package that owns the terminal — because a confirmation is the one
   thing a command cannot return as data for its caller to print: the answer has to come back from the
   same tty `ui.IsTerminal` already detects. A package that owns a destructive verb but not the
@@ -92,6 +95,12 @@ human action" with nothing mechanical enforcing it, and `fork merge` had already
 See also [[destructive-verb-rm]] (the verb is named `rm`) and [[bare-subcommand-shows-help]].
 
 ## Changelog
+- 2026-11-06 — a declined gate exits 1, not 2 (`ui.DeclineExit`): exit 2 is a usage error, and a
+  person's no is not one. Swept every gate: coop tasks rm (one task, --all-done, across queues),
+  coop backlog rm, coop credentials rm, coop down --delete-volumes, coop fork --fresh, coop fork rm
+  (and its orphaned-state path, which printed a bare "cancelled"), coop fork merge --all (both
+  paths). coop net forget and coop approve are a separate task's (they never used the gate's exit 2)
+  (task 2026-11-06-exit-1-not-2-when-a-person-declines-any-coop-con).
 - 2026-11-04 — the snapshot of a setup check written before admitted markers is no longer proved and
   marked for removal; it stays on disk (task 2026-11-04-drop-the-old-network-record-readers).
 - 2026-10-17 — the 2026-08-09 and 2026-08-10 sweep entries name each call site's function (as it

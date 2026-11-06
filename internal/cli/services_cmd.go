@@ -581,8 +581,8 @@ func confirmVolumeDeletion(targets []box.ServiceVolume, yes bool) (int, error) {
 		return ui.ConfirmationResponse(answer, false)
 	}); err != nil {
 		ui.Note("")
-		ui.Note("Cancelled.")
-		return 2, ui.ErrReported
+		ui.Note("Cancelled. Nothing was stopped or deleted.")
+		return ui.DeclineExit(err), ui.ErrReported
 	}
 	// --yes asked nothing, so there is no answered question to separate from what follows.
 	if !yes {

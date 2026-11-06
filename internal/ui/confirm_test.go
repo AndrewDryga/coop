@@ -157,3 +157,20 @@ func TestConfirmationResponse(t *testing.T) {
 		}
 	}
 }
+
+// A person's no exits 1, since nothing changed and the command was fine; only a gate nothing could
+// answer exits 2, which --yes fixes. A stand-in terminal answers the gate as a person would.
+func TestDeclineExit(t *testing.T) {
+	restore := AnswerConfirmationsFrom(strings.NewReader("n\n"))
+	var err error
+	if _, captureErr := procharness.CaptureOutput(func() { err = DestroyGate("Delete this task", false) }, &os.Stderr); captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	restore()
+	if !errors.Is(err, ErrCancelled) || DeclineExit(err) != 1 {
+		t.Errorf("a declined gate = %v, exit %d; want cancelled, exit 1", err, DeclineExit(err))
+	}
+	if err := DestroyGate("Delete this task", false); !errors.Is(err, ErrNeedsConfirmation) || DeclineExit(err) != 2 {
+		t.Errorf("a gate without a terminal = %v, exit %d; want needs-confirmation, exit 2", err, DeclineExit(err))
+	}
+}

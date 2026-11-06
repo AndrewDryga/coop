@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -30,7 +29,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 		}
 		img := ""
 		if !pending {
-			if !yes && !ui.IsTerminal(os.Stdin) {
+			if !yes && !ui.CanAsk() {
 				return mergeOutcome{}, mergeNeedsConfirmation()
 			}
 			img, err = c.MergeGate(repo)
@@ -93,7 +92,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 
 func (c *Control) forkMergeIsolatedBatch(repo string, names []string, force, yes bool) (int, error) {
 	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
-		return 2, ForkCancelled(err, "coop fork merge")
+		return ui.DeclineExit(err), ForkCancelled(err, "coop fork merge", "No fork was merged or deleted.")
 	}
 	for _, name := range names {
 		if forkspace.NeedsStop(repo, name) {

@@ -424,7 +424,7 @@ func TestForkRmPrintsOneBlankLineBetweenSections(t *testing.T) {
 			"✓ Fork a stopped\n" +
 			"\n" +
 			"✓ Deleted fork a\n"},
-		{name: "declined", answer: "n", wantCode: 2, want: "" +
+		{name: "declined", answer: "n", wantCode: 1, want: "" +
 			"Delete fork \"a\"\n" +
 			"\n" +
 			"  <ws>\n" +

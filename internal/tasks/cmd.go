@@ -2727,7 +2727,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		ui.Note("  %s", displayPath(filepath.Join(root, StateDone)))
 		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
 		if err := ui.DestroyGate("Delete these tasks", request.yes); err != nil {
-			return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
+			return ui.DeclineExit(err), cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 		}
 		removed, err := removeAllDone(root)
 		if err != nil {
@@ -2747,7 +2747,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 	ui.Note("Permanently delete %q, including its instructions,\nprogress, and saved evidence.\n", t.Title)
 	ui.Note("  %s\n", displayPath(t.Dir))
 	if err := ui.DestroyGate("Delete this task", request.yes); err != nil {
-		return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
+		return ui.DeclineExit(err), cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 	}
 	removed, err := removeTaskFolderAndRecords(root, t)
 	if err != nil && removed {

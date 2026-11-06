@@ -371,7 +371,8 @@ func TestApprovedServiceStop(t *testing.T) {
 		assertApprovedSession(t, "29d-delete-volumes-accepted", normalizeProject(t, repo, out))
 	})
 
-	// A bare Enter is No: the gate's default is the safe one, and nothing is deleted or stopped.
+	// A bare Enter is No: the gate's default is the safe one, and nothing is deleted or stopped. It
+	// exits 1, as every declined confirmation does: the command itself was fine.
 	t.Run("29e-delete-volumes-declined", func(t *testing.T) {
 		repo := serviceProject(t)
 		shim := composeShim{services: []string{"db", "redis"}, volumes: projectVolumes(t, repo)}
@@ -379,8 +380,8 @@ func TestApprovedServiceStop(t *testing.T) {
 		typedAnswers(t, "")
 		var code int
 		out := captureTerminal(t, func() { code, _ = a.cmdDown([]string{"--delete-volumes"}) })
-		if code != 2 {
-			t.Errorf("a declined deletion exited %d, want 2", code)
+		if code != 1 {
+			t.Errorf("a declined deletion exited %d, want 1", code)
 		}
 		assertApprovedSession(t, "29e-delete-volumes-declined", normalizeProject(t, repo, out))
 	})

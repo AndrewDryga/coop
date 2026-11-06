@@ -28,6 +28,13 @@
   an unknown option with exit 2 and make nothing. The fork commands use the same refusals as the
   rest of Coop: a mistyped option gets a correction, and the usage line is the one their help
   shows.
+
+- **Answering no to any Coop deletion question exits 1.** `coop tasks rm`, `coop credentials rm`,
+  `coop down --delete-volumes`, `coop fork rm`, `coop fork merge --all` and `coop fork --fresh`
+  exited 2, the code for a usage error, when you answered no; like `coop backlog rm`, they now exit
+  1 and say what was kept. `coop down --delete-volumes` now says "Cancelled. Nothing was stopped or
+  deleted.", and declining the removal of a fork's leftover state no longer prints a bare
+  "cancelled" error. A run with no terminal and no `--yes` still exits 2.
 - **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
   to approve, `coop approve` prints "No approval needed: this project's requested access has not
   changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any

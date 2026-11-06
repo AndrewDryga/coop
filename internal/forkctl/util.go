@@ -58,7 +58,7 @@ func approve(prompt string, yes bool) bool {
 	if yes {
 		return true
 	}
-	if !ui.IsTerminal(os.Stdin) {
+	if !ui.CanAsk() {
 		return false
 	}
 	return ui.Confirm(prompt, true)

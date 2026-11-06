@@ -123,8 +123,7 @@ func TestBacklogRemoveDeclineExitsOne(t *testing.T) {
 	if code, err := cmdBacklogFolder("", root, []string{"rm", id}); code != 2 || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Errorf("rm with nothing to answer = (%d, %v), want exit 2 asking for --yes", code, err)
 	}
-	confirmIdeaRemoval = func(string, bool, ...func(string) bool) error { return ui.ErrCancelled }
-	t.Cleanup(func() { confirmIdeaRemoval = ui.DestroyGate })
+	t.Cleanup(ui.AnswerConfirmationsFrom(strings.NewReader("n\n")))
 	var code int
 	var err error
 	said := captureBacklog(t, func() { code, err = cmdBacklogFolder("", root, []string{"rm", id}) })

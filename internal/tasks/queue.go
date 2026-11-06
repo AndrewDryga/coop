@@ -586,7 +586,7 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		}
 		ui.Note("  Their instructions, progress and saved evidence will be permanently deleted.\n")
 		if err := ui.DestroyGate("Delete these tasks", removal.yes); err != nil {
-			return 2, cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
+			return ui.DeclineExit(err), cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 		}
 		removed := 0
 		for _, rel := range rels {

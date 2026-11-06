@@ -1070,7 +1070,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	// Merging lands work and (by default) deletes the fork. A non-interactive run has
 	// no one to answer the prompts, so refuse rather than proceed on the default —
 	// pass --yes to opt in explicitly.
-	if !yes && !ui.IsTerminal(os.Stdin) {
+	if !yes && !ui.CanAsk() {
 		return 2, mergeNeedsConfirmation()
 	}
 	img, err := c.MergeGate(repo)
@@ -1215,7 +1215,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 	// fork), this runs unattended. Ask once before destroying anything; --yes (already required for a
 	// non-interactive run) skips the prompt.
 	if err := ui.DestroyGate("Merge and delete forks that land", yes); err != nil {
-		return 2, ForkCancelled(err, "coop fork merge")
+		return ui.DeclineExit(err), ForkCancelled(err, "coop fork merge", "No fork was merged or deleted.")
 	}
 	// --yes asked nothing, so there is no answered question to separate from the first fork.
 	if !yes {

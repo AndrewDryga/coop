@@ -62,7 +62,7 @@ func DestroyGate(what string, yes bool, asks ...func(string) bool) error {
 		}
 		return nil
 	}
-	if !IsTerminal(os.Stdin) {
+	if !CanAsk() {
 		return needsConfirmation{what: what}
 	}
 	if !Confirm(what+"?", false) {
@@ -71,12 +71,35 @@ func DestroyGate(what string, yes bool, asks ...func(string) bool) error {
 	return nil
 }
 
-// confirmInput is a narrow test seam for the one thing Confirm cannot do without a terminal: read
-// the answer back. nil — which it always is outside this package's own tests — means the real
-// interactive path, os.Stdin gated by IsTerminal, so an interactive user's behavior is unchanged.
-// A test points it at a reader standing in for the terminal; that is the only way the bare-Enter,
-// explicit-answer, and EOF branches below are reachable in a gate that has no tty.
+// CanAsk reports whether a confirmation has someone to answer it: a terminal, or a test standing in
+// for one (AnswerConfirmationsFrom). A command that will ask checks it before any work.
+func CanAsk() bool { return confirmInput != nil || IsTerminal(os.Stdin) }
+
+// DeclineExit is the exit status of a command whose confirmation did not let it go on: 1 when a
+// person answered no, since nothing changed and nothing was wrong with the command, and 2 only when
+// nothing could answer (no terminal and no --yes), a usage error the run fixes with --yes.
+func DeclineExit(err error) int {
+	if errors.Is(err, ErrNeedsConfirmation) {
+		return 2
+	}
+	return 1
+}
+
+// confirmInput is a narrow test seam for the one thing a confirmation cannot do without a terminal:
+// read the answer back. nil — which it always is outside tests — means the real interactive path,
+// os.Stdin gated by IsTerminal, so an interactive user's behavior is unchanged. A test points it at
+// a reader standing in for the terminal (another package's test through AnswerConfirmationsFrom);
+// that is the only way the bare-Enter, explicit-answer, and EOF branches below are reachable in a
+// gate that has no tty.
 var confirmInput io.Reader
+
+// AnswerConfirmationsFrom makes DestroyGate and Confirm read each answer from r, as though a person
+// typed it at a terminal, until restore runs. Only tests call it: a run asks its own terminal.
+func AnswerConfirmationsFrom(r io.Reader) (restore func()) {
+	old := confirmInput
+	confirmInput = r
+	return func() { confirmInput = old }
+}
 
 // Confirm asks a yes/no question, returning def with no tty (batch runs) or on a
 // bare Enter.

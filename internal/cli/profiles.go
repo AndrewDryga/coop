@@ -388,7 +388,7 @@ func (a *app) removeProfile(agent, name string, yes bool) (int, error) {
 			return 2, ui.ConfirmationRequired("coop credentials rm")
 		}
 		removalCancelled()
-		return 2, ui.ErrReported
+		return ui.DeclineExit(err), ui.ErrReported
 	}
 	if !yes {
 		ui.Note("") // the Enter that answered the prompt ended its line; keep the result a paragraph
