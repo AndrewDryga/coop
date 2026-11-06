@@ -13,7 +13,7 @@ import (
 // which it does by moving done tasks back into 10_in_progress/, not 00_todo/. Regression: the
 // check looked at 00_todo/ only, so a reopened task in in_progress fell through to the green pass.
 func TestFinalVerdict(t *testing.T) {
-	reopened := []taskLine{{id: "fix-login", title: "Fix login retries", state: "in progress"}}
+	reopened := []taskLine{{id: "fix-login", title: "Fix login retries", state: "in progress", reopened: true}}
 	got := captureStderr(t, func() {
 		printFinalVerdict(tasks.TaskCounts{Done: 2, Doing: 3}, reopened, nil, "coop loop claude")
 	})
@@ -27,12 +27,32 @@ func TestFinalVerdict(t *testing.T) {
 	}
 
 	// Reopened into todo: the sentence uses the state the task is ACTUALLY in.
-	todo := []taskLine{{id: "fix-login", title: "Fix login retries", state: "todo"}}
+	todo := []taskLine{{id: "fix-login", title: "Fix login retries", state: "todo", reopened: true}}
 	got = captureStderr(t, func() {
 		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, todo, nil, "coop loop claude")
 	})
 	if !strings.Contains(got, "Final review left 1 task to finish") || !strings.Contains(got, "is back in todo.") {
 		t.Errorf("todo reopen report = %q", got)
+	}
+
+	// Only a task a review reopened is "back": queue work no review touched is counted instead.
+	mixed := []taskLine{
+		{id: "fix-login", title: "Fix login retries", state: "todo", reopened: true},
+		{id: "add-search", title: "Add search", state: "todo"},
+		{id: "add-export", title: "Add export", state: "todo"},
+	}
+	got = captureStderr(t, func() {
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 3}, mixed, nil, "coop loop claude")
+	})
+	if !strings.Contains(got, "Fix login retries is back in todo.") || !strings.Contains(got, "2 other tasks are still in the queue.") ||
+		strings.Contains(got, "Add search") {
+		t.Errorf("mixed report = %q", got)
+	}
+	got = captureStderr(t, func() {
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, mixed[2:], nil, "coop loop claude")
+	})
+	if !strings.Contains(got, "1 task is still in the queue.") || strings.Contains(got, "is back") {
+		t.Errorf("untouched-queue report = %q", got)
 	}
 
 	// Nothing reopened, work parked on a decision: not a pass, and it names the task.
@@ -334,7 +354,7 @@ func TestReviewBannersAreCompactBoundedAndGrammatical(t *testing.T) {
 func TestLoopResultTextNeutralizesTaskControls(t *testing.T) {
 	bad := "Fix \x1b[31mlogin\x1b[0m\nINJECT"
 	got := captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Todo: 1}, []taskLine{{title: bad, state: "todo"}}, nil, "coop loop")
+		printFinalVerdict(tasks.TaskCounts{Todo: 1}, []taskLine{{title: bad, state: "todo", reopened: true}}, nil, "coop loop")
 		printTaskLimitReached(loopTaskLimit{max: 1, settled: 1, lastTitle: bad, lastState: tasks.StateDone}, "coop loop")
 		h := newLoopHealth()
 		h.noteReopen([]string{"task"})

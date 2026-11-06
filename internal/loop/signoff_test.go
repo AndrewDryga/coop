@@ -73,6 +73,11 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	if !strings.Contains(string(decision), "review keeps reopening") || strings.Contains(string(decision), "Old decision") {
 		t.Fatalf("review cap retained stale decision:\n%s", decision)
 	}
+	// A resumed review parks a task while unrelated work still waits: the decision counts it
+	// instead of claiming the queue drained.
+	if !strings.Contains(string(decision), "with 1 other task still in the queue") || strings.Contains(string(decision), "drained") {
+		t.Fatalf("review cap decision misstates the queue:\n%s", decision)
+	}
 	if !pathExists(filepath.Join(q, stateInProgress, "unrelated")) {
 		t.Fatal("unrelated actionable task was moved by the signoff cap")
 	}
@@ -102,8 +107,10 @@ func TestBlockReopenedTasksUsesCompletionAuthority(t *testing.T) {
 	if err := blockReopenedTasks([]string{q}, []string{task.ID}, 3); err != nil {
 		t.Fatal(err)
 	}
-	if !pathExists(filepath.Join(q, stateBlocked, task.ID, "decision.md")) {
+	if decision, err := os.ReadFile(filepath.Join(q, stateBlocked, task.ID, "decision.md")); err != nil {
 		t.Fatal("completed review reopen was not authoritatively blocked")
+	} else if !strings.Contains(string(decision), "No other task was left in the queue.") {
+		t.Fatalf("review cap decision on an empty queue:\n%s", decision)
 	}
 
 	leased := taskForLease(t, q, stateInProgress, "leased-reopen")

@@ -126,6 +126,16 @@ func parkCappedReview(hosts, reopened []string, rounds int) error {
 // The loop runs on the host, where coop's own task helpers are available, so it moves the folders
 // directly, all or none: a move or write that fails is returned and fails the run.
 func blockReopenedTasks(hosts, reopened []string, rounds int) error {
+	states, err := tasks.QueueSnapshot(hosts)
+	if err != nil {
+		return err
+	}
+	others := 0
+	for id, state := range states {
+		if (state == tasks.StateTodo || state == tasks.StateInProgress) && !slices.Contains(reopened, id) {
+			others++
+		}
+	}
 	moves := make([]tasks.TrustedTaskMove, 0, len(reopened))
 	for _, id := range reopened {
 		task, err := lifecycleTaskSubject(hosts, id)
@@ -138,7 +148,7 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 			SourceStates:  []string{tasks.StateTodo, tasks.StateInProgress, tasks.StateDone, tasks.StateBlocked},
 			MetadataNames: []string{"decision.md"},
 			AfterMove: func(dir string) error {
-				return writeReviewBlockDecision(filepath.Join(dir, "decision.md"), id, title, rounds)
+				return writeReviewBlockDecision(filepath.Join(dir, "decision.md"), id, title, rounds, others)
 			},
 		})
 	}
@@ -150,18 +160,23 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 
 // writeReviewBlockDecision drops a decision.md explaining that the review kept reopening this task
 // past the round cap. Replace an older resolved decision: decision.md carries the current open
-// question, not a stale action from a previous block.
-func writeReviewBlockDecision(path, id, title string, rounds int) error {
+// question, not a stale action from a previous block. others counts the actionable tasks left
+// beside it: a resumed review parks a task while unrelated work still waits, so the text never
+// claims the queue drained.
+func writeReviewBlockDecision(path, id, title string, rounds, others int) error {
+	queue := "No other task was left in the queue."
+	if others > 0 {
+		queue = fmt.Sprintf("The loop parked it here with %s still in the queue.", ui.Count(others, "other task"))
+	}
 	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
 		"**Blocks:** this task (`%s`).\n\n"+
-		"**The decision:** The unattended loop drained the queue and review reopened this "+
-		"task %d times without it converging — the work loop can't get it to a state the review "+
-		"accepts. A human needs to look at why (a gate it can't make green, a spec gap, a flaky test) "+
-		"before it goes back in the queue.\n\n"+
+		"**The decision:** The final review reopened this task %d times without it converging — "+
+		"the work loop can't get it to a state the review accepts. %s A human needs to look at why "+
+		"(a gate it can't make green, a spec gap, a flaky test) before it goes back in the queue.\n\n"+
 		"**Recommendation:** Read the review's reopen notes in this task's log.md, fix the underlying "+
 		"issue (or split/redefine the task), then `coop tasks unblock %s`.\n\n"+
 		"---\n\n"+
 		"**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock %s -->\n",
-		title, rounds, id, rounds, id, id)
+		title, rounds, id, rounds, queue, id, id)
 	return os.WriteFile(path, []byte(body), 0o644)
 }

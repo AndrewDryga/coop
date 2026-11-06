@@ -3,7 +3,7 @@ name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
 sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -125,9 +125,21 @@ replay, same raw parent) and moves the authority to it without spending the gene
 carries the other reopened tasks across that rework in the same load, because afterwards nothing
 shows the rework any more.
 
-When the review round cap parks a task, its `decision.md` describes that current cap. A resolved
-decision from an earlier block is replaced rather than shown as the action for a different block;
-prior reasoning belongs in the task log.
+When the review round cap parks a task, its `decision.md` describes that current cap and how many
+other tasks were still actionable (a resumed review parks with unrelated work waiting, so it never
+says the queue drained). A resolved decision from an earlier block is replaced rather than shown as
+the action for a different block; prior reasoning belongs in the task log.
+
+A subject whose task sits in `50_blocked/` (parked by the cap, or blocked by its worker during
+rework) keeps its pending record, but `LoadPendingReviews` returns it in `Parked`, outside the
+cohort: no review can run on it until a person unblocks it. Counting it as an unsettled subject once
+wedged every `coop loop` start ("Final review left N tasks to finish", no work done) until a human
+answered the decision, and a parked record from an older plan would also have clashed with the next
+run's cohort ("different stored review plans"). A resumed review whose remaining subjects are all
+parked therefore continues with the queue under a fresh cohort; unblocking returns the task as a
+reopened subject of its own plan. Authority carries (`PendingReviewCohort.IDs`) still include parked
+subjects, so their audit authority follows rewrites while they wait
+(`TestProviderScriptedLoopPendingReviewParkedAtTheCapLeavesTheQueueRunning`).
 
 Completed between audits add a second, separate run-scoped handoff: `auditEvidenceStore` keeps only
 receipt-consistent per-task summaries, caps their prompt size, and drops them when signoff reopens a
@@ -175,6 +187,9 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-11-05 — blocked subjects are parked outside the cohort; a resumed review that parked its
+  last subjects goes on with the queue; the cap decision counts the other actionable tasks (task
+  2026-11-05-keep-working-the-queue-after-a-resumed-final-rev).
 - 2026-11-04 — version 1 pending reviews and format-0 completion fingerprints are refused by name
   instead of converted (task 2026-11-04-drop-the-old-fork-and-task-record-readers).
 - 2026-10-18 — a round reads its subjects, window and change set from one commit and the review

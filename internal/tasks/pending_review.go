@@ -108,9 +108,14 @@ type PendingReviewPrevious struct {
 	ReclosedWithoutCommit bool                  `json:"reclosed_without_commit,omitempty"`
 }
 
+// Parked holds the subjects whose tasks sit in 50_blocked/ waiting for a person, such as one the
+// review round cap parked. Their records keep the debt, but they are outside the cohort: no review
+// can run on them until a human unblocks the task, so they never hold up the rest of the queue or
+// conflict with a newer cohort's plan. Unblocking returns the task to the cohort as a reopened subject.
 type PendingReviewCohort struct {
 	Plan     PendingReviewPlan
 	Subjects []PendingReviewRecord
+	Parked   []PendingReviewRecord
 }
 
 // PendingReviewContent fingerprints what a signoff round reviewed: every commit in the subject's
@@ -1008,9 +1013,6 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if err := pendingReviewPlanMatches(repo, hosts, record.Plan); err != nil {
 			return PendingReviewCohort{}, err
 		}
-		if len(cohort.Subjects) > 0 && !pendingReviewPlanEqual(cohort.Plan, record.Plan) {
-			return PendingReviewCohort{}, errors.New("pending final reviews have different stored review plans; finish the oldest cohort explicitly")
-		}
 		current, ok, err := CurrentTask(root, record.Task.Ref.ID)
 		if err != nil || !ok {
 			return PendingReviewCohort{}, errors.Join(err, fmt.Errorf("pending-review task %s is missing", record.Task.Ref.ID))
@@ -1075,6 +1077,13 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 			if err := writePendingReviewRecord(root, record); err != nil {
 				return PendingReviewCohort{}, err
 			}
+			if current.State == StateBlocked {
+				cohort.Parked = append(cohort.Parked, record)
+				continue
+			}
+			if err := sameCohortPlan(cohort, record); err != nil {
+				return PendingReviewCohort{}, err
+			}
 			cohort.Plan = record.Plan
 			cohort.Subjects = append(cohort.Subjects, record)
 			roots[record.Task.Ref.ID] = root
@@ -1084,25 +1093,24 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		if err != nil || !record.Fingerprint.Matches(fingerprint) {
 			return PendingReviewCohort{}, errors.Join(err, fmt.Errorf("pending-review task %s completion receipt or archive changed", current.ID))
 		}
+		if err := sameCohortPlan(cohort, record); err != nil {
+			return PendingReviewCohort{}, err
+		}
 		cohort.Plan = record.Plan
 		cohort.Subjects = append(cohort.Subjects, record)
 		roots[record.Task.Ref.ID] = root
 	}
-	slices.SortFunc(cohort.Subjects, func(a, b PendingReviewRecord) int {
-		return strings.Compare(a.Task.Ref.ID, b.Task.Ref.ID)
-	})
+	byID := func(a, b PendingReviewRecord) int { return strings.Compare(a.Task.Ref.ID, b.Task.Ref.ID) }
+	slices.SortFunc(cohort.Subjects, byID)
+	slices.SortFunc(cohort.Parked, byID)
+	// Carry the other reopened tasks across a recovered rework now: once its authority moved, a
+	// later load no longer sees the rework, and those tasks would be parked as stale.
+	for _, record := range reworked {
+		if err := CarryReopenedReviews(repo, hosts, cohort.IDs(), record.BaselineHead, &record); err != nil {
+			return PendingReviewCohort{}, fmt.Errorf("keep final-review authority across task %s's interrupted rework: %w", record.TaskID, err)
+		}
+	}
 	if len(cohort.Subjects) > 0 {
-		ids := make([]string, len(cohort.Subjects))
-		for i, subject := range cohort.Subjects {
-			ids[i] = subject.Task.Ref.ID
-		}
-		// Carry the other reopened tasks across a recovered rework now: once its authority moved, a
-		// later load no longer sees the rework, and those tasks would be parked as stale.
-		for _, record := range reworked {
-			if err := CarryReopenedReviews(repo, hosts, ids, record.BaselineHead, &record); err != nil {
-				return PendingReviewCohort{}, fmt.Errorf("keep final-review authority across task %s's interrupted rework: %w", record.TaskID, err)
-			}
-		}
 		head, err := pendingReviewHead(repo)
 		if err != nil {
 			return PendingReviewCohort{}, err
@@ -1115,6 +1123,24 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 		}
 	}
 	return cohort, nil
+}
+
+// IDs names every subject with review debt, parked ones included, for work that must keep all
+// of their authority current, such as carrying it across a rewrite of history.
+func (c PendingReviewCohort) IDs() []string {
+	var ids []string
+	for _, subject := range slices.Concat(c.Subjects, c.Parked) {
+		ids = append(ids, subject.Task.Ref.ID)
+	}
+	return ids
+}
+
+// sameCohortPlan refuses to mix review contracts in one cohort.
+func sameCohortPlan(cohort PendingReviewCohort, record PendingReviewRecord) error {
+	if len(cohort.Subjects) > 0 && !pendingReviewPlanEqual(cohort.Plan, record.Plan) {
+		return errors.New("pending final reviews have different stored review plans; finish the oldest cohort explicitly")
+	}
+	return nil
 }
 
 // returnChangedToSignoff sends back to signoff each subject awaiting verification whose reviewed

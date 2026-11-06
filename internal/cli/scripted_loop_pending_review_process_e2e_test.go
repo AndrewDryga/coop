@@ -613,3 +613,111 @@ func TestProviderScriptedLoopExplicitPendingReviewImport(t *testing.T) {
 		t.Fatalf("reviewed re-import attempts = %#v, want signoff then verification again", starts)
 	}
 }
+
+// The 2026-11-05 wedge: a resumed final review parked its subject at the round cap, and that run and
+// every later `coop loop` ended with "Final review left N tasks to finish" without working any of the
+// unrelated todo tasks, until a human answered the decision. The parked task keeps its debt and
+// decision; the queue goes on, in the capping run and in every later one.
+func TestProviderScriptedLoopPendingReviewParkedAtTheCapLeavesTheQueueRunning(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	resetLoopProcessRepo(t, suite)
+	t.Cleanup(func() { logLoopProcessFailure(t, suite) })
+
+	parkedID, queuedID, laterID := "a-parked-at-the-cap", "b-queued-after-the-cap", "c-queued-after-a-restart"
+	seedLoopProcessTask(t, suite.layout.Repo, parkedID)
+	seedLoopProcessTask(t, suite.layout.Repo, queuedID)
+	work := loopRecoveryTarget("claude", "work-model", "work")
+	signoff := loopRecoveryTarget("claude", "signoff-model", "work")
+	writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{signoff}, nil, 1)
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: parkedID, Attempts: []loopProcessAttempt{{TaskID: parkedID, Target: work, Stage: "work", Result: "complete"}}},
+	})
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), wait.Deadline)
+	first := procharness.Run(firstCtx, procharness.Command{
+		Path: suite.coopBin, Args: []string{"loop", work, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
+		Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
+	})
+	firstCancel()
+	if first.Err != nil || first.ExitCode != 0 || !strings.Contains(first.Stderr, "Final review remains pending") {
+		t.Fatalf("bounded first process = exit %d err %v\nstdout:\n%s\nstderr:\n%s", first.ExitCode, first.Err, first.Stdout, first.Stderr)
+	}
+	resetFixtureWorkFile := func() {
+		if err := os.Remove(filepath.Join(suite.layout.Repo, "loop-claude.txt")); err != nil {
+			t.Fatal(err)
+		}
+		loopProcessGit(t, suite, "add", "-u")
+		loopProcessGit(t, suite, "commit", "-qm", "reset fixture work file between runs")
+	}
+	resetFixtureWorkFile()
+
+	// The resumed review reopens its only subject in its last allowed round, which parks it.
+	attempts := []loopProcessAttempt{
+		{TaskID: parkedID, Target: signoff, Stage: "signoff", Result: "reopen"},
+		{TaskID: queuedID, Target: work, Stage: "work", Result: "complete"},
+		{TaskID: queuedID, Target: signoff, Stage: "signoff", Result: "pass"},
+	}
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: parkedID, Attempts: attempts},
+	})
+	second := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+	if second.Err != nil || second.ExitCode != 3 ||
+		!strings.Contains(second.Stderr, "Review limit reached") ||
+		!strings.Contains(second.Stderr, "blocked for your decision: 1 task. Continuing with the current queue.") ||
+		!strings.Contains(second.Stdout+second.Stderr, "Stopped for your decision") ||
+		strings.Contains(second.Stderr, "Final review left") {
+		t.Fatalf("capped resumed review = exit %d err %v\nstdout:\n%s\nstderr:\n%s", second.ExitCode, second.Err, second.Stdout, second.Stderr)
+	}
+	blocked := filepath.Join(suite.layout.Repo, tasksRoot, stateBlocked, parkedID)
+	decision, err := os.ReadFile(filepath.Join(blocked, "decision.md"))
+	if err != nil || !strings.Contains(string(decision), "with 1 other task still in the queue") || strings.Contains(string(decision), "drained") {
+		t.Fatalf("parked decision = %q, %v", decision, err)
+	}
+	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, queuedID)) {
+		t.Fatal("the capping run did not go on to the queued task")
+	}
+	parkedRecord := func() bool {
+		registry := processLeaseAuthorityRoot(suite.layout)
+		entries, err := os.ReadDir(registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".pending-review.json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(registry, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), `"id":"`+parkedID+`"`) && strings.Contains(string(data), `"phase":"reopened"`) {
+				return true
+			}
+		}
+		return false
+	}
+	if !parkedRecord() {
+		t.Fatal("the parked task lost its pending review debt")
+	}
+
+	// Every later start with that record and new todo work, the live repro, works the queue too.
+	resetFixtureWorkFile()
+	seedLoopProcessTask(t, suite.layout.Repo, laterID)
+	attempts = []loopProcessAttempt{
+		{TaskID: laterID, Target: work, Stage: "work", Result: "complete"},
+		{TaskID: laterID, Target: signoff, Stage: "signoff", Result: "pass"},
+	}
+	suite.reset(t, loopProcessScenario{
+		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: laterID, Attempts: attempts},
+	})
+	third := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
+	if third.Err != nil || third.ExitCode != 3 || strings.Contains(third.Stderr, "Resuming final review") ||
+		!strings.Contains(third.Stdout+third.Stderr, "Stopped for your decision") {
+		t.Fatalf("restart beside parked debt = exit %d err %v\nstdout:\n%s\nstderr:\n%s", third.ExitCode, third.Err, third.Stdout, third.Stderr)
+	}
+	if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateDone, laterID)) || !pathExists(blocked) || !parkedRecord() {
+		t.Fatal("the restart did not work the queue beside the parked task and its debt")
+	}
+}

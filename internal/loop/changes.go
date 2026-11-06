@@ -289,6 +289,12 @@ func (h *loopHealth) noteReopen(ids []string) {
 	}
 }
 
+// wasReopened reports whether a signoff or verification of this run reopened the task.
+func (h *loopHealth) wasReopened(id string) bool {
+	th, ok := h.byTask[id]
+	return ok && th.reopens > 0
+}
+
 // noteIteration folds one work iteration's gate-file warnings into the tasks it finished.
 func (h *loopHealth) noteIteration(finished, gateFiles []string) {
 	for _, id := range finished {

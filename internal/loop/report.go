@@ -24,10 +24,12 @@ import (
 // it, the subproject scope it belongs to (empty at the repo root) and — where the report describes
 // what is LEFT to do — the queue state it is actually in. Completions are recorded as they are
 // accepted, so the closing report describes work that landed rather than what a commit range
-// happens to contain.
+// happens to contain. reopened marks a task a review sent back, the only kind the closing report
+// may call "back" in the queue.
 type taskLine struct {
 	id, title, scope, state string
 	doneSubtasks, subtasks  int
+	reopened                bool
 }
 
 func taskReportLine(item tasks.Item, scope string) taskLine {

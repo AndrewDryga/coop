@@ -79,6 +79,77 @@ func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A subject the round cap parked in 50_blocked/ keeps its debt but leaves the cohort: it cannot be
+// reviewed until a person unblocks it, so it must not hold the rest of the queue or clash with the
+// next run's plan. Every 2026-11-05 loop start stopped on such a record until a human answered it.
+func TestPendingReviewParksABlockedSubjectOutsideTheCohort(t *testing.T) {
+	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	reopenForRework(t, repo, root, done)
+	reopened, _ := mustCurrentTask(t, root, done.ID)
+	if err := MoveTaskDir(root, reopened, StateBlocked); err != nil {
+		t.Fatal(err)
+	}
+	cohort, err := LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 0 || len(cohort.Parked) != 1 ||
+		cohort.Parked[0].Task.Ref.ID != done.ID || cohort.Parked[0].Phase != PendingReviewReopened {
+		t.Fatalf("cohort = %+v, %v; want the blocked subject parked outside it", cohort, err)
+	}
+	if ids := cohort.IDs(); len(ids) != 1 || ids[0] != done.ID {
+		t.Fatalf("cohort ids = %v, want the parked subject for authority carries", ids)
+	}
+
+	// The next run's completion starts its own cohort beside the parked debt.
+	later := taskWithCompletedChecklist(t, root, StateDone, "z-later")
+	writeTaskFile(t, filepath.Join(repo, "later.txt"), "later\n")
+	git(t, repo, "add", "later.txt")
+	git(t, repo, "commit", "-qm", "later work\n\nCoop-Task: z-later")
+	if err := CompleteTrustedTask("", root, later); err != nil {
+		t.Fatal(err)
+	}
+	newer := plan
+	newer.CohortID = strings.Repeat("ab", 16)
+	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{"z-later"}, newer); err != nil {
+		t.Fatal(err)
+	}
+	cohort, err = LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != "z-later" ||
+		!pendingReviewPlanEqual(cohort.Plan, newer) || len(cohort.Parked) != 1 {
+		t.Fatalf("cohort beside parked debt = %+v, %v", cohort, err)
+	}
+	// Settle the newer cohort as an accepted review would, by dropping its record.
+	name, err := pendingReviewRecordName(root, "z-later")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := leaseAuthorityRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(registry, name)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The debt survived: unblocking brings the task back as a reopened subject of its own plan.
+	if _, ok, err := readPendingReviewRecord(root, done.ID); err != nil || !ok {
+		t.Fatalf("parked record = %v, %v; want it kept", ok, err)
+	}
+	blocked, _ := mustCurrentTask(t, root, done.ID)
+	if err := resolveAndUnblock(repo, root, blocked, "fix the gate"); err != nil {
+		t.Fatal(err)
+	}
+	cohort, err = LoadPendingReviews(repo, []string{root})
+	if err != nil || len(cohort.Subjects) != 1 || cohort.Subjects[0].Task.Ref.ID != done.ID ||
+		cohort.Subjects[0].Phase != PendingReviewReopened || !pendingReviewPlanEqual(cohort.Plan, plan) || len(cohort.Parked) != 0 {
+		t.Fatalf("cohort after unblock = %+v, %v", cohort, err)
+	}
+}
+
 func TestPendingReviewBranchReadErrorsAreNotBranchLoss(t *testing.T) {
 	repo, root, base, assignment, _, plan := pendingReviewTestCompletion(t)
 	t.Cleanup(func() { _ = assignment.Lease.Release() })

@@ -691,6 +691,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	resumingPendingReview := len(pendingReview.Subjects) > 0
 	pendingReopened := pendingReviewIDs(pendingReview, tasks.PendingReviewReopened)
+	earlierReopened := slices.Clone(pendingReopened) // reopened by an earlier run's review
 	announcePendingFinalReview(
 		pendingReviewIDs(pendingReview, tasks.PendingReviewSignoff, tasks.PendingReviewVerify),
 		continueCmd,
@@ -772,6 +773,12 @@ reviewAgain:
 			if assignment.Outcome == tasks.AssignmentDrained {
 				if limit.scope() != "" {
 					continue // the selected task settled between scans; observe and count its final state
+				}
+				if resumingPendingReview && len(pendingReopened) > 0 && onlyID == pendingReopened[0] {
+					// The reopened subject is no longer workable, typically parked in 50_blocked/ for a
+					// person; its record keeps the debt. Work the next reopened subject instead.
+					pendingReopened = pendingReopened[1:]
+					continue
 				}
 				break
 			}
@@ -1317,7 +1324,7 @@ reviewAgain:
 			if lease.Reopen != nil && iterHead != headAfter {
 				// Accepted rework replays the commits after its own, which other reopened tasks' audit
 				// authority records by commit ID.
-				if err := tasks.CarryReopenedReviews(repo, hosts, pendingReviewIDs(pendingReview), iterHead, lease.Reopen); err != nil {
+				if err := tasks.CarryReopenedReviews(repo, hosts, pendingReview.IDs(), iterHead, lease.Reopen); err != nil {
 					releaseErr := errors.Join(lease.Release(), windows.Close())
 					refRelease()
 					return 1, errors.Join(fmt.Errorf("keep final-review authority across the rework of task %s: %w", assigned.Item.ID, err), releaseErr)
@@ -1940,16 +1947,19 @@ reviewAgain:
 			}
 		}
 	}
-	if resumingPendingReview && !reviewCapped && !verificationFailed && !softStop.Load() && iterCtx.Err() == nil {
+	// A resumed review that parked its last unsettled subjects at the round cap is settled too: those
+	// tasks wait in 50_blocked/ with their debt and decision, and the unrelated queue goes on.
+	if resumingPendingReview && !verificationFailed && !softStop.Load() && iterCtx.Err() == nil {
 		remaining, pendingErr := tasks.LoadPendingReviews(repo, hosts)
 		if pendingErr != nil {
 			return 1, fmt.Errorf("validate resumed final review: %w", pendingErr)
 		}
 		if len(remaining.Subjects) == 0 {
-			// The older cohort is fully receipt-accepted. Restore this invocation's settings before
-			// touching unrelated queue work, and give new completions their own run-anchored cohort.
+			// The older cohort is fully receipt-accepted or parked. Restore this invocation's settings
+			// before touching unrelated queue work, and give new completions their own run-anchored cohort.
 			resumingPendingReview = false
-			pendingReview = tasks.PendingReviewCohort{}
+			reviewCapped = false
+			pendingReview = tasks.PendingReviewCohort{Parked: remaining.Parked}
 			pendingReopened = nil
 			lc.Signoff, lc.Verify = currentSignoff, currentVerify
 			lc.Signoff.Agent = slices.Clone(currentSignoff.Agent)
@@ -1986,7 +1996,11 @@ reviewAgain:
 			}
 			signoffRound, maxReviewRounds = 1, 0
 			if c0.Todo+c0.Doing > 0 {
-				ui.Note("The earlier final review is settled. Continuing with the current queue.")
+				if len(remaining.Parked) > 0 {
+					ui.Note("The earlier final review is settled; blocked for your decision: %s. Continuing with the current queue.", ui.Count(len(remaining.Parked), "task"))
+				} else {
+					ui.Note("The earlier final review is settled. Continuing with the current queue.")
+				}
 				goto reviewAgain
 			}
 		}
@@ -2034,6 +2048,9 @@ reviewAgain:
 	actionable, blocked, err := queueTaskLines(hosts, scopes)
 	if err != nil {
 		return 1, err
+	}
+	for i := range actionable {
+		actionable[i].reopened = health.wasReopened(actionable[i].id) || slices.Contains(earlierReopened, actionable[i].id)
 	}
 	cleanupServices()
 	c.closeWith(func() {

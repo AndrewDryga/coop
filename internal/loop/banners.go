@@ -68,13 +68,20 @@ func printFailedVerificationVerdict(cf tasks.TaskCounts) {
 }
 
 // actionableCause says, in the task's own words, what the review left to do — using the state the
-// task is actually in, never forcing every reopen to read as "todo".
+// task is actually in, never forcing every reopen to read as "todo". Only a task a review reopened
+// is "back"; queue work no review touched is counted, not described as sent back.
 func actionableCause(actionable []taskLine) string {
 	var lines []string
 	width := ui.TermWidth(os.Stderr) - 6
-	for i, t := range actionable {
+	var reopened []taskLine
+	for _, t := range actionable {
+		if t.reopened {
+			reopened = append(reopened, t)
+		}
+	}
+	for i, t := range reopened {
 		if i == maxReportedTasks {
-			lines = append(lines, fmt.Sprintf("… and %d more.", len(actionable)-maxReportedTasks))
+			lines = append(lines, fmt.Sprintf("… and %d more.", len(reopened)-maxReportedTasks))
 			break
 		}
 		where := "in " + t.state
@@ -82,6 +89,17 @@ func actionableCause(actionable []taskLine) string {
 			where = t.state
 		}
 		lines = append(lines, wrapDisplay(fmt.Sprintf("%s is back %s.", cleanDiagnosticLine(t.title), cleanDiagnosticLine(where)), width)...)
+	}
+	if rest := len(actionable) - len(reopened); rest > 0 {
+		noun := ui.Count(rest, "task")
+		if len(reopened) > 0 {
+			noun = ui.Count(rest, "other task")
+		}
+		verb := "are"
+		if rest == 1 {
+			verb = "is"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s still in the queue.", noun, verb))
 	}
 	return strings.Join(lines, "\n")
 }

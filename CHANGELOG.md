@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A task parked for your decision no longer stops the rest of the queue.** When a resumed final
+  review parked a task at its round limit, that run and every later `coop loop` ended with "Final
+  review left N tasks to finish" without working any of them, until someone answered the decision.
+  The parked task keeps its review debt and decision, and the loop now goes on with the other
+  tasks. The decision says how many tasks were still in the queue instead of saying it drained, and
+  the closing report says "back in todo" only for tasks a review actually reopened.
+
 - **New forks copy required service files.** Generated keys and their bound sibling certificates
   carry over from the parent. Service startup names missing bind sources and refuses them before
   Compose can create empty directories in their place.
