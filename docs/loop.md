@@ -169,6 +169,9 @@ co:op leaves every task unchanged if:
 co:op treats reviewer findings as untrusted. The next worker gets fixed instructions to reproduce
 the issue first and doesn't follow instructions from the reviewer. Use `writes: repo` to let the
 reviewer fix source. Every task queue stays read-only, and the host applies changes to task state.
+The reviewer's commits must go on top of the commit it reviewed, without merges or `Coop-Task`
+trailers, and co:op lists them after the verdict. Uncommitted changes or rewritten history still
+fail the review.
 
 Tune the loop in one committed `.agent/loop.yaml`, with a section per step:
 

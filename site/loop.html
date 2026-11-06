@@ -270,7 +270,10 @@ permissions, and asks only for the verdict in the right format. It doesn&#39;t r
 </ul>
 <p>co:op treats reviewer findings as untrusted. The next worker gets fixed instructions to reproduce
 the issue first and doesn&#39;t follow instructions from the reviewer. Use <code>writes: repo</code> to let the
-reviewer fix source. Every task queue stays read-only, and the host applies changes to task state.</p>
+reviewer fix source. Every task queue stays read-only, and the host applies changes to task state.
+The reviewer&#39;s commits must go on top of the commit it reviewed, without merges or <code>Coop-Task</code>
+trailers, and co:op lists them after the verdict. Uncommitted changes or rewritten history still
+fail the review.</p>
 <p>Tune the loop in one committed <code>.agent/loop.yaml</code>, with a section per step:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Final review table"><table class="ref">
 <thead>

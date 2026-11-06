@@ -494,8 +494,8 @@ func TestReviewTaskQueueSnapshotPreservesSubjectEvidenceWithoutArchivedBulk(t *t
 		}
 	}
 	mounts, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir(), []string{"review-subject"})
-	if err != nil || len(mounts) != 1 || len(snapshots) != 1 {
-		t.Fatalf("task queue snapshot = %v, %v, %v", mounts, snapshots, err)
+	if err != nil || len(mounts) != 1 || len(snapshots) != 2 || snapshots[1] != mounts[0].Source {
+		t.Fatalf("task queue snapshot = %v, %v, %v; want the mounted tree listed beside its parent", mounts, snapshots, err)
 	}
 	defer os.RemoveAll(snapshots[0])
 	for _, rel := range []string{"README.md", "10_in_progress/current/task.md", "10_in_progress/current/artifacts/evidence.txt", "99_done/old/task.md", "99_done/review-subject/artifacts/evidence.txt", "99_done/review-subject/screenshots/page.png"} {

@@ -2394,6 +2394,9 @@ func ValidCompanionName(name string) bool {
 	return true
 }
 
+// repoReadOnlyPathMounts mounts each path read-only from a private snapshot under artifactParent.
+// It also returns every directory it made, each snapshot's temporary parent and the tree inside it:
+// Run removes them afterwards and admits them as generated directories in a filtered launch.
 func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent string, subjectIDs []string) ([]Mount, []string, error) {
 	if artifactParent == "" {
 		return nil, nil, errors.New("read-only repository paths require a private artifact directory")
@@ -2482,6 +2485,9 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 		if copyErr != nil {
 			return fail(fmt.Errorf("snapshot read-only repository path %q: %w", path, copyErr))
 		}
+		// The tree is what mounts: unlisted, a filtered launch refuses it as a bind inside coop's
+		// network records.
+		snapshots = append(snapshots, snapshot)
 		mounts = append(mounts, Mount{
 			Kind: Bind, Source: snapshot, Target: target, RO: true,
 		})

@@ -105,6 +105,8 @@ type reviewRunResult struct {
 	// concurrent holds non-subject tasks a parallel host controller completed while a review
 	// window was open. They must enter later signoff bookkeeping rather than be absorbed.
 	concurrent []string
+	// commits are the ones a repository-writable review added, oldest first.
+	commits []string
 }
 
 func interruptedReviewResult(last reviewRunResult, retries int) reviewRunResult {
@@ -377,20 +379,38 @@ func snapshotReviewSource(repo string) (reviewSourceSnapshot, error) {
 }
 
 func validateReviewSource(repo string, snapshot reviewSourceSnapshot) error {
-	return validateReviewSourceAfterConcurrent(repo, snapshot, false)
+	_, err := validateReviewSourceAfterConcurrent(repo, snapshot, nil, "", loopcfg.ReviewWritesTasks)
+	return err
 }
 
-func validateReviewSourceAfterConcurrent(repo string, snapshot reviewSourceSnapshot, concurrent bool) error {
+var errReviewSourceChanged = errors.New("review source changed after the reviewer returned")
+
+// validateReviewSourceAfterConcurrent checks the checkout a review left against its snapshot.
+// Uncommitted tracked changes are never accepted. A completion observed by the host-owned review
+// window may advance HEAD: the loop enrolls that task into the next review round. Only a
+// repository-writable review may move HEAD otherwise, by adding commits that pass
+// tasks.ReviewCommits; it returns those commits, the review's own. runBase is the run's recorded base.
+func validateReviewSourceAfterConcurrent(repo string, snapshot reviewSourceSnapshot, concurrent []string, runBase string, writes loopcfg.ReviewWrites) ([]string, error) {
 	current, err := snapshotReviewSource(repo)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// A completion observed by the host-owned review window may advance HEAD. The loop enrolls
-	// that task into the next review round; uncommitted tracked changes are never accepted.
-	if current.trackedState != snapshot.trackedState || (!concurrent && current.head != snapshot.head) {
-		return errors.New("review source changed after the reviewer returned")
+	switch {
+	case current.trackedState != snapshot.trackedState:
+		return nil, errReviewSourceChanged
+	case current.head == snapshot.head:
+		return nil, nil
+	case !writes.RepositoryWritable():
+		if len(concurrent) > 0 {
+			return nil, nil
+		}
+		return nil, errReviewSourceChanged
 	}
-	return nil
+	commits, err := tasks.ReviewCommits(repo, runBase, snapshot.head, current.head, concurrent)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errReviewSourceChanged, err)
+	}
+	return commits, nil
 }
 
 func snapshotReviewSubjects(hosts, subjects []string) ([]reviewSubjectSnapshot, error) {
@@ -526,12 +546,25 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 	if head != "" && sourceSnapshot.head != head {
 		return reviewRunResult{target: rev.Active()}, fmt.Errorf("%w: HEAD moved from %s to %s after the final-review round recorded what it covers", tasks.ErrCompletionWindowSetup, head, sourceSnapshot.head)
 	}
+	runBase := ""
+	if pendingReview != nil {
+		runBase = pendingReview.BaseHead
+	}
 	start, headBefore := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 	run, runErr := c.runReview(ctx, repo, img, rev, forkName, prompt, activity, reviewCmd, hosts, subjects, pendingReview, writes, sink, peers, wake, observe)
 	run.output = normalizeReviewVerdictOutput(run.output)
+	// checkSource audits the checkout the review left and records the commits it added as its own.
+	checkSource := func() error {
+		commits, err := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, run.concurrent, runBase, writes)
+		if err != nil {
+			return fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, err)
+		}
+		run.commits = commits
+		return nil
+	}
 	if runErr == nil {
-		if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
-			runErr = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		if snapshotErr := checkSource(); snapshotErr != nil {
+			runErr = snapshotErr
 		} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
 			runErr = fmt.Errorf("%w: review subjects changed before verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		} else {
@@ -545,6 +578,9 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 		}
 	}
 	if runErr == nil || !errors.Is(runErr, errReviewVerdictMalformed) {
+		if runErr == nil {
+			noteReviewCommits(repo, run.commits)
+		}
 		if observe != nil {
 			observe(run, start, headBefore)
 		}
@@ -556,15 +592,15 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 	if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
 		return run, fmt.Errorf("%w: review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 	}
-	if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
-		return run, fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+	if snapshotErr := checkSource(); snapshotErr != nil {
+		return run, snapshotErr
 	}
 	ui.Alert("The review result could not be read", fmt.Sprintf("%v\nRequesting one format-only correction in the same reviewer session.", runErr))
 	correction := reviewVerdictCorrection(runErr, run.output, subjects)
 	run, runErr = c.runReviewCorrection(ctx, repo, img, rev, forkName, correction, activity, reviewCmd, run, hosts, subjects, pendingReview, writes, sink, peers)
 	if runErr == nil {
-		if snapshotErr := validateReviewSourceAfterConcurrent(repo, sourceSnapshot, len(run.concurrent) > 0); snapshotErr != nil {
-			runErr = fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		if snapshotErr := checkSource(); snapshotErr != nil {
+			runErr = snapshotErr
 		} else if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
 			runErr = fmt.Errorf("%w: review subjects changed before corrected verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		} else {
@@ -577,10 +613,30 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 			}
 		}
 	}
+	if runErr == nil {
+		noteReviewCommits(repo, run.commits)
+	}
 	if observe != nil {
 		observe(run, start, headBefore)
 	}
 	return run, runErr
+}
+
+// noteReviewCommits names the commits a repository-writable review added, so the person sees what
+// the reviewer changed beside its verdict.
+func noteReviewCommits(repo string, commits []string) {
+	if len(commits) == 0 {
+		return
+	}
+	const shown = 5 // a box can make any number
+	lines := strings.Split(forkspace.GitOut(repo, append([]string{"log", "--no-walk=unsorted", "--format=%h %s"}, commits[:min(shown, len(commits))]...)...), "\n")
+	for i := range lines {
+		lines[i] = truncate(ui.SafeInline(lines[i]), 72)
+	}
+	if len(commits) > shown {
+		lines = append(lines, fmt.Sprintf("and %d more", len(commits)-shown))
+	}
+	ui.Note("The reviewer added %s: %s.", ui.Count(len(commits), "commit"), strings.Join(lines, "; "))
 }
 
 // runCandidateReviewVerdict runs the same provider/error/receipt boundary as final review without

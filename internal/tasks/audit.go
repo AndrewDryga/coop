@@ -3060,6 +3060,66 @@ func AttemptBindingsRefused(repo, runBase, base, head, assigned string, touched 
 	return scan.tolerated, scan.refused
 }
 
+// ReviewCommits checks the commits a repository-writable review (writes: repo) left on top of base,
+// the HEAD it started from, and returns the review's own, oldest first. They must extend base
+// without rewriting or merging, and they pass the binding scan every work attempt passes, with one
+// difference: a review binds no task, so a trailer an attempt may carry for a task it never touched
+// is refused too. concurrent names completions another session landed during the review: their own
+// commits may share the range, are not the review's, and the next round reviews them.
+func ReviewCommits(repo, runBase, base, head string, concurrent []string) ([]string, error) {
+	if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", base, head); err != nil {
+		return nil, fmt.Errorf("HEAD no longer contains commit %s, where the review started", shortCommit(base))
+	}
+	listed, err := forkspace.GitOutErr(repo, "rev-list", "--reverse", "--parents", base+".."+head)
+	if err != nil {
+		return nil, fmt.Errorf("could not read the review's commits: %w", err)
+	}
+	scan, ok := scanTaskBindings(repo, base, head, runBase, allowedTasks(concurrent), nil)
+	if !ok {
+		return nil, errors.New(strings.Join(scan.refused, "; "))
+	}
+	var problems []string
+	for _, id := range scan.tolerated {
+		if commits := CommitsForTask(repo, base+".."+head, id); len(commits) > 0 {
+			problems = append(problems, fmt.Sprintf("commit %s binds task %s, and a review binds no task", shortCommits(commits), bindingLabel(id)))
+		} else {
+			problems = append(problems, fmt.Sprintf("a commit binds task %s, and a review binds no task", bindingLabel(id)))
+		}
+	}
+	theirs := map[string]bool{}
+	for _, id := range concurrent {
+		if len(scan.newBound[id]) == 0 {
+			continue
+		}
+		// A second binding beside the completion's own would let the review bind its task too.
+		if scan.invalid[id] != "" || scan.reachable[id] != 1 {
+			problems = append(problems, fmt.Sprintf("task %s, which another session completed during the review, does not have exactly one commit", bindingLabel(id)))
+			continue
+		}
+		for _, sha := range scan.newBound[id] {
+			theirs[sha] = true
+		}
+	}
+	var reviewer []string
+	for _, line := range strings.Split(listed, "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) == 0:
+		case len(fields) > 2:
+			problems = append(problems, fmt.Sprintf("commit %s is a merge, and a review may only add commits on top", shortCommit(fields[0])))
+		case !theirs[fields[0]]:
+			reviewer = append(reviewer, fields[0])
+		}
+	}
+	if len(problems) > 0 {
+		if len(problems) > bindingProblemsShown {
+			problems = append(problems[:bindingProblemsShown], fmt.Sprintf("%d more problems like these", len(problems)-bindingProblemsShown))
+		}
+		return nil, errors.New(strings.Join(problems, "; "))
+	}
+	return reviewer, nil
+}
+
 // taskBindingScan is what one walk over the Coop-Task trailers head reaches learns about allowed
 // ids, split at base.
 type taskBindingScan struct {

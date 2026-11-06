@@ -133,6 +133,14 @@
   rework, completing it, `coop tasks done` and the signing pass now refuse such a commit for every
   reopened task, and name the commits Git reads.
 
+- **`signoff.writes: repo` reviews now run and keep the reviewer's fixes.** In the default filtered
+  mode the review box never started ("coop's network records must live outside every directory an
+  agent can reach"), and with `--egress open` any commit the reviewer made failed the review with
+  "review source changed after the reviewer returned". The reviewer's commits are now accepted when
+  they go on top of the commit it reviewed, with no merge and no `Coop-Task` trailer, and the loop
+  lists them after the verdict. Uncommitted changes and rewritten history still fail the review,
+  and `writes: tasks` still refuses any commit.
+
 - **`coop loop --peer` counts each consultation and keeps the peer when you continue.** A loop with
   `--peer` recorded no peer usage, so the closing cost summary missed every consultation; only
   preset loops recorded it. Each consultation now adds its row, and one the box cannot record says

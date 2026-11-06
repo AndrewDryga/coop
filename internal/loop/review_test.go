@@ -228,6 +228,92 @@ func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
 	}
 }
 
+// A writes: repo reviewer may fix source, so its verdict stands over the commits it added on top of
+// the HEAD it reviewed, and the loop names them as the reviewer's. Before, any commit failed the
+// completion audit, so such a review could never pass. The commits still pass the loop's binding
+// and range checks, any other change to the checkout fails the review as before, and a report-only
+// review (writes: tasks) still refuses every commit.
+func TestRepositoryWritableReviewKeepsOnlyItsOwnCommits(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	commit := func(message string) func(string, func(...string)) {
+		return func(repo string, git func(...string)) {
+			writeTaskFile(t, filepath.Join(repo, "notes.txt"), "reviewed\n")
+			git("add", "notes.txt")
+			git("commit", "-qm", message)
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		writes loopcfg.ReviewWrites
+		change func(repo string, git func(...string))
+		refuse string // "" accepts the review; else part of the refusal
+	}{
+		{"its own commit", loopcfg.ReviewWritesRepo, commit("QA review edit"), ""},
+		{"report-only review", loopcfg.ReviewWritesTasks, commit("QA review edit"), "review source changed after the reviewer returned"},
+		{"uncommitted change", loopcfg.ReviewWritesRepo, func(repo string, _ func(...string)) {
+			writeTaskFile(t, filepath.Join(repo, "source.go"), "package changed\n")
+		}, "review source changed after the reviewer returned"},
+		{"rewritten history", loopcfg.ReviewWritesRepo, func(_ string, git func(...string)) {
+			git("commit", "--amend", "-qm", "base, rewritten")
+		}, "HEAD no longer contains commit"},
+		{"task binding", loopcfg.ReviewWritesRepo, commit("QA review edit\n\nCoop-Task: task-a"), "binds task task-a, and a review binds no task"},
+		{"merge", loopcfg.ReviewWritesRepo, func(repo string, git func(...string)) {
+			git("checkout", "-qb", "side")
+			commit("side work")(repo, git)
+			git("checkout", "-q", "main")
+			git("merge", "-q", "--no-ff", "-m", "merge side", "side")
+		}, "is a merge, and a review may only add commits on top"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			writeTaskFile(t, filepath.Join(repo, "source.go"), "package source\n")
+			git("add", ".gitignore", "source.go")
+			git("commit", "-qm", "base")
+			task := taskForLease(t, repo, stateDone, "task-a")
+			head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+
+			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+			c.net = newNetworkLog()
+			c.runID = "writes-test"
+			c.boxRun = func(spec box.RunSpec) (int, error) {
+				if spec.RepoReadOnly == tc.writes.RepositoryWritable() {
+					t.Fatalf("review box read-only = %t for writes %q", spec.RepoReadOnly, tc.writes)
+				}
+				tc.change(repo, git)
+				verdict := "AUDIT EVIDENCE — task-a — gate: focused tests passed — findings: none\nREVIEW COMPLETE — PASS — reopened: none"
+				_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", verdict)
+				_, _ = io.WriteString(spec.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1,\"duration_ms\":1}\n")
+				return 0, nil
+			}
+			command := func(_ string, prompt, _ string, _ bool) ([]string, bool, bool) {
+				return []string{"claude", "-p", prompt}, true, true
+			}
+			rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
+			var run reviewRunResult
+			var err error
+			output := captureStderr(t, func() {
+				run, err = c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
+					[]string{repo}, []string{task.ID}, head, nil, tc.writes, io.Discard, nil, nil, nil)
+			})
+			if tc.refuse != "" {
+				if err == nil || !errors.Is(err, tasks.ErrCompletionWindowAudit) || !strings.Contains(err.Error(), tc.refuse) {
+					t.Fatalf("review = %v, want the completion audit to refuse it with %q", err, tc.refuse)
+				}
+				return
+			}
+			after := forkspace.GitOut(repo, "rev-parse", "HEAD")
+			if err != nil || len(run.reopened) != 0 || len(run.commits) != 1 || run.commits[0] != after {
+				t.Fatalf("review = commits %q reopened %q err %v, want the reviewer's commit %s accepted", run.commits, run.reopened, err, after)
+			}
+			if !strings.Contains(output, "The reviewer added 1 commit: "+after[:7]+" QA review edit.") {
+				t.Fatalf("the reviewer's commit was not named:\n%s", output)
+			}
+		})
+	}
+}
+
 // A candidate review whose box's services did not start reviewed nothing. Its attempt is retried
 // like any failed review attempt; when every attempt fails that way, it says the review could not
 // start, never that it did not pass.
@@ -399,8 +485,46 @@ func TestReviewSourceSnapshotRejectsHeadAndTrackedChanges(t *testing.T) {
 	if err := validateReviewSource(repo, snapshot); err == nil {
 		t.Fatal("HEAD change preserved a stale review snapshot")
 	}
-	if err := validateReviewSourceAfterConcurrent(repo, snapshot, true); err != nil {
+	if _, err := validateReviewSourceAfterConcurrent(repo, snapshot, []string{"concurrent-task"}, "", loopcfg.ReviewWritesTasks); err != nil {
 		t.Fatalf("host-observed concurrent commit rejected: %v", err)
+	}
+}
+
+// A completion another session lands during a writes: repo review shares the review's range. Its
+// commit belongs to that task, which the next round reviews; only the other commits are the
+// reviewer's. Without the host's word for that completion, its trailer is a binding the review made.
+func TestRepositoryWritableReviewSharesItsRangeWithAConcurrentCompletion(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	commit := func(name, message string) {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", name)
+		git("commit", "-qm", message)
+	}
+	commit("source.go", "base")
+	snapshot, err := snapshotReviewSource(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit("other.go", "Other work\n\nCoop-Task: other-task")
+	commit("notes.txt", "QA review edit")
+	reviewer := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	commits, err := validateReviewSourceAfterConcurrent(repo, snapshot, []string{"other-task"}, "", loopcfg.ReviewWritesRepo)
+	if err != nil || len(commits) != 1 || commits[0] != reviewer {
+		t.Fatalf("review commits = %q, %v; want only the reviewer's %s", commits, err, reviewer)
+	}
+	if _, err := validateReviewSourceAfterConcurrent(repo, snapshot, nil, "", loopcfg.ReviewWritesRepo); err == nil ||
+		!strings.Contains(err.Error(), "binds task other-task, and a review binds no task") {
+		t.Fatalf("an unobserved completion's trailer = %v, want it refused as the review's binding", err)
+	}
+	// Nor can the review bind that task a second time behind the completion's own commit.
+	commit("more.txt", "QA review edit\n\nCoop-Task: other-task")
+	if _, err := validateReviewSourceAfterConcurrent(repo, snapshot, []string{"other-task"}, "", loopcfg.ReviewWritesRepo); err == nil ||
+		!strings.Contains(err.Error(), "does not have exactly one commit") {
+		t.Fatalf("a second binding for the concurrent task = %v, want it refused", err)
 	}
 }
 

@@ -130,7 +130,14 @@ repository source writable, then overlays every real queue root with a nested re
 Task lifecycle is report-only in the prompt and successful verdicts are applied by the host.
 Queue paths are validated as real in-repository directories before the runtime starts.
 An absent configured queue fails with an actionable error instead of letting Docker create a
-root-owned nested bind destination in the host checkout.
+root-owned nested bind destination in the host checkout. Each snapshot's mounted `tree` is listed
+with its parent among the run's generated directories: a filtered launch admits only those, and
+it refused an unlisted tree as a bind inside coop's network records. After the review, its commits
+must extend the HEAD it started from without merges and pass the work loop's binding scan with
+every `Coop-Task` trailer refused (`tasks.ReviewCommits`); only a concurrent host completion's own
+commit may bind in that range. The loop names the reviewer's commits after the verdict.
+Uncommitted tracked changes still fail any review, and `writes: tasks` still refuses every HEAD
+move but a concurrent completion's.
 
 Commit trailers describe task changes but do not authorize review. A work iteration is rejected if
 it introduces a binding for any task other than its assigned task. Final signoff and verify can act
@@ -144,6 +151,9 @@ back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-11-06 — `writes: repo` works: a filtered launch admits the queue snapshot tree, and the
+  completion audit keeps a reviewer's own commits after the binding and range checks instead of
+  refusing every commit (task 2026-11-06-make-signoff-writes-repo-work-in-filtered-and-op).
 - 2026-11-06 — every check of an ordinary record reads Git's trailers too, not only a moved
   record's (task 2026-11-06-make-every-audit-reopen-check-read-git-s-trailer).
 - 2026-11-06 — a person's unblock moves a reopened task's record past commits that leave the task

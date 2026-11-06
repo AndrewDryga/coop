@@ -399,3 +399,33 @@ func TestFilteredReadinessPreservesCallerCancellation(t *testing.T) {
 		}
 	}
 }
+
+// A repository-writable review (signoff.writes: repo) keeps its task queues read-only through a
+// private snapshot of each one. A filtered run makes that snapshot among the run's generated files, so
+// the launch plan must admit it as one: before, the plan refused it as a mount inside coop's network
+// records, and the review box never started.
+func TestFilteredRepositoryWritableReviewMountsItsQueueSnapshot(t *testing.T) {
+	f, _ := filteredFixture(t)
+	repo := f.record.Project
+	queue := filepath.Join(repo, ".agent", "tasks")
+	writeCopyFixture(t, filepath.Join(queue, "99_done", "subject", "task.md"), "# Subject\n")
+	protected, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, f.runfiles, []string{"subject"})
+	if err != nil || len(protected) != 1 {
+		t.Fatalf("queue snapshot = %v, %v", protected, err)
+	}
+	t.Cleanup(func() {
+		for _, dir := range snapshots {
+			_ = os.RemoveAll(dir)
+		}
+	})
+	mounts := append([]Mount{{Kind: Bind, Source: repo, Target: "/workspace"}}, protected...)
+	spec := RunSpec{Image: f.image, Repo: repo, Workdir: "/workspace"}
+	options := assembleOptions(&config.Config{HomeInBox: "/home/node"}, false, spec, mounts, "", "", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	// Run adds these directories to tmpDirs, every one of which a filtered launch admits as generated.
+	if err := f.validateMounts(options, nil, snapshots); err != nil {
+		t.Fatalf("filtered plan refused the review's read-only queue snapshot: %v\n%q", err, options)
+	}
+	if !slices.Contains(options, protected[0].Source+":/workspace/.agent/tasks:ro") {
+		t.Fatalf("the task queue is not mounted read-only from its snapshot: %q", options)
+	}
+}
