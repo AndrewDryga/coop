@@ -4931,26 +4931,40 @@ func TestBlockedAuditUnblockFailsClosed(t *testing.T) {
 		if err := WriteAuditReopenRecord(f.root, tampered); err != nil {
 			t.Fatal(err)
 		}
-		code, err := tasksFolderUnblock(f.repo, f.root, []string{f.id, "must not be recorded"})
+		code, err := tasksFolderUnblock(f.repo, f.root, []string{f.id, "external acceptance passed"})
 		if code != -1 || err == nil {
 			t.Fatalf("tampered subject unblock = code %d, err %v", code, err)
 		}
 		for _, want := range []string{
 			"unblock " + f.id + " failed during audit authority validation",
-			"task remains blocked", "restore the unchanged host audit record and reviewed Git baseline",
-			`coop tasks unblock ` + f.id + ` "<answer>"`,
+			"no longer matches its recorded baseline",
+			"task remains blocked, and your answer is saved in decision.md",
+			"undo the change the error names", "then retry: coop tasks unblock " + f.id,
 		} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("unblock error missing %q: %v", want, err)
 			}
+		}
+		if strings.Contains(err.Error(), "<answer>") {
+			t.Errorf("the retry asks for the answer again although it is saved: %v", err)
 		}
 		assertBlocked(t, f)
 		got, ok, err := ReadAuditReopenRecord(f.root, f.id)
 		if err != nil || !ok || !sameAuditReopenRecord(got, tampered) {
 			t.Fatalf("rejected subject changed authority: got=%#v ok=%v err=%v", got, ok, err)
 		}
-		if mustDecisionResolved(t, filepath.Join(f.task.Dir, "decision.md")) {
-			t.Fatal("rejected subject recorded the inline answer")
+		// The refusal keeps the person's answer, and the retry needs no answer to finish.
+		if answer, err := recordedAnswer(filepath.Join(f.task.Dir, "decision.md")); err != nil || answer != "external acceptance passed" {
+			t.Fatalf("refused unblock answer = %q, %v; want it saved", answer, err)
+		}
+		if err := WriteAuditReopenRecord(f.root, f.record); err != nil {
+			t.Fatal(err)
+		}
+		if code, err := tasksFolderUnblock(f.repo, f.root, []string{f.id}); code != 0 || err != nil {
+			t.Fatalf("retry with the saved answer = code %d, %v", code, err)
+		}
+		if current, ok := mustCurrentTask(t, f.root, f.id); !ok || current.State != StateTodo {
+			t.Fatalf("retried unblock task = %#v, ok=%v", current, ok)
 		}
 	})
 
@@ -5510,7 +5524,10 @@ func TestParkStaleAuditReopenPreservesPriorDecision(t *testing.T) {
 	}
 	decision := readFileString(filepath.Join(blockedDir, "decision.md"))
 	for _, want := range []string{
-		"restore the host-audited Git baseline",
+		"HEAD moved under reopened task",
+		// Unblocking alone handles other work landing; restoring is for a rewritten history only.
+		"**A — accept other work:** Run `coop tasks unblock " + id + ` "<answer>"` + "`",
+		"Try A first. If it refuses because this task's history was rewritten",
 		"restore the exact pre-attempt baseline",
 		baseline,
 		"git rev-parse HEAD",

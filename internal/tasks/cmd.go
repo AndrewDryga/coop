@@ -1499,6 +1499,7 @@ const waitingAnswerNote = "Start the answer with what to do: text that opens wit
 
 type unblockStageError struct {
 	stage, artifact, state string
+	answerSaved            bool // the person's answer is already in decision.md
 	err                    error
 }
 
@@ -1520,7 +1521,10 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 		)
 	}
 	command := "coop tasks unblock " + id
-	if hasAnswer {
+	blocked := "task remains blocked"
+	if failure != nil && failure.answerSaved {
+		blocked = "task remains blocked, and your answer is saved in decision.md"
+	} else if hasAnswer {
 		command += ` "<answer>"`
 	}
 	stage := "unblock transition"
@@ -1529,7 +1533,7 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 		stage = failure.stage
 		switch failure.stage {
 		case "audit authority validation":
-			remedy = "restore the unchanged host audit record and reviewed Git baseline named by the error"
+			remedy = "undo the change the error names (a commit loses a trailer only through a history rewrite)"
 		case "decision write":
 			remedy = fmt.Sprintf("make %q a writable regular decision file", failure.artifact)
 		case "fork decision copy":
@@ -1541,8 +1545,8 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 		}
 	}
 	return fmt.Errorf(
-		"unblock %s failed during %s: %w — task remains blocked; %s, then retry: %s",
-		id, stage, err, remedy, command,
+		"unblock %s failed during %s: %w — %s; %s, then retry: %s",
+		id, stage, err, blocked, remedy, command,
 	)
 }
 
@@ -1550,19 +1554,30 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 // task to 00_todo/ — NOT 10_in_progress/: in_progress is the "an agent is on this" lock taken by
 // `claim`, so a just-unblocked task with nobody on it belongs in the queue as available work; the
 // resolved decision.md rides along as the audit trail. Shared by `unblock` and the -i browser.
+//
+// The answer is saved before anything can refuse the unblock, so a refusal never loses what the
+// person typed. A saved answer alone moves no task with audit authority: the loop's pre-flight
+// leaves those to this command (UnblockResolved).
 func resolveAndUnblock(project, root string, t Item, answer string) error {
-	transition, err := prepareBlockedAuditReopenUnblock(project, root, t)
-	if err != nil {
-		return &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
-	}
 	if answer != "" {
 		decision := filepath.Join(t.Dir, "decision.md")
 		if err := recordResolution(decision, answer); err != nil {
-			return &unblockStageError{
-				stage: "decision write", artifact: decision, state: StateBlocked,
-				err: transition.finish(err),
-			}
+			return &unblockStageError{stage: "decision write", artifact: decision, state: StateBlocked, err: err}
 		}
+	}
+	err := returnBlockedToTodo(project, root, t)
+	var failure *unblockStageError
+	if answer != "" && errors.As(err, &failure) {
+		failure.answerSaved = true
+	}
+	return err
+}
+
+// returnBlockedToTodo is the unblock itself, once any answer is in decision.md.
+func returnBlockedToTodo(project, root string, t Item) error {
+	transition, err := prepareBlockedAuditReopenUnblock(project, root, t)
+	if err != nil {
+		return &unblockStageError{stage: "audit authority validation", state: StateBlocked, err: err}
 	}
 	// A fork works from its own copy of the task and reads the answer there, so the answer goes
 	// into that copy too. The lease the transition holds keeps the fork's worker off it meanwhile.
@@ -1587,6 +1602,9 @@ func resolveAndUnblock(project, root string, t Item, answer string) error {
 		appendTaskLog(dir, "Unblocked: "+recorded)
 	} else {
 		appendTaskLog(dir, "Unblocked")
+	}
+	if note := transition.movedNote(); note != "" {
+		appendTaskLog(dir, note)
 	}
 	return nil
 }

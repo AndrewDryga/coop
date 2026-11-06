@@ -50,10 +50,14 @@ type AuditReopenCommit struct {
 }
 
 type AuditReopenRecord struct {
-	Version         int                 `json:"version"`
-	Generation      string              `json:"generation"`
-	TaskID          string              `json:"task_id"`
-	BaselineHead    string              `json:"baseline_head,omitempty"`
+	Version      int    `json:"version"`
+	Generation   string `json:"generation"`
+	TaskID       string `json:"task_id"`
+	BaselineHead string `json:"baseline_head,omitempty"`
+	// ReviewedHead is the commit that ends Subject and History once a person's unblock moved
+	// BaselineHead past commits that landed later and touch neither this task nor its History.
+	// Empty means BaselineHead ends them. Rework then starts at BaselineHead.
+	ReviewedHead    string              `json:"reviewed_head,omitempty"`
 	Subject         AuditReopenCommit   `json:"subject"`
 	History         []AuditReopenCommit `json:"history"`
 	UnblockPending  bool                `json:"unblock_pending,omitempty"`
@@ -502,6 +506,9 @@ func validateAuditReopenRecord(record AuditReopenRecord, id string) error {
 		len(record.History) > auditReopenHistoryLimit {
 		return errors.New("invalid complete-history audit reopen record")
 	}
+	if record.ReviewedHead != "" && (!validAuditReopenHead(record.ReviewedHead) || record.ReviewedHead == record.BaselineHead) {
+		return errors.New("invalid re-anchored audit reopen record")
+	}
 	seen := map[string]bool{id: true}
 	for _, commit := range record.History {
 		if commit.ChangeTree == "" || (commit.TaskID != "" && seen[commit.TaskID]) {
@@ -528,7 +535,7 @@ func auditReopenRecordActive(record AuditReopenRecord) bool {
 
 func AuditReopenRecordsEqual(a, b AuditReopenRecord) bool {
 	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
-		a.BaselineHead == b.BaselineHead && a.Subject == b.Subject &&
+		a.BaselineHead == b.BaselineHead && a.ReviewedHead == b.ReviewedHead && a.Subject == b.Subject &&
 		slices.Equal(a.History, b.History) && a.UnblockPending == b.UnblockPending &&
 		a.Finding == b.Finding && a.DisputedReceipt == b.DisputedReceipt && a.Repaired == b.Repaired
 }

@@ -3,7 +3,7 @@ name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
 sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -92,6 +92,38 @@ invoke the host transition. Finalization copies the generation into the host com
 before consuming it, so crash replay can finish consumption and an accepted generation cannot be
 reused.
 
+Other work keeps landing while a reopened task waits, and main's history holds what the exact
+replay refuses: one task bound by several commits, one commit closing two tasks. Any such commit
+after the baseline once kept the task blocked for good (2026-11-06: 60 commits, one task bound four
+times). A person's unblock now moves the record past them (`movedAuditReopen`) when HEAD reaches
+the end of the reviewed history in a straight line, no commit after it names the task or a task of
+its History in any `Coop-Task` trailer, and Git binds neither of them to any other commit. That last
+check reads Git's own trailers (`auditReopenGitBindings`) on every check of a moved record, not
+only at the move: Git skips trailing `#` comment lines and everything after a scissors line, which
+the raw parse takes as the message's last paragraph, so a commit can bind a task for Git alone.
+Subject and History stay as reviewed, their end is kept as `ReviewedHead`, and `BaselineHead` moves
+to HEAD. Those accepted commits are never replayed, so a moved record allows only a zero-commit
+re-close or one appended repair, never a rewrite: the rewrite check compares only the history the
+record still replays and would accept one that drops them all (`TestMovedAuditAuthorityAllowsNoRewrite`).
+The accepted commits are pinned only by `BaselineHead`, a commit of other work that the loop's
+signing pass or an amend can rewrite. So a moved record moves again from `ReviewedHead` at the next
+unblock, and an accepted repair stays a later commit rather than becoming the baseline. That also
+means a person's unblock accepts a history whose accepted commits were dropped or changed, as long
+as nothing names the task; the record then stays moved (it never regains rewrite authority). The
+host's signing carry (`carriedMovedAuditReopen`) follows a moved record only across a rewrite that
+kept every accepted commit's change, author and message, and moves the baseline to its own
+rewritten copy, never further. Commits after the baseline get the strict check as before. It is
+the only check a failed audit-rework attempt gets against forged bindings (the loop skips
+`AttemptBindingsRefused` for audit rework), so a lease never moves a record by itself; a stale
+lease parks the task with advice to try the unblock first. A merge after the reviewed history still
+refuses. The unblock saves the person's answer before any check, so a refusal never loses it, and
+the refusal names what changed.
+
+Open gap (2026-11-06): a moved record is consumed by its completion, and a later review that fails
+the task again captures a new record with `CaptureAuditReopen`, which still needs every later
+commit to replay exactly. That capture refuses the same history, so the review cannot reopen the
+task, and the same holds for any task with such commits after its own.
+
 `writes: repo` is the explicit escape hatch for a review stage that must repair source. It makes
 repository source writable, then overlays every real queue root with a nested read-only mount.
 Task lifecycle is report-only in the prompt and successful verdicts are applied by the host.
@@ -110,6 +142,12 @@ never clears a commit that changed after signoff, an untrailered repair included
 back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
+
+- 2026-11-06 — a person's unblock moves a reopened task's record past commits that leave the task
+  alone, again from the reviewed history after its baseline was rewritten, and the signing carry
+  follows a moved record; the unblock saves the answer before any check and a stale lease advises
+  unblocking first; recorded the review-reopen capture gap (task
+  2026-11-06-let-the-owner-unblock-a-reopened-task-after-unre).
 
 - 2026-11-05 — added repeated-finding human handoff; traced host move rollback, pending completion
   rollback, blocked debt recovery, worker attempt provenance and all three ordinary review stages.

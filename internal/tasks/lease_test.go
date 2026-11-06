@@ -238,7 +238,6 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 		task := taskWithCompletedChecklist(t, root, StateBlocked, "unsupported-blocked")
 		decision := filepath.Join(task.Dir, "decision.md")
 		writeTaskFile(t, decision, "# Decision\n\n**Resolution:** <!-- unresolved -->\n")
-		beforeDecision := readFileString(decision)
 		record := testAuditReopenRecord(task.ID, "unsupported-blocked-generation")
 		record.Version = 1
 		body, err := json.Marshal(record)
@@ -246,15 +245,21 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		written := writeRawAuditReopenRecord(t, root, task.ID, body)
-		code, err := tasksFolderUnblock("", root, []string{task.ID, "must not be recorded"})
-		if code != -1 || err == nil || !strings.Contains(err.Error(), "unsupported audit reopen record version 1") {
+		code, err := tasksFolderUnblock("", root, []string{task.ID, "keep the answer"})
+		if code != -1 || err == nil || !strings.Contains(err.Error(), "unsupported audit reopen record version 1") ||
+			!strings.Contains(err.Error(), "your answer is saved in decision.md") {
 			t.Fatalf("unsupported unblock = code %d err=%v", code, err)
 		}
 		if current, ok := mustCurrentTask(t, root, task.ID); !ok || current.State != StateBlocked {
 			t.Fatalf("unsupported unblock moved task: %#v ok=%v", current, ok)
 		}
-		if after := readFileString(decision); after != beforeDecision {
-			t.Fatalf("unsupported unblock changed decision:\n%s", after)
+		// The answer outlives the refusal, and the loop's pre-flight still leaves the task to an
+		// explicit unblock.
+		if answer, err := recordedAnswer(decision); err != nil || answer != "keep the answer" {
+			t.Fatalf("unsupported unblock answer = %q, %v; want it saved", answer, err)
+		}
+		if ids, err := UnblockResolved([]string{root}); err != nil || len(ids) != 0 {
+			t.Fatalf("pre-flight unblocked = %v, %v; want the task left blocked", ids, err)
 		}
 		name, _ := auditReopenRecordName(root, task.ID)
 		registry, openErr := OpenLeaseAuthorityRoot()

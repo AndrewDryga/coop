@@ -1370,6 +1370,15 @@ func carryAuditReopen(repo, root, id, oldHead string, rework map[AuditReopenComm
 	if AuditReopenCurrentValid(repo, "HEAD", id, record) || !AuditReopenCurrentValid(repo, oldHead, id, record) {
 		return nil
 	}
+	if record.ReviewedHead != "" {
+		// The commits a moved record accepted cannot be found again by trailer. Anything but a
+		// rewrite that kept them as they were leaves the record for a person's unblock.
+		moved, ok := carriedMovedAuditReopen(repo, oldHead, id, record)
+		if !ok {
+			return nil
+		}
+		return replaceAuditReopenRecordIfMatches(root, record, moved)
+	}
 	current, err := CaptureAuditReopen(repo, id)
 	if err != nil || current.Subject != record.Subject || len(current.History) < len(record.History) {
 		return nil

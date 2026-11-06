@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
+  reopened could not be unblocked once main gained commits the review's record could not replay,
+  such as one task bound by several commits or one commit that closes two tasks. Every try failed
+  with "changed its subject or complete descendant history", and the answer typed in
+  `coop tasks decisions -i` was lost. When HEAD still contains the reviewed commit and no later
+  commit names the task, the unblock now accepts those commits and the rework starts from HEAD. A
+  refusal names the commit that stopped it, and your answer is saved first, so the retry is just
+  `coop tasks unblock <id>`. When a loop parks such a task because its record no longer matches
+  HEAD, it now says to unblock it first, instead of only telling you to restore an old commit.
+
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with
