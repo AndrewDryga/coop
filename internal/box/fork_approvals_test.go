@@ -369,6 +369,58 @@ func TestForkBuildApprovalCreationClearsPreviousImage(t *testing.T) {
 	}
 }
 
+// A case-exposure approval keys on the same private anchor as the service approvals, and a parent can
+// hold one without any. A new fork takes it like the others: the paths the parent accepted, nothing
+// more, and nothing the parent accepts later.
+func TestSnapshotForkServiceApprovalCopiesCaseExposure(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	parent, fork := forkApprovalWorkspace(t), forkApprovalWorkspace(t)
+	anchor, err := serviceApprovalAnchor(parent, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accept := func(paths ...string) {
+		t.Helper()
+		path, err := caseExposurePath(anchor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(caseExposureApproval{Version: 1, Anchor: anchor, Paths: paths})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accepted := []string{"config/.env"}
+	accept(accepted...)
+	if pending := UnapprovedCaseExposures(parent, accepted); len(pending) != 0 {
+		t.Fatalf("fixture parent exposure approval is not usable: %v", pending)
+	}
+
+	if err := SnapshotForkApprovals(t.Context(), nil, parent, fork); err != nil {
+		t.Fatal(err)
+	}
+	if pending := UnapprovedCaseExposures(fork, accepted); len(pending) != 0 {
+		t.Fatalf("the fork did not take the parent's case-exposure approval: pending %v", pending)
+	}
+	if forkAnchor, err := serviceApprovalAnchor(fork, false); err != nil || forkAnchor == anchor {
+		t.Fatalf("fork anchor = %q, %v; want its own", forkAnchor, err)
+	}
+	if pending := UnapprovedCaseExposures(fork, []string{"other/.env"}); len(pending) != 1 {
+		t.Errorf("the fork accepted a path the parent never approved: pending %v", pending)
+	}
+	accept("config/.env", "later/.env")
+	if pending := UnapprovedCaseExposures(fork, []string{"later/.env"}); len(pending) != 1 {
+		t.Errorf("a later parent approval reached the fork: pending %v", pending)
+	}
+}
+
 // forkWithSnapshotApprovals approves a service file and network rules in parent, then snapshots them
 // into a new fork the way fork creation does.
 func forkWithSnapshotApprovals(t *testing.T) (parent, fork, parentFile, forkFile string, compose []byte, store *networkstate.Store) {

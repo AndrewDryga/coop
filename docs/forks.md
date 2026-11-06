@@ -33,13 +33,14 @@ account too. You can also name a preset, as in `coop fork perf frontier`, and th
 the fork.
 
 A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.
-At creation, Coop also snapshots the parent's network, service and project-build approvals. They
-keep the same approved inputs and restrictions; changing the fork's rules, Compose file or build
-files still needs approval there. A fork refused for new network access names the command that
-reviews it, `COOP_REPO=<fork folder> coop approve`, which you can run from the project. Later
-parent approvals do not update an existing fork. Coop can
-build a separate fork image from unchanged approved files without asking again. Approved external
-or explicitly named service volumes still refer to the same Docker volumes.
+At creation, Coop also snapshots the parent's network, service, project-build and
+`coop approve --case-exposure` file approvals. They keep the same approved inputs and
+restrictions; changing the fork's rules, Compose file or build files still needs approval there. A
+fork refused for new network access names the command that reviews it,
+`COOP_REPO=<fork folder> coop approve`, which you can run from the project. Later parent approvals
+do not update an existing fork, and a fork recreated with `--fresh` takes the parent's approvals
+again. Coop can build a separate fork image from unchanged approved files without asking again.
+Approved external or explicitly named service volumes still refer to the same Docker volumes.
 
 Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
 approval withdrawn at a fork's path stays withdrawn even if you recreate that fork; run

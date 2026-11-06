@@ -114,13 +114,55 @@ func TestForkApprovalRecoveryFollowsTheRefusal(t *testing.T) {
 	if err := checkForkApprovalSnapshot(a, workspace); err == nil {
 		t.Fatal("approving the parent admitted the fork's extra rule")
 	}
-	approve(workspace)
+	// The fork's review asks only for the rule the parent never approved.
+	if review := approve(workspace); !strings.Contains(review, "+ extra.example:443") || strings.Contains(review, "+ fork.example") {
+		t.Fatalf("the fork's review = %q, want only the extra rule new", review)
+	}
 	if err := checkForkApprovalSnapshot(a, workspace); err != nil {
 		t.Fatalf("fork after following its refusal: %v", err)
 	}
 	writeForkApprovalSnapshotRule(t, workspace, "later.example")
 	if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
 		t.Fatalf("fork with a later rule = %v, want it refused again", err)
+	}
+}
+
+// A fork recreated with --fresh is a new fork, so it takes what the parent has approved by then,
+// not what its earlier namesake held.
+func TestForkFreshTakesTheParentsApprovalsAgain(t *testing.T) {
+	repo := initRepo(t)
+	writeForkNetworkPreflightProject(t, repo)
+	commitForkNetworkPreflightFixture(t, repo)
+	a := forkNetworkPreflightApp(t, repo)
+	signInCred(t, a.cfg, "claude", "default")
+	store := openForkApprovalSnapshotStore(t)
+	approveForkApprovalSnapshotProject(t, store, repo)
+	workspace := createForkApprovalSnapshotBoundary(t, repo, "fresh", false)
+	first, err := store.Approval(workspace)
+	if err != nil || first == nil {
+		t.Fatalf("first fork approval = %+v, %v", first, err)
+	}
+	writeForkApprovalSnapshotRule(t, repo, "later.example")
+	// Only the request: coop approve keeps its marker out of Git, and this fixture approved directly.
+	git(t, repo, "add", project.File)
+	git(t, repo, "commit", "-qm", "request a later rule")
+	approveForkApprovalSnapshotProject(t, store, repo)
+
+	var code int
+	var runErr error
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code, runErr = a.forkCreate([]string{"fresh", "claude", "--fresh", "--yes"}) })
+	})
+	if !strings.Contains(stdout+stderr, "Recreate fork: fresh") || runErr != nil && strings.Contains(runErr.Error(), "approv") {
+		t.Fatalf("fork --fresh = (%d, %v), want the fork recreated with the parent's current approval\n%s%s", code, runErr, stdout, stderr)
+	}
+	recreated, err := store.Approval(workspace)
+	if err != nil || recreated == nil || recreated.ProjectAnchor == first.ProjectAnchor {
+		t.Fatalf("recreated fork approval = %+v, %v; want a new snapshot of the parent's", recreated, err)
+	}
+	if err := checkForkApprovalSnapshot(a, workspace); err != nil {
+		t.Fatalf("recreated fork with the parent's current rules: %v", err)
 	}
 }
 

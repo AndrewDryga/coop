@@ -143,13 +143,14 @@ coop fork rm perf        # or discard it (confirms first; inspect task/Git impac
 account too. You can also name a preset, as in <code>coop fork perf frontier</code>, and the preset&#39;s lead runs
 the fork.</p>
 <p>A fork inherits your Git identity, signing-key setting and global gitignore from the parent repo.
-At creation, Coop also snapshots the parent&#39;s network, service and project-build approvals. They
-keep the same approved inputs and restrictions; changing the fork&#39;s rules, Compose file or build
-files still needs approval there. A fork refused for new network access names the command that
-reviews it, <code>COOP_REPO=&lt;fork folder&gt; coop approve</code>, which you can run from the project. Later
-parent approvals do not update an existing fork. Coop can
-build a separate fork image from unchanged approved files without asking again. Approved external
-or explicitly named service volumes still refer to the same Docker volumes.</p>
+At creation, Coop also snapshots the parent&#39;s network, service, project-build and
+<code>coop approve --case-exposure</code> file approvals. They keep the same approved inputs and
+restrictions; changing the fork&#39;s rules, Compose file or build files still needs approval there. A
+fork refused for new network access names the command that reviews it,
+<code>COOP_REPO=&lt;fork folder&gt; coop approve</code>, which you can run from the project. Later parent approvals
+do not update an existing fork, and a fork recreated with <code>--fresh</code> takes the parent&#39;s approvals
+again. Coop can build a separate fork image from unchanged approved files without asking again.
+Approved external or explicitly named service volumes still refer to the same Docker volumes.</p>
 <p>Coop refuses to copy approvals whose parent identity or stored records are invalid. A network
 approval withdrawn at a fork&#39;s path stays withdrawn even if you recreate that fork; run
 <code>coop approve</code> in the fork to grant access again. Removing a fork removes the approvals it holds,

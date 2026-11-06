@@ -213,7 +213,22 @@ func snapshotForkServiceApprovals(parent, fork, root string) (undo func() error,
 		}
 		approvals = append(approvals, approval)
 	}
-	if len(approvals) == 0 {
+	// The case-exposure approval shares the service anchor. A record that grants the parent nothing
+	// (UnapprovedCaseExposures reads it the same way) carries nothing either.
+	var exposure *caseExposureApproval
+	casePath, err := caseExposurePath(anchor)
+	if err != nil {
+		return undo, err
+	}
+	if raw, err := os.ReadFile(casePath); err == nil {
+		var approved caseExposureApproval
+		if json.Unmarshal(raw, &approved) == nil && approved.Version == 1 && approved.Anchor == anchor {
+			exposure = &approved
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return undo, err
+	}
+	if len(approvals) == 0 && exposure == nil {
 		return undo, nil
 	}
 	forkAnchor, err := serviceApprovalAnchor(fork, true)
@@ -248,6 +263,20 @@ func snapshotForkServiceApprovals(parent, fork, root string) (undo func() error,
 		written = append(written, filepath.Join(root, key+".json"))
 		if err := writeServiceApproval(root, key, approval); err != nil {
 			return undo, fmt.Errorf("snapshot fork service approval: %w", err)
+		}
+	}
+	if exposure != nil {
+		path, err := caseExposurePath(forkAnchor)
+		if err != nil {
+			return undo, err
+		}
+		data, err := json.Marshal(caseExposureApproval{Version: 1, Anchor: forkAnchor, Paths: exposure.Paths})
+		if err != nil {
+			return undo, err
+		}
+		written = append(written, path)
+		if err := config.WriteFileAtomicMode(path, data, 0o600); err != nil {
+			return undo, fmt.Errorf("snapshot fork case-exposure approval: %w", err)
 		}
 	}
 	return undo, nil

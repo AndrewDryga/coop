@@ -203,8 +203,9 @@
   carry over from the parent. Service startup names missing bind sources and refuses them before
   Compose can create empty directories in their place.
 
-- **New forks carry the parent's existing approvals.** Matching network rules, service permissions
-  and project build files need no repeat approval in each fork. Changed inputs still need approval
+- **New forks carry the parent's existing approvals.** Matching network rules, service permissions,
+  file access approved with `coop approve --case-exposure` and project build files need no repeat
+  approval in each fork, including one recreated with `--fresh`. Changed inputs still need approval
   in the fork, and later parent approvals do not carry over. `coop fork ls` shows a refused loop as
   stopped with its reason.
 
