@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
+sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/service_launch_wait.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
 updated: 2026-11-05
 ---
 
@@ -36,9 +36,12 @@ configuration bytes, not bind-source filesystem identity. `LockServiceLaunch` us
 the repository directory's filesystem identity (so moves retain the barrier) and holds its
 exclusive side from validation through Docker opening mounts. A writable sandbox holds the shared
 side while its agent can replace paths. A service start is keyed by the workspace its Compose file
-and bind sources come from (`serviceStartRepo`: a fork's own workspace), and every box holds the
-shared side of both its project's lock and, in a fork, its workspace's lock. So a fork's start waits
-only for boxes in that fork, while project-wide approval changes still wait for every box. Already-running Compose sidecars are outside that lock:
+and bind sources come from (`serviceStartRepo`: the main checkout, or a fork's own workspace), and
+every box holds the shared side of its workspace's lock and of the project lock
+(`LockProjectLaunch`, a file of its own even though the main checkout's folder keys both). So a
+start waits only for boxes in its workspace, while project-wide approval changes
+(`lockApprovalTransition`, and the main checkout's first service anchor, `lockFirstServiceAnchor`)
+still wait for every box. Every holder takes the workspace lock first. Already-running Compose sidecars are outside that lock:
 before every new start, `RunningWritableBindSourcesByLabels` inspects all live Compose containers
 on the same frozen daemon as the eventual `compose up`, even if the operator changes Docker context,
 and refuses any writable bind overlapping this repository. `coop down` or stopping the container
@@ -148,6 +151,10 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-11-05: the project lock is its own file (`.project-launch.lock`), so the main checkout's
+  workspace lock no longer doubles as it and the main checkout's `coop up` stops waiting for fork
+  loops. Swept every lock caller: approval transitions take both locks, the first service anchor
+  takes the project lock, fork approval snapshots keep the main checkout's shared side.
 - 2026-11-05: added creation-only required-file copying and start-only bind existence checks;
   verified all three pinned-start callers, review, teardown and private Compose snapshot handling.
 - 2026-11-04: `lastApprovalFor` no longer reads version 4 service approvals (task 2026-11-04-drop-the-old-host-state-readers).

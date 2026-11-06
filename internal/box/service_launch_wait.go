@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -20,10 +19,30 @@ import (
 // Another box between its two service steps lets go sooner than this, and that wait is nobody's news.
 var serviceLaunchWaitNotice = 2 * time.Second
 
-// LockServiceLaunch takes the project's service launch lock exclusively for a command a person
-// watches, and says so if it has to wait.
+// LockServiceLaunch takes a workspace's service launch lock exclusively for a command a person
+// watches, and says so if it has to wait. Only the boxes working in that workspace hold it.
 func LockServiceLaunch(ctx context.Context, repo string) (func(), error) {
 	return lockServiceLaunch(ctx, repo, true, RunSpec{}, nil)
+}
+
+// lockApprovalTransition is what an approval change that every box's mounts depend on takes, such as a
+// project's first anchor: the main checkout's workspace lock, which a box from a build before the
+// project lock holds too, and then the project lock, which every box holds, a fork's included. A box
+// takes them in that order as well, so neither side can wait on the other for ever.
+func lockApprovalTransition(ctx context.Context, repo string) (func(), error) {
+	unlockWorkspace, err := lockServiceLaunch(ctx, repo, true, RunSpec{}, nil)
+	if err != nil {
+		return nil, err
+	}
+	unlockProject, err := lockProjectLaunch(ctx, repo, true, nil)
+	if err != nil {
+		unlockWorkspace()
+		return nil, err
+	}
+	return func() {
+		unlockProject()
+		unlockWorkspace()
+	}, nil
 }
 
 // lockServiceLaunch is forkspace.LockServiceLaunch for anyone a person is waiting on. A running box
@@ -31,14 +50,27 @@ func LockServiceLaunch(ctx context.Context, repo string) (func(), error) {
 // whoever has to wait says for what, what to do about it, and when the wait ends. spec names the box
 // that waits, if one does: its own record is not what it waits for, and a supervisor may want to know.
 func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec RunSpec, sections *launchSections) (func(), error) {
+	return waitForLaunchLock(ctx, repo, false, exclusive, spec, sections)
+}
+
+// lockProjectLaunch is lockServiceLaunch for the project lock (forkspace.LockProjectLaunch).
+func lockProjectLaunch(ctx context.Context, repo string, exclusive bool, sections *launchSections) (func(), error) {
+	return waitForLaunchLock(ctx, repo, true, exclusive, RunSpec{}, sections)
+}
+
+func waitForLaunchLock(ctx context.Context, repo string, project, exclusive bool, spec RunSpec, sections *launchSections) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	take := forkspace.LockServiceLaunch
+	if project {
+		take = forkspace.LockProjectLaunch
 	}
 	var said *ServiceLaunchBusy
 	var told, own bool
 	for {
 		step, cancel := context.WithTimeout(ctx, serviceLaunchWaitNotice)
-		unlock, err := forkspace.LockServiceLaunch(step, repo, exclusive)
+		unlock, err := take(step, repo, exclusive)
 		cancel()
 		switch {
 		case err == nil && said == nil:
@@ -56,7 +88,7 @@ func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec Ru
 		// services, or for a command such as `coop up`, which keeps no record.
 		busy, ownNow := &ServiceLaunchBusy{}, false
 		if exclusive {
-			busy, ownNow = serviceLaunchHolders(repo, spec.activityID, spec.ActivitySource)
+			busy, ownNow = serviceLaunchHolders(repo, project, spec.activityID, spec.ActivitySource)
 		}
 		// This wait has no limit and who it waits for can change: parked boxes stop and another session's
 		// box takes the lock first, or the other way around. So it asks again for as long as it lasts.
@@ -82,10 +114,11 @@ func lockServiceLaunch(ctx context.Context, repo string, exclusive bool, spec Ru
 
 // serviceStartRepo keys the service start barrier: the workspace a box's services start from, which its
 // agent can change. Compose opens bind sources only there, and a fork has its own workspace and Compose
-// project, so a fork's start waits only for boxes that can replace paths in that workspace, never for a
-// sibling fork's boxes. Keyed by the parent project, four emisar forks starved each other for hours
-// (2026-11-05). Approval changes still take the project's own lock, which every box also holds
-// (enterAuthorityMountWindow).
+// project, so a start waits only for boxes that can replace paths in that workspace: a fork's never for
+// a sibling fork's boxes, the main checkout's never for a fork's. Keyed by the parent project, four
+// emisar forks starved each other for hours, and the main checkout's `coop up` waited for a fork's
+// whole loop (2026-11-05). Approval changes take the project lock, which every box also holds
+// (enterAuthorityMountWindow, lockApprovalTransition).
 func serviceStartRepo(spec RunSpec, projectRepo string) string {
 	if spec.Repo != "" {
 		return spec.Repo
@@ -107,10 +140,15 @@ func lockServiceStart(ctx context.Context, repo string, spec RunSpec, sections *
 }
 
 // noteLaunchHeld says this box holds the lock that unlock releases, until it does, so that a wait can name
-// it. A box with no record has nothing to be named by.
+// it. The note goes with the box's record, in its project's, where a wait on any of the project's locks
+// looks: noted with a fork's own records, a fork box starting services was never named. A box with no
+// record has nothing to be named by.
 func (spec RunSpec) noteLaunchHeld(repo string, unlock func()) func() {
 	if spec.activityID == "" {
 		return unlock
+	}
+	if spec.ActivityRepo != "" {
+		repo = spec.ActivityRepo
 	}
 	forget := forkspace.NoteServiceLaunchHeld(repo, spec.activityID)
 	return func() {
@@ -142,13 +180,14 @@ func (e *ServiceLaunchBusy) Say() (title string, details []string) {
 		"Coop goes on by itself once they stop. Close them to go on sooner."}
 }
 
-// serviceLaunchHolders says who keeps a launch out of repo's lock, as far as the host's records can
-// tell: a running box other than except and the boxes of the launch's own session (source) that said it
-// holds the lock. A fork workspace's lock is held only by boxes working there, so only those count. A record alone says nothing: a controller only supervises, a box may be waiting for the
+// serviceLaunchHolders says who keeps a launch out of repo's lock, or out of its project lock (project),
+// as far as the host's records can tell: a running box other than except and the boxes of the launch's
+// own session (source) that said it holds the lock. A workspace's lock is held only by boxes working
+// there, so only those count; every box holds the project lock. A record alone says nothing: a controller only supervises, a box may be waiting for the
 // lock too, and a box may only hold prompts, in this session or any other. Counting those made two
 // sessions wait on each other. Of a session's own boxes only a parked one counts. own reports that parked
 // boxes of its own session are all there is. An unreadable record names nobody; the wait is still real.
-func serviceLaunchHolders(repo, except, source string) (busy *ServiceLaunchBusy, own bool) {
+func serviceLaunchHolders(repo string, project bool, except, source string) (busy *ServiceLaunchBusy, own bool) {
 	authority, _, err := forkspace.ResolveProjectBinding(repo)
 	if err != nil {
 		return &ServiceLaunchBusy{}, false
@@ -157,15 +196,11 @@ func serviceLaunchHolders(repo, except, source string) (busy *ServiceLaunchBusy,
 	if err != nil {
 		return &ServiceLaunchBusy{}, false
 	}
-	workspace := ""
-	if filepath.Clean(repo) != filepath.Clean(authority) {
-		workspace = filepath.Clean(repo)
-	}
 	var others []forkspace.ExecutionObservation
 	for _, observation := range live {
 		switch record := observation.Record; {
 		case !forkspace.ServiceLaunchHeldBy(authority, record.ID):
-		case workspace != "" && record.Workspace != workspace:
+		case !project && !sameDirectory(record.Workspace, repo):
 		case source != "" && record.SourceID == source:
 			own = own || record.Role == forkspace.ExecutionRoleWarm
 		default:
@@ -197,7 +232,7 @@ func editorServiceLaunchBusy(spec RunSpec, joins func() bool) error {
 	if err != nil || !taken {
 		return err
 	}
-	busy, own := serviceLaunchHolders(repo, "", spec.SupervisorID)
+	busy, own := serviceLaunchHolders(repo, false, "", spec.SupervisorID)
 	if own {
 		return nil
 	}
@@ -231,7 +266,7 @@ func serviceLaunchStamp(repo, source string) string {
 		unlock()
 		starting = false
 	}
-	busy, own := serviceLaunchHolders(repo, "", source)
+	busy, own := serviceLaunchHolders(repo, false, "", source)
 	return fmt.Sprint(starting, own, busy.Boxes)
 }
 

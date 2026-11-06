@@ -27,6 +27,7 @@ const (
 	executionRecordCount   = 4096
 	executionRegistryV1    = "v1"
 	serviceLaunchLockName  = ".service-launch.lock"
+	projectLaunchLockName  = ".project-launch.lock"
 )
 
 // TestExecutionRegistryRootEnv is the user-state fallback a test binary must name; production
@@ -311,12 +312,26 @@ func ensureServiceLockDir(dir string) error {
 
 func newExecutionID() string { return randid.Hex(16) }
 
-// LockServiceLaunch coordinates the short daemon-mount boundary with running sandboxes. A service
-// launch takes the exclusive lock while Docker opens live bind sources; every sandbox holds the
-// shared lock only while its agent process can replace those paths. This serializes the dangerous
-// instant, not the users or their independently owned service stacks.
+// LockServiceLaunch coordinates the short daemon-mount boundary with running sandboxes, one
+// workspace at a time. A service launch takes the exclusive lock of the workspace its bind sources
+// come from while Docker opens them; every sandbox holds the shared lock of its own workspace only
+// while its agent process can replace those paths. This serializes the dangerous instant, not the
+// users or their independently owned service stacks.
 func LockServiceLaunch(ctx context.Context, repo string, exclusive bool) (func(), error) {
-	path, err := ServiceLaunchLockPath(repo)
+	return lockLaunch(ctx, repo, serviceLaunchLockName, exclusive)
+}
+
+// LockProjectLaunch is the project-wide side of that barrier: every sandbox in the project, a fork's
+// too, holds its shared side for its whole life, and an approval change that every box's mounts
+// depend on takes it exclusively. It is a file apart from the main checkout's workspace lock, though
+// both are keyed by the same folder: as one file, a service start in the main checkout waited for
+// every fork's boxes.
+func LockProjectLaunch(ctx context.Context, repo string, exclusive bool) (func(), error) {
+	return lockLaunch(ctx, repo, projectLaunchLockName, exclusive)
+}
+
+func lockLaunch(ctx context.Context, repo, name string, exclusive bool) (func(), error) {
+	path, err := launchLockPath(repo, name)
 	if err != nil {
 		return nil, err
 	}
@@ -425,6 +440,10 @@ func flockWaiting(ctx context.Context, f *os.File, how int) error {
 // than its pathname. A moved checkout keeps the same mount barrier; a replacement at its old
 // pathname cannot borrow that barrier or accidentally wait on its old executions.
 func ServiceLaunchLockPath(repo string) (string, error) {
+	return launchLockPath(repo, serviceLaunchLockName)
+}
+
+func launchLockPath(repo, name string) (string, error) {
 	registry, err := oldExecutionDir(repo)
 	if err != nil {
 		return "", err
@@ -441,7 +460,7 @@ func ServiceLaunchLockPath(repo string) (string, error) {
 		return "", errors.New("service launch repository has no filesystem identity")
 	}
 	key := fmt.Sprintf("%x-%x", uint64(stat.Dev), uint64(stat.Ino))
-	return filepath.Join(filepath.Dir(registry), "service-locks", key+serviceLaunchLockName), nil
+	return filepath.Join(filepath.Dir(registry), "service-locks", key+name), nil
 }
 
 // launchHolderFolder has one empty file for each execution whose box holds the service launch lock now,

@@ -139,3 +139,39 @@ func TestServiceLaunchLockIsTakenAgainWhenTheSweepRemovedIt(t *testing.T) {
 		t.Fatalf("a second launch took the lock the first holds: %v", err)
 	}
 }
+
+// Every box takes its project lock as well, so a gone repository's project lock goes the same way.
+func TestServiceLaunchLockSweepRemovesAGoneRepositorysProjectLock(t *testing.T) {
+	t.Setenv(TestExecutionRegistryRootEnv, t.TempDir())
+	parent := t.TempDir()
+	live, gone := filepath.Join(parent, "live"), filepath.Join(parent, "gone")
+	var locks []string
+	for _, repo := range []string{live, gone} {
+		if err := os.Mkdir(repo, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, repo := range []string{live, gone} {
+		unlock, err := LockProjectLaunch(context.Background(), repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unlock()
+		path, err := launchLockPath(repo, projectLaunchLockName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		locks = append(locks, path)
+	}
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := sweepServiceLaunchLocks(filepath.Dir(locks[0]), 100, time.Now()); err != nil || removed != 1 {
+		t.Fatalf("sweep = %d, %v; want the gone repository's project lock", removed, err)
+	}
+	for i, want := range []bool{true, false} {
+		if _, err := os.Lstat(locks[i]); (err == nil) != want {
+			t.Errorf("after the sweep %s exists = %v, want %v", filepath.Base(locks[i]), err == nil, want)
+		}
+	}
+}

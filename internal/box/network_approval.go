@@ -221,7 +221,7 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 		return nil, openErr
 	}
 
-	unlockTransition, err := LockServiceLaunch(ctx, inputs.canonical)
+	unlockTransition, err := lockApprovalTransition(ctx, inputs.canonical)
 	if err != nil {
 		return nil, fmt.Errorf("wait for active boxes before anchoring network approval: %w", err)
 	}

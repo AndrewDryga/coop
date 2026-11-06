@@ -100,7 +100,7 @@ func ReviewCaseExposure(ctx context.Context, cfg *config.Config, repo string) (*
 	}
 	// The existing service identity provides the same copy-resistant binding
 	// and private-state protection. Creation is serialized with box launches.
-	unlock, err := LockServiceLaunch(ctx, repo)
+	unlock, err := lockApprovalTransition(ctx, repo)
 	if err != nil {
 		return nil, err
 	}

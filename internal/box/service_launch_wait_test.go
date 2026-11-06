@@ -203,7 +203,7 @@ func TestAWaitNamesOnlyWhatClosingWouldEnd(t *testing.T) {
 	self := recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleActive})
 	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "session", Role: forkspace.ExecutionRoleActive})
 	recordBox(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop, SourceID: "somebody", Role: forkspace.ExecutionRoleController})
-	busy, own := serviceLaunchHolders(repo, self.ID, "session")
+	busy, own := serviceLaunchHolders(repo, false, self.ID, "session")
 	if own || len(busy.Boxes) != 0 {
 		t.Fatalf("names %v, own %v, with nothing to close", busy.Boxes, own)
 	}
@@ -214,7 +214,7 @@ func TestAWaitNamesOnlyWhatClosingWouldEnd(t *testing.T) {
 	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionInteractive, SourceID: "another"})
 	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "another session", Role: forkspace.ExecutionRoleActive})
 	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, SourceID: "a third session", Role: forkspace.ExecutionRoleActive})
-	busy, own = serviceLaunchHolders(repo, self.ID, "session")
+	busy, own = serviceLaunchHolders(repo, false, self.ID, "session")
 	if own || !slices.Equal(busy.Boxes, []string{"a box in a terminal", "an editor session"}) {
 		t.Fatalf("names %v, own %v", busy.Boxes, own)
 	}
@@ -575,11 +575,12 @@ func newForkWorkspace(t *testing.T, repo, name string) (string, forkspace.Identi
 	return workspace, identity
 }
 
-// Each fork starts its services from its own workspace, so its start waits only for boxes working there.
+// Every workspace starts its services from its own files, so a start waits only for boxes working there.
 // Keyed by the parent project, four emisar forks starved each other for hours (2026-11-05): a fork
 // restarting its services waited for every sibling's box, and a final review waited for a sibling's gate.
-// A project-wide approval change still waits for every box, which keeps the project's lock too.
-func TestAForkServiceStartWaitsOnlyForItsOwnWorkspace(t *testing.T) {
+// The main checkout's `coop up` then waited for a fork's whole loop, its workspace lock being the
+// project's. A project-wide approval change still waits for every box, through the project lock.
+func TestAServiceStartWaitsOnlyForBoxesInItsOwnWorkspace(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	if err := os.Mkdir(repo, 0o700); err != nil {
 		t.Fatal(err)
@@ -592,16 +593,20 @@ func TestAForkServiceStartWaitsOnlyForItsOwnWorkspace(t *testing.T) {
 	if got := serviceStartRepo(RunSpec{}, repo); got != repo {
 		t.Fatalf("a launch with no workspace is keyed by %q, want the project %q", got, repo)
 	}
-	free := func(dir string) bool {
+	short := func() context.Context {
 		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		defer cancel()
-		unlock, err := forkspace.LockServiceLaunch(ctx, dir, true)
+		t.Cleanup(cancel)
+		return ctx
+	}
+	taken := func(unlock func(), err error) bool {
 		if err != nil {
 			return false
 		}
 		unlock()
 		return true
 	}
+	free := func(dir string) bool { return taken(forkspace.LockServiceLaunch(short(), dir, true)) }
+	approvalFree := func() bool { return taken(lockApprovalTransition(short(), repo)) }
 	// A box running in fork b, as a sibling loop's box does for its whole life.
 	unlock, err := enterAuthorityMountWindow(t.Context(), repo, b, nil, func() error { return nil })
 	if err != nil {
@@ -613,27 +618,34 @@ func TestAForkServiceStartWaitsOnlyForItsOwnWorkspace(t *testing.T) {
 	if free(b) {
 		t.Error("fork b's service start did not wait for the box running in fork b")
 	}
-	if free(repo) {
+	// What the main checkout's `coop up` and a loop box there take to start their services.
+	if !taken(LockServiceLaunch(short(), repo)) {
+		t.Error("the main checkout's coop up waited for a box in fork b")
+	}
+	if !taken(lockServiceStart(short(), serviceStartRepo(RunSpec{Repo: repo, ActivityRepo: repo}, repo), RunSpec{}, nil)) {
+		t.Error("a main-checkout box's service start waited for a box in fork b")
+	}
+	if approvalFree() {
 		t.Error("a project-wide approval change did not wait for a fork's box")
 	}
 	unlock()
-	if !free(b) || !free(repo) {
+	if !free(b) || !approvalFree() {
 		t.Error("the box's locks were not released")
 	}
-	// The main checkout's box holds one lock, its own, once.
+	// The main checkout's box holds its own workspace's lock and the project lock, no fork's.
 	unlock, err = enterAuthorityMountWindow(t.Context(), repo, repo, nil, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !free(a) || free(repo) {
-		t.Error("a main-checkout box held a fork's lock, or not its own")
+	if !free(a) || free(repo) || approvalFree() {
+		t.Error("a main-checkout box held a fork's lock, or not its own or the project's")
 	}
 	unlock()
 }
 
-// A fork's wait names only boxes in its own workspace: a sibling's box does not keep it out, so asking
-// a person to close it would be wrong. The project's lock still names every holder.
-func TestAForkWaitNamesOnlyBoxesInItsWorkspace(t *testing.T) {
+// A wait names only boxes in its own workspace: another workspace's box does not keep it out, so asking
+// a person to close it would be wrong. The project lock names every holder.
+func TestAWaitNamesOnlyBoxesInItsWorkspace(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	if err := os.Mkdir(repo, 0o700); err != nil {
 		t.Fatal(err)
@@ -646,16 +658,98 @@ func TestAForkWaitNamesOnlyBoxesInItsWorkspace(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = forkspace.EndExecution(repo, record) })
 	t.Cleanup(forkspace.NoteServiceLaunchHeld(repo, record.ID))
+	recordHolder(t, repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionLocalLoop})
 	for _, tc := range []struct {
-		lock string
-		want []string
+		lock    string
+		project bool
+		want    []string
 	}{
-		{a, nil},
-		{b, []string{"a loop in fork b"}},
-		{repo, []string{"a loop in fork b"}},
+		{a, false, nil},
+		{b, false, []string{"a loop in fork b"}},
+		{repo, false, []string{"a loop"}},
+		{repo, true, []string{"a loop", "a loop in fork b"}},
 	} {
-		if busy, _ := serviceLaunchHolders(tc.lock, "", ""); !slices.Equal(busy.Boxes, tc.want) {
-			t.Errorf("a wait on %s names %v, want %v", tc.lock, busy.Boxes, tc.want)
+		busy, _ := serviceLaunchHolders(tc.lock, tc.project, "", "")
+		if slices.Sort(busy.Boxes); !slices.Equal(busy.Boxes, tc.want) {
+			t.Errorf("a wait on %s (project %v) names %v, want %v", tc.lock, tc.project, busy.Boxes, tc.want)
 		}
+	}
+}
+
+// The main checkout's first service anchor changes what every box in the project may mount, a fork's
+// too, so the approval that makes it waits for every box, though `coop up` no longer does just to start
+// services. An anchor already made, or a fork's own first one, waits for nobody.
+func TestTheMainCheckoutsFirstServiceAnchorWaitsForEveryBox(t *testing.T) {
+	pinHome(t)
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	repo := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fork, _ := newForkWorkspace(t, repo, "a")
+	unlockBox, err := enterAuthorityMountWindow(t.Context(), repo, fork, nil, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { unlockBox() }()
+	if unlock, create, err := lockFirstServiceAnchor(fork); err != nil || !create {
+		t.Fatalf("a fork's first anchor: create %v, %v", create, err)
+	} else {
+		unlock()
+	}
+	made := make(chan error, 1)
+	go func() {
+		unlock, create, err := lockFirstServiceAnchor(repo)
+		if err == nil {
+			if !create {
+				err = errors.New("the first anchor may not be made")
+			}
+			unlock()
+		}
+		made <- err
+	}()
+	select {
+	case err := <-made:
+		t.Fatalf("the main checkout's first anchor went ahead while a fork's box ran: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlockBox()
+	if err := <-made; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serviceApprovalAnchor(repo, true); err != nil {
+		t.Fatal(err)
+	}
+	unlockBox, err = enterAuthorityMountWindow(t.Context(), repo, fork, nil, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, create, err := lockFirstServiceAnchor(repo)
+	if err != nil || create {
+		t.Fatalf("an existing anchor: create %v, %v", create, err)
+	}
+	unlock()
+}
+
+// A fork box starting its services is named by a wait in that fork: its note goes with its record, in the
+// project's records, where every wait looks, not with the fork's own.
+func TestAForkBoxStartingServicesIsNamedByAWaitThere(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, identity := newForkWorkspace(t, repo, "a")
+	record, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionForkLoop, Workspace: a, Fork: &identity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = forkspace.EndExecution(repo, record) })
+	forget := RunSpec{activityID: record.ID, ActivityRepo: repo}.noteLaunchHeld(a, func() {})
+	if busy, _ := serviceLaunchHolders(a, false, "", ""); !slices.Equal(busy.Boxes, []string{"a loop in fork a"}) {
+		t.Errorf("a wait in fork a names %v while its box starts services", busy.Boxes)
+	}
+	forget()
+	if busy, _ := serviceLaunchHolders(a, false, "", ""); len(busy.Boxes) != 0 {
+		t.Errorf("a wait in fork a names %v once its box let go", busy.Boxes)
 	}
 }

@@ -133,6 +133,30 @@ func serviceComposePath(workspace, file string) (canonical, rel string, err erro
 	return canonical, rel, nil
 }
 
+// lockFirstServiceAnchor is what an approval holds before it makes a workspace's first service anchor.
+// The main checkout's anchor changes the mount authority of every box in the project, a fork's included
+// (authorityProtection), so making it waits for them all, which `coop up` no longer does just to start
+// services. A fork's anchor is its own; that fork's boxes are held off by the `coop up` lock already.
+// create is whether the scope may make the anchor: only when it was missing, so one that disappears
+// after this look fails instead of being made without the lock.
+func lockFirstServiceAnchor(workspace string) (unlock func(), create bool, err error) {
+	if _, err := serviceApprovalAnchor(workspace, false); !errors.Is(err, os.ErrNotExist) {
+		return func() {}, false, nil // an anchor, or a broken one the scope reports
+	}
+	project, fork, err := forkspace.ResolveProjectBinding(workspace)
+	if err != nil {
+		return nil, false, err
+	}
+	if fork != nil {
+		return func() {}, true, nil
+	}
+	unlock, err = lockProjectLaunch(context.Background(), project, true, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("wait for active boxes before anchoring service approval: %w", err)
+	}
+	return unlock, true, nil
+}
+
 func serviceApprovalScope(workspace, file string, data []byte, create bool) (canonical, rel, anchor, key string, err error) {
 	canonical, rel, err = serviceComposePath(workspace, file)
 	if err != nil {
@@ -323,7 +347,12 @@ func (r *ServiceSecretReview) Approve() error {
 		paths = append(append([]string(nil), prior.Paths...), paths...)
 		sort.Strings(paths)
 	}
-	_, _, anchor, key, err := serviceApprovalScope(r.workspace, file, r.data, true)
+	unlock, create, err := lockFirstServiceAnchor(r.workspace)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, _, anchor, key, err := serviceApprovalScope(r.workspace, file, r.data, create)
 	if err != nil {
 		return err
 	}
@@ -506,7 +535,12 @@ func (r *ServiceStartReview) ApproveVolumes() error {
 	if err := r.prepareVolumes(); err != nil {
 		return err
 	}
-	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, true)
+	unlock, create, err := lockFirstServiceAnchor(r.workspace)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, create)
 	if err != nil {
 		return err
 	}
@@ -541,7 +575,12 @@ func (r *ServiceStartReview) ApproveRenewal() error {
 			return err
 		}
 	}
-	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, true)
+	unlock, create, err := lockFirstServiceAnchor(r.workspace)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	canonical, rel, anchor, key, err := serviceApprovalScope(r.workspace, r.file, r.data, create)
 	if err != nil {
 		return err
 	}

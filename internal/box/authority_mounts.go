@@ -252,24 +252,26 @@ func appendUniqueAuthorityPath(paths []string, path string) []string {
 // enterAuthorityMountWindow makes validation and the following runtime lifetime one shared
 // interval. A first project anchor takes the matching exclusive lock, so a launch validated before
 // that transition cannot start afterwards with mount authority the anchored policy would refuse.
-// The box also holds its own workspace's lock (serviceStartRepo) when that is a fork's, so a service
-// start there waits for it, while a start in a sibling fork does not.
+// The box holds two locks: its own workspace's (serviceStartRepo), so a service start there waits for
+// it while a start in any other workspace does not, and the project lock, which every box in the
+// project holds, so an approval change waits for all of them (lockApprovalTransition). The workspace
+// lock comes first, in the order every holder takes them.
 func enterAuthorityMountWindow(ctx context.Context, repo, workspace string, sections *launchSections, validate func() error) (func(), error) {
-	unlock, err := lockServiceLaunch(ctx, repo, false, RunSpec{}, sections)
+	if workspace == "" {
+		workspace = repo
+	}
+	unlockWorkspace, err := lockServiceLaunch(ctx, workspace, false, RunSpec{}, sections)
 	if err != nil {
 		return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
 	}
-	if workspace != "" && !sameDirectory(repo, workspace) {
-		unlockProject := unlock
-		unlockWorkspace, err := lockServiceLaunch(ctx, workspace, false, RunSpec{}, sections)
-		if err != nil {
-			unlockProject()
-			return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
-		}
-		unlock = func() {
-			unlockWorkspace()
-			unlockProject()
-		}
+	unlockProject, err := lockProjectLaunch(ctx, repo, false, sections)
+	if err != nil {
+		unlockWorkspace()
+		return nil, fmt.Errorf("enter the sandbox mount window: %w", err)
+	}
+	unlock := func() {
+		unlockProject()
+		unlockWorkspace()
 	}
 	if err := validate(); err != nil {
 		unlock()

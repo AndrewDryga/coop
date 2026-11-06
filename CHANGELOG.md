@@ -87,10 +87,12 @@
   in the fork, and later parent approvals do not carry over. `coop fork ls` shows a refused loop as
   stopped with its reason.
 
-- **Forks no longer wait for each other to start their services.** A fork's service start waited
-  for every running box in the whole project, so parallel fork loops starved each other for hours.
-  A fork starts its own Compose project from its own folder, so its start now waits only for boxes
-  in that fork. Changes to the project's approvals still wait for every box.
+- **Forks and the main checkout no longer wait for each other to start their services.** A service
+  start waited for every running box in the whole project, so parallel fork loops starved each other
+  for hours, and `coop up` in the main checkout waited for a fork's whole loop. Each checkout starts
+  its own Compose project from its own folder, so its start now waits only for boxes in that
+  checkout. Changes to the project's approvals, including the main checkout's first saved service
+  approval, still wait for every box.
 
 - **`coop tasks watch` shows what is moving, what stopped and what needs you.** The board has four
   sections: Now, Stopped, Needs you and Up next, each with its count. Each task above Up next has a

@@ -13,10 +13,11 @@ import (
 	"time"
 )
 
-// SweepServiceLaunchLocks removes the service-launch locks whose repository is gone, looking at no
-// more than limit of them, and reports how many it removed. Every box launch takes the lock of its
-// repository's folder, so each throwaway repository, such as a doctor fixture, an eval trial or a
-// session's job source, leaves one behind. A test binary sweeps only the root it was pointed at.
+// SweepServiceLaunchLocks removes the service-launch and project-launch locks whose repository is
+// gone, looking at no more than limit of them, and reports how many it removed. Every box launch
+// takes both locks of its repository's folder, so each throwaway repository, such as a doctor
+// fixture, an eval trial or a session's job source, leaves them behind. A test binary sweeps only the
+// root it was pointed at.
 func SweepServiceLaunchLocks(limit int) (int, error) {
 	root, err := executionRegistryRoot()
 	if err != nil {
@@ -52,6 +53,9 @@ func sweepServiceLaunchLocks(dir string, limit int, now time.Time) (int, error) 
 	var errs []error
 	for _, name := range names {
 		key, ok := strings.CutSuffix(name, serviceLaunchLockName)
+		if !ok {
+			key, ok = strings.CutSuffix(name, projectLaunchLockName)
+		}
 		if !ok {
 			continue
 		}
