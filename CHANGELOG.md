@@ -1264,6 +1264,15 @@
   messages and completion use the same word. The old `none` is refused with a message that names
   `offline`, so update scripts, editor settings and `coop.conf` that used it.
 
+- **A refused isolated fork merge no longer leaves the fork stuck as merging.** When the fork added
+  a file that sits untracked in your project, the merge was refused only after the checks ran and
+  after Coop wrote its journal, so `coop fork ls` showed the fork as merging and the next
+  `coop fork merge` published it without asking. Coop now looks for such files before it asks and
+  before the checks, and writes the journal only when it is about to change your project, so a
+  refusal leaves nothing behind and the next merge asks again. Deleting a fork now also removes its
+  log, its publication record and the private copies `coop fork review --open` kept, and
+  `review --open` prints the command that removes its copy sooner.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

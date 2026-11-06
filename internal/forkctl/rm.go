@@ -67,6 +67,9 @@ func RecoverOrphanedGenerationLocked(repo, name string, force bool) (bool, error
 			return false, fmt.Errorf("return the missing fork's canonical assignments: %w", err)
 		}
 	}
+	if err := forkspace.RemoveLeftoverRecordsLocked(repo, name, identity); err != nil {
+		return false, err
+	}
 	if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
 		return false, err
 	}

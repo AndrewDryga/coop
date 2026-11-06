@@ -686,6 +686,54 @@ func RemoveWorkerState(repo, name string) error {
 	return nil
 }
 
+// RemoveLeftoverRecordsLocked removes what a deleted fork leaves in the records folder that nothing
+// else can use: its log, the record of its last isolated publication and the private copies its
+// reviews kept. identity is the fork's, or the zero Identity for a fork that never had a generation,
+// which leaves only a log. The caller holds the lifecycle lock.
+//
+// The lock file stays. flock locks the file itself, so a command already waiting on it would lock a
+// file no later command can reach, and two commands could then hold the fork's lock at once.
+func RemoveLeftoverRecordsLocked(repo, name string, identity Identity) error {
+	state, err := OpenStateRoot(repo, "", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer state.Close()
+	folder, err := state.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := folder.ReadDir(-1)
+	_ = folder.Close()
+	if err != nil {
+		return err
+	}
+	// Without a valid generation the prefixes would match every fork's records.
+	var prefixes []string
+	if ValidGeneration(identity.Generation) {
+		for _, kind := range []string{"candidate", "preview", "source"} {
+			prefixes = append(prefixes, IsolatedRecordPrefix(kind, identity))
+		}
+	}
+	var failures []error
+	for _, entry := range entries {
+		leftover := entry.Name() == name+".log"
+		for _, prefix := range prefixes {
+			leftover = leftover || strings.HasPrefix(entry.Name(), prefix)
+		}
+		if !leftover {
+			continue
+		}
+		if err := state.RemoveAll(entry.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
 // WritePid records a detached worker: its pid, its kernel start token, so a pid reused after a crash
 // or a reboot is never mistaken for it, and the fork generation it serves. The caller holds the
 // lifecycle lock. A process without a stable token is refused: stop could never prove it is the same.

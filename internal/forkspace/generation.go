@@ -67,6 +67,13 @@ func LandIntentPath(repo string, identity Identity) string {
 	return filepath.Join(StateDir(repo), identity.Name+"."+string(identity.Generation)+".land.json")
 }
 
+// IsolatedRecordPrefix begins the name of each private folder or record an isolated fork's review and
+// publication keep in the fork records folder: kind is "candidate", "preview" or "source". The
+// generation in the name is how deleting the fork finds what is its own and nothing else.
+func IsolatedRecordPrefix(kind string, identity Identity) string {
+	return ".isolated-" + kind + "-" + string(identity.Generation)
+}
+
 func NewGeneration() Generation { return Generation(randid.Hex(16)) }
 
 func ValidGeneration(g Generation) bool { return forkGenerationRE.MatchString(string(g)) }

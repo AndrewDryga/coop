@@ -43,7 +43,7 @@ type isolatedSourceRecord struct {
 }
 
 func isolatedSourcePath(repo string, identity forkspace.Identity) string {
-	return filepath.Join(forkspace.StateDir(repo), ".isolated-source-"+string(identity.Generation)+".json")
+	return filepath.Join(forkspace.StateDir(repo), forkspace.IsolatedRecordPrefix("source", identity)+".json")
 }
 
 // isolatedSourceBoundary is the source commit up to which the parent already holds the fork's
@@ -218,7 +218,24 @@ func intentCandidate(repo string, intent isolatedLandIntent) isolatedCandidate {
 		upstream: intent.Upstream, head: intent.PublicationHead, tree: intent.PublicationTree}
 }
 
-func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (bool, error) {
+// parentChangedRefusal is the refusal for a parent that is no longer what the review saw. Without a
+// journal nothing has started and nothing waits to be reconciled; with one, the parent may be half
+// published, and the journal and the kept copy wait for a person to reconcile it.
+func parentChangedRefusal(journaled bool, cause error) error {
+	switch {
+	case !journaled:
+		return errors.Join(errors.New("parent changed after isolated review; publication not started"), cause)
+	case cause != nil:
+		return fmt.Errorf("isolated publication interrupted or parent changed; custody/journal retained, reconcile without resetting: %w", cause)
+	}
+	return errors.New("isolated parent is neither unchanged nor coherently landed on the recorded target; preserve journal/custody and reconcile")
+}
+
+// advanceIsolatedLand carries a publication as far as it goes. A fresh one, journaled false, writes
+// its journal itself, once every refusal that leaves the parent as it was has passed and the first
+// change to the parent is next: a refused merge leaves nothing for the next one to finish. One from
+// the journal, journaled true, may have changed the parent already, so a refusal keeps the journal.
+func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent, journaled bool) (bool, error) {
 	candidate := intentCandidate(repo, intent)
 	if err := candidate.validateSource(repo); err != nil {
 		return false, err
@@ -244,7 +261,7 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 	defer unlock()
 	parent, err := captureIsolatedParent(repo)
 	if err != nil {
-		return false, fmt.Errorf("isolated publication interrupted or parent changed; custody/journal retained, reconcile without resetting: %w", err)
+		return false, parentChangedRefusal(journaled, err)
 	}
 	landed := parent.Head == intent.PublicationHead && parent.Tree == intent.PublicationTree &&
 		intent.PublicationContent != "" && parent.Content == intent.PublicationContent &&
@@ -252,13 +269,18 @@ func (c *Control) advanceIsolatedLand(repo string, intent isolatedLandIntent) (b
 		strings.Join(parent.Metadata, "\x00") == strings.Join(intent.Parent.Metadata, "\x00")
 	if !landed {
 		if intent.Phase == "landed" || !sameIsolatedParent(parent, intent.Parent) {
-			return false, errors.New("isolated parent is neither unchanged nor coherently landed on the recorded target; preserve journal/custody and reconcile")
+			return false, parentChangedRefusal(journaled, nil)
 		}
 		if err := checkIsolatedIntroductions(repo, candidate.dir, intent.Parent.Head, intent.PublicationHead); err != nil {
 			return false, err
 		}
 		if intent.Candidate != nil {
 			if err := tasks.ValidateForkCandidateLocked(repo, *intent.Candidate, intent.SourceHead, intent.SourceTree); err != nil {
+				return false, err
+			}
+		}
+		if !journaled {
+			if err := writeIsolatedRecord(repo, landIntentPath(repo, intent.Fork), intent); err != nil {
 				return false, err
 			}
 		}
@@ -362,8 +384,8 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if intent, pending, err := readIsolatedIntent(repo, identity); err != nil {
 		return mergeOutcome{}, err
 	} else if pending {
-		ui.Note("Reconciling journaled isolated publication for %s on its recorded target.", name)
-		landed, err := c.advanceIsolatedLand(repo, intent)
+		ui.Note("Finishing the interrupted publication of fork %s into %s.", name, strings.TrimPrefix(intent.Parent.Target, "refs/heads/"))
+		landed, err := c.advanceIsolatedLand(repo, intent, true)
 		return finish(landed, intent.SourceHead, intent.PublicationHead, err)
 	}
 	if force {
@@ -373,9 +395,10 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err != nil {
 		return mergeOutcome{}, err
 	}
-	retain := false
 	defer func() {
-		if !retain {
+		// The kept copy is the journal's custody: it lives exactly as long as a journal does. A
+		// journal that cannot be read is kept with it, since it may still be needed.
+		if _, journaled, err := readIsolatedIntent(repo, identity); !journaled && err == nil {
 			candidate.cleanup()
 		}
 	}()
@@ -387,6 +410,11 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		if !summary.Active() {
 			return mergeOutcome{skipped: true}, nil
 		}
+	}
+	// What the parent alone decides is decided before anyone is asked and before the checks run.
+	// The publication checks it again once it holds the lock, since the parent can change meanwhile.
+	if err := checkIsolatedIntroductions(repo, candidate.dir, candidate.parent.Head, candidate.head); err != nil {
+		return mergeOutcome{}, err
 	}
 	if confirm != nil && !confirm(candidate) {
 		return mergeOutcome{skipped: true}, nil
@@ -431,11 +459,7 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err := candidate.validateSource(repo); err != nil {
 		return mergeOutcome{}, err
 	}
-	if err := writeIsolatedRecord(repo, landIntentPath(repo, identity), intent); err != nil {
-		return mergeOutcome{}, err
-	}
-	retain = true
-	landed, err := c.advanceIsolatedLand(repo, intent)
+	landed, err := c.advanceIsolatedLand(repo, intent, false)
 	return finish(landed, candidate.sourceHead, candidate.head, err)
 }
 

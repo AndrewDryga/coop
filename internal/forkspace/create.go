@@ -236,8 +236,9 @@ func appendFile(path string, data []byte) error {
 	return errors.Join(writeErr, f.Close())
 }
 
-// Destroy removes a fork's workspace and its review/<name> ref, then prunes an empty forks home.
-// Best-effort on the ref so it works for partially-built forks.
+// Destroy removes a fork's workspace and its review/<name> ref, then prunes an empty forks home and
+// removes the records only the fork could use (RemoveLeftoverRecordsLocked). Best-effort on the ref
+// so it works for partially-built forks.
 //
 // The fork's sibling SERVICES are the caller's job, before this (forkctl.DestroyFork):
 // teardown is driven by the fork's own compose file, so once the workspace is deleted there is
@@ -278,5 +279,5 @@ func Destroy(repo, name string) error {
 	if entries, _ := readFolder(home); len(entries) == 0 {
 		_ = os.Remove(home)
 	}
-	return nil
+	return RemoveLeftoverRecordsLocked(repo, name, identity)
 }

@@ -129,8 +129,9 @@ rebases the copy onto the parent commit it recorded. This leaves your checkout, 
 workspace and the parent's Git refs unchanged, so you can review even while your parent checkout
 has uncommitted changes.
 
-`review --open` and `COOP_REVIEW_CMD` show a private copy of the committed files, and co:op prints
-its path so you can remove it when you finish. Edits to a preview are never included in the merge.
+`review --open` and `COOP_REVIEW_CMD` show a private copy of the committed files. co:op prints its
+path and the command that removes it, and deleting the fork removes it too. Edits to a preview are
+never included in the merge.
 
 Use only an editor, difftool or review command you trust to run on your host. `coop fork open`
 opens the agent's actual workspace instead of a private review copy, and co:op warns that Git or
@@ -173,8 +174,9 @@ from the exact source it reviewed.
 ### When a merge is interrupted
 
 If you cancel a merge or co:op refuses it before it starts, the parent's files, index and refs stay
-unchanged. Once co:op starts changing the checkout, it records each step in a journal, and an
-interruption can leave the checkout partly updated.
+unchanged and nothing is left to resume, so the next merge asks again and runs the checks again.
+Once co:op starts changing the checkout, it records each step in a journal, and an interruption can
+leave the checkout partly updated.
 
 Keep the exact reviewed changes and the journal, then rerun `coop fork merge <name>`. co:op can
 resume only if the checkout exactly matches its original clean state or the complete merged state

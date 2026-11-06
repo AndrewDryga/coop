@@ -186,8 +186,8 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 		}
 		preview := candidate.dir
 		candidate.dir = "" // GUI tools may return before their window closes.
-		ui.Note("Host editor opens retained committed preview %s, not the model workspace.", preview)
-		ui.Note("Preview edits never become merge input; remove this private preview when finished.")
+		ui.Note("The editor opens a private copy of the committed files, not the agent's workspace.")
+		ui.Note("Edits there are never merged. Deleting the fork removes the copy.%s", removeSooner("it", preview))
 		return c.openInEditor(preview)
 	case stat:
 		return 0, nil
@@ -202,9 +202,24 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 		}
 		comparison := candidate.dir
 		candidate.dir = ""
-		ui.Note("Configured host review tool uses retained committed preview %s.", preview)
-		ui.Note("Comparison runs in %s; neither copy becomes merge input. Remove both when finished.", comparison)
+		ui.Note("Your review command uses a private copy of the committed files: %s", preview)
+		ui.Note("It compares that copy with a second one in %s. Neither is ever merged.", comparison)
+		ui.Note("Deleting the fork removes both copies.%s", removeSooner("both", preview, comparison))
 		return c.runReviewCmd(comparison, preview, name, ref)
 	}
 	return 0, gitInteractive(candidate.dir, "diff", "--no-ext-diff", "HEAD..."+ref)
+}
+
+// removeSooner ends a note about private copies a review keeps with the command that removes them
+// before the fork is deleted, or with nothing when a path has a character no one could paste.
+func removeSooner(what string, folders ...string) string {
+	words := []string{"rm", "-r"}
+	for _, folder := range folders {
+		quoted, ok := ui.ShellWord(folder)
+		if !ok {
+			return ""
+		}
+		words = append(words, quoted)
+	}
+	return " To remove " + what + " sooner, run: " + strings.Join(words, " ")
 }

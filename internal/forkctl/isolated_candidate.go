@@ -46,7 +46,7 @@ func (candidate isolatedCandidate) cleanup() {
 // Custom tools need published files without changing the base comparison's
 // HEAD...ref contract. Both copies are retained because GUI tools can return early.
 func (candidate isolatedCandidate) committedPreview(repo string) (_ string, err error) {
-	preview, err := mkdirStateTemp(repo, ".isolated-preview-")
+	preview, err := mkdirStateTemp(repo, forkspace.IsolatedRecordPrefix("preview", candidate.identity)+"-")
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +106,7 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if _, err := observed(ws, "merge-base", "--is-ancestor", upstream, sourceHead); err != nil {
 		return isolatedCandidate{}, fmt.Errorf("isolated fork no longer descends from its published source boundary: %w", err)
 	}
-	dir, err := mkdirStateTemp(repo, ".isolated-candidate-")
+	dir, err := mkdirStateTemp(repo, forkspace.IsolatedRecordPrefix("candidate", identity)+"-")
 	if err != nil {
 		return isolatedCandidate{}, err
 	}
