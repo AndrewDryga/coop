@@ -201,13 +201,54 @@ func TestTaskListShowsWhatEachTaskWaitsFor(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "docs", "task.md"), "---\ntitle: Docs\nwaits_on: bridge\n---\n# Docs\n")
 	writeTaskFile(t, filepath.Join(root, StateTodo, "bridge", "task.md"), "# Bridge\n")
-	out := captureStdout(t, func() {
-		if _, err := printTaskTree(root, "Tasks", false); err != nil {
-			t.Fatal(err)
-		}
-	})
+	out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
 	if !strings.Contains(out, "Waits for bridge") || strings.Count(out, "Waits for") != 1 {
 		t.Fatalf("listing = %q", out)
+	}
+}
+
+// The listing says a task waits only while the loop would skip it, as the board does: once the task
+// it names is done the wait is met, and neither shows a marker.
+func TestTaskListShowsNoWaitOnceTheTaskItWaitsForIsDone(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "shop")
+	root := filepath.Join(repo, TasksRoot)
+	writeTaskFile(t, filepath.Join(root, StateTodo, "docs", "task.md"), "---\ntitle: Docs\nwaits_on: bridge\n---\n# Docs\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "bridge", "task.md"), "# Bridge\n")
+	listing := func() string { return captureStdout(t, func() { _, _ = tasksFolderList(root, false, StateTodo) }) }
+	board := func() string { return captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}) }) }
+
+	for what, out := range map[string]string{"listing": listing(), "board": board()} {
+		if !strings.Contains(out, "Waits for bridge") {
+			t.Fatalf("the %s of a task whose wait is pending lacks the marker:\n%s", what, out)
+		}
+	}
+	bridge, _ := mustCurrentTask(t, root, "bridge")
+	if err := MoveTaskDir(root, bridge, StateDone); err != nil {
+		t.Fatal(err)
+	}
+	for what, out := range map[string]string{"listing": listing(), "board": board()} {
+		if !strings.Contains(out, "Docs") || strings.Contains(out, "Waits for") {
+			t.Fatalf("the %s of a task whose wait is met:\n%s\nwant Docs with no marker", what, out)
+		}
+	}
+}
+
+// A task may wait for one in another queue, so the roll-up over several queues reads every wait
+// against all of them: a done task in another queue meets it, a todo one does not.
+func TestTaskRollUpReadsAWaitAcrossQueues(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, "web", StateTodo, "ship", "task.md"), "---\ntitle: Ship\nwaits_on: built\n---\n# Ship\n")
+	writeTaskFile(t, filepath.Join(repo, "web", StateTodo, "later", "task.md"), "---\ntitle: Later\nwaits_on: tested\n---\n# Later\n")
+	writeTaskFile(t, filepath.Join(repo, "api", StateDone, "built", "task.md"), "# Built\n")
+	writeTaskFile(t, filepath.Join(repo, "api", StateTodo, "tested", "task.md"), "# Tested\n")
+	var code int
+	var err error
+	out := captureStdout(t, func() { code, err = tasksListAll(repo, []string{"web", "api"}, []string{"--todo"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("roll-up = %d, %v", code, err)
+	}
+	if !strings.Contains(out, "Waits for tested") || strings.Contains(out, "Waits for built") || strings.Count(out, "Waits for") != 1 {
+		t.Fatalf("roll-up =\n%s\nwant only the wait on the task still todo", out)
 	}
 }
 

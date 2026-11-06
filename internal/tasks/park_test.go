@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // addBlocked creates a task and blocks it, which writes an unanswered decision.md.
@@ -163,13 +165,19 @@ func TestParkRefusesATaskInProgressOrDone(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateInProgress, "busy", "task.md"), body)
 	writeTaskFile(t, filepath.Join(root, StateDone, "shipped", "task.md"), body)
 
-	code, err := tasksFolderPark(root, []string{"busy"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "release it first with coop tasks release busy") {
-		t.Fatalf("park of an in-progress task = (%d, %v), want 1 and the release hint", code, err)
-	}
-	code, err = tasksFolderPark(root, []string{"shipped"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "only a todo or blocked task can be parked") {
-		t.Fatalf("park of a done task = (%d, %v), want 1 and a refusal", code, err)
+	for id, want := range map[string]string{
+		"busy": "\n✗ Could not park busy\n\n      It is in progress.\n\n" +
+			"  Release it first: coop tasks release busy\n  Then park it:     coop tasks park busy\n",
+		"shipped": "\n✗ Could not park shipped\n\n      It is done. Only a todo or blocked task can be parked.\n\n" +
+			"  Tasks you can park: coop tasks ls --todo --blocked\n",
+	} {
+		code, err := tasksFolderPark(root, []string{id})
+		if code != 1 {
+			t.Fatalf("park of %s = (%d, %v), want exit 1 and a refusal", id, code, err)
+		}
+		if got := refusal(t, err).Render(ui.Palette{}); got != want {
+			t.Fatalf("park of %s:\n%s\nwant:\n%s", id, got, want)
+		}
 	}
 	if !pathExists(filepath.Join(root, StateInProgress, "busy")) || !pathExists(filepath.Join(root, StateDone, "shipped")) {
 		t.Error("a refused park must leave the task where it was")
@@ -179,6 +187,37 @@ func TestParkRefusesATaskInProgressOrDone(t *testing.T) {
 	}
 	if code, _ := tasksFolderPark(root, nil); code != 2 {
 		t.Errorf("park with no id = %d, want 2 (usage)", code)
+	}
+}
+
+// A claimed task, and one a review reopened, are refused in the same block, each with the command
+// that gets it ready to park, and stay where they are.
+func TestParkRefusesAClaimedOrReopenedTaskInTheSharedBlock(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "mine", "task.md"), "# Mine\n")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "reviewed", "task.md"), "# Reviewed\n")
+	if _, err := claimTaskOwnerRecord(root, "mine", claimOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAuditReopenRecord(root, testAuditReopenRecord("reviewed", "generation-1")); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"mine": "\n✗ Could not park mine\n\n      It is claimed.\n\n" +
+			"  Release it first: coop tasks release mine\n  Then park it:     coop tasks park mine\n",
+		"reviewed": "\n✗ Could not park reviewed\n\n      A loop's review reopened it. Only coop tasks unblock can answer it.\n\n" +
+			"  Answer it: coop tasks unblock reviewed \"<answer>\"\n",
+	} {
+		code, err := tasksFolderPark(root, []string{id})
+		if code != 1 {
+			t.Fatalf("park of %s = (%d, %v), want exit 1 and a refusal", id, code, err)
+		}
+		if got := refusal(t, err).Render(ui.Palette{}); got != want {
+			t.Fatalf("park of %s:\n%s\nwant:\n%s", id, got, want)
+		}
+		if !pathExists(filepath.Join(root, StateTodo, id)) {
+			t.Errorf("a refused park moved %s", id)
+		}
 	}
 }
 

@@ -27,6 +27,15 @@ type queueIndex map[string][]Item
 
 func (q queueIndex) add(item Item) { q[item.ID] = append(q[item.ID], item) }
 
+// indexOf is the index of one queue's tasks.
+func indexOf(items []Item) queueIndex {
+	index := queueIndex{}
+	for _, item := range items {
+		index.add(item)
+	}
+	return index
+}
+
 // wait says whether item may start and, for a broken wait, why not, in words for its decision.
 func (q queueIndex) wait(item Item) (waitStatus, string) {
 	on := item.WaitsOn

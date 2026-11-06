@@ -742,8 +742,8 @@ var errTaskClaimedByOther = errors.New("task is claimed by another live process"
 
 // competingClaim reports whether an existing claim blocks a new one: only a claim bound to a
 // process that is still alive and is not the claimer's own does. A person's claim (no process) or
-// a claim whose process is gone is taken over silently — the point of binding is to tell "someone
-// is on this" from "someone was".
+// a claim whose process is gone is taken over without --force — the point of binding is to tell
+// "someone is on this" from "someone was". The claim's result still says whose it replaced.
 func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	if existing.Kind != TaskOwnerHuman || existing.ActorPID == 0 || !ownerProcessLive(existing) {
 		return false
@@ -751,8 +751,9 @@ func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	return existing.ActorPID != actor.PID || !processidentity.Same(existing.ActorStart, actor.StartToken)
 }
 
-// claimTakeover is the claim a new claim replaced: one whose process had stopped, or, with --force,
-// one whose process still runs. A nil from replaced nothing worth naming.
+// claimTakeover is the claim a new claim replaced: one whose process had stopped, a person's that an
+// agent's claim replaced, or, with --force, one whose process still runs. A nil from replaced
+// nothing worth naming.
 type claimTakeover struct {
 	from *TaskOwnerRecord
 	live bool
@@ -762,6 +763,8 @@ type claimTakeover struct {
 func (c claimTakeover) note(leaseEnded bool) string {
 	who := claimHolder(*c.from, true)
 	switch {
+	case c.from.ActorPID == 0: // a person's claim has no process to have stopped and no lease to end
+		return "Took over from " + who + "."
 	case !c.live:
 		return "Took over from " + who + ", whose process has stopped."
 	case leaseEnded:
@@ -799,6 +802,10 @@ func claimTaskOwnerRecord(root, id string, opts claimOptions) (claimTakeover, er
 		takeover = claimTakeover{from: &previous}
 	case refused != nil:
 		return claimTakeover{}, refused
+	case previous.ActorPID == 0 && opts.actor.PID != 0:
+		// A person's claim blocks nobody and has no process to mark as displaced, so the mark below
+		// stays as it was. The agent's claim over it still says whose it was.
+		takeover = claimTakeover{from: &previous}
 	case competingClaim(previous, opts.actor):
 		if !opts.force {
 			return claimTakeover{}, liveClaimRefusal("claim", id, previous)
@@ -1407,7 +1414,7 @@ func tasksFolderPark(root string, args []string) (int, error) {
 	}
 	actor := captureClaimActor(realClaimActorProbe, os.Getppid(), ui.IsTerminal(os.Stdin), ClaimActor{})
 	if err := parkTask(root, t, reason, actor); err != nil {
-		var refusal *parkRefusal
+		var refusal *ui.UsageError
 		if errors.As(err, &refusal) {
 			return 1, err
 		}
@@ -1426,28 +1433,29 @@ func tasksFolderPark(root string, args []string) (int, error) {
 // parkedBy opens the log.md note a park writes, before who parked the task (coopLogNotes).
 const parkedBy = "Parked in the backlog by "
 
-// parkRefusal is a task that can't be parked as it stands; the message says what to do instead.
-type parkRefusal struct{ msg string }
-
-func (r *parkRefusal) Error() string { return r.msg }
-
 // parkTask moves a todo or blocked task into the backlog, holding its owner record's lock so a
 // concurrent claim can't land mid-move. It refuses a task with audit authority (only an explicit
-// unblock may spend that) or a live claim, and records who parked it (actor, named as a claim names
-// its holder) and their reason in log.md before the move. A todo task needs no decision to be set
-// aside, so none is written.
+// unblock may spend that) or a live claim, each as a ui.UsageError that says what to run instead,
+// and records who parked it (actor, named as a claim names its holder) and their reason in log.md
+// before the move. A todo task needs no decision to be set aside, so none is written.
 func parkTask(root string, t Item, reason string, actor ClaimActor) error {
+	id := ui.SafeInline(t.ID) // a folder name can come from a box
+	refuse := func(cause string, rows ...[2]string) error {
+		return ui.CommandFailed("Could not park "+id, cause, rows...)
+	}
 	switch t.State {
 	case StateTodo, StateBlocked:
 	case StateInProgress:
-		return &parkRefusal{fmt.Sprintf("%s is in progress: release it first with coop tasks release %s, then park it", t.ID, t.ID)}
+		return refuse("It is in progress.", [2]string{"Release it first:", "coop tasks release " + id}, [2]string{"Then park it:", "coop tasks park " + id})
 	default:
-		return &parkRefusal{fmt.Sprintf("%s is %s: only a todo or blocked task can be parked", t.ID, StateLabel(t.State))}
+		return refuse("It is "+StateLabel(t.State)+". Only a todo or blocked task can be parked.",
+			[2]string{"Tasks you can park:", "coop tasks ls --todo --blocked"})
 	}
 	if _, audited, err := ReadAuditReopenRecord(root, t.ID); err != nil {
 		return fmt.Errorf("inspect audit authority for %s: %w", t.ID, err)
 	} else if audited {
-		return &parkRefusal{fmt.Sprintf("%s was reopened by an audit and carries its authority: answer it with coop tasks unblock %s instead", t.ID, t.ID)}
+		return refuse("A loop's review reopened it. Only coop tasks unblock can answer it.",
+			[2]string{"Answer it:", "coop tasks unblock " + id + ` "<answer>"`})
 	}
 	owner, err := lockTaskOwner(root, t.ID)
 	if err != nil {
@@ -1457,7 +1465,7 @@ func parkTask(root string, t Item, reason string, actor ClaimActor) error {
 	if _, claimed, err := owner.Read(); err != nil {
 		return err
 	} else if claimed {
-		return &parkRefusal{fmt.Sprintf("%s is claimed: release it first with coop tasks release %s", t.ID, t.ID)}
+		return refuse("It is claimed.", [2]string{"Release it first:", "coop tasks release " + id}, [2]string{"Then park it:", "coop tasks park " + id})
 	}
 	note := parkedBy + journalActor(actor)
 	switch {
@@ -1822,6 +1830,10 @@ func unblockedNote(answer string) string {
 	}
 	return "Unblocked: " + answer
 }
+
+// changedAnswer opens the log.md note for an answer typed in `coop tasks decisions -i` after the task
+// was back in todo, which replaced the answer it came back with (coopLogNotes).
+const changedAnswer = "Answer changed: "
 
 // moveBlockedAuditUnblock writes a non-authorizing pending record, moves the folder, then activates
 // the replacement. A crash at either boundary remains fail-closed: blocked+pending is explicitly
@@ -2939,23 +2951,24 @@ var listStateOrder = []string{StateInProgress, StateTodo, StateBlocked, StateDon
 // tasksFolderList prints the queue, then warns about anything left at the queue root that is not
 // part of it (see warnQueueRootStrays).
 func tasksFolderList(root string, all bool, only ...string) (int, error) {
-	code, err := printTaskTree(root, "Tasks", all, only...)
+	items, err := ReadTaskTree(root)
+	if err != nil {
+		return -1, err
+	}
+	code, err := printTaskTree(root, "Tasks", items, indexOf(items), all, only...)
 	if err == nil {
 		warnQueueRootStrays(root)
 	}
 	return code, err
 }
 
-// printTaskTree prints the queue grouped by state, under heading ("" when the caller already named
-// the queue). only narrows it to the given states (a --blocked/--todo/… filter); empty shows every
-// state. Each task is three lines at most — its title, the facts that are exceptional about it, and
-// its id as an OSC 8 hyperlink to its folder, so it opens on click in a supporting terminal and
-// stays plain text in a pipe. There is no count footer: the section headings already carry the counts.
-func printTaskTree(root, heading string, all bool, only ...string) (int, error) {
-	items, err := ReadTaskTree(root)
-	if err != nil {
-		return -1, err
-	}
+// printTaskTree prints the queue's items grouped by state, under heading ("" when the caller already
+// named the queue). waits holds every task a wait may name, which says whether a task still waits.
+// only narrows it to the given states (a --blocked/--todo/… filter); empty shows every state. Each
+// task is three lines at most — its title, the facts that are exceptional about it, and its id as
+// an OSC 8 hyperlink to its folder, so it opens on click in a supporting terminal and stays plain
+// text in a pipe. There is no count footer: the section headings already carry the counts.
+func printTaskTree(root, heading string, items []Item, waits queueIndex, all bool, only ...string) (int, error) {
 	p := ui.For(os.Stdout)
 	if len(items) == 0 {
 		// Saved ideas are not tasks, but "no tasks" alone would hide them. The count is best-effort:
@@ -3012,7 +3025,7 @@ func printTaskTree(root, heading string, all bool, only ...string) (int, error) 
 			for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
 				fmt.Printf("  %s\n", tl)
 			}
-			if m := listMarkers(p, t); m != "" {
+			if m := listMarkers(p, t, waits); m != "" {
 				fmt.Printf("    %s\n", m)
 			}
 			fmt.Printf("    %s\n", p.Link(fileURI(t.Dir), p.Faint(t.ID)))
@@ -3141,11 +3154,12 @@ func decisionDividerWidth() int {
 }
 
 // listMarkers renders what is EXCEPTIONAL about a task, on its own line between the title and the
-// id: a high or low priority, subtask progress, a blocked task's waiting answer, and an in-progress
-// task's owner or reservation — joined with " · ", or "" when there is nothing to say. An ordinary
-// todo task, and an in-progress task nobody has claimed or reserved, carry no marker at all: a row
-// that always says something says nothing (see rule tag-exceptions-not-every-row).
-func listMarkers(p ui.Palette, t Item) string {
+// id: a high or low priority, subtask progress, a blocked task's waiting answer, an in-progress
+// task's owner or reservation, and a wait for another task that is not done (waits, as the loop and
+// the board read it) — joined with " · ", or "" when there is nothing to say. An ordinary todo
+// task, and an in-progress task nobody has claimed or reserved, carry no marker at all: a row that
+// always says something says nothing (see rule tag-exceptions-not-every-row).
+func listMarkers(p ui.Palette, t Item, waits queueIndex) string {
 	var parts []string
 	if t.State != StateDone {
 		switch priorityRank(t) {
@@ -3172,7 +3186,7 @@ func listMarkers(p ui.Palette, t Item) string {
 			parts = append(parts, p.Dim(m))
 		}
 	}
-	if t.WaitsOn != "" && t.State != StateDone {
+	if t.State != StateDone && waits.waiting(t) {
 		parts = append(parts, p.Dim("Waits for "+t.WaitsOn))
 	}
 	return strings.Join(parts, p.Dim(" · "))
@@ -3503,11 +3517,11 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		// Only a person at a terminal answers here, so the park is theirs, bound to no process.
 		if line == ":b" {
 			if err := parkTask(ref.root, t, "", ClaimActor{}); err != nil {
-				var refusal *parkRefusal
+				var refusal *ui.UsageError
 				if !errors.As(err, &refusal) {
 					return -1, err
 				}
-				fmt.Fprintf(out, "  %s\n", refusal.msg)
+				fmt.Fprint(out, refusal.Render(p))
 				continue
 			}
 			parked++
@@ -3550,6 +3564,7 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 				if err := recordResolution(decPath, line); err != nil {
 					return -1, err
 				}
+				appendTaskLog(t.Dir, changedAnswer+line) // best-effort, like the unblock's: the answer is saved
 				fmt.Fprintf(out, "%s Saved your new answer to %s.\n", p.Green("✓"), sanitizeCell(t.Title))
 			}
 			i++

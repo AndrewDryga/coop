@@ -799,6 +799,23 @@ func TestCmdSignOutsideGitNamesTheFolder(t *testing.T) {
 	}
 }
 
+// A --from that names nothing in the repository is refused in the shared block, as every other sign
+// refusal is, not as a bare "no such commit" line, and still exits 1.
+func TestCmdSignRefusesAFromRefGitCannotFindInTheSharedBlock(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo, git := gitRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	code, err := a.cmdSign([]string{"--from", "nosuchref"})
+	want := "\n✗ No commit named \"nosuchref\"\n\n      Git cannot find it in this repository.\n\n" +
+		"  Use --from with a commit, branch or tag that exists, such as origin/main.\n  Help: coop help sign\n"
+	if code != 1 || err == nil || usageBlock(t, err) != want {
+		t.Fatalf("coop sign --from nosuchref = (%d, %v), want exit 1 and\n%s", code, err, want)
+	}
+}
+
 func TestCmdSignRejectsEmptyFromBeforeRepositoryAccess(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: filepath.Join(t.TempDir(), "missing")}}
 	for _, args := range [][]string{{"--from"}, {"--from", ""}, {"--from", "--help"}} {

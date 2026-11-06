@@ -64,7 +64,7 @@ func stateTemplateRefusal(t Item, retry string) error {
 // review verdict, a refused completion — not what its worker changed or why, so none is an entry.
 var (
 	coopLogNotes = []string{
-		"Claimed by ", "Unblocked: ", "Blocked: ", parkedBy, "review: fail",
+		"Claimed by ", "Unblocked: ", changedAnswer, "Blocked: ", parkedBy, "review: fail",
 		"completion rejected: ", "implementation completion rejected: ",
 		"provider exited while an agent-owned background job", "the host watchdog killed this provider attempt",
 		"preflight: ", "host parked this task", "host preflight parked this task",

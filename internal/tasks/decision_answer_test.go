@@ -486,9 +486,10 @@ func TestDecisionBrowserPrintsLabelsAsText(t *testing.T) {
 	}
 }
 
-// Each saved answer gets one line before the next question, which says where it left the task. The
-// person's own answer is shown as they typed it, asterisks and all.
-func TestDecisionBrowserConfirmsEachSavedAnswer(t *testing.T) {
+// blockedPair is a queue with two blocked tasks, alpha and beta, each asking an unanswered question,
+// and the browser refs that walk them.
+func blockedPair(t *testing.T) (string, []decisionRef) {
+	t.Helper()
 	root := t.TempDir()
 	var refs []decisionRef
 	for _, id := range []string{"alpha", "beta"} {
@@ -499,6 +500,35 @@ func TestDecisionBrowserConfirmsEachSavedAnswer(t *testing.T) {
 		}
 		refs = append(refs, decisionRef{root: root, id: id})
 	}
+	return root, refs
+}
+
+// Every answer saved in the browser reaches log.md: the first with the unblock, and one typed after
+// the task is back in todo as its own line, so the log never stops at the answer the task came back
+// with. Those lines are Coop's own notes, not a worker's entry.
+func TestDecisionBrowserLogsEveryAnswerItSaves(t *testing.T) {
+	root, refs := blockedPair(t)
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser("", refs, strings.NewReader("Use B, blue.\n:p\nUse A.\n:p\nUse C, green.\n:q\n"), &out); code != 0 || err != nil {
+		t.Fatalf("browser = (%d, %v)", code, err)
+	}
+	log := readFile(t, filepath.Join(root, StateTodo, "alpha", "log.md"))
+	first, second, third := strings.Index(log, "- Unblocked: Use B, blue.\n"), strings.Index(log, "- Answer changed: Use A.\n"), strings.Index(log, "- Answer changed: Use C, green.\n")
+	if first < 0 || second < first || third < second {
+		t.Fatalf("log.md does not hold the three answers in the order they were typed:\n%s", log)
+	}
+	if LogHasEntry(log) {
+		t.Errorf("log.md reads as holding a worker's entry:\n%s", log)
+	}
+	if dec := readFile(t, filepath.Join(root, StateTodo, "alpha", "decision.md")); !strings.Contains(dec, "**Resolution:** Use C, green.\n") {
+		t.Errorf("decision.md does not hold the last answer:\n%s", dec)
+	}
+}
+
+// Each saved answer gets one line before the next question, which says where it left the task. The
+// person's own answer is shown as they typed it, asterisks and all.
+func TestDecisionBrowserConfirmsEachSavedAnswer(t *testing.T) {
+	root, refs := blockedPair(t)
 	var out bytes.Buffer
 	if code, err := runDecisionBrowser("", refs, strings.NewReader("Use **B**, blue.\n:p\nUse A.\n:q\n"), &out); code != 0 || err != nil {
 		t.Fatalf("browser = (%d, %v)", code, err)

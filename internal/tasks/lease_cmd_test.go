@@ -17,6 +17,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/ui"
 
 	"time"
 
@@ -73,12 +74,24 @@ func waitLease(t *testing.T, item Item, state taskLeaseState) TaskLeaseObservati
 	}
 }
 
+// A lease covers work in progress. A todo task is refused in the shared block that names claim; a
+// blocked or done one cannot be claimed either, so it gets the refusal claim itself gives.
 func TestLeaseRequiresAnInProgressTask(t *testing.T) {
 	root := t.TempDir()
-	writeTaskFile(t, filepath.Join(root, StateTodo, "todo", "task.md"), "# Todo\n")
+	for state, id := range map[string]string{StateTodo: "todo", StateBlocked: "blocked", StateDone: "done"} {
+		writeTaskFile(t, filepath.Join(root, state, id, "task.md"), "# "+strings.ToUpper(id[:1])+id[1:]+"\n")
+	}
 	code, err := holdTaskLease(context.Background(), root, leaseRequest{id: "todo"}, time.Millisecond)
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "coop tasks claim todo") {
-		t.Fatalf("lease on a todo task = %d, %v; want a refusal pointing at claim", code, err)
+	want := "\n✗ Could not lease todo\n\n      It is todo. A lease covers work in progress.\n\n  Claim it first: coop tasks claim todo\n"
+	if code != 1 || err == nil || refusal(t, err).Render(ui.Palette{}) != want {
+		t.Fatalf("lease on a todo task = %d, %v; want exit 1 and\n%s", code, err, want)
+	}
+	for _, id := range []string{"blocked", "done"} {
+		item, _ := mustCurrentTask(t, root, id)
+		code, err := holdTaskLease(context.Background(), root, leaseRequest{id: id}, time.Millisecond)
+		if code != 1 || err == nil || refusal(t, err).Render(ui.Palette{}) != refusal(t, claimRefusal(item)).Render(ui.Palette{}) {
+			t.Fatalf("lease on a %s task = %d, %v; want exit 1 and the refusal claim gives", id, code, err)
+		}
 	}
 }
 

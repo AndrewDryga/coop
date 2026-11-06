@@ -516,13 +516,23 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 	}
 	all := slices.Contains(args, "--all")
 	only := taskStateFilter(args)
+	// A task may wait for one in another queue, as the loop and the board read it, so one index
+	// spans them all.
+	roots := make([]string, len(rels))
+	for i, rel := range rels {
+		roots[i] = filepath.Join(repo, rel)
+	}
+	waits, _, err := readQueueIndex(roots)
+	if err != nil {
+		return -1, err
+	}
 	p := ui.For(os.Stdout)
 	for i, rel := range rels {
 		if i > 0 {
 			fmt.Println() // one blank line between queues, as between the sections inside one
 		}
 		fmt.Println(banner(p, rel))
-		root := filepath.Join(repo, rel)
+		root := roots[i]
 		// Empty/absent queues print a plain gray line (not ui.Info) so the whole roll-up stays one
 		// clean stdout block — no "coop:" prefix mid-list, and `coop tasks ls > file` keeps it all.
 		exists, err := taskQueueExists(root)
@@ -543,7 +553,7 @@ func tasksListAll(repo string, rels []string, args []string) (int, error) {
 			continue
 		}
 		// The banner already names the queue, so its listing carries no "Tasks" heading of its own.
-		if _, err := printTaskTree(root, "", all, only...); err != nil {
+		if _, err := printTaskTree(root, "", items, waits, all, only...); err != nil {
 			return -1, err
 		}
 		warnQueueRootStrays(root)

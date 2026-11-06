@@ -222,6 +222,58 @@ func TestAForcedClaimEndsTheDisplacedLeaseAndNamesItsHolder(t *testing.T) {
 	}
 }
 
+// An agent's claim over a person's says whose it took, in its output and in log.md, as it does over
+// a process's, forced or not. A person has no process, so no lease ends and nothing is marked: the
+// mark an earlier forced claim left on a process stays. A person who claims again what is theirs
+// takes it from nobody.
+func TestAnAgentsClaimOverAPersonsClaimNamesThePerson(t *testing.T) {
+	t.Setenv("USER", "alice")
+	me := selfActor(t, "claude")
+	qa, _ := sleeperActor(t, "qa")
+	for name, force := range map[string]bool{"forced": true, "plain": false} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+			claim := func(actor ClaimActor, force bool) string {
+				t.Helper()
+				return captureStderr(t, func() {
+					if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
+						t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
+					}
+				})
+			}
+			claim(qa, false)
+			claim(ClaimActor{}, true) // alice, at a terminal, takes it from qa, which is then marked as displaced
+
+			out := claim(me, force)
+			if want := "  Took over from alice.\n"; !strings.Contains(out, want) || strings.Contains(out, "Already in progress") {
+				t.Fatalf("claim output =\n%s\nwant it to say %q", out, want)
+			}
+			item, _ := mustCurrentTask(t, root, "x")
+			want := fmt.Sprintf("- Claimed by claude (PID %d), taking it over from alice\n", me.PID)
+			if log := readFileString(filepath.Join(item.Dir, "log.md")); !strings.Contains(log, want) {
+				t.Fatalf("log.md =\n%s\nwant it to contain %q", log, want)
+			}
+			if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != me.PID || rec.TakenFromPID != qa.PID {
+				t.Fatalf("owner after the claim = %+v, want claude's claim with qa still marked as displaced", rec)
+			}
+		})
+	}
+
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "mine", "task.md"), "# Mine\n")
+	for range 2 {
+		out := captureStderr(t, func() {
+			if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateInProgress, "claim", "claimed", claimOptions{}); code != 0 || err != nil {
+				t.Fatalf("a person's claim = %d, %v", code, err)
+			}
+		})
+		if strings.Contains(out, "Took over") {
+			t.Fatalf("a person's own claim says it took the task from someone:\n%s", out)
+		}
+	}
+}
+
 // A forced claim takes the task from the displaced process for good: that process can no longer
 // complete it, lease it or claim it back without --force, whether an agent forced the claim or a
 // person at a terminal, whose claim binds to no process.

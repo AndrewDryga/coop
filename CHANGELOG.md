@@ -39,6 +39,14 @@
   a signal, and when Docker's client holds the terminal and passes it to the box, which ends the box's
   first process before it runs. Docker's words about a start you stopped are no longer shown. A box
   with its input redirected that Ctrl-C or SIGTERM stops also exits 130 or 143, not 1.
+
+- **Four task-command slips are fixed.** `coop tasks claim --force` over a person's claim now says
+  whose claim it took, as it does over a process's. `coop tasks ls` no longer shows "Waits for" once
+  the task it names is done, as the board and the loop already read it. Every answer typed in
+  `coop tasks decisions -i` reaches `log.md`, not only the first. `coop tasks park` on a task that
+  cannot be parked, `coop tasks lease` on one that is not in progress and `coop sign --from` with a
+  name Git does not know now refuse with the usual headline, cause and next step.
+
 - **`coop codex -p "- fix this bug"` runs the prompt.** A prompt that starts with a dash and a space,
   such as a markdown bullet list, was read as an option, so it reached `codex exec` without the `--`
   that keeps it a prompt. It is now the prompt, behind `--`; a lone `-` still means standard input.

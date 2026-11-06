@@ -174,6 +174,18 @@ func bindLeaseToClaimant(root string, req leaseRequest) leaseRequest {
 	return req
 }
 
+// leaseStateRefusal is why a lease cannot start on t, which is not in progress: a todo task is
+// claimed first, and a blocked or done one cannot be claimed either, so it is sent where claim
+// sends it.
+func leaseStateRefusal(t Item) error {
+	if refusal := claimRefusal(t); refusal != nil {
+		return refusal
+	}
+	id := ui.SafeInline(t.ID)
+	return ui.CommandFailed("Could not lease "+id, "It is todo. A lease covers work in progress.",
+		[2]string{"Claim it first:", "coop tasks claim " + id})
+}
+
 // holdTaskLease is the testable core of `coop tasks lease`.
 func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time.Duration) (int, error) {
 	t, err := FindTask(root, req.id)
@@ -181,7 +193,7 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 		return lookupExit(err), err
 	}
 	if t.State != StateInProgress {
-		return 1, fmt.Errorf("%s is %s — a lease covers work in progress; claim it first: coop tasks claim %s", t.ID, StateLabel(t.State), t.ID)
+		return 1, leaseStateRefusal(t)
 	}
 	if record, owned, err := readTaskOwnerRecordOf(root, t); err != nil {
 		return -1, err

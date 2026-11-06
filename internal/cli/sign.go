@@ -38,7 +38,9 @@ func signBase(repo, from string) (string, error) {
 		}
 	}
 	if forkspace.GitOut(repo, "rev-parse", "--verify", "--quiet", base+"^{commit}") == "" {
-		return "", fmt.Errorf("no such commit: %s", base)
+		return "", ui.CommandFailed(fmt.Sprintf("No commit named %q", base), "Git cannot find it in this repository.",
+			[2]string{"", "Use --from with a commit, branch or tag that exists, such as origin/main."},
+			[2]string{"Help:", "coop help sign"})
 	}
 	return base, nil
 }
