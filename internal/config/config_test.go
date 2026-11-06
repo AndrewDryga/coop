@@ -957,6 +957,94 @@ func TestRootDirHonorsCoopHome(t *testing.T) {
 	}
 }
 
+// Every setting that names one of Coop's own folders or files on this machine needs an absolute
+// path: a relative one would follow the working folder, usually a repository a box mounts, and put
+// accounts or settings inside it. Load refuses it before it touches anything, by name.
+func TestLoadRefusesRelativeHostPaths(t *testing.T) {
+	for _, key := range []string{"COOP_CONFIG_DIR", "COOP_MCP_FILE", "COOP_PRESETS_DIR", "COOP_CONF", "COOP_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
+		for _, value := range []string{"rel2", "~/coop", "./agents"} {
+			t.Run(key+"="+value, func(t *testing.T) {
+				clearAgentEnv(t)
+				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+				work := t.TempDir()
+				t.Chdir(work)
+				t.Setenv(key, value)
+				_, err := Load()
+				want := fmt.Sprintf("%s must be an absolute path, not %q", key, value)
+				if err == nil || err.Error() != want {
+					t.Fatalf("Load error = %v, want %q", err, want)
+				}
+				if entries, _ := os.ReadDir(work); len(entries) != 0 {
+					t.Errorf("Load wrote %d entries into the working folder, want none", len(entries))
+				}
+			})
+		}
+	}
+	t.Run("an empty COOP_CONFIG_DIR is no folder", func(t *testing.T) {
+		clearAgentEnv(t)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("COOP_CONFIG_DIR", "")
+		if _, err := Load(); err == nil || err.Error() != `COOP_CONFIG_DIR must be an absolute path, not ""` {
+			t.Fatalf("Load error = %v, want the empty COOP_CONFIG_DIR refused", err)
+		}
+	})
+	t.Run("an empty MCP file or presets folder means none", func(t *testing.T) {
+		clearAgentEnv(t)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("COOP_MCP_FILE", "")
+		t.Setenv("COOP_PRESETS_DIR", "")
+		if c := mustLoad(t); c.MCPFile != "" || c.GlobalPresetsDir() != "" {
+			t.Errorf("MCPFile=%q GlobalPresetsDir=%q, want both empty", c.MCPFile, c.GlobalPresetsDir())
+		}
+	})
+	t.Run("absolute paths load", func(t *testing.T) {
+		clearAgentEnv(t)
+		root := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", root)
+		t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+		t.Setenv("COOP_CONF", writeMainConf(t, ""))
+		t.Setenv("COOP_CONFIG_DIR", filepath.Join(root, "agents"))
+		t.Setenv("COOP_MCP_FILE", filepath.Join(root, "mcp.json"))
+		t.Setenv("COOP_PRESETS_DIR", filepath.Join(root, "presets"))
+		c := mustLoad(t)
+		if c.ConfigDir != filepath.Join(root, "agents") || c.MCPFile != filepath.Join(root, "mcp.json") || c.GlobalPresetsDir() != filepath.Join(root, "presets") {
+			t.Errorf("ConfigDir=%q MCPFile=%q GlobalPresetsDir=%q", c.ConfigDir, c.MCPFile, c.GlobalPresetsDir())
+		}
+	})
+	// In coop.conf the refusal names the file and the line, and never the value.
+	for _, key := range []string{"COOP_CONFIG_DIR", "COOP_MCP_FILE", "COOP_PRESETS_DIR"} {
+		t.Run(key+" in coop.conf", func(t *testing.T) {
+			clearAgentEnv(t)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			path := writeMainConf(t, "COOP_PIDS=512\n"+key+"=~/coop\n")
+			t.Setenv("COOP_CONF", path)
+			_, err := Load()
+			var failure *Failure
+			if !errors.As(err, &failure) || failure.Where != path+":2" || failure.Problem != "Invalid value for "+key+"." || failure.Action != "Use an absolute path." {
+				t.Fatalf("Load error = %#v, want %s:2 to name %s and ask for an absolute path", err, path, key)
+			}
+		})
+	}
+}
+
+// Without a home folder there is no ~/.config, and the working folder must not stand in for it.
+func TestConfigHomeNeedsAnAbsoluteHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	if _, err := xdgConfigHome(); err == nil || !strings.Contains(err.Error(), "find your home folder") {
+		t.Errorf("xdgConfigHome with no HOME = %v, want a refusal", err)
+	}
+	t.Setenv("HOME", "relative")
+	if _, err := xdgConfigHome(); err == nil || err.Error() != `HOME must be an absolute path, not "relative"` {
+		t.Errorf("xdgConfigHome with a relative HOME = %v, want a refusal", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got, err := xdgConfigHome(); err != nil || got != filepath.Join(home, ".config") {
+		t.Errorf("xdgConfigHome = (%q, %v), want %q", got, err, filepath.Join(home, ".config"))
+	}
+}
+
 // Git keeps only the shared settings, and an edited file is left alone.
 func TestSettingsGitignoreKeepsOnlySharedSettings(t *testing.T) {
 	home := t.TempDir()

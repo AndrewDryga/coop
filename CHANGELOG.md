@@ -27,6 +27,15 @@
   never asked about Git again. Init now stops with the message a run without a terminal gets and
   changes nothing, and it asks again on every run until the folder is in Git, even where an
   earlier run left files.
+
+- **Coop refuses a relative path for its own folders before it writes or asks anything.** A
+  relative `COOP_CONFIG_DIR` put sign-ins and `mcp.json` in the current folder, usually a
+  repository: `coop init` wrote `rel2/mcp.json` into the project, and `coop login` asked for an API
+  key before it failed. Every command now stops with "COOP_CONFIG_DIR must be an absolute path", as
+  it already did for `COOP_HOME`. `COOP_MCP_FILE`, `COOP_PRESETS_DIR`, `COOP_CONF`,
+  `XDG_CONFIG_HOME` and `XDG_STATE_HOME` get the same check, `coop.conf` names the line of a
+  relative one, and an unset `HOME` no longer puts Coop's settings in `.config` under the current
+  folder. An empty `COOP_MCP_FILE` or `COOP_PRESETS_DIR` still means none.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

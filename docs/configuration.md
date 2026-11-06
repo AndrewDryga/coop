@@ -59,15 +59,15 @@ On Docker, co:op also removes all Linux capabilities (`--cap-drop ALL`). Even if
 
 | Variable | Default | What it does |
 |---|---|---|
-| `COOP_CONFIG_DIR` | `~/.config/coop/agents` | The folder for each agent's credentials and settings. |
-| `COOP_CONF` | `~/.config/coop/coop.conf` | Environment only. Reads `coop.conf` from this path, which must name a readable regular file. |
+| `COOP_CONFIG_DIR` | `~/.config/coop/agents` | Absolute path of the folder for each agent's credentials and settings. |
+| `COOP_CONF` | `~/.config/coop/coop.conf` | Environment only. Reads `coop.conf` from this absolute path, which must name a readable regular file. |
 | `NO_COLOR` | unset | Environment only. Any value, even an empty one, turns off ANSI color everywhere ([no-color.org](https://no-color.org)). |
 | `COOP_<AGENT>_CMD`, like `COOP_CLAUDE_CMD` | the agent's autonomous command | Overrides an agent's base command. |
 | `COOP_<AGENT>_MODEL`, like `COOP_CLAUDE_MODEL` | the CLI's default | The agent-wide default model, everywhere that agent runs. See [picking models](agents.md#picking-models). |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | How long `coop-consult` waits for each peer, in seconds. See below. |
 | `COOP_CONSULT_STREAM_LIMIT` | `0` (unlimited) | The most output, in bytes, `coop-consult` accepts from a peer's reply or diagnostics. It discards a larger reply. Set it in `agents/env`. See [limits](agents.md#limits). |
-| `COOP_PRESETS_DIR` | `~/.config/coop/presets` | The folder for global presets. See [where presets live](agents.md#where-presets-live). |
-| `COOP_MCP_FILE` | `~/.config/coop/agents/mcp.json` | The file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full. |
+| `COOP_PRESETS_DIR` | `~/.config/coop/presets` | Absolute path of the folder for global presets. See [where presets live](agents.md#where-presets-live). |
+| `COOP_MCP_FILE` | `~/.config/coop/agents/mcp.json` | Absolute path of the file that defines MCP servers. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full. |
 | `COOP_SHELL` | `bash` | The shell `coop shell` opens. |
 | `COOP_NO_UPDATE_CHECK` | off | Turns off the once-a-day "a newer coop/box is available" check. |
 

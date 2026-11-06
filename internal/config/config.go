@@ -150,9 +150,15 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// localDir ignores a relative state folder, but eval results would land in it (relativePathError).
+	if base := os.Getenv("XDG_STATE_HOME"); base != "" && !filepath.IsAbs(base) {
+		return nil, relativePathError("XDG_STATE_HOME", base)
+	}
 	confPath, explicitConf := os.LookupEnv("COOP_CONF")
 	if !explicitConf {
 		confPath = filepath.Join(boxHome, "coop.conf")
+	} else if !filepath.IsAbs(confPath) {
+		return nil, relativePathError("COOP_CONF", confPath)
 	}
 	conf, err := loadMainConf(confPath, explicitConf)
 	if err != nil {
@@ -307,6 +313,12 @@ func Load() (*Config, error) {
 
 	c.MCPFile = get("COOP_MCP_FILE", filepath.Join(c.ConfigDir, "mcp.json"))
 	c.MCPInBox = c.HomeInBox + "/.mcp.json"
+	// Checked before anything below touches these paths (relativePathError).
+	for _, setting := range [][2]string{{"COOP_CONFIG_DIR", c.ConfigDir}, {"COOP_MCP_FILE", c.MCPFile}, {"COOP_PRESETS_DIR", c.GlobalPresetsDir()}} {
+		if hostPath(setting[0], setting[1]) != nil {
+			return nil, relativePathError(setting[0], setting[1])
+		}
+	}
 	if err := ensurePrivateDirIfPresent(c.ConfigDir); err != nil {
 		return nil, err
 	}
@@ -724,15 +736,36 @@ func (c *Config) Profiles(agent string) ([]string, error) {
 	return names, err
 }
 
-func xdgConfigHome() string {
+// xdgConfigHome is the folder that holds Coop's settings folder: XDG_CONFIG_HOME, else ~/.config.
+// Without a home folder there is no such place, and the working folder must not stand in for it.
+func xdgConfigHome() (string, error) {
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return v
+		return v, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".config"
+		return "", fmt.Errorf("find your home folder: %w", err)
 	}
-	return filepath.Join(home, ".config")
+	if !filepath.IsAbs(home) {
+		return "", relativePathError("HOME", home)
+	}
+	return filepath.Join(home, ".config"), nil
+}
+
+// relativePathError refuses a relative path for a setting that names one of Coop's own folders or
+// files on this machine. It would follow the working folder, which is usually a repository Coop's
+// boxes mount and you may commit, and put accounts or settings inside it.
+func relativePathError(key, value string) error {
+	return fmt.Errorf("%s must be an absolute path, not %q", key, value)
+}
+
+// hostPath accepts a COOP_CONFIG_DIR, COOP_MCP_FILE or COOP_PRESETS_DIR value: an absolute path, or
+// for the last two nothing, which means no MCP file or no global presets.
+func hostPath(key, value string) error {
+	if filepath.IsAbs(value) || (value == "" && key != "COOP_CONFIG_DIR") {
+		return nil
+	}
+	return advice("Use an absolute path.")
 }
 
 // The variables internal/testutil/teststate sets for a test binary: the folder it made, and the
@@ -789,17 +822,24 @@ func within(dir, path string) bool {
 func RootDir() (string, error) {
 	if home := os.Getenv("COOP_HOME"); home != "" {
 		if !filepath.IsAbs(home) {
-			return "", fmt.Errorf("COOP_HOME must be an absolute path, not %q", home)
+			return "", relativePathError("COOP_HOME", home)
 		}
 		if err := CheckTestFolder("COOP_HOME", home); err != nil {
 			return "", err
 		}
 		return filepath.Clean(home), nil
 	}
+	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" && !filepath.IsAbs(base) {
+		return "", relativePathError("XDG_CONFIG_HOME", base)
+	}
 	if err := CheckTestFolder("XDG_CONFIG_HOME", os.Getenv("XDG_CONFIG_HOME")); err != nil {
 		return "", err
 	}
-	return filepath.Join(xdgConfigHome(), "coop"), nil
+	base, err := xdgConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "coop"), nil
 }
 
 // StateHome is the XDG state folder that holds Coop's network authority and eval results:
@@ -1105,6 +1145,8 @@ func validateMainConfigValue(key, value string) error {
 	case "COOP_PIDS":
 		_, err := parsePids(value)
 		return err
+	case "COOP_CONFIG_DIR", "COOP_MCP_FILE", "COOP_PRESETS_DIR":
+		return hostPath(key, value)
 	default:
 		return nil
 	}

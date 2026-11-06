@@ -85,6 +85,58 @@ func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {
 	}
 }
 
+// A relative COOP_CONFIG_DIR would put sign-ins and the MCP file inside the working folder, usually
+// the repository a box mounts. Every command refuses it before it writes a file or asks a question:
+// init wrote rel2/mcp.json into the project, and login asked for an API key before failing.
+func TestMainRefusesRelativeConfigDirBeforeWritingOrAsking(t *testing.T) {
+	useEmptyMainConfig(t)
+	hermeticGit(t)
+	work := t.TempDir()
+	gitInit(t, work)
+	t.Chdir(work)
+	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
+	marker := filepath.Join(t.TempDir(), "runtime-called")
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtime, []byte("#!/bin/sh\necho \"$@\" >> \""+marker+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_RUNTIME", runtime)
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	oldStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	t.Setenv("COOP_CONFIG_DIR", "rel2")
+	for _, argv := range [][]string{{"init"}, {"credentials"}, {"login", "gemini@rel"}} {
+		var code int
+		var stdout string
+		stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code = Main(argv) }) })
+		if code != 1 || stdout != "" || stderr != "✗ COOP_CONFIG_DIR must be an absolute path, not \"rel2\"\n" {
+			t.Errorf("coop %s = %d, stdout %q, stderr %q; want exit 1 and only the refusal", strings.Join(argv, " "), code, stdout, stderr)
+		}
+		if entries, _ := os.ReadDir(work); len(entries) != 1 || entries[0].Name() != ".git" {
+			t.Fatalf("coop %s changed the working folder: %v, want only .git", strings.Join(argv, " "), entries)
+		}
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("coop %s ran the runtime (stat err %v)", strings.Join(argv, " "), err)
+		}
+	}
+
+	t.Setenv("COOP_CONFIG_DIR", t.TempDir())
+	stdout := captureStdout(t, func() {
+		if code := Main([]string{"credentials"}); code != 0 {
+			t.Errorf("coop credentials with an absolute COOP_CONFIG_DIR exit = %d, want 0", code)
+		}
+	})
+	if !strings.Contains(stdout, "Accounts available to Coop") {
+		t.Errorf("coop credentials with an absolute COOP_CONFIG_DIR printed %q", stdout)
+	}
+}
+
 func TestRejectArgs(t *testing.T) {
 	if err := rejectArgs("build", nil); err != nil {
 		t.Errorf("no args should be ok, got %v", err)
