@@ -47,7 +47,7 @@ func TestProviderScriptedDetachedForkLifecycle(t *testing.T) {
 				_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
 			}
 		})
-		ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
+		ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1)
 		awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), true)
 
 		duplicate := runDetachedCLI(t, suite, suite.layout.Repo, suite.env,
@@ -135,7 +135,7 @@ func TestProviderScriptedDetachedPresetLifecycle(t *testing.T) {
 			_ = runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
 		}
 	})
-	ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
+	ready := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1)
 	awaitPathState(t, forkspace.PidPath(suite.layout.Repo, name), true)
 
 	trace := readProcessTrace(t, suite.layout.Trace)
@@ -221,13 +221,13 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	if started.Err != nil || started.ExitCode != 0 {
 		t.Fatalf("start %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s", suite.layout.Repo, started.ExitCode, started.Err, started.Stdout, started.Stderr)
 	}
-	firstReady := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1, 10*time.Second)
+	firstReady := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 1)
 	started = runDetachedCLI(t, suite, secondRepo, secondEnv,
 		"fork", name, target, "--loop", "--detach", "--tasks", filepath.Join(secondRepo, tasksRoot))
 	if started.Err != nil || started.ExitCode != 0 {
 		t.Fatalf("start %s = exit %d err %v\nstdout:\n%s\nstderr:\n%s", secondRepo, started.ExitCode, started.Err, started.Stdout, started.Stderr)
 	}
-	secondReady := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 2, 10*time.Second)
+	secondReady := awaitProcessEventCount(t, suite.layout.Trace, "provider", "ready", 2)
 	t.Cleanup(func() {
 		for _, row := range []struct {
 			repo string
@@ -331,7 +331,7 @@ func readProcessForkIdentity(t *testing.T, repo, name string) forkspace.Identity
 
 func runDetachedCLI(t *testing.T, suite *directProcessSuite, repo string, env []string, args ...string) procharness.Result {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
 	return procharness.Run(ctx, procharness.Command{
 		Path: suite.coopBin, Args: args, Dir: repo, Env: env,
@@ -339,9 +339,9 @@ func runDetachedCLI(t *testing.T, suite *directProcessSuite, repo string, env []
 	})
 }
 
-func awaitProcessEventCount(t *testing.T, path, source, event string, count int, timeout time.Duration) *processTrace {
+func awaitProcessEventCount(t *testing.T, path, source, event string, count int) *processTrace {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard: the suite's hundreds of process starts slow with load
 	for time.Now().Before(deadline) {
 		var matches []*processTrace
 		data, err := os.ReadFile(path)
@@ -359,7 +359,7 @@ func awaitProcessEventCount(t *testing.T, path, source, event string, count int,
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s/%s #%d\ntrace:\n%s", source, event, count, readProcessFile(t, path))
+	t.Fatalf("timed out after %s waiting for %s/%s #%d\ntrace:\n%s", wait.Deadline, source, event, count, readProcessFile(t, path))
 	return nil
 }
 

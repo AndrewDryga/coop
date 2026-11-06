@@ -36,7 +36,7 @@ func TestProviderScriptedLoopUnfinishedChecklist(t *testing.T) {
 				Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
 				Loop: loopProcessPlan{TaskID: id, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete"}}},
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 			defer cancel()
 			result := procharness.Run(ctx, procharness.Command{
 				Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
@@ -73,7 +73,7 @@ func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
 			{Target: target, Stage: "work", Result: "decision-complete"},
 		}},
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 	defer cancel()
 	result := procharness.Run(ctx, procharness.Command{
 		Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
@@ -159,7 +159,7 @@ func TestProviderScriptedLoopCompletionRepair(t *testing.T) {
 				command.Env = replaceProcessEnv(command.Env, "COOP_SPINNER", "0")
 				command = terminalLoopCommand(t, command)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 			result := procharness.Run(ctx, command)
 			cancel()
 			output := result.Stdout + result.Stderr

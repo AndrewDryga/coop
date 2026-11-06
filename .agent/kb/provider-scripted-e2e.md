@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -28,14 +28,27 @@ short: a provider's argv can carry its whole prompt). The consult stalls once fi
 stuck 19 s in one capture; the 2026-10-10 recovery row whose deadline rows showed the wrapper in its
 capture wait with one capture shell and its `cat` left) have the shape of a capture reader that
 macOS left without its EOF; see [[provider-consult-e2e]]. Consult and delegate peers here run under
-the fixture's `setsid`/`timeout` aliases (the suite sets `COOP_CONSULT_TIMEOUT=2`), in their own
-session, so a deadline also lists the run's descendants that left its group (`processTable.departed`).
-Separately, under heavy compile load the overflow cases of
-`TestProviderScriptedConsultTimeoutAndOverflowMatrix` outrun their 20 s budget; the run examined was
-a slow drain, not a hang — `bounded_capture` spawns about five processes per 64 KiB block. A loop-review
-run's hang guard is `loopReviewBudget`: 10 s per launched attempt, never under `wait.Deadline` (an
-attempt costs about 3-3.5 s under gate load, more beside a second gate; flat 20 s budgets failed at
-20.2 and 20.6 s with nothing hung).
+the fixture's `setsid`/`timeout` aliases, in their own session, so a deadline also lists the run's
+descendants that left its group (`processTable.departed`). Separately, under heavy compile load the
+overflow cases of `TestProviderScriptedConsultTimeoutAndOverflowMatrix` once outran a 20 s budget;
+the run examined was a slow drain, not a hang — `bounded_capture` spawns about five processes per
+64 KiB block.
+
+**Load multiplies process starts, so the guards scale.** Nearly all of a scripted case's time is the
+host's own process starts: about 70 git calls and ten runtime calls between two provider runs, and a
+fixture binary start for each runtime, provider, peer and alias call. Each slows with load. A
+six-attempt signoff run took 2.1-2.5 s quiet, 14-18 s at load 50, and passed 60 s under make check
+with nothing hung. So every fixed guard sized from a quiet run fails the same way: the 10 s per
+attempt run budget, 5 s readiness waits, and the 2 s consult and delegate bounds (a delegate's
+codex peer killed while its nested consult ran). Now a scripted loop run's hang guard is
+`wait.Deadline` per launched attempt (`loopReviewBudget`; `scriptedLoopBudget` counts the attempts
+the current scenario scripts), every await helper waits `wait.Deadline` with no per-call timeout,
+and the fixture's marker and release waits wait 60 s. The suite sets `COOP_CONSULT_TIMEOUT=60`; the
+consult timeout case sets the 2 s it tests, and the fixture gives a delegate call scripted to exit
+124 `COOP_DELEGATE_TIMEOUT=2` and every other call 60. Those two timeout cases hold on any host
+because their peers never reply. A shim that sleeps before each git call, or before each fixture
+binary start, reproduces the load failures on demand: 150 ms per git call failed the old readiness
+wait and signoff budget, and 500 ms per fixture start failed the old delegate consult.
 
 Fork coverage uses disposable parent and fork repositories to cross the external CLI/runtime
 boundary without a second emulator. It proves fresh, resume, and new sessions; all four native
@@ -152,6 +165,10 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-05 — the scripted guards scale with load (task
+  2026-11-05-investigate-scripted-loop-timeouts-under-concurr): per-attempt `wait.Deadline` run
+  budgets, `wait.Deadline` in every await helper, 60 s fixture marker/release waits and suite
+  consult bound, and a 40-minute bound on both shards; the consult and delegate timeout cases keep 2 s.
 - 2026-11-04 — dropped the proof that a provider-only `.coop/session.<provider>` file is ignored:
   `forkctl.ForkSessionFile` always names the account and no code reads the old name.
 - 2026-10-15 — the consult capture stalls are explained: macOS can lose a FIFO reader's EOF

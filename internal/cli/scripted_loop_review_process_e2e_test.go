@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,15 +211,15 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		output := result.Stdout + result.Stderr
@@ -460,7 +461,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		// The gated work box holds the run mid-iteration: rewrite the review prompts on disk —
 		// the "audit-prompt fix committed mid-run and believed active" incident — then release.
 		edited := bytes.ReplaceAll(startupConfig, []byte("FIXTURE"), []byte("EDITED"))
@@ -826,7 +827,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 
 		commitUnbound(t, taskID, "intervening")
 		descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
@@ -836,7 +837,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		loopProcessGit(t, suite, "add", "descendant.txt")
 		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
 		commitUnbound(t, taskID, "trailing")
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		hostCompletion := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
@@ -892,7 +893,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, blockAttempts))
 		process := startLoopRecovery(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		commitUnbound(t, taskID, "intervening")
 		descendantFile := filepath.Join(suite.layout.Repo, "descendant.txt")
 		if err := os.WriteFile(descendantFile, []byte("descendant\n"), 0o600); err != nil {
@@ -901,7 +902,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		loopProcessGit(t, suite, "add", "descendant.txt")
 		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
 		commitUnbound(t, taskID, "trailing")
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		hostCompletion := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
@@ -926,7 +927,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, blockAttempts)
 		unblockArgs := []string{"tasks", "unblock", taskID, "external acceptance passed"}
-		ctx, cancel = context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel = context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		unblocked := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: unblockArgs,
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
@@ -1012,7 +1013,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		writeLoopReviewConfig(t, suite.layout.Repo, nil, nil, nil, 3)
 		attempts := []loopProcessAttempt{{Target: work, Stage: "work", Result: "verify-only-after-block"}}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, wait.Deadline)
+		result := runLoopReview(t, suite, work, scriptedLoopBudget(t, suite))
 		for _, want := range []string{
 			"host audit-reopen authority no longer matches current HEAD",
 			"no provider started",
@@ -1064,13 +1065,13 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		if err := os.WriteFile(filepath.Join(suite.layout.Repo, "descendant.txt"), []byte("descendant\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		loopProcessGit(t, suite, "add", "descendant.txt")
 		loopProcessGit(t, suite, "commit", "-q", "-m", "fixture: descendant", "-m", "Coop-Task: "+descendantID)
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		hostCompletion := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "done", descendantID},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
@@ -1255,7 +1256,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
 
 		traceBeforeRetry := readProcessTrace(t, suite.layout.Trace)
-		retry := runLoopReview(t, suite, work, wait.Deadline)
+		retry := runLoopReview(t, suite, work, scriptedLoopBudget(t, suite))
 		if retry.Err != nil || retry.ExitCode != 1 ||
 			!strings.Contains(retry.Stderr, "needs exactly one commit with \"Coop-Task: "+taskID+"\"") ||
 			!strings.Contains(retry.Stderr, "found 2") {
@@ -1491,19 +1492,19 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecoveryPTY(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "ready", 2, wait.Deadline)
+		awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "ready", 2)
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") || strings.Contains(result.Stderr, "completion ownership") {
@@ -1560,16 +1561,16 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecoveryPTY(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", wait.Deadline)
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping")
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "Reviewing task: ") || strings.Contains(result.Stdout+result.Stderr, "Reviewing completed work") {
@@ -1598,21 +1599,21 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecoveryPTY(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", wait.Deadline)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), wait.Deadline)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "Reviewing task: ", wait.Deadline)
-		awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "exit", 2, wait.Deadline)
-		awaitLoopProcessOutput(t, process, "Continuing in ", wait.Deadline)
+		awaitLoopProcessOutput(t, process, "Reviewing task: ")
+		awaitLoopTraceEventCount(t, suite.layout.Trace, "provider", "exit", 2)
+		awaitLoopProcessOutput(t, process, "Continuing in ")
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		if result.ExitCode != loop.LoopInterruptedExitCode || !strings.Contains(result.Stdout+result.Stderr, "stopping") {
@@ -1628,9 +1629,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 	})
 }
 
-func awaitLoopTraceEventCount(t *testing.T, path, source, event string, want int, timeout time.Duration) {
+func awaitLoopTraceEventCount(t *testing.T, path, source, event string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard: the suite's hundreds of process starts slow with load
 	for time.Now().Before(deadline) {
 		count := 0
 		for _, record := range readProcessTrace(t, path) {
@@ -1643,7 +1644,7 @@ func awaitLoopTraceEventCount(t *testing.T, path, source, event string, want int
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %d %s/%s trace events", want, source, event)
+	t.Fatalf("timed out after %s waiting for %d %s/%s trace events", wait.Deadline, want, source, event)
 }
 
 func writeLoopReviewConfig(t *testing.T, repo string, between, signoff, verify []string, rounds int) {
@@ -1685,19 +1686,35 @@ func runLoopReview(t *testing.T, suite *directProcessSuite, target string, timeo
 	return procharness.Run(ctx, loopReviewCommand(suite, target))
 }
 
-// loopReviewBudget is the hang guard for one scripted loop run. Like every fixture guard it never
-// drops below wait.Deadline, and it grows with the attempts the run launches: one cost about 3-3.5 s
-// under gate load on 2026-10-07 and more with a second gate beside it, so the flat 20 s these runs had
-// failed busy machines at 20.2 and 20.6 s with nothing hung. A refusal that must come before any
-// provider starts keeps its own short deadline.
+// loopReviewBudget is the hang guard for one scripted loop run: wait.Deadline for each attempt it
+// launches. Nearly all of an attempt's time is the host's own process starts (about 70 git calls and
+// ten runtime calls between two provider runs), and each start slows with load: a six-attempt run took
+// 2.1-2.5 s on a quiet host, 14-18 s at load 50, and passed 60 s under make check with nothing hung.
+// The 10 s per attempt this used to allow assumed a cost that load multiplies. A refusal that must come
+// before any provider starts keeps its own short deadline.
 func loopReviewBudget(attempts int) time.Duration {
-	return max(wait.Deadline, time.Duration(attempts)*10*time.Second)
+	return time.Duration(max(attempts, 1)) * wait.Deadline
+}
+
+// scriptedLoopBudget is loopReviewBudget for the attempts the suite's current scenario scripts, for
+// helpers that run whatever scenario the case last reset.
+func scriptedLoopBudget(t *testing.T, suite *directProcessSuite) time.Duration {
+	t.Helper()
+	data, err := os.ReadFile(suite.scenarioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scenario loopProcessScenario
+	if err := json.Unmarshal(data, &scenario); err != nil {
+		t.Fatalf("read the loop scenario for its budget: %v", err)
+	}
+	return loopReviewBudget(len(scenario.Loop.Attempts))
 }
 
 func runLoopReviewPTY(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
 	t.Helper()
 	command := terminalLoopCommand(t, loopReviewCommand(suite, target))
-	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+	ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 	defer cancel()
 	return procharness.Run(ctx, command)
 }

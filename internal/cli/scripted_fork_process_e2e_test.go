@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestProviderScriptedForkSessionProcess(t *testing.T) {
@@ -285,8 +286,8 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer first.Cleanup()
-		firstReady := awaitProcessEvent(t, override.layout.Trace, "provider", "ready", 5*time.Second)
-		sameCtx, sameCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		firstReady := awaitProcessEvent(t, override.layout.Trace, "provider", "ready")
+		sameCtx, sameCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		same := procharness.Run(sameCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{"fork", "overlap-same", target},
 			Dir: override.layout.Repo, Env: override.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -298,7 +299,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		// One prompt with -p is headless, so the session lock does not refuse it; this suite runs
 		// offline, where the prompt is refused for having no network instead (the lock's headless
 		// reading is covered in internal/agent).
-		promptCtx, promptCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		promptCtx, promptCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		promptResult := procharness.Run(promptCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target, "-p", "fixture prompt"},
 			Dir: override.layout.Repo, Env: override.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -337,7 +338,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		}
 		secondEnv := replaceProcessEnv(override.env, "COOP_PROVIDER_FIXTURE_SCENARIO", secondScenarioPath)
 		secondEnv = replaceProcessEnv(secondEnv, "COOP_REPO", secondRepo)
-		contenderCtx, contenderCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		contenderCtx, contenderCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		contended := procharness.Run(contenderCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{"fork", "overlap-b", target},
 			Dir: secondRepo, Env: secondEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -347,7 +348,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			t.Fatalf("cross-repo contender = exit %d err %v\nstderr:\n%s", contended.ExitCode, contended.Err, contended.Stderr)
 		}
 		// Ordinary and consult launches in B retain the same independent home selection.
-		directCtx, directCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		directCtx, directCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		direct := procharness.Run(directCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target}, Dir: secondRepo, Env: secondEnv,
 			MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -371,7 +372,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		consultEnv = replaceProcessEnv(consultEnv, "COOP_PROVIDER_FIXTURE_SCENARIO", consultPath)
-		consultCtx, consultCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		consultCtx, consultCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		consult := procharness.Run(consultCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target, "--peer", peerTarget.String()},
 			Dir: secondRepo, Env: consultEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -383,7 +384,7 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 
 		// Codex exec rollouts are source:"exec" and excluded from discovery, so a headless run
 		// skips the interactive producer lock; offline, it is refused for having no network.
-		execCtx, execCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		execCtx, execCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		execResult := procharness.Run(execCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{target, "--", "exec", "fixture prompt"},
 			Dir: secondRepo, Env: secondEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -412,13 +413,13 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		if err := syscall.Kill(firstReady.PID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		firstCtx, firstCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		firstCtx, firstCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		firstResult := first.Wait(firstCtx)
 		firstCancel()
 		if firstResult.Err != nil || firstResult.ExitCode == 0 {
 			t.Fatalf("canceled first fork = exit %d err %v", firstResult.ExitCode, firstResult.Err)
 		}
-		secondCtx, secondCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		secondCtx, secondCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		secondResult := procharness.Run(secondCtx, procharness.Command{
 			Path: override.coopBin, Args: []string{"fork", "overlap-b", target},
 			Dir: secondRepo, Env: secondEnv, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,

@@ -166,7 +166,7 @@ func newDelegateCommand(root, image, trace, scenarioPath, wrapper string, run ru
 	}
 	cmd := exec.Command(wrapper, argv...)
 	cmd.Dir = run.HostWorkdir
-	env, err := delegateEnvironment(root, image, trace, scenarioPath, run, wrapper, call.Role)
+	env, err := delegateEnvironment(root, image, trace, scenarioPath, run, wrapper, call)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -201,7 +201,7 @@ func serveConcurrentDelegates(root, image, trace, scenarioPath, wrapper string, 
 		return finishDelegateCommand(root, trace, 0, delegate.Calls[0], firstMeta, err)
 	}
 	defer func() { _ = first.Process.Kill() }()
-	if err := awaitDelegateFile(root, delegateReadyFileName, 5*time.Second); err != nil {
+	if err := awaitDelegateFile(root, delegateReadyFileName); err != nil {
 		return 1, err
 	}
 	second, secondMeta, err := newDelegateCommand(root, image, trace, scenarioPath, wrapper, run, 1, delegate.Calls[1])
@@ -212,7 +212,7 @@ func serveConcurrentDelegates(root, image, trace, scenarioPath, wrapper string, 
 		return finishDelegateCommand(root, trace, 1, delegate.Calls[1], secondMeta, err)
 	}
 	defer func() { _ = second.Process.Kill() }()
-	if err := awaitDelegateFile(root, delegateContenderFileName, 5*time.Second); err != nil {
+	if err := awaitDelegateFile(root, delegateContenderFileName); err != nil {
 		return 1, err
 	}
 	cursor, err := readDelegateCursor(root)
@@ -231,9 +231,11 @@ func serveConcurrentDelegates(root, image, trace, scenarioPath, wrapper string, 
 	return finishDelegateCommand(root, trace, 1, delegate.Calls[1], secondMeta, second.Wait())
 }
 
-func awaitDelegateFile(root, name string, timeout time.Duration) error {
+// awaitDelegateFile waits for a marker another fixture process writes. The wait guards a broken
+// fixture, so it is generous: under load the processes between two markers took seconds.
+func awaitDelegateFile(root, name string) error {
 	path := filepath.Join(root, "state", name)
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		_, err := os.Stat(path)
 		if err == nil {
@@ -243,7 +245,7 @@ func awaitDelegateFile(root, name string, timeout time.Duration) error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return fmt.Errorf("concurrent delegate marker %q did not appear", name)
+	return fmt.Errorf("concurrent delegate marker %q did not appear within 60s", name)
 }
 
 func validateDelegateContractMount(root string, run runCommand, want string) error {
@@ -464,7 +466,7 @@ func renderDelegateStep(root string, step delegateStep, delegate delegateScenari
 		// Passing plain tool text through as Codex JSON made this fixture host-jq dependent.
 		return 0, "", renderDelegateSuccess(step.Provider, strings.TrimSpace(answer.String()))
 	case "wait":
-		if err := awaitDelegateFile(root, delegateReleaseFileName, 5*time.Second); err != nil {
+		if err := awaitDelegateFile(root, delegateReleaseFileName); err != nil {
 			return 1, "", err
 		}
 		return 0, "", nil
@@ -682,7 +684,7 @@ func encodeDelegateCursor(f *os.File, cursor delegateCursor) error {
 	return f.Sync()
 }
 
-func delegateEnvironment(root, image, trace, scenarioPath string, run runCommand, wrapper, role string) ([]string, error) {
+func delegateEnvironment(root, image, trace, scenarioPath string, run runCommand, wrapper string, call delegateCall) ([]string, error) {
 	values := cloneMap(run.Env)
 	for key, value := range values {
 		if !(strings.HasPrefix(key, "COOP_DELEGATE_") || strings.HasPrefix(key, "COOP_CONSULT_")) || !strings.HasSuffix(key, "_CONTRACT") {
@@ -700,9 +702,15 @@ func delegateEnvironment(root, image, trace, scenarioPath string, run runCommand
 		}
 	}
 	values["COOP_DELEGATE_LOCK"] = filepath.Join(root, "tmp", "coop-delegate.lock")
-	values["COOP_DELEGATE_TIMEOUT"] = "2"
+	// A call scripted to time out (exit 124) gets the tiny bound it tests; its peer waits for a release
+	// that never comes, so 2 s holds on any host. Every other call gets a fixture guard: a healthy
+	// delegate with a nested consult outlived 2 s under load.
+	values["COOP_DELEGATE_TIMEOUT"] = "60"
+	if call.ExitCode == 124 {
+		values["COOP_DELEGATE_TIMEOUT"] = "2"
+	}
 	values["COOP_PROVIDER_FIXTURE_DELEGATE_WRAPPER"] = wrapper
-	values["COOP_PROVIDER_FIXTURE_DELEGATE_ROLE"] = role
+	values["COOP_PROVIDER_FIXTURE_DELEGATE_ROLE"] = call.Role
 	if run.Env["COOP_CONSULT_ADVISOR_TARGETS"] != "" {
 		for _, m := range run.Mounts {
 			if m.Target == consult.ConsultWrapperPath {

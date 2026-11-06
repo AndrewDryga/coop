@@ -758,9 +758,11 @@ func waitLoopRelease(root, taskID string) error {
 	return waitLoopReleaseFile(root, "loop-release-"+taskID)
 }
 
+// waitLoopReleaseFile waits for the test to release a held attempt. The wait guards a broken fixture,
+// so it is generous: the test may run coop commands before it releases, and those slow with load.
 func waitLoopReleaseFile(root, name string) error {
 	path := filepath.Join(root, "state", name)
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 			return nil
@@ -769,7 +771,7 @@ func waitLoopReleaseFile(root, name string) error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return errors.New("timed out waiting for loop release")
+	return errors.New("timed out after 60s waiting for loop release")
 }
 
 // hideLoopBaseTree moves the root tree of the commit this attempt started from out of the object

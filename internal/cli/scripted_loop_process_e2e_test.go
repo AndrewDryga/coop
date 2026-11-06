@@ -18,6 +18,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 type loopProcessPlan struct {
@@ -69,7 +70,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				}
 
 				suite.reset(t, scenario)
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				result := procharness.Run(ctx, procharness.Command{
 					Path: suite.coopBin,
 					Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
@@ -133,7 +134,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin,
 			Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
@@ -185,7 +186,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin,
 			Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
@@ -231,7 +232,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 					Version: 6, Provider: provider, ProviderHomes: agents.Names(),
 					Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: outcome}}},
 				})
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				result := procharness.Run(ctx, procharness.Command{
 					Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 					Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -290,7 +291,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 						Version: 6, Provider: provider, ProviderHomes: agents.Names(),
 						Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "repair-binding"}}},
 					})
-					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 					retry := procharness.Run(ctx, procharness.Command{
 						Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 						Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -320,7 +321,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{{Target: target, Stage: "work", Result: "complete-extra-finalized"}}},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -360,7 +361,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{attempt}},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -391,7 +392,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		if err := os.Rename(filepath.Join(root, stateTodo, archiveID), filepath.Join(root, stateDone, archiveID)); err != nil {
 			t.Fatal(err)
 		}
-		seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), wait.Deadline)
 		seed := procharness.Run(seedCtx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "done", archiveID}, Dir: suite.layout.Repo,
 			Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -413,7 +414,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -446,7 +447,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 			Version: 6, Provider: "codex", ProviderHomes: agents.Names(),
 			Loop: loopProcessPlan{TaskID: taskID, Attempts: []loopProcessAttempt{attempt}},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20, KillGrace: 500 * time.Millisecond,
@@ -471,7 +472,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 		env := append(slices.Clone(suite.env), "COOP_EVAL_LOOP_STARTED_FILE="+started)
 		target := "codex:loop-model/high@work"
 		loopRun := func() procharness.Result {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 			defer cancel()
 			return procharness.Run(ctx, procharness.Command{
 				Path: suite.coopBin, Args: []string{"loop", target, "--max-tasks", "1", "--no-preflight", "--no-mcp"},

@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 type directProviderContract struct {
@@ -70,6 +71,9 @@ var directProviderContracts = map[string]directProviderContract{
 		commandOverride: "grok --permission-mode bypassPermissions --model baked-grok --reasoning-effort low",
 	},
 }
+
+// scriptedConsultTimeout is the suite's COOP_CONSULT_TIMEOUT in seconds: the fixture guard's deadline.
+const scriptedConsultTimeout = int(wait.Deadline / time.Second)
 
 type directProcessSuite struct {
 	layout       procharness.Layout
@@ -274,7 +278,10 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 	}
 	allCredKeys := sortedKeys(credentialSet)
 	envFile.WriteString("FIXTURE_SAFE=visible\n")
-	envFile.WriteString("COOP_CONSULT_TIMEOUT=2\n")
+	// A finite consult bound, so a stalled peer fails its case instead of the package, set as a fixture
+	// guard: under load a healthy nested consult outlived the 2 s this once was. The timeout case sets
+	// the 2 s it tests.
+	fmt.Fprintf(&envFile, "COOP_CONSULT_TIMEOUT=%d\n", scriptedConsultTimeout)
 	// 0 = unlimited, matching production. A case that needs the bound raises it explicitly.
 	envFile.WriteString("COOP_CONSULT_STREAM_LIMIT=0\n")
 	for _, key := range allCredKeys {
@@ -309,7 +316,7 @@ func newDirectProcessSuite(t *testing.T) *directProcessSuite {
 func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (procharness.Result, []*processTrace) {
 	t.Helper()
 	s.reset(t, scenario)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
 	result := procharness.Run(ctx, procharness.Command{
 		Path: s.coopBin, Args: args, Dir: s.layout.Repo, Env: s.env,
@@ -359,12 +366,12 @@ func (s *directProcessSuite) cancelReadyProvider(t *testing.T, provider string) 
 		t.Fatal(err)
 	}
 	defer process.Cleanup()
-	ready := awaitProcessEvent(t, s.layout.Trace, "provider", "ready", 5*time.Second)
+	ready := awaitProcessEvent(t, s.layout.Trace, "provider", "ready")
 	if err := process.SignalGroup(syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
-	exit := awaitProcessEvent(t, s.layout.Trace, "provider", "exit", 5*time.Second)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	exit := awaitProcessEvent(t, s.layout.Trace, "provider", "exit")
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
 	defer cancel()
 	result := process.Wait(ctx)
 	if result.Err != nil || result.ExitCode == 0 {
@@ -512,9 +519,9 @@ func assertDirectEnvironment(t *testing.T, env []processEnv, credentialKeys []st
 	}
 }
 
-func awaitProcessEvent(t *testing.T, path, source, event string, timeout time.Duration) *processTrace {
+func awaitProcessEvent(t *testing.T, path, source, event string) *processTrace {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard: the suite's hundreds of process starts slow with load
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -530,6 +537,6 @@ func awaitProcessEvent(t *testing.T, path, source, event string, timeout time.Du
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for %s/%s\ntrace:\n%s", source, event, readProcessFile(t, path))
+	t.Fatalf("timed out after %s waiting for %s/%s\ntrace:\n%s", wait.Deadline, source, event, readProcessFile(t, path))
 	return nil
 }

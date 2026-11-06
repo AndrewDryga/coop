@@ -3,7 +3,7 @@ name: test-fixture-guards-vs-timing-bounds
 description: a test wait that guards a broken fixture is generous (testutil/wait, 60 s); a tight wall-clock bound is reserved for timing that IS the behavior under test, and then attributes its phases
 subsystem: testing
 sources: [Makefile, internal/testutil/wait/wait.go, internal/testutil/procharness/harness_test.go, internal/box/runtime_init_e2e_test.go, internal/cli/fork_cmd_test.go, internal/forkctl/testhelpers_test.go, internal/forkctl/supervise_test.go, internal/forkctl/supervise.go, internal/cli/acp_cmd.go, internal/cli/acp_execution_test.go, internal/acpproxy/scripted_matrix_e2e_test.go, internal/consult/instructions_test.go, internal/consult/capture_ownership_test.go, internal/box/run_test.go, internal/runtime/runtime_test.go, internal/sessionsvc/acp_test.go, internal/sessionsvc/service_test.go, internal/sessionsvc/helpers_test.go, internal/sessionsvc/storage_test.go, tools/lifecyclebench/cases.go, tools/lifecyclebench/cases_test.go, internal/agent/usage_report_test.go, internal/workerconnector/job_sources.go, internal/workerconnector/job_sources_refresh_test.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 Two kinds of waits look alike in a test and fail alike on a loaded host, but mean opposite things.
@@ -133,6 +133,11 @@ on failure and reap its resident group on every assertion path. The editor-stdin
 stable-leader assertions remain unchanged.
 
 ## Changelog
+- 2026-11-05 — the scripted provider suite's guards had been sized from quiet runs; process starts
+  dominate its cases and load multiplies them, so they now use `wait.Deadline` (per attempt for loop
+  runs) and the shards a 40-minute bound. Its 2 s consult and delegate timeout cases keep 2 s, since
+  their peers never reply. See [[provider-scripted-e2e]] (task
+  2026-11-05-investigate-scripted-loop-timeouts-under-concurr).
 - 2026-11-04 — dropped the deleted `TestRunCanceledAfterServicesUpTearsDownAttemptedReviewCompose`
   from the 2026-09-06 inventory; the other tests it names still exist.
 - 2026-10-20 — held a Linux/dash child immediately before sleep exec, observed pending terminal

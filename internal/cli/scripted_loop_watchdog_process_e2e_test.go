@@ -248,7 +248,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		release := holdLoopHostSetup(t, suite)
 		process := startLoopRecovery(t, suite, "watchdog-setup")
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "runtime", "hold", 10*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "runtime", "hold")
 		// Hold the box's host setup well past the 2s start deadline. A clock armed before
 		// box.Run would fire right here — against a box that has launched nothing, and that
 		// cancellation cannot reach while its setup runs synchronously.
@@ -257,7 +257,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			t.Fatalf("held host setup launched %d provider(s), want none", len(started))
 		}
 		release()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		output := visibleProcessText(result.Stdout + result.Stderr)
@@ -372,14 +372,14 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, target)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		// Hold the tool open well past the idle deadline; a false idle fire would kill the
 		// provider and fail the run below.
 		time.Sleep(2500 * time.Millisecond)
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		output := visibleProcessText(result.Stdout + result.Stderr)
@@ -407,14 +407,14 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, target)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		// Hold the tool open well past the idle deadline; a false idle fire would kill the
 		// provider and fail the run below.
 		time.Sleep(2500 * time.Millisecond)
 		if err := os.WriteFile(filepath.Join(suite.layout.State, "loop-release-"+taskID), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		output := visibleProcessText(result.Stdout + result.Stderr)
@@ -613,16 +613,16 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecoveryPTY(t, suite, target)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+		coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping", 5*time.Second)
+		awaitLoopProcessOutput(t, process, "Finishing this attempt and its review, then stopping")
 		if err := syscall.Kill(coopPID, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		if result.ExitCode == 0 {
@@ -666,12 +666,12 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 				}
 				process := start(t, suite, target)
 				defer process.Cleanup()
-				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 10*time.Second)
-				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
+				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 				if err := syscall.Kill(coopPID, sig); err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				result := process.Wait(ctx)
 				cancel()
 				if result.ExitCode == 0 {
@@ -701,7 +701,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		result := runLoopReview(t, suite, work, 20*time.Second)
+		result := runLoopReview(t, suite, work, scriptedLoopBudget(t, suite))
 		output := visibleProcessText(result.Stdout + result.Stderr)
 		if result.Err != nil || result.ExitCode != 0 ||
 			!strings.Contains(output, "Stopped an unresponsive review attempt") {
@@ -759,7 +759,7 @@ func TestProviderScriptedLoopWatchdogProcess(t *testing.T) {
 					attempts = append(attempts, loopProcessAttempt{Target: signoff, Stage: "signoff", Result: result})
 				}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
-				result := runLoopReview(t, suite, work, 30*time.Second)
+				result := runLoopReview(t, suite, work, scriptedLoopBudget(t, suite))
 				output := visibleProcessText(result.Stdout + result.Stderr)
 				if result.Err != nil || result.ExitCode != 1 || !strings.Contains(output, tc.wantMessage) ||
 					strings.Contains(output, "in a row") || strings.Contains(output, "consecutive") ||

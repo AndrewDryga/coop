@@ -294,6 +294,8 @@ func TestProviderScriptedConsultTimeoutAndOverflowMatrix(t *testing.T) {
 		setFixtureEnv("COOP_CONSULT_TIMEOUT", seconds)
 	}
 
+	// This case is ABOUT the bound; its peer never replies, so a tiny one holds on any host.
+	setTimeout(2)
 	t.Run("timeout", func(t *testing.T) {
 		for index, peer := range providers {
 			lead := providers[(index+1)%len(providers)]
@@ -1124,7 +1126,7 @@ func assertConsultEnvironment(t *testing.T, environment []processEnv, lead, peer
 	for _, item := range environment {
 		values[item.Name] = item
 	}
-	if values["COOP_PRIMARY"].Value != lead || values["COOP_PEERS"].Value != peer || values["COOP_CONSULT_TIMEOUT"].Value != "2" {
+	if values["COOP_PRIMARY"].Value != lead || values["COOP_PEERS"].Value != peer || values["COOP_CONSULT_TIMEOUT"].Value != fmt.Sprint(scriptedConsultTimeout) {
 		t.Fatalf("consult scope environment = primary %#v peers %#v timeout %#v", values["COOP_PRIMARY"], values["COOP_PEERS"], values["COOP_CONSULT_TIMEOUT"])
 	}
 	key := strings.ToUpper(strings.ReplaceAll(peer, "-", "_"))

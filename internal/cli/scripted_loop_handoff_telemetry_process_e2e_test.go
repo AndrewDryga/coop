@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/AndrewDryga/coop/internal/loop"
 )
@@ -45,7 +44,7 @@ func TestProviderScriptedReviewHandoffTelemetry(t *testing.T) {
 					attempts = append(attempts, loopProcessAttempt{Target: reviewer, Stage: "signoff", Result: "pass"})
 				}
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
-				result := runLoopReview(t, suite, work, 30*time.Second)
+				result := runLoopReview(t, suite, work, scriptedLoopBudget(t, suite))
 				if result.Err != nil {
 					t.Fatalf("review process did not finish: %v", result.Err)
 				}

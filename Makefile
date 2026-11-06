@@ -289,16 +289,18 @@ provider-scripted-e2e: provider-scripted-loop-e2e provider-scripted-other-e2e ##
 
 # The suite runs ~11 minutes on a Mac and 4.5 on CI, so it runs as two shards, the loop tests (60%
 # of its time) and the rest: -run and -skip take the same pattern, so each test is in exactly one.
-# Under ordinary load it can outlast Go's 10-minute default with every test passing. The 20-minute
-# bound is a hang guard; the behavior deadlines live inside the tests.
+# Under ordinary load it can outlast Go's 10-minute default with every test passing. The 40-minute
+# bound is a hang guard; the behavior deadlines live inside the tests. Nearly all of a case's time is
+# process starts, which load multiplies: the loop shard took 10.5 minutes at a load of 20-50 on
+# 2026-11-05 and ran out of a 20-minute bound beside the race owners with no test hung.
 PROVIDER_SHARD := ^TestProviderScriptedLoop
 
 provider-scripted-loop-e2e: ## The scripted provider suite's loop tests
-	@go test -tags providere2e -run '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
+	@go test -tags providere2e -run '$(PROVIDER_SHARD)' -count=1 -timeout 40m -v ./internal/cli/
 
 provider-scripted-other-e2e: ## The scripted provider suite's other tests and its fixtures
 	@go test -count=1 ./internal/testutil/procharness ./internal/cli/testdata/providerfixture
-	@go test -tags providere2e -run '^TestProviderScripted' -skip '$(PROVIDER_SHARD)' -count=1 -timeout 20m -v ./internal/cli/
+	@go test -tags providere2e -run '^TestProviderScripted' -skip '$(PROVIDER_SHARD)' -count=1 -timeout 40m -v ./internal/cli/
 
 # Selects every deterministic test in the providerlivee2e files; a test that needs a
 # real provider is named …LiveCompatibility (its subprocess …LiveChild) and runs only on demand.

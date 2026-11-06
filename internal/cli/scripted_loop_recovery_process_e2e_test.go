@@ -20,6 +20,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
@@ -210,11 +211,11 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecovery(t, suite, "ordinary")
 				defer process.Cleanup()
-				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.", 5*time.Second)
+				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.")
 				if err := process.SignalGroup(syscall.SIGINT); err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				got := process.Wait(ctx)
 				cancel()
 				if got.ExitCode == 0 || strings.Contains(got.Stderr, "switching to") {
@@ -243,16 +244,16 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, attempts))
 				process := startLoopRecoveryPTY(t, suite, target)
 				defer process.Cleanup()
-				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.", 10*time.Second)
+				awaitLoopProcessOutput(t, process, "Retrying in 10 seconds · attempt 2 of 5.")
 				// Signal coop directly, not the group: under the script(1) PTY a group signal makes
 				// util-linux script own the exit code (it exits 0, "Session terminated, killing
 				// shell"), but signaling the child lets script report coop's real code via -e — the
 				// same reason the hard-interrupt case below targets coop's PID.
-				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin), 5*time.Second)
+				coopPID := awaitDescendantPID(t, process.PID(), filepath.Base(suite.coopBin))
 				if err := syscall.Kill(coopPID, syscall.SIGTERM); err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				result := process.Wait(ctx)
 				cancel()
 				if result.ExitCode == 0 || strings.Contains(result.Stderr, "Continuing with") {
@@ -312,11 +313,11 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
 		process := startLoopRecovery(t, suite, "all-limited")
 		defer process.Cleanup()
-		awaitLoopProcessOutput(t, process, "All configured agents have reached their usage limits.", 10*time.Second)
+		awaitLoopProcessOutput(t, process, "All configured agents have reached their usage limits.")
 		if err := process.SignalGroup(syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		result := process.Wait(ctx)
 		cancel()
 		if result.ExitCode == 0 {
@@ -354,9 +355,9 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			{Target: targets[2], Stage: "work", Result: "complete"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
-		// The all-limited wait never sleeps less than ladder's 10s floor, which would leave the
-		// shared 20s budget only ~10s for four attempts on a loaded host.
-		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		// The all-limited wait never sleeps less than ladder's 10s floor; the per-attempt budget
+		// covers it.
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		defer cancel()
 		result := procharness.Run(ctx, loopRecoveryCommand(suite, "all-limited-resume"))
 		output := result.Stdout + result.Stderr
@@ -398,12 +399,12 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, scenario)
 		process := startLoopRecovery(t, suite, target)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		assertProcessLeaseHeld(t, suite.layout, taskID, "codex", target)
 		if err := process.SignalGroup(syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		first := process.Wait(ctx)
 		cancel()
 		if first.ExitCode == 0 {
@@ -456,14 +457,14 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 		suite.reset(t, scenario)
 		process := startLoopRecovery(t, suite, work)
 		defer process.Cleanup()
-		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
+		awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 		// Crash the CONTROLLER only — the box runs in its own process group (the provider
 		// watchdog's cancel seam) and survives its killed client, exactly like a real
 		// container — then reap the orphan as the container runtime would.
 		if err := syscall.Kill(process.PID(), syscall.SIGKILL); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		killed := process.Wait(ctx)
 		cancel()
 		if killed.ExitCode == 0 {
@@ -476,7 +477,7 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 			t.Fatal("fixture did not leave a completed task under the killed controller")
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 		removed := procharness.Run(ctx, procharness.Command{
 			Path: suite.coopBin, Args: []string{"tasks", "rm", taskID, "--yes"},
 			Dir: suite.layout.Repo, Env: suite.env, MaxOutput: 1 << 20,
@@ -523,14 +524,14 @@ func TestProviderScriptedLoopRecoveryProcess(t *testing.T) {
 				suite.reset(t, loopRecoveryScenario(taskID, []loopProcessAttempt{attempt}))
 				process := startLoopRecovery(t, suite, target)
 				defer process.Cleanup()
-				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready", 5*time.Second)
+				awaitProcessEvent(t, suite.layout.Trace, "provider", "ready")
 				// Crash the CONTROLLER between the provider's completion and host
 				// finalization — kill only coop (a graceful stop signal would now finalize
 				// cleanly), then reap the surviving box as the container runtime would.
 				if err := syscall.Kill(process.PID(), syscall.SIGKILL); err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 				first := process.Wait(ctx)
 				cancel()
 				if first.ExitCode == 0 {
@@ -603,14 +604,14 @@ func writeLoopRecoveryPreset(t *testing.T, repo, name string, targets []string) 
 
 func runLoopRecovery(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 	defer cancel()
 	return procharness.Run(ctx, loopRecoveryCommand(suite, target))
 }
 
 func runLoopRecoveryPTY(t *testing.T, suite *directProcessSuite, target string) procharness.Result {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 	defer cancel()
 	return procharness.Run(ctx, terminalLoopCommand(t, loopRecoveryCommand(suite, target)))
 }
@@ -663,9 +664,9 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
-func awaitDescendantPID(t *testing.T, root int, executable string, timeout time.Duration) int {
+func awaitDescendantPID(t *testing.T, root int, executable string) int {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard: the suite's hundreds of process starts slow with load
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("ps", "-axo", "pid=,ppid=,comm=").Output()
 		if err == nil {
@@ -701,7 +702,7 @@ func awaitDescendantPID(t *testing.T, root int, executable string, timeout time.
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("no %s descendant of pid %d appeared", executable, root)
+	t.Fatalf("no %s descendant of pid %d appeared within %s", executable, root, wait.Deadline)
 	return 0
 }
 
@@ -798,9 +799,9 @@ func readLoopStageRecords(t *testing.T, suite *directProcessSuite) []loop.StageR
 	return records
 }
 
-func awaitLoopProcessOutput(t *testing.T, process *procharness.Process, needle string, timeout time.Duration) {
+func awaitLoopProcessOutput(t *testing.T, process *procharness.Process, needle string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(wait.Deadline) // a fixture guard: the suite's hundreds of process starts slow with load
 	for time.Now().Before(deadline) {
 		stdout, stderr := process.Output()
 		if strings.Contains(stdout, needle) || strings.Contains(stderr, needle) {
@@ -809,7 +810,7 @@ func awaitLoopProcessOutput(t *testing.T, process *procharness.Process, needle s
 		time.Sleep(10 * time.Millisecond)
 	}
 	stdout, stderr := process.Output()
-	t.Fatalf("timed out waiting for process output %q\nstdout:\n%s\nstderr:\n%s", needle, stdout, stderr)
+	t.Fatalf("timed out after %s waiting for process output %q\nstdout:\n%s\nstderr:\n%s", wait.Deadline, needle, stdout, stderr)
 }
 
 func assertLoopTaskRecoverable(t *testing.T, suite *directProcessSuite, taskID string, expectedHead ...string) {
