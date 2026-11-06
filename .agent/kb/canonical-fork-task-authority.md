@@ -29,7 +29,11 @@ internal/cli/fork_cmd.go) then assigns its next task: a pass that exits 3 is acc
 never through `PrepareForkProjectionForRun`, because a resumed (`paused`) assignment's restore would
 unblock the projection again and lose the new decision. The worker reads its answer from the
 projection, never the canonical folder, and acceptance copies the projection's decision.md back over
-the canonical one. So `resolveAndUnblock` (internal/tasks/cmd.go) copies the canonical decision.md
+the canonical one, but never an answer in it: the box can write that copy, and the canonical
+Resolution line is the person's, so unless the copy is the canonical decision.md byte for byte, its
+every Resolution line, indented or not, arrives as the unanswered placeholder
+(`syncProjectionDecision`, internal/tasks/projection.go, which landing goes through too). So
+`resolveAndUnblock` (internal/tasks/cmd.go) copies the canonical decision.md
 into the validated projection (`syncForkDecision`) under the canonical lease, before the task returns
 to todo, and refuses, leaving the task blocked, when it cannot. The unblock also notes itself in the
 projection's log.md as the canonical log does (`unblockedNote`), because acceptance copies that log
@@ -73,9 +77,9 @@ themselves. After an answer, unblock says the fork picks the task up on its next
 stopped loop resumes with `coop fork <name> --loop -d`, the board's restart command. A fork that
 stops for its decisions names each task and what it still needs (`forkDecisionStep`,
 internal/cli/fork_cmd.go): an answer in the project's decision.md waits only for unblock, and one
-in the projection is named but never read as the answer. Resume never unblocks by itself, because
-acceptance copies the projection's decision.md over the project's, so an answer the box wrote
-before parking reads as answered there too; only a person's unblock sends the task back. Without
+in the projection is named but never read as the answer. Resume never unblocks by itself: an
+answer typed into the project's decision.md still waits for the person's unblock, which alone sends
+the task back. Without
 `--tasks` or `COOP_TASKS`, unblock also searches the queues the assignment index names
 (`forkQueuesBeyond`, internal/tasks/queue.go), so a fork's `--tasks` queue needs no flag.
 
@@ -94,6 +98,11 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — acceptance and landing copy the fork's decision.md without its answer unless the
+  copy is the project's byte for byte: a Resolution the box wrote had reached the project's file,
+  where unblock without an answer and coop loop's pre-flight took it for the person's (task
+  2026-11-06-keep-a-fork-s-box-written-answer-out-of-the-proj). Verified against projection.go and
+  candidate.go, the two callers of `syncProjectionTree`.
 - 2026-11-06 — a stopped fork names each blocked task and what it needs, a blocked task's next
   action names the unblock command, and unblock finds a fork's `--tasks` queue through the
   assignment index; resume still never unblocks, since a box-written answer reaches the project's

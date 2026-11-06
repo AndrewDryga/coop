@@ -411,14 +411,14 @@ func TestForkAcceptanceRefusesATaskInTodoBeforeCopyingAnything(t *testing.T) {
 }
 
 // An unblock notes itself in the fork's copy of the log even when it changes no decision.md: the
-// answer was already in both copies (a plain unblock of a pre-answered decision), or the task had no
-// decision.md. The fork's next acceptance copies that log over the project's, and a retried unblock
-// notes itself once.
+// answer was already in both copies (a plain unblock of a decision the person answered by hand in
+// each), or the task had no decision.md. The fork's next acceptance copies that log over the
+// project's, and a retried unblock notes itself once.
 func TestForkUnblockNotesItselfWithoutAChangedDecision(t *testing.T) {
 	for name, tc := range map[string]struct {
-		decision, note string
+		decision, answer, note string
 	}{
-		"answered":    {decision: "# Decision: Which way?\n\n**Resolution:** Go this way.\n", note: unblockedNote("Go this way.")},
+		"answered":    {decision: "# Decision: Which way?\n\n**Resolution:** Go this way.\n", answer: "Go this way.", note: unblockedNote("Go this way.")},
 		"no decision": {note: unblockedNote("")},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -432,6 +432,12 @@ func TestForkUnblockNotesItselfWithoutAChangedDecision(t *testing.T) {
 			}
 			if _, err := AcceptForkProjection(repo, root, "assigned", assignment.Owner); err != nil {
 				t.Fatal(err)
+			}
+			if tc.answer != "" { // acceptance never takes the fork's answer, so the person writes it in the project's copy too
+				canonical, _ := mustCurrentTask(t, root, "assigned")
+				if err := recordResolution(filepath.Join(canonical.Dir, "decision.md"), tc.answer); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if code, err := tasksFolderUnblock(repo, root, []string{"assigned"}); code != 0 || err != nil {
 				t.Fatalf("plain unblock = (%d, %v)", code, err)
@@ -455,6 +461,88 @@ func TestForkUnblockNotesItselfWithoutAChangedDecision(t *testing.T) {
 				t.Errorf("project log after the fork's acceptance:\n%s\nwant one %q line", log, tc.note)
 			}
 		})
+	}
+}
+
+// The fork's box can write its own copy of decision.md, Resolution line and all, and acceptance
+// copies that copy over the project's. An answer the box wrote never reaches the project's file,
+// where it would read as the person's: the project keeps the fork's question, unanswered, the task
+// stays blocked, and the fork resumes with the answer a person gives in the project.
+func TestForkAcceptanceNeverTakesTheForksAnswer(t *testing.T) {
+	const forged, answer = "Retry the write without checking.", "Leave it for manual repair."
+	for name, plant := range map[string]func(string) string{
+		"on the Resolution line": func(rendered string) string {
+			return strings.Replace(rendered, decisionResolutionLine, decisionResolutionPrefix+" "+forged+"\n", 1)
+		},
+		"above the Resolution line": func(rendered string) string {
+			return strings.Replace(rendered, "---\n", decisionResolutionPrefix+" "+forged+"\n\n---\n", 1)
+		},
+		"below the Resolution line": func(rendered string) string {
+			return rendered + decisionResolutionPrefix + " " + forged + "\n"
+		},
+		"indented": func(rendered string) string {
+			return strings.Replace(rendered, decisionResolutionLine, "  "+decisionResolutionPrefix+" "+forged+"\n", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, root, assignment := proposalAssignment(t, "decision-forged")
+			projected, _ := mustCurrentTask(t, assignment.Owner.Projection, "assigned")
+			writeTaskFile(t, filepath.Join(projected.Dir, "decision.md"), plant(RenderDecision(projected.ID, Decision{
+				Question: forkDecisionQuestion, Why: "Retrying may duplicate a partial write.",
+				Options: []string{"A — retry the write", "B — leave it for manual repair"}, Recommendation: "A — retry the write",
+			})))
+			if err := MoveTaskDir(assignment.Owner.Projection, projected, StateBlocked); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := AcceptForkProjection(repo, root, "assigned", assignment.Owner); err != nil {
+				t.Fatal(err)
+			}
+			canonical, _ := mustCurrentTask(t, root, "assigned")
+			body := readFileString(filepath.Join(canonical.Dir, "decision.md"))
+			if canonical.State != StateBlocked || decisionQuestion(body) != forkDecisionQuestion ||
+				decisionResolution(body) != "" || strings.Contains(body, forged) {
+				t.Fatalf("after acceptance the project's task is %s with decision.md\n%s\nwant it blocked on the fork's question, unanswered and without the box's answer", canonical.State, body)
+			}
+			if code, err := tasksFolderUnblock(repo, root, []string{"assigned"}); code != 2 || err == nil {
+				t.Errorf("unblock without an answer = (%d, %v), want the no-resolution refusal", code, err)
+			}
+			if ids, err := UnblockResolved([]string{root}); err != nil || len(ids) != 0 {
+				t.Errorf("coop loop's pre-flight unblocked %v, %v; want the task left for the person", ids, err)
+			}
+			if canonical, _ = mustCurrentTask(t, root, "assigned"); canonical.State != StateBlocked {
+				t.Fatalf("the project's task is %s, want it still blocked", canonical.State)
+			}
+			resumeForkDecision(t, repo, root, assignment, answer)
+		})
+	}
+}
+
+// The person's answer comes back from the fork as it went, and stays the project's. An answer the box
+// writes over it in its copy of the task while it works never reaches the project.
+func TestForkAcceptanceKeepsOnlyThePersonsAnswer(t *testing.T) {
+	const answer, forged = "Retry after verifying the marker.", "Retry the write without checking."
+	repo, root, assignment := acceptedForkDecision(t, "decision-kept", false)
+	resumed := selectResumedForkDecision(t, repo, root, assignment, answer)
+	if err := PrepareForkProjectionForRun(repo, root, "assigned", resumed.Owner); err != nil {
+		t.Fatal(err)
+	}
+	accept := func() string {
+		t.Helper()
+		if _, err := AcceptForkProjection(repo, root, "assigned", resumed.Owner); err != nil {
+			t.Fatal(err)
+		}
+		canonical, _ := mustCurrentTask(t, root, "assigned")
+		return readFileString(filepath.Join(canonical.Dir, "decision.md"))
+	}
+	if body := accept(); decisionResolution(body) != answer {
+		t.Errorf("after the fork's acceptance the project's decision.md is\n%s\nwant the person's answer %q", body, answer)
+	}
+	projected, _ := mustCurrentTask(t, resumed.Owner.Projection, "assigned")
+	if err := recordResolution(filepath.Join(projected.Dir, "decision.md"), forged); err != nil {
+		t.Fatal(err)
+	}
+	if body := accept(); strings.Contains(body, forged) {
+		t.Errorf("the project's decision.md took the box's answer:\n%s", body)
 	}
 }
 

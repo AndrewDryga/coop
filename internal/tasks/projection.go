@@ -1022,7 +1022,12 @@ func syncProjectionTree(src, dst string, completed bool) error {
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := replaceProjectionFile(from, to); err != nil {
+		if name == "decision.md" {
+			err = syncProjectionDecision(src, dst)
+		} else {
+			err = replaceProjectionFile(from, to)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -1040,6 +1045,45 @@ func syncProjectionTree(src, dst string, completed bool) error {
 		}
 	}
 	return nil
+}
+
+// syncProjectionDecision copies the fork's decision.md into the project's task folder dst, but never
+// an answer the fork wrote. The fork's box can write its copy, and the Resolution line of the
+// project's decision.md is the person's answer, written on the host by hand, by coop tasks unblock or
+// by decisions -i. So unless the copy is the project's decision.md byte for byte, every Resolution
+// line in it reaches the project as the unanswered placeholder; the fork's question still shows.
+func syncProjectionDecision(src, dst string) error {
+	copied, _, err := openProjectionRoot(src)
+	if err != nil {
+		return err
+	}
+	defer copied.Close()
+	body, err := ReadTaskMetadataFile(copied, "decision.md")
+	if err != nil {
+		return err
+	}
+	project, err := OpenTaskMetadataRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer project.Close()
+	// A project's decision.md that cannot be read is replaced like any other, without the answer.
+	if current, exists, err := readOptionalTaskMetadataFile(project, "decision.md"); err != nil || !exists || !bytes.Equal(current, body) {
+		body = withoutAnswers(body)
+	}
+	return AtomicWriteTaskFile(project, "decision.md", body)
+}
+
+// withoutAnswers is a decision.md body with every Resolution line, indented or not, back to the
+// unanswered placeholder.
+func withoutAnswers(body []byte) []byte {
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), decisionResolutionPrefix) {
+			lines[i] = strings.TrimSuffix(decisionResolutionLine, "\n")
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // syncProjectionDirectory updates a canonical artifact directory without the create-only copy

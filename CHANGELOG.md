@@ -28,6 +28,12 @@
   before, the board could list it first. On a short terminal a section shrinks to its header and
   "+ N more" before it is left out, so no header shows alone and Up next stays while it fits. The
   board left on the screen after every task is done no longer says to press Ctrl-C.
+
+- **A fork can no longer answer its own decision.** A fork's box could write an answer into its
+  copy of a task's `decision.md`, and when the fork parked the task, that answer reached the
+  project's `decision.md` as if you had given it: `coop tasks unblock <id>` sent the task back
+  without asking, and `coop loop` in the project unblocked it by itself. The project's copy now
+  takes the fork's question but never its answer, so the task waits for yours.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed
