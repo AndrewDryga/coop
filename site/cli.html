@@ -127,7 +127,7 @@
 <li><a href="#coop-tasks-lease-reserve-a-task-while-work-is-running">coop tasks lease</a></li>
 <li><a href="#coop-tasks-block-pause-a-task-that-needs-a-decision">coop tasks block</a></li>
 <li><a href="#coop-tasks-unblock-record-a-decision-and-return-a-task-to-todo">coop tasks unblock</a></li>
-<li><a href="#coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later">coop tasks park</a></li>
+<li><a href="#coop-tasks-park-set-a-todo-or-blocked-task-aside-in-the-backlog">coop tasks park</a></li>
 <li><a href="#coop-tasks-done-move-completed-work-to-the-archive">coop tasks done</a></li>
 <li><a href="#coop-tasks-path-print-a-tasks-folder-path">coop tasks path</a></li>
 <li><a href="#coop-tasks-queues-print-task-queue-paths">coop tasks queues</a></li>
@@ -638,7 +638,7 @@ WORK
   release &lt;id&gt;               return a task to todo with its handoff notes
   block &lt;id&gt;                 ask for a decision before continuing
   unblock &lt;id&gt; [&#34;&lt;answer&gt;&#34;]  record a decision and return the task to todo
-  park &lt;id&gt; [&#34;&lt;reason&gt;&#34;]     keep a blocked task in the backlog for later
+  park &lt;id&gt; [&#34;&lt;reason&gt;&#34;]     set a todo or blocked task aside in the backlog
   done &lt;id&gt;                  move completed work to the archive
 
 REVIEW
@@ -806,14 +806,16 @@ ANSWER A QUESTION
 EXAMPLES
   coop tasks unblock login-retries &#34;Return to sign-in after the first failure.&#34;
 
-Questions waiting for you: coop tasks decisions -i</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-park-keep-a-blocked-task-in-the-backlog-for-later"><h2>coop tasks park: keep a blocked task in the backlog for later</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks park: keep a blocked task in the backlog for later code example" tabindex="0"><code>Usage: coop tasks park &lt;id&gt; [&#34;&lt;reason&gt;&#34;] [--tasks &lt;path&gt;]...
+Questions waiting for you: coop tasks decisions -i</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-park-set-a-todo-or-blocked-task-aside-in-the-backlog"><h2>coop tasks park: set a todo or blocked task aside in the backlog</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks park: set a todo or blocked task aside in the backlog code example" tabindex="0"><code>Usage: coop tasks park &lt;id&gt; [&#34;&lt;reason&gt;&#34;] [--tasks &lt;path&gt;]...
 
-  Answers a decision with &#34;not now&#34;. The task moves to the backlog with its
-  folder, log and decision, so nothing returns it to todo on its own.
-  Your reason is saved in the task&#39;s log.
+  Moves the task to the backlog with its folder and log, so nothing picks it
+  up or returns it to todo on its own. Your reason is saved in the task&#39;s log.
+  For a blocked task this answers its decision with &#34;not now&#34;; the decision
+  stays open. Release a task in progress before you park it.
   coop backlog promote brings it back, blocked while its decision is open.
 
 EXAMPLES
+  coop tasks park login-retries &#34;After the release.&#34;
   coop tasks park choose-storage &#34;Not this quarter.&#34;
 
 Questions waiting for you: coop tasks decisions -i</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-done-move-completed-work-to-the-archive"><h2>coop tasks done: move completed work to the archive</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks done: move completed work to the archive code example" tabindex="0"><code>Usage: coop tasks done &lt;id&gt; [--tasks &lt;path&gt;]... [&lt;options&gt;]

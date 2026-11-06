@@ -19,7 +19,9 @@ The backlog is the **same folder format**, but it lives OUTSIDE the lifecycle: t
 Stop hook, `coop tasks`, and every counter ignore it, so an idea waits there with no nagging.
 Manage it with `coop backlog` — `add "<title>"` to capture, `promote <id>` to move it into
 `00_todo/` when it's ready (a folder move, not a rewrite), `rm <id>` to drop it. Not-yet-ready
-work belongs in the backlog, never in `00_todo/`.
+work belongs in the backlog, never in `00_todo/`. To set a todo task aside, run
+`coop tasks park <id> ["<reason>"]`: it moves to the backlog with its reason in `log.md`, and
+`promote` returns it to `00_todo/`.
 
 A state change is a folder move — use the commands, not a manual `mv`:
 `coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.

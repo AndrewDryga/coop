@@ -21,6 +21,8 @@ Manage it with `coop backlog` — `add "<title>"` to capture, `promote <id>` to 
 `00_todo/` when it's ready (a folder move, not a rewrite), `rm <id>` to drop it. Only the
 genuinely large belongs in the backlog — work one iteration couldn't finish, or that needs a spec
 or a decision before anyone can start; everything else goes in `00_todo/`, and so does a close call.
+To set a todo task aside, run `coop tasks park <id> ["<reason>"]`: it moves to the backlog with
+its reason in `log.md`, and `promote` returns it to `00_todo/`.
 
 A state change is a folder move — use the commands, not a manual `mv`:
 `coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.

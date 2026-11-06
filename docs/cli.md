@@ -545,7 +545,7 @@ WORK
   release <id>               return a task to todo with its handoff notes
   block <id>                 ask for a decision before continuing
   unblock <id> ["<answer>"]  record a decision and return the task to todo
-  park <id> ["<reason>"]     keep a blocked task in the backlog for later
+  park <id> ["<reason>"]     set a todo or blocked task aside in the backlog
   done <id>                  move completed work to the archive
 
 REVIEW
@@ -759,16 +759,18 @@ Questions waiting for you: coop tasks decisions -i
 
 ==============================================================================
 
-coop tasks park: keep a blocked task in the backlog for later
+coop tasks park: set a todo or blocked task aside in the backlog
 
 Usage: coop tasks park <id> ["<reason>"] [--tasks <path>]...
 
-  Answers a decision with "not now". The task moves to the backlog with its
-  folder, log and decision, so nothing returns it to todo on its own.
-  Your reason is saved in the task's log.
+  Moves the task to the backlog with its folder and log, so nothing picks it
+  up or returns it to todo on its own. Your reason is saved in the task's log.
+  For a blocked task this answers its decision with "not now"; the decision
+  stays open. Release a task in progress before you park it.
   coop backlog promote brings it back, blocked while its decision is open.
 
 EXAMPLES
+  coop tasks park login-retries "After the release."
   coop tasks park choose-storage "Not this quarter."
 
 Questions waiting for you: coop tasks decisions -i

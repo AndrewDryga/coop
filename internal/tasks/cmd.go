@@ -1177,9 +1177,10 @@ func parseTaskParkArgs(args []string) (id, reason string, err error) {
 	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
 }
 
-// tasksFolderPark answers a blocked task's decision with "not now": the folder moves to the backlog
-// drawer with its log and decision.md, so no preflight can re-queue it (the drawer is never scanned),
-// and `coop backlog promote` later brings it back blocked, with the question still open.
+// tasksFolderPark sets a todo task aside, or answers a blocked task's decision with "not now": the
+// folder moves to the backlog drawer with its log (and a blocked task's decision.md), so neither the
+// loop nor a preflight can pick it up (the drawer is never scanned). `coop backlog promote` later
+// brings it back to todo, or to blocked while its question is still open.
 func tasksFolderPark(root string, args []string) (int, error) {
 	id, reason, err := parseTaskParkArgs(args)
 	if err != nil {
@@ -1197,7 +1198,11 @@ func tasksFolderPark(root string, args []string) (int, error) {
 		return -1, err
 	}
 	ui.OK("Parked: %s", t.Title)
-	ui.Note("\n  It's in the backlog now, and its decision stays open.")
+	if t.State == StateBlocked {
+		ui.Note("\n  It's in the backlog now, and its decision stays open.")
+	} else {
+		ui.Note("\n  It's in the backlog now.")
+	}
 	ui.Note("  Bring it back: coop backlog promote %s", t.ID)
 	return 0, nil
 }
@@ -1207,12 +1212,17 @@ type parkRefusal struct{ msg string }
 
 func (r *parkRefusal) Error() string { return r.msg }
 
-// parkTask moves a blocked task into the backlog, holding its owner record's lock so a concurrent
-// claim can't land mid-move. It refuses a task with audit authority (only an explicit unblock may
-// spend that) or a live claim, and records the owner's reason in log.md before the move.
+// parkTask moves a todo or blocked task into the backlog, holding its owner record's lock so a
+// concurrent claim can't land mid-move. It refuses a task with audit authority (only an explicit
+// unblock may spend that) or a live claim, and records the owner's reason in log.md before the move.
+// A todo task needs no decision to be set aside, so none is written.
 func parkTask(root string, t Item, reason string) error {
-	if t.State != StateBlocked {
-		return &parkRefusal{fmt.Sprintf("%s is %s, not blocked: only a task waiting on a decision can be parked", t.ID, StateLabel(t.State))}
+	switch t.State {
+	case StateTodo, StateBlocked:
+	case StateInProgress:
+		return &parkRefusal{fmt.Sprintf("%s is in progress: release it first with coop tasks release %s, then park it", t.ID, t.ID)}
+	default:
+		return &parkRefusal{fmt.Sprintf("%s is %s: only a todo or blocked task can be parked", t.ID, StateLabel(t.State))}
 	}
 	if _, audited, err := ReadAuditReopenRecord(root, t.ID); err != nil {
 		return fmt.Errorf("inspect audit authority for %s: %w", t.ID, err)
@@ -1229,7 +1239,10 @@ func parkTask(root string, t Item, reason string) error {
 	} else if claimed {
 		return &parkRefusal{fmt.Sprintf("%s is claimed: release it first with coop tasks release %s", t.ID, t.ID)}
 	}
-	note := "Parked in the backlog by the owner; the decision stays open."
+	note := "Parked in the backlog by the owner."
+	if t.State == StateBlocked {
+		note = "Parked in the backlog by the owner; the decision stays open."
+	}
 	if reason != "" {
 		note = "Parked in the backlog by the owner: " + reason
 	}

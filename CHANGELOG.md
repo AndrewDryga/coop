@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Set a todo task aside without making up a question.** `coop tasks park <id> ["<reason>"]` now
+  takes a todo task too: it moves to the backlog with your reason in its log, and no decision is
+  written. `coop backlog promote` returns it to todo. Before, only a blocked task could be parked,
+  so setting work aside meant blocking it on an invented question first. A task in progress is
+  refused with the command that releases it.
+
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
