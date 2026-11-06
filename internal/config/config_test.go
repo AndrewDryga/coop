@@ -1062,11 +1062,16 @@ func TestTightenReadable(t *testing.T) {
 			t.Errorf("%s: %o, want %o", name, info.Mode().Perm(), tc.want)
 		}
 	}
+	// The fixtures set their modes after creating them: a create takes the inherited umask (077 left
+	// the linked file 0600 before the call, so its "unchanged" check failed).
 	linked := filepath.Join(dir, "linked")
-	if err := os.WriteFile(linked, nil, 0o644); err != nil {
+	if err := os.WriteFile(linked, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Link(linked, filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(linked, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	TightenReadablePath(linked)
@@ -1074,7 +1079,10 @@ func TestTightenReadable(t *testing.T) {
 		t.Errorf("a file with two links changed to %o", info.Mode().Perm())
 	}
 	sub := filepath.Join(dir, "sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	TightenReadablePath(sub)
