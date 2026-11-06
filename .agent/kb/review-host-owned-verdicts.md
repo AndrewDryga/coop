@@ -2,8 +2,8 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
-updated: 2026-10-17
+sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
+updated: 2026-11-05
 ---
 
 `between`, `signoff`, and `verify` default to `writes: tasks`. The name is retained for
@@ -24,6 +24,17 @@ folder, metadata snapshot, and completion receipt. Findings are written only ins
 untrusted log block; `state.md` receives a fixed reproduction-first next action, and the trusted
 work prompt says never to follow commands from review evidence. Missing, malformed, interrupted,
 failed, or out-of-scope proposals leave every task unchanged.
+
+An audit reopen carries its full bounded finding in host authority. Accepted re-completion copies
+it into pending review with whether the worker's validated attempt left HEAD unchanged. A repeated
+finding after that zero-commit close moves directly to blocked with both the finding and the
+worker's state explanation in `decision.md`. Matching normalizes case, whitespace and terminal
+periods; it never matches truncated display prefixes. Oversized findings reopen normally.
+Known earlier repairs and ambiguous unbound commits after the reopen suppress automatic dispute
+blocking; tagged sibling commits do not. The dispute names the exact completion receipt, so
+startup can retire its review debt after an interrupted host move. Explicit human unblock resets
+the finding. Blocked subjects are neither accepted nor scheduled for another review round.
+A missing-evidence finding requires the evidence even for a zero-commit re-close.
 
 A successful review process whose structured proposal is malformed gets one immediate format-only
 correction in the same native provider session. Coop returns the exact validator errors and a
@@ -99,6 +110,9 @@ never clears a commit that changed after signoff, an untrailered repair included
 back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
+
+- 2026-11-05 — added repeated-finding human handoff; traced host move rollback, pending completion
+  rollback, blocked debt recovery, worker attempt provenance and all three ordinary review stages.
 
 - 2026-10-17 — the recorded content now covers the whole review range up to HEAD (third review).
 - 2026-10-17 — the recorded content covers the commits after the subject's too (an untrailered

@@ -62,10 +62,11 @@ func newLoopHealth() *loopHealth { return &loopHealth{byTask: map[string]*taskHe
 // Its verdict comes only from a validated receipt whose exact reopens the host applied;
 // gate/findings are deliberately reviewer-reported context, never an acceptance decision.
 type auditEvidence struct {
-	verdict   string
-	gate      string
-	findings  string
-	protected bool
+	verdict      string
+	gate         string
+	findings     string
+	fullFindings string
+	protected    bool
 }
 
 const (
@@ -131,6 +132,7 @@ func parseAuditEvidence(output string) (map[string]auditEvidence, error) {
 			return nil, errors.New("audit evidence line has no task ID or gate field")
 		}
 		gate, findings, ok := strings.Cut(rest, findingsMarker)
+		fullFindings := findings
 		gate, findings = compactAuditEvidence(gate), compactAuditEvidence(findings)
 		if !ok || gate == "" || findings == "" {
 			return nil, fmt.Errorf("audit evidence for %s has an empty or missing gate/findings field", id)
@@ -138,7 +140,7 @@ func parseAuditEvidence(output string) (map[string]auditEvidence, error) {
 		if _, duplicate := evidence[id]; duplicate {
 			return nil, fmt.Errorf("duplicate audit evidence for %s", id)
 		}
-		evidence[id] = auditEvidence{gate: gate, findings: findings}
+		evidence[id] = auditEvidence{gate: gate, findings: findings, fullFindings: fullFindings}
 	}
 	// A second structured block is not evidence to merge or deduplicate. It is an ambiguous
 	// provider response and must fail closed unless the verdict boundary already proved it was one

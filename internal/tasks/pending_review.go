@@ -79,29 +79,33 @@ type PendingReviewPlan struct {
 // Reviewed is what its latest signoff round started on. A verdict covers only that content, so a
 // subject whose commits changed since goes back to signoff instead of being cleared.
 type PendingReviewRecord struct {
-	Version      int                    `json:"version"`
-	Plan         PendingReviewPlan      `json:"plan"`
-	Task         TaskInstance           `json:"task"`
-	Fingerprint  CompletionFingerprint  `json:"fingerprint"`
-	Base         string                 `json:"base,omitempty"`
-	Reviewed     *PendingReviewContent  `json:"reviewed,omitempty"`
-	Phase        PendingReviewPhase     `json:"phase"`
-	Round        int                    `json:"round"`
-	RoundStarted bool                   `json:"round_started,omitempty"`
-	Prepared     bool                   `json:"prepared,omitempty"`
-	Previous     *PendingReviewPrevious `json:"previous,omitempty"`
-	UpdatedAt    time.Time              `json:"updated_at"`
+	Version               int                    `json:"version"`
+	Plan                  PendingReviewPlan      `json:"plan"`
+	Task                  TaskInstance           `json:"task"`
+	Fingerprint           CompletionFingerprint  `json:"fingerprint"`
+	Base                  string                 `json:"base,omitempty"`
+	Reviewed              *PendingReviewContent  `json:"reviewed,omitempty"`
+	Phase                 PendingReviewPhase     `json:"phase"`
+	Round                 int                    `json:"round"`
+	RoundStarted          bool                   `json:"round_started,omitempty"`
+	Prepared              bool                   `json:"prepared,omitempty"`
+	Previous              *PendingReviewPrevious `json:"previous,omitempty"`
+	UpdatedAt             time.Time              `json:"updated_at"`
+	Finding               string                 `json:"finding,omitempty"`
+	ReclosedWithoutCommit bool                   `json:"reclosed_without_commit,omitempty"`
 }
 
 // PendingReviewPrevious is the active debt displaced by a prepared recompletion. If publication
 // dies before the matching completion receipt, recovery restores this exact state rather than
 // losing the reopen obligation or treating the unaccepted generation as reviewed.
 type PendingReviewPrevious struct {
-	Task         TaskInstance          `json:"task"`
-	Fingerprint  CompletionFingerprint `json:"fingerprint"`
-	Phase        PendingReviewPhase    `json:"phase"`
-	Round        int                   `json:"round"`
-	RoundStarted bool                  `json:"round_started,omitempty"`
+	Task                  TaskInstance          `json:"task"`
+	Fingerprint           CompletionFingerprint `json:"fingerprint"`
+	Phase                 PendingReviewPhase    `json:"phase"`
+	Round                 int                   `json:"round"`
+	RoundStarted          bool                  `json:"round_started,omitempty"`
+	Finding               string                `json:"finding,omitempty"`
+	ReclosedWithoutCommit bool                  `json:"reclosed_without_commit,omitempty"`
 }
 
 type PendingReviewCohort struct {
@@ -571,6 +575,9 @@ func validatePendingReviewPlan(plan PendingReviewPlan) error {
 }
 
 func validatePendingReviewRecord(record PendingReviewRecord) error {
+	if err := validateReclosedFinding(record.Finding, record.ReclosedWithoutCommit); err != nil {
+		return err
+	}
 	if record.Version != pendingReviewVersion || record.Round < 0 || record.UpdatedAt.IsZero() {
 		return errors.New("invalid pending-review record")
 	}
@@ -600,6 +607,9 @@ func validatePendingReviewRecord(record PendingReviewRecord) error {
 	}
 	if record.Previous != nil {
 		previous := record.Previous
+		if err := validateReclosedFinding(previous.Finding, previous.ReclosedWithoutCommit); err != nil {
+			return err
+		}
 		if !record.Prepared || previous.Task.Ref != record.Task.Ref || previous.Round < 0 {
 			return errors.New("invalid previous pending-review state")
 		}
@@ -711,13 +721,14 @@ func pendingReviewRecordMatchesExpected(current, expected PendingReviewRecord) b
 		current.Base == expected.Base && (current.Reviewed == nil) == (expected.Reviewed == nil) &&
 		(current.Reviewed == nil || *current.Reviewed == *expected.Reviewed) &&
 		current.Phase == expected.Phase && current.Round == expected.Round &&
+		current.Finding == expected.Finding && current.ReclosedWithoutCommit == expected.ReclosedWithoutCommit &&
 		current.RoundStarted == expected.RoundStarted && current.Prepared == expected.Prepared
 }
 
 // MarkCompletedForReview publishes pending debt and the ordinary completion receipt under the
 // same task authority. The prepared record comes first: a crash before the receipt is recoverable
 // as unaccepted work; a crash after it can promote the exact nonce on startup.
-func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingReviewPlan) error {
+func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingReviewPlan, unchanged bool) error {
 	if task.ID != l.id || task.State != StateDone || filepath.Dir(filepath.Dir(task.Dir)) != l.root {
 		return errors.New("pending-review completion does not match its task lease")
 	}
@@ -763,11 +774,29 @@ func (l *TaskLease) MarkCompletedForReview(repo string, task Item, plan PendingR
 		Version: pendingReviewVersion, Plan: subject.Plan, Task: instance, Fingerprint: fingerprint, Base: base,
 		Phase: PendingReviewSignoff, Prepared: true, UpdatedAt: time.Now().UTC(),
 	}
+	if l.Reopen != nil {
+		record.Finding = l.Reopen.Finding
+		record.ReclosedWithoutCommit = record.Finding != "" && unchanged && !l.Reopen.Repaired
+		if record.ReclosedWithoutCommit {
+			// A hard interruption may have left an unbound repair before this attempt started.
+			// Tagged sibling work is unrelated; an unattributed repair makes zero-work uncertain.
+			history, err := auditReopenCurrentHistory(repo, "HEAD", task.ID, *l.Reopen)
+			if err != nil {
+				return err
+			}
+			for _, commit := range history[len(l.Reopen.History):] {
+				if commit.semantic.TaskID == "" {
+					record.ReclosedWithoutCommit = false
+				}
+			}
+		}
+	}
 	if hadPrior {
 		record.Round = prior.Round
 		record.Previous = &PendingReviewPrevious{
 			Task: prior.Task, Fingerprint: prior.Fingerprint,
 			Phase: prior.Phase, Round: prior.Round, RoundStarted: prior.RoundStarted,
+			Finding: prior.Finding, ReclosedWithoutCommit: prior.ReclosedWithoutCommit,
 		}
 	}
 	if err := writePendingReviewRecord(l.root, record); err != nil {
@@ -807,6 +836,7 @@ func previousPendingReview(record PendingReviewRecord) PendingReviewRecord {
 	return PendingReviewRecord{
 		Version: record.Version, Plan: record.Plan, Task: previous.Task, Fingerprint: previous.Fingerprint, Base: record.Base,
 		Phase: previous.Phase, Round: previous.Round, RoundStarted: previous.RoundStarted, UpdatedAt: time.Now().UTC(),
+		Finding: previous.Finding, ReclosedWithoutCommit: previous.ReclosedWithoutCommit,
 	}
 }
 
@@ -1025,6 +1055,12 @@ func LoadPendingReviews(repo string, hosts []string) (PendingReviewCohort, error
 			if !active || !auditReopenRecordActive(audit) {
 				return PendingReviewCohort{}, fmt.Errorf("pending-review task %s left the archive without host review authority", current.ID)
 			}
+			if current.State == StateBlocked && audit.DisputedReceipt == record.Fingerprint.Receipt {
+				if err := retireDisputedReview(root, record, audit); err != nil {
+					return PendingReviewCohort{}, err
+				}
+				continue
+			}
 			replaced, err := recoverInterruptedRework(repo, root, current.ID)
 			if err != nil {
 				return PendingReviewCohort{}, fmt.Errorf("recover task %s's interrupted rework: %w", current.ID, err)
@@ -1229,6 +1265,12 @@ func carryAuditReopen(repo, root, id, oldHead string, rework map[AuditReopenComm
 		}
 	}
 	current.Generation = record.Generation
+	current.Finding, current.DisputedReceipt, current.Repaired = record.Finding, record.DisputedReceipt, record.Repaired
+	for _, commit := range current.History[len(record.History):] {
+		if commit.TaskID == "" {
+			current.Repaired = true
+		}
+	}
 	return replaceAuditReopenRecordIfMatches(root, record, current)
 }
 

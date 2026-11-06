@@ -86,7 +86,7 @@ func TestCompletionWindowRefusesOldRecordsByName(t *testing.T) {
 // tree_format. It is refused by name, never read as a changed archive, and its file stays as it was.
 func TestPendingReviewRefusesAFingerprintWithoutTreeFormat(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {

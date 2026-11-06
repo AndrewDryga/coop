@@ -59,7 +59,7 @@ func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignm
 
 func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -117,7 +117,7 @@ func TestLoadPendingReviewsBoundsOnlyTheSelectedQueues(t *testing.T) {
 	registry := t.TempDir()
 	t.Setenv(TestLeaseAuthorityRootEnv, registry)
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -153,7 +153,7 @@ func TestLoadPendingReviewsBoundsOnlyTheSelectedQueues(t *testing.T) {
 
 func TestPendingReviewPreparedRecordPromotesOnlyWithMatchingReceipt(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	record, ok, err := readPendingReviewRecord(root, done.ID)
@@ -176,7 +176,7 @@ func TestPendingReviewPreparedRecordPromotesOnlyWithMatchingReceipt(t *testing.T
 
 func TestPendingReviewPreparedRecordRollsBackWithoutAcceptedReceipt(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	record, ok, err := readPendingReviewRecord(root, done.ID)
@@ -499,7 +499,7 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 // find its completion and still notice a real change to the archive.
 func TestPendingReviewSurvivesADeviceRenumber(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -526,7 +526,7 @@ func TestPendingReviewSurvivesADeviceRenumber(t *testing.T) {
 func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 	t.Run("archive", func(t *testing.T) {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -540,7 +540,7 @@ func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 
 	t.Run("dropped commit", func(t *testing.T) {
 		repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -563,7 +563,7 @@ func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 	// verification: loading sends the task back to signoff.
 	t.Run("history", func(t *testing.T) {
 		repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -599,7 +599,7 @@ func TestPendingReviewRejectsArchiveAndHistoryMutation(t *testing.T) {
 // at the commit it returns, and the review refuses to start anywhere else.
 func TestPendingReviewRoundReadsOneHead(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -659,7 +659,7 @@ func TestPendingReviewFindsSignedCommitsByTrailer(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "later.txt"), "later unbound work\n")
 	git(t, repo, "add", "later.txt")
 	git(t, repo, "commit", "-qm", "later unbound work")
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -728,7 +728,7 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 
 	t.Run("a second commit in the range", func(t *testing.T) {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -750,7 +750,7 @@ func TestPendingReviewSearchesOnlyTheRecordedRange(t *testing.T) {
 // and stored version 2; this build refuses it by name on every read, and leaves the file as it was.
 func TestPendingReviewRefusesVersion1Records(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -805,7 +805,7 @@ func TestPendingReviewRefusesVersion1Records(t *testing.T) {
 
 func TestPendingReviewRecordRejectsMalformedRollbackState(t *testing.T) {
 	repo, _, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	record, ok, err := readPendingReviewRecord(assignment.Task.Root, done.ID)
@@ -841,7 +841,7 @@ func TestPendingReviewRecordRejectsMalformedRollbackState(t *testing.T) {
 
 func TestPreparedRecompletionRollbackRestoresPriorDebt(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -851,12 +851,14 @@ func TestPreparedRecompletionRollbackRestoresPriorDebt(t *testing.T) {
 		t.Fatal(err)
 	}
 	prior, _, _ := readPendingReviewRecord(root, done.ID)
+	prior.Finding, prior.ReclosedWithoutCommit = "missing desktop evidence", true
 	prepared := prior
 	prepared.Phase = PendingReviewSignoff
 	prepared.Prepared = true
 	prepared.Previous = &PendingReviewPrevious{
 		Task: prior.Task, Fingerprint: prior.Fingerprint,
 		Phase: prior.Phase, Round: prior.Round, RoundStarted: prior.RoundStarted,
+		Finding: prior.Finding, ReclosedWithoutCommit: prior.ReclosedWithoutCommit,
 	}
 	if err := writePendingReviewRecord(root, prepared); err != nil {
 		t.Fatal(err)
@@ -872,7 +874,7 @@ func TestPreparedRecompletionRollbackRestoresPriorDebt(t *testing.T) {
 
 func TestTaskDeletionClearsPendingReviewRecord(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -889,7 +891,7 @@ func TestTaskDeletionClearsPendingReviewRecord(t *testing.T) {
 
 func TestPendingReviewStageTransitionsAndClear(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -922,7 +924,7 @@ func TestPendingReviewStageTransitionsAndClear(t *testing.T) {
 
 func TestPendingReviewActivationFailureRestoresPriorReopen(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -960,7 +962,7 @@ func TestPendingReviewActivationFailureRestoresPriorReopen(t *testing.T) {
 
 func TestPendingReviewImportBasePrecedesImportedCommit(t *testing.T) {
 	repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1133,7 +1135,7 @@ func TestPendingReviewVerdictCoversTheTreeTheRunStartsFrom(t *testing.T) {
 // not clear that.
 func TestPendingReviewVerdictCoversTheRunBeforeTheTasksCommit(t *testing.T) {
 	repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1175,7 +1177,7 @@ func TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn(t *testing.T) {
 	setup := func(t *testing.T) (repo, root string, done Item, accepted PendingReviewRecord) {
 		t.Helper()
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -1259,7 +1261,7 @@ func TestPendingReviewVerdictCoversTheCommitsAfterTheTasksOwn(t *testing.T) {
 func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 	t.Run("changed after verdict", func(t *testing.T) {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -1279,7 +1281,7 @@ func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 
 	t.Run("commit dropped after verdict", func(t *testing.T) {
 		repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -1297,7 +1299,7 @@ func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 
 	t.Run("content changed during the review", func(t *testing.T) {
 		repo, root, base, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -1322,7 +1324,7 @@ func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 
 	t.Run("archive changed after verdict", func(t *testing.T) {
 		repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+		if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 			t.Fatal(err)
 		}
 		if err := assignment.Lease.Release(); err != nil {
@@ -1341,7 +1343,7 @@ func TestPendingReviewClearChecksTheVerdictStillApplies(t *testing.T) {
 
 func TestTrustedRecompletionReturnsReopenedTaskToPendingSignoff(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1382,7 +1384,7 @@ func TestPendingReviewRecordNameCannotEscapeRegistry(t *testing.T) {
 
 func TestPendingReviewRejectsBranchDrift(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1455,7 +1457,7 @@ func TestCarryReopenedReviewsAfterSigning(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, "descendant.txt"), "descendant\n")
 	git(t, repo, "add", "descendant.txt")
 	git(t, repo, "commit", "-qm", "descendant implementation\n\nCoop-Task: descendant")
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1596,7 +1598,7 @@ func TestPendingReviewResumesReworkAStoppedControllerLeft(t *testing.T) {
 	git(t, repo, "add", "descendant.txt")
 	git(t, repo, "commit", "-qm", "descendant implementation\n\nCoop-Task: descendant")
 	descendant := forkspace.GitOut(repo, "rev-parse", "HEAD")
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1687,7 +1689,7 @@ func TestPendingReviewRequiresItsExactOrderedQueueSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1706,7 +1708,7 @@ func TestPendingReviewRequiresItsExactOrderedQueueSelection(t *testing.T) {
 
 func TestPendingReviewIgnoresMalformedRecordFromAnotherQueue(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1737,7 +1739,7 @@ func TestPendingReviewIgnoresMalformedRecordFromAnotherQueue(t *testing.T) {
 
 func TestPendingReviewCrashWindowEnrollsConcurrentCompletionBeforeRetiring(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
-	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := assignment.Lease.Release(); err != nil {
@@ -1793,7 +1795,7 @@ func TestPendingReviewIgnoresAmbientHooks(t *testing.T) {
 			if strings.TrimSpace(message) != "implement review subject\n\nCoop-Task: review-me" {
 				t.Fatalf("fixture commit message changed: %q", message)
 			}
-			if err := assignment.Lease.MarkCompletedForReview(repo, done, plan); err != nil {
+			if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {
 				t.Fatal(err)
 			}
 		})

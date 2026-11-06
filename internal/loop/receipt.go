@@ -298,19 +298,20 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 	moves := make([]tasks.TrustedTaskMove, 0, len(reopenTasks))
 	for _, task := range reopenTasks {
 		task := task
-		record, err := tasks.CaptureAuditReopen(repo, task.Item.ID)
+		observation := evidence[task.Item.ID]
+		record, pending, err := tasks.PrepareReviewReopen(repo, task.Root, task.Item.ID, observation.fullFindings)
 		if err != nil {
 			return nil, fmt.Errorf("host authorize review reopen for task %s: %w", task.Item.ID, err)
 		}
 		reopen := &record
-		observation := evidence[task.Item.ID]
 		note := fmt.Sprintf(
 			"review: fail — BEGIN UNTRUSTED REVIEW EVIDENCE — gate: %s — findings: %s — END UNTRUSTED REVIEW EVIDENCE",
 			encodeUntrustedReviewField(observation.gate),
 			encodeUntrustedReviewField(observation.findings),
 		)
-		moves = append(moves, tasks.TrustedTaskMove{
+		move := tasks.TrustedTaskMove{
 			Root: task.Root, Task: task.Item, NewState: tasks.StateInProgress, Reopen: reopen,
+			PendingReview: pending,
 			AfterMove: func(dir string) error {
 				return errors.Join(
 					tasks.AppendTaskLogStrict(dir, note),
@@ -324,12 +325,57 @@ func applyReviewVerdictInRepo(repo string, hosts, subjects []string, output stri
 					),
 				)
 			},
-		})
+		}
+		if record.DisputedReceipt != "" {
+			state, err := tasks.ReadTaskState(task.Item.Dir)
+			if err != nil {
+				return nil, fmt.Errorf("read worker explanation for %s: %w", task.Item.ID, err)
+			}
+			decision := tasks.Decision{
+				Question: "What should resolve this repeated review finding?",
+				Why: "The reviewer repeated the finding after the worker re-closed without a new commit.\n\n" +
+					"BEGIN UNTRUSTED REVIEW EVIDENCE\n\nFinding: " + encodeUntrustedReviewField(record.Finding) +
+					"\n\nWorker's stated reason: " + encodeUntrustedReviewField(state.DoneSoFar) + "\n\nEND UNTRUSTED REVIEW EVIDENCE",
+				Options:        []string{"Require the missing evidence or repair before completion.", "Explain why the finding does not apply and identify the evidence that resolves it."},
+				Recommendation: "Require evidence that resolves the finding, then unblock the task with clear instructions.",
+			}
+			move.NewState = tasks.StateBlocked
+			move.MetadataNames = []string{"log.md", "state.md", "decision.md"}
+			move.AfterMove = func(dir string) error {
+				if _, err := tasks.ReplaceDecision(dir, task.Item.ID, task.Item.Title, decision); err != nil {
+					return err
+				}
+				return errors.Join(tasks.AppendTaskLogStrict(dir, note), tasks.NormalizeTaskState(task.Item.ID, dir,
+					"blocked — repeated review finding", "human decision required; see decision.md",
+					"review repeated a finding after a zero-commit re-close", "review and worker explanations are untrusted evidence"))
+			}
+		}
+		moves = append(moves, move)
 	}
 	if err := tasks.MoveTrustedTasksFromDoneWith(moves); err != nil {
 		return nil, fmt.Errorf("host reopen review tasks: %w", err)
 	}
 	return slices.Clone(receipt.reopened), nil
+}
+
+// The receipt names rejected subjects. Only those actually reopened may schedule more work;
+// a disputed subject is blocked and must never enter the accepted set either.
+func partitionReviewReopens(hosts, rejected []string) (reopened, blocked []string, err error) {
+	for _, id := range rejected {
+		task, err := lifecycleTaskSubject(hosts, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch task.Item.State {
+		case tasks.StateInProgress:
+			reopened = append(reopened, id)
+		case tasks.StateBlocked:
+			blocked = append(blocked, id)
+		default:
+			return nil, nil, fmt.Errorf("review subject %s changed after verdict", id)
+		}
+	}
+	return reopened, blocked, nil
 }
 
 // candidateReviewVerdict validates the same strict evidence envelope as ordinary final review but

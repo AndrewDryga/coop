@@ -2600,6 +2600,7 @@ func TestAuditResumeLine(t *testing.T) {
 		"independently verify", "ZERO new commits", "99_done/", "verification-only",
 		"exactly one real repair commit", "WITHOUT a Coop-Task or Coop-Recovery trailer",
 		"preserving the reviewed history", "host audit authority binds",
+		"missing evidence must include that evidence", "run the requested checks", "A bare assertion",
 	} {
 		if !strings.Contains(l, want) {
 			t.Errorf("audit resume line missing %q:\n%s", want, l)

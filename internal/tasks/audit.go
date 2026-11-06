@@ -522,6 +522,7 @@ type TrustedTaskMove struct {
 	SourceStates  []string
 	MetadataNames []string
 	Reopen        *AuditReopenRecord
+	PendingReview *PendingReviewRecord
 	AfterMove     func(string) error
 }
 
@@ -540,6 +541,7 @@ type trustedTaskMoveState struct {
 	reopenTouched       bool
 	departureTouched    bool
 	moved               bool
+	metadataTouched     bool
 }
 
 // moveTrustedTaskFromDoneWith is the one-task form of the atomic host move used for review
@@ -635,6 +637,12 @@ func MoveTrustedTasksFromDoneWith(moves []TrustedTaskMove) (retErr error) {
 			))
 		}
 		states[len(states)-1].current = current
+		if move.PendingReview != nil {
+			record, ok, err := readPendingReviewRecord(move.Root, move.Task.ID)
+			if err != nil || !ok || !pendingReviewRecordMatchesExpected(record, *move.PendingReview) {
+				return failBeforeMutation(errors.Join(err, fmt.Errorf("task %s pending review changed before verdict", move.Task.ID)))
+			}
+		}
 		if move.AfterMove != nil {
 			names := move.MetadataNames
 			if len(names) == 0 {
@@ -696,6 +704,7 @@ func MoveTrustedTasksFromDoneWith(moves []TrustedTaskMove) (retErr error) {
 			state.moved = true
 		}
 		if state.move.AfterMove != nil {
+			state.metadataTouched = true
 			dir := filepath.Join(state.move.Root, state.move.NewState, state.current.ID)
 			if err := state.move.AfterMove(dir); err != nil {
 				return rollback(err)
@@ -712,8 +721,11 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 		state := &states[i]
 		restored[i] = true
 		dir := filepath.Join(state.move.Root, state.move.NewState, state.current.ID)
+		if !state.moved {
+			dir = state.current.Dir
+		}
 		var metadataErr error
-		if state.move.AfterMove != nil {
+		if state.metadataTouched {
 			metadataErr = restoreTaskMetadata(dir, state.metadata)
 		}
 		var moveErr error
@@ -759,6 +771,20 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 		}
 		if err := writeLeaseCompletionReceiptValue(state.authority, state.previous); err != nil {
 			errs = append(errs, fmt.Errorf("restore task %s completion receipt: %w", state.current.ID, err))
+			continue
+		}
+		if state.move.PendingReview != nil {
+			// Restoring bytes and renaming the archive changes its filesystem fingerprint.
+			// Bind the restored debt to that archive while its original receipt is still locked.
+			record := *state.move.PendingReview
+			fingerprint, err := completionFingerprintWithReceipt(state.current, state.previous.Nonce, false)
+			if err == nil {
+				record.Fingerprint = fingerprint
+				err = writePendingReviewRecord(state.move.Root, record)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("restore task %s pending review: %w", state.current.ID, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -2158,6 +2184,7 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRec
 		rebased.BaselineHead = forkspace.GitOut(repo, "rev-parse", "--verify", head+"^{commit}")
 		rebased.History = history
 		rebased.UnblockPending = false
+		rebased.Repaired = true
 		return rebased, nil
 	}
 	baseHistory, err := auditReopenCurrentHistory(repo, base, id, record)
@@ -2185,6 +2212,7 @@ func rebasedAuditReopenRecord(repo, base, head, id string, record AuditReopenRec
 	rebased.Subject = replacement[0].semantic
 	rebased.History = history
 	rebased.UnblockPending = false
+	rebased.Repaired = true
 	return rebased, nil
 }
 
@@ -2354,12 +2382,20 @@ func lockBlockedAuditReopenUnblock(project, root string, task Item, observed Aud
 		transition.replacement = &replacement
 		return transition, nil
 	}
+	replacement := record
 	if auditReopenCompletionValid(repo, head, head, task.ID, record) {
-		return transition, nil
+		if record.DisputedReceipt == "" {
+			return transition, nil
+		}
+	} else {
+		replacement, err = rebaseBlockedAuditReopen(repo, head, task.ID, record)
+		if err != nil {
+			return fail(err)
+		}
 	}
-	replacement, err := rebaseBlockedAuditReopen(repo, head, task.ID, record)
-	if err != nil {
-		return fail(err)
+	if record.DisputedReceipt != "" {
+		// A human's resolution starts a new attempt, not another automatic dispute cycle.
+		replacement.Finding, replacement.DisputedReceipt, replacement.Repaired = "", "", false
 	}
 	pending := replacement
 	pending.Version = auditReopenPendingVersion
@@ -3010,7 +3046,9 @@ func auditResumeLine(id string) string {
 		"commit is already in history — this is NOT crash recovery. Read its log.md/state.md for the recorded " +
 		"finding and independently verify it. If the finding is false, re-close with ZERO new commits: leave " +
 		"history untouched and move the task folder to 99_done/ — the host audit authority accepts a " +
-		"verification-only completion. If the finding is real, add exactly one real repair commit WITHOUT a " +
+		"verification-only completion. A zero-commit re-close of a finding asking for missing evidence must include " +
+		"that evidence in state.md or durable artifacts: run the requested checks and record exact commands, results, " +
+		"and artifact paths. A bare assertion that the finding is false is not evidence. If the finding is real, add exactly one real repair commit WITHOUT a " +
 		"Coop-Task or Coop-Recovery trailer, preserving the reviewed history. The host audit authority binds " +
 		"that repair to this task. Do not rewrite reviewed commits or add a receipt-only commit."
 }

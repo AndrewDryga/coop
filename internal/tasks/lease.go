@@ -50,13 +50,16 @@ type AuditReopenCommit struct {
 }
 
 type AuditReopenRecord struct {
-	Version        int                 `json:"version"`
-	Generation     string              `json:"generation"`
-	TaskID         string              `json:"task_id"`
-	BaselineHead   string              `json:"baseline_head,omitempty"`
-	Subject        AuditReopenCommit   `json:"subject"`
-	History        []AuditReopenCommit `json:"history"`
-	UnblockPending bool                `json:"unblock_pending,omitempty"`
+	Version         int                 `json:"version"`
+	Generation      string              `json:"generation"`
+	TaskID          string              `json:"task_id"`
+	BaselineHead    string              `json:"baseline_head,omitempty"`
+	Subject         AuditReopenCommit   `json:"subject"`
+	History         []AuditReopenCommit `json:"history"`
+	UnblockPending  bool                `json:"unblock_pending,omitempty"`
+	Finding         string              `json:"finding,omitempty"`
+	DisputedReceipt string              `json:"disputed_receipt,omitempty"`
+	Repaired        bool                `json:"repaired,omitempty"`
 }
 
 // TaskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
@@ -161,7 +164,7 @@ func (l *TaskLease) MarkCompleted(taskDir string) error {
 		if currentErr != nil || !exists || current.State != StateDone || current.Dir != taskDir {
 			return errors.Join(currentErr, fmt.Errorf("task %s changed before concurrent final-review enrollment", l.id))
 		}
-		return l.MarkCompletedForReview(plan.Workspace, current, plan)
+		return l.MarkCompletedForReview(plan.Workspace, current, plan, false)
 	}
 	if prior, ok, err := readPendingReviewRecord(l.root, l.id); err != nil {
 		return fmt.Errorf("inspect pending final review: %w", err)
@@ -173,7 +176,7 @@ func (l *TaskLease) MarkCompleted(taskDir string) error {
 		if currentErr != nil || !exists || current.State != StateDone || current.Dir != taskDir {
 			return errors.Join(currentErr, fmt.Errorf("task %s changed before final-review recompletion", l.id))
 		}
-		return l.MarkCompletedForReview(prior.Plan.Workspace, current, prior.Plan)
+		return l.MarkCompletedForReview(prior.Plan.Workspace, current, prior.Plan, false)
 	}
 	generation := ""
 	if l.Reopen != nil {
@@ -478,6 +481,12 @@ func auditReopenRecordName(root, id string) (string, error) {
 }
 
 func validateAuditReopenRecord(record AuditReopenRecord, id string) error {
+	if record.Finding != "" && !ValidTaskText(record.Finding, false, TaskLineLimit) {
+		return errors.New("invalid audit reopen finding")
+	}
+	if record.DisputedReceipt != "" && (record.Finding == "" || !durableIdentityRE.MatchString(record.DisputedReceipt)) {
+		return errors.New("invalid audit dispute receipt")
+	}
 	current := record.Version == auditReopenVersion && !record.UnblockPending ||
 		record.Version == auditReopenPendingVersion && record.UnblockPending
 	if !current || record.Generation == "" || record.TaskID != id ||
@@ -515,7 +524,8 @@ func auditReopenRecordActive(record AuditReopenRecord) bool {
 func AuditReopenRecordsEqual(a, b AuditReopenRecord) bool {
 	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
 		a.BaselineHead == b.BaselineHead && a.Subject == b.Subject &&
-		slices.Equal(a.History, b.History) && a.UnblockPending == b.UnblockPending
+		slices.Equal(a.History, b.History) && a.UnblockPending == b.UnblockPending &&
+		a.Finding == b.Finding && a.DisputedReceipt == b.DisputedReceipt && a.Repaired == b.Repaired
 }
 
 func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {

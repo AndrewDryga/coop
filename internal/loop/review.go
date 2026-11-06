@@ -99,6 +99,7 @@ type reviewRunResult struct {
 	retries   int
 	target    agents.Target
 	reopened  []string
+	blocked   []string
 	sessionID string
 	// concurrent holds non-subject tasks a parallel host controller completed while a review
 	// window was open. They must enter later signoff bookkeeping rather than be absorbed.
@@ -514,6 +515,12 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 			runErr = fmt.Errorf("%w: review subjects changed before verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		} else {
 			run.reopened, runErr = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
+			if runErr == nil {
+				run.reopened, run.blocked, runErr = partitionReviewReopens(hosts, run.reopened)
+				if runErr == nil && len(run.blocked) > 0 {
+					ui.Note("Repeated review finding needs your decision: %s. See coop tasks decisions -i.", strings.Join(run.blocked, ", "))
+				}
+			}
 		}
 	}
 	if runErr == nil || !errors.Is(runErr, errReviewVerdictMalformed) {
@@ -541,6 +548,12 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 			runErr = fmt.Errorf("%w: review subjects changed before corrected verdict application: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
 		} else {
 			run.reopened, runErr = applyReviewVerdictInRepo(repo, hosts, subjects, run.output)
+			if runErr == nil {
+				run.reopened, run.blocked, runErr = partitionReviewReopens(hosts, run.reopened)
+				if runErr == nil && len(run.blocked) > 0 {
+					ui.Note("Repeated review finding needs your decision: %s. See coop tasks decisions -i.", strings.Join(run.blocked, ", "))
+				}
+			}
 		}
 	}
 	if observe != nil {

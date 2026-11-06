@@ -1338,7 +1338,7 @@ reviewAgain:
 				}
 				var receiptErr error
 				if len(custom) == 0 && !noChangeAccepted {
-					receiptErr = lease.MarkCompletedForReview(repo, assignedCompletion.Item, reviewPlan)
+					receiptErr = lease.MarkCompletedForReview(repo, assignedCompletion.Item, reviewPlan, iterHead == headAfter)
 				} else {
 					receiptErr = lease.MarkCompleted(assignedCompletion.Item.Dir)
 				}
@@ -1468,7 +1468,7 @@ reviewAgain:
 								return 1, fmt.Errorf("record between-review reopens: %w", err)
 							}
 						}
-						if len(btRun.concurrent) > 0 {
+						if len(btRun.concurrent) > 0 || len(btRun.blocked) > 0 {
 							pendingReview, err = tasks.LoadPendingReviews(repo, hosts)
 							if err != nil {
 								return 1, fmt.Errorf("reload concurrent between-review subjects: %w", err)
@@ -1492,8 +1492,8 @@ reviewAgain:
 							return 1, ui.Reported(fmt.Errorf("protected-change audit for %s: %w", strings.Join(finishedIDs, ", "), verdictErr))
 						}
 						if rerr == nil && !interrupted {
-							audits.capture(finishedIDs, reopenedIDs, protectedAudit, btRun.output)
-							audits.drop(reopenedIDs)
+							audits.capture(finishedIDs, append(slices.Clone(reopenedIDs), btRun.blocked...), protectedAudit, btRun.output)
+							audits.drop(append(slices.Clone(reopenedIDs), btRun.blocked...))
 						}
 					}
 				}
@@ -1715,7 +1715,7 @@ reviewAgain:
 		health.noteReopen(reopenedIDs)
 		// The host moved exactly the tasks the receipt names (a missing or malformed receipt failed
 		// runReviewVerdict above), so a verdict cannot be lost between the review and the queue.
-		acceptedIDs := withoutReviewIDs(subjectIDs, reopenedIDs)
+		acceptedIDs := withoutReviewIDs(withoutReviewIDs(subjectIDs, reopenedIDs), soRun.blocked)
 		acceptedRecords, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: roundRecords}, acceptedIDs)
 		if selectErr != nil {
 			return 1, selectErr
@@ -1748,11 +1748,11 @@ reviewAgain:
 			c.closeWith(func() { printInterrupted(cf, continueCmd, false) })
 			return LoopInterruptedExitCode, nil
 		}
-		audits.drop(reopenedIDs)
+		audits.drop(append(slices.Clone(reopenedIDs), soRun.blocked...))
 		// Advance the baseline past this round's accepted subjects WITHOUT rescanning done/. A
 		// completion landing during or just after the review window stays outside the baseline and
 		// enters the next round's subject diff.
-		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, reopenedIDs, soRun.concurrent)
+		reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, subjects, append(slices.Clone(reopenedIDs), soRun.blocked...), soRun.concurrent)
 		requeued := requeueChangedReviews(reviewBaseline, pendingReview)
 		switch signoffRoundOutcome(signoffRound, maxReviewRounds, len(reopenedIDs) > 0) {
 		case signoffContinue:
@@ -1891,7 +1891,7 @@ reviewAgain:
 			}
 			var requeued []string
 			if verr == nil {
-				expected, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, withoutReviewIDs(verifyIDs, reopenedIDs))
+				expected, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, withoutReviewIDs(withoutReviewIDs(verifyIDs, reopenedIDs), vRun.blocked))
 				if selectErr != nil {
 					return 1, selectErr
 				}
@@ -1902,8 +1902,8 @@ reviewAgain:
 				if err != nil {
 					return 1, fmt.Errorf("reload final-verification subjects: %w", err)
 				}
-				audits.drop(reopenedIDs)
-				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, reopenedIDs, vRun.concurrent)
+				audits.drop(append(slices.Clone(reopenedIDs), vRun.blocked...))
+				reviewBaseline = reviewBaselineAfterVerdict(reviewBaseline, nil, append(slices.Clone(reopenedIDs), vRun.blocked...), vRun.concurrent)
 				requeued = requeueChangedReviews(reviewBaseline, pendingReview)
 				if len(reopenedIDs) > 0 {
 					switch signoffRoundOutcome(signoffRound, maxReviewRounds, true) {
