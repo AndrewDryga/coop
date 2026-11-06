@@ -183,6 +183,9 @@ type nativeRunRuntime struct {
 	dial     map[string]func(context.Context, string, string) (net.Conn, error)
 	fallback http.Handler
 	events   *GuardEvents // nil in an open run, which keeps no gateway record
+	// read loads one access document; nil is readNativeDocument. Tests point it away from the
+	// fixed private directory.
+	read func(context.Context, string, any) error
 }
 
 func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
@@ -234,7 +237,11 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 				return NativeAccessSnapshot{}, err
 			}
 			var snapshot NativeAccessSnapshot
-			err := readNativeDocument(ctx, account.Binding.Provider+".json", &snapshot)
+			read := readNativeDocument
+			if r.read != nil {
+				read = r.read
+			}
+			err := read(ctx, account.Binding.Provider+".json", &snapshot)
 			return snapshot, err
 		}, handler)
 		if err != nil {
