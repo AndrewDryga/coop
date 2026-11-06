@@ -321,6 +321,65 @@ func TestNetworkLogSeparatesCoopsOwnGatewayAndOffersNoUnrunnableLookup(t *testin
 	}
 }
 
+// Coop's credential broker refuses a provider request that overlaps a slow read of the agent's
+// sign-in, and the provider stays allowed. The block says so in plain words, apart from the
+// addresses the box could not reach, and offers no command for it. A real block beside it keeps
+// today's wording, lookup and pointer, and only the real block reaches the closing tally.
+func TestNetworkLogSaysASlowSignInReadIsNotABlockedAddress(t *testing.T) {
+	const held = "Coop briefly refused provider requests while the host was slow to read the agent's sign-in"
+	log := newNetworkLog()
+	log.setStage("Task attempt 1")
+	log.record(box.NetworkReport{RunID: "run-1", Denials: []box.NetworkDenial{
+		{Destination: "chatgpt.com", Name: "chatgpt.com", Basis: "admission", Count: 4, SlowSignIn: true},
+		{Destination: "api.anthropic.com", Name: "api.anthropic.com", Basis: "admission", Count: 1, SlowSignIn: true},
+	}})
+	out := captureStderr(t, log.finishIteration)
+	for _, want := range []string{"⚠ Task attempt 1: " + held, "chatgpt.com · 4 requests", "api.anthropic.com · 1 request"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("iteration block %q is missing %q", out, want)
+		}
+	}
+	for _, unwanted := range []string{"could not reach", "blocked", "coop net"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("a slow sign-in read was reported as a block (%q):\n%s", unwanted, out)
+		}
+	}
+	if closing := captureStderr(t, log.summary); closing != "" {
+		t.Errorf("a run whose only refusals were slow sign-in reads printed a closing tally: %q", closing)
+	}
+
+	log.setStage("Task attempt 2")
+	log.record(box.NetworkReport{RunID: "run-2", Event: "ev-2", Denials: []box.NetworkDenial{
+		{Destination: "chatgpt.com", Name: "chatgpt.com", Basis: "admission", Count: 3, SlowSignIn: true},
+		{Destination: "b.example", Name: "b.example", Basis: "tls", Count: 2},
+	}})
+	mixed := captureStderr(t, log.finishIteration)
+	for _, want := range []string{
+		"⚠ Task attempt 2 could not reach 1 remote address",
+		"b.example · TLS · blocked 2 times",
+		"Explain: coop net blocked b.example --run run-2",
+		"To see why: coop net blocked ev-2 --run run-2",
+		"⚠ Task attempt 2: " + held,
+		"chatgpt.com · 3 requests",
+	} {
+		if !strings.Contains(mixed, want) {
+			t.Errorf("iteration block %q is missing %q", mixed, want)
+		}
+	}
+	if strings.Contains(mixed, "chatgpt.com · admission") || strings.Contains(mixed, "coop net blocked chatgpt.com") {
+		t.Errorf("the slow sign-in read was listed with the real block:\n%s", mixed)
+	}
+	// It prints last, so the real block's commands never sit under it as if they were its own.
+	if i := strings.Index(mixed, held); i >= 0 && (strings.Contains(mixed[i:], "coop net") || strings.Contains(mixed[i:], "b.example")) {
+		t.Errorf("a command or the real block follows the slow sign-in read:\n%s", mixed)
+	}
+	closing := captureStderr(t, log.summary)
+	if !strings.Contains(closing, "Traffic to 1 remote address was blocked across 2 network runs") ||
+		!strings.Contains(closing, "b.example · blocked 2 times") || strings.Contains(closing, "chatgpt.com") {
+		t.Errorf("closing tally = %q, want only the real block", closing)
+	}
+}
+
 // A packet the filter counted has no destination, so the block prints the report's own words for it
 // and never a raw-socket term.
 func TestNetworkIterationPrintsThePacketTally(t *testing.T) {

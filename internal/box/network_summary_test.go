@@ -1,6 +1,7 @@
 package box
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,6 +50,46 @@ func TestRunReportGroupsRefusalsByDestinationAndBasis(t *testing.T) {
 	}
 	if report.Quiet() {
 		t.Error("a run with refusals must not report as quiet")
+	}
+}
+
+// Coop's credential broker refuses a provider request that overlaps a slow read of the agent's
+// sign-in, and keeps the provider allowed. Those refusals are tagged so the loop can say so, and
+// still reported. One refusal for any other reason keeps a destination a real block, and neither
+// the explain pointer nor the destination bound is spent on a slow read.
+func TestRunReportTagsRefusalsFromASlowSignInRead(t *testing.T) {
+	slow := func(id, name string) networkview.Denial {
+		d := denial(id, name, "admission_failed", false)
+		d.Reason = "native_account_unavailable"
+		return d
+	}
+	revoked := denial("r1", "api.anthropic.com", "admission_failed", false)
+	revoked.Reason = "native_broker_revoked"
+	report := networkRunReport("run1", networkview.Snapshot{Denials: []networkview.Denial{
+		slow("s1", "chatgpt.com"), slow("s2", "chatgpt.com"), slow("s3", "api.anthropic.com"), revoked,
+	}})
+	want := []NetworkDenial{
+		{Destination: "chatgpt.com", Name: "chatgpt.com", Basis: "admission", Count: 2, SlowSignIn: true},
+		{Destination: "api.anthropic.com", Name: "api.anthropic.com", Basis: "admission", Count: 2},
+	}
+	if !reflect.DeepEqual(report.Denials, want) {
+		t.Fatalf("denials = %+v, want %+v", report.Denials, want)
+	}
+	if report.Event != "r1" {
+		t.Errorf("explain pointer = %q, want the revoked refusal r1, not a slow read", report.Event)
+	}
+	only := networkRunReport("run1", networkview.Snapshot{Denials: []networkview.Denial{slow("s1", "chatgpt.com")}})
+	if only.Quiet() || len(only.Denials) != 1 || !only.Denials[0].SlowSignIn || only.Event != "" {
+		t.Errorf("slow-read-only report = %+v, want one tagged refusal, still reported, with nothing to open", only)
+	}
+	var full []networkview.Denial
+	for i := range maxSummaryDenials + 1 {
+		full = append(full, denial("id"+strconv.Itoa(i), "host"+strconv.Itoa(i)+".example", "dns_denied", false))
+	}
+	bounded := networkRunReport("run1", networkview.Snapshot{Denials: append(full, slow("s9", "chatgpt.com"))})
+	if len(bounded.Denials) != maxSummaryDenials+1 || bounded.Omitted != 1 || !bounded.Denials[maxSummaryDenials].SlowSignIn {
+		t.Errorf("bounded denials = %+v, omitted %d, want %d blocked destinations, the slow read and 1 omitted",
+			bounded.Denials, bounded.Omitted, maxSummaryDenials)
 	}
 }
 

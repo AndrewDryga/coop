@@ -2,8 +2,8 @@
 name: native-broker-lease-reads
 description: the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 subsystem: box
-sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/networkgateway/native_broker_unsettled_test.go, internal/safefile/safefile.go]
-updated: 2026-11-05
+sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/box/network_summary.go, internal/loop/network.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/networkgateway/native_broker_unsettled_test.go, internal/safefile/safefile.go]
+updated: 2026-11-06
 ---
 
 The host atomically publishes private access snapshots, but a Docker VM bind mount can briefly
@@ -33,7 +33,11 @@ guard logged `native_broker_stopped reason=document_canceled attempts=1 load_ms=
 blocking read past the 1s budget, and Codex got 403 from chatgpt.com for the rest of the run.
 `document_io`, `document_schema` and shutdown still latch. Every broker 403 is emitted as a guard
 `admission_failed` event naming the origin (`native_account_unavailable`, `native_broker_revoked`,
-`native_broker_request_refused`), so it reaches the run's denials; an open run has no sink.
+`native_broker_request_refused`), so it reaches the run's denials; an open run has no sink. The run
+report tags a destination whose every refusal is `native_account_unavailable`
+(`NetworkDenial.SlowSignIn`, matched by that literal in box's `slowSignInRead`, so a renamed reason
+needs both). The loop prints it last in the attempt block as a slow sign-in read, with no lookup,
+and leaves it out of "could not reach", the explain pointer and the closing tally.
 
 The host publisher (`nativeRun.serve`) writes a lease every 5 s, at most a minute and never past
 the access's own expiry. It renews the access planning read once under 10 minutes of it are left
@@ -74,6 +78,11 @@ mutex; a blocked log sink cannot delay revocation. Credentials, accounts, raw do
 arbitrary I/O/parser errors are never logged. Document callers still receive the generic error.
 
 ## Changelog
+- 2026-11-06 — the loop listed slow-read refusals as remote addresses an attempt could not reach,
+  with `coop net blocked` hints. The run report now tags them and the loop words them apart (task
+  2026-11-06-say-a-provider-refusal-was-a-slow-sign-in-read-n). Verified with
+  `TestRunReportTagsRefusalsFromASlowSignInRead`,
+  `TestNetworkLogSaysASlowSignInReadIsNotABlockedAddress` and seven mutation runs.
 - 2026-11-05 — a deadline-bound read no longer latches; it refuses inside the last lease and
   latches once that lapses (task 2026-11-05-say-when-a-network-filter-alert-comes-from-host). Cause
   read from a live guard's first-stop line under load. Broker 403s are now run evidence. Verified

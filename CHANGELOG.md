@@ -258,10 +258,12 @@
   attempt failed. A slow read now refuses only the requests it overlaps, and access comes back at
   the next good read. If reads keep failing until the sign-in's current lease runs out (at most a
   minute), or the sign-in is withdrawn, the gateway still refuses for the rest of the run. These
-  refusals now appear in `coop net inspect` and `coop net blocked`. A single slow check of the
-  packet filter no longer raises a critical alert; one that stays unanswered for 3 seconds still
-  does. When the gateway stops answering, the failed attempt now says so instead of only
-  "context canceled".
+  refusals now appear in `coop net inspect` and `coop net blocked`. After an attempt, `coop loop`
+  says Coop briefly refused those provider requests while the host was slow to read the sign-in,
+  and does not count the provider among the remote addresses the attempt could not reach. A single
+  slow check of the packet filter no longer raises a critical alert; one that stays unanswered for
+  3 seconds still does. When the gateway stops answering, the failed attempt now says so instead of
+  only "context canceled".
 
 - **A task parked for your decision no longer stops the rest of the queue.** When a resumed final
   review parked a task at its round limit, that run and every later `coop loop` ended with "Final

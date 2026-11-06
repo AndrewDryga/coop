@@ -48,9 +48,11 @@ type NetworkReport struct {
 	// They are kept apart from Denials because they name no destination: folding
 	// them in would report Coop's own plumbing as somewhere the box could not
 	// reach (networkreport.LocalRefusal).
-	Gateway  int
-	Alerts   []string
-	Event    string // the evidence id `coop net blocked --run` can open, when one was retained
+	Gateway int
+	Alerts  []string
+	// Event is the evidence id `coop net blocked --run` can open, when one was retained. It is
+	// never a slow sign-in read, which leaves a person nothing to change.
+	Event    string
 	Truncate bool
 }
 
@@ -66,6 +68,10 @@ type NetworkDenial struct {
 	Name  string
 	Basis string // dns | tls | socket | admission | unknown
 	Count int
+	// SlowSignIn marks a destination whose every refusal came from Coop's credential broker while
+	// the host was slow to read the agent's sign-in (slowSignInRead). No rule refused it and the
+	// provider stays allowed, so a caller words it apart and offers nothing to look up or approve.
+	SlowSignIn bool
 }
 
 func (d NetworkDenial) String() string {
@@ -108,7 +114,9 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 		if where == "" {
 			where = "name withheld"
 		}
-		if first == "" {
+		slow := slowSignInRead(denial)
+		// Event points at a refusal a person can act on, so never at a slow sign-in read.
+		if first == "" && !slow {
 			first = denial.ID
 		}
 		// An event that already carries a draft rule is the one worth opening:
@@ -119,19 +127,27 @@ func networkRunReport(runID string, snapshot networkview.Snapshot) NetworkReport
 		key := basis + "\x00" + where
 		if existing, ok := groups[key]; ok {
 			existing.Count++
+			// One refusal for any other reason makes the destination a real block.
+			existing.SlowSignIn = existing.SlowSignIn && slow
 			continue
 		}
-		group := &NetworkDenial{Destination: where, Name: denial.Name, Basis: basis, Count: 1}
+		group := &NetworkDenial{Destination: where, Name: denial.Name, Basis: basis, Count: 1, SlowSignIn: slow}
 		groups[key] = group
 		ordered = append(ordered, group)
 	}
 	if out.Event = drafted; out.Event == "" {
 		out.Event = first
 	}
-	for i, g := range ordered {
-		if i >= maxSummaryDenials {
-			out.Omitted = len(ordered) - maxSummaryDenials
-			break
+	shown := 0
+	for _, g := range ordered {
+		// Slow sign-in reads name only the broker's own provider origins, a short fixed list, so they
+		// are always kept and never push a blocked destination out of the bound.
+		if !g.SlowSignIn {
+			if shown == maxSummaryDenials {
+				out.Omitted++
+				continue
+			}
+			shown++
 		}
 		out.Denials = append(out.Denials, *g)
 	}
@@ -169,6 +185,13 @@ func denialBasis(kind string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// slowSignInRead reports a refusal the credential broker made only because a read of the agent's
+// sign-in did not finish in time on a busy host (networkgateway's errNativeAccessUnsettled). The
+// broker refuses just the requests that read overlaps and keeps the provider allowed.
+func slowSignInRead(d networkview.Denial) bool {
+	return d.Kind == "admission_failed" && d.Reason == "native_account_unavailable"
 }
 
 func allowedTraffic(counters *networkview.Counters) string {

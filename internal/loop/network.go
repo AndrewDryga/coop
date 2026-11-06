@@ -93,6 +93,9 @@ func (l *networkLog) record(r box.NetworkReport) {
 	l.pending = append(l.pending, loopNetworkRun{report: r, stage: stage})
 	l.alerts += len(r.Alerts)
 	for _, denial := range r.Denials {
+		if denial.SlowSignIn {
+			continue // its provider stayed allowed: not a remote address the run could not reach
+		}
 		key := denial.Destination
 		if _, seen := l.refused[key]; !seen {
 			l.order = append(l.order, key)
@@ -140,11 +143,17 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 	if r.Quiet() {
 		return
 	}
-	if total := len(r.Denials) + r.Omitted; total > 0 {
-		rows := []string{}
-		rows = append(rows, networkDenialList(r)...)
+	var blocked, slow []box.NetworkDenial
+	for _, denial := range r.Denials {
+		if denial.SlowSignIn {
+			slow = append(slow, denial)
+		} else {
+			blocked = append(blocked, denial)
+		}
+	}
+	if total := len(blocked) + r.Omitted; total > 0 {
 		ui.Alert(fmt.Sprintf("%s could not reach %s", stage, ui.Count(total, "remote address", "remote addresses")),
-			strings.Join(rows, "\n"), explainRow(r)...)
+			strings.Join(networkDenialList(blocked, r.Omitted, denialRow), "\n"), explainRow(r.RunID, blocked)...)
 	}
 	if r.Gateway > 0 {
 		// Not somewhere the box could not reach: something in it addressed Coop's own
@@ -163,20 +172,27 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 	if r.Event != "" {
 		ui.Detail("To see why: coop net blocked %s --run %s", r.Event, r.RunID)
 	}
+	if len(slow) > 0 {
+		// Not somewhere the box could not reach either: no rule refused these and the provider stays
+		// allowed, so there is nothing to look up or approve. Printed last, so no command above reads
+		// as one for it.
+		ui.Alert(stage+": Coop briefly refused provider requests while the host was slow to read the agent's sign-in",
+			strings.Join(networkDenialList(slow, 0, slowSignInRow), "\n"))
+	}
 }
 
 // explainRow is the one command that explains a refusal — the destination lookup, pointed at the
 // exact run that recorded it. It is omitted when no destination was retained: a lookup with
 // nothing to look up is worse than no pointer at all.
-func explainRow(r box.NetworkReport) [][2]string {
-	if r.RunID == "" {
+func explainRow(runID string, blocked []box.NetworkDenial) [][2]string {
+	if runID == "" {
 		return nil
 	}
-	for _, denial := range r.Denials {
+	for _, denial := range blocked {
 		// The lookup takes a NAME. A refusal whose destination the evidence withheld —
 		// or never had — would make a command that cannot run.
 		if denial.Name != "" {
-			return [][2]string{{"Explain:", "coop net blocked " + denial.Name + " --run " + r.RunID}}
+			return [][2]string{{"Explain:", "coop net blocked " + denial.Name + " --run " + runID}}
 		}
 	}
 	return nil
@@ -201,17 +217,23 @@ func protocolWord(basis string) string {
 	return basis
 }
 
+// slowSignInRow is one provider address Coop refused only during a slow sign-in read: no protocol
+// or "blocked", since no rule refused it.
+func slowSignInRow(d box.NetworkDenial) string {
+	return d.Destination + " · " + ui.Count(d.Count, "request")
+}
+
 // networkDenialList renders one iteration's refusals as a few bounded lines —
 // one destination each, the way the end-of-run summary reads.
-func networkDenialList(r box.NetworkReport) []string {
-	shown, omitted := r.Denials, r.Omitted
+func networkDenialList(denials []box.NetworkDenial, omitted int, row func(box.NetworkDenial) string) []string {
+	shown := denials
 	if len(shown) > maxLoopDenials {
 		omitted += len(shown) - maxLoopDenials
 		shown = shown[:maxLoopDenials]
 	}
 	lines := make([]string, 0, len(shown)+1)
 	for _, denial := range shown {
-		lines = append(lines, denialRow(denial))
+		lines = append(lines, row(denial))
 	}
 	if omitted > 0 {
 		lines = append(lines, fmt.Sprintf("… %d more remote addresses", omitted))
