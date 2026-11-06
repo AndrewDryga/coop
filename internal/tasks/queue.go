@@ -757,7 +757,8 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 
 // tasksDecisionsAll rolls up `coop tasks decisions` across several configured queues, each under
 // its header (only queues that exist are shown); -i walks every queue's open decisions in one
-// interactive session, each header naming the queue the decision lives in.
+// interactive session, each header naming the queue the decision lives in. The forks ready to
+// merge belong to the project, not to one queue, so they come once, after every queue.
 func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 	interactive := false
 	for _, a := range args {
@@ -768,6 +769,11 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 			return 2, decisionsArgumentErr(a)
 		}
 	}
+	roots := make([]string, len(rels))
+	for i, rel := range rels {
+		roots[i] = filepath.Join(repo, rel)
+	}
+	merges := readyMerges(repo, roots)
 	if interactive {
 		var refs []decisionRef
 		var answered []Item
@@ -793,6 +799,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 				}
 			}
 		}
+		refs = append(refs, mergeRefs(merges)...)
 		// A task the human already answered is not a question to browse, but it is still theirs to
 		// finish — so it is named here too, with the one command that finishes it.
 		p := ui.For(os.Stdout)
@@ -808,11 +815,11 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		printAnsweredDecisions(p, answered, true)
 		return code, err
 	}
-	return tasksDecisionsRollup(repo, rels)
+	return tasksDecisionsRollup(repo, rels, merges)
 }
 
 // tasksDecisionsRollup is the non-interactive multi-queue decisions listing.
-func tasksDecisionsRollup(repo string, rels []string) (int, error) {
+func tasksDecisionsRollup(repo string, rels []string, merges []readyMerge) (int, error) {
 	p := ui.For(os.Stdout)
 	first := true
 	for _, rel := range rels {
@@ -845,13 +852,14 @@ func tasksDecisionsRollup(repo string, rels []string) (int, error) {
 		}
 		first = false
 		fmt.Println(banner(p, rel))
-		if _, err := tasksFolderDecisions(repo, root, nil); err != nil {
+		if _, err := queueDecisions(repo, root, false, nil); err != nil {
 			return -1, err
 		}
 	}
 	if first {
 		ui.Note("no open decisions across %s", ui.Count(len(rels), "configured queue"))
 	}
+	printReadyMerges(p, merges, !first)
 	return 0, nil
 }
 

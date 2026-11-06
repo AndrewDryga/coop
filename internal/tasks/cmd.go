@@ -2872,6 +2872,12 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 			return 2, decisionsArgumentErr(a)
 		}
 	}
+	return queueDecisions(project, root, interactive, readyMerges(project, []string{root}))
+}
+
+// queueDecisions lists or walks one queue's open decisions, then the forks ready to merge. The
+// multi-queue roll-up passes no merges and lists them once after every queue.
+func queueDecisions(project, root string, interactive bool, merges []readyMerge) (int, error) {
 	var decisions, answered []Item
 	items, err := ReadTaskTree(root)
 	if err != nil {
@@ -2886,15 +2892,16 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 		}
 	}
 	p := ui.For(os.Stdout)
+	if interactive && len(decisions)+len(merges) > 0 {
+		code, err := decisionsInteractive(project, root, decisions, merges)
+		printAnsweredDecisions(p, answered, true)
+		return code, err
+	}
 	if len(decisions) == 0 {
 		ui.Note("No questions waiting for your answer.")
 		printAnsweredDecisions(p, answered, false)
+		printReadyMerges(p, merges, len(answered) > 0)
 		return 0, nil
-	}
-	if interactive {
-		code, err := decisionsInteractive(project, root, decisions)
-		printAnsweredDecisions(p, answered, true)
-		return code, err
 	}
 	fmt.Printf("%s%s\n", p.Bold("Questions waiting for your answer"), p.Dim(fmt.Sprintf(" · %d", len(decisions))))
 	for _, t := range decisions {
@@ -2931,6 +2938,7 @@ func tasksFolderDecisions(project, root string, args []string) (int, error) {
 	fmt.Print("\nAnswer one: coop tasks unblock <id> \"<answer>\"\n")
 	fmt.Print("Read and answer each: coop tasks decisions -i\n")
 	printAnsweredDecisions(p, answered, true)
+	printReadyMerges(p, merges, true)
 	return 0, nil
 }
 
@@ -2965,8 +2973,12 @@ func printAnsweredDecisions(p ui.Palette, answered []Item, gap bool) {
 
 // decisionRef locates one open decision for the browser: the queue root that owns it, the task
 // id (re-resolved on each visit, so a concurrent move is caught), and a display label naming the
-// queue in a multi-queue session ("" when there is only one queue — no label needed).
-type decisionRef struct{ root, label, id string }
+// queue in a multi-queue session ("" when there is only one queue — no label needed). A ref with a
+// merge is a fork ready to merge instead.
+type decisionRef struct {
+	root, label, id string
+	merge           *readyMerge
+}
 
 // decisionRefs turns one queue's blocked tasks into browser refs, labeled for the roll-up.
 func decisionRefs(root, label string, decisions []Item) []decisionRef {
@@ -2995,13 +3007,15 @@ func decisionsNeedTerminalErr() error {
 
 // decisionsInteractive walks the open decisions one at a time on a tty (`coop tasks decisions -i`):
 // each is shown in full, an answer is read and recorded (unblocking the task), and :n / :p move
-// between them, :q stops. It needs a real terminal — in a pipe or the unattended loop there's
-// nobody to answer, so it errors instead of hanging.
-func decisionsInteractive(project, root string, decisions []Item) (int, error) {
+// between them, :q stops. The forks ready to merge follow, each offering its review and merge. It
+// needs a real terminal — in a pipe or the unattended loop there's nobody to answer, so it errors
+// instead of hanging.
+func decisionsInteractive(project, root string, decisions []Item, merges []readyMerge) (int, error) {
 	if !ui.IsTerminal(os.Stdin) {
 		return 2, decisionsNeedTerminalErr()
 	}
-	return runDecisionBrowser(project, decisionRefs(root, "", decisions), os.Stdin, os.Stdout)
+	refs := append(decisionRefs(root, "", decisions), mergeRefs(merges)...)
+	return runDecisionBrowser(project, refs, os.Stdin, os.Stdout)
 }
 
 // runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a
@@ -3010,9 +3024,48 @@ func decisionsInteractive(project, root string, decisions []Item) (int, error) {
 func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io.Writer) (int, error) {
 	p := ui.For(os.Stdout)
 	sc := bufio.NewScanner(in)
-	answered, parked, deleted := 0, 0, 0
+	answered, parked, deleted, merged := 0, 0, 0, 0
+	questions := 0
+	for _, ref := range refs {
+		if ref.merge == nil {
+			questions++
+		}
+	}
 	for i := 0; i >= 0; {
 		ref := refs[i]
+		if ref.merge != nil {
+			// A fork ready to merge is no question: its page runs the fork's own review and merge
+			// commands, then reads back whether the merge happened.
+			fmt.Fprintf(out, "\n%s\n", decisionDivider(p, i+1, len(refs), "fork "+ref.merge.fork))
+			fprintMergePage(out, p, *ref.merge)
+			if !sc.Scan() {
+				break // EOF / ^D ends the session
+			}
+			switch strings.TrimSpace(sc.Text()) {
+			case ":r":
+				runForkFrom(out, "review", ref.merge.fork)
+			case ":m":
+				runForkFrom(out, "merge", ref.merge.fork)
+				if !forkReadyToMerge(project, ref.merge.fork) {
+					merged++
+					refs = append(refs[:i], refs[i+1:]...)
+				}
+			case ":q", ":quit":
+				i = -1
+			case ":p":
+				if i > 0 {
+					i--
+				}
+			case ":n", "":
+				i++
+			default:
+				fmt.Fprintf(out, "  Type :r to review the fork, :m to merge it, or press Enter to skip it.\n")
+			}
+			if i >= len(refs) {
+				i = -1
+			}
+			continue
+		}
 		t, err := FindTask(ref.root, ref.id)
 		if err != nil {
 			return -1, err
@@ -3139,8 +3192,8 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 	if err := sc.Err(); err != nil {
 		return -1, fmt.Errorf("read decision answer: %w", err)
 	}
-	// Answers, parks and deletions are counted separately: they are different outcomes, and a session
-	// that did several must not report any one of them as the whole story.
+	// Answers, parks, deletions and merges are counted separately: they are different outcomes, and
+	// a session that did several must not report any one of them as the whole story.
 	var outcomes []string
 	if answered > 0 {
 		outcomes = append(outcomes, fmt.Sprintf("answered %s — %s returned to todo", ui.Count(answered, "question"), pluralTasks(answered)))
@@ -3150,6 +3203,13 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 	}
 	if deleted > 0 {
 		outcomes = append(outcomes, "deleted "+ui.Count(deleted, "task"))
+	}
+	if merged > 0 {
+		outcomes = append(outcomes, "merged "+ui.Count(merged, "fork"))
+	}
+	if len(outcomes) == 0 && questions == 0 {
+		ui.Note("No forks merged.")
+		return 0, nil
 	}
 	if len(outcomes) == 0 {
 		ui.Note("No answers saved. Tasks are still blocked.")

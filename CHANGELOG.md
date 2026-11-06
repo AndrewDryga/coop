@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks decisions` lists forks ready to merge.** The board's Needs you section shows a
+  fork's finished work beside the open questions and points at `coop tasks decisions -i`, which
+  until now listed only the questions. After them it now lists each fork ready to merge with its
+  tasks and `coop fork review <name>, then coop fork merge <name>`. In `-i`, `:r` reviews the fork
+  and `:m` merges it, running those same commands.
+
 - **`coop tasks lint` names folders that hold no task.** A folder in a state folder or the backlog
   without a task.md never shows in `coop tasks`, so files saved into it went unseen: two loop
   workers saved their gate logs into folders named `*separate` and `*ignore-local-editor*`, and lint
