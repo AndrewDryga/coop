@@ -95,11 +95,15 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		project := filepath.Base(snapshot.Repository)
 		liveForks := liveForkGenerations(snapshot.Forks)
 		forkSystems := map[forkspace.Identity]string{}
+		loopErrors := map[forkspace.Identity]string{}
 		merging := map[forkspace.Identity]*forkMerge{}
 		var merges []*forkMerge
 		for _, fork := range snapshot.Forks {
 			if fork.Identity != nil && fork.DetachedSystem != "" {
 				forkSystems[*fork.Identity] = fork.DetachedSystem
+			}
+			if fork.Identity != nil && fork.LoopError != "" {
+				loopErrors[*fork.Identity] = fork.LoopError
 			}
 			if fork.Identity != nil && (fork.Candidate || fork.PendingLand) {
 				ws := forkspace.Workspace(repo, fork.Name)
@@ -170,7 +174,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 					}
 				}
 				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
-					m.stopReason = forkStopReason(repo, *task.Fork, m.stoppedByYou)
+					m.stopReason = forkStopReason(repo, task.Fork.Name, loopErrors[*task.Fork], m.stoppedByYou)
 				}
 			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, now)
@@ -444,23 +448,17 @@ func forkNote(repo, name, file string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// forkStopReason is why a fork's loop ended: the failure the loop recorded for this generation
-// (forkctl.NoteForkLoopExit), else, unless a person stopped it, the last error line of its log (what
-// coop fork logs shows; a stop tears an attempt down, and its error says nothing), else "".
-func forkStopReason(repo string, identity forkspace.Identity, stoppedByYou bool) string {
-	if root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, identity.Name), ".coop")); err == nil {
-		data, readErr := ReadTaskMetadataFile(root, "loop-error")
-		root.Close()
-		if generation, reason, ok := strings.Cut(strings.TrimSpace(string(data)), "\n"); readErr == nil && ok && generation == string(identity.Generation) {
-			if reason = oneLineTitle(sanitizeCell(reason)); reason != "" {
-				return reason
-			}
-		}
-	}
-	if stoppedByYou {
+// forkStopReason is why a fork's loop ended: the failure the loop recorded for this generation (the
+// snapshot's LoopError), else, unless a person stopped it, the last error line of its log (what coop
+// fork logs shows; a stop tears an attempt down, and its error says nothing), else "".
+func forkStopReason(repo, fork, recorded string, stoppedByYou bool) string {
+	switch {
+	case recorded != "":
+		return recorded
+	case stoppedByYou:
 		return ""
 	}
-	return lastLoggedError(forkspace.LogPath(repo, identity.Name))
+	return lastLoggedError(forkspace.LogPath(repo, fork))
 }
 
 // forkLogTail bounds how much of a fork's log the board reads to find its last error.

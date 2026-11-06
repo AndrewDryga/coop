@@ -69,6 +69,9 @@
   nothing else is left. A task answered and then blocked again in the same fork now shows its new
   question there too; the fork used to put it back in progress.
 
+- **`coop tasks watch --json` says why a stopped fork's loop ended.** A fork whose loop is not
+  running carries `loop_error`, the failure its loop recorded, on one line as `coop fork ls` shows
+  it. A fork whose loop runs again has none, so an old failure never reads as the current one.
 - **`coop tasks watch` tells a stop you made, and a wait, from a crash.** A task whose loop you
   stopped with Ctrl-C or `coop fork stop` reads `stopped by you` with the command that resumes it,
   where it read `worker gone` or `loop ended unexpectedly`. A loop waiting out a usage limit keeps

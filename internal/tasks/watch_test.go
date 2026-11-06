@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -1074,11 +1075,14 @@ func TestTaskWatchCountsAPersonsClaimAsWork(t *testing.T) {
 
 // Why a fork's loop ended comes from the failure it recorded for this generation, else the last
 // error line in the tail of its log (color and all), else nothing — the board then says the loop
-// ended unexpectedly.
+// ended unexpectedly. The record reads as one bounded line with its hidden characters escaped.
 func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
 	workspace, identity := testAssignmentFork(t, repo, "sweep-b")
-	if got := forkStopReason(repo, identity, false); got != "" {
+	reason := func(stoppedByYou bool) string {
+		return forkStopReason(repo, "sweep-b", forkLoopFailure(repo, identity), stoppedByYou)
+	}
+	if got := reason(false); got != "" {
 		t.Errorf("no record and no log: reason = %q, want none", got)
 	}
 	if err := forkspace.EnsureStateDir(repo); err != nil {
@@ -1093,26 +1097,30 @@ func TestForkStopReasonReadsTheRecordThenTheLog(t *testing.T) {
 	}
 	write(log, "Using .agent/loop.yaml\n\x1b[31m✗ An older failure\x1b[0m\nmore output\n\x1b[31m✗ Codex cannot start because this project asks for network access that has not been approved\x1b[0m\n\n  Review it: coop approve\n")
 	network := "Codex cannot start because this project asks for network access that has not been approved"
-	if got := forkStopReason(repo, identity, false); got != network {
+	if got := reason(false); got != network {
 		t.Errorf("log only: reason = %q, want its last error line %q", got, network)
 	}
 	if err := os.MkdirAll(filepath.Join(workspace, ".coop"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	write(filepath.Join(workspace, ".coop", "loop-error"), "an-older-generation\nthe old loop's failure\n")
-	if got := forkStopReason(repo, identity, false); got != network {
+	if got := reason(false); got != network {
 		t.Errorf("another generation's record: reason = %q, want the log's %q", got, network)
 	}
 	// A person stopped the loop: tearing its attempt down is no failure, whatever the log says last.
-	if got := forkStopReason(repo, identity, true); got != "" {
+	if got := reason(true); got != "" {
 		t.Errorf("stopped by you: reason = %q, want none from the log", got)
 	}
 	write(filepath.Join(workspace, ".coop", "loop-error"), string(identity.Generation)+"\nthe recorded failure\n")
-	if got := forkStopReason(repo, identity, false); got != "the recorded failure" {
+	if got := reason(false); got != "the recorded failure" {
 		t.Errorf("recorded failure: reason = %q, want it before the log", got)
 	}
-	if got := forkStopReason(repo, identity, true); got != "the recorded failure" {
+	if got := reason(true); got != "the recorded failure" {
 		t.Errorf("recorded failure of a stopped loop: reason = %q, want it", got)
+	}
+	write(filepath.Join(workspace, ".coop", "loop-error"), string(identity.Generation)+"\nboom\x1b[2J  then\t"+strings.Repeat("x", 400)+"\n")
+	if got := forkLoopFailure(repo, identity); !strings.HasPrefix(got, `boom\u001B[2J then x`) || len([]rune(got)) != loopFailureLimit || !strings.HasSuffix(got, "…") {
+		t.Errorf("an agent-written record = %q, want one escaped line of %d runes", got, loopFailureLimit)
 	}
 	// Only the log's tail is read: an error line further back than that is not this stop's reason.
 	write(log, "✗ An ancient failure\n"+strings.Repeat("progress\n", forkLogTail/9+1))
@@ -1249,6 +1257,67 @@ func TestTaskWatchNamesEveryTaskOfAForkTheSameWay(t *testing.T) {
 	}
 	if got := readForkTargets(snapshot).of(repo, otherIdentity); got != "codex:gpt-6-astra/xhigh@personal" {
 		t.Errorf("fork with its loop's target note = %q, want the noted target", got)
+	}
+}
+
+// A fork whose loop is not running carries the failure its loop recorded, in --json as coop fork ls
+// shows it and on its task's row as the commands that move it on. Once its loop runs again, the old
+// failure is gone from both.
+func TestTaskWatchShowsAForksRecordedLoopFailure(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	root := filepath.Join(repo, ".agent", "tasks")
+	taskWithCompletedChecklist(t, root, StateTodo, "wire-auth")
+	workspace, identity := testAssignmentFork(t, repo, "sweep-a")
+	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace, BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeForkProjection(assignment); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	refusal := "Codex cannot start because this project asks for network access that has not been approved"
+	if err := os.MkdirAll(filepath.Join(workspace, ".coop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".coop", "loop-error"), []byte(string(identity.Generation)+"\n"+refusal+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	watch := func(jsonOutput bool) string {
+		return captureStdout(t, func() { _, _ = TasksWatch(Host{}, repo, []string{root}, jsonOutput) })
+	}
+	loopError := func() string {
+		t.Helper()
+		var snapshot ProjectSnapshot
+		if err := json.Unmarshal([]byte(watch(true)), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		for _, fork := range snapshot.Forks {
+			if fork.Name == "sweep-a" {
+				return fork.LoopError
+			}
+		}
+		return ""
+	}
+	if got := loopError(); got != refusal {
+		t.Errorf("--json loop_error = %q, want %q", got, refusal)
+	}
+	if out := watch(false); !strings.Contains(out, " in fork sweep-a · network access not approved\n    to fix, run: coop approve, then coop fork sweep-a --loop -d\n") {
+		t.Errorf("the stopped fork's row:\n%s", out)
+	}
+	worker := forkspace.WorkerState{Pid: os.Getpid(), Token: processidentity.StartToken(os.Getpid()), Generation: identity.Generation}
+	if err := forkspace.WriteWorkerState(repo, "sweep-a", worker); err != nil {
+		t.Fatal(err)
+	}
+	if got := loopError(); got != "" {
+		t.Errorf("a running fork's loop_error = %q, want none", got)
+	}
+	if out := watch(false); strings.Contains(out, "network access") || !strings.Contains(out, "Now (1)") {
+		t.Errorf("the running fork's row:\n%s", out)
 	}
 }
 

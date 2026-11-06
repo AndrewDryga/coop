@@ -84,10 +84,12 @@ another system's worker still outranks the old failure, as does a host-owned rea
 confirmed new worker or foreground controller clears the old hint before running, so a stop cannot
 leave an earlier approval refusal behind. Queue outcomes (work remaining or blocked) and intentional
 interruptions are not failures. This file is a display diagnostic only: it does not create lifecycle
-or network-approval authority. `coop tasks watch` reads it too (`forkStopReason` in
-`internal/tasks/watch.go`, which cannot import forkctl, so it repeats the `<generation>\n<reason>`
-format): a stopped fork task's state comes from it, else from the last `✗` line in the tail of the
-fork's log, and a known reason maps to its complete fix commands.
+or network-approval authority. The project snapshot reads it too (`forkLoopFailure` in
+`internal/tasks/snapshot.go`, which cannot import forkctl, so it repeats the `<generation>\n<reason>`
+format) into `ProjectForkSnapshot.LoopError` (`loop_error` in `coop tasks watch --json`), one
+bounded `ui.SafeInline` line, and only while nothing runs the fork's loop. `coop tasks watch` takes a
+stopped fork task's state from it, else from the last `✗` line in the tail of the fork's log, and a
+known reason maps to its complete fix commands.
 
 ## Unsupported state never becomes an identity
 
@@ -227,6 +229,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-05 — the project snapshot carries the loop-error hint as `ProjectForkSnapshot.LoopError`
+  (`loop_error` in `coop tasks watch --json`) while the fork's loop is not running; the board reads
+  it from there instead of opening the file itself. `coop fork ls` keeps its own reader and JSON.
 - 2026-11-05 — `coop tasks watch` reads the loop-error hint (then the fork log's last error) to say
   why a fork's task stopped and which commands restart it; another system's loop reads "running on
   <system>" on its task row.

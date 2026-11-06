@@ -11,6 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const projectSnapshotVersion = 1
@@ -71,6 +72,9 @@ type ProjectForkSnapshot struct {
 	Reservation      *forkspace.WorkspaceReservation  `json:"reservation,omitempty"`
 	Executions       []forkspace.ExecutionObservation `json:"executions,omitempty"`
 	ActiveExecutions int                              `json:"active_executions"`
+	// LoopError is the failure this generation's loop recorded when it ended (forkctl.NoteForkLoopExit),
+	// as coop fork ls shows it, while nothing runs the fork's loop: a running loop's is stale.
+	LoopError string `json:"loop_error,omitempty"`
 
 	// For the board's merge row, not the JSON contract: when the candidate was published and how
 	// many tasks it carries, and when its merge started.
@@ -389,6 +393,10 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				}
 			}
 		}
+		if current, ok := currentGeneration[identity.Name]; ok && current == identity &&
+			!fork.DetachedRunning && fork.DetachedSystem == "" && fork.ActiveExecutions == 0 {
+			fork.LoopError = forkLoopFailure(repo, identity)
+		}
 		snapshot.Forks = append(snapshot.Forks, fork)
 		delete(nameSet, identity.Name)
 	}
@@ -423,6 +431,32 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 	sort.Strings(snapshot.Problems)
 	snapshot.Problems = compactSnapshotProblems(snapshot.Problems)
 	return snapshot
+}
+
+// loopFailureLimit bounds a recorded loop failure as forkctl writes it, so a note an agent rewrote
+// in the fork's workspace still reads as one short line.
+const loopFailureLimit = 300
+
+// forkLoopFailure is the failure the fork's loop recorded for this generation in its workspace's
+// .coop/loop-error, as "<generation>\n<reason>", or "". The workspace is agent-writable, so the note
+// is read through the no-follow metadata root and comes back one bounded line, its hidden characters
+// escaped as coop fork ls shows them.
+func forkLoopFailure(repo string, identity forkspace.Identity) string {
+	root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, identity.Name), ".coop"))
+	if err != nil {
+		return ""
+	}
+	data, err := ReadTaskMetadataFile(root, "loop-error")
+	root.Close()
+	generation, reason, ok := strings.Cut(strings.TrimSpace(string(data)), "\n")
+	if err != nil || !ok || generation != string(identity.Generation) {
+		return ""
+	}
+	reason = ui.SafeInline(oneLineTitle(reason))
+	if r := []rune(reason); len(r) > loopFailureLimit {
+		reason = string(r[:loopFailureLimit-1]) + "…"
+	}
+	return reason
 }
 
 func compactSnapshotProblems(problems []string) []string {
