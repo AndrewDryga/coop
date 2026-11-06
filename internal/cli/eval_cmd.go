@@ -459,15 +459,17 @@ func (a *app) resolveEvalConfigurations(positionals []string) ([]eval.Configurat
 // workloads into one score, and refuses an interrupted (unsealed) run.
 func (a *app) evalCompare(args []string) (int, error) {
 	const usage = "coop eval compare <before-id> <after-id>"
+	for i, arg := range args {
+		if i > 1 || strings.HasPrefix(arg, "-") { // a dash word is an option, never a run ID
+			return 2, extraArgErr(arg, "coop eval compare", usage, nil)
+		}
+	}
 	if len(args) < 2 {
 		name := "before run ID"
 		if len(args) == 1 {
 			name = "after run ID"
 		}
 		return 2, ui.MissingArgument(name, "coop eval compare", usage)
-	}
-	if len(args) > 2 {
-		return 2, ui.UnexpectedArgument(args[2], "coop eval compare", usage)
 	}
 	root, err := evalStateRoot()
 	if err != nil {
@@ -560,7 +562,12 @@ func evalStateRoot() (string, error) {
 // user can copy the shape rather than learn the schema from an error. Create-only — it refuses to
 // write into a directory that already has a suite.
 func (a *app) evalInit(args []string) (int, error) {
-	if len(args) != 1 {
+	for i, arg := range args {
+		if i > 0 || strings.HasPrefix(arg, "-") { // a dash word is an option, never a folder to create
+			return 2, extraArgErr(arg, "coop eval init", "coop eval init <dir>", nil)
+		}
+	}
+	if len(args) == 0 {
 		return 2, ui.MissingArgument("<dir>", "coop eval init", "coop eval init ./evals/my-suite")
 	}
 	dir := args[0]

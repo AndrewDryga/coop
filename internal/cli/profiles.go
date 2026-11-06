@@ -28,6 +28,13 @@ import (
 // A leading verb (`default|rm|model …`) reads as an unknown agent: the path grammar above is the
 // only spelling for an edit.
 func (a *app) cmdCredentials(args []string) (int, error) {
+	// A dash word is an option, never an agent, account or action. The one option is --yes after
+	// rm, which profilePath checks.
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") && (i < 3 || args[2] != "rm") {
+			return 2, unknownOptionErr(arg, "coop credentials", nil)
+		}
+	}
 	if len(args) > 0 {
 		if _, ok := agents.Get(args[0]); ok && len(args) > 1 {
 			return a.profilePath(args[0], args[1], args[2:])
@@ -217,7 +224,7 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 	case "rm":
 		for _, x := range rest[1:] { // only --yes may follow rm here; anything else is a mistake
 			if x != "-y" && x != "--yes" {
-				return 2, ui.UnexpectedArgument(x, "coop credentials", fmt.Sprintf("coop credentials %s %s rm [--yes]", agent, profile))
+				return 2, extraArgErr(x, "coop credentials", fmt.Sprintf("coop credentials %s %s rm [--yes]", agent, profile), []string{"--yes", "-y"})
 			}
 		}
 		return a.removeProfile(agent, profile, hasYes(rest))

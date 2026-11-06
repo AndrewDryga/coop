@@ -145,12 +145,16 @@ func InvalidForkName(name, command string) *ui.UsageError {
 	}
 }
 
-// oneForkName returns the single fork name from the parsed positionals, rejecting a second one:
-// acting on only one and printing success is a data-loss footgun (`fork rm a b` looks like it removed
-// both). Zero positionals returns "" so callers can apply their own "name required" usage error.
-func oneForkName(verb string, pos []string) (string, error) {
-	if len(pos) > 1 {
-		return "", ui.UnexpectedArgument(pos[1], "coop fork "+verb, "coop fork "+verb+" <name>")
+// oneForkName returns the single fork name from the positionals, refusing anything else by the
+// shared rule (ui.ExtraArgument): a second name, since acting on only one and printing success is a
+// data-loss footgun (`fork rm a b` looks like it removed both), and a word starting with "-", which
+// is an option this verb does not have, never a name. usage is the verb's help page syntax line.
+// Zero positionals returns "" so callers can apply their own "name required" usage error.
+func oneForkName(verb, usage string, pos []string) (string, error) {
+	for i, arg := range pos {
+		if i > 0 || strings.HasPrefix(arg, "-") {
+			return "", ui.ExtraArgument(arg, "coop fork "+verb, usage, nil)
+		}
 	}
 	if len(pos) == 0 {
 		return "", nil
@@ -302,6 +306,7 @@ func ForkUnmerged(repo, ws string) bool {
 }
 
 func (c *Control) ForkRm(args []string) (int, error) {
+	const usage = "coop fork rm <name> [<options>]"
 	force := false
 	var pos []string
 	for _, x := range args {
@@ -311,17 +316,17 @@ func (c *Control) ForkRm(args []string) (int, error) {
 		case "--yes", "-y": // accepted so `--yes` skips the confirm below (read via hasYes)
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, ui.UnknownOption(x, "coop fork rm", "")
+				return 2, ui.UnknownOptionAmong(x, "coop fork rm", []string{"--force", "-f", "--yes", "-y"})
 			}
 			pos = append(pos, x)
 		}
 	}
-	name, err := oneForkName("rm", pos)
+	name, err := oneForkName("rm", usage, pos)
 	if err != nil {
 		return 2, err
 	}
 	if name == "" {
-		return 2, ui.MissingArgument("fork name", "coop fork rm", "coop fork rm <name> [--force] [--yes]")
+		return 2, ui.MissingArgument("fork name", "coop fork rm", usage)
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, InvalidForkName(name, "coop fork rm")
@@ -504,12 +509,13 @@ func (c *Control) ForkRm(args []string) (int, error) {
 // ForkPath prints a fork's filesystem path (for `cd "$(coop fork path <name>)"` and the
 // like). It's the plumbing companion to `coop fork open`, which opens it in your editor.
 func (c *Control) ForkPath(args []string) (int, error) {
-	name, err := oneForkName("path", args)
+	const usage = "coop fork path <name>"
+	name, err := oneForkName("path", usage, args)
 	if err != nil {
 		return 2, err
 	}
 	if name == "" {
-		return 2, ui.MissingArgument("fork name", "coop fork path", "coop fork path <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork path", usage)
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, InvalidForkName(name, "coop fork path")
@@ -530,12 +536,13 @@ func (c *Control) ForkPath(args []string) (int, error) {
 // you can work in or eyeball it on the host. Opening is a host-side action, so it
 // doesn't need the box image built.
 func (c *Control) ForkOpenEditor(args []string) (int, error) {
-	name, err := oneForkName("open", args)
+	const usage = "coop fork open <name>"
+	name, err := oneForkName("open", usage, args)
 	if err != nil {
 		return 2, err
 	}
 	if name == "" {
-		return 2, ui.MissingArgument("fork name", "coop fork open", "coop fork open <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork open", usage)
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, InvalidForkName(name, "coop fork open")

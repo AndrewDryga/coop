@@ -988,6 +988,7 @@ func mergeNeedsConfirmation() *ui.UsageError {
 }
 
 func (c *Control) ForkMerge(args []string) (int, error) {
+	const usage = "coop fork merge <name> [<options>]"
 	all, force, yes := false, false, false
 	var pos []string
 	for _, x := range args {
@@ -1000,12 +1001,12 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 			yes = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, ui.UnknownOption(x, "coop fork merge", "")
+				return 2, ui.UnknownOptionAmong(x, "coop fork merge", []string{"--all", "--force", "-f", "--yes", "-y"})
 			}
 			pos = append(pos, x)
 		}
 	}
-	name, err := oneForkName("merge", pos)
+	name, err := oneForkName("merge", usage, pos)
 	if err != nil {
 		return 2, err
 	}
@@ -1017,8 +1018,8 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 			// pretending to be another instruction.
 			Headline: `Missing fork name for "coop fork merge"`,
 			Rows: [][2]string{
-				{"Usage:", "coop fork merge <name> [--force] [--yes]"},
-				{ui.Continuation, "coop fork merge --all [--force] [--yes]"},
+				{"Usage:", usage},
+				{ui.Continuation, "coop fork merge --all [<options>]"},
 				{"Help:", ui.HelpCommand("coop fork merge")},
 			},
 		}

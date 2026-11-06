@@ -20,6 +20,14 @@
   `/32`. `coop net blocked` exits 1 when no recorded block matches, as `grep` does, and its help
   and the exit-code table say so. The gateway image changed, so the next filtered run checks the
   network setup again.
+
+- **A word starting with `-` is an option everywhere a name goes.** `coop eval init --bogus` made a
+  folder named `--bogus`, `coop presets --bogus` looked for a preset by that name, and `coop fork
+  stop --bogus` for a fork. `coop credentials`, `coop sessions` and `coop eval compare` did the
+  same, and `coop fork <name> acp --credential` was an "unexpected argument". They now refuse it as
+  an unknown option with exit 2 and make nothing. The fork commands use the same refusals as the
+  rest of Coop: a mistyped option gets a correction, and the usage line is the one their help
+  shows.
 - **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
   to approve, `coop approve` prints "No approval needed: this project's requested access has not
   changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any

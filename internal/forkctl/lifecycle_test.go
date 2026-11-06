@@ -300,14 +300,19 @@ func TestForkRmPreflightsMalformedStateBeforeConfirmation(t *testing.T) {
 }
 
 func TestOneForkName(t *testing.T) {
-	if n, err := oneForkName("rm", []string{"x"}); n != "x" || err != nil {
+	const usage = "coop fork rm <name> [<options>]"
+	if n, err := oneForkName("rm", usage, []string{"x"}); n != "x" || err != nil {
 		t.Errorf("oneForkName(1) = (%q, %v), want (x, nil)", n, err)
 	}
-	if n, err := oneForkName("rm", nil); n != "" || err != nil {
+	if n, err := oneForkName("rm", usage, nil); n != "" || err != nil {
 		t.Errorf("oneForkName(0) = (%q, %v), want (\"\", nil)", n, err)
 	}
-	if _, err := oneForkName("rm", []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), `Unexpected argument "b" for "coop fork rm"`) {
-		t.Errorf("oneForkName(2) should refuse the second name, got %v", err)
+	if _, err := oneForkName("rm", usage, []string{"a", "b"}); err == nil || err.Error() != `Unexpected argument "b" for "coop fork rm" — Usage: `+usage+` — Help: coop help fork rm` {
+		t.Errorf("oneForkName(2) should refuse the second name with the help page's usage, got %v", err)
+	}
+	// A dash word is an option, never a name: coop fork stop --bogus looked for a fork called --bogus.
+	if _, err := oneForkName("stop", "coop fork stop <name>", []string{"--bogus"}); err == nil || err.Error() != `Unknown option "--bogus" for "coop fork stop" — See available options: coop help fork stop` {
+		t.Errorf("oneForkName(--bogus) should refuse an unknown option, got %v", err)
 	}
 }
 

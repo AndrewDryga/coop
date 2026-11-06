@@ -25,8 +25,8 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		}
 		rest = append(rest, x)
 	}
-	if err := rejectArgs("fork ls", rest); err != nil {
-		return 2, err // a stray token should fail, not be silently ignored
+	if len(rest) > 0 { // a stray token should fail, not be silently ignored
+		return 2, ui.ExtraArgument(rest[0], "coop fork ls", "coop fork ls [--json]", []string{"--json"})
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
 	if err != nil {

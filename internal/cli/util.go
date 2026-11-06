@@ -21,53 +21,10 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
-// levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
-func levenshtein(a, b string) int {
-	ra, rb := []rune(a), []rune(b)
-	prev := make([]int, len(rb)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(ra); i++ {
-		cur := make([]int, len(rb)+1)
-		cur[0] = i
-		for j := 1; j <= len(rb); j++ {
-			cost := 1
-			if ra[i-1] == rb[j-1] {
-				cost = 0
-			}
-			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
-		}
-		prev = cur
-	}
-	return prev[len(rb)]
-}
-
-// nearestCommand suggests the candidate closest to a mistyped command. The allowed edit distance
-// scales with input length so short words don't attract noise: 1-2 runes get no suggestion (fuzzy
-// matches on `ls`/`go`/`cp` are mostly noise, and the caller's "run it in the box" hint covers them),
-// 3 runes match only at distance 1 (`lop`→loop, `lss`→ls — a single slip of the most-typed verbs),
-// and 4+ runes match within 2. This is what catches a distance-1 typo of `ls` before `coop fork lss`
-// silently clones a stray fork.
+// nearestCommand suggests the candidate closest to a mistyped command (ui.Nearest). A word of one
+// or two runes gets no suggestion, which the caller's "run it in the box" hint covers.
 func nearestCommand(input string, candidates []string) (string, bool) {
-	n := len([]rune(input))
-	if n < 3 {
-		return "", false
-	}
-	maxDist := 2
-	if n == 3 {
-		maxDist = 1
-	}
-	best, bestDist := "", -1
-	for _, c := range candidates {
-		if d := levenshtein(input, c); bestDist < 0 || d < bestDist {
-			best, bestDist = c, d
-		}
-	}
-	if bestDist >= 0 && bestDist <= maxDist {
-		return best, true
-	}
-	return "", false
+	return ui.Nearest(input, candidates)
 }
 
 // rejectArgs returns the shared extra-argument refusal when a command that takes no arguments is
@@ -81,15 +38,11 @@ func rejectArgs(cmd string, args []string) error {
 	return extraArgErr(args[0], "coop "+cmd, "coop "+cmd, nil)
 }
 
-// extraArgErr refuses a token its command did not take, by the one rule every command shares: a
-// token that starts with "-" is an option the command does not have, corrected against options when
-// it is a near miss of one, and any other token is an argument with no place, shown with usage, the
-// syntax line of the command's own help page.
+// extraArgErr refuses a token its command did not take, by the one rule every command shares
+// (ui.ExtraArgument): a token that starts with "-" is an unknown option, any other an unexpected
+// argument shown with usage, the syntax line of the command's own help page.
 func extraArgErr(arg, command, usage string, options []string) error {
-	if strings.HasPrefix(arg, "-") {
-		return unknownOptionErr(arg, command, options)
-	}
-	return ui.UnexpectedArgument(arg, command, usage)
+	return ui.ExtraArgument(arg, command, usage, options)
 }
 
 // padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and
@@ -108,15 +61,11 @@ func unknownSubcommandErr(family, verb string, valid []string) error {
 	return ui.UnknownCommandPath([]string{family, verb}, guess, false)
 }
 
-// unknownOptionErr refuses an option its command does not accept, suggesting the whole corrected
-// command when the typo has an obvious fix. command is the full owning path ("coop models"); valid
-// is that command's real option list, so the suggestion can never name an option it would refuse.
+// unknownOptionErr refuses an option its command does not accept (ui.UnknownOptionAmong). command
+// is the full owning path ("coop models"); valid is that command's real option list, so a suggested
+// correction can never name an option the command would refuse.
 func unknownOptionErr(option, command string, valid []string) error {
-	option, _, _ = strings.Cut(option, "=") // a value is not part of the name, and may be secret
-	if guess, _ := nearestCommand(option, valid); guess != "" {
-		return ui.UnknownOptionNear(option, command, guess)
-	}
-	return ui.UnknownOption(option, command, "")
+	return ui.UnknownOptionAmong(option, command, valid)
 }
 
 // gitOutputBytes is forkspace.GitOutErr for NUL-separated or whitespace-significant output: the raw bytes,

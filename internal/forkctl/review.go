@@ -109,6 +109,7 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 }
 
 func (c *Control) ForkReview(args []string) (int, error) {
+	const usage = "coop fork review <name> [<options>]"
 	stat, tool, open, gate := false, false, false, false
 	var pos []string
 	for _, x := range args {
@@ -123,17 +124,17 @@ func (c *Control) ForkReview(args []string) (int, error) {
 			gate = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, ui.UnknownOption(x, "coop fork review", "")
+				return 2, ui.UnknownOptionAmong(x, "coop fork review", []string{"--stat", "--tool", "--open", "--gate"})
 			}
 			pos = append(pos, x)
 		}
 	}
-	name, err := oneForkName("review", pos)
+	name, err := oneForkName("review", usage, pos)
 	if err != nil {
 		return 2, err
 	}
 	if name == "" {
-		return 2, ui.MissingArgument("fork name", "coop fork review", "coop fork review <name> [--stat | --tool | --open] [--gate]")
+		return 2, ui.MissingArgument("fork name", "coop fork review", usage)
 	}
 	if !forkspace.ValidExistingName(name) {
 		return 2, InvalidForkName(name, "coop fork review")

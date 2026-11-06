@@ -51,15 +51,6 @@ func indent(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// rejectArgs returns a usage error when a command that takes no arguments is given some, so a stray
-// token fails clearly instead of being silently ignored.
-func rejectArgs(cmd string, args []string) error {
-	if len(args) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s takes no arguments (got %q) — see 'coop %s --help'", cmd, strings.Join(args, " "), cmd)
-}
-
 // approve reports whether a destructive step is approved. --yes approves without asking; otherwise
 // it prompts interactively. In a non-interactive run (no TTY) without --yes it refuses rather than
 // silently taking the default — so a pipe or CI job can't land work and delete a fork on its own.

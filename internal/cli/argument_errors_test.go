@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,11 +27,24 @@ func helpUsageLine(t *testing.T, page string) string {
 // unknown option, any other is an unexpected argument, and that refusal's Usage line is the one
 // `coop help <command>` prints. Each row gives the arguments the command accepts before the bad one.
 func TestArgumentRefusalsShareOneRule(t *testing.T) {
+	forkVerb := func(verb string) func(*app, []string) (int, error) {
+		return func(a *app, args []string) (int, error) { return a.cmdFork(append([]string{verb}, args...)) }
+	}
 	cases := []struct {
 		page string
 		lead []string
 		run  func(a *app, args []string) (int, error)
 	}{
+		{"eval compare", []string{"run-1", "run-2"}, (*app).evalCompare},
+		{"eval init", []string{filepath.Join(t.TempDir(), "suite")}, (*app).evalInit},
+		{"fork ls", nil, forkVerb("ls")},
+		{"fork review", []string{"api"}, forkVerb("review")},
+		{"fork merge", []string{"api"}, forkVerb("merge")},
+		{"fork rm", []string{"api"}, forkVerb("rm")},
+		{"fork stop", []string{"api"}, forkVerb("stop")},
+		{"fork logs", []string{"api"}, forkVerb("logs")},
+		{"fork path", []string{"api"}, forkVerb("path")},
+		{"fork open", []string{"api"}, forkVerb("open")},
 		{"completion", []string{"bash"}, func(_ *app, args []string) (int, error) { return cmdCompletion(args) }},
 		{"shell", nil, (*app).cmdShell},
 		{"up", nil, (*app).cmdUp},
@@ -62,6 +77,48 @@ func TestArgumentRefusalsShareOneRule(t *testing.T) {
 				t.Errorf("%s %s = (%d, %v), want (2, %q)", command, strings.Join(args, " "), code, err, bad.want)
 			}
 		}
+	}
+}
+
+// A word that starts with "-" is an option wherever a name is expected: coop presets --bogus looked
+// for a preset called --bogus, coop fork stop --bogus for a fork, coop fork myfork acp --credential
+// was an "unexpected argument", and coop eval init --bogus made a folder by that name. Each refuses
+// it as the unknown option it is, with exit 2, and makes nothing.
+func TestADashWordIsAnOptionWhereANameIsExpected(t *testing.T) {
+	t.Chdir(t.TempDir()) // where eval init would make its folder
+	forkVerb := func(verb string) func(*app, []string) (int, error) {
+		return func(a *app, args []string) (int, error) { return a.cmdFork(append([]string{verb}, args...)) }
+	}
+	for _, tc := range []struct {
+		command string // the command the refusal names
+		args    []string
+		run     func(a *app, args []string) (int, error)
+	}{
+		{"coop presets", []string{"--bogus"}, (*app).cmdPresets},
+		{"coop presets init", []string{"init", "--bogus"}, (*app).cmdPresets},
+		{"coop credentials", []string{"--bogus"}, (*app).cmdCredentials},
+		{"coop credentials", []string{"claude", "--bogus"}, (*app).cmdCredentials},
+		{"coop credentials", []string{"claude", "work", "--bogus"}, (*app).cmdCredentials},
+		{"coop credentials", []string{"claude", "work", "default", "--bogus"}, (*app).cmdCredentials},
+		{"coop credentials", []string{"claude", "work", "rm", "--bogus"}, (*app).cmdCredentials},
+		{"coop sessions", []string{"--bogus"}, (*app).cmdSessions},
+		{"coop eval compare", []string{"--bogus"}, (*app).evalCompare},
+		{"coop eval compare", []string{"run-1", "--bogus"}, (*app).evalCompare},
+		{"coop eval init", []string{"--bogus"}, (*app).evalInit},
+		{"coop fork stop", []string{"--bogus"}, forkVerb("stop")},
+		{"coop fork path", []string{"--bogus"}, forkVerb("path")},
+		{"coop fork open", []string{"--bogus"}, forkVerb("open")},
+		{"coop fork myfork acp", []string{"--bogus"}, func(a *app, args []string) (int, error) { return a.forkACP("myfork", args) }},
+		{"coop acp", []string{"claude", "--bogus"}, (*app).cmdACP},
+	} {
+		a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}, argv: tc.args}
+		want := fmt.Sprintf("Unknown option %q for %q — See available options: %s", "--bogus", tc.command, ui.HelpCommand(tc.command))
+		if code, err := tc.run(a, tc.args); code != 2 || err == nil || err.Error() != want {
+			t.Errorf("%s = (%d, %v), want (2, %q)", strings.Join(tc.args, " "), code, err, want)
+		}
+	}
+	if _, err := os.Stat("--bogus"); !os.IsNotExist(err) {
+		t.Errorf("coop eval init --bogus made a folder: %v", err)
 	}
 }
 

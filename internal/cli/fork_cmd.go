@@ -1086,17 +1086,9 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if _, err := resolvePeerTargets("coop fork "+name, peerVals, agents.Names()); err != nil {
 		return 2, err
 	}
-	if len(rest) > 1 || (len(rest) == 1 && !isTargetHead(rest[0])) {
-		extra := rest[0]
-		if isTargetHead(extra) {
-			extra = rest[1]
-		}
-		return 2, &ui.UsageError{
-			Headline: fmt.Sprintf("Unexpected argument %q for %q", extra, "coop fork "+name+" acp"),
-			Rows: [][2]string{
-				{"Usage:", "coop fork " + name + " acp [<target>] [--peer <target>...] [--egress <mode>]"},
-				{"Help:", "coop help fork"},
-			},
+	for i, arg := range rest {
+		if i > 0 || !isTargetHead(arg) {
+			return 2, extraArgErr(arg, "coop fork "+name+" acp", "coop fork "+name+" acp [<target>] [--peer <target>...] [--egress <mode>]", acpOptions)
 		}
 	}
 	// The positional target names the fork's ACP session (coop fork <name> acp claude:opus@work),

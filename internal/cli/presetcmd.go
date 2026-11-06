@@ -28,8 +28,10 @@ func (a *app) cmdPresets(args []string) (int, error) {
 	if len(args) > 0 && args[0] == "init" {
 		return a.presetsInit(repo, args[1:])
 	}
-	if len(args) > 1 {
-		return 2, ui.UnexpectedArgument(args[1], "coop presets", "coop presets [init] [<preset>]")
+	for i, arg := range args {
+		if i > 0 || strings.HasPrefix(arg, "-") { // a dash word is an option, never a preset's name
+			return 2, extraArgErr(arg, "coop presets", "coop presets [init] [<preset>]", nil)
+		}
 	}
 	if len(args) == 1 {
 		if args[0] == "ls" { // rule: `ls` must lead somewhere useful, not read as a preset name
@@ -185,11 +187,13 @@ func presetRoleCounts(p *preset.Preset) string {
 // (`coop presets init [<preset>]`, name defaulting to "frontier"). The template loads
 // cleanly as written, so the new preset lists and runs immediately.
 func (a *app) presetsInit(repo string, args []string) (int, error) {
+	for i, arg := range args {
+		if i > 0 || strings.HasPrefix(arg, "-") {
+			return 2, extraArgErr(arg, "coop presets init", "coop presets init [<name>]", nil)
+		}
+	}
 	name := "frontier"
-	switch {
-	case len(args) > 1:
-		return 2, ui.UnexpectedArgument(args[1], "coop presets init", "coop presets init [<name>]")
-	case len(args) == 1:
+	if len(args) == 1 {
 		name = args[0]
 	}
 	problem := preset.NameRule

@@ -250,12 +250,12 @@ func (c *Control) ForkLogs(args []string) (int, error) {
 			follow = true
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, ui.UnknownOption(x, "coop fork logs", "")
+				return 2, ui.UnknownOptionAmong(x, "coop fork logs", []string{"--follow", "-f"})
 			}
 			pos = append(pos, x)
 		}
 	}
-	name, err := oneForkName("logs", pos)
+	name, err := oneForkName("logs", "coop fork logs [<name>] [--follow]", pos)
 	if err != nil {
 		return 2, err
 	}
@@ -426,10 +426,11 @@ func (c *Control) StopBeforeDestroy(name string) (int, error) {
 }
 
 func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
+	const usage = "coop fork stop <name>"
 	if len(args) == 0 || args[0] == "" {
-		return 2, ui.MissingArgument("fork name", "coop fork stop", "coop fork stop <name>")
+		return 2, ui.MissingArgument("fork name", "coop fork stop", usage)
 	}
-	name, err := oneForkName("stop", args)
+	name, err := oneForkName("stop", usage, args)
 	if err != nil {
 		return 2, err
 	}

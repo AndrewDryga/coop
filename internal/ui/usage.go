@@ -134,7 +134,7 @@ func UnknownCommand(rejected, suggestion, helpCommand string) *UsageError {
 // "coop" ("tasks", "watxh"), guess is the corrected LAST token when its family had a near miss,
 // and asHelp forms the suggestion as a help route so a help request stays a help request. With no
 // guess it points at the nearest valid family's page, which is the path without its last token.
-// Each package computes guess with its own spelling helper; the SHAPE is assembled only here.
+// The caller computes guess (Nearest); the SHAPE is assembled only here.
 func UnknownCommandPath(path []string, guess string, asHelp bool) *UsageError {
 	prefix := "coop "
 	if asHelp {
@@ -173,6 +173,16 @@ func UnknownOptionNear(option, command, guess string) *UsageError {
 		suggestion = command + " " + guess
 	}
 	return UnknownOption(option, command, suggestion)
+}
+
+// UnknownOptionAmong is UnknownOption for a command whose real options are valid: a near miss of
+// one is corrected, so the suggestion can never name an option the command would refuse.
+func UnknownOptionAmong(option, command string, valid []string) *UsageError {
+	option, _, _ = strings.Cut(option, "=") // a value is not part of the name, and may be secret
+	if guess, ok := Nearest(option, valid); ok {
+		return UnknownOptionNear(option, command, guess)
+	}
+	return UnknownOption(option, command, "")
 }
 
 // correctedCommand rebuilds a command line with its first copy of option replaced by guess, keeping
@@ -290,6 +300,17 @@ func UnexpectedArgument(arg, command, usage string) *UsageError {
 	}
 }
 
+// ExtraArgument refuses a token its command did not take, by the one rule every command shares: a
+// token that starts with "-" is an option the command does not have (UnknownOptionAmong its
+// options), and any other token is an argument with no place, shown with usage, the syntax line of
+// the command's own help page.
+func ExtraArgument(arg, command, usage string, options []string) *UsageError {
+	if strings.HasPrefix(arg, "-") {
+		return UnknownOptionAmong(arg, command, options)
+	}
+	return UnexpectedArgument(arg, command, usage)
+}
+
 // ConflictingOptions refuses two options that cannot be combined. The constraint is already in the
 // headline, so the block shows only the focused help route — no usage block, and no guess about
 // which side the user meant to drop.
@@ -336,4 +357,52 @@ func StandaloneValue(value, option, command string) *UsageError {
 // end the command.
 func CommandFailed(headline, cause string, rows ...[2]string) *UsageError {
 	return &UsageError{Headline: headline, Cause: cause, Rows: rows, ExitCode: 1}
+}
+
+// Nearest suggests the candidate closest to a mistyped word. The allowed edit distance scales with
+// input length so short words don't attract noise: 1-2 runes get no suggestion (fuzzy matches on
+// `ls`/`go`/`cp` are mostly noise), 3 runes match only at distance 1 (`lop`→loop, `lss`→ls — a
+// single slip of the most-typed verbs), and 4+ runes match within 2. This is what catches a
+// distance-1 typo of `ls` before `coop fork lss` silently clones a stray fork.
+func Nearest(input string, candidates []string) (string, bool) {
+	n := len([]rune(input))
+	if n < 3 {
+		return "", false
+	}
+	maxDist := 2
+	if n == 3 {
+		maxDist = 1
+	}
+	best, bestDist := "", -1
+	for _, c := range candidates {
+		if d := levenshtein(input, c); bestDist < 0 || d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	if bestDist >= 0 && bestDist <= maxDist {
+		return best, true
+	}
+	return "", false
+}
+
+// levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
 }

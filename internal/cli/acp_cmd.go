@@ -79,6 +79,9 @@ func (a *app) firstSignedInAgent() (string, error) {
 	return authed[0], nil
 }
 
+// acpOptions are the options coop acp and coop fork <name> acp take, for correcting a near miss.
+var acpOptions = []string{"--peer", "--egress", "--allow-domain", "--egress-rules"}
+
 // cmdACP runs the box as an ACP agent over stdio: the repo mounts at its real
 // host path (so the editor's absolute paths resolve, and the session history
 // matches `coop`/`coop loop` — see resolveWorkdir) and no tty is allocated. The
@@ -141,7 +144,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	if len(args) > 0 {
 		if strings.HasPrefix(args[0], "-") {
-			return 2, unknownOptionErr(args[0], "coop acp", []string{"--peer", "--egress", "--allow-domain", "--egress-rules"})
+			return 2, unknownOptionErr(args[0], "coop acp", acpOptions)
 		}
 		if terr := takeWho(args[0]); terr != nil {
 			return 2, terr
@@ -151,7 +154,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, ui.UnexpectedArgument(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]")
+		return 2, extraArgErr(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]", acpOptions)
 	}
 	presetFromEnv := false
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the

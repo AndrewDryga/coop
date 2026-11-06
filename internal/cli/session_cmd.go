@@ -277,6 +277,9 @@ func (a *app) cmdSessions(args []string) (int, error) {
 		}
 		return runSessionCompact(state, backup)
 	default:
+		if strings.HasPrefix(args[0], "-") { // an option, never a command's name
+			return 2, unknownOptionErr(args[0], "coop sessions", nil)
+		}
 		return 2, unknownSubcommandErr("sessions", args[0], sessionCommands)
 	}
 }

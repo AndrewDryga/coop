@@ -852,10 +852,11 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 		t.Errorf("fork ACP with repeatable peers = (%d, %v), want target account validation after peer extraction", code, err)
 	}
 	code, err = a.forkACP("myfork", []string{"claude", "--credential", "ghost"})
-	wantUsage := "Usage: coop fork myfork acp [<target>] [--peer <target>...] [--egress <mode>]"
-	if code != 2 || err == nil || !strings.Contains(err.Error(), `Unexpected argument "--credential"`) || !strings.Contains(err.Error(), wantUsage) {
-		t.Errorf("fork acp --credential = (%d, %v), want (2, the option refused with %q)", code, err, wantUsage)
+	const wantOption = `Unknown option "--credential" for "coop fork myfork acp" — See available options: coop help fork myfork acp`
+	if code != 2 || err == nil || err.Error() != wantOption {
+		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantOption)
 	}
+	wantUsage := "Usage: coop fork myfork acp [<target>] [--peer <target>...] [--egress <mode>]"
 	for extra, args := range map[string][]string{
 		"codex:high": {"claude:opus", "codex:high"},
 		"junk":       {"claude:opus", "junk"},
