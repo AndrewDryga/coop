@@ -1,6 +1,8 @@
 package acpproxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -213,6 +215,68 @@ func TestProxyLoadWithNoTranscriptStartsAfresh(t *testing.T) {
 		t.Fatalf("binding saves = %v, want S1→claude:N2", saves)
 	}
 	h.shutdown()
+}
+
+// The child dies after it found no transcript and before it answered the session/new standing in for
+// the load. The editor's load stays pending: the replacement child gets the session/new, and its answer
+// is the load's answer.
+func TestProxyLoadWithNoTranscriptSurvivesTheChildDying(t *testing.T) {
+	store := newMemBindings(map[string]SessionBinding{"S1": {Provider: "claude", AdapterID: "S1"}})
+	h := newProxyHarnessWith(t, 2, nil, RunOpts{Bindings: store}, "claude", "claude")
+	h.initialize(0)
+
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"cwd":"/w","mcpServers":[],"sessionId":"S1"}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":2,"error":{"code":-32002,"message":"Resource not found: S1"}}`)
+	if fresh := parse(readLine(t, h.childIn[0])); fresh.Method != "session/new" {
+		t.Fatalf("after a missing transcript the box got %q, want session/new", fresh.Method)
+	}
+	h.children[0].outW.Close()
+
+	var fresh header
+	for fresh.Method != "session/new" {
+		frame := parse(readLine(t, h.childIn[1]))
+		switch frame.Method {
+		case "initialize":
+			writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(frame.ID)+`,"result":{"protocolVersion":1}}`)
+		case "session/new":
+			fresh = frame
+		default:
+			t.Fatalf("the replacement got %q before the load's session/new", frame.Method)
+		}
+	}
+	if sessionID(fresh.Params) != "" || !strings.Contains(string(fresh.Params), `"cwd":"/w"`) {
+		t.Fatalf("the replacement's session/new = %s, want the load's params without its id", fresh.Params)
+	}
+	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(fresh.ID)+`,"result":{"sessionId":"N3"}}`)
+	answer := string(readLine(t, h.clientOut))
+	if !strings.Contains(answer, `"id":2`) || !strings.Contains(answer, `"result"`) || strings.Contains(answer, "error") {
+		t.Fatalf("editor's load was answered %s, want success from the replacement", answer)
+	}
+	h.shutdown()
+}
+
+// A proxy that hands off or gives up answers a load still waiting on its fresh session, so the editor
+// is never left waiting on a child that is gone.
+func TestProxyAnswersAWaitingReloadWhenItStopsReplacing(t *testing.T) {
+	for name, stop := range map[string]func(*proxy){
+		"handoff": (*proxy).beginReload,
+		"give up": (*proxy).failAllPending,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			p := &proxy{out: &out, reloads: map[string]reloadAsNew{
+				InjectPrefix + "reload-1-2": {editorID: "S1", request: json.RawMessage(`2`), generation: 1},
+			}}
+			stop(p)
+			if got := out.String(); !strings.Contains(got, `"id":2`) || !strings.Contains(got, "The agent restarted — send your message again.") {
+				t.Fatalf("the waiting load was answered %q, want the retry error", got)
+			}
+			if len(p.reloads) != 0 {
+				t.Fatalf("reloads left after stopping: %v", p.reloads)
+			}
+		})
+	}
 }
 
 // Any other load failure, and a fresh session that fails too, reach the editor as the adapter's answer.

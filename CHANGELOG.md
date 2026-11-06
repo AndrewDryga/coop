@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor reopening a thread with no transcript no longer waits forever when the agent restarts.**
+  Coop answers such a `session/load` with a fresh session. If the agent died before it answered, the
+  editor's load was dropped. The replacement agent now gets the fresh session request and its answer
+  is the load's answer; a session that gives up or hands off answers the load with a retry message.
+
 - **A changed `box.egress` needs approval again even with `COOP_EGRESS` set.** A project approved
   for filtered access whose `.agent/project.yaml` later set `box.egress: offline` was refused until
   `coop approve`, but with `COOP_EGRESS=open` or `filtered` in the environment it kept running with

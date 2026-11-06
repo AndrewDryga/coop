@@ -866,6 +866,7 @@ func (p *proxy) beginReload() {
 			ids = append(ids, id)
 		}
 	}
+	ids = append(ids, p.takeReloadsLocked()...)
 	p.pending = map[string]bool{}
 	p.authPending = map[authenticationScope]string{}
 	p.reactivating = map[string]string{}
@@ -1641,6 +1642,40 @@ func (p *proxy) reloadAsNewLocked(op sessionRequest, request json.RawMessage, fa
 		failure: clone(failure), generation: generation,
 	}
 	return id, append(msg, '\n')
+}
+
+// reissueReloadsLocked moves every load still waiting on its fresh session to child generation, which
+// replaced the child that died before answering, and returns the session/new requests to write to it:
+// the editor's load stays pending until a child answers it. p.mu must be held.
+func (p *proxy) reissueReloadsLocked(generation uint64) [][]byte {
+	var writes [][]byte
+	for id, r := range p.reloads {
+		if r.generation == generation {
+			continue
+		}
+		delete(p.reloads, id)
+		next := fmt.Sprintf("%sreload-%d-%s", InjectPrefix, generation, trimQuotes(r.request))
+		msg, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": next, "method": "session/new", "params": json.RawMessage(r.params)})
+		if err != nil {
+			continue
+		}
+		r.generation = generation
+		p.reloads[next] = r
+		writes = append(writes, append(msg, '\n'))
+	}
+	return writes
+}
+
+// takeReloadsLocked ends every load still waiting on its fresh session and returns the editor request
+// ids to answer, for a proxy that is giving up or handing off rather than replacing its child. p.mu
+// must be held.
+func (p *proxy) takeReloadsLocked() []string {
+	ids := make([]string, 0, len(p.reloads))
+	for _, r := range p.reloads {
+		ids = append(ids, string(r.request))
+	}
+	p.reloads = nil
+	return ids
 }
 
 // finishReload binds the editor's thread to the fresh session and answers its load, or sends the
@@ -2889,6 +2924,7 @@ func (p *proxy) swapChildAt(
 	p.initResult = clone(initResult)
 	p.authMethods = maps.Clone(authMethods)
 	p.initGeneration = p.generation
+	reloadWrites := p.reissueReloadsLocked(nextGeneration)
 	var forceWrites [][]byte
 	var released []clientLine
 	activeAdapters := map[string]bool{}
@@ -2922,6 +2958,11 @@ func (p *proxy) swapChildAt(
 	}
 	if !down {
 		for _, msg := range cleanupWrites {
+			_, _ = c.In.Write(msg)
+		}
+		// A load that became session/new on the child that died gets its fresh session here. If the write
+		// fails, this child is dying too, and the next replacement or the give-up answers the load.
+		for _, msg := range reloadWrites {
 			_, _ = c.In.Write(msg)
 		}
 		for _, msg := range forceWrites {
@@ -2998,6 +3039,13 @@ func (p *proxy) failAllPending() {
 	for _, prompt := range p.takeRestartHeldLocked() {
 		id := string(parse(prompt.line).ID)
 		if id != "" && !seen[id] {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	// A load waiting on its fresh session is answered too: no child is left to give it one.
+	for _, id := range p.takeReloadsLocked() {
+		if !seen[id] {
 			ids = append(ids, id)
 			seen[id] = true
 		}
