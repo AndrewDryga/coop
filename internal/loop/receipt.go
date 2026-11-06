@@ -16,6 +16,19 @@ type reviewReceipt struct {
 	reopened []string
 }
 
+// CandidateReviewFindings reaches the host only after exact-subject and source validation.
+type CandidateReviewFindings struct {
+	Tasks []tasks.ForkCandidateFinding
+}
+
+func (f *CandidateReviewFindings) Error() string {
+	ids := make([]string, 0, len(f.Tasks))
+	for _, task := range f.Tasks {
+		ids = append(ids, task.TaskID)
+	}
+	return "candidate review found unresolved issues in " + strings.Join(ids, ", ")
+}
+
 // parseReviewReceiptLine parses one strict receipt line. Old count-only receipts are deliberately
 // rejected: only the exact task ids can bind the verdict to the queue delta and distinguish review
 // work from unrelated actionable tasks.
@@ -379,8 +392,8 @@ func partitionReviewReopens(hosts, rejected []string) (reopened, blocked []strin
 }
 
 // candidateReviewVerdict validates the same strict evidence envelope as ordinary final review but
-// deliberately grants no generic task-reopen authority. A failing verdict leaves the frozen fork
-// candidate pending; only a complete PASS can be durably authorized by the host caller.
+// grants no generic task-reopen authority. The host caller must bind a failing verdict to the
+// exact pending candidate before applying rework; only a complete PASS authorizes publication.
 func candidateReviewVerdict(subjects []string, output string) ([]string, error) {
 	output = normalizeReviewVerdictOutput(output)
 	receipt, ok := reviewReopenReceipt(output)

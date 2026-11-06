@@ -142,10 +142,22 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 	// reviewing/publication state is deliberately non-landable, but it is still live authority and
 	// may not be mistaken for permission to claim another task. Terminal history also closes this
 	// generation; a kept landed workspace is evidence, not a fresh scheduler.
-	if _, exists, err := ReadForkCandidateRoundStatus(request.AuthorityRepo, request.Fork); err != nil {
+	state, frozen, err := readForkCandidateState(request.AuthorityRepo, request.Fork)
+	if err != nil {
 		return ForkAssignment{}, err
-	} else if exists {
-		return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
+	}
+	var rework map[string]bool
+	if frozen {
+		if state.manifest.Phase != forkCandidateReworking {
+			return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
+		}
+		if err := replayForkCandidateReworkLocked(request.AuthorityRepo, state.manifest); err != nil {
+			return ForkAssignment{}, err
+		}
+		rework = make(map[string]bool)
+		for _, task := range state.manifest.Rework.Tasks {
+			rework[task.AssignmentID] = true
+		}
 	}
 	for attempt := 0; attempt < maxLeaseRescans; attempt++ {
 		owned, unowned, foreign, err := forkAssignmentCandidates(hosts)
@@ -162,6 +174,9 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				foreign = true
 				continue
 			}
+			if frozen && !rework[record.Fork.AssignmentID] {
+				continue
+			}
 			switch record.Fork.Phase {
 			case ForkAssignmentPreparing, ForkAssignmentWorking, ForkAssignmentPaused:
 				candidates = append(candidates, candidate)
@@ -169,7 +184,9 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 				// reviewing/ready/blocked is settled for this executor and must not be reworked.
 			}
 		}
-		candidates = append(candidates, unowned...)
+		if !frozen {
+			candidates = append(candidates, unowned...)
+		}
 		var busy TaskLeaseSummary
 		for _, candidate := range candidates {
 			lease, observation, leaseErr := TryTaskLease(candidate.Root, candidate.Item, request.LeaseOwner)
@@ -297,7 +314,7 @@ func AssignForkTask(hosts []string, request ForkAssignmentRequest) (ForkAssignme
 		if busy.Busy+busy.Stalled > 0 {
 			return ForkAssignment{Outcome: ForkAssignmentUnavailable}, nil
 		}
-		if len(unowned) == 0 || foreign {
+		if frozen || len(unowned) == 0 || foreign {
 			return ForkAssignment{Outcome: ForkAssignmentExecutorDrained}, nil
 		}
 	}

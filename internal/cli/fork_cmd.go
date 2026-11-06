@@ -1466,6 +1466,18 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 						Round: review.Round, PreviousRound: review.PreviousRound, TaskIDs: taskIDs,
 					},
 				})
+				var findings *loop.CandidateReviewFindings
+				if errors.As(runErr, &findings) {
+					if err := tasks.ReworkForkCandidate(repo, identity, review.Candidate.ID, findings.Tasks); err != nil {
+						return 1, fmt.Errorf("record candidate rework: %w", err)
+					}
+					ids := make([]string, 0, len(findings.Tasks))
+					for _, finding := range findings.Tasks {
+						ids = append(ids, finding.TaskID)
+					}
+					ui.Note("Fork %s candidate is waiting on rework: %s.", name, strings.Join(ids, ", "))
+					continue
+				}
 				if runErr != nil || code != 0 {
 					return code, runErr
 				}
@@ -1533,7 +1545,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			// A provider or final-signoff failure is never review authority. If the execution-local
 			// queue reached done before the failure surfaced, restore it to in-progress first; then
 			// accept only the paused/blocked metadata so the exact generation can resume safely.
-			prepareErr := tasks.PrepareForkProjectionForRun(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
+			prepareErr := tasks.RestoreFailedForkProjection(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)
 			var acceptErr error
 			if prepareErr == nil {
 				_, acceptErr = tasks.AcceptForkProjection(repo, assignment.Task.Root, assignment.Task.Item.ID, assignment.Owner)

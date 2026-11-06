@@ -91,10 +91,10 @@ func validateLoopResult(index int, stage, result string) error {
 		result == "progress-wait"
 	switch stage {
 	case "work":
-		if common || result == "terminal-omission" || result == "complete" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
+		if common || result == "terminal-omission" || result == "complete" || result == "complete-template-log" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
-			result == "repair-older-binding-changed-descendant" || result == "verify-only" ||
+			result == "repair-older-binding-changed-descendant" || result == "repair-handoff-records" || result == "verify-only" ||
 			result == "verify-only-after-block" || result == "second-binding" ||
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
@@ -105,7 +105,7 @@ func validateLoopResult(index int, stage, result string) error {
 		}
 	case "between", "signoff", "verify":
 		if common || result == "pass" || result == "pass-gated" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-subject-and-host" || result == "pass-with-descendant" ||
-			result == "pass-corrected" || result == "reopen" || result == "reopen-gated" || result == "reopen-injection" ||
+			result == "pass-corrected" || result == "reopen" || result == "reopen-handoff-records" || result == "reopen-gated" || result == "reopen-injection" ||
 			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
 			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
 			result == "complete-extra" || result == "background-drained-review" || result == "background-drained-review-host-completion" ||
@@ -198,7 +198,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "complete-unlisted-range", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
+	case "complete", "complete-template-log", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "complete-unlisted-range", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
 		outcome := attempt.Result
 		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "complete-unlisted-range" || outcome == "background-drained-complete" {
 			outcome = ""
@@ -277,6 +277,12 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 190, "", nil
 		}
 		return 0, "", nil
+	case "repair-handoff-records":
+		if err := repairLoopHandoffRecords(root, plan.TaskID); err != nil {
+			return 1, "", err
+		}
+		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
+		return 0, "", nil
 	case "background-drained", "background-timeout", "background-timeout-after-restored-completion":
 		if attempt.Result == "background-timeout-after-restored-completion" {
 			if err := verifyBackgroundHandoffState(root, plan.TaskID); err != nil {
@@ -288,7 +294,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 190, "", nil
 		}
 		return 191, "", nil
-	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-subject-and-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
+	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-subject-and-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-handoff-records", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
 		"pass-codex-split-footer-echo",
 		"background-drained-review", "background-drained-review-host-completion", "background-timeout-review":
@@ -299,6 +305,10 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			}
 		case "malformed-review-corrected", "pass-corrected", "reopen-corrected":
 			if err := verifyLoopReviewCorrection(root, plan.TaskID, attempt.Stage, provider, providerArgv, true); err != nil {
+				return 1, "", err
+			}
+		case "reopen-handoff-records":
+			if err := verifyLoopCandidateHandoffFinding(root, plan.TaskID, provider, providerArgv); err != nil {
 				return 1, "", err
 			}
 		}
@@ -322,6 +332,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			}
 		}
 		reply := loopReviewReply(plan.TaskID, attempt.Stage, strings.HasPrefix(attempt.Result, "reopen"))
+		if attempt.Result == "reopen-handoff-records" {
+			reply = loopReviewReplyWithFinding(plan.TaskID, "Completion records unfinished: log.md contains only the template; state.md still contains the Traps placeholder")
+		}
 		if attempt.Result == "pass-with-host" {
 			// The concurrently host-completed sibling must be THIS round's review subject; a prompt
 			// that omits it means the loop silently absorbed the completion. The exactly-one-
@@ -1036,6 +1049,87 @@ func reopenLoopTask(root, taskID, stage string) error {
 	return writeLoopTaskFile(root, filepath.Join(destination, "log.md"), "\n## Fixture review\n- "+stage+" reopened the task.\n", true)
 }
 
+func verifyLoopCandidateHandoffFinding(root, taskID, provider string, argv []string) error {
+	prompt := loopPromptFrom(provider, argv)
+	if !strings.Contains(prompt, "Final fork candidate review") || !strings.Contains(prompt, taskID) {
+		return errors.New("handoff finding was not returned to the whole-fork candidate review")
+	}
+	if err := verifyLoopTaskDone(root, taskID); err != nil {
+		return err
+	}
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
+	taskDir, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "99_done", taskID))
+	if err != nil {
+		return err
+	}
+	logFile, err := procharness.OpenRegularFile(root, filepath.Join(taskDir, "log.md"), os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	log, readErr := io.ReadAll(io.LimitReader(logFile, 64<<10))
+	closeErr := logFile.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	if strings.TrimSpace(string(log)) != "# Log — <title>" {
+		return fmt.Errorf("candidate handoff log is not template-only: %q", log)
+	}
+	stateFile, err := procharness.OpenRegularFile(root, filepath.Join(taskDir, "state.md"), os.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	state, readErr := io.ReadAll(io.LimitReader(stateFile, 64<<10))
+	closeErr = stateFile.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	if !strings.Contains(string(state), "**Status:** complete") || !strings.Contains(string(state), "**Traps:** <gotchas the next agent must know, or —>") {
+		return fmt.Errorf("candidate handoff state has no completion-record placeholder: %q", state)
+	}
+	return nil
+}
+
+func repairLoopHandoffRecords(root, taskID string) error {
+	repo, err := loopRepo(root)
+	if err != nil {
+		return err
+	}
+	tasks, err := loopTaskQueue(root, repo, taskID)
+	if err != nil {
+		return err
+	}
+	taskDir, err := procharness.CanonicalUnderRoot(root, filepath.Join(tasks, "10_in_progress", taskID))
+	if err != nil {
+		return fmt.Errorf("handoff rework task is not in progress: %w", err)
+	}
+	if _, err := loopCommitForTask(repo, taskID); err != nil {
+		return err
+	}
+	state := fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture repaired the completion handoff records without a code change\n**Next action:** none\n**Traps:** none\n", taskID)
+	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "state.md"), state, false); err != nil {
+		return err
+	}
+	log := "\n## Candidate review rework\n- Repaired the completion handoff records without changing code.\n"
+	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "log.md"), log, true); err != nil {
+		return err
+	}
+	destination := filepath.Join(tasks, "99_done", taskID)
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return fmt.Errorf("handoff rework destination %q already exists", taskID)
+		}
+		return err
+	}
+	return os.Rename(taskDir, destination)
+}
+
 func completeExtraLoopTask(root, taskID, stage string) error {
 	repo, err := loopRepo(root)
 	if err != nil {
@@ -1327,7 +1421,7 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 				return err
 			}
 			commitArgs := []string{"commit", "-q", "-m", "fixture: complete " + provider + " loop task"}
-			if outcome == "" {
+			if outcome == "" || outcome == "complete-template-log" {
 				commitArgs = append(commitArgs, "-m", "Coop-Task: "+taskID)
 			}
 			if err := runLoopGit(repo, commitArgs...); err != nil {
@@ -1346,6 +1440,15 @@ func serveLoopWorker(root, provider, taskID, target, outcome string) error {
 	logLine := fmt.Sprintf("\n## Fixture completion\n- %s completed the closed loop lifecycle.\n", provider)
 	if err := writeLoopTaskFile(root, filepath.Join(taskDir, "log.md"), logLine, true); err != nil {
 		return err
+	}
+	if outcome == "complete-template-log" {
+		state = fmt.Sprintf("# State - %s\n\n**Status:** complete\n**Done so far:** fixture committed the work\n**Next action:** none\n**Traps:** <gotchas the next agent must know, or —>\n", taskID)
+		if err := writeLoopTaskFile(root, filepath.Join(taskDir, "state.md"), state, false); err != nil {
+			return err
+		}
+		if err := writeLoopTaskFile(root, filepath.Join(taskDir, "log.md"), "# Log — <title>\n", false); err != nil {
+			return err
+		}
 	}
 	if outcome == "repair-older-binding-blocked" {
 		decision := "# Decision: external acceptance available?\n\n" +

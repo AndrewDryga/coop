@@ -566,6 +566,85 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	}
 }
 
+func TestProviderScriptedForkLoopReworksFailedCandidateHandoffBeforeMerge(t *testing.T) {
+	suite := newDirectProcessSuite(t)
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))
+	resetForkProcessRepo(t, suite)
+	name, provider, taskID := "candidate-rework", "codex", "candidate-rework-task"
+	seedLoopProcessTask(t, suite.layout.Repo, taskID)
+	model, effort, account := "candidate-rework-model", "high", "work"
+	target := forkProcessTarget(provider, model, effort, account)
+	writeLoopReviewConfig(t, suite.layout.Repo, nil, []string{target}, nil, 3)
+	loopProcessGit(t, suite, "add", ".agent/loop.yaml")
+	loopProcessGit(t, suite, "commit", "-qm", "fixture loop review config")
+	attempts := []loopProcessAttempt{
+		{Target: target, Stage: "work", Result: "complete-template-log"},
+		{Target: target, Stage: "signoff", Result: "pass"},
+		{Target: target, Stage: "signoff", Result: "reopen-handoff-records"},
+		{Target: target, Stage: "work", Result: "repair-handoff-records"},
+		{Target: target, Stage: "signoff", Result: "pass"},
+		{Target: target, Stage: "signoff", Result: "pass"}, // exact candidate-wide review after records-only rework
+	}
+	scenario := loopProcessScenario{
+		Version: 6, Provider: provider, ProviderHomes: agents.Names(),
+		Loop: loopProcessPlan{TaskID: taskID, Attempts: attempts},
+	}
+	suite.reset(t, scenario)
+	command := loopReviewCommand(suite, target)
+	command.Args = []string{"fork", name, target, "--loop", "--tasks", filepath.Join(suite.layout.Repo, tasksRoot)}
+	ctx, cancel := context.WithTimeout(context.Background(), loopReviewBudget(len(attempts)))
+	defer cancel()
+	result := procharness.Run(ctx, command)
+	trace := readProcessTrace(t, suite.layout.Trace)
+	ws := forkspace.Workspace(suite.layout.Repo, name)
+	if result.Err != nil || result.ExitCode != 0 || !strings.Contains(result.Stderr, taskID) ||
+		!strings.Contains(result.Stderr, "waiting on rework") ||
+		!strings.Contains(result.Stderr, "Candidate review round ") || !strings.Contains(result.Stderr, " passed") ||
+		!strings.Contains(result.Stdout, "Completion records unfinished: log.md contains only the template") ||
+		strings.Count(result.Stdout, "fixture-loop-complete-"+provider) != 2 {
+		t.Fatalf("fork loop candidate rework = exit %d err %v\nstdout:\n%s\nstderr:\n%s\ntrace:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr, readProcessFile(t, suite.layout.Trace))
+	}
+	var reviewRuns []*processTrace
+	for _, event := range trace {
+		if event.Source == "runtime" && event.Event == "run" && event.Run != nil {
+			reviewRuns = append(reviewRuns, event)
+		}
+	}
+	if len(reviewRuns) != len(attempts) {
+		t.Fatalf("fork work/signoff/candidate-rework run count = %d, want %d", len(reviewRuns), len(attempts))
+	}
+	identity := readProcessForkIdentity(t, suite.layout.Repo, name)
+	if _, exists, err := tasks.ReadForkCandidate(suite.layout.Repo, identity); err != nil || !exists {
+		t.Fatalf("reworked candidate was not ready to merge: exists=%v err=%v", exists, err)
+	}
+	canonicalTask := filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)
+	if !pathExists(canonicalTask) || !pathExists(ws) {
+		t.Fatalf("fork loop changed canonical task ownership before merge: task=%v fork=%v", pathExists(canonicalTask), pathExists(ws))
+	}
+
+	result, trace = suite.run(t, []string{"fork", "merge", name, "--yes"}, processScenario(provider, nil, 0, ""))
+	if result.Err != nil || result.ExitCode != 0 || len(trace) != 0 || pathExists(ws) {
+		t.Fatalf("reworked candidate merge = exit %d err %v trace %d fork %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, len(trace), pathExists(ws), result.Stdout, result.Stderr)
+	}
+	landed, err := os.ReadFile(filepath.Join(suite.layout.Repo, "loop-codex.txt"))
+	if err != nil || string(landed) != "completed by codex\n" {
+		t.Fatalf("landed fork work = %q, %v", landed, err)
+	}
+	done := filepath.Join(suite.layout.Repo, tasksRoot, stateDone, taskID)
+	state, stateErr := os.ReadFile(filepath.Join(done, "state.md"))
+	log, logErr := os.ReadFile(filepath.Join(done, "log.md"))
+	if stateErr != nil || logErr != nil || !strings.Contains(string(state), "**Status:** complete") ||
+		!strings.Contains(string(state), "**Next action:** none") || strings.Contains(string(state), "<gotchas") ||
+		!strings.Contains(string(log), "Repaired the completion handoff records without changing code") ||
+		!strings.Contains(string(log), "BEGIN UNTRUSTED REVIEW EVIDENCE") ||
+		pathExists(filepath.Join(done, "tmp")) {
+		t.Fatalf("canonical task was not reconciled after rework: state %q (%v), log %q (%v)", state, stateErr, log, logErr)
+	}
+	if commits := tasks.CommitsForTask(suite.layout.Repo, "", taskID); len(commits) != 1 {
+		t.Fatalf("records-only rework left %d task commits, want the original work commit only: %#v", len(commits), commits)
+	}
+}
+
 func TestProviderScriptedForkCandidateReviewResumesExactFrozenRound(t *testing.T) {
 	suite := newDirectProcessSuite(t)
 	t.Setenv(tasks.TestLeaseAuthorityRootEnv, processLeaseAuthorityRoot(suite.layout))

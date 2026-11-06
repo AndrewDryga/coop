@@ -563,8 +563,8 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 }
 
 // runCandidateReviewVerdict runs the same provider/error/receipt boundary as final review without
-// importing generic pending-review authority. Candidate review never moves task folders: findings
-// leave the frozen manifest in reviewing, while only an exact all-subject pass returns success.
+// importing generic pending-review authority. Validated findings return to the fork controller,
+// which journals exact candidate rework before changing any projected task.
 func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img string, rev *ladder.Rotation, forkName, prompt, activity string, reviewCmd reviewCmdBuilder, hosts, subjects []string, sink io.Writer, peers []agents.Target, wake <-chan struct{}, observe reviewAttemptObserver) (reviewRunResult, error) {
 	hosts = slices.Clone(hosts)
 	subjects = slices.Clone(subjects)
@@ -592,7 +592,14 @@ func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img strin
 		var err error
 		run.reopened, err = candidateReviewVerdict(subjects, run.output)
 		if err == nil && len(run.reopened) > 0 {
-			err = fmt.Errorf("candidate review found unresolved issues in %s", strings.Join(run.reopened, ", "))
+			evidence, _ := parseAuditEvidence(run.output) // the complete envelope was validated above
+			findings := &CandidateReviewFindings{}
+			for _, id := range run.reopened {
+				findings.Tasks = append(findings.Tasks, tasks.ForkCandidateFinding{
+					TaskID: id, Gate: evidence[id].gate, Finding: evidence[id].fullFindings,
+				})
+			}
+			err = findings
 		}
 		return err
 	}

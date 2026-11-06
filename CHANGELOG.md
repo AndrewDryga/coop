@@ -68,6 +68,16 @@
   before it starts the project's services reads `waiting to start its services`. Each shows only
   while it is true: the next run forgets the stop, and a wait ends with the wait or its process.
   `--json` carries them as the task's `loop` and its execution's `WaitingForServices`.
+
+- **A fork whose final review finds a gap goes back to work instead of getting stuck.** When the
+  review of a fork's whole batch flagged one task, the batch could never land: restarting the fork
+  only ran the same review again, and fixing the task's notes by hand made the next run refuse the
+  batch. The fork loop now names the flagged tasks ("candidate is waiting on rework"), reopens only
+  those in the same fork with the finding in their log, and reviews the whole batch again once they
+  are done. Missing notes can be fixed without another commit. A task Coop cannot safely reopen, or
+  one whose finding comes back unchanged after a fix that added no commit, waits for your decision
+  with the finding recorded. A fork run that fails after parking a task for a decision now leaves
+  it parked instead of reopening it.
 - **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
   just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
   the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the

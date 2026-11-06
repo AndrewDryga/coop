@@ -215,6 +215,16 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 	if err != nil {
 		return ForkCandidateReview{}, false, err
 	}
+	if exists && state.manifest.Phase == forkCandidateReworking {
+		if _, err := forkCandidateReworkCohort(repo, *state.manifest); err != nil {
+			return ForkCandidateReview{}, false, err
+		}
+		for _, task := range state.manifest.Rework.Tasks {
+			if !task.Applied {
+				return ForkCandidateReview{}, false, errors.New("fork candidate rework has not finished reopening its tasks")
+			}
+		}
+	}
 	if exists && state.manifest.Phase == forkCandidateActive {
 		candidate, err := candidateFromManifest(repo, *state.manifest)
 		if err != nil {
@@ -265,6 +275,9 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 		}
 		workspace := forkspace.Workspace(repo, identity.Name)
 		if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", current.Head, head); err != nil {
+			if state.manifest.Rework != nil {
+				return ForkCandidateReview{}, false, fmt.Errorf("fork HEAD no longer descends from its reviewed candidate; preserve the rework, restore the recorded pre-rework history at %s, and keep the published round in the ancestry", state.manifest.Rework.Head)
+			}
 			return ForkCandidateReview{}, false, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
 		}
 	}
@@ -275,6 +288,7 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 	}
 	if exists {
 		manifest.Current = state.manifest.Current
+		manifest.Rework = state.manifest.Rework
 	}
 	if err := validateCandidateOwnersForReview(candidate); err != nil {
 		return ForkCandidateReview{}, false, err
@@ -332,6 +346,7 @@ func AuthorizeForkCandidateReview(repo string, identity forkspace.Identity, cand
 		return err
 	}
 	manifest.Phase, manifest.UpdatedAt = forkCandidatePublishing, time.Now().UTC()
+	manifest.Rework = nil
 	return writeForkCandidateManifest(repo, manifest)
 }
 
@@ -361,7 +376,7 @@ func PublishForkCandidate(repo string, identity forkspace.Identity, head, tree s
 	if err != nil {
 		return ForkCandidate{}, false, err
 	}
-	if !exists || state.manifest.Phase == forkCandidateReviewing || state.manifest.Phase == forkCandidateSuperseding {
+	if !exists || state.manifest.Phase == forkCandidateReviewing || state.manifest.Phase == forkCandidateSuperseding || state.manifest.Phase == forkCandidateReworking {
 		return ForkCandidate{}, false, errors.New("fork candidate requires a fresh final review before publication")
 	}
 	manifest := *state.manifest
@@ -632,6 +647,7 @@ func DiscardForkCandidateStateLocked(repo string, identity forkspace.Identity) e
 	}
 	manifest.Phase, manifest.Pending, manifest.TerminalID, manifest.UpdatedAt =
 		forkCandidateDiscarded, nil, terminalID, time.Now().UTC()
+	manifest.Rework = nil
 	return writeForkCandidateManifest(repo, manifest)
 }
 

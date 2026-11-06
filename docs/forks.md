@@ -325,6 +325,11 @@ only the tasks recorded in that candidate. A journal lets co:op resume these ste
 interruption. A `Coop-Task` trailer helps with consistency checks and search, but it cannot complete
 a task on its own.
 
+If the final candidate review finds a gap, co:op names the affected tasks and returns them to work
+in the same fork before reviewing the complete candidate again. Missing handoff records can be
+repaired without another code commit. A repeated finding after an unchanged-history repair, or a
+task whose rework cannot be safely authorized, waits for your decision with the finding recorded.
+
 After a stop or crash, the same fork generation can resume its assigned tasks. `rm`, `--fresh` and
 the worker API's session discard refuse to proceed while the fork still owns assigned tasks, a
 merge candidate, task proposals or cleanup state. `rm` and `--fresh` proceed only with `--force`,

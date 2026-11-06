@@ -771,6 +771,16 @@ func renameFolderBetween(from *os.Root, fromName string, to *os.Root, toName str
 // passed final signoff, so it is restored for a fresh range-bound loop attempt. Once acceptance has
 // moved the owner to reviewing/ready this function is never called.
 func PrepareForkProjectionForRun(authorityRepo, root, id string, expected ForkTaskOwner) error {
+	return prepareForkProjection(authorityRepo, root, id, expected, true)
+}
+
+// RestoreFailedForkProjection reopens an unaccepted completion while preserving any decision
+// the failed run left blocked. Only the next run may resume an explicitly unblocked owner.
+func RestoreFailedForkProjection(authorityRepo, root, id string, expected ForkTaskOwner) error {
+	return prepareForkProjection(authorityRepo, root, id, expected, false)
+}
+
+func prepareForkProjection(authorityRepo, root, id string, expected ForkTaskOwner, resume bool) error {
 	projection, err := openAssignedProjection(authorityRepo, expected)
 	if err != nil {
 		return err
@@ -780,7 +790,7 @@ func PrepareForkProjectionForRun(authorityRepo, root, id string, expected ForkTa
 	if err != nil {
 		return err
 	}
-	if result.State == StateBlocked && expected.Phase == ForkAssignmentPaused {
+	if resume && result.State == StateBlocked && expected.Phase == ForkAssignmentPaused {
 		if err := moveProjectedTask(projection, StateBlocked, StateInProgress, id); err != nil {
 			return fmt.Errorf("restore unblocked fork projection: %w", err)
 		}

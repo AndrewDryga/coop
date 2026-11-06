@@ -538,6 +538,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		if errors.As(reviewErr, new(box.UnreadableCoopignore)) {
 			return 1, reviewErr // drawn by the CLI, the folder names a box chose escaped
 		}
+		if errors.As(reviewErr, new(*CandidateReviewFindings)) {
+			return 1, reviewErr // the fork controller owns the durable rework transition
+		}
 		if reviewErr != nil {
 			ui.Failure("Candidate review did not pass", reviewErr.Error(), [2]string{"Continue:", continueCmd})
 			return 1, ui.Reported(reviewErr)

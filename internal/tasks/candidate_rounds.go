@@ -23,6 +23,7 @@ const (
 	forkCandidateActive      = "active"
 	forkCandidateSuperseding = "superseding"
 	forkCandidateReviewing   = "reviewing"
+	forkCandidateReworking   = "reworking"
 	forkCandidatePublishing  = "publishing"
 	forkCandidateLanded      = "landed"
 	forkCandidateDiscarded   = "discarded"
@@ -45,13 +46,14 @@ type forkCandidateRoundRecord struct {
 // immutable. A pending candidate remains embedded until its immutable round exists, so a crash
 // never loses the exact snapshot whose review or partial owner updates must be replayed.
 type forkCandidateManifest struct {
-	Version    int                `json:"version"`
-	Fork       forkspace.Identity `json:"fork"`
-	Phase      string             `json:"phase"`
-	Current    *forkCandidateRef  `json:"current,omitempty"`
-	Pending    *ForkCandidate     `json:"pending,omitempty"`
-	TerminalID string             `json:"terminal_id,omitempty"`
-	UpdatedAt  time.Time          `json:"updated_at"`
+	Version    int                  `json:"version"`
+	Fork       forkspace.Identity   `json:"fork"`
+	Phase      string               `json:"phase"`
+	Current    *forkCandidateRef    `json:"current,omitempty"`
+	Pending    *ForkCandidate       `json:"pending,omitempty"`
+	Rework     *forkCandidateRework `json:"rework,omitempty"`
+	TerminalID string               `json:"terminal_id,omitempty"`
+	UpdatedAt  time.Time            `json:"updated_at"`
 }
 
 type forkCandidateState struct {
@@ -186,7 +188,7 @@ func validateForkCandidateManifest(manifest forkCandidateManifest, identity fork
 		if manifest.Current == nil || manifest.Pending != nil || manifest.TerminalID != "" || manifest.Current.Round == forkCandidateRoundLimit {
 			return errors.New("invalid superseding fork candidate manifest")
 		}
-	case forkCandidateReviewing, forkCandidatePublishing:
+	case forkCandidateReviewing, forkCandidatePublishing, forkCandidateReworking:
 		if manifest.Pending == nil || manifest.Pending.Fork != identity || manifest.TerminalID != "" {
 			return errors.New("invalid pending fork candidate manifest")
 		}
@@ -211,7 +213,7 @@ func validateForkCandidateManifest(manifest forkCandidateManifest, identity fork
 	default:
 		return errors.New("invalid fork candidate manifest phase")
 	}
-	return nil
+	return validateForkCandidateRework(manifest)
 }
 
 func pendingRound(manifest forkCandidateManifest) uint64 {
@@ -365,6 +367,9 @@ func writeForkCandidateManifest(repo string, manifest forkCandidateManifest) err
 	body, err := json.Marshal(manifest)
 	if err != nil {
 		return err
+	}
+	if len(body)+1 > forkCandidateLimit {
+		return errors.New("fork candidate manifest exceeds its size limit")
 	}
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
