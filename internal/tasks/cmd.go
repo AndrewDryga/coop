@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -1426,7 +1427,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 		} else if recovered {
 			ui.OK("Finished unblocking task: %s", t.Title)
 			ui.Note("\n  Its fork assignment is paused. The task is in todo.")
-			noteForkResume(fork)
+			noteForkResume(project, fork)
 			return 0, nil
 		}
 	}
@@ -1457,7 +1458,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	} else {
 		ui.Note("\n  The task is back in todo.")
 	}
-	noteForkResume(fork)
+	noteForkResume(project, fork)
 	return 0, nil
 }
 
@@ -1473,14 +1474,22 @@ func taskForkName(root string, item Item) string {
 }
 
 // forkResumeNote tells a person who answered a fork's decision how the fork goes on: its loop picks
-// the task up by itself, and a stopped loop resumes with the board's restart command.
-func forkResumeNote(fork string) string {
-	return "Fork " + fork + " picks it up on its next pass. If its loop has stopped, resume it: coop fork " + fork + " --loop -d"
+// the task up by itself, and a stopped loop resumes with the board's restart command. The person
+// types that command in the folder they are in, so outside the project, in the fork's own checkout
+// say, it names the project with COOP_REPO.
+func forkResumeNote(project, fork string) string {
+	restart := "coop fork " + fork + " --loop -d"
+	if here, ok, _ := box.FindRepo(); project != "" && (!ok || !box.SameFolder(here, project)) {
+		if word, ok := ui.ShellWord(project); ok {
+			restart = "COOP_REPO=" + word + " " + restart
+		}
+	}
+	return "Fork " + fork + " picks it up on its next pass. If its loop has stopped, resume it: " + restart
 }
 
-func noteForkResume(fork string) {
+func noteForkResume(project, fork string) {
 	if fork != "" {
-		ui.Note("\n  %s", forkResumeNote(fork))
+		ui.Note("\n  %s", forkResumeNote(project, fork))
 	}
 }
 
@@ -3402,7 +3411,7 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 				}
 				answered++
 				if fork != "" {
-					fmt.Fprintf(out, "\n  %s\n", forkResumeNote(fork))
+					fmt.Fprintf(out, "\n  %s\n", forkResumeNote(project, fork))
 				}
 			} else if err := recordResolution(decPath, line); err != nil {
 				return -1, err

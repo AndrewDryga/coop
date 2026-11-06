@@ -134,7 +134,7 @@ func TestForkBlockedDecisionBrowserAnswersAndResumesCanonicalTask(t *testing.T) 
 	if code, err := runDecisionBrowser(repo, refs, strings.NewReader(answer+"\n"), &out); code != 0 || err != nil {
 		t.Fatalf("decision browser = (%d, %v)", code, err)
 	}
-	for _, want := range []string{"packages/service/.agent/tasks · assigned · in fork " + name, forkResumeNote(name)} {
+	for _, want := range []string{"packages/service/.agent/tasks · assigned · in fork " + name, forkResumeNote(repo, name)} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("decision browser is missing %q:\n%s", want, out.String())
 		}

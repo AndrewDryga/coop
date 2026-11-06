@@ -65,7 +65,8 @@ only when nothing else is left. Answer it from the project with `coop tasks unbl
 or `coop tasks decisions -i`: the fork picks the task up on its next pass, and a stopped fork
 resumes with `coop fork <name> --loop -d`. An answer typed into `decision.md` by hand still needs
 `coop tasks unblock <id>` to send the task back, and a stopped fork says which of its tasks have
-one. `unblock` also finds a task in a queue the fork was given with `--tasks`.
+one. `unblock` also finds a task in a queue the fork was given with `--tasks`, and run in the
+fork's own checkout, it answers the task in the project.
 
 ## Isolated-write forks
 

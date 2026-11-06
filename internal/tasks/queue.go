@@ -10,6 +10,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -272,6 +273,14 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {
 		return -1, err
+	}
+	// A fork's tasks live in its project's queues, and a queue in the fork's own checkout is the box's
+	// to write, so unblock run in that checkout answers the task in the project.
+	if len(rest) > 0 && rest[0] == "unblock" {
+		checkout := repo
+		if repo, _, err = forkspace.ResolveProjectBinding(checkout); err != nil {
+			return -1, fmt.Errorf("cannot tell which project the fork checkout %s belongs to: %w", checkout, err)
+		}
 	}
 	project, err := projectFolder(cfg, repo)
 	if err != nil {

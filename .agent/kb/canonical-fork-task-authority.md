@@ -79,9 +79,12 @@ stops for its decisions names each task and what it still needs (`forkDecisionSt
 internal/cli/fork_cmd.go): an answer in the project's decision.md waits only for unblock, and one
 in the projection is named but never read as the answer. Resume never unblocks by itself: an
 answer typed into the project's decision.md still waits for the person's unblock, which alone sends
-the task back. Without
-`--tasks` or `COOP_TASKS`, unblock also searches the queues the assignment index names
-(`forkQueuesBeyond`, internal/tasks/queue.go), so a fork's `--tasks` queue needs no flag.
+the task back. Without `--tasks` or `COOP_TASKS`, unblock also searches the queues the assignment
+index names (`forkQueuesBeyond`, internal/tasks/queue.go), so a fork's `--tasks` queue needs no
+flag. Run in a fork's own checkout, unblock works on the project the host's generation record binds
+that checkout to (`forkspace.ResolveProjectBinding`), never on a queue in the checkout, which the
+box can write; the restart its note names carries `COOP_REPO=<project>` wherever the person is
+outside the project (`forkResumeNote`).
 
 Merge writes a replayable land intent before the parent fast-forward. Recovery can therefore finish
 canonical task completion, receipts, proposal import, assignment removal, and workspace teardown
@@ -98,6 +101,9 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — unblock run in a fork's own checkout answers the task in the project; it had read
+  the checkout's queue, which a fork's clone lacks and its box can write, and the restart it named
+  only worked in the project (task 2026-11-06-find-a-fork-s-task-when-coop-tasks-unblock-runs).
 - 2026-11-06 — acceptance and landing copy the fork's decision.md without its answer unless the
   copy is the project's byte for byte: a Resolution the box wrote had reached the project's file,
   where unblock without an answer and coop loop's pre-flight took it for the person's (task

@@ -314,6 +314,73 @@ func TestForkLoopSaysWhatEachDecisionStillNeeds(t *testing.T) {
 	}
 }
 
+// coop tasks unblock <id> "<answer>" answers a fork's task in the project whether it runs there or in
+// the fork's own checkout, never in a queue the fork's box wrote in that checkout. The restart it
+// names works where the person is.
+func TestTasksUnblockAnswersAForksTaskFromTheForksCheckout(t *testing.T) {
+	const id, answer = "2026-11-06-fork-decision-checkout", "Go with this."
+	for _, where := range []string{"project", "fork"} {
+		t.Run(where, func(t *testing.T) {
+			repo := initRepo(t)
+			seedForkDecisionTask(t, repo, id)
+			commitForkNetworkPreflightFixture(t, repo)
+			a := forkNetworkPreflightApp(t, repo)
+			var ran []string
+			a.forkLoopRun = parkingForkPass(t, &ran)
+			ws, identity := setUpForkForDecision(t, repo, "here")
+			if code, output, err := runForkLoopForDecision(t, a, repo, ws, identity); code != loopDecisionExit || err != nil {
+				t.Fatalf("fork loop = (%d, %v)\n%s", code, err, output)
+			}
+			queue := filepath.Join(repo, ".agent", "tasks")
+			record, owned, err := tasks.ReadTaskOwnerRecord(queue, id)
+			if err != nil || !owned || record.Fork == nil {
+				t.Fatalf("owner = (%+v, %v, %v)", record, owned, err)
+			}
+			planted := filepath.Join(ws, ".agent", "tasks", tasks.StateBlocked, id)
+			if err := os.MkdirAll(planted, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				"task.md":     "---\nid: " + id + "\ntitle: Planted\nlabels: []\nupdated: 2026-11-06T00:00:00Z\n---\n\n# Planted\n",
+				"decision.md": "# Decision: Planted?\n\n**Resolution:** <!-- answer -->\n",
+			} {
+				if err := os.WriteFile(filepath.Join(planted, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			project, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restart := "resume it: coop fork here --loop -d\n"
+			if where == "fork" {
+				t.Chdir(ws)
+				restart = "resume it: COOP_REPO=" + shellWord(project) + " coop fork here --loop -d\n"
+			} else {
+				t.Chdir(repo)
+			}
+			a.cfg.RepoOverride = ""
+			var code int
+			out := captureStderr(t, func() {
+				captureStdout(t, func() { code, err = a.cmdTasks([]string{"unblock", id, answer}) })
+			})
+			if code != 0 || err != nil || !strings.Contains(out, restart) {
+				t.Fatalf("coop tasks unblock in the %s = (%d, %v), want it to answer the task and say %q:\n%s", where, code, err, restart, out)
+			}
+			if got, err := tasks.TaskResolution(filepath.Join(queue, tasks.StateTodo, id)); err != nil || got != answer {
+				t.Errorf("the project's task answer = %q, %v; want it back in todo with %q", got, err, answer)
+			}
+			if got, err := tasks.TaskResolution(filepath.Join(record.Fork.Projection, tasks.StateBlocked, id)); err != nil || got != answer {
+				t.Errorf("the fork's copy of the answer = %q, %v; want %q", got, err, answer)
+			}
+			if got, err := tasks.TaskResolution(planted); err != nil || got != "" {
+				t.Errorf("the queue in the fork's checkout got answer %q, %v; want it left alone", got, err)
+			}
+		})
+	}
+}
+
 // A fork started on a queue the project's task commands do not list parks its decision there, and
 // coop tasks unblock <id>, the command its decision.md names, finds it there without --tasks. A queue
 // a person names is searched as named.

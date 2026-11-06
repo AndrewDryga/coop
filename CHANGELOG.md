@@ -41,6 +41,10 @@
   "+ N more" before it is left out, so no header shows alone and Up next stays while it fits. The
   board left on the screen after every task is done no longer says to press Ctrl-C.
 
+- **`coop tasks unblock` works in a fork's own checkout.** Run there, it said "No task matching",
+  or acted on a queue in the checkout that the fork's box can write. It now answers the task in the
+  fork's project, as it does when run in the project, and the command it names to restart a stopped
+  fork includes `COOP_REPO`, so it works from where you are.
 - **A fork can no longer answer its own decision.** A fork's box could write an answer into its
   copy of a task's `decision.md`, and when the fork parked the task, that answer reached the
   project's `decision.md` as if you had given it: `coop tasks unblock <id>` sent the task back
