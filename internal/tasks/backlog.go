@@ -51,6 +51,8 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	project, err := projectFolder(cfg, repo)
 	if err != nil {
 		return -1, err
+	} else if project == "" {
+		return 1, noProject(repo)
 	}
 	rels, err := TaskQueues(cfg, repo, flags)
 	if err != nil {
@@ -90,11 +92,7 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	if len(rels) == 0 {
 		return 2, noQueueConfigured("coop backlog")
 	}
-	root := filepath.Join(repo, rels[0])
-	if err := refuseQueueOutsideProject(repo, project, root); err != nil {
-		return 1, err
-	}
-	return cmdBacklogFolder(project, root, rest)
+	return cmdBacklogFolder(project, filepath.Join(repo, rels[0]), rest)
 }
 
 // cmdBacklogFolder dispatches `coop backlog <sub>` against a single queue root (…/.agent/tasks). A bare

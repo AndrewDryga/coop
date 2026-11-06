@@ -200,8 +200,9 @@ func taskProjectAddError(name string, choices []taskProjectChoice) error {
 // TaskQueues resolves the task-queue path(s) for a command — the repeated --tasks flags if
 // any, else COOP_TASKS (cfg.TasksFiles, default .agent/tasks) — into repo-relative paths. A
 // relative path is taken relative to the repo root (where the box runs); an absolute one must
-// live inside the repo. The repo-relative form is what the loop's prompt names and the host
-// joins with the repo to read.
+// live inside the repo, for coop tasks, coop backlog and coop loop alike: a loop's box sees only
+// the project. Only a fork loop takes a queue outside it, through its own --tasks. The repo-relative
+// form is what the loop's prompt names and the host joins with the repo to read.
 func TaskQueues(cfg *config.Config, repo string, flags []string) ([]string, error) {
 	given := flags
 	if len(given) == 0 {
@@ -246,7 +247,9 @@ func queueOutsideRepo(path string, fromFlag bool) error {
 	}
 	return &ui.UsageError{
 		Headline: headline,
-		Cause:    "A task queue must be a folder inside this repository, such as .agent/tasks.",
+		Cause: "A task queue must be a folder inside this repository, such as .agent/tasks.\n" +
+			"Only a fork loop can work a queue outside it.",
+		Rows: [][2]string{{"Fork loop:", "coop fork <name> --loop --tasks " + path}},
 	}
 }
 
@@ -285,6 +288,8 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	project, err := projectFolder(cfg, repo)
 	if err != nil {
 		return -1, err
+	} else if project == "" {
+		return 1, noProject(repo)
 	}
 	projectName := ""
 	if len(rest) > 0 && rest[0] == "add" {
@@ -429,12 +434,12 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rels) == 0 {
 		return 2, noQueueConfigured("coop tasks")
 	}
-	return tasksInQueue(repo, project, rels[0], rest, flags, explicitQueues)
+	return tasksInQueue(repo, rels[0], rest, flags, explicitQueues)
 }
 
 // tasksInQueue runs a command on the one queue at rel. explicit says the queue was named (--tasks or
 // COOP_TASKS) rather than found in the project.
-func tasksInQueue(repo, project, rel string, rest, flags []string, explicit bool) (int, error) {
+func tasksInQueue(repo, rel string, rest, flags []string, explicit bool) (int, error) {
 	sub := ""
 	if len(rest) > 0 {
 		sub = rest[0]
@@ -449,9 +454,6 @@ func tasksInQueue(repo, project, rel string, rest, flags []string, explicit bool
 		// If the swallowed value names a subcommand, the user almost certainly meant `coop tasks <sub>`.
 		if sub == "" && len(flags) == 1 && isTasksSubcommand(flags[0]) {
 			return 2, ui.UnknownValue("queue folder", flags[0], "coop tasks --tasks", "", "coop tasks "+flags[0])
-		}
-		if project == "" {
-			return 1, noProject(repo)
 		}
 		switch {
 		case sub == "add":
@@ -478,17 +480,14 @@ func tasksInQueue(repo, project, rel string, rest, flags []string, explicit bool
 }
 
 func tasksAddInQueue(repo, project, rel string, args []string) (int, error) {
-	root := filepath.Join(repo, rel)
-	if err := refuseQueueOutsideProject(repo, project, root); err != nil {
-		return 1, err
-	}
-	return tasksFolderAddWithProject(root, args, StateTodo, "tasks add", project)
+	return tasksFolderAddWithProject(filepath.Join(repo, rel), args, StateTodo, "tasks add", project)
 }
 
-// projectFolder is the project a task command may start a queue in: COOP_REPO when it is set, else
-// the Git repository holding the working folder, or "" when there is neither. ResolveRepo falls back
-// to the working folder, which still reads a queue someone made there, but a new one there would
-// hold tasks no project owns: `coop tasks add` in ~/Downloads must not start a queue.
+// projectFolder is the project task commands work in: COOP_REPO when it is set, else the Git
+// repository holding the working folder, or "" when there is neither. ResolveRepo falls back to the
+// working folder, but a queue there holds tasks no project owns, so the task commands refuse it,
+// one that exists as well as a new one: `coop tasks add` in ~/Downloads must not start a queue, and
+// --tasks must not reach around that. Only a fork loop takes a queue outside its project.
 func projectFolder(cfg *config.Config, repo string) (string, error) {
 	if cfg.RepoOverride != "" {
 		return repo, nil
@@ -499,19 +498,7 @@ func projectFolder(cfg *config.Config, repo string) (string, error) {
 	return repo, nil
 }
 
-// refuseQueueOutsideProject refuses the queue at root when it does not exist yet and no project owns
-// the folder (see projectFolder), so no command starts a queue there.
-func refuseQueueOutsideProject(repo, project, root string) error {
-	if project != "" {
-		return nil
-	}
-	if exists, err := taskQueueExists(root); err != nil || exists {
-		return err
-	}
-	return noProject(repo)
-}
-
-// noProject refuses a task command in a folder that is no project and has no queue yet.
+// noProject refuses a task command in a folder that is no project.
 func noProject(dir string) error {
 	return ui.CommandFailed("No project here",
 		dir+" is not inside a Git repository.\nRun Coop in your project folder, or set one up here.",
@@ -721,31 +708,42 @@ type queueTask struct {
 	task Item
 }
 
+// findTaskAcrossQueuesWith resolves id in every queue at once, by the rank MatchTask uses
+// (matchRank): the best match in any queue wins, so a task's exact ID in one queue is never
+// ambiguous with a part of an ID in another.
 func findTaskAcrossQueuesWith(repo string, rels []string, id, listCommand string, read func(string) ([]Item, error)) (queueTask, error) {
-	var exact, subs []queueTask
+	best := -1
+	var pick []queueTask
 	for _, rel := range rels {
 		items, err := read(filepath.Join(repo, rel))
 		if err != nil {
 			return queueTask{}, err
 		}
 		for _, t := range items {
-			switch {
-			case t.ID == id:
-				exact = append(exact, queueTask{rel, t})
-			case strings.Contains(t.ID, id):
-				subs = append(subs, queueTask{rel, t})
+			switch rank := matchRank(t, id); {
+			case rank < 0:
+			case best < 0 || rank < best:
+				best, pick = rank, []queueTask{{rel, t}}
+			case rank == best:
+				pick = append(pick, queueTask{rel, t})
 			}
 		}
-	}
-	pick := exact
-	if len(pick) == 0 {
-		pick = subs
 	}
 	switch len(pick) {
 	case 1:
 		return pick[0], nil
 	case 0:
-		return queueTask{}, taskLookupRefusal(fmt.Sprintf("No task matching %q in %s", id, ui.Count(len(rels), "task queue")), listCommand)
+		headline := fmt.Sprintf("No task matching %q in %s", id, ui.Count(len(rels), "task queue"))
+		if listCommand == "coop tasks" {
+			roots := make([]string, len(rels))
+			for i, rel := range rels {
+				roots[i] = filepath.Join(repo, rel)
+			}
+			if refusal := parkedIdeaRefusal(headline, roots, id); refusal != nil {
+				return queueTask{}, refusal
+			}
+		}
+		return queueTask{}, taskLookupRefusal(headline, listCommand)
 	}
 	// Each match names its queue, since the same ID can sit in two of them. Paths and folder names
 	// are escaped: a folder name can come from a box.

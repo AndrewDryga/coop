@@ -71,6 +71,46 @@ func TestTaskLookupRefusalsAreRejectedInput(t *testing.T) {
 	}
 }
 
+// A task's exact ID or slug names it even when it is part of another ID, and a lookup ignores case,
+// so the title coop tasks ls shows works too. That holds in one queue, across queues, and in the
+// backlog. A miss that names a parked idea says where it is and how to bring it back.
+func TestTaskLookupPrefersAnExactSlugAndIgnoresCase(t *testing.T) {
+	repo := t.TempDir()
+	a, b := filepath.Join(repo, "a"), filepath.Join(repo, "b")
+	for _, task := range []struct{ root, state, id string }{
+		{a, StateTodo, "2026-11-06-idea"}, {a, StateTodo, "2026-11-06-w"}, {b, StateTodo, "2026-11-06-idea2"},
+		{a, StateBacklog, "2026-11-06-plan"}, {a, StateBacklog, "2026-11-06-plan2"}, {b, StateBacklog, "2026-11-06-parked"},
+	} {
+		writeTaskFile(t, filepath.Join(task.root, task.state, task.id, "task.md"), "# "+task.id+"\n")
+	}
+	writeTaskFile(t, filepath.Join(a, StateTodo, "2026-11-06-idea-notes", "task.md"), "# notes\n")
+	for id, want := range map[string]string{"idea": "2026-11-06-idea", "W": "2026-11-06-w", "2026-11-06-IDEA": "2026-11-06-idea", "NOTES": "2026-11-06-idea-notes"} {
+		if got, err := FindTask(a, id); err != nil || got.ID != want {
+			t.Errorf("FindTask(%q) = %q, %v; want %s", id, got.ID, err, want)
+		}
+	}
+	if _, err := FindTask(a, "ide"); err == nil || refusal(t, err).Headline != `2 tasks match "ide"` {
+		t.Errorf("a part of two IDs = %v, want both listed", err)
+	}
+	if got, err := FindTaskAcrossQueues(repo, []string{"a", "b"}, "idea"); err != nil || got.ID != "2026-11-06-idea" {
+		t.Errorf("across queues, idea = %q, %v; want 2026-11-06-idea", got.ID, err)
+	}
+	if got, err := findBacklogTask(a, "Plan"); err != nil || got.ID != "2026-11-06-plan" {
+		t.Errorf("backlog plan = %q, %v; want 2026-11-06-plan", got.ID, err)
+	}
+
+	for _, lookup := range []func() error{
+		func() error { _, err := FindTask(b, "parked"); return err },
+		func() error { _, err := FindTaskAcrossQueues(repo, []string{"a", "b"}, "parked"); return err },
+	} {
+		block := refusal(t, lookup())
+		if !strings.HasPrefix(block.Headline, `No task matching "parked"`) || block.Cause != "2026-11-06-parked is an idea in the backlog." ||
+			!slices.Equal(block.Rows, [][2]string{{"Make it a task:", "coop backlog promote 2026-11-06-parked"}, {"Ideas:", "coop backlog"}}) {
+			t.Errorf("a parked task's miss = %#v, want it named with its promote command", block)
+		}
+	}
+}
+
 // The add refusals are drawn in the shared block, each naming what to change.
 func TestTasksAddRefusesInTheSharedBlock(t *testing.T) {
 	root := t.TempDir()
@@ -102,7 +142,8 @@ func TestTasksAddRefusesInTheSharedBlock(t *testing.T) {
 }
 
 // A queue outside the repository is refused by name, saying whether --tasks or COOP_TASKS chose it:
-// a person may not remember setting the variable.
+// a person may not remember setting the variable. The refusal names the one command that works such
+// a queue, a fork loop.
 func TestTaskQueuesOutsideTheRepositoryNameTheirSource(t *testing.T) {
 	repo := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "tasks")
@@ -113,7 +154,8 @@ func TestTaskQueuesOutsideTheRepositoryNameTheirSource(t *testing.T) {
 	_, err = TaskQueues(&config.Config{TasksFiles: []string{"../tasks"}}, repo, nil)
 	block := refusal(t, err)
 	if block.Headline != `Invalid value "../tasks" in COOP_TASKS` ||
-		block.Cause != "A task queue must be a folder inside this repository, such as .agent/tasks." {
+		block.Cause != "A task queue must be a folder inside this repository, such as .agent/tasks.\nOnly a fork loop can work a queue outside it." ||
+		!slices.Equal(block.Rows, [][2]string{{"Fork loop:", "coop fork <name> --loop --tasks ../tasks"}}) {
 		t.Errorf("COOP_TASKS outside = %#v", block)
 	}
 }

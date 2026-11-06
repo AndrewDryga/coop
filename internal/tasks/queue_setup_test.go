@@ -3,6 +3,7 @@ package tasks
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,8 +23,10 @@ func gitFolder(t *testing.T) string {
 	return repo
 }
 
-// Outside a Git repository nothing owns a new queue, so add refuses with the next step and leaves
-// the folder as it was. Listing there says the same thing, bare or not, and so does the backlog.
+// Outside a Git repository nothing owns a queue, so add refuses with the next step and leaves the
+// folder as it was. Listing there says the same thing, bare or not, and so does the backlog. A queue
+// that already exists there, named with --tasks or COOP_TASKS, is refused the same way: only a fork
+// loop works a queue outside its project.
 func TestTasksOutsideAProjectRefuseToStartAQueue(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -39,6 +42,75 @@ func TestTasksOutsideAProjectRefuseToStartAQueue(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, ".agent")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused add left a queue behind: %v", err)
+	}
+
+	queue := filepath.Join(dir, "q2")
+	writeTaskFile(t, filepath.Join(queue, StateTodo, "2026-11-06-q", "task.md"), "# Q\n")
+	for _, run := range []struct {
+		cfg  *config.Config
+		args []string
+	}{
+		{cfg, []string{"--tasks", queue, "add", "Q2", "--context", "c", "--acceptance", "a", "--approach", "p"}},
+		{cfg, []string{"--tasks", queue, "ls"}},
+		{&config.Config{TasksFiles: []string{queue}}, []string{"ls"}},
+	} {
+		code, err := CmdTasks(Host{}, run.cfg, run.args)
+		if code != 1 || err == nil || !strings.Contains(err.Error(), "not inside a Git repository") {
+			t.Errorf("coop tasks %q on a queue outside a project = (%d, %v), want the same refusal", run.args, code, err)
+		}
+	}
+	if code, err := CmdBacklog(cfg, []string{"--tasks", queue, "ls"}); code != 1 || err == nil || !strings.Contains(err.Error(), "coop init") {
+		t.Errorf("coop backlog on a queue outside a project = (%d, %v), want the same refusal", code, err)
+	}
+	if items := mustReadTaskTree(t, queue); len(items) != 1 {
+		t.Errorf("a refused add changed the queue: %+v", items)
+	}
+}
+
+// Every queue a task command sets up inside a Git repository keeps its task folders out of Git and
+// its README.md committable, as the project's first queue does: one outside .agent gets lines of its
+// own, and so does one beside .agent/tasks, which coop's stanza would otherwise ignore whole.
+func TestTasksAddKeepsEveryNewQueuesTasksOutOfGit(t *testing.T) {
+	repo := initRepo(t)
+	t.Chdir(repo)
+	cfg := &config.Config{}
+	ignored := func(rel string) bool {
+		cmd := exec.Command("git", "check-ignore", "-q", rel)
+		cmd.Dir = repo
+		return cmd.Run() == nil
+	}
+	add := func(args ...string) string {
+		t.Helper()
+		return captureStderr(t, func() {
+			if code, err := CmdTasks(Host{}, cfg, args); code != 0 || err != nil {
+				t.Fatalf("coop tasks %q = (%d, %v)", args, code, err)
+			}
+		})
+	}
+	add("add", "First")
+	for _, queue := range []string{"q2", ".agent/tasks-b"} {
+		out := add("--tasks", queue, "add", "Q", "--context", "c", "--acceptance", "a", "--approach", "p")
+		for _, want := range []string{"Set up a task queue in " + queue, "Updated .gitignore to keep task folders out of Git"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("add in %s lacks %q:\n%s", queue, want, out)
+			}
+		}
+		items := mustReadTaskTree(t, filepath.Join(repo, queue))
+		if len(items) != 1 {
+			t.Fatalf("%s holds %+v", queue, items)
+		}
+		task := filepath.ToSlash(filepath.Join(queue, StateTodo, items[0].ID, "task.md"))
+		if !ignored(task) || ignored(queue+"/README.md") {
+			t.Errorf("%s: task ignored = %v, README.md ignored = %v; want the task out of Git and README.md in it:\n%s",
+				queue, ignored(task), ignored(queue+"/README.md"), readFileString(filepath.Join(repo, ".gitignore")))
+		}
+		before := readFileString(filepath.Join(repo, ".gitignore"))
+		if out := add("--tasks", queue, "add", "Again"); strings.Contains(out, "Set up") || readFileString(filepath.Join(repo, ".gitignore")) != before {
+			t.Errorf("a second add in %s set the queue up again:\n%s", queue, out)
+		}
+	}
+	if ignored(".agent/tasks/README.md") || !ignored(".agent/tasks/00_todo") {
+		t.Error("the project's own queue lost its rules")
 	}
 }
 

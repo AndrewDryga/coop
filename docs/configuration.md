@@ -87,7 +87,7 @@ working, that answer is lost and needs a retry.
 | `COOP_GATE` | unset | The check command, such as `make check`, that runs in the box during a local fork merge or during review with `--gate`. Controller-job reviews use the check in the submitted job instead. |
 | `COOP_EDITOR` | detected | The editor for `coop fork review --open`. |
 | `COOP_REVIEW_CMD` | unset | A full override for `coop fork review`, run with `sh -c`. |
-| `COOP_TASKS` | derived | The task queue directories for `coop tasks` and the loop, separated by spaces. If unset, co:op uses the queues listed in `.agent/project.yaml` for a [monorepo](loop.md#monorepos), or `.agent/tasks` otherwise. For one run, `--tasks` replaces this choice and doesn't add to it. |
+| `COOP_TASKS` | derived | The task queue directories for `coop tasks` and the loop, separated by spaces. Each must be inside the project. If unset, co:op uses the queues listed in `.agent/project.yaml` for a [monorepo](loop.md#monorepos), or `.agent/tasks` otherwise. For one run, `--tasks` replaces this choice and doesn't add to it. |
 | `COOP_CAFFEINATE` | `1` | On a Mac, uses `caffeinate` to prevent idle sleep while the loop runs. `0` or `false` turns it off. |
 | `COOP_ACP_WARM` | `1` | Environment only. Keeps a box ready for each other editor ACP provider you're signed in to, so switching to that provider's default model skips box startup. Set `0` or `false` to save memory. |
 | `COOP_ACP_CARRY_TOKENS` | `200000` | How much of an editor conversation, in tokens of about 4 bytes, co:op carries to a new provider when you switch, dropping the oldest messages first. |

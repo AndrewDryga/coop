@@ -204,6 +204,23 @@ func shellcheckPath(t *testing.T) string {
 	return sc
 }
 
+// A queue's own .gitignore lines are anchored to its folder, with any pattern character escaped; a
+// .agent/tasks at any depth needs none, since coop's stanza covers it.
+func TestQueueIgnoreStanza(t *testing.T) {
+	for rel, want := range map[string][]string{
+		".agent/tasks":     nil,
+		"web/.agent/tasks": nil,
+		"q2": {"# the task queue q2: commit its README.md, keep its tasks local",
+			"!/q2/", "/q2/*", "!/q2/README.md"},
+		"work/[a]*?": {"# the task queue work/[a]*?: commit its README.md, keep its tasks local",
+			`!/work/\[a]\*\?/`, `/work/\[a]\*\?/*`, `!/work/\[a]\*\?/README.md`},
+	} {
+		if got := queueIgnoreStanza(rel); !slices.Equal(got, want) {
+			t.Errorf("queueIgnoreStanza(%q) = %q, want %q", rel, got, want)
+		}
+	}
+}
+
 // A pre-existing broad .gitignore line (e.g. .agent/*.log) must NOT make coop init skip writing its
 // block — that would drop the !kb/!skills un-ignore and leave tracked dirs ignored. The block is
 // monorepo-aware: **/.agent/* (any depth) with !.agent/project.yaml.
@@ -212,7 +229,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n.agent/*.log\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, "", writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -224,7 +241,7 @@ func TestUpdateGitignoreBroadPrefixDoesNotSkipBlock(t *testing.T) {
 		}
 	}
 	// Idempotent: a second run doesn't duplicate the block.
-	_, _ = (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync)
+	_, _ = (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, "", writeAndSync)
 	gi2, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if n := strings.Count(string(gi2), "\n**/.agent/*\n"); n != 1 {
 		t.Errorf("coop block written %d times, want 1:\n%s", n, gi2)
@@ -240,10 +257,10 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 	}
 
 	s := &scaffolder{repo: repo}
-	if _, err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := s.updateGitignore([]string{"gemini"}, "", writeAndSync); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := s.updateGitignore([]string{"gemini"}, "", writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -273,7 +290,7 @@ func TestUpdateGitignoreCompletesMinimalCurrentBlock(t *testing.T) {
 // doesn't keep a .gemini/ shouldn't be given rules for one.
 func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 	repo := t.TempDir()
-	if _, err := (&scaffolder{repo: repo}).updateGitignore(nil, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore(nil, "", writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
@@ -281,7 +298,7 @@ func TestUpdateGitignoreSkipsGeminiRulesWhenUnused(t *testing.T) {
 		t.Errorf("gemini rules written for a repo with no .gemini/:\n%s", gi)
 	}
 	// …and adding gemini later still gets them, exactly once.
-	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, writeAndSync); err != nil {
+	if _, err := (&scaffolder{repo: repo}).updateGitignore([]string{"gemini"}, "", writeAndSync); err != nil {
 		t.Fatal(err)
 	}
 	gi, _ = os.ReadFile(filepath.Join(repo, ".gitignore"))

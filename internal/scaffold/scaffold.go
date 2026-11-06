@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -144,7 +145,7 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 	if _, err := WriteProject(repo, subs, services...); err != nil {
 		return s.notices, err
 	}
-	if _, err := s.updateGitignore(agentDirs, writeAndSync); err != nil {
+	if _, err := s.updateGitignore(agentDirs, "", writeAndSync); err != nil {
 		return s.notices, err
 	}
 	// The shared Claude fallback needs the same stack-aware commit gate even when the repo keeps no
@@ -613,12 +614,32 @@ func CheckGitignore(repo string) error {
 	return err
 }
 
+// queueIgnoreStanza is the lines that keep the task folders of the queue at rel (repo-relative,
+// slash-separated) out of Git while its README.md stays committable, or nil when coop's own stanza
+// already does that: it covers every .agent/tasks. Another queue, such as q2 or .agent/tasks-b,
+// gets lines anchored to its own folder.
+func queueIgnoreStanza(rel string) []string {
+	if rel == "" || path.Base(rel) == "tasks" && path.Base(path.Dir(rel)) == ".agent" {
+		return nil
+	}
+	if strings.ContainsAny(rel, "\r\n") {
+		return nil // no .gitignore line can name it
+	}
+	// A folder name may hold a character .gitignore reads as a pattern.
+	escaped := strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(rel)
+	return []string{
+		"# the task queue " + rel + ": commit its README.md, keep its tasks local",
+		"!/" + escaped + "/", "/" + escaped + "/*", "!/" + escaped + "/README.md",
+	}
+}
+
 // updateGitignore edits .gitignore through the rooted reader and staged replacement the other
-// in-place edits use, and reports whether it changed the file. A box can write the repository, so
-// .gitignore may be a link it planted to a host file such as ~/.zshrc: the read refuses a link or
-// any other non-regular entry, and the edit is renamed into place rather than written through
-// whatever the name points to by then.
-func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite) (bool, error) {
+// in-place edits use, and reports whether it changed the file. queue is the repo-relative folder of
+// a task queue being set up, or "" for none; it gets its own lines when coop's stanza does not cover
+// it (queueIgnoreStanza). A box can write the repository, so .gitignore may be a link it planted to
+// a host file such as ~/.zshrc: the read refuses a link or any other non-regular entry, and the edit
+// is renamed into place rather than written through whatever the name points to by then.
+func (s *scaffolder) updateGitignore(agentDirs []string, queue string, write scaffoldFileWrite) (bool, error) {
 	root, err := os.OpenRoot(s.repo)
 	if err != nil {
 		return false, fmt.Errorf("open scaffold root %s: %w", s.repo, err)
@@ -664,6 +685,11 @@ func (s *scaffolder) updateGitignore(agentDirs []string, write scaffoldFileWrite
 				lines = appendIgnoreStanza(lines, stanza)
 			}
 		}
+	}
+	// The queue's rules work only in their order, so a queue missing any of them gets all three.
+	missing := func(rule string) bool { return !hasIgnoreLine(lines, rule) }
+	if stanza := queueIgnoreStanza(queue); stanza != nil && slices.ContainsFunc(stanza[1:], missing) {
+		lines = appendIgnoreStanza(lines, stanza)
 	}
 
 	out := strings.Join(lines, "\n") + "\n"

@@ -107,7 +107,8 @@ NETWORK OPTIONS
 LOOP OPTIONS
   --loop                 work through the project's task queue
   -d, --detach           run the loop in the background (implies --loop)
-  -t, --tasks <path>     choose a task queue; repeat for more queues
+  -t, --tasks <path>     choose a task queue, even one outside the project;
+                         repeat for more queues
 ` + peerOptionRow + `
 
   Each fork receives one project task at a time. Its task is completed in the

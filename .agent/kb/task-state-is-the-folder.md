@@ -3,7 +3,7 @@ name: task-state-is-the-folder
 description: a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 subsystem: tasks
 sources: [internal/tasks/dir.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/projection.go, internal/cli/context.go, internal/cli/session_tasks.go]
-updated: 2026-11-03
+updated: 2026-11-06
 ---
 A task is a folder, and its STATE is which directory it sits in: `00_todo/` `10_in_progress/`
 `50_blocked/` `99_done/` (the numeric prefix only sorts `ls` in lifecycle order). Moving the folder
@@ -24,8 +24,14 @@ single-queue handler. It accepts one ID or `--all-done`, never both, before repo
 discovery or archive counting. An empty archive or `--yes` does not excuse malformed arguments;
 valid removals still use the shared confirmation gate and existing lease/authority cleanup.
 
-ID-addressed commands, including `release`, share the cross-queue resolver: unique exact identity
-beats fragments, duplicate matches refuse with queue-selection guidance. Release then uses the
+ID-addressed commands, including `release`, share one ranking (`matchRank`): the exact ID, then the
+ID or its slug (the ID without its date) in any case, then a part of an ID in any case. The best rank
+any task has wins, in one queue and across queues alike, so `idea` names `2026-11-06-idea` beside
+`2026-11-06-idea2`; duplicate matches at that rank refuse with queue-selection guidance, and a miss
+that names a backlog idea says so with its `coop backlog promote` command. Task commands work only
+queues inside a project: outside a Git repository (and without `COOP_REPO`) they refuse even an
+existing queue, and an absolute `--tasks` outside the repository is refused; only a fork loop takes
+one outside it. Release then uses the
 ordinary single-queue handler: it returns an in-progress task to todo and clears the caller's
 claim, preserving progress and handoff notes. It cannot clear a sandbox assignment or another live
 process's claim. Update `state.md` before handing work back, as the CLI help instructs.
@@ -36,6 +42,9 @@ argument boundaries before extracting queue flags, then resolves task metadata b
 Git status; task paths still append last so route reasons and scope ordering stay stable.
 
 ## Changelog
+- 2026-11-06 — an exact slug beats a longer ID, lookups ignore case, a parked idea's miss names its
+  promote command, and task commands refuse every queue outside a project (task
+  2026-11-06-keep-new-task-queues-out-of-git-settle-outside-q).
 - 2026-11-03 — interactive agent boxes (`coop acp`, `coop <agent>`) now get the task tools too, so a
   hand move is only the fallback of a box without them (task
   2026-11-03-let-coop-acp-and-coop-run-agents-change-task-sta).

@@ -51,6 +51,13 @@
   `merg` as a fork name, `coop fork <name> acp` for a missing fork names the command that creates
   it, and the account-name rule shows one backslash, not two.
 
+- **Every new task queue keeps its tasks out of Git, and task IDs are easier to type.** A queue set
+  up with `coop tasks add --tasks q2` got its README.md but no `.gitignore` lines, so `git add -A`
+  would commit its task folders; it now gets lines of its own, and its README.md stays committable.
+  A task's exact slug now wins over longer IDs (`coop backlog promote idea` beside `idea2`), lookups
+  ignore case (`coop tasks claim W`), and an ID that names a parked task says it is in the backlog
+  and how to promote it. Outside a Git repository, `coop tasks` and `coop backlog` now refuse an
+  existing queue named with `--tasks` too; only a fork loop takes a queue outside the project.
 - **The tasks board shows Up next in the loop's order and fits short terminals.** A task that
   waits for another now comes last in Up next, marked "Waits for <id>", since the loop skips it;
   before, the board could list it first. On a short terminal a section shrinks to its header and

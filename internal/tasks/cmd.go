@@ -183,28 +183,61 @@ func isTasksSubcommand(s string) bool {
 	return slices.Contains(TasksVerbs, s)
 }
 
-// MatchTask resolves id against a set of task items: an exact ID match wins, else a unique substring
-// match (so a slug fragment works). Ambiguous or absent is refused as rejected input (see
-// lookupExit). listCmd names the command that lists this set ("coop tasks" / "coop backlog"), so the
-// refusal points at the right listing. Shared by FindTask (the lifecycle tree) and findBacklogTask
-// (xx_backlog).
+// matchRank is how well id names the task t, the lower the better, or -1 when it does not: 0 its
+// exact ID, 1 its ID or its slug (the ID without its date) in any case, 2 a part of its ID in any
+// case. A lookup takes the tasks at the best rank any task has, so "idea" names 2026-11-06-idea even
+// beside 2026-11-06-idea2, and "W", the title coop tasks ls shows, names 2026-11-06-w.
+func matchRank(t Item, id string) int {
+	switch {
+	case t.ID == id:
+		return 0
+	case strings.EqualFold(t.ID, id) || strings.EqualFold(idSlug(t.ID), id):
+		return 1
+	case strings.Contains(strings.ToLower(t.ID), strings.ToLower(id)):
+		return 2
+	}
+	return -1
+}
+
+// idSlug is a task ID without the date coop tasks add puts in front of it: 2026-11-06-idea is idea.
+func idSlug(id string) string {
+	const date = "2006-01-02"
+	if len(id) > len(date)+1 && id[len(date)] == '-' {
+		if _, err := time.Parse(date, id[:len(date)]); err == nil {
+			return id[len(date)+1:]
+		}
+	}
+	return id
+}
+
+// bestMatches is the items id names at the best rank any of them has (matchRank).
+func bestMatches(items []Item, id string) []Item {
+	best := -1
+	var hits []Item
+	for _, t := range items {
+		switch rank := matchRank(t, id); {
+		case rank < 0:
+		case best < 0 || rank < best:
+			best, hits = rank, []Item{t}
+		case rank == best:
+			hits = append(hits, t)
+		}
+	}
+	return hits
+}
+
+// MatchTask resolves id against a set of task items: its exact ID or slug wins, ignoring case, else
+// a unique part of an ID (so a slug fragment works); see matchRank. Ambiguous or absent is refused
+// as rejected input (see lookupExit). listCmd names the command that lists this set ("coop tasks" /
+// "coop backlog"), so the refusal points at the right listing. Shared by FindTask (the lifecycle
+// tree) and findBacklogTask (xx_backlog).
 func MatchTask(items []Item, id, listCmd string) (Item, error) {
 	if id == "" {
 		// An empty fragment would substring-match every task ("" is in everything); refuse it
 		// instead of silently acting on the first/only one.
 		return Item{}, taskLookupRefusal("Missing task ID", listCmd)
 	}
-	for _, t := range items {
-		if t.ID == id {
-			return t, nil
-		}
-	}
-	var hits []Item
-	for _, t := range items {
-		if strings.Contains(t.ID, id) {
-			hits = append(hits, t)
-		}
-	}
+	hits := bestMatches(items, id)
 	switch len(hits) {
 	case 1:
 		return hits[0], nil
@@ -241,15 +274,45 @@ func lookupExit(err error) int {
 	return 1
 }
 
-// FindTask locates a task by ID across the lifecycle state dirs — an exact ID match, else a unique
-// substring match. Backlog (xx_backlog) is deliberately NOT searched: it's off to the side, so the
-// active id-commands (claim/done/…) can't accidentally act on an un-promoted idea. See findBacklogTask.
+// FindTask locates a task by ID across the lifecycle state dirs (see MatchTask). Backlog
+// (xx_backlog) is deliberately NOT searched: it's off to the side, so the active id-commands
+// (claim/done/…) can't accidentally act on an un-promoted idea. See findBacklogTask. A miss that
+// names an idea there says so, with the command that promotes it.
 func FindTask(root, id string) (Item, error) {
 	items, err := ReadTaskTree(root)
 	if err != nil {
 		return Item{}, err
 	}
+	if id != "" && len(bestMatches(items, id)) == 0 {
+		if refusal := parkedIdeaRefusal(fmt.Sprintf("No task matching %q", id), []string{root}, id); refusal != nil {
+			return Item{}, refusal
+		}
+	}
 	return MatchTask(items, id, "coop tasks")
+}
+
+// parkedIdeaRefusal is the refusal of a task ID that names no task but names an idea in the backlog
+// of one of roots, or nil when it names none: a parked task is an idea until it is promoted. A
+// backlog that cannot be read gives no hint; the plain refusal still stands.
+func parkedIdeaRefusal(headline string, roots []string, id string) *ui.UsageError {
+	var ideas []Item
+	for _, root := range roots {
+		items, err := ReadBacklog(root)
+		if err != nil {
+			return nil
+		}
+		ideas = append(ideas, items...)
+	}
+	hits := bestMatches(ideas, id)
+	switch len(hits) {
+	case 0:
+		return nil
+	case 1:
+		return &ui.UsageError{Headline: headline, Cause: hits[0].ID + " is an idea in the backlog.",
+			Rows: [][2]string{{"Make it a task:", "coop backlog promote " + hits[0].ID}, {"Ideas:", "coop backlog"}}}
+	}
+	return &ui.UsageError{Headline: headline, Cause: fmt.Sprintf("It matches %d ideas in the backlog.", len(hits)),
+		Rows: [][2]string{{"Ideas:", "coop backlog"}}}
 }
 
 // findBacklogTask locates a backlog item by ID under root's xx_backlog/ — the backlog analog of

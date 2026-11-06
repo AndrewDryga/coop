@@ -358,7 +358,7 @@ working, that answer is lost and needs a retry.</p>
 <tr>
 <td><code>COOP_<wbr/>TASKS</code></td>
 <td>derived</td>
-<td>The task queue directories for <code>coop tasks</code> and the loop, separated by spaces. If unset, co:op uses the queues listed in <code>.agent/project.yaml</code> for a <a href="loop.html#monorepos">monorepo</a>, or <code>.agent/tasks</code> otherwise. For one run, <code>--tasks</code> replaces this choice and doesn&#39;t add to it.</td>
+<td>The task queue directories for <code>coop tasks</code> and the loop, separated by spaces. Each must be inside the project. If unset, co:op uses the queues listed in <code>.agent/project.yaml</code> for a <a href="loop.html#monorepos">monorepo</a>, or <code>.agent/tasks</code> otherwise. For one run, <code>--tasks</code> replaces this choice and doesn&#39;t add to it.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>CAFFEINATE</code></td>

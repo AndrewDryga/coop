@@ -590,6 +590,7 @@ FOR AI AGENTS
 PROJECTS
   Coop includes queues listed in .agent/project.yaml.
   Use --tasks <path> to select a queue; repeat it to include several.
+  A queue must be inside the project; only a fork loop takes one outside it.
   With subprojects, coop tasks add uses the subproject you run it in.
   Elsewhere, choose one with --project <name>.
 
@@ -639,8 +640,8 @@ OPTIONS
   If you use any text option, include --context, --acceptance and --approach.
   Repeat a text option to add another paragraph.
 
-  The first task in a Git project without a task queue sets one up: its
-  README.md, and .gitignore lines that keep task folders out of Git.
+  The first task in a new task queue sets the queue up: its README.md, and
+  .gitignore lines that keep its task folders out of Git.
 
 EXAMPLES
   coop tasks add "Fix login retries"
@@ -1311,7 +1312,8 @@ NETWORK OPTIONS
 LOOP OPTIONS
   --loop                 work through the project's task queue
   -d, --detach           run the loop in the background (implies --loop)
-  -t, --tasks <path>     choose a task queue; repeat for more queues
+  -t, --tasks <path>     choose a task queue, even one outside the project;
+                         repeat for more queues
   --peer <target>        start a read-only peer agent (no @account); repeatable
 
   Each fork receives one project task at a time. Its task is completed in the

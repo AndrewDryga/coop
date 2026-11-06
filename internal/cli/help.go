@@ -1004,6 +1004,7 @@ FOR AI AGENTS
 PROJECTS
   Coop includes queues listed in .agent/project.yaml.
   Use --tasks <path> to select a queue; repeat it to include several.
+  A queue must be inside the project; only a fork loop takes one outside it.
   With subprojects, coop tasks add uses the subproject you run it in.
   Elsewhere, choose one with --project <name>.
 
@@ -1049,8 +1050,8 @@ OPTIONS
   If you use any text option, include --context, --acceptance and --approach.
   Repeat a text option to add another paragraph.
 
-  The first task in a Git project without a task queue sets one up: its
-  README.md, and .gitignore lines that keep task folders out of Git.
+  The first task in a new task queue sets the queue up: its README.md, and
+  .gitignore lines that keep its task folders out of Git.
 
 EXAMPLES
   coop tasks add "Fix login retries"

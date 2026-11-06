@@ -40,16 +40,21 @@ type QueueSetup struct {
 	Gitignore bool // .gitignore gained the lines that keep task folders out of Git
 }
 
-// InitQueue is the queue part of Init, for the first `coop tasks add` or `coop backlog add` in a
-// project nobody ran coop init in: queue's state folders and README.md, and the .gitignore lines
-// that keep task folders out of Git. queue is the queue folder inside repo. A .gitignore coop cannot
-// edit stops it before anything is written, and nothing that exists is replaced.
+// InitQueue is the queue part of Init, for the `coop tasks add` or `coop backlog add` that starts a
+// queue: queue's state folders and README.md, and the .gitignore lines that keep its task folders
+// out of Git, coop's stanza for .agent/tasks and lines of its own for any other folder. queue is
+// the queue folder inside repo. A .gitignore coop cannot edit stops it before anything is written,
+// and nothing that exists is replaced.
 func InitQueue(repo, queue string) (QueueSetup, error) {
 	if err := CheckGitignore(repo); err != nil {
 		return QueueSetup{}, err
 	}
+	rel, err := filepath.Rel(repo, queue)
+	if err != nil || !filepath.IsLocal(rel) {
+		return QueueSetup{}, fmt.Errorf("the task queue %s is not inside %s", queue, repo)
+	}
 	s := &scaffolder{repo: repo}
-	ignored, err := s.updateGitignore(nil, writeAndSync)
+	ignored, err := s.updateGitignore(nil, filepath.ToSlash(rel), writeAndSync)
 	if err != nil {
 		return QueueSetup{}, err
 	}
