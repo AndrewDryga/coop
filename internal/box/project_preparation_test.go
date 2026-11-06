@@ -883,6 +883,79 @@ func planThenRemember(x *approvedRebuildFixture, daemon string) error {
 	return err
 }
 
+// An ignore file that is a link is refused in the plain words a linked Dockerfile gets, wherever a build
+// reads it, instead of the system's "too many levels of symbolic links" for a link nobody followed (QA,
+// 2026-11-06). Following it would build, so the link's target is a good ignore file on purpose. The next
+// run needs no record to say so: it selects the same files and refuses them itself. Replacing the link
+// with a file ends it.
+func TestALinkedIgnoreFileIsRefusedInPlainWords(t *testing.T) {
+	for name, test := range map[string]struct {
+		link    string // the ignore file that is a link
+		regular string // another ignore file, which stays a file ("" for none)
+	}{
+		"the project's":              {link: ".dockerignore"},
+		"the Dockerfile's own":       {link: ".agent/Dockerfile.dockerignore"},
+		"one the Dockerfile's beats": {link: ".dockerignore", regular: ".agent/Dockerfile.dockerignore"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			daemon := filepath.Join(t.TempDir(), "docker")
+			if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			x.write("docker/real.dockerignore", "node_modules\n")
+			if test.regular != "" {
+				x.write(test.regular, "node_modules\n")
+			}
+			link := filepath.Join(x.repo, filepath.FromSlash(test.link))
+			target, err := filepath.Rel(filepath.Dir(link), filepath.Join(x.repo, "docker", "real.dockerignore"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			want := test.link + " is a symbolic link. Replace it with the file it points to"
+
+			var stage *StageError
+			_, planned := PlanBuild(runtime.Runtime{Name: daemon}, x.cfg, x.repo, false)
+			_, selected := buildContextSelection(t.Context(), x.repo)
+			_, built := buildFilteredProject(t.Context(), x.rt, x.cfg, x.d, x.f.store, x.repo, x.candidate, io.Discard)
+			for way, err := range map[string]error{"coop build and coop update": planned, "the context of any build": selected} {
+				var refusal *projectImageRefusal
+				if err == nil || err.Error() != want || !errors.As(err, &refusal) || errors.As(err, &stage) {
+					t.Errorf("%s: %v, want the plain refusal %q, which no one is told to fix as a path or a permission", way, err, want)
+				}
+			}
+			if built == nil || !strings.Contains(built.Error(), want) {
+				t.Errorf("a build that never saw the plan: %v, want %q", built, want)
+			}
+			if x.builds() != 0 {
+				t.Fatalf("the builder ran %d times on a linked ignore file", x.builds())
+			}
+			required := x.miss()
+			if !required.Refused || required.Approved || required.Reason != want {
+				t.Fatalf("readiness on the linked file = %+v, want the refusal %q", required, want)
+			}
+			if got, want := required.Error(), "Coop refused the last build of this project's box: "+want+". After you fix it, run 'coop build --egress filtered' on the host."; got != want {
+				t.Errorf("run refusal =\n%q\nwant\n%q", got, want)
+			}
+
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+			x.write(test.link, "node_modules\n")
+			if required := x.miss(); required.Refused || !strings.Contains(required.Reason, "no explicit project build") {
+				t.Fatalf("readiness on the replaced file = %+v, want the plain miss", required)
+			}
+			x.explicitBuild()
+			if err := x.readiness(); err != nil {
+				t.Fatalf("readiness after a build that passed = %v", err)
+			}
+		})
+	}
+}
+
 // coop build says when the approval it records covers far more than the image reads, and how to narrow
 // it. Every such file voids the approval when it changes, which is how emisar's loop came to be refused
 // for edits its box never reads (2026-11-05). A context narrowed to what the Dockerfile copies hears

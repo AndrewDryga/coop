@@ -23,7 +23,13 @@ func filterDockerBuildContext(ctx context.Context, repo string, entries []contex
 	}
 	var active string
 	var patterns []string
-	for _, rel := range []string{dockerfile + ".dockerignore", ".dockerignore"} {
+	ignoreFiles := dockerIgnoreFiles(dockerfile)
+	for _, rel := range ignoreFiles {
+		if err := refuseLinkedBuildFile(repo, rel); err != nil {
+			return nil, err
+		}
+	}
+	for _, rel := range ignoreFiles {
 		data, err := readRepositoryRegularFileNoFollow(repo, rel, imageInputFileLimit)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

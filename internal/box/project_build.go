@@ -52,6 +52,22 @@ func projectBuildDigest(fields []string) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
+// dockerIgnoreFiles are the files a build may read its exclusions from, the Dockerfile's own before the
+// project's, as Docker does.
+func dockerIgnoreFiles(dockerfile string) []string {
+	return []string{dockerfile + ".dockerignore", ".dockerignore"}
+}
+
+// refuseLinkedBuildFile refuses a file a project build reads when it is a symbolic link, in one set of
+// plain words for all of them. Coop never follows such a link, as Docker would, out of the context, and
+// the system words that refusal as a loop of links.
+func refuseLinkedBuildFile(repo, rel string) error {
+	if info, err := os.Lstat(filepath.Join(repo, rel)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return refusedImage("%s is a symbolic link. Replace it with the file it points to", filepath.ToSlash(rel))
+	}
+	return nil
+}
+
 // Docker follows linked control files outside its context. Require regular staged files covered
 // by the digest before executing anything, not merely before remembering the resulting image.
 func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string) error {
@@ -60,7 +76,7 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 		modes[entry.rel] = entry.mode
 	}
 	dockerfile := filepath.FromSlash(dfRel)
-	for _, rel := range []string{dockerfile, dockerfile + ".dockerignore", ".dockerignore"} {
+	for _, rel := range append([]string{dockerfile}, dockerIgnoreFiles(dockerfile)...) {
 		mode, covered := modes[rel]
 		if covered && !mode.IsRegular() || !covered && rel == dockerfile {
 			return refusedImage("%s must be a regular file inside the build context", rel)

@@ -629,13 +629,18 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 		return BuildPlan{Image: cfg.BaseImage}, nil
 	}
 	if errors.Is(readErr, syscall.ELOOP) {
-		// The read never follows a link, and the system words that refusal as a loop of links.
-		if info, err := os.Lstat(filepath.Join(repo, dfRel)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-			return BuildPlan{}, refusedImage("%s is a symbolic link. Replace it with the file it points to", dfRel)
+		if err := refuseLinkedBuildFile(repo, dfRel); err != nil {
+			return BuildPlan{}, err
 		}
 	}
 	if readErr != nil {
 		return BuildPlan{}, fmt.Errorf("read project Dockerfile %s: %w", dfRel, readErr)
+	}
+	// A linked ignore file is refused like a linked Dockerfile: here, before any setup or staging.
+	for _, rel := range dockerIgnoreFiles(dfRel) {
+		if err := refuseLinkedBuildFile(repo, rel); err != nil {
+			return BuildPlan{}, err
+		}
 	}
 	if err := refuseCopiedProjectFile(content, dfRel); err != nil {
 		return BuildPlan{}, err

@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A linked `.dockerignore` is refused in plain words, as a linked Dockerfile is.** With a
+  `.dockerignore` or `.agent/Dockerfile.dockerignore` that is a symlink, `coop build` said "too many
+  levels of symbolic links" (a filtered build only after it had checked the host's network setup),
+  and `coop run` said the same. Both now say `.dockerignore is a symbolic link. Replace it with the
+  file it points to.` first, and the run adds the build command to run once it is fixed.
+
 - **A filtered launch's MCP refusal names the server and the setting.** A header such as
   `"X-Api-Key": "${QA_MCP_TOKEN}"` was refused with "restricted MCP requires literal
   configuration" and no server name, so a file with several servers gave no way to tell which to

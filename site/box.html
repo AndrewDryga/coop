@@ -331,7 +331,8 @@ don&#39;t repeat them in the Dockerfile. For a different setup, write an <code>.
 <p>When the agent needs a new system package, add it to the <code>RUN</code> line and run <code>coop build</code> again. If
 you change <code>.agent/Dockerfile</code> or <code>.tool-versions</code> but forget to rebuild, <code>coop</code> notices on the next
 run and reminds you to run <code>coop build</code>.</p>
-<p>The selected Dockerfile must be a regular file inside the repo, not a symlink.</p>
+<p>The selected Dockerfile must be a regular file inside the repo, not a symlink. The same goes for the
+ignore files a build reads, <code>.dockerignore</code> and the one named after the Dockerfile.</p>
 <p>You can reuse a stage of your app&#39;s existing <code>Dockerfile</code> or use your own <code>docker-compose.yml</code>
 for service containers. Set the paths relative to the repository in <code>.agent/project.yaml</code>:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Your own image: .agent/Dockerfile table"><table class="ref">

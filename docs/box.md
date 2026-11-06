@@ -246,7 +246,8 @@ When the agent needs a new system package, add it to the `RUN` line and run `coo
 you change `.agent/Dockerfile` or `.tool-versions` but forget to rebuild, `coop` notices on the next
 run and reminds you to run `coop build`.
 
-The selected Dockerfile must be a regular file inside the repo, not a symlink.
+The selected Dockerfile must be a regular file inside the repo, not a symlink. The same goes for the
+ignore files a build reads, `.dockerignore` and the one named after the Dockerfile.
 
 You can reuse a stage of your app's existing `Dockerfile` or use your own `docker-compose.yml`
 for service containers. Set the paths relative to the repository in `.agent/project.yaml`:

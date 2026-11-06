@@ -32,8 +32,9 @@ type ProjectBuildRequired struct {
 	Dockerfile string
 	Reason     string
 	Approved   bool
-	// Refused says Coop built these exact files and refused the image, and Reason is why, with its fix.
-	// The same files would be refused again, so a launch at a terminal does not offer to build them.
+	// Refused says Coop refused these exact files, after a build or before one, and Reason is why, with
+	// its fix. The same files would be refused again, so a launch at a terminal does not offer to build
+	// them.
 	Refused bool
 	// Command builds these files for the person this process serves (BuildCommand), set where the
 	// miss leaves this package. Empty is the plain coop build --egress filtered.
@@ -83,6 +84,13 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 	repo := projectPolicyRepo(spec)
 	entries, err := buildContextSelection(ctx, repo)
 	if err != nil {
+		var refusal *projectImageRefusal
+		if errors.As(err, &refusal) {
+			// Files no build may start from, such as a linked ignore file. There is no tree to digest, so
+			// nothing could be filed for them (rememberUnbuiltRefusal), and nothing needs to be: this
+			// finds the same at every launch.
+			return &ProjectBuildRequired{Dockerfile: dfRel, Reason: refusal.Error(), Refused: true}
+		}
 		return err
 	}
 	tree, files, err := contextDigestFiles(ctx, repo, entries, nil)
@@ -185,7 +193,7 @@ func rememberUnbuiltRefusal(ctx context.Context, docker filteredDocker, store *n
 	}
 	entries, err := buildContextSelection(ctx, repo)
 	if err != nil {
-		return
+		return // a refusal here, a linked ignore file, is one readiness finds again by itself
 	}
 	tree, err := contextDigest(ctx, repo, entries, nil)
 	if err != nil {
