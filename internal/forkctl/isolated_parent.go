@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,23 +36,31 @@ type isolatedParent struct {
 
 type isolatedTreeEntry struct{ mode, object, path string }
 
-// The two states of the parent a publication will not start from that a person can fix at once.
-// parentRefusal draws them for the one who ran the merge.
-var errParentDetached = errors.New("the parent is not on a branch")
+// The states of the parent a publication will not start from that a person can fix at once: detached,
+// locked, or different from its last commit (parentDirtyError). parentRefusal draws them for the one
+// who ran the merge. Their own text is plain and does not say "parent", since a fork's workspace is
+// read the same way.
+var errParentDetached = errors.New("the checkout is not on a branch")
 
 type parentLockedError struct{ lock string }
 
-func (e *parentLockedError) Error() string { return "the parent has a Git lock file at " + e.lock }
+func (e *parentLockedError) Error() string { return "Git has a lock file at " + e.lock }
 
-// parentRefusal is the block for a parent that is detached or locked, or nil for any other error.
-// journaled says an interrupted publication's journal is kept, so the block says not to reset.
+// parentRefusal is the block for a parent that is detached, locked or different from its last commit,
+// or nil for any other error. journaled says an interrupted publication's journal is kept, so the
+// block says not to reset. A parent that differs then is the interrupted merge's own half-made state
+// as much as a person's edit, so that case keeps the recovery text, which tells no one to commit or
+// stash.
 func parentRefusal(err error, journaled bool) *ui.UsageError {
 	kept := ""
 	if journaled {
 		kept = "\nCoop kept the journal of the interrupted merge. Do not reset your project. Fix this, then run the merge again."
 	}
 	var locked *parentLockedError
+	var dirty *parentDirtyError
 	switch {
+	case errors.As(err, &dirty) && !journaled:
+		return parentDirtyBlock(dirty)
 	case errors.Is(err, errParentDetached):
 		return ui.CommandFailed("Your project is not on a branch",
 			"A merge puts the fork's commits on the branch your project has checked out, and HEAD is detached."+kept,
@@ -219,10 +228,36 @@ func captureIsolatedCheckoutBounded(repo string, detachedAllowed bool, depth int
 	if err != nil {
 		return isolatedParent{}, err
 	}
+	// `ls-files -v` tags a plain entry H, an unmerged one M, a skip-worktree one S, and writes the tag
+	// of an assume-unchanged one in lower case.
+	var flagged *parentDirtyError
 	for _, record := range bytes.Split(flags, []byte{0}) {
-		if len(record) != 0 && (len(record) < 3 || record[0] != 'H' || record[1] != ' ') {
-			return isolatedParent{}, errors.New("isolated land refuses hidden index flags or unmerged entries")
+		if len(record) == 0 || len(record) >= 3 && record[0] == 'H' && record[1] == ' ' {
+			continue
 		}
+		if flagged == nil {
+			flagged = &parentDirtyError{dir: canonical, nested: depth > 0}
+		}
+		if len(record) < 3 {
+			continue
+		}
+		path := string(record[2:])
+		switch tag := record[0]; {
+		case tag == 'M':
+			if !slices.Contains(flagged.conflicts, path) {
+				flagged.conflicts = append(flagged.conflicts, path)
+			}
+		case tag == 'S' || tag == 's':
+			flagged.skipped = append(flagged.skipped, path)
+			if tag == 's' {
+				flagged.assumed = append(flagged.assumed, path)
+			}
+		case tag >= 'a' && tag <= 'z':
+			flagged.assumed = append(flagged.assumed, path)
+		}
+	}
+	if flagged != nil {
+		return isolatedParent{}, flagged
 	}
 	index, err := forkspace.ObserveGit(context.Background(), canonical, "ls-files", "--stage", "-z")
 	if err != nil {
@@ -237,7 +272,7 @@ func captureIsolatedCheckoutBounded(repo string, detachedAllowed bool, depth int
 		fmt.Fprintf(&expected, "%s %s 0\t%s\x00", entry.mode, entry.object, entry.path)
 	}
 	if !bytes.Equal(index, expected.Bytes()) {
-		return isolatedParent{}, errors.New("isolated land refuses staged changes or an unmerged index")
+		return isolatedParent{}, readDirtyChanges(canonical, depth > 0)
 	}
 	root, err := os.OpenRoot(canonical)
 	if err != nil {
@@ -248,6 +283,15 @@ func captureIsolatedCheckoutBounded(repo string, detachedAllowed bool, depth int
 	for _, entry := range entries {
 		fmt.Fprintf(content, "%d:%s:%s:", len(entry.path), entry.path, entry.mode)
 		if err := verifyIsolatedTracked(canonical, root, entry, depth, remaining, content); err != nil {
+			// A submodule that differs says so itself, with its own folder. Otherwise Git's own status
+			// names what differs here, and a refusal Git cannot explain keeps the comparison's words.
+			var nested *parentDirtyError
+			if errors.As(err, &nested) {
+				return isolatedParent{}, nested
+			}
+			if dirty := dirtyCheckout(canonical, depth > 0, entry.path); dirty != nil {
+				return isolatedParent{}, dirty
+			}
 			return isolatedParent{}, fmt.Errorf("isolated parent tracked file %q: %w", entry.path, err)
 		}
 	}

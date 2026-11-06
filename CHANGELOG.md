@@ -1368,6 +1368,13 @@
   prints where its copy is. `coop fork ls` shows `Isolated: yes` for an isolated fork, and
   `coop fork ls --json` has an `isolated` field.
 
+- **An isolated merge over uncommitted changes says which files and how to clear them.** Staged
+  changes, edited or deleted tracked files, unresolved merge conflicts, files marked
+  `assume-unchanged` or `skip-worktree`, and the same in a submodule were each refused with one line
+  in Coop's own words. Each is now one block that names the files and gives the exact command:
+  `git commit -a`, `git stash push`, or the `git update-index` that clears the mark. Finishing an
+  interrupted merge keeps its recovery text, which never tells you to commit or stash.
+
 ## 12.1.0
 
 - **Faster warm starts on a Mac.** Large checkouts spend less time scanning files and setting up

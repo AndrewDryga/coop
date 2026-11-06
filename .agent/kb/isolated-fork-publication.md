@@ -2,7 +2,7 @@
 name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
-sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/testhelpers_test.go]
+sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/isolated_dirty.go, internal/forkctl/testhelpers_test.go]
 updated: 2026-11-06
 ---
 
@@ -74,13 +74,19 @@ Candidates, previews and the source receipt are named by the fork's generation
 forkspace.Destroy and orphan recovery, never without a valid generation. The lock file stays: flock
 locks the file, so removing it under a waiting command would let two commands hold one fork's lock.
 Refusals are the shared block (`ui.CommandFailed`): `isolatedRefusal` for the fork's commits, which
-always says `--force` cannot bypass the check, and `parentRefusal` for a detached or locked parent,
-which adds that the journal is kept when the land came from one. Wrapping such an error hides its
+always says `--force` cannot bypass the check, and `parentRefusal` for a detached, locked or dirty
+parent (`parentDirtyError`: staged or changed files, conflicts, assume-unchanged and skip-worktree
+marks, a submodule's own), which adds that the journal is kept when the land came from one. A dirty
+parent met from a journal keeps the recovery text instead, since it may be that publication's own
+half-made state and no one should be told to commit or stash it. Wrapping such an error hides its
 text, since the dispatcher draws only the block.
 Custom tools run at the captured base comparison while COOP_FORK_PATH points to a separate exact
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-11-06 — a parent with uncommitted changes, conflicts or hidden index flags is refused in the
+  same block, naming the files and the exact command that clears them (task
+  2026-11-06-put-the-isolated-fork-s-dirty-parent-refusals-in).
 - 2026-11-06 — isolated refusals became blocks that name the cause and the next step, and `fork ls`
   marks isolation (task 2026-11-06-word-isolated-fork-refusals-and-previews-plainly).
 - 2026-11-06 — a merge refused before it changed the parent (an untracked file in the way) left its
