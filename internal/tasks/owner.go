@@ -219,6 +219,21 @@ func ReadTaskOwnerRecord(root, id string) (TaskOwnerRecord, bool, error) {
 	if !exists {
 		return TaskOwnerRecord{}, false, errors.New("owned task is missing from its canonical queue")
 	}
+	return ownerRecordOfInstance(root, item, record)
+}
+
+// readTaskOwnerRecordOf is ReadTaskOwnerRecord for item, a task the caller just read from root's
+// tree. It skips CurrentTask's second whole-tree read, which a caller walking every task would
+// otherwise pay once per owned task.
+func readTaskOwnerRecordOf(root string, item Item) (TaskOwnerRecord, bool, error) {
+	record, ok, err := readTaskOwnerRecordUnvalidated(root, item.ID)
+	if err != nil || !ok {
+		return record, ok, err
+	}
+	return ownerRecordOfInstance(root, item, record)
+}
+
+func ownerRecordOfInstance(root string, item Item, record TaskOwnerRecord) (TaskOwnerRecord, bool, error) {
 	instance, err := ReadTaskInstance(root, item)
 	if err != nil {
 		return TaskOwnerRecord{}, false, err

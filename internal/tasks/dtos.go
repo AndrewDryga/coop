@@ -1,5 +1,12 @@
 package tasks
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
 // TaskCounts tallies a task queue by state (todo/in_progress/blocked/done).
 type TaskCounts struct {
 	Todo    int `json:"todo"`
@@ -69,4 +76,25 @@ func QueueProgress(hosts []string) (TaskCounts, string, error) {
 		return total, "", nil
 	}
 	return total, next.Item.Title, nil
+}
+
+// QueueStamps fingerprints the queues' state folders. A task added, moved between states or
+// removed changes a state folder's time, so a poller can skip the whole-tree read (a few file calls
+// per archived task) while the stamps hold. A change inside one task's folder does not show here.
+func QueueStamps(hosts []string) string {
+	var b strings.Builder
+	for _, root := range hosts {
+		for _, state := range []string{"", StateTodo, StateInProgress, StateBlocked, StateDone} {
+			stampPath(&b, filepath.Join(root, state))
+		}
+	}
+	return b.String()
+}
+
+func stampPath(b *strings.Builder, path string) {
+	if info, err := os.Stat(path); err == nil {
+		fmt.Fprintf(b, "%s %d %d\n", path, info.ModTime().UnixNano(), info.Size())
+	} else {
+		fmt.Fprintf(b, "%s -\n", path)
+	}
 }

@@ -34,7 +34,7 @@ func (c *Control) debugShell(repo, img, agent, forkName string) {
 	})
 }
 
-const progressPoll = 2 * time.Second // how often the live bar re-reads the queue while an iteration runs
+const progressPoll = 2 * time.Second // how often the live bar checks the queue while an iteration runs
 
 // IterationCommand adds streaming flags only to coop's known headless forms on a TTY. Claude's
 // existing form appends them after the prompt; the other CLIs require their trailing prompt token
@@ -388,29 +388,67 @@ func (c *Control) iterationActivityTask(id string) *forkspace.ExecutionTaskRef {
 func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
-	last, _, _ := tasks.QueueProgress(hosts) // the bar was built with this baseline
+	progress := newProgressTick(hosts, time.Now()) // the bar was built with this baseline
 	for {
 		select {
 		case <-stop:
 			return
-		case <-t.C:
-			last = updateLoopBarCounts(hosts, last, bar)
+		case now := <-t.C:
+			progress.tick(now, bar)
 		}
 	}
 }
 
-func updateLoopBarCounts(hosts []string, last tasks.TaskCounts, bar *loopBar) tasks.TaskCounts {
+// progressRefresh bounds how long the bar may miss a count change the state folders' stamps do not
+// show, such as a task.md written into a folder that was already there.
+const progressRefresh = 30 * time.Second
+
+// progressTick re-reads the queue for the bar only when a state folder changed or progressRefresh
+// passed. The whole-tree read costs a few file calls per archived task, so reading it every tick
+// kept an otherwise idle loop busy on a queue of a thousand done tasks.
+type progressTick struct {
+	hosts  []string
+	stamps string
+	at     time.Time
+	last   tasks.TaskCounts
+}
+
+func newProgressTick(hosts []string, now time.Time) *progressTick {
+	stamps := tasks.QueueStamps(hosts)
+	last, _, err := tasks.QueueProgress(hosts)
+	if err != nil {
+		stamps = "" // nothing good was read, so the first tick reads again
+	}
+	return &progressTick{hosts: hosts, stamps: stamps, at: now, last: last}
+}
+
+func (p *progressTick) tick(now time.Time, bar *loopBar) {
+	stamps := tasks.QueueStamps(p.hosts)
+	if stamps == p.stamps && now.Sub(p.at) < progressRefresh {
+		return
+	}
+	var read bool
+	p.last, read = updateLoopBarCounts(p.hosts, p.last, bar)
+	if !read {
+		stamps = "" // a failed or torn read is retried on the next tick, not after the next change
+	}
+	// the stamps were taken before the read, so a change during it is seen next tick
+	p.stamps, p.at = stamps, now
+}
+
+// updateLoopBarCounts reads the queue counts into the bar. read is false when no good counts came
+// back, so the caller knows to try again.
+func updateLoopBarCounts(hosts []string, last tasks.TaskCounts, bar *loopBar) (counts tasks.TaskCounts, read bool) {
 	// c.total()==0 while we had a baseline is a torn read (a folder caught mid-move) — a
 	// running loop always has tasks; keep the last good counts rather than blink to 0/0.
 	c, _, err := tasks.QueueProgress(hosts)
-	if err != nil {
-		return last
+	if err != nil || c.Total() == 0 && last.Total() > 0 {
+		return last, false
 	}
-	if c != last && (c.Total() > 0 || last.Total() == 0) {
+	if c != last {
 		bar.setCounts(c)
-		return c
 	}
-	return last
+	return c, true
 }
 
 func reviewActivity(stage string, subjects []string) string {

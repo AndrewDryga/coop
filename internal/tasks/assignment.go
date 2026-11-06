@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -64,7 +65,7 @@ func forkAssignmentCandidates(hosts []string) (owned, unowned []QueuedTask, fore
 			if item.State != StateInProgress && item.State != StateTodo {
 				continue
 			}
-			record, ok, readErr := ReadTaskOwnerRecord(root, item.ID)
+			record, ok, readErr := readTaskOwnerRecordOf(root, item)
 			if readErr != nil {
 				return nil, nil, false, fmt.Errorf("read owner record for task %s: %w", item.ID, readErr)
 			}
@@ -335,24 +336,55 @@ type LocatedForkAssignment struct {
 }
 
 func ForkAssignments(repo string, identity forkspace.Identity) ([]LocatedForkAssignment, error) {
+	return forkAssignmentsIn(repo, identity, map[string][]Item{})
+}
+
+// ForkAssignments is the package ForkAssignments over the queues this snapshot already read, so a
+// listing of every fork reads each queue once, not once per fork. A queue the snapshot could not
+// read, or did not read, is read here.
+func (s ProjectSnapshot) ForkAssignments(identity forkspace.Identity) ([]LocatedForkAssignment, error) {
+	trees := map[string][]Item{}
+	for _, queue := range s.Queues {
+		if queue.Error == "" {
+			trees[queue.Root] = nil
+		}
+	}
+	for _, task := range s.Tasks {
+		if items, read := trees[task.Queue]; read {
+			trees[task.Queue] = append(items, task.Item)
+		}
+	}
+	return forkAssignmentsIn(s.Repository, identity, trees)
+}
+
+// forkAssignmentsIn reads each canonical queue at most once for the whole call, not once per
+// assignment and again per owner record: these trees hold every archived task. trees holds the
+// queues already read and gains the ones read here.
+func forkAssignmentsIn(repo string, identity forkspace.Identity, trees map[string][]Item) ([]LocatedForkAssignment, error) {
 	indexes, problems := IndexedForkAssignments(repo, identity)
 	if len(problems) > 0 {
 		return nil, errors.Join(problems...)
 	}
 	var out []LocatedForkAssignment
 	for _, index := range indexes {
-		item, ok, err := CurrentTask(index.CanonicalRoot, index.Task.Ref.ID)
-		if err != nil {
-			return nil, err
+		items, read := trees[index.CanonicalRoot]
+		if !read {
+			var err error
+			if items, err = ReadTaskTree(index.CanonicalRoot); err != nil {
+				return nil, err
+			}
+			trees[index.CanonicalRoot] = items
 		}
-		if !ok {
+		i := slices.IndexFunc(items, func(item Item) bool { return item.ID == index.Task.Ref.ID })
+		if i < 0 {
 			return nil, fmt.Errorf("indexed fork assignment %s lost canonical task %s", index.AssignmentID, index.Task.Ref.ID)
 		}
+		item := items[i]
 		instance, err := ReadTaskInstance(index.CanonicalRoot, item)
 		if err != nil || !sameTaskInstance(index.Task, instance) {
 			return nil, errors.Join(err, fmt.Errorf("indexed fork assignment %s names a replaced task", index.AssignmentID))
 		}
-		record, owned, err := ReadTaskOwnerRecord(index.CanonicalRoot, item.ID)
+		record, owned, err := readTaskOwnerRecordOf(index.CanonicalRoot, item)
 		if err != nil {
 			return nil, err
 		}

@@ -199,8 +199,9 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		counts, _ := TaskTreeCounts(items)
 		label := queueSnapshotLabel(repo, root)
 		queueID := ""
-		if identity, identityErr := readQueueIdentity(root); identityErr == nil {
-			queueID = identity.ID
+		queueIdentity, identityErr := readQueueIdentity(root)
+		if identityErr == nil {
+			queueID = queueIdentity.ID
 		} else if !errors.Is(identityErr, os.ErrNotExist) {
 			appendSnapshotProblem(&snapshot, "queue "+root+" identity", identityErr)
 		}
@@ -213,11 +214,19 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				ID: item.ID, Title: item.Title, State: StateLabel(item.State), Path: item.Dir, Item: item,
 			}
 			key := snapshotTaskKey("", "", root, item.ID)
-			if instance, err := ReadTaskInstance(root, item); err == nil {
+			// The item was just read from this tree, so its owner record is checked against it
+			// rather than a fresh read of the whole tree per owned task, and its instance reuses the
+			// queue identity read above (ReadTaskInstance fails the same way without one).
+			owner, owned, ownerErr := readTaskOwnerRecordOf(root, item)
+			instance, err := TaskInstance{}, identityErr
+			if err == nil {
+				instance, err = taskInstanceIn(queueIdentity, item)
+			}
+			if err == nil {
 				view.Task = &instance
 				view.QueueID = instance.Ref.QueueID
 				key = snapshotTaskKey(instance.Ref.QueueID, instance.Ref.TaskID, root, item.ID)
-			} else if owner, owned, ownerErr := ReadTaskOwnerRecord(root, item.ID); ownerErr == nil && owned && owner.Task != nil {
+			} else if ownerErr == nil && owned && owner.Task != nil {
 				instance := *owner.Task
 				view.Task = &instance
 				view.QueueID = instance.Ref.QueueID
@@ -229,7 +238,6 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 					view.Lease = lease.label()
 				}
 			}
-			owner, owned, ownerErr := ReadTaskOwnerRecord(root, item.ID)
 			if ownerErr != nil {
 				appendSnapshotProblem(&snapshot, "task "+item.ID+" owner", ownerErr)
 			} else if owned {

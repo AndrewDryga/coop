@@ -36,8 +36,10 @@ type forkStatus struct {
 }
 
 // gatherForkStatus reads one fork's state. Git runs through the hardened fork helpers
-// because the tree is agent-controlled (see forkBranch/forkUpdated for why).
-func (c *Control) gatherForkStatus(repo, name string) forkStatus {
+// because the tree is agent-controlled (see forkBranch/forkUpdated for why). projectSnapshot is
+// the caller's one read of the project: it walks every task in the queue, so a listing reads it
+// once for all its forks.
+func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.ProjectSnapshot) forkStatus {
 	ws := forkspace.Workspace(repo, name)
 	agent := ReadForkAgent(ws)
 	if agent == "" {
@@ -51,7 +53,7 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	if generationErr != nil {
 		problems = append(problems, "generation: "+generationErr.Error())
 	} else if hasIdentity {
-		if assignments, err := tasks.ForkAssignments(repo, identity); err == nil {
+		if assignments, err := projectSnapshot.ForkAssignments(identity); err == nil {
 			for _, assignment := range assignments {
 				switch assignment.Record.Fork.Phase {
 				case tasks.ForkAssignmentBlocked:
@@ -79,7 +81,6 @@ func (c *Control) gatherForkStatus(repo, name string) forkStatus {
 	cleanup := !running && elsewhere == "" && pathExists(forkspace.PidPath(repo, name))
 	active, parked, cleanupSandboxes, unverifiedSandboxes := 0, 0, 0, 0
 	reserved, ready, landing := false, false, false
-	projectSnapshot := tasks.ReadProjectSnapshot(repo, nil)
 	for _, observed := range projectSnapshot.Forks {
 		if observed.Name != name || observed.Identity != nil && hasIdentity && *observed.Identity != identity {
 			continue

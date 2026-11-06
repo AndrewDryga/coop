@@ -281,6 +281,12 @@ func ReadTaskInstance(root string, item Item) (TaskInstance, error) {
 	if err != nil {
 		return TaskInstance{}, err
 	}
+	return taskInstanceIn(queue, item)
+}
+
+// taskInstanceIn is ReadTaskInstance with item's queue identity already read, for a caller that
+// walks every task of one queue and would otherwise re-read the same queue record per task.
+func taskInstanceIn(queue queueIdentityRecord, item Item) (TaskInstance, error) {
 	task, err := readTaskIdentity(item.Dir)
 	if err != nil {
 		return TaskInstance{}, err

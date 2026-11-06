@@ -3,7 +3,7 @@ name: loop-live-bar
 description: the loop's sticky bottom bar; every paint parks the cursor at column 0 so a kernel ^C echo can't wrap the line and desync the region's erase math — the subsystem once deleted instead of debugged
 subsystem: loop
 sources: [internal/loop/bar.go, internal/loop/iteration.go, internal/loop/loop.go, internal/ui/live.go, internal/ui/ui.go, internal/loop/bar_test.go, internal/loop/interrupt_test.go, internal/ui/live_test.go, internal/ui/region_skip_test.go]
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
 `coop loop` renders a Docker-build-style live view: the agent's output scrolls in the region
@@ -24,7 +24,9 @@ re-samples `ui.TermWidth(os.Stderr)` on every paint, so a resize is picked up (`
 1. one whole line of agent/loop output, buffered by `lineWriter` (internal/loop/bar.go) — partial
    lines never paint, so a half-written line can't be measured as a full one;
 2. a queue-count change, polled every `progressPoll` = 2s by `monitorProgress` — counts only,
-   never the activity string, and a torn read of 0/0 is rejected (`updateLoopBarCounts`);
+   never the activity string, and a torn read of 0/0 is rejected (`updateLoopBarCounts`). A tick
+   re-reads the tree only when a state folder's stamp changed or `progressRefresh` = 30s passed
+   (`progressTick`), so an idle loop costs a few `stat` calls, not a read of every archived task;
 3. the spinner tick, every `spinInterval` = 120ms (`spinLoop`), started by `runIterationWithMode` only
    when `ui.SpinnerEnabled()`.
 
@@ -88,6 +90,10 @@ loudly. A glitch here is cursor arithmetic to root-cause, never a reason to remo
 [[nonzero-progress-segments-stay-visible]] for the segment-visibility contract of the bar it paints.
 
 ## Changelog
+- 2026-11-05 — the 2s tick now stamps the state folders (`tasks.QueueStamps`) and re-reads the
+  tree only when one changed or `progressRefresh` (30s) passed (`progressTick`): a full read of a
+  1,300-task queue cost ~260 ms per tick. Verified `monitorProgress`, `progressTick` and
+  `updateLoopBarCounts` in internal/loop/iteration.go.
 - 2026-11-04 — dropped the aside on the bar's old home in `internal/cli` (the 2026-08-10 entry below
   records the move) and the one on the reverted Warp exclusion. Verified `uiPresentationOwners` in
   internal/importdag_test.go.

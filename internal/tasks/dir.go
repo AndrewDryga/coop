@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -284,6 +285,11 @@ func parseTaskFolder(dir, state string) (Item, bool, error) {
 		return Item{}, false, err
 	}
 	defer root.Close()
+	return parseTaskFolderIn(root, dir, state)
+}
+
+// parseTaskFolderIn is parseTaskFolder for a task folder the caller already opened as root.
+func parseTaskFolderIn(root *os.Root, dir, state string) (Item, bool, error) {
 	if _, err := root.Lstat("task.md"); errors.Is(err, os.ErrNotExist) {
 		return Item{}, false, nil
 	} else if err != nil {
@@ -351,13 +357,8 @@ func ReadTaskTreeBelow(top, root string) ([]Item, error) {
 	return ReadTaskTree(root)
 }
 
-// readStateEntries lists the state folder state of queue, opened as a real folder.
-func readStateEntries(queue *os.Root, state string) ([]os.DirEntry, error) {
-	folder, err := openRealSubroot(queue, state)
-	if err != nil {
-		return nil, err
-	}
-	defer folder.Close()
+// readStateEntries lists folder, a state folder opened as a real folder.
+func readStateEntries(folder *os.Root) ([]os.DirEntry, error) {
 	dir, err := folder.Open(".")
 	if err != nil {
 		return nil, err
@@ -368,7 +369,25 @@ func readStateEntries(queue *os.Root, state string) ([]os.DirEntry, error) {
 	return entries, err
 }
 
+// parseTaskEntry reads the task folder name inside the open state folder. Opening it from that
+// handle, not by path, also finds the task in the same state folder the listing came from, and
+// skips re-opening the queue and the state folder for each archived task, which made a read of
+// 1,300 tasks take about twice as long.
+func parseTaskEntry(folder *os.Root, stateDir, name, state string) (Item, bool, error) {
+	root, err := openRealSubroot(folder, name)
+	if err != nil {
+		return Item{}, false, err
+	}
+	defer root.Close()
+	return parseTaskFolderIn(root, filepath.Join(stateDir, name), state)
+}
+
+// taskTreeReads counts whole-tree reads. A queue keeps every archived task, so a read costs a few
+// file calls per task; the tests hold a project snapshot to one read per queue with it.
+var taskTreeReads atomic.Int64
+
 func readTaskTreeOnce(root string) ([]Item, bool, error) {
+	taskTreeReads.Add(1)
 	var items []Item
 	info, err := lstatTaskPath(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -410,43 +429,19 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, false, fmt.Errorf("lifecycle state %s is not a real directory", stateDir)
 		}
-		entries, err := readStateEntries(queue, state)
+		folder, err := openRealSubroot(queue, state)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, true, nil
 		}
 		if err != nil {
 			return nil, false, fmt.Errorf("read lifecycle state %s: %w", stateDir, err)
 		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				if e.Type().IsRegular() {
-					// A stray regular file (a Finder .DS_Store from browsing the queue, an editor swap
-					// file) cannot redirect lifecycle authority the way a symlink can, so it must not
-					// hide the whole queue; `coop tasks lint` names the non-dotfile ones as misplaced work.
-					continue
-				}
-				return nil, false, fmt.Errorf("task entry %s is not a real directory", filepath.Join(stateDir, e.Name()))
-			}
-			t, ok, err := parseTaskFolder(filepath.Join(stateDir, e.Name()), state)
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, true, nil
-			}
-			if err != nil {
-				return nil, false, fmt.Errorf("read task %s/%s: %w", state, e.Name(), err)
-			}
-			if !ok {
-				continue
-			}
-			if first, exists := seen[t.ID]; exists {
-				if len(duplicates[t.ID]) == 0 {
-					duplicates[t.ID] = append(duplicates[t.ID], first)
-				}
-				duplicates[t.ID] = append(duplicates[t.ID], state)
-			} else {
-				seen[t.ID] = state
-				items = append(items, t)
-			}
+		stateItems, retry, err := readStateFolder(folder, stateDir, state, seen, duplicates)
+		folder.Close()
+		if err != nil || retry {
+			return nil, retry, err
 		}
+		items = append(items, stateItems...)
 	}
 	for id, states := range duplicates {
 		var still []string
@@ -472,6 +467,50 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 		}
 		return items[i].ID < items[j].ID
 	})
+	return items, false, nil
+}
+
+// readStateFolder parses every task folder in one open state folder, recording ids in seen and
+// a second sighting in duplicates. retry reports a folder that moved away mid-read.
+func readStateFolder(folder *os.Root, stateDir, state string, seen map[string]string, duplicates map[string][]string) ([]Item, bool, error) {
+	entries, err := readStateEntries(folder)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read lifecycle state %s: %w", stateDir, err)
+	}
+	var items []Item
+	for _, e := range entries {
+		if !e.IsDir() {
+			if e.Type().IsRegular() {
+				// A stray regular file (a Finder .DS_Store from browsing the queue, an editor swap
+				// file) cannot redirect lifecycle authority the way a symlink can, so it must not
+				// hide the whole queue; `coop tasks lint` names the non-dotfile ones as misplaced work.
+				continue
+			}
+			return nil, false, fmt.Errorf("task entry %s is not a real directory", filepath.Join(stateDir, e.Name()))
+		}
+		t, ok, err := parseTaskEntry(folder, stateDir, e.Name(), state)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, true, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("read task %s/%s: %w", state, e.Name(), err)
+		}
+		if !ok {
+			continue
+		}
+		if first, exists := seen[t.ID]; exists {
+			if len(duplicates[t.ID]) == 0 {
+				duplicates[t.ID] = append(duplicates[t.ID], first)
+			}
+			duplicates[t.ID] = append(duplicates[t.ID], state)
+		} else {
+			seen[t.ID] = state
+			items = append(items, t)
+		}
+	}
 	return items, false, nil
 }
 

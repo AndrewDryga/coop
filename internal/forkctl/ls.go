@@ -60,7 +60,7 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	}
 	statuses := make([]forkStatus, 0, len(names))
 	for _, name := range names {
-		statuses = append(statuses, c.gatherForkStatus(repo, name))
+		statuses = append(statuses, c.gatherForkStatus(repo, name, projectSnapshot))
 	}
 	// One compact block per fork, not an eight-column table: a table truncates names, hides what
 	// its symbols mean, and pads every fork to the widest one. Each row is a labeled fact, and a
@@ -236,7 +236,7 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 	sort.Strings(names)
 	for _, n := range names {
 		ws := forkspace.Workspace(repo, n)
-		s := c.gatherForkStatus(repo, n)
+		s := c.gatherForkStatus(repo, n, projectSnapshot)
 		status := &forkJSONStatus{
 			State: s.stateCell(), Tasks: s.Counts, ActiveSandboxes: s.Active,
 			ParkedSandboxes: s.Parked, CleanupSandboxes: s.CleanupSandboxes,

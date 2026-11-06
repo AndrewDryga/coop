@@ -3505,7 +3505,7 @@ func ReleaseGoneOwners(hosts []string) ([]string, error) {
 			if t.State != StateInProgress {
 				continue
 			}
-			record, owned, err := ReadTaskOwnerRecord(host, t.ID)
+			record, owned, err := readTaskOwnerRecordOf(host, t)
 			if err != nil {
 				ui.Warn("pre-flight: could not read the owner of %s: %v — claim left in place", t.ID, err)
 				continue

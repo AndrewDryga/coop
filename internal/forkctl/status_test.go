@@ -16,6 +16,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
 // An unreported cost is omitted, never rendered as a free run.
@@ -88,7 +89,7 @@ func TestForkStatusDoesNotHideCorruptGeneration(t *testing.T) {
 	if err := os.WriteFile(forkspace.GenerationPath(repo, "broken"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status := (&Control{}).gatherForkStatus(repo, "broken")
+	status := (&Control{}).gatherForkStatus(repo, "broken", tasks.ReadProjectSnapshot(repo, nil))
 	if status.stateCell() != "unknown" || len(status.Problems) == 0 {
 		t.Fatalf("corrupt generation status = %+v, cell=%q", status, status.stateCell())
 	}

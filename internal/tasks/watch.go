@@ -546,22 +546,12 @@ func (c *boardCache) get(now time.Time) boardRead {
 // so they show here too. Done tasks only add to a count, so their folders are left alone.
 func watchFingerprint(roots []string, board boardRead) string {
 	var b strings.Builder
-	stamp := func(path string) {
-		if info, err := os.Stat(path); err == nil {
-			fmt.Fprintf(&b, "%s %d %d\n", path, info.ModTime().UnixNano(), info.Size())
-		} else {
-			fmt.Fprintf(&b, "%s -\n", path)
-		}
-	}
+	stamp := func(path string) { stampPath(&b, path) }
 	queues := append([]string(nil), roots...)
 	for _, queue := range board.snapshot.Queues {
 		queues = append(queues, queue.Root)
 	}
-	for _, root := range queues {
-		for _, state := range []string{"", StateTodo, StateInProgress, StateBlocked, StateDone} {
-			stamp(filepath.Join(root, state))
-		}
-	}
+	b.WriteString(QueueStamps(queues))
 	for _, m := range board.merged {
 		if m.State == StateDone {
 			continue

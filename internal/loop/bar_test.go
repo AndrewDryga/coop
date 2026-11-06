@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,7 +144,7 @@ func TestLoopBarActivityDoesNotFollowQueueSelection(t *testing.T) {
 			if err := moveTaskDir(root, moving, newState); err != nil {
 				t.Fatal(err)
 			}
-			updated := updateLoopBarCounts([]string{root}, counts, bar)
+			updated, _ := updateLoopBarCounts([]string{root}, counts, bar)
 			if updated == counts {
 				t.Fatal("fixture did not change queue counts")
 			}
@@ -154,6 +155,44 @@ func TestLoopBarActivityDoesNotFollowQueueSelection(t *testing.T) {
 				t.Errorf("bar line followed queue selection instead of fixed activity: %q", line)
 			}
 		})
+	}
+}
+
+// The bar's 2 s tick once re-read the whole queue, a few file calls per archived task, so a loop
+// waiting on its agent stayed busy over a thousand done tasks. A tick now reads only after a state
+// folder changed, and refreshes anyway after progressRefresh for what the stamps cannot show.
+func TestProgressTickReadsTheQueueOnlyAfterAStateFolderChanges(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, stateDone, "old", "task.md"), "# Old\n")
+	next := taskItem{ID: "next", State: stateTodo, Dir: filepath.Join(root, stateTodo, "next")}
+	writeTaskFile(t, filepath.Join(next.Dir, "task.md"), "# Next\n")
+	start := time.Now()
+	progress := newProgressTick([]string{root}, start)
+	var output bytes.Buffer
+	width := loopWidth(100)
+	bar := newLoopBar(ui.NewRegion(&output, width), width, start, progress.last, "work")
+
+	// A file removed inside a done folder changes the count but no state folder: an idle tick
+	// skips the read, and the refresh catches it.
+	if err := os.Remove(filepath.Join(root, stateDone, "old", "task.md")); err != nil {
+		t.Fatal(err)
+	}
+	progress.tick(start.Add(progressPoll), bar)
+	if progress.last.Done != 1 {
+		t.Fatalf("an idle tick re-read the queue: %+v", progress.last)
+	}
+	progress.tick(start.Add(progressRefresh), bar)
+	if progress.last.Done != 0 || progress.last.Todo != 1 {
+		t.Fatalf("the refresh missed the change: %+v", progress.last)
+	}
+
+	// A claim moves a folder between states, which the very next tick reads.
+	if err := moveTaskDir(root, next, stateInProgress); err != nil {
+		t.Fatal(err)
+	}
+	progress.tick(start.Add(progressRefresh+progressPoll), bar)
+	if progress.last.Doing != 1 || progress.last.Todo != 0 {
+		t.Fatalf("a state change waited for the refresh: %+v", progress.last)
 	}
 }
 

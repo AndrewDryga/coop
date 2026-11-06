@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,33 @@ func writeTaskFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// BenchmarkQueueProgress is the loop's progress tick (every 2 s while an iteration runs) and the
+// whole-tree read inside every board frame, on a queue shaped like this repository's: a few live
+// tasks over 1,300 archived ones.
+func BenchmarkQueueProgress(b *testing.B) {
+	root := filepath.Join(b.TempDir(), ".agent", "tasks")
+	write := func(state, id string) {
+		dir := filepath.Join(root, state, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte("# "+id+"\n\n- [x] done\n"), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := range 1300 {
+		write(StateDone, fmt.Sprintf("done-%04d", i))
+	}
+	for i := range 5 {
+		write(StateTodo, fmt.Sprintf("todo-%d", i))
+	}
+	for b.Loop() {
+		if counts, _, err := QueueProgress([]string{root}); err != nil || counts.Done != 1300 {
+			b.Fatalf("counts = %+v, %v", counts, err)
+		}
 	}
 }
 

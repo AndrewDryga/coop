@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,5 +178,78 @@ func TestProjectSnapshotReportsQueueEntriesTheTaskReaderCannotTrust(t *testing.T
 	snapshot := ReadProjectSnapshot(repo, []string{root})
 	if len(snapshot.Problems) == 0 || !strings.Contains(strings.Join(snapshot.Problems, "\n"), "is not a real directory") {
 		t.Fatalf("untrusted queue entry disappeared from snapshot: %v", snapshot.Problems)
+	}
+}
+
+// A queue keeps every archived task, so one whole-tree read costs a few file calls per task. The
+// snapshot behind coop tasks watch and coop fork ls once re-read the whole tree for every owned
+// task, and fork ls read the snapshot again per fork: with four forks and 1,300 done tasks one
+// listing took 20 seconds. Each queue is read once per snapshot and once per ForkAssignments call,
+// however many tasks the forks own.
+func TestProjectSnapshotReadsEachQueueOnceHoweverManyTasksAreOwned(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	root := filepath.Join(repo, TasksRoot)
+	for i := range 4 {
+		taskForLease(t, root, StateTodo, fmt.Sprintf("todo-%d", i))
+		taskForLease(t, root, StateDone, fmt.Sprintf("done-%d", i))
+	}
+	var forks []forkspace.Identity
+	for _, name := range []string{"a", "b", "c"} {
+		workspace, identity := testAssignmentFork(t, repo, name)
+		assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+			BaselineHead: strings.Repeat("a", 40), LeaseOwner: testLeaseOwner(),
+		})
+		if err != nil || assignment.Outcome != ForkAssignmentSelected {
+			t.Fatalf("assign %s: %+v, %v", name, assignment, err)
+		}
+		if err := assignment.Lease.Release(); err != nil {
+			t.Fatal(err)
+		}
+		forks = append(forks, identity)
+	}
+
+	before := taskTreeReads.Load()
+	snapshot := ReadProjectSnapshot(repo, []string{root})
+	if reads := taskTreeReads.Load() - before; reads != 1 {
+		t.Fatalf("one snapshot of one queue read its tree %d times", reads)
+	}
+	owned := 0
+	for _, task := range snapshot.Tasks {
+		if task.Fork != nil {
+			owned++
+		}
+	}
+	if owned != len(forks) || len(snapshot.Problems) != 0 {
+		t.Fatalf("snapshot lost the forks' owners: %d owned, problems %v", owned, snapshot.Problems)
+	}
+	for _, identity := range forks {
+		before = taskTreeReads.Load()
+		assignments, err := ForkAssignments(repo, identity)
+		if err != nil || len(assignments) != 1 {
+			t.Fatalf("fork %s assignments = %+v, %v", identity.Name, assignments, err)
+		}
+		if reads := taskTreeReads.Load() - before; reads != 1 {
+			t.Fatalf("ForkAssignments for %s read the queue %d times", identity.Name, reads)
+		}
+		// fork ls asks the snapshot it already read, which finds the same assignment without a read
+		before = taskTreeReads.Load()
+		fromSnapshot, err := snapshot.ForkAssignments(identity)
+		if err != nil || len(fromSnapshot) != 1 || fromSnapshot[0].Item.ID != assignments[0].Item.ID ||
+			fromSnapshot[0].Record.Fork.AssignmentID != assignments[0].Record.Fork.AssignmentID {
+			t.Fatalf("fork %s snapshot assignments = %+v, %v; want %+v", identity.Name, fromSnapshot, err, assignments)
+		}
+		if reads := taskTreeReads.Load() - before; reads != 0 {
+			t.Fatalf("the snapshot's ForkAssignments for %s read the queue %d times", identity.Name, reads)
+		}
+	}
+	// A queue the snapshot could not read is read again, so its error is the one reported.
+	broken := ProjectSnapshot{Repository: repo, Queues: []ProjectQueueSnapshot{{Root: root, Error: "unreadable"}}}
+	before = taskTreeReads.Load()
+	if assignments, err := broken.ForkAssignments(forks[0]); err != nil || len(assignments) != 1 {
+		t.Fatalf("assignments past an unread queue = %+v, %v", assignments, err)
+	}
+	if reads := taskTreeReads.Load() - before; reads != 1 {
+		t.Fatalf("an unread queue was read %d times", reads)
 	}
 }
