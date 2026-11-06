@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -61,6 +62,10 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&doc); err != nil {
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			return rejectedComposeSettings(data, typeErr)
+		}
 		return fmt.Errorf("not a plain sibling-services compose file (only image/environment/ports/volumes/healthcheck-style keys are allowed): %w", err)
 	}
 	var extra any
@@ -135,6 +140,147 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 		}
 	}
 	return nil
+}
+
+// RejectedComposeSettings is every setting the strict decode refused, one per line, each naming its
+// service (or volume, network or the top level) and its line, so one edit can fix them all.
+type RejectedComposeSettings struct{ Problems []string }
+
+func (e *RejectedComposeSettings) Error() string { return strings.Join(e.Problems, "\n") }
+
+// rejectedComposeSettings turns each line of a yaml.v3 strict-decode error into the setting it is
+// about. The errors carry a line and a key but not where the key sits, so one walk of the file's own
+// node tree says which service each belongs to. A line in a form this does not know is kept as it is.
+func rejectedComposeSettings(data []byte, typeErr *yaml.TypeError) error {
+	var root yaml.Node
+	_ = yaml.Unmarshal(data, &root) // the strict decode already parsed these bytes
+	places := indexComposeSettings(&root)
+	rejected := &RejectedComposeSettings{}
+	shown := map[string]bool{}
+	for _, entry := range typeErr.Errors {
+		problem := entry
+		if place, wrong, ok := parseComposeDecodeError(entry); ok {
+			if path, found := places[place]; found {
+				problem = fmt.Sprintf("%s %s (line %d)", composeSettingName(path), wrong, place.line)
+			}
+		}
+		if !shown[problem] {
+			shown[problem] = true
+			rejected.Problems = append(rejected.Problems, problem)
+		}
+	}
+	return rejected
+}
+
+// parseComposeDecodeError reads the yaml.v3 decode errors a Compose file can cause: a key the
+// allowlist lacks, a key given twice, and a value of the wrong shape, which names no key, only the
+// value's YAML kind.
+func parseComposeDecodeError(entry string) (place composePlace, wrong string, ok bool) {
+	prefix, detail, found := strings.Cut(entry, ": ")
+	number, numbered := strings.CutPrefix(prefix, "line ")
+	line, err := strconv.Atoi(number)
+	if !found || !numbered || err != nil {
+		return composePlace{}, "", false
+	}
+	if rest, found := strings.CutPrefix(detail, "field "); found {
+		if key, _, found := strings.Cut(rest, " not found in type "); found {
+			return composePlace{line: line, key: key}, "is not allowed", true
+		}
+	}
+	if rest, found := strings.CutPrefix(detail, "mapping key "); found {
+		quoted, _, _ := strings.Cut(rest, " already defined at line ")
+		if key, err := strconv.Unquote(quoted); err == nil {
+			return composePlace{line: line, key: key}, "is set twice", true
+		}
+	}
+	if rest, found := strings.CutPrefix(detail, "cannot unmarshal "); found {
+		kind, _, _ := strings.Cut(rest, " ")
+		return composePlace{line: line, kind: kind}, "has an unsupported value", true
+	}
+	return composePlace{}, "", false
+}
+
+// composePlace is a mapping key on a line, or with no key a value of one YAML kind (!!map, !!seq,
+// !!str...) that starts on it. The kind tells apart a wrong value from the entries inside it or
+// beside it on the same line.
+type composePlace struct {
+	line      int
+	key, kind string
+}
+
+// indexComposeSettings records each mapping entry's key path by its key's line and name, and by the
+// line and kind its value starts with, keeping the deepest entry there. Services, volumes and
+// networks are walked first and through anchors, so a setting a service merges from an anchor is
+// named by that service rather than by the anchor's own top-level key. Every node is walked once.
+func indexComposeSettings(root *yaml.Node) map[composePlace][]string {
+	places := map[composePlace][]string{}
+	walked := map[*yaml.Node]bool{}
+	var walk func(node *yaml.Node, path []string)
+	walk = func(node *yaml.Node, path []string) {
+		if node == nil || walked[node] {
+			return
+		}
+		walked[node] = true
+		switch node.Kind {
+		case yaml.DocumentNode, yaml.SequenceNode:
+			for _, child := range node.Content {
+				walk(child, path)
+			}
+		case yaml.AliasNode:
+			walk(node.Alias, path)
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				if key.Value == "<<" && key.ShortTag() == "!!merge" {
+					walk(value, path) // a merged anchor's settings belong to the mapping that merges it
+					continue
+				}
+				entry := append(slices.Clip(path), key.Value)
+				walk(value, entry) // deeper entries first, so they keep a line they share
+				for _, place := range []composePlace{{line: key.Line, key: key.Value}, {line: value.Line, kind: value.ShortTag()}} {
+					if _, taken := places[place]; !taken {
+						places[place] = entry
+					}
+				}
+			}
+		}
+	}
+	doc := root
+	if doc.Kind == yaml.DocumentNode && len(doc.Content) == 1 {
+		doc = doc.Content[0]
+	}
+	for i := 0; doc.Kind == yaml.MappingNode && i+1 < len(doc.Content); i += 2 {
+		switch section := doc.Content[i].Value; section {
+		case "services", "volumes", "networks":
+			walk(doc.Content[i+1], []string{section})
+		}
+	}
+	walk(doc, nil)
+	return places
+}
+
+// composeSettingName says where a setting sits: `service "app": privileged`, `volume "data"`, or
+// `top-level include`. Keys come from a file an agent may write, so an unusual one is quoted.
+func composeSettingName(path []string) string {
+	nouns := map[string]string{"services": "service", "volumes": "volume", "networks": "network"}
+	if noun, ok := nouns[path[0]]; ok && len(path) > 1 {
+		name := fmt.Sprintf("%s %q", noun, path[1])
+		if len(path) == 2 {
+			return name
+		}
+		return name + ": " + composeKey(strings.Join(path[2:], "."))
+	}
+	return "top-level " + composeKey(strings.Join(path, "."))
+}
+
+func composeKey(key string) string {
+	unusual := func(r rune) bool {
+		return r != '_' && r != '-' && r != '.' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	}
+	if key == "" || strings.ContainsFunc(key, unusual) {
+		return strconv.Quote(key)
+	}
+	return key
 }
 
 func checkComposeValues(node *yaml.Node, seen map[*yaml.Node]bool) error {

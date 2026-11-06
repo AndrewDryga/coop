@@ -408,6 +408,31 @@ func (r *ServiceStartReview) Renewal() bool                      { return r != n
 
 func (r *ServiceStartReview) Endpoint() string { return r.binding.Endpoint }
 func (r *ServiceStartReview) DaemonID() string { return r.binding.DaemonID }
+
+// VolumeKinds reports whether the reviewed volumes include `external: true` ones and custom-named
+// ones, so a message can call them what the Compose file does.
+func (r *ServiceStartReview) VolumeKinds() (external, custom bool) {
+	var doc composeDoc
+	if r == nil || yaml.Unmarshal(r.data, &doc) != nil {
+		return false, false
+	}
+	for logical, declaration := range doc.Volumes {
+		actual := declaration.Name
+		if actual == "" {
+			actual = logical
+		}
+		if !slices.ContainsFunc(r.Volumes, func(volume ServiceVolumeAccess) bool { return volume.Name == actual }) {
+			continue
+		}
+		if declaration.External {
+			external = true
+		} else if declaration.Name != "" {
+			custom = true
+		}
+	}
+	return external, custom
+}
+
 func (r *ServiceStartReview) VolumeIdentity(name string) (runtime.NamedVolumeIdentity, bool) {
 	for _, identity := range r.binding.Objects {
 		if identity.Name == name {

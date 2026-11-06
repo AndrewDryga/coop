@@ -98,6 +98,79 @@ func TestExternalServiceVolumeNeedsTerminalReview(t *testing.T) {
 	}
 }
 
+// A custom-named volume is not called external, a start without a terminal says that a terminal is
+// what every start needs, and Compose's advice to mark the volume external is not passed on: Coop
+// attaches it only after review, so Compose never created it.
+func TestCustomNamedServiceVolumeMessages(t *testing.T) {
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "services:\n  db:\n    image: postgres:18\n    volumes: [data:/data]\nvolumes:\n  data:\n    name: team-data\n"
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warning := func(volume string) string {
+		return `time="2026-11-06T04:33:40-06:00" level=warning msg="volume \"` + volume +
+			`\" already exists but was not created by Docker Compose. Use ` + "`external: true`" + ` to use an existing volume"`
+	}
+	shim := composeShim{services: []string{"db"}, upProgress: []string{warning("team-data"), warning("other-data"), " Container db-1 Started"}}
+	a := &app{cfg: &config.Config{RepoOverride: repo}, rt: shim.build(t), rtSet: true}
+	var code int
+	out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 1 || !strings.Contains(out, "Services that use custom-named Docker volumes start only from a terminal, even after approval.") ||
+		!strings.Contains(out, "Run coop up at a terminal to review the volumes.") || strings.Contains(out, "every time") {
+		t.Fatalf("nonterminal start before approval = %d:\n%s", code, out)
+	}
+	typedAnswers(t, "n")
+	out = captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 1 || !strings.Contains(out, "Custom-named Docker volume access was not approved.") || strings.Contains(out, "External") {
+		t.Fatalf("declined custom-named volume = %d:\n%s", code, out)
+	}
+	typedAnswers(t, "y")
+	out = captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 0 || strings.Contains(out, `\"team-data\" already exists`) || !strings.Contains(out, `\"other-data\" already exists`) ||
+		!strings.Contains(out, "Container db-1 Started") {
+		t.Fatalf("approved custom-named volume start = %d:\n%s", code, out)
+	}
+	initInput = nil
+	out = captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+	if code != 1 || !strings.Contains(out, "start only from a terminal, even after approval.") ||
+		!strings.Contains(out, "Run coop up at a terminal.") || strings.Contains(out, "to review the volumes") {
+		t.Fatalf("nonterminal start after approval = %d:\n%s", code, out)
+	}
+}
+
+// Each kind of reviewed volume is called what its Compose declaration makes it.
+func TestServiceVolumeKindNamesTheDeclaration(t *testing.T) {
+	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
+	for _, tc := range []struct{ uses, volumes, want string }{
+		{"[data:/data]", "  data:\n    external: true\n    name: team-data\n", "External Docker volume access was not approved."},
+		{"[data:/data]", "  data:\n    name: team-data\n", "Custom-named Docker volume access was not approved."},
+		{"[data:/data, shared:/shared]", "  data:\n    name: team-data\n  shared:\n    external: true\n",
+			"External and custom-named Docker volume access was not approved."},
+		// A declaration no service uses is not part of the review.
+		{"[data:/data]", "  data:\n    name: team-data\n  unused:\n    external: true\n", "Custom-named Docker volume access was not approved."},
+	} {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "services:\n  db:\n    image: postgres:18\n    volumes: " + tc.uses + "\nvolumes:\n" + tc.volumes
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "compose.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"db"}}.build(t), rtSet: true}
+		typedAnswers(t, "n")
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 1 || !strings.Contains(out, tc.want) {
+			t.Errorf("declined %q = %d:\n%s\nwant %q", tc.volumes, code, out, tc.want)
+		}
+	}
+}
+
 func TestVolumeApprovalAndSecretDeclineKeepDecoy(t *testing.T) {
 	t.Setenv(box.ServiceStateRootEnv, t.TempDir())
 	repo := t.TempDir()

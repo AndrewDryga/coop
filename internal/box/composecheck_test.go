@@ -1,8 +1,10 @@
 package box
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,6 +152,60 @@ func TestValidateComposeMalformed(t *testing.T) {
 	repo, path := writeCompose(t, "services: [this is not a map]\n")
 	if err := ValidateComposeFile(path, repo, false); err == nil {
 		t.Error("malformed compose (services not a mapping) must be rejected")
+	}
+}
+
+// Every setting the allowlist refuses is named with where it sits and its line. yaml's own error
+// has one line per problem under a header, and showing only its first line named nothing.
+func TestValidateComposeNamesEveryRejectedSetting(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want []string
+	}{
+		"service settings": {
+			"services:\n  app:\n    image: a\n    privileged: true\n    cap_add: [NET_ADMIN]\n  web:\n    image: b\n    network_mode: host\n    env_file: .env\n",
+			[]string{`service "app": privileged is not allowed (line 4)`, `service "app": cap_add is not allowed (line 5)`,
+				`service "web": network_mode is not allowed (line 8)`, `service "web": env_file is not allowed (line 9)`},
+		},
+		"build":     {"services:\n  app:\n    build: .\n", []string{`service "app": build is not allowed (line 3)`}},
+		"top level": {"include:\n  - other.yml\nservices:\n  app:\n    image: a\n", []string{"top-level include is not allowed (line 1)"}},
+		"volume and network": {
+			"services:\n  app:\n    image: a\nvolumes:\n  data:\n    driver: local\nnetworks:\n  back:\n    driver: host\n",
+			[]string{`volume "data": driver is not allowed (line 6)`, `network "back": driver is not allowed (line 9)`},
+		},
+		"merged from an anchor": {
+			"x-base: &base\n  privileged: true\nservices:\n  app:\n    <<: *base\n    image: a\n",
+			[]string{"top-level x-base is not allowed (line 1)", `service "app": privileged is not allowed (line 2)`},
+		},
+		// yaml reports the anchor's line once for each service that merges it; one fix covers both.
+		"anchor two services merge": {
+			"x-base: &base\n  privileged: true\nservices:\n  app:\n    <<: *base\n    image: a\n  web:\n    <<: *base\n    image: b\n",
+			[]string{"top-level x-base is not allowed (line 1)", `service "app": privileged is not allowed (line 2)`},
+		},
+		"wrong shape": {"services:\n  app:\n    image: [a]\n", []string{`service "app": image has an unsupported value (line 3)`}},
+		// The wrong value is named, not the setting inside it or beside it that shares its line.
+		"settings for text": {"services:\n  app:\n    image:\n      name: postgres\n", []string{`service "app": image has an unsupported value (line 4)`}},
+		"flow siblings": {
+			"services:\n  app: {image: a, restart: [x]}\nvolumes:\n  data: {external: true, name: [x]}\n",
+			[]string{`service "app": restart has an unsupported value (line 2)`, `volume "data": name has an unsupported value (line 4)`},
+		},
+		"service shape":   {"services:\n  app: alpine\n", []string{`service "app" has an unsupported value (line 2)`}},
+		"sections shape":  {"services: [this is not a map]\n", []string{"top-level services has an unsupported value (line 1)"}},
+		"set twice":       {"services:\n  app:\n    image: a\n    image: b\n", []string{`service "app": image is set twice (line 4)`}},
+		"agent-made name": {"services:\n  app:\n    image: a\n    \"\\e[2J\": x\n", []string{`service "app": "\x1b[2J" is not allowed (line 4)`}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo, path := writeCompose(t, tc.body)
+			err := ValidateComposeFile(path, repo, false)
+			var rejected *RejectedComposeSettings
+			if !errors.As(err, &rejected) || !slices.Equal(rejected.Problems, tc.want) {
+				t.Fatalf("refusal = %#v\nwant %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "unmarshal") || strings.Contains(err.Error(), "box.") {
+				t.Fatalf("refusal kept yaml's own wording: %q", err)
+			}
+		})
 	}
 }
 

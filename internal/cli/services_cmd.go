@@ -95,6 +95,9 @@ func (a *app) cmdUp(args []string) (int, error) {
 	ui.Note("")
 	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
 	progress := &distinctLines{w: errOut}
+	for _, volume := range review.Volumes {
+		progress.volumes = append(progress.volumes, volume.Name)
+	}
 	started, err := box.UpServicesReviewed(a.rt, repo, file, review, out, progress, box.ConfigExposureRoots(a.cfg)...)
 	progress.flush()
 	if out.seen || errOut.seen {
@@ -127,10 +130,14 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 	if review == nil || len(review.Volumes) == 0 {
 		return 0, nil
 	}
+	kind := serviceVolumeKind(review)
 	if !atTerminal {
+		action := "Run coop up at a terminal."
+		if review.VolumeApprovalNeeded {
+			action = "Run coop up at a terminal to review the volumes."
+		}
 		return 1, reported("Services were not started",
-			"External or custom Docker volumes need approval every time.",
-			"Run coop up at a terminal to review the volumes.")
+			fmt.Sprintf("Services that use %s Docker volumes start only from a terminal, even after approval.", kind), action)
 	}
 	if !review.VolumeApprovalNeeded {
 		return 0, nil
@@ -157,7 +164,7 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 	answer, _ := askOneOK(ask, "Allow these Docker volumes? [y/N]: ")
 	ui.Note("")
 	if !ui.ConfirmationResponse(answer, false) {
-		return 1, reported("Services were not started", "External Docker volume access was not approved.")
+		return 1, reported("Services were not started", sentence(kind+" Docker volume access was not approved"))
 	}
 	if !save {
 		return 0, nil
@@ -169,6 +176,18 @@ func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Sc
 	ui.OK("Docker-volume access approved")
 	ui.Note("")
 	return 0, nil
+}
+
+// serviceVolumeKind names the reviewed volumes the way the Compose file declares them.
+func serviceVolumeKind(review *box.ServiceStartReview) string {
+	switch external, custom := review.VolumeKinds(); {
+	case external && custom:
+		return "external and custom-named"
+	case external:
+		return "external"
+	default:
+		return "custom-named"
+	}
 }
 
 // composeRefusal renders the refusals that happen before anything runs: coop will not run this
@@ -192,8 +211,16 @@ func composeRefusal(headline, rel string, err error, retry string) error {
 		return reported(headline, fmt.Sprintf("Coop's private folder %s is inside a folder exposed to an agent.", ui.SafeInline(exposed.Dir)),
 			"Move it out of the agent's view, then run "+retry+" again.")
 	}
-	return reported(headline, sentence(firstLine(err)),
-		fmt.Sprintf("Fix %s, then run %s again.", rel, retry))
+	reason := sentence(firstLine(err))
+	// Every refused setting gets its own line, so one edit can fix them all.
+	if rejected := (*box.RejectedComposeSettings)(nil); errors.As(err, &rejected) {
+		lines := make([]string, len(rejected.Problems))
+		for i, problem := range rejected.Problems {
+			lines[i] = sentence(ui.SafeInline(problem))
+		}
+		reason = strings.Join(lines, "\n")
+	}
+	return reported(headline, reason, fmt.Sprintf("Fix %s, then run %s again.", rel, retry))
 }
 
 // askServiceSecrets puts the secret-looking files a Compose file binds in front of a human and
@@ -334,8 +361,23 @@ func composeHashedProgress(line string) bool {
 	return hashedContainer.MatchString(line) && !strings.Contains(strings.ToLower(line), "error")
 }
 
+// composeReviewedVolumeWarning is Compose's warning that a volume exists but Compose did not create
+// it, about a volume the review covered. Coop attaches only volumes a person approved by name and
+// creates a missing custom-named one itself, so Compose always finds it there, and its advice to
+// add `external: true` would send the reader to change a file that is right.
+func composeReviewedVolumeWarning(line string, volumes []string) bool {
+	line = strings.ReplaceAll(line, `\"`, `"`) // Compose quotes its message when stderr is a pipe
+	for _, name := range volumes {
+		if strings.Contains(line, `volume "`+name+`" already exists but was not created by Docker Compose`) {
+			return true
+		}
+	}
+	return false
+}
+
 type distinctLines struct {
 	w       io.Writer
+	volumes []string // reviewed volume names, whose composeReviewedVolumeWarning is dropped
 	partial []byte
 	seen    map[string]bool
 }
@@ -349,7 +391,7 @@ func (d *distinctLines) Write(p []byte) (int, error) {
 		}
 		line := string(d.partial[:end+1])
 		d.partial = d.partial[end+1:]
-		if d.seen[line] || composeHashedProgress(line) {
+		if d.seen[line] || composeHashedProgress(line) || composeReviewedVolumeWarning(line, d.volumes) {
 			continue
 		}
 		if d.seen == nil {

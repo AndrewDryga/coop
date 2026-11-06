@@ -50,6 +50,13 @@
   When a run still finds no default account, for example after its account was deleted by hand, it
   lists the signed-in accounts and offers `coop credentials <agent> <account> default` or
   `coop <agent>@<account>` instead of a sign-in.
+
+- **`coop up` names every Compose setting it refuses.** A file with `privileged: true` was refused
+  with only "yaml: unmarshal errors:". Each refused setting now gets its own line with its service
+  and line, such as `Service "app": privileged is not allowed (line 4).` For a custom-named volume,
+  Compose's advice to add `external: true` is no longer shown, a declined review no longer calls
+  the volume external, and without a terminal `coop up` says what the rule is: these services
+  start only from a terminal, even after approval.
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with
