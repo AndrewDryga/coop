@@ -417,7 +417,7 @@ func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, step := range []string{"\t@go run ./tools/gateslot \"$(HOME)/.cache/coop-gate/slots\" $(MAKE) --no-print-directory full-gate\n", "\nfull-gate: trim-gate-cache check-static\n", "$(addprefix gate-,$(GATE_TEST_OWNERS))"} {
+	for _, step := range []string{"\t@$(GATE_SLOT) $(MAKE) --no-print-directory full-gate\n", "\nfull-gate: trim-gate-cache check-static\n", "$(addprefix gate-,$(GATE_TEST_OWNERS))"} {
 		if !strings.Contains(string(makefile), step) {
 			t.Errorf("make check must take a gate slot, then run check-static and every GATE_TEST_OWNERS owner: %q is gone", step)
 		}
@@ -440,6 +440,34 @@ func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
 		if raceConstraint.Match(data) {
 			t.Errorf("%s has a race build constraint, so make check would skip tests only check-unit runs", file)
 		}
+	}
+}
+
+// TestReleaseLocalChecksTakeAGateSlot keeps check-local's 20-minute suites under the host's gate
+// slots, as make check is: several agents' local checks at once overloaded the host until suites
+// timed out. Every go test line of the scoped recipe runs through GATE_SLOT, the slots make check
+// takes.
+func TestReleaseLocalChecksTakeAGateSlot(t *testing.T) {
+	if slot := makeVariable(t, "GATE_SLOT"); slot != `go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots"` {
+		t.Errorf("GATE_SLOT = %q; want tools/gateslot on the slots in ~/.cache/coop-gate/slots", slot)
+	}
+	makefile, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, recipe, ok := strings.Cut(string(makefile), "\ncheck-local: require-git-lfs fmt-check ")
+	recipe, _, _ = strings.Cut(recipe, "\nelse ")
+	tests := 0
+	for _, line := range strings.Split(recipe, "\n") {
+		if strings.Contains(line, "go test") {
+			tests++
+			if !strings.HasPrefix(line, "\t@$(GATE_SLOT) go test ") {
+				t.Errorf("check-local runs tests without a gate slot: %q", line)
+			}
+		}
+	}
+	if !ok || tests == 0 {
+		t.Error("the Makefile's scoped check-local recipe is gone or runs no tests")
 	}
 }
 

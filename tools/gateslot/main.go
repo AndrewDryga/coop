@@ -8,7 +8,8 @@
 // flock when its holder dies, so a crashed or killed gate frees its slot with no cleanup.
 //
 // The command starts only after the slot is taken, so the time spent waiting never counts against
-// the gate's own timeouts.
+// the gate's own timeouts. A gate inside another, such as this repo's make check under the fork
+// merge gate's coop-gate-slot, runs at once in the outer gate's slot.
 //
 //	go run ./tools/gateslot DIR COMMAND [ARG...]
 package main
@@ -29,6 +30,11 @@ import (
 // mounts (internal/box/gateslot.go) takes the same slot files and must keep the same count.
 const slots = 2
 
+// held is set for every process a gate starts. A gate that finds it set already runs in a slot:
+// waiting for a second one would let two merges, each holding one slot, wait for each other
+// forever. The coop-gate-slot helper sets and reads the same variable.
+const held = "COOP_GATE_SLOT_HELD"
+
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: gateslot DIR COMMAND [ARG...]")
@@ -38,22 +44,25 @@ func main() {
 }
 
 // gate waits for one of n slots under dir, then runs argv with the slot held and returns its exit
-// status.
+// status. Inside another gate it runs argv at once, in that gate's slot.
 func gate(dir string, n int, poll time.Duration, stderr io.Writer, argv []string) int {
-	start := time.Now()
-	slot, err := acquire(dir, n, poll, func() {
-		fmt.Fprintf(stderr, "Waiting for another gate to finish: %d already run on this host (slots in %s)\n", n, dir)
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "gateslot: %v\n", err)
-		return 1
-	}
-	defer slot.Close()
-	if waited := time.Since(start); waited >= poll {
-		fmt.Fprintf(stderr, "Got a gate slot after %s\n", waited.Round(time.Second))
+	if os.Getenv(held) == "" {
+		start := time.Now()
+		slot, err := acquire(dir, n, poll, func() {
+			fmt.Fprintf(stderr, "Waiting for another gate to finish: %d already run on this host (slots in %s)\n", n, dir)
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "gateslot: %v\n", err)
+			return 1
+		}
+		defer slot.Close()
+		if waited := time.Since(start); waited >= poll {
+			fmt.Fprintf(stderr, "Got a gate slot after %s\n", waited.Round(time.Second))
+		}
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), held+"=1")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(stderr, "gateslot: %v\n", err)
@@ -68,7 +77,7 @@ func gate(dir string, n int, poll time.Duration, stderr io.Writer, argv []string
 			_ = cmd.Process.Signal(s)
 		}
 	}()
-	err = cmd.Wait()
+	err := cmd.Wait()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {

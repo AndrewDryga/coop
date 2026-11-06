@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,99 @@ import (
 	"testing"
 	"time"
 )
+
+// TestMain runs the tests' gates outside any slot: make check runs these tests inside its own gate,
+// which marks every process under it. With GATESLOT_TEST_GATE set, this binary is a gateslot on two
+// slots in that folder instead, so a test can start one gate inside another.
+func TestMain(m *testing.M) {
+	if dir := os.Getenv("GATESLOT_TEST_GATE"); dir != "" {
+		os.Exit(gate(dir, 2, 10*time.Millisecond, os.Stderr, os.Args[1:]))
+	}
+	os.Unsetenv(held)
+	os.Exit(m.Run())
+}
+
+// TestGateInsideAGateTakesNoSecondSlot runs a gate inside a gate, as the fork merge gate's
+// coop-gate-slot runs this repo's make check: the inner gate runs in the outer gate's slot and
+// leaves the other slot free.
+func TestGateInsideAGateTakesNoSecondSlot(t *testing.T) {
+	dir, scratch := t.TempDir(), t.TempDir()
+	started, release := filepath.Join(scratch, "started"), filepath.Join(scratch, "release")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	// The outer gate's command is a second gate, which runs the shell.
+	outer, out := startGate(ctx, t, dir, os.Args[0],
+		"sh", "-c", `touch "$1"; while [ ! -e "$2" ]; do sleep 0.01; done`, "sh", started, release)
+	waitFor(t, started)
+	if first, second := busy(t, dir, 0), busy(t, dir, 1); !first || second {
+		t.Errorf("first slot taken %v, second %v; want only the outer gate's", first, second)
+	}
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := outer.Wait(); err != nil {
+		t.Fatalf("gates exit = %v\n%s", err, out)
+	}
+}
+
+// TestTwoGatesWithGatesInsideFinishOnTwoSlots is the deadlock of two fork merges at once: each
+// merge's coop-gate-slot took one of the two slots, and the make check inside each waited for a
+// slot of its own, forever. Here each outer gate starts its inner gate only once both outer gates
+// hold a slot, and both finish.
+func TestTwoGatesWithGatesInsideFinishOnTwoSlots(t *testing.T) {
+	dir, scratch := t.TempDir(), t.TempDir()
+	a, b := filepath.Join(scratch, "a"), filepath.Join(scratch, "b")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	inside := `touch "$1"; while [ ! -e "$2" ]; do sleep 0.01; done; exec "$3" true`
+	first, firstOut := startGate(ctx, t, dir, "sh", "-c", inside, "sh", a, b, os.Args[0])
+	second, secondOut := startGate(ctx, t, dir, "sh", "-c", inside, "sh", b, a, os.Args[0])
+	for i, run := range []struct {
+		gate *exec.Cmd
+		out  *bytes.Buffer
+	}{{first, firstOut}, {second, secondOut}} {
+		err := run.gate.Wait()
+		if ctx.Err() != nil {
+			t.Fatalf("the gates inside waited for the slots their outer gates held until the test stopped them:\n%s", run.out)
+		}
+		if err != nil {
+			t.Fatalf("gate %d exit = %v\n%s", i+1, err, run.out)
+		}
+	}
+}
+
+// startGate starts this test binary as a gateslot on dir that runs argv, in a process group of its
+// own: when ctx ends, the gate is killed with every gate it started.
+func startGate(ctx context.Context, t *testing.T, dir string, argv ...string) (*exec.Cmd, *bytes.Buffer) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, os.Args[0], argv...)
+	cmd.Env = append(os.Environ(), "GATESLOT_TEST_GATE="+dir)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	return cmd, &out
+}
+
+// busy reports whether a running gate holds slot i under dir.
+func busy(t *testing.T, dir string, i int) bool {
+	t.Helper()
+	file, err := os.Open(filepath.Join(dir, fmt.Sprintf("slot-%d", i)))
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close() // closing drops the lock if this probe got it
+	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil && !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatal(err)
+	}
+	return err != nil
+}
 
 // TestSecondGateWaitsForTheFirst runs two gates on one slot: the second says it waits, starts only
 // once the first has finished, and then runs.

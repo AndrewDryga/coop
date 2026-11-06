@@ -458,7 +458,9 @@ same subscription limits. A preset can define a rotation across providers and ac
 the host until tests time out. To limit that, tell your agents to run the full gate as
 <code>coop-gate-slot make check</code> (or put <code>coop-gate-slot</code> in front of your own gate command). Every
 box has this helper. At most two gates run at once on one host; another one prints <code>Waiting for another gate to finish</code> and starts when a slot is free, so its timeouts start only then. The
-<code>coop fork merge</code> gate takes a slot the same way. Boxes share the slots through their common
+<code>coop fork merge</code> gate takes a slot the same way. A gate inside another gate runs in the outer
+gate&#39;s slot, so a <code>gate:</code> command that already starts with <code>coop-gate-slot</code> doesn&#39;t wait for a
+second one. Boxes share the slots through their common
 <code>~/.cache</code> volume on Docker and OrbStack. Apple container runs each box in its own VM, and
 sharing slots there hasn&#39;t been tested, so don&#39;t count on the limit there.</p>
 <p>A stale or crashed worker shows as <code>cleanup</code> in <code>coop fork ls</code>. Run <code>coop fork stop &lt;name&gt;</code> to

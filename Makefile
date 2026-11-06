@@ -214,11 +214,14 @@ GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 # A main loop and its forks each run this gate in a box at the same moment, and together they loaded
 # a 12-core Mac past 40 until suites timed out. So the gate first takes one of a few slots shared by
 # every box on the host (tools/gateslot): the coop-cache volume is every box's ~/.cache, so a flock
-# there is host-wide. A gate that waits says so, and its timeouts start only once it runs.
+# there is host-wide. A gate that waits says so, and its timeouts start only once it runs. Inside
+# another gate, such as the fork merge gate's coop-gate-slot, it runs at once in that gate's slot.
+# check-local's tests take a slot the same way.
+GATE_SLOT := go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots"
 check: export GOCACHE := $(GATE_GOCACHE)
 check: export GOFLAGS := $(strip $(shell go env GOFLAGS) -trimpath)
 check: ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
-	@go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots" $(MAKE) --no-print-directory full-gate
+	@$(GATE_SLOT) $(MAKE) --no-print-directory full-gate
 
 full-gate: trim-gate-cache check-static
 	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
@@ -273,7 +276,7 @@ check-local: require-git-lfs fmt-check ## Scoped local checks; SCOPE=docs|rules|
 	@echo 'Local checks: $(ITERATION_SCOPE) owner and reverse consumers; no race or live providers'
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
 	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) $(LOCAL_$(ITERATION_SCOPE)) || exit 1; done
-	@go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
+	@$(GATE_SLOT) go test -count=1 -p 4 -timeout 20m $(LOCAL_$(ITERATION_SCOPE))
 else ifeq ($(SCOPE),docs)
 check-local: docs-check align rules-check
 	@echo 'Local checks: docs, site content, alignment and rules'

@@ -15,6 +15,11 @@ const GateSlotPath = "/usr/local/bin/coop-gate-slot"
 // runs with the lock descriptor closed, so a server it leaves running cannot keep the slot. Without
 // flock or a writable slot folder the helper runs the gate without a slot: the slots spare the host,
 // and a missing one must not fail a project's checks.
+//
+// The gate runs with COOP_GATE_SLOT_HELD set, and a gate started inside it, such as coop's own make
+// check under the fork merge gate, runs at once in the outer gate's slot. Waiting for a second slot
+// there would let two merges, each holding one, wait for each other forever. tools/gateslot sets and
+// reads the same variable.
 func GateSlotScript() string { return gateSlotScript }
 
 const gateSlotScript = `#!/bin/sh
@@ -23,9 +28,11 @@ const gateSlotScript = `#!/bin/sh
 #   coop-gate-slot make check
 #
 # Every coop box shares ~/.cache, so the slots there are host-wide. A third gate waits for one of
-# the first two to finish, and its command starts only then.
+# the first two to finish, and its command starts only then. A gate inside a gate runs at once, in
+# the outer gate's slot.
 [ "${1-}" != "--" ] || shift
 [ "$#" -gt 0 ] || { echo "usage: coop-gate-slot [--] <command> [args...]" >&2; exit 2; }
+[ -z "${COOP_GATE_SLOT_HELD-}" ] || exec "$@"
 dir="$HOME/.cache/coop-gate/slots"
 if ! command -v flock >/dev/null 2>&1 || ! mkdir -p "$dir" 2>/dev/null; then
 	echo "coop-gate-slot: no gate slot is available here (flock or $dir is missing); running the gate without one" >&2
@@ -40,6 +47,7 @@ while :; do
 		exec 9<"$file" || exit 1
 		if flock -n 9; then
 			[ -z "$told" ] || echo "Got a gate slot after $(($(date +%s) - start))s" >&2
+			export COOP_GATE_SLOT_HELD=1
 			"$@" 9<&-
 			exit $?
 		fi

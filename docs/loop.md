@@ -313,7 +313,9 @@ the host until tests time out. To limit that, tell your agents to run the full g
 `coop-gate-slot make check` (or put `coop-gate-slot` in front of your own gate command). Every
 box has this helper. At most two gates run at once on one host; another one prints `Waiting for
 another gate to finish` and starts when a slot is free, so its timeouts start only then. The
-`coop fork merge` gate takes a slot the same way. Boxes share the slots through their common
+`coop fork merge` gate takes a slot the same way. A gate inside another gate runs in the outer
+gate's slot, so a `gate:` command that already starts with `coop-gate-slot` doesn't wait for a
+second one. Boxes share the slots through their common
 `~/.cache` volume on Docker and OrbStack. Apple container runs each box in its own VM, and
 sharing slots there hasn't been tested, so don't count on the limit there.
 

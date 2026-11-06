@@ -39,12 +39,18 @@ Docker volume is seen across containers (checked on OrbStack 2026-11-05); a host
 `~/.cache`, so host gates and box gates count separately. A per-VM runtime such as Apple container
 was not checked. Every box also mounts `coop-gate-slot` (internal/box/gateslot.go), a shell helper
 on the same `slot-0`/`slot-1` files, so another project's opted-in gate and the `coop fork merge`
-gate share the limit; keep its slot count equal to `tools/gateslot`'s.
+gate share the limit; keep its slot count equal to `tools/gateslot`'s. Both set
+`COOP_GATE_SLOT_HELD` for the gate they run, and a gate that finds it set runs at once: the merge
+gate's `coop-gate-slot make check` takes one slot, not two. Without that, two merges at once held
+both slots and each make check inside waited forever. `make check-local` runs its `go test` step
+under the same slots (`GATE_SLOT` in the Makefile); its vet steps run without one.
 
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-06 — a gate inside a gate runs in the outer gate's slot, and check-local's tests take a
+  slot (task 2026-11-06-make-gate-slots-re-entrant-and-cover-check-local).
 - 2026-11-06 — every box mounts `coop-gate-slot` on the same slot files, and the fork merge gate runs
   under it (task 2026-11-05-limit-concurrent-full-gates-for-every-project-s).
 - 2026-11-05 — `make check` takes a host-wide gate slot from the shared cache volume (task
