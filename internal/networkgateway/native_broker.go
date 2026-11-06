@@ -197,8 +197,10 @@ type NativeBroker struct {
 	stopped         bool
 	stop            nativeBrokerStop
 	active          map[*nativeBrokerConn]struct{}
-	once            sync.Once
-	workers         sync.WaitGroup
+	// events records each refusal with the run's other gateway refusals; nil in an open run.
+	events  *GuardEvents
+	once    sync.Once
+	workers sync.WaitGroup
 }
 
 type nativeBrokerStop struct {
@@ -359,7 +361,8 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 				b.stopProtected("context_canceled", 0, 0, 0)
 				return
 			case <-ticker.C:
-				if _, err := b.current(); err != nil {
+				// An unsettled read keeps polling: this tick is what latches a lease that lapses unread.
+				if _, err := b.current(); err != nil && !errors.Is(err, errNativeAccessUnsettled) {
 					return
 				}
 			}
@@ -395,6 +398,21 @@ func nativeSnapshotFailure(binding NativeBrokerBinding, previous, next NativeAcc
 	}
 }
 
+// errNativeAccessUnsettled refuses one request while the access document could not be read in
+// time. Unlike native_broker_revoked it does not stop the broker.
+var errNativeAccessUnsettled = Failure("native_account_unavailable")
+
+// nativeReadUnsettled reports a read that ended on its deadline rather than on what the document
+// said. A loaded host's VM bind mount once took 1233 ms for one read (attempts=1, past the 1 s
+// budget), and latching on that refused the agent's own provider for the rest of the run.
+func nativeReadUnsettled(reason string) bool {
+	switch reason {
+	case "load_deadline", "document_canceled", "document_missing", "document_incomplete":
+		return true
+	}
+	return false
+}
+
 func (b *NativeBroker) current() (NativeAccessSnapshot, error) {
 	// Serialize reads and comparisons so completion order cannot look like rollback.
 	b.mu.Lock()
@@ -423,6 +441,13 @@ func (b *NativeBroker) current() (NativeAccessSnapshot, error) {
 	}
 	if reason == "" {
 		b.last = next
+	} else if nativeReadUnsettled(reason) && b.last.Expires.After(time.Now()) {
+		// A read that ran out of time says nothing about the account: the host revokes by
+		// publishing a revoked document, never by withholding one. Refuse this request, keep the
+		// revision watermark so a rollback still latches, and let the next read decide. The last
+		// lease bounds the wait: once it lapses unread, the failure below latches as before.
+		b.mu.Unlock()
+		return NativeAccessSnapshot{}, errNativeAccessUnsettled
 	} else {
 		b.latchProtected(reason, next.Revision, attempts, time.Since(started))
 	}
@@ -447,11 +472,11 @@ func (b *NativeBroker) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	}
 	if err != nil || port != "443" || request.RequestURI != request.Host || request.URL.Host != request.Host ||
 		request.ContentLength > 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" {
-		http.Error(w, "native CONNECT refused", http.StatusForbidden)
+		b.refuse(w, host, "native_broker_request_refused", "native CONNECT refused")
 		return
 	}
 	if _, err := b.current(); err != nil {
-		http.Error(w, "native account unavailable", http.StatusForbidden)
+		b.refuse(w, host, safeReason(err), "native account unavailable")
 		return
 	}
 	select {
@@ -525,13 +550,16 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 	host := request.TLS.ServerName
 	origin, ok := b.origins[host]
 	if !ok || request.Host != host && request.Host != host+":443" {
-		http.Error(w, "native origin refused", http.StatusForbidden)
+		if !ok {
+			host = "" // the handshake admits only declared names; never record another
+		}
+		b.refuse(w, host, "native_broker_request_refused", "native origin refused")
 		return
 	}
 	for name, expected := range origin.clientAccountHeaders {
 		values := request.Header.Values(name)
 		if len(values) != 0 && (len(values) != 1 || values[0] != expected[0]) {
-			http.Error(w, "native account selector refused", http.StatusForbidden)
+			b.refuse(w, host, "native_broker_request_refused", "native account selector refused")
 			return
 		}
 	}
@@ -542,7 +570,7 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		if route.line.ClientMarker != "" {
 			values := request.Header.Values(route.line.ClientHeader)
 			if len(values) != 1 || values[0] != route.line.ClientPrefix+route.line.ClientMarker {
-				http.Error(w, "native account selector refused", http.StatusForbidden)
+				b.refuse(w, host, "native_broker_request_refused", "native account selector refused")
 				return
 			}
 		}
@@ -555,7 +583,7 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		}
 		access, err := b.current()
 		if err != nil {
-			http.Error(w, "native account unavailable", http.StatusForbidden)
+			b.refuse(w, host, safeReason(err), "native account unavailable")
 			return
 		}
 		request = request.WithContext(context.WithValue(request.Context(), nativeAccessKey{}, access))
@@ -563,7 +591,16 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		route.proxy.ServeHTTP(w, request)
 		return
 	}
-	http.Error(w, "native route refused", http.StatusForbidden)
+	b.refuse(w, host, "native_broker_request_refused", "native route refused")
+}
+
+// refuse answers 403 and records the refusal beside the gateway's own, so a provider refused here
+// shows in the run's evidence and `coop net blocked`, not only in the agent's log.
+func (b *NativeBroker) refuse(w http.ResponseWriter, host, reason, message string) {
+	if b.events != nil {
+		b.events.emit(GuardEvent{Kind: "admission_failed", Name: host, Reason: reason})
+	}
+	http.Error(w, message, http.StatusForbidden)
 }
 
 func (b *NativeBroker) stopProtected(reason string, revision uint64, attempts int, elapsed time.Duration) {

@@ -945,8 +945,12 @@ func TestFilteredHealthLossCancelsAttachmentAndRemovesAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "restricted network health lost") || ctx.Err() != nil {
+	if err == nil || ctx.Err() != nil {
 		t.Fatal("health loss did not stop attachment", err)
+	}
+	// The loop shows an attempt's first line. It once read only "context canceled".
+	if first := strings.SplitN(err.Error(), "\n", 2)[0]; !strings.HasPrefix(first, "the network gateway stopped answering") || strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("health loss did not lead with its cause: %q", err)
 	}
 	if gone, err := f.cleanup("runtime_failed"); err != nil || !gone {
 		t.Fatal("health cleanup", gone, err)

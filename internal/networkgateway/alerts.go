@@ -197,7 +197,14 @@ func (d *alertDetector) observe(now BootInstant, s *networkview.Snapshot) {
 		delay := alertHealthQuiet
 		severity := "warning"
 		if i == 0 {
-			delay, severity = 0, "critical"
+			severity = "critical"
+			// A controller that answered "not enforcing", or a socket outside the capture, is
+			// critical at once. One counters call that missed its 500 ms budget is only a slow
+			// observer — a loaded host did that once in 388 samples — and the kernel keeps
+			// enforcing; it is critical only if it stays unanswered as long as any other layer.
+			if layer.Reason != "controller_observation_unavailable" {
+				delay = 0
+			}
 		}
 		bad := layer.Status != "ready" && now.Sub(slot.badSince) >= delay
 		row := networkview.Alert{Version: DetectorVersion, Category: names[i], Severity: severity, WindowMillis: networkview.Count(max(time.Millisecond, delay).Milliseconds()),

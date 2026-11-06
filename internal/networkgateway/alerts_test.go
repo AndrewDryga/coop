@@ -240,3 +240,51 @@ func TestAlertCursorSaturationCannotPublishChangedFactsUnderSameSequence(t *test
 		t.Fatal("saturated sequence changed evidence under a reused cursor")
 	}
 }
+
+// A loaded host once missed one 500 ms counters call in 388 samples, and that single sample raised
+// "the packet filter was unknown (critical)" for a run the kernel enforced throughout. A controller
+// that stays unanswered is still critical, and one that answers "not enforcing" is critical at once.
+func TestAlertEnforcerSlowObserverWaitsButRefusalIsImmediate(t *testing.T) {
+	for _, test := range []struct {
+		health   networkview.Health
+		openedAt int // seconds of a continuously bad layer before the alert opens
+	}{
+		{networkview.Health{Status: "unknown", Reason: "controller_observation_unavailable"}, 3},
+		{networkview.Health{Status: "unavailable", Reason: "enforcement_unavailable"}, 0},
+		{networkview.Health{Status: "unknown", Reason: "unexpected_agent_connection"}, 0},
+	} {
+		t.Run(test.health.Reason, func(t *testing.T) {
+			now := testBootNow()
+			d := alertDetector{started: now}
+			s := alertFixture(1, now)
+			d.observe(now, &s)
+			for second := 1; second <= 5; second++ {
+				tick := now.Add(time.Duration(second) * time.Second)
+				s = alertFixture(second+1, tick)
+				s.Health.Enforcer = test.health
+				d.observe(tick, &s)
+				row := alertByCategory(s, "health_enforcer")
+				if second-1 < test.openedAt && row != nil {
+					t.Fatalf("alert opened after %ds of %s, want %ds", second-1, test.health.Reason, test.openedAt)
+				}
+				if second-1 >= test.openedAt && (row == nil || row.State != "open" || row.Severity != "critical") {
+					t.Fatalf("after %ds of %s: %+v, want an open critical alert", second-1, test.health.Reason, row)
+				}
+			}
+		})
+	}
+	// One missed sample between answered ones never alerts.
+	now := testBootNow()
+	d := alertDetector{started: now}
+	for second := 0; second <= 6; second++ {
+		tick := now.Add(time.Duration(second) * time.Second)
+		s := alertFixture(second+1, tick)
+		if second == 3 {
+			s.Health.Enforcer = networkview.Health{Status: "unknown", Reason: "controller_observation_unavailable"}
+		}
+		d.observe(tick, &s)
+		if row := alertByCategory(s, "health_enforcer"); row != nil {
+			t.Fatalf("one slow counters call raised %+v", row)
+		}
+	}
+}

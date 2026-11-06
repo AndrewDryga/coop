@@ -182,6 +182,7 @@ type nativeRunRuntime struct {
 	config   NativeRunConfig
 	dial     map[string]func(context.Context, string, string) (net.Conn, error)
 	fallback http.Handler
+	events   *GuardEvents // nil in an open run, which keeps no gateway record
 }
 
 func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
@@ -239,6 +240,7 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 		if err != nil {
 			return err
 		}
+		broker.events = r.events // before the listener below exists, so no request races it
 		brokers = append(brokers, broker)
 		handler = broker
 	}
@@ -385,7 +387,7 @@ func (g *GuardRuntime) prepareNative(config LaunchConfig, clock *BootClock, cont
 	if err != nil {
 		return nil, err
 	}
-	g.native = &nativeRunRuntime{config: plan, dial: map[string]func(context.Context, string, string) (net.Conn, error){}}
+	g.native = &nativeRunRuntime{config: plan, events: g.GuardEvents, dial: map[string]func(context.Context, string, string) (net.Conn, error){}}
 	var resolvers []*Resolver
 	for _, host := range config.NativeOrigins {
 		var key [32]byte

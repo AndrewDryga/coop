@@ -2,8 +2,8 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
-updated: 2026-11-04
+sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+updated: 2026-11-05
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -27,7 +27,13 @@ changing their clock values; it is not a repair of the unexplained native Claude
 The native broker chooses its permanent first denial while holding the snapshot comparison
 mutex, clears retained access there, then tears down streams outside the mutex. Every stop
 caller uses that same latch, so slow cleanup cannot admit a newer valid snapshot or replace
-the initiating credential-free diagnostic with a later lifecycle reason.
+the initiating credential-free diagnostic with a later lifecycle reason. A read that only ran out
+of time is not a denial and does not latch inside the last lease (see native-broker-lease-reads).
+
+The `health_enforcer` alert is critical at once when the controller answers "not enforcing" or a
+socket is outside the capture. `controller_observation_unavailable` (one counters call past its
+500 ms `KernelSampleTimeout`) waits the same 3 s as the other layers: alerts drive no enforcement,
+and one loaded run missed a single sample in 388 while the kernel enforced throughout.
 
 **Controller** — UID `0:65532`, `CAP_ADD NET_ADMIN` and nothing else, on the bridge (`helperOptions`
 in box/filtered_launch.go, re-checked by `verifyContainer`). It owns nftables table `coop_net`
@@ -344,6 +350,8 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-05 — a slow counters call waits 3 s before the critical enforcer alert; a deadline-bound
+  native document read no longer latches (task 2026-11-05-say-when-a-network-filter-alert-comes-from-host).
 - 2026-11-04 — a closed `::1` port refuses at once too (TCP reset by rule, ICMPv6 error on `lo` for
   UDP); no other IPv6 is accepted.
 - 2026-11-04 — a closed local port refuses at once and rejected traffic fails at once: the

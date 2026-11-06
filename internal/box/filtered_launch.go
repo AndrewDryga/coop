@@ -457,7 +457,12 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	})
 	cancel()
 	watchErr := <-watchDone
-	outcome := errors.Join(runErr, watchErr)
+	if watchErr != nil && errors.Is(runErr, context.Canceled) {
+		// The watch stopped the workload, so its cancellation is a consequence. Leading with it
+		// made a loop attempt read only "context canceled" when the gateway had failed closed.
+		runErr = nil
+	}
+	outcome := errors.Join(watchErr, runErr)
 	// An interrupt is not a fault to describe twice: the workload and the watcher both stop on the
 	// same cancellation, and "context canceled context canceled" tells a person nothing. Cleanup
 	// still runs after this returns, so the box and its gateway are gone either way.
@@ -493,7 +498,7 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 				continue // nft remains fail-closed while bounded observation retries run
 			}
 			cancel()
-			return fmt.Errorf("restricted network health lost: %w", err)
+			return fmt.Errorf("the network gateway stopped answering, so the box could reach nothing and Coop ended the attempt: %w", err)
 		}
 		probeFailures = 0
 		// Observation loss is not permission to open networking, nor an

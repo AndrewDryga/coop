@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A busy host no longer cuts a filtered agent off from its own provider.** When the gateway took
+  just over a second to read the agent's sign-in, it stopped passing that sign-in for the rest of
+  the run, and Codex then got "HTTP CONNECT failed with status 403" from chatgpt.com until the
+  attempt failed. A slow read now refuses only the requests it overlaps, and access comes back at
+  the next good read. If reads keep failing until the sign-in's current lease runs out (at most a
+  minute), or the sign-in is withdrawn, the gateway still refuses for the rest of the run. These
+  refusals now appear in `coop net inspect` and `coop net blocked`. A single slow check of the
+  packet filter no longer raises a critical alert; one that stays unanswered for 3 seconds still
+  does. When the gateway stops answering, the failed attempt now says so instead of only
+  "context canceled".
+
 - **A task parked for your decision no longer stops the rest of the queue.** When a resumed final
   review parked a task at its round limit, that run and every later `coop loop` ended with "Final
   review left N tasks to finish" without working any of them, until someone answered the decision.

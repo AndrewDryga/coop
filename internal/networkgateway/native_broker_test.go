@@ -26,6 +26,7 @@ type nativeTransportFixture struct {
 	client          *http.Client
 	mu              sync.Mutex
 	snapshot        NativeAccessSnapshot
+	loadErr         error // what the next document read fails with, when set
 	forwarded       atomic.Int64
 }
 
@@ -65,6 +66,9 @@ func newNativeTransportFixture(t *testing.T, handler http.Handler, configure ...
 	f.broker, err = NewNativeBroker(context.Background(), binding, []NativeBrokerOrigin{origin}, func(context.Context) (NativeAccessSnapshot, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.loadErr != nil {
+			return NativeAccessSnapshot{}, f.loadErr
+		}
 		return f.snapshot, nil
 	}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ordinary") }))
 	if err != nil {

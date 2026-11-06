@@ -2,8 +2,8 @@
 name: native-broker-lease-reads
 description: the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 subsystem: box
-sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/safefile/safefile.go]
-updated: 2026-10-17
+sources: [internal/box/native_broker.go, internal/box/native_account.go, internal/box/account_renewal.go, internal/networkgateway/native_runtime.go, internal/networkgateway/native_document_test.go, internal/networkgateway/native_broker.go, internal/networkgateway/native_broker_test.go, internal/networkgateway/native_broker_diagnostic_test.go, internal/networkgateway/native_broker_unsettled_test.go, internal/safefile/safefile.go]
+updated: 2026-11-05
 ---
 
 The host atomically publishes private access snapshots, but a Docker VM bind mount can briefly
@@ -22,6 +22,18 @@ refuse immediately. Cancellation is checked before reads and before admitting a 
 Revocation, rollback, same-revision mutation, exhaustion and invalid snapshots permanently stop
 protected traffic and active streams. The previous credential is never forwarded on read failure;
 a stopped broker cannot revive. Partial fields are never decoded or inherited between attempts.
+
+A read that ends on its deadline (`nativeReadUnsettled`: `load_deadline`, `document_canceled`,
+`document_missing`, `document_incomplete`) is not a denial: the host revokes only by publishing a
+revoked document. It refuses that request (`native_account_unavailable`), keeps the last revision
+as the rollback watermark, and the 100ms poll keeps reading. The last lease's `Expires` bounds it:
+a failing read after that latches as before. Active streams stay open inside the lease, which is
+how long a stalled host publisher already kept them. Measured cause: under host load 35-65 one
+guard logged `native_broker_stopped reason=document_canceled attempts=1 load_ms=1233`, a single
+blocking read past the 1s budget, and Codex got 403 from chatgpt.com for the rest of the run.
+`document_io`, `document_schema` and shutdown still latch. Every broker 403 is emitted as a guard
+`admission_failed` event naming the origin (`native_account_unavailable`, `native_broker_revoked`,
+`native_broker_request_refused`), so it reaches the run's denials; an open run has no sink.
 
 The host publisher (`nativeRun.serve`) writes a lease every 5 s, at most a minute and never past
 the access's own expiry. It renews the access planning read once under 10 minutes of it are left
@@ -62,6 +74,10 @@ mutex; a blocked log sink cannot delay revocation. Credentials, accounts, raw do
 arbitrary I/O/parser errors are never logged. Document callers still receive the generic error.
 
 ## Changelog
+- 2026-11-05 — a deadline-bound read no longer latches; it refuses inside the last lease and
+  latches once that lapses (task 2026-11-05-say-when-a-network-filter-alert-comes-from-host). Cause
+  read from a live guard's first-stop line under load. Broker 403s are now run evidence. Verified
+  with `TestNativeBrokerSlowRead…`, `TestNativeBrokerLeaseLapsed…` and mutation runs of both guards.
 - 2026-10-17 — renewal starts with a 10-minute lead, separate from the 2-minute deadline the adapters
   check, and later accesses renew at half their lifetime (task
   2026-10-16-start-native-credential-renewal-well-before-the). Review found the lead let several
