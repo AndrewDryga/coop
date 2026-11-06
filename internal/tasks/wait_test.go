@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // lintedTask writes a task.md lint has nothing to say about, waiting for waitsOn when it is set.
@@ -344,5 +345,49 @@ func TestWaitsForAnotherTaskReportsAnUnreadableQueue(t *testing.T) {
 	}
 	if waits, err := WaitsForAnotherTask(QueuedTask{Root: root, Item: docs}); err == nil {
 		t.Fatalf("an unreadable queue read as waits=%v with no error", waits)
+	}
+}
+
+// A person claims a waiting task while the loop settles its wait. The claim records itself under the
+// task's owner lock before it moves the folder, and settlement holds that lock from its checks to its
+// write, so the claim waits for the settlement instead of moving the folder out from under it.
+func TestSettleTaskWaitsLetsAConcurrentClaimWaitItsTurn(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "alpha-docs", "task.md"), "---\nid: alpha-docs\nwaits_on: zeta-bridge\n---\n\n# Docs\n- [ ] write\n")
+	writeTaskFile(t, filepath.Join(root, StateDone, "zeta-bridge", "task.md"), "# Bridge\n- [x] fix\n")
+	claimed := make(chan error, 1)
+	settleWaitBeforeWrite = func(task QueuedTask) {
+		go func() {
+			if _, err := claimTaskOwnerRecord(root, task.Item.ID, claimOptions{}); err != nil {
+				claimed <- err
+				return
+			}
+			current, _, err := CurrentTask(root, task.Item.ID)
+			if err == nil {
+				err = MoveTaskDir(root, current, StateInProgress)
+			}
+			claimed <- err
+		}()
+		select { // without the owner lock the claim finishes here and moves the folder away
+		case err := <-claimed:
+			claimed <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { settleWaitBeforeWrite = nil })
+
+	settled, err := SettleTaskWaits([]string{root}, testLeaseOwner())
+	if err != nil || len(settled) != 1 || settled[0].Task.Item.ID != "alpha-docs" {
+		t.Fatalf("settle beside a claim = %+v, %v", settled, err)
+	}
+	if err := <-claimed; err != nil {
+		t.Fatalf("the claim after settlement: %v", err)
+	}
+	task, ok := mustCurrentTask(t, root, "alpha-docs")
+	if !ok || task.State != StateInProgress || task.WaitsOn != "" {
+		t.Fatalf("task after settle and claim = %+v", task)
+	}
+	if _, owned, err := ReadTaskOwnerRecord(root, "alpha-docs"); err != nil || !owned {
+		t.Fatalf("claim ownership = %v, %v", owned, err)
 	}
 }

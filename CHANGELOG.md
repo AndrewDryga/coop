@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Claiming a waiting task while a loop settles waits no longer stops the loop.** The loop's wait
+  settlement now holds the task's owner lock from its checks to its write, the lock a claim takes
+  before it moves the task, so the claim waits a moment instead of moving the folder out from under it.
+
 - **An editor reopening a thread with no transcript no longer waits forever when the agent restarts.**
   Coop answers such a `session/load` with a fresh session. If the agent died before it answered, the
   editor's load was dropped. The replacement agent now gets the fresh session request and its answer

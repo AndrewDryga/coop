@@ -201,33 +201,62 @@ func SettleTaskWaits(hosts []string, owner TaskLeaseOwner) ([]SettledWait, error
 			if status == waitPending {
 				continue
 			}
-			if _, owned, err := ReadTaskOwnerRecord(task.Root, task.Item.ID); err != nil {
-				return settled, err
-			} else if owned {
-				continue
-			}
-			lease, _, err := TryTaskLease(task.Root, task.Item, owner)
-			if errors.Is(err, errLeaseCandidateGone) {
-				continue
-			}
+			done, reason, err := settleWait(task, status, why, owner)
 			if err != nil {
 				return settled, err
 			}
-			if lease == nil {
+			if !done {
 				continue
 			}
-			if status == waitMet {
-				why, err = "", releaseWait(task.Item)
-			} else {
-				blocked, err = true, parkBrokenWait(task, why)
-			}
-			if err = errors.Join(err, lease.Release()); err != nil {
-				return settled, err
-			}
-			settled = append(settled, SettledWait{Task: task, WaitsOn: task.Item.WaitsOn, Reason: why})
+			blocked = blocked || status != waitMet
+			settled = append(settled, SettledWait{Task: task, WaitsOn: task.Item.WaitsOn, Reason: reason})
 		}
 	}
 	return settled, nil
+}
+
+// settleWaitBeforeWrite lets a test act in the window between settlement's checks and its write.
+var settleWaitBeforeWrite func(QueuedTask)
+
+// settleWait settles one waiting task while holding its owner lock, the lock a claim takes to record
+// itself before it moves the task. A task claimed first, or moved or changed since the queue was read,
+// is left for a later pass; a claim that comes later waits until this settlement is written, so the
+// task never moves under it. done reports whether the task was settled, and reason why it was blocked.
+func settleWait(task QueuedTask, status waitStatus, why string, owner TaskLeaseOwner) (done bool, reason string, err error) {
+	ownerLock, err := lockTaskOwner(task.Root, task.Item.ID)
+	if err != nil {
+		return false, "", err
+	}
+	defer ownerLock.Close()
+	if _, owned, err := ownerLock.Read(); err != nil || owned {
+		return false, "", err
+	}
+	current, exists, err := CurrentTask(task.Root, task.Item.ID)
+	if err != nil {
+		return false, "", err
+	}
+	if !exists || current.State != StateTodo || filepath.Clean(current.Dir) != filepath.Clean(task.Item.Dir) || current.WaitsOn != task.Item.WaitsOn {
+		return false, "", nil
+	}
+	lease, _, err := TryTaskLease(task.Root, task.Item, owner)
+	if errors.Is(err, errLeaseCandidateGone) || err == nil && lease == nil {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if settleWaitBeforeWrite != nil {
+		settleWaitBeforeWrite(task)
+	}
+	if status == waitMet {
+		why, err = "", releaseWait(task.Item)
+	} else {
+		err = parkBrokenWait(task, why)
+	}
+	if err = errors.Join(err, lease.Release()); err != nil {
+		return false, "", err
+	}
+	return true, why, nil
 }
 
 // releaseWait makes a waiting task ordinary work again and keeps the worker's resume step.
