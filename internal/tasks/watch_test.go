@@ -297,8 +297,9 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stoppedByYou: true, stopReason: "Codex cannot start because the box image is missing"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · the box image is missing", "    to resume, run: coop fork sweep-b --loop -d"}},
 		{"fork loop refused, reason recorded",
-			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPaused, agent: "codex", stopReason: "this project asks for unrestricted internet access, which has not been approved"}, "Stopped (1)",
-			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · network access not approved", "    to fix, run: coop approve, then coop fork sweep-b --loop -d"}},
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentPaused, agent: "codex", stopReason: "this project asks for unrestricted internet access, which has not been approved",
+				approve: "COOP_REPO=/work/app-forks/sweep-b coop approve"}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · network access not approved", "    to fix, run: COOP_REPO=/work/app-forks/sweep-b coop approve, then coop fork sweep-b --loop -d"}},
 		{"fork loop lost its sign-in",
 			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "the provider no longer accepts this account's saved sign-in; run coop login"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · sign-in no longer accepted", "    to fix, run: coop login, then coop fork sweep-b --loop -d"}},
@@ -1306,7 +1307,9 @@ func TestTaskWatchShowsAForksRecordedLoopFailure(t *testing.T) {
 	if got := loopError(); got != refusal {
 		t.Errorf("--json loop_error = %q, want %q", got, refusal)
 	}
-	if out := watch(false); !strings.Contains(out, " in fork sweep-a · network access not approved\n    to fix, run: coop approve, then coop fork sweep-a --loop -d\n") {
+	// A fork's approvals are its own, so the fix approves the fork's checkout, from the project.
+	if out := watch(false); !strings.Contains(out, " in fork sweep-a · network access not approved\n") ||
+		!strings.Contains(out, "COOP_REPO="+workspace+" coop approve") || !strings.Contains(out, "then coop fork sweep-a --loop -d\n") {
 		t.Errorf("the stopped fork's row:\n%s", out)
 	}
 	worker := forkspace.WorkerState{Pid: os.Getpid(), Token: processidentity.StartToken(os.Getpid()), Generation: identity.Generation}

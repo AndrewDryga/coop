@@ -88,6 +88,14 @@ then its network approval, anchor, build review and image grants. A network with
 stays. A failure keeps the fork for a retry; `rm --force` deletes it anyway with a warning. A
 marker whose private anchor is missing proves nothing and is skipped.
 
+A fork's loop, interactive start and local ACP admit against the fork's own checkout (no
+`PolicyRepo`), while fork merge gates set the parent and controller jobs their staged source.
+`coop approve` reviews only the project it runs in (`netProject`: COOP_REPO, else the working
+folder's checkout), so the refusal's review line comes from `box.ApproveCommand`: plain
+`coop approve` when that is the launch's policy folder, else `COOP_REPO=<folder> coop approve`,
+never `cd` (the fork restart that follows belongs in the project). `coop tasks watch` names the
+same command for a fork task stopped on the refusal.
+
 Approval review has a two-phase concurrency rule. An exact existing marker/private-anchor pair may
 be reviewed read-only without pausing running boxes. Any missing, replaced, or moved binding is a
 transition: `ReviewProjectNetwork` takes the project's exclusive service-launch lock, re-reads the
@@ -389,6 +397,9 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-06 — a refusal for another checkout's request names it with COOP_REPO; verified the fork
+  loop, interactive fork and local fork ACP refusals and the board's fix line (task
+  2026-11-05-make-fork-loop-network-approval-recovery-identif).
 - 2026-11-05 — removing a fork retires its own approvals and anchors before the checkout goes
   (task 2026-11-05-retire-a-fork-s-private-approval-records-when-it).
 - 2026-11-05 — verified creation-only fork approval snapshots, fresh anchors, build-review reuse

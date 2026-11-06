@@ -84,13 +84,13 @@ func TestForkServiceFilesCopyRequiredAndBoundFiles(t *testing.T) {
 			if strings.Contains(output, "Started fork") {
 				wait.For(t, "detached fixture worker approval refusal", func() bool {
 					data, err := os.ReadFile(forkspace.LogPath(repo, name))
-					return err == nil && strings.Contains(string(data), "Review it: coop approve")
+					return err == nil && strings.Contains(string(data), forkReview(t, repo, name))
 				})
 				wait.For(t, "detached fixture worker pid record to clear", func() bool {
 					return !pathExists(forkspace.PidPath(repo, name))
 				})
 			}
-			if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "Review it: coop approve") {
+			if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), forkReview(t, repo, name)) {
 				t.Fatalf("fork creation = (%d, %v), want the fixture's network approval refusal after creation", code, runErr)
 			}
 			if strings.Contains(output, "Started fork") {
@@ -137,7 +137,7 @@ func TestForkServiceFilesCopyRequiredAndBoundFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, err = a.forkCreate([]string{name})
-			if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+			if code != 1 || err == nil || !strings.Contains(err.Error(), forkReview(t, repo, name)) {
 				t.Fatalf("fork reopen = (%d, %v), want the fixture's network approval refusal", code, err)
 			}
 			for _, file := range []struct {

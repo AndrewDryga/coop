@@ -37,14 +37,14 @@ func TestForkApprovalSnapshot(t *testing.T) {
 				assertForkApprovalSnapshotAnchor(t, store, repo, workspace)
 
 				writeForkApprovalSnapshotRule(t, workspace, "changed.example")
-				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
 					t.Fatalf("fork with changed rules = %v, want the approval refusal", err)
 				}
 
 				writeForkApprovalSnapshotRule(t, repo, "changed.example")
 				commitForkNetworkPreflightFixture(t, repo)
 				approveForkApprovalSnapshotProject(t, store, repo)
-				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
 					t.Fatalf("fork after the parent approved changed rules = %v, want the fork-local approval refusal", err)
 				}
 			})
@@ -57,12 +57,12 @@ func TestForkApprovalSnapshot(t *testing.T) {
 				store := openForkApprovalSnapshotStore(t)
 
 				workspace := createForkApprovalSnapshotBoundary(t, repo, "unapproved", isolated)
-				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
 					t.Fatalf("fork created before parent approval = %v, want the approval refusal", err)
 				}
 
 				approveForkApprovalSnapshotProject(t, store, repo)
-				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+				if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
 					t.Fatalf("earlier fork after the parent was approved = %v, want the approval refusal", err)
 				}
 				approval, err := store.Approval(workspace)
@@ -71,6 +71,56 @@ func TestForkApprovalSnapshot(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// A fork's approvals are its own after creation. Its loop's refusal for a rule the parent never
+// approved names the fork's checkout, and the command it names settles it; the parent's coop
+// approve has nothing to review, and a later request is refused again.
+func TestForkApprovalRecoveryFollowsTheRefusal(t *testing.T) {
+	repo := initRepo(t)
+	writeForkNetworkPreflightProject(t, repo)
+	commitForkNetworkPreflightFixture(t, repo)
+	a := forkNetworkPreflightApp(t, repo)
+	store := openForkApprovalSnapshotStore(t)
+	approveForkApprovalSnapshotProject(t, store, repo)
+	workspace := createForkApprovalSnapshotBoundary(t, repo, "recover", false)
+	extra := "box:\n  egress: filtered\n  egress_rules:\n" +
+		"    - to: {domain: fork.example}\n      protocol: tls\n      ports: [443]\n" +
+		"    - to: {domain: extra.example}\n      protocol: tls\n      ports: [443]\n"
+	if err := os.WriteFile(filepath.Join(workspace, project.File), []byte(extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := checkForkApprovalSnapshot(a, workspace)
+	if err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
+		t.Fatalf("fork with an extra rule = %v, want the review command for the fork's checkout", err)
+	}
+	yes := func(string) bool { return true }
+	approve := func(folder string) string {
+		t.Helper()
+		here, err := box.ResolveRepo(folder) // what COOP_REPO=<folder> coop approve reviews
+		if err != nil {
+			t.Fatal(err)
+		}
+		return captureStderr(t, func() {
+			if code, err := a.approveProject(context.Background(), here, false, yes); code != 0 || err != nil {
+				t.Fatalf("coop approve in %s = (%d, %v)", folder, code, err)
+			}
+		})
+	}
+	if output := approve(repo); !strings.Contains(output, netApproveUnchanged) {
+		t.Fatalf("the parent's coop approve = %q, want nothing to review there", output)
+	}
+	if err := checkForkApprovalSnapshot(a, workspace); err == nil {
+		t.Fatal("approving the parent admitted the fork's extra rule")
+	}
+	approve(workspace)
+	if err := checkForkApprovalSnapshot(a, workspace); err != nil {
+		t.Fatalf("fork after following its refusal: %v", err)
+	}
+	writeForkApprovalSnapshotRule(t, workspace, "later.example")
+	if err := checkForkApprovalSnapshot(a, workspace); err == nil || !strings.Contains(err.Error(), reviewIn(t, workspace)) {
+		t.Fatalf("fork with a later rule = %v, want it refused again", err)
 	}
 }
 
@@ -89,7 +139,7 @@ func TestForkRefusedLoopListing(t *testing.T) {
 			code, runErr = a.forkCreate([]string{"networked", "claude", "--loop", "-d"})
 		})
 	})
-	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "Review it: coop approve") {
+	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), forkReview(t, repo, "networked")) {
 		t.Fatalf("detached fork refusal = (%d, %v), want the network approval refusal", code, runErr)
 	}
 	if strings.Contains(output, "Started fork") {

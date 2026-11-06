@@ -189,7 +189,7 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 		ui.Warn("%s", notice)
 	}
 	if preview.Pending != nil && !broken { // compared with a request of nothing, a broken file's pending says nothing
-		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: coop approve", networkLaunchName(spec), preview.Pending)
+		refusal = fmt.Errorf("%s cannot start because %w\n\n  Review it: %s", networkLaunchName(spec), preview.Pending, ApproveCommand(approvingProject(cfg), canonical))
 	}
 	if refusal != nil {
 		if !options.HoldPending || mode == egress.None {
@@ -340,6 +340,37 @@ func checkRuleFlags(spec RunSpec, options NetworkAdmission, mode egress.Mode) er
 	named := strings.Join(flags, " and ")
 	return fmt.Errorf("%s cannot start because %s only %s to filtered access, and this run is %s\n\n  Use --egress filtered, or leave out %s",
 		networkLaunchName(spec), named, adds, mode.Word(), named)
+}
+
+// ApproveCommand is the command that reviews the network request of the project in folder, for a
+// person whose coop approve reviews the project here. A fork's approvals are its own, so a launch
+// in another checkout, such as a fork loop started from its parent, names that checkout. COOP_REPO,
+// not cd: the next command a person runs, a fork restart say, belongs in the folder they are in.
+func ApproveCommand(here, folder string) string {
+	if here != "" && SameFolder(here, folder) {
+		return "coop approve"
+	}
+	if word, ok := ui.ShellWord(folder); ok {
+		return "COOP_REPO=" + word + " coop approve"
+	}
+	return "coop approve"
+}
+
+// approvingProject is the project coop approve reviews when this process's person runs it, as
+// cli.netProject finds it: COOP_REPO, else the working folder's checkout. "" when there is none.
+func approvingProject(cfg *config.Config) string {
+	if cfg.RepoOverride != "" {
+		here, err := ResolveRepo(cfg.RepoOverride)
+		if err != nil {
+			return ""
+		}
+		return here
+	}
+	here, ok, err := FindRepo()
+	if err != nil || !ok {
+		return ""
+	}
+	return here
 }
 
 // networkLaunchName is who a refusal says cannot start: the agent by its

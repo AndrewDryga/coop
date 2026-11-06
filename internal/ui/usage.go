@@ -190,7 +190,7 @@ func correctedCommand(args []string, option, guess string) (command string, type
 		case strings.HasPrefix(arg, option+"="):
 			arg, replaced = guess+strings.TrimPrefix(arg, option), true
 		}
-		quoted, ok := shellWord(arg)
+		quoted, ok := ShellWord(arg)
 		if !ok {
 			return "", typed
 		}
@@ -203,8 +203,8 @@ func correctedCommand(args []string, option, guess string) (command string, type
 	return command, true
 }
 
-// shellWord quotes one argument for a shell. A control character has no form a person could paste.
-func shellWord(arg string) (string, bool) {
+// ShellWord quotes one argument for a shell. A control character has no form a person could paste.
+func ShellWord(arg string) (string, bool) {
 	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@%+,", r))
 	}) < 0 {

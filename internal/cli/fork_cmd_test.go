@@ -482,7 +482,7 @@ func TestInteractiveForkUsesSharedNetworkAdmission(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
 	signInCred(t, a.cfg, "claude", "default")
 	code, err := a.forkCreate([]string{"networked", "claude", "--allow-domain", "example.com"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+	if code != 1 || err == nil || !strings.Contains(err.Error(), forkReview(t, repo, "networked")) {
 		t.Fatalf("interactive fork without approval = (%d, %v)", code, err)
 	}
 	if data, readErr := os.ReadFile(recorder); readErr != nil || strings.Contains("\n"+string(data), "\nrun ") {
@@ -530,7 +530,7 @@ func TestForkFirstStartThatStopsShortIsShownAsNeverStarted(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
 	signInCred(t, a.cfg, "claude", "default")
 	code, err := a.forkCreate([]string{"networked", "claude"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+	if code != 1 || err == nil || !strings.Contains(err.Error(), forkReview(t, repo, "networked")) {
 		t.Fatalf("first start = (%d, %v), want the admission refusal", code, err)
 	}
 	reason, _, _ := strings.Cut(err.Error(), "\n")
@@ -1268,7 +1268,7 @@ func TestLocalForkACPUsesSharedNetworkAdmission(t *testing.T) {
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), BaseImage: "test-image", Egress: "open"}, rt: recordingRuntime(t, recorder), rtSet: true}
 	code, err := a.forkACP("networked", []string{"claude", "--allow-domain", "example.com"})
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+	if code != 1 || err == nil || !strings.Contains(err.Error(), forkReview(t, repo, "networked")) {
 		t.Fatalf("local fork ACP without approval = (%d, %v)", code, err)
 	}
 	if _, err := os.Stat(recorder); !os.IsNotExist(err) {

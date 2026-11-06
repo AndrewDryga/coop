@@ -71,6 +71,23 @@ func forkNetworkPreflightApp(t *testing.T, repo string) *app {
 	return &app{cfg: cfg, rt: rt, rtSet: true}
 }
 
+// reviewIn is the review line a launch refused for folder's network request ends with, when coop
+// runs in another project: coop approve reviews the project it runs in, so it names folder.
+func reviewIn(t *testing.T, folder string) string {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "Review it: COOP_REPO=" + canonical + " coop approve"
+}
+
+// forkReview is reviewIn for a fork's checkout, which holds the fork's own approvals.
+func forkReview(t *testing.T, repo, name string) string {
+	t.Helper()
+	return reviewIn(t, forkspace.Workspace(repo, name))
+}
+
 func assertForkNetworkTaskUnassigned(t *testing.T, repo, taskID string) {
 	t.Helper()
 	queue := filepath.Join(repo, ".agent", "tasks")
@@ -128,13 +145,13 @@ func TestDetachedForkLoopChecksNetworkApprovalBeforeStarting(t *testing.T) {
 		// reach its approval refusal and clear its record before inspecting canonical ownership.
 		wait.For(t, "detached fixture worker approval refusal", func() bool {
 			data, err := os.ReadFile(forkspace.LogPath(repo, name))
-			return err == nil && strings.Contains(string(data), "Review it: coop approve")
+			return err == nil && strings.Contains(string(data), forkReview(t, repo, name))
 		})
 		wait.For(t, "detached fixture worker pid record to clear", func() bool {
 			return !pathExists(forkspace.PidPath(repo, name))
 		})
 	}
-	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), "Review it: coop approve") {
+	if code != 1 || runErr == nil || !strings.Contains(runErr.Error(), forkReview(t, repo, name)) {
 		t.Errorf("detached fork without network approval = (%d, %v), want exit 1 and the approval refusal", code, runErr)
 	}
 	if strings.Contains(output, "Started fork") {
@@ -166,7 +183,7 @@ func TestRunForkLoopChecksNetworkApprovalBeforeAssigningCanonicalTask(t *testing
 			identity := bindTestFork(t, repo, forkName)
 
 			code, err := a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, detached)
-			if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+			if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 				t.Errorf("runForkLoop(detached=%v) = (%d, %v), want the approval refusal", detached, code, err)
 			}
 			assertForkNetworkTaskUnassigned(t, repo, taskID)
@@ -191,7 +208,7 @@ func TestRunForkLoopChecksForkWorkspaceNetworkPolicyBeforeAssigning(t *testing.T
 	writeForkNetworkPreflightProject(t, ws)
 
 	code, err := a.runForkLoop(repo, ws, identity, "claude", "", "", "", "", nil, networkFlags{}, false)
-	if code != 1 || err == nil || !strings.Contains(err.Error(), "Review it: coop approve") {
+	if code != 1 || err == nil || !strings.Contains(err.Error(), reviewIn(t, ws)) {
 		t.Errorf("runForkLoop with a workspace-only network request = (%d, %v), want the approval refusal", code, err)
 	}
 	assertForkNetworkTaskUnassigned(t, repo, taskID)

@@ -33,7 +33,8 @@ func admissionFixture(t *testing.T) (*config.Config, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &config.Config{ConfigDir: t.TempDir(), Egress: "open"}, repo, root
+	// The person runs coop in this project, so its review command is plain coop approve.
+	return &config.Config{ConfigDir: t.TempDir(), Egress: "open", RepoOverride: repo}, repo, root
 }
 
 // filteredReachedRuntimePreflight is how these tests prove a filtered resolution SUCCEEDED without
@@ -125,7 +126,7 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				loaded.ConfigDir = cfg.ConfigDir
+				loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
 				cfg = loaded
 			}
 			if test.remembered {
@@ -249,7 +250,7 @@ func TestAdmitNetworkRefusesRuleFlagsOnARunThatIsNotFiltered(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				loaded.ConfigDir = cfg.ConfigDir
+				loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
 				cfg = loaded
 			}
 			options := NetworkAdmission{InvocationMode: test.invocation, Domains: test.domains}
@@ -299,6 +300,38 @@ func TestAdmitNetworkUnapprovedProjectRulesRefuse(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("unapproved request created authority state", err)
+	}
+}
+
+// coop approve reviews the project it runs in. A launch in another checkout, a fork loop started
+// from its parent, must name the checkout whose approval it needs, or the review settles nothing.
+func TestAdmitNetworkNamesTheCheckoutToApproveFromAnotherProject(t *testing.T) {
+	cfg, repo, _ := admissionFixture(t)
+	fork := filepath.Join(t.TempDir(), "app-forks", "sweep a")
+	if err := os.MkdirAll(fork, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := filepath.EvalSymlinks(fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCopyFixture(t, filepath.Join(fork, ".agent", "project.yaml"), projectRuleYAML)
+	_, err = admitFixture(t, cfg, fork, NetworkAdmission{})
+	want := "\n\n  Review it: COOP_REPO='" + fork + "' coop approve"
+	if err == nil || !strings.HasSuffix(err.Error(), want) {
+		t.Fatalf("admission from %s = %v, want the review command for the fork, ending %q", repo, err, want)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(fork, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, here := range []string{fork, link} {
+		if got := ApproveCommand(here, fork); got != "coop approve" {
+			t.Errorf("ApproveCommand(%q, the same checkout) = %q, want plain coop approve", here, got)
+		}
+	}
+	if got := ApproveCommand("", repo); got != "COOP_REPO="+repo+" coop approve" {
+		t.Errorf("ApproveCommand outside any project = %q, want the checkout named", got)
 	}
 }
 
@@ -781,7 +814,7 @@ func TestHeldAdmissionOfABrokenFileStillRefuses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loaded.ConfigDir = cfg.ConfigDir
+		loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
 		return loaded
 	}
 	t.Run("a caller that did not ask", func(t *testing.T) {
@@ -888,7 +921,7 @@ func TestHeldAdmissionStillRefuses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loaded.ConfigDir = cfg.ConfigDir
+		loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
 		// Nothing to review and nothing to hold: it starts, offline, with no filtered child.
 		if err := heldAdmission(t, loaded, repo); err != nil {
 			t.Fatalf("offline admission = %v, want it to start offline", err)
@@ -918,7 +951,7 @@ func TestHeldAdmissionStillRefuses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loaded.ConfigDir = cfg.ConfigDir
+		loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
 		cannotHold(t, loaded, repo, runtime.Runtime{Name: "container"})
 	})
 	t.Run("an image of the person's own", func(t *testing.T) {

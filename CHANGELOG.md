@@ -112,6 +112,12 @@
   resumed with boxes that could not reach those hosts. `coop loop` and `coop fork <name> --loop`
   now repeat them, quoted for the shell.
 
+- **A fork refused for network access says where to approve it.** A fork's approvals are its own
+  once it is created, but its refusal said only "Review it: coop approve", and running that in the
+  project reviewed the project, found nothing new and left the fork refused. A launch in another
+  checkout now names it, as in `COOP_REPO=~/src/app-forks/api coop approve`, and so does the fix
+  line `coop tasks watch` shows for that fork's task.
+
 - **Removing a fork removes the approvals it holds.** `coop fork rm`, `--fresh` and the cleanup
   after `coop fork merge` left the fork's service, network and build approvals behind in Coop's
   private records, where nothing used or removed them. They now go with the fork. The parent's

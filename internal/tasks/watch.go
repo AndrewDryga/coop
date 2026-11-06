@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -48,6 +49,8 @@ type mergedTask struct {
 	since time.Time
 	// stopReason is why a stopped fork's loop ended, as its loop recorded or logged it.
 	stopReason string
+	// approve is the coop approve that reviews a stopped fork's own network request from the project.
+	approve string
 	// What the loop that let go of the task said (ProjectTaskLoop): a person stopped it, or it waits
 	// out a usage limit until limitUntil. startingServices: the task's box waits to start its services.
 	stoppedByYou     bool
@@ -178,6 +181,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				}
 				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
 					m.stopReason = forkStopReason(repo, task.Fork.Name, loopErrors[*task.Fork], m.stoppedByYou)
+					m.approve = box.ApproveCommand(repo, forkspace.Workspace(repo, task.Fork.Name))
 				}
 			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, now)
@@ -898,7 +902,7 @@ func classifyForkTask(m mergedTask) taskRow {
 		row.others = "in fork " + m.fork
 		return row
 	}
-	state, failure, verb, fix := forkStopNext(m.fork, m.stopReason)
+	state, failure, verb, fix := forkStopNext(m.fork, m.approve, m.stopReason)
 	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix, others: "in fork " + m.fork}
 }
 
@@ -906,14 +910,18 @@ func classifyForkTask(m mergedTask) taskRow {
 // commands that move its task on. A known refusal names its fix and then the restart, because
 // fixing the cause alone does not start the loop again, and a start refused for a stated reason
 // reads as that reason. Any other failure is an error as the loop or its log put it: the state
-// says the loop failed, and the error comes as written, on lines of its own.
-func forkStopNext(fork, reason string) (state, failure, verb string, fix []string) {
+// says the loop failed, and the error comes as written, on lines of its own. A fork's approvals are
+// its own, so approve reviews the fork's checkout.
+func forkStopNext(fork, approve, reason string) (state, failure, verb string, fix []string) {
 	restart := "coop fork " + fork + " --loop -d"
+	if approve == "" {
+		approve = "coop approve"
+	}
 	switch {
 	case reason == "":
 		return "loop ended unexpectedly", "", "resume", []string{restart}
 	case strings.Contains(reason, "has not been approved"):
-		return "network access not approved", "", "fix", []string{"coop approve", restart}
+		return "network access not approved", "", "fix", []string{approve, restart}
 	case strings.Contains(reason, "run coop login"):
 		return "sign-in no longer accepted", "", "fix", []string{"coop login", restart}
 	}
