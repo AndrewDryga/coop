@@ -310,7 +310,7 @@ func TestProviderAccountsLiveContractController(t *testing.T) {
 		reader := bufio.NewReader(client)
 		for _, request := range []map[string]any{
 			{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}}},
-			{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": accountLiveTaskID}}},
+			{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": accountLiveTaskID, "unrun_checks": []string{}}}},
 		} {
 			if err := json.NewEncoder(client).Encode(request); err != nil {
 				t.Fatal(err)

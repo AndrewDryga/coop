@@ -85,13 +85,19 @@ var toolTable = []tool{
 	},
 	{
 		name:        "tasks_complete",
-		description: "Move the task into 99_done/ after required verification passed. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused for a blocked task, which waits for a human's answer, and when another live process holds the task.",
+		description: "Move the task into 99_done/ after required verification passed. List every required check that did not run after your final edits in unrun_checks, or send [] when all of them ran; a nonempty list refuses completion, so run those checks, or block on the missing authority with tasks_block. Normal implementation needs its task-bound commit. If the task is already satisfied or an investigation reasonably could not reproduce the issue, send outcome plus concrete reason and evidence to close without a fake commit. Human decisions use tasks_block. Before calling, promote any promised logs from tmp/ to artifacts/ and verify their durable paths, not links back into tmp/. Keep evidence in artifacts/, not compiled programs or rebuildable bulk: put those in tmp/ and record a binary's commit, sha256 and build command in log.md. Requires a nonempty, fully checked checklist. Refused for a blocked task, which waits for a human's answer, and when another live process holds the task.",
 		schema: object(map[string]any{
 			"id":       idProp(),
 			"outcome":  enumProp("Omit for normal implementation completion. No-change choices require reason and evidence.", "already_satisfied", "could_not_reproduce", "wont_fix"),
 			"reason":   textProp("Why this truthful no-change outcome satisfies the task; required with outcome.", true, blockLimit),
 			"evidence": textProp("Existing implementation and verification evidence, or exact reproduction attempts and retained logs; required with outcome.", true, blockLimit),
-		}, "id"),
+			"unrun_checks": map[string]any{
+				"type":        "array",
+				"description": "Every required check that did not run after your final edits, one per item. Send [] only when all of them ran. A nonempty list refuses completion: run those checks, or block on the missing authority with tasks_block.",
+				"maxItems":    maxItems,
+				"items":       textProp("One required check that did not run, such as its exact command.", false, lineLimit),
+			},
+		}, "id", "unrun_checks"),
 		run: (*Server).complete,
 	},
 	{
@@ -387,6 +393,22 @@ func (s *optionalString) UnmarshalJSON(raw []byte) error {
 	s.present = true
 	s.value = string(value)
 	return nil
+}
+
+// requiredStrings is a list that must be sent even when empty: encoding/json reads an omitted
+// field and an explicit null alike as an empty list, and for unrun_checks an empty list claims that
+// every required check ran.
+type requiredStrings struct {
+	present bool
+	values  []string
+}
+
+func (s *requiredStrings) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return &json.UnmarshalTypeError{Value: "null", Type: reflect.TypeFor[[]string]()}
+	}
+	s.present = true
+	return json.Unmarshal(raw, &s.values)
 }
 
 type nonNullBool bool
@@ -735,12 +757,16 @@ func (s *Server) bulkNote(dir string) string {
 
 func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		ID       string         `json:"id"`
-		Outcome  optionalString `json:"outcome"`
-		Reason   optionalString `json:"reason"`
-		Evidence optionalString `json:"evidence"`
+		ID          string          `json:"id"`
+		Outcome     optionalString  `json:"outcome"`
+		Reason      optionalString  `json:"reason"`
+		Evidence    optionalString  `json:"evidence"`
+		UnrunChecks requiredStrings `json:"unrun_checks"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
+		return r
+	}
+	if r := checkUnrunChecks(in.UnrunChecks); r != nil {
 		return r
 	}
 	claim := CompletionClaim{Outcome: "implemented"}
@@ -790,6 +816,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		if claim.NoChange() {
 			return refusal("no-change completion is available only for the assigned task")
 		}
+		if r := unrunChecksRefusal(loc.item.ID, in.UnrunChecks.values); r != nil {
+			return r
+		}
 		if r := s.boxWriteRefusal(loc, "complete"); r != nil {
 			return r
 		}
@@ -810,6 +839,9 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 	// lifecycle fields truthful the moment the folder lands in done.
 	if err := tasks.RequireCompletedChecklist(loc.item); err != nil {
 		return refusal(err.Error())
+	}
+	if r := unrunChecksRefusal(loc.item.ID, in.UnrunChecks.values); r != nil {
+		return r
 	}
 	if check := s.authority.ValidateAssignedCompletion; check != nil {
 		if err := check(claim); err != nil {
@@ -1072,6 +1104,34 @@ func (s *Server) proposalRoot(queue string) (string, *toolResult) {
 		}
 	}
 	return roots[0], nil
+}
+
+// checkUnrunChecks refuses an unrun_checks list that was never sent, or whose entries a task file
+// could not carry. The tool dispatcher reports an omitted field first; this keeps the handler from
+// ever reading an omission as "every check ran".
+func checkUnrunChecks(list requiredStrings) *toolResult {
+	if !list.present {
+		return refusal("unrun_checks is required: list every required check that did not run after your final edits, or send [] when all of them ran")
+	}
+	if len(list.values) > maxItems {
+		return refusal(fmt.Sprintf("unrun_checks takes at most %d entries", maxItems))
+	}
+	for _, check := range list.values {
+		if r := checkText("unrun_checks", check, false, lineLimit); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+// unrunChecksRefusal turns away a completion whose worker reports a required check it did not run.
+// Workers ticked such a check with the excuse appended to its checklist text, and only the final
+// review caught it, after the loop had moved on.
+func unrunChecksRefusal(id string, unrun []string) *toolResult {
+	if len(unrun) == 0 {
+		return nil
+	}
+	return refusal(fmt.Sprintf("%s has not moved: required checks did not run after the final edits: %s. Run them and call tasks_complete again with unrun_checks [], or, if this run lacks the authority to run them, call tasks_block on that missing authority", id, strings.Join(unrun, "; ")))
 }
 
 // checkText refuses text a task file must never carry: empty, over its limit, invalid UTF-8, or

@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
-updated: 2026-11-03
+updated: 2026-11-05
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (eight tools:
@@ -185,6 +185,10 @@ it leaves a log.md note.
 Fork identity validation still permits an unfinished done projection so crash recovery can
 reopen it; captured completion acceptance, publication, and landing enforce the prerequisite.
 This checks task structure, not whether the agent actually ran a claimed verification.
+`tasks_complete` also requires `unrun_checks`, the worker's own list of required checks that did
+not run after its final edits: `[]` completes, and any entry refuses after the checklist check and
+before binding validation, pointing at `tasks_block`. An omitted list is a missing field and null is
+refused, so neither reads as "every check ran". It is a report, not proof.
 
 Tool input omissions are classified centrally from the same ordered required fields
 advertised by tools/list. Every missing top-level field is reported together, with its static
@@ -224,6 +228,8 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-05 — `tasks_complete` takes a required `unrun_checks` list and refuses a nonempty one
+  (task 2026-11-05-refuse-completion-when-the-worker-reports-a-requ).
 - 2026-11-03 — interactive agent sessions (`coop acp`, `coop <agent>`) get the task tools plus
   `tasks_claim`/`tasks_release`, claims bound to the session's host process; session writes respect
   other live claims; done tasks refuse non-assigned writes; the loop re-checks a claim after it

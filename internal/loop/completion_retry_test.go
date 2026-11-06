@@ -120,7 +120,7 @@ func TestNoChangeCompletionKeepsFirstAttemptEvidence(t *testing.T) {
 					return result
 				}
 				request("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}})
-				args := map[string]any{"id": completionID}
+				args := map[string]any{"id": completionID, "unrun_checks": []string{}}
 				if !implemented {
 					args["outcome"] = "already_satisfied"
 					args["reason"] = "Existing implementation satisfies the task."

@@ -437,7 +437,7 @@ func TestCompleteOnADoneTaskGoesByItsReceipt(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, tasks.StateDone, "t1", "task.md"), []byte(open), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if text := newSession(t, newServer(t, root, "t1")).mustCall("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "already done") {
+		if text := newSession(t, newServer(t, root, "t1")).mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}}); !strings.Contains(text, "already done") {
 			t.Fatalf("complete on an accepted task = %s", text)
 		}
 	})
@@ -446,7 +446,7 @@ func TestCompleteOnADoneTaskGoesByItsReceipt(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, tasks.StateDone, "t1", "task.md"), []byte(open), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if text := newSession(t, newServer(t, root, "t1")).mustRefuse("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "still open") {
+		if text := newSession(t, newServer(t, root, "t1")).mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}}); !strings.Contains(text, "still open") {
 			t.Fatalf("complete on an unowned move = %s", text)
 		}
 	})
@@ -456,7 +456,7 @@ func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
 	finishChecklist(t, root, "t1")
 	sess := newSession(t, newServer(t, root, "t1"))
-	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 	done := filepath.Join(root, tasks.StateDone, "t1")
 	state, err := os.ReadFile(filepath.Join(done, "state.md"))
 	if err != nil {
@@ -466,7 +466,7 @@ func TestCompleteTheAssignedTaskMovesAndNormalizes(t *testing.T) {
 		!strings.Contains(string(state), "**Done so far:** first\n") {
 		t.Fatalf("state.md = %q", state)
 	}
-	if text := sess.mustCall("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "already done") {
+	if text := sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}}); !strings.Contains(text, "already done") {
 		t.Fatalf("second complete = %s", text)
 	}
 }
@@ -489,7 +489,7 @@ func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
+	text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 	if !strings.Contains(text, "missing Coop-Task binding") || !strings.Contains(text, "retry tasks_complete in this turn") {
 		t.Fatalf("completion refusal lacks repair guidance: %s", text)
 	}
@@ -501,11 +501,11 @@ func TestAssignedCompletionRefusalCanBeRepairedInTheSameSession(t *testing.T) {
 		t.Fatalf("refused task moved to done: %v", err)
 	}
 	ready.Store(true)
-	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 	if checks.Load() != 2 {
 		t.Fatalf("completion checks = %d, want a fresh check on both calls", checks.Load())
 	}
-	sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 	if checks.Load() != 2 {
 		t.Fatal("idempotent completion revalidated an already-moved task")
 	}
@@ -518,7 +518,7 @@ func TestServerRetainsOnlyTheAssignedTerminalRefusal(t *testing.T) {
 	s.authority.ValidateAssignedCompletion = func(CompletionClaim) error { return errors.New("missing task binding") }
 	sess := newSession(t, s)
 
-	completeRefusal := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
+	completeRefusal := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 	got, ok := s.LatestAssignedTerminalRefusal()
 	if !ok || got.Action != "tasks_complete" || got.Detail != completeRefusal {
 		t.Fatalf("completion refusal = %+v, %v; want exact %q", got, ok, completeRefusal)
@@ -551,9 +551,9 @@ func TestAssignedTaskCanCloseWithAnExplicitNoChangeOutcome(t *testing.T) {
 	sess := newSession(t, s)
 	before := taskFiles(t, root)
 	for _, args := range []map[string]any{
-		{"id": "t1", "outcome": "already_satisfied"},
-		{"id": "t1", "outcome": "already_satisfied", "reason": "why", "evidence": nil},
-		{"id": "t1", "reason": "why", "evidence": "proof"},
+		{"id": "t1", "unrun_checks": []string{}, "outcome": "already_satisfied"},
+		{"id": "t1", "unrun_checks": []string{}, "outcome": "already_satisfied", "reason": "why", "evidence": nil},
+		{"id": "t1", "unrun_checks": []string{}, "reason": "why", "evidence": "proof"},
 	} {
 		sess.mustRefuse("tasks_complete", args)
 	}
@@ -561,7 +561,7 @@ func TestAssignedTaskCanCloseWithAnExplicitNoChangeOutcome(t *testing.T) {
 		t.Fatal("invalid no-change completion mutated task files")
 	}
 	text := sess.mustCall("tasks_complete", map[string]any{
-		"id": "t1", "outcome": "already_satisfied",
+		"id": "t1", "unrun_checks": []string{}, "outcome": "already_satisfied",
 		"reason": "Existing implementation covers the task.", "evidence": "Commit for task-old; focused check passed.",
 	})
 	if !strings.Contains(text, "closed as already satisfied") {
@@ -693,7 +693,7 @@ func TestMutationOnATaskAnotherLiveProcessHoldsIsRefused(t *testing.T) {
 		"tasks_append_log":   {"id": "theirs", "entry": "hi"},
 		"tasks_update_state": {"id": "theirs", "status": "s", "done_so_far": "d", "next_action": "n", "traps": "t"},
 		"tasks_set_subtasks": {"id": "theirs", "subtasks": []map[string]any{{"text": "x"}}},
-		"tasks_complete":     {"id": "theirs"},
+		"tasks_complete":     {"id": "theirs", "unrun_checks": []string{}},
 		"tasks_block":        {"id": "theirs", "question": "q", "why": "W", "options": []string{"A"}, "recommendation": "A"},
 	} {
 		text := sess.mustRefuse(name, args)
@@ -740,10 +740,10 @@ func TestCompleteWithoutAnAssignedLeaseUsesTheTrustedPath(t *testing.T) {
 	}
 	defer lease.Release()
 	sess := newSession(t, newServer(t, root, ""))
-	if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "held"}); !strings.Contains(text, "held by another live process") {
+	if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "held", "unrun_checks": []string{}}); !strings.Contains(text, "held by another live process") {
 		t.Fatalf("refusal = %s", text)
 	}
-	sess.mustCall("tasks_complete", map[string]any{"id": "free"})
+	sess.mustCall("tasks_complete", map[string]any{"id": "free", "unrun_checks": []string{}})
 	state, err := os.ReadFile(filepath.Join(root, tasks.StateDone, "free", "state.md"))
 	if err != nil || !strings.Contains(string(state), "**Status:** complete") {
 		t.Fatalf("trusted completion did not land: %v %q", err, state)
@@ -767,7 +767,7 @@ func TestCompleteRefusesABlockedTask(t *testing.T) {
 				t.Fatal(err)
 			}
 			sess := newSession(t, newServer(t, root, assigned))
-			if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"}); !strings.Contains(text, "coop tasks unblock") {
+			if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}}); !strings.Contains(text, "coop tasks unblock") {
 				t.Fatalf("refusal = %s", text)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "task.md")); err != nil {
@@ -947,8 +947,8 @@ func TestToolsRefuseAQueueReachedThroughALink(t *testing.T) {
 				{"tasks_append_log", map[string]any{"id": "secret", "entry": "## planted"}},
 				{"tasks_set_subtasks", map[string]any{"id": "secret", "subtasks": []map[string]any{{"text": "planted", "done": true}}}},
 				{"tasks_block", map[string]any{"id": "secret", "question": "d", "why": "W", "options": []string{"A — a"}, "recommendation": "r"}},
-				{"tasks_complete", map[string]any{"id": "secret"}},
-				{"tasks_complete", map[string]any{"id": "mine"}},
+				{"tasks_complete", map[string]any{"id": "secret", "unrun_checks": []string{}}},
+				{"tasks_complete", map[string]any{"id": "mine", "unrun_checks": []string{}}},
 				{"tasks_propose", map[string]any{"kind": "task", "title": "Planted", "context": "c", "acceptance": "a", "approach": "p", "subtasks": []string{"s"}}},
 				{"tasks_propose", map[string]any{"kind": "backlog", "title": "Planted idea", "context": "c", "acceptance": "a", "approach": "p", "subtasks": []string{"s"}}},
 			} {

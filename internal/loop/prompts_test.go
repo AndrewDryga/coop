@@ -202,6 +202,24 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 	}
 }
 
+// An excuse ticked into the checklist used to pass until the final review; the worker must name
+// every unrun required check at completion instead, in plain and audit-rework iterations alike.
+func TestLoopWorkPromptNamesUnrunChecksAtCompletion(t *testing.T) {
+	for _, audit := range []bool{false, true} {
+		work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, audit)
+		for _, want := range []string{
+			"Every tasks_complete call sends `unrun_checks`",
+			"each required check that did not run after your final edits, or `[]` only when every one ran",
+			"A nonempty list is refused and the task does not move",
+			"run those checks, or block on the missing authority with tasks_block",
+		} {
+			if !strings.Contains(work, want) {
+				t.Errorf("audit=%v work prompt lacks %q", audit, want)
+			}
+		}
+	}
+}
+
 func TestLoopWorkPromptNoChangeCompletion(t *testing.T) {
 	work := LoopWorkPrompt("/repo", ".agent/tasks", "decision", "claude", nil, nil, false)
 	for _, want := range []string{

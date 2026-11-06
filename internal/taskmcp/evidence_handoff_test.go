@@ -36,7 +36,7 @@ func TestCompletionEvidenceHandoff(t *testing.T) {
 				}
 				sess := newSession(t, newServer(t, root, assigned))
 				// Refused completion does not consume evidence or issue a success receipt.
-				refused := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1"})
+				refused := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 				if strings.Contains(refused, completionEvidenceHandoff) {
 					t.Fatal("refusal emitted successful handoff")
 				}
@@ -45,7 +45,7 @@ func TestCompletionEvidenceHandoff(t *testing.T) {
 				}
 				finishChecklist(t, root, "t1")
 				for call := 0; call < 2; call++ {
-					text := sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+					text := sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 					for _, want := range []string{"Host finalization removes tmp/", "never cite tmp/ as retained evidence", "or say the full log was not retained", "not independent proof", "write nothing more"} {
 						if !strings.Contains(text, want) {
 							t.Fatalf("handoff missing %q: %s", want, text)
@@ -158,9 +158,9 @@ func TestCompletionResultWarnsAboutBulk(t *testing.T) {
 					owner = "t1"
 				}
 				sess := newSession(t, newServer(t, root, owner))
-				results := map[string]string{"t1 moved to 99_done/": sess.mustCall("tasks_complete", map[string]any{"id": "t1"})}
+				results := map[string]string{"t1 moved to 99_done/": sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})}
 				if assigned {
-					results["t1 is already done"] = sess.mustCall("tasks_complete", map[string]any{"id": "t1"})
+					results["t1 is already done"] = sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": []string{}})
 				}
 				for head, text := range results {
 					after, ok := strings.CutPrefix(text, head+completionEvidenceHandoff)

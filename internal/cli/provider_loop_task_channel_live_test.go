@@ -201,7 +201,7 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 				}
 			}
 			if tc.firstRefusal {
-				write(1, "tasks_complete", map[string]any{"id": s.id})
+				write(1, "tasks_complete", map[string]any{"id": s.id, "unrun_checks": []string{}})
 			}
 			write(12, "tasks_list", map[string]any{"query": providerLoopLiveSearchQuery})
 			stateID := s.id
@@ -213,7 +213,7 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 			proposal := providerLoopLiveProposal()
 			write(11, "tasks_propose", map[string]any{"kind": proposal.Kind, "title": proposal.Title, "context": proposal.Context, "acceptance": proposal.Acceptance, "approach": proposal.Approach, "subtasks": proposal.Subtasks})
 			write(2, "tasks_set_subtasks", map[string]any{"id": s.id, "subtasks": []map[string]any{{"text": "required check", "done": true}}})
-			write(3, "tasks_complete", map[string]any{"id": s.id})
+			write(3, "tasks_complete", map[string]any{"id": s.id, "unrun_checks": []string{}})
 			var replies bytes.Buffer
 			if err := s.Serve(context.Background(), providerLoopLiveTestConnection{strings.NewReader(requests.String()), &replies}); err != nil {
 				t.Fatal(err)
@@ -236,9 +236,9 @@ func TestProviderLoopLiveContractTaskChannel(t *testing.T) {
 					t.Fatal(err)
 				}
 				requests.Reset()
-				write(4, "tasks_complete", map[string]any{"id": s.id})
+				write(4, "tasks_complete", map[string]any{"id": s.id, "unrun_checks": []string{}})
 				write(5, "tasks_set_subtasks", map[string]any{"id": s.id, "subtasks": []map[string]any{{"text": "required check", "done": true}}})
-				write(6, "tasks_complete", map[string]any{"id": s.id})
+				write(6, "tasks_complete", map[string]any{"id": s.id, "unrun_checks": []string{}})
 				if err := s.Serve(context.Background(), providerLoopLiveTestConnection{strings.NewReader(requests.String()), &replies}); err != nil {
 					t.Fatal(err)
 				}

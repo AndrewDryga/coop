@@ -22,6 +22,12 @@
   so setting work aside meant blocking it on an invented question first. A task in progress is
   refused with the command that releases it.
 
+- **A loop worker can no longer finish a task with a required check it did not run.** Workers that
+  could not run a check in the box ticked it anyway, with the excuse added to its text, such as "host
+  run not possible from the box". Only the final review caught that, after the loop had moved on.
+  Finishing a task now means listing every required check that did not run after the last edit, or
+  an empty list when all of them ran. Any listed check stops the task from finishing, and the worker
+  is told to run it or to stop for a person's decision.
 - **Loop workers no longer stash in your checkout.** A worker ran `git stash` and `git stash pop` to
   test without its edits. While a stash is held, everyone's unsaved edits are gone from disk, and a
   pop after a stash that saved nothing applies an older, unrelated entry. The instructions for loop

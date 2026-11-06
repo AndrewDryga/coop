@@ -75,7 +75,7 @@ command -v coop >/dev/null 2>&1 && echo "COOPPRESENT" || echo "NOCOOP"
 {
   echo '{"jsonrpc":"2.0","id":"list","method":"tools/list"}'
   echo '{"jsonrpc":"2.0","id":"held","method":"tools/call","params":{"name":"tasks_append_log","arguments":{"id":"theirs","entry":"must not land"}}}'
-  echo '{"jsonrpc":"2.0","id":"done","method":"tools/call","params":{"name":"tasks_complete","arguments":{"id":"mine"}}}'
+  echo '{"jsonrpc":"2.0","id":"done","method":"tools/call","params":{"name":"tasks_complete","arguments":{"id":"mine","unrun_checks":[]}}}'
 } | socat -t 5 STDIO UNIX-CONNECT:/coop/tasks/mcp.sock`
 	var out, errOut strings.Builder
 	code, runErr := box.Run(cfg, rt, box.RunSpec{

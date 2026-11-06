@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,10 +62,18 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 			for _, want := range []string{
 				"promote any promised logs", "verify their durable paths", "not links back into tmp/",
 				"Keep evidence in artifacts/, not compiled programs or rebuildable bulk", "put those in tmp/", "record a binary's commit, sha256 and build command in log.md",
+				"List every required check that did not run after your final edits in unrun_checks", "or send [] when all of them ran",
+				"a nonempty list refuses completion", "block on the missing authority with tasks_block",
 			} {
 				if !strings.Contains(descriptor["description"].(string), want) {
 					t.Fatalf("completion descriptor lacks %q", want)
 				}
+			}
+			// An empty list is the honest "all ran", so the list has no lower bound, only the usual cap.
+			unrun := properties["unrun_checks"].(map[string]any)
+			if unrun["type"] != "array" || unrun["minItems"] != nil || unrun["maxItems"] != float64(tasks.TaskListLimit) ||
+				!slices.Contains(schema["required"].([]any), any("unrun_checks")) {
+				t.Fatalf("unrun_checks schema = %v, required = %v", unrun, schema["required"])
 			}
 		case "tasks_update_state":
 			if len(examples(schema)) != 1 {

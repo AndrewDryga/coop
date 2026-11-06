@@ -110,13 +110,13 @@ func TestSessionClaimsWorksAndCompletesATask(t *testing.T) {
 	}
 	sess.mustCall("tasks_append_log", map[string]any{"id": "work", "entry": "## today — did it"})
 	sess.mustCall("tasks_set_subtasks", map[string]any{"id": "work", "subtasks": []map[string]any{{"text": "first", "done": true}, {"text": "second", "done": true}}})
-	if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "work", "outcome": "already_satisfied", "reason": "r", "evidence": "e"}); !strings.Contains(text, "without outcome") {
+	if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "work", "unrun_checks": []string{}, "outcome": "already_satisfied", "reason": "r", "evidence": "e"}); !strings.Contains(text, "without outcome") {
 		t.Fatalf("a session's no-change completion must explain the plain path: %s", text)
 	}
 	if text := sess.mustCall("tasks_get", map[string]any{"id": "work"}); !strings.Contains(text, `"claim": "yours"`) {
 		t.Fatalf("the session's own claim must read as yours: %s", text)
 	}
-	sess.mustCall("tasks_complete", map[string]any{"id": "work"})
+	sess.mustCall("tasks_complete", map[string]any{"id": "work", "unrun_checks": []string{}})
 	if _, err := os.Stat(filepath.Join(root, tasks.StateDone, "work")); err != nil {
 		t.Fatalf("completed task is not done: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSessionClaimAndReleaseRefuseWhatTheSessionDoesNotOwn(t *testing.T) {
 		"tasks_append_log":   {"id": "theirs", "entry": "x"},
 		"tasks_update_state": {"id": "theirs", "status": "s"},
 		"tasks_set_subtasks": {"id": "theirs", "subtasks": []map[string]any{{"text": "x"}}},
-		"tasks_complete":     {"id": "theirs"},
+		"tasks_complete":     {"id": "theirs", "unrun_checks": []string{}},
 		"tasks_block":        {"id": "theirs", "question": "q", "why": "W", "options": []string{"A"}, "recommendation": "A"},
 	} {
 		if text := sess.mustRefuse(name, args); !strings.Contains(text, "claimed by codex") {
@@ -200,7 +200,7 @@ func TestLoopBoxStaysOffClaimedAndDoneTasks(t *testing.T) {
 	for name, args := range map[string]map[string]any{
 		"tasks_append_log":   {"id": "theirs", "entry": "x"},
 		"tasks_set_subtasks": {"id": "theirs", "subtasks": []map[string]any{{"text": "x", "done": true}}},
-		"tasks_complete":     {"id": "theirs"},
+		"tasks_complete":     {"id": "theirs", "unrun_checks": []string{}},
 		"tasks_block":        {"id": "theirs", "question": "q", "why": "W", "options": []string{"A"}, "recommendation": "A"},
 	} {
 		if text := loop.mustRefuse(name, args); !strings.Contains(text, "claimed by codex") {

@@ -65,6 +65,7 @@ func LoopWorkPrompt(repo, assignedRoot, assignedID, agent string, peers []agents
 		commitPolicy,
 		citationPolicy,
 		completionPolicy,
+		"Every tasks_complete call sends `unrun_checks`: each required check that did not run after your final edits, or `[]` only when every one ran. A nonempty list is refused and the task does not move: run those checks, or block on the missing authority with tasks_block.",
 		"If you hit a one-way-door decision, call tasks_block on your task with the question, why the task is blocked, the options, and your recommendation; a human resolves it, so stop working the task after that.",
 		discoveryPolicy,
 		"Work exactly ONE task per run: take the assigned task to done — or to blocked — then STOP without claiming or starting another, even if 00_todo/ still has tasks. The loop re-invokes you in a fresh box with fresh context for the next one; draining the whole queue in a single run is the loop's job, not yours.",

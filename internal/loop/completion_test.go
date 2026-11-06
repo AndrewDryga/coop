@@ -107,7 +107,7 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				request("initialize", map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}})
 				noChange := scenario == "explicit no change" || scenario == "edit after no-change completion"
 				complete := func() map[string]any {
-					args := map[string]any{"id": id}
+					args := map[string]any{"id": id, "unrun_checks": []string{}}
 					if noChange {
 						args["outcome"] = "already_satisfied"
 						args["reason"] = "The existing base implementation meets the task."
@@ -314,7 +314,7 @@ func TestLoopWarnsAboutBulkInACompletedTask(t *testing.T) {
 				reader, encoder := bufio.NewReader(client), json.NewEncoder(client)
 				for _, call := range []map[string]any{
 					{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": "2024-11-05", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "test", "version": "0"}}},
-					{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id}}},
+					{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "tasks_complete", "arguments": map[string]any{"id": id, "unrun_checks": []string{}}}},
 				} {
 					if err := encoder.Encode(call); err != nil {
 						t.Fatal(err)
