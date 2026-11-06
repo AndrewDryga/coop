@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A project can be approved again after its approval marker is written over.** Writing
+  `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
+  Coop's private copy through the hard link. Every run was then refused, and `coop approve` and
+  `coop net forget` failed with "private filesystem identity anchor changed before retirement" on
+  every try, even after the printed steps. Coop now removes that pair by its file identity:
+  `coop approve` replaces it once you review the access again, and `coop net forget` removes it. A
+  written-over marker still grants nothing, and no approval moves to another folder.
+
 - **A box Docker refuses to create fails cleanly.** Coop called that outcome unknown and left the
   run's filesystem helper running for ten minutes, past `coop net recover`. It now says Docker
   refused to create the container for this run, names the settings to check, and removes the helper

@@ -688,6 +688,10 @@ If a marker is malformed, inspect it with `ls -l -- ./.coop-network-approval`. O
 it's stale, remove it inside that checkout with `rm -- ./.coop-network-approval`, then run
 `coop approve` again.
 
+Writing the marker in place, as `printf … > .coop-network-approval` does, also changes co:op's
+private hard link, so the approval no longer applies. `coop approve` replaces both once you review
+the access again, and `coop net forget` removes them.
+
 The box can see the marker, so co:op also checks the paths in runtime mount arguments:
 
 - You may mount the exact project directory.

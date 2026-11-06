@@ -20,6 +20,10 @@ const maxAnchorBody = 512
 
 var linkNames = linkRootNames
 
+// beforeDiscardRemovesMarker, set only by tests, runs after Discard matched the marker to the private
+// anchor and before it removes the marker: where a concurrent review could replace the pair.
+var beforeDiscardRemovesMarker func()
+
 // Binding names one marker inside a protected root and its second name inside
 // an already-open private state root. Body identifies the intended binding for
 // diagnostics and recovery; the live hard link, not these bytes, is authority.
@@ -241,6 +245,97 @@ func Retire(binding Binding) error {
 	if readErr != nil || closeErr != nil || !ok || owner != uint32(os.Getuid()) ||
 		info.Mode().Perm() != 0o600 || !bytes.Equal(body, binding.Body) {
 		return errors.Join(readErr, closeErr, errors.New("private filesystem identity anchor changed before retirement"))
+	}
+	if err := sameOpenName(binding.AnchorRoot, binding.AnchorName, info); err != nil {
+		return err
+	}
+	if err := binding.AnchorRoot.Remove(binding.AnchorName); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Altered reports whether binding's private anchor exists but no longer holds what Create left
+// there: binding.Body, with mode 0600. Create writes an anchor once, so different bytes or a
+// different mode came through the marker, which shares its inode: writing the marker in place, as a
+// shell redirect or an editor does, reaches both names, and then neither proves the binding.
+//
+// Only a caller that derives the anchor name and binding.Body from one authority record of its own
+// may read Altered as that. For a binding read from a marker, a difference is only a mismatch.
+func Altered(binding Binding) (bool, error) {
+	if err := binding.check(); err != nil {
+		return false, err
+	}
+	info, err := binding.AnchorRoot.Lstat(binding.AnchorName)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, errors.New("private filesystem identity anchor is not a regular file")
+	}
+	if info.Mode().Perm() != 0o600 || info.Size() != int64(len(binding.Body)) {
+		return true, nil // decided without reading: an overwrite can make the file any size
+	}
+	anchor, _, err := openRegular(binding.AnchorRoot, binding.AnchorName)
+	if err != nil {
+		return false, err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(anchor, maxAnchorBody+1))
+	if err := errors.Join(readErr, anchor.Close()); err != nil {
+		return false, err
+	}
+	return !bytes.Equal(body, binding.Body), nil
+}
+
+// Discard retires an Altered binding by the identity of its names, since its bytes prove nothing.
+// The private name goes once it is a regular file this user owns, and the marker before it, only
+// while the marker is that very inode: any other file at the marker's name is not this binding's
+// and stays. Discard refuses a binding that is not Altered, whose bytes still prove it: Retire is
+// the removal that checks them. Its caller is bound by Altered's rule, and must already hold that
+// the binding grants nothing, since only intact bytes ever do.
+func Discard(binding Binding) error {
+	altered, err := Altered(binding)
+	if err != nil {
+		return err
+	}
+	if !altered {
+		if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return errors.New("private filesystem identity anchor still holds its binding; retire it instead")
+	}
+	info, err := binding.AnchorRoot.Lstat(binding.AnchorName)
+	if err != nil {
+		return err
+	}
+	if _, owner, ok := fileAuthority(info); !info.Mode().IsRegular() || !ok || owner != uint32(os.Getuid()) {
+		return errors.New("private filesystem identity anchor is not this user's file")
+	}
+	// The public name goes before the private one, as in Create's cleanup: a marker left with no
+	// private half would read as a binding nobody can prove.
+	if root, _, err := openPinnedRoot(binding.RootPath); err == nil {
+		marker, markerErr := root.Lstat(binding.MarkerName)
+		if markerErr == nil && os.SameFile(marker, info) {
+			if beforeDiscardRemovesMarker != nil {
+				beforeDiscardRemovesMarker()
+			}
+			// While the private name still holds the inode, its number cannot have been reused for
+			// a newer file at the marker's name, such as a pair a concurrent review just made.
+			markerErr = sameOpenName(binding.AnchorRoot, binding.AnchorName, info)
+			if markerErr == nil {
+				markerErr = root.Remove(binding.MarkerName)
+			}
+		}
+		closeErr := root.Close()
+		if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+			return errors.Join(markerErr, closeErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
 	}
 	if err := sameOpenName(binding.AnchorRoot, binding.AnchorName, info); err != nil {
 		return err

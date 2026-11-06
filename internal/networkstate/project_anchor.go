@@ -45,6 +45,22 @@ const markerRecovery = "inspect it with 'ls -l -- ./.coop-network-approval', rem
 // cancelled review) the unforgeable directory binding whose random name is included in the review
 // digest. Only publishing an Approval turns that binding into authority.
 func (s *Store) ensureProjectAnchor(project, projectID string, allowTransition bool, prior *Approval) (string, error) {
+	// A marker written in place writes through to the private anchor that shares its inode, and
+	// then neither proves anything. This project's approval names that anchor, so the pair is known
+	// to be this checkout's own: it goes by identity first, and a fresh one is made below as for a
+	// checkout with no marker. A marker that is some other file stays, for the checks below.
+	altered, err := s.priorAnchorAltered(project, prior)
+	if err != nil {
+		return "", err
+	}
+	if altered {
+		if !allowTransition {
+			return "", errProjectAnchorTransition
+		}
+		if err := s.retireProjectAnchor(project, prior); err != nil {
+			return "", fmt.Errorf("retire overwritten project identity: %w", err)
+		}
+	}
 	body, err := fsidentity.ReadMarker(project, ProjectApprovalMarker)
 	switch {
 	case err == nil:
@@ -161,5 +177,25 @@ func (s *Store) retireProjectAnchor(project string, approval *Approval) error {
 	if _, err := s.root.Lstat(projectAnchorName(approval.ProjectID, approval.ProjectAnchor)); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return fsidentity.Retire(s.projectAnchorBinding(project, approval.ProjectID, approval.ProjectAnchor))
+	binding := s.projectAnchorBinding(project, approval.ProjectID, approval.ProjectAnchor)
+	// This approval names the anchor and its bytes, and Coop writes them once, so other bytes came
+	// through the checkout's marker. They prove nothing, and the pair goes by identity: retiring it
+	// by its bytes would fail on every retry and leave the checkout unable to be approved again.
+	altered, err := fsidentity.Altered(binding)
+	if err != nil {
+		return err
+	}
+	if altered {
+		return fsidentity.Discard(binding)
+	}
+	return fsidentity.Retire(binding)
+}
+
+// priorAnchorAltered reports whether the anchor of this project's own approval was written through
+// its marker (fsidentity.Altered). A review then has to retire it before anything else.
+func (s *Store) priorAnchorAltered(project string, prior *Approval) (bool, error) {
+	if prior == nil || prior.Version != networkApprovalVersion || !projectAnchorRE.MatchString(prior.ProjectAnchor) {
+		return false, nil
+	}
+	return fsidentity.Altered(s.projectAnchorBinding(project, prior.ProjectID, prior.ProjectAnchor))
 }

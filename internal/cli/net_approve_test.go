@@ -753,6 +753,44 @@ func TestNetNamesWhatApproveWouldRefuse(t *testing.T) {
 	}
 }
 
+// A marker written in place, as `printf junk > .coop-network-approval` does, overwrites Coop's private
+// anchor through the hard link. The approval then admits nothing, and one coop approve at a terminal
+// settles it, as does coop net forget and approving again.
+func TestApproveAndForgetRecoverAnOverwrittenMarker(t *testing.T) {
+	for _, recover := range []string{"approve", "forget"} {
+		t.Run(recover, func(t *testing.T) {
+			a, repo := servicesProject(t, approveOtherRule, "")
+			if code, _, out, err := runApprove(t, a, repo, func(string) bool { return true }); code != 0 || err != nil {
+				t.Fatalf("first approval: code=%d err=%v out=%s", code, err, out)
+			}
+			// os.WriteFile truncates the existing file, so it writes through the link like a redirect.
+			if err := os.WriteFile(filepath.Join(repo, networkstate.ProjectApprovalMarker), []byte("junk\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo); err != nil || access.Pending == nil {
+				t.Fatalf("the overwritten marker still counts: pending=%v err=%v", access.Pending, err)
+			}
+			if recover == "forget" {
+				review, err := box.ReviewProjectNetworkForget(repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = confirmNetForget(t.Context(), review, &bytes.Buffer{}, func() bool { return true })
+				if err := errors.Join(err, review.Close()); err != nil {
+					t.Fatalf("forget: %v", err)
+				}
+			}
+			code, asked, out, err := runApprove(t, a, repo, func(string) bool { return true })
+			if code != 0 || err != nil || len(asked) != 1 {
+				t.Fatalf("approving again: code=%d err=%v asked=%q out=%s", code, err, asked, out)
+			}
+			if access, err := box.ProjectNetworkAccess(t.Context(), a.cfg, repo); err != nil || access.Pending != nil || access.Approval == nil {
+				t.Fatalf("after approving again: approval=%v pending=%v err=%v", access.Approval, access.Pending, err)
+			}
+		})
+	}
+}
+
 // A project file that does not parse is a failure to look, never a project with nothing wrong.
 func TestApproveReportsAProjectItCannotRead(t *testing.T) {
 	a, repo := servicesProject(t, "box: [\n", "services:\n  db:\n    image: postgres:18\n")

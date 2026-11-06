@@ -210,3 +210,139 @@ func TestRetireFinishesAfterTheMarkerIsAlreadyGone(t *testing.T) {
 		t.Fatalf("retirement retry left private anchor: %v", err)
 	}
 }
+
+// overwriteInPlace writes the marker the way `printf junk > marker` does: through its inode, which
+// the private anchor shares.
+func overwriteInPlace(t *testing.T, binding Binding, data []byte) {
+	t.Helper()
+	file, err := os.OpenFile(filepath.Join(binding.RootPath, binding.MarkerName), os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A marker written in place changes the private anchor too, so its bytes prove nothing and Retire,
+// which checks them, can never finish. Discard retires the pair by identity instead: the marker
+// while it is the anchor's own inode, then the private name.
+func TestDiscardRetiresAnOverwrittenPairByIdentity(t *testing.T) {
+	for name, alter := range map[string]func(t *testing.T, binding Binding){
+		"overwritten": func(t *testing.T, binding Binding) { overwriteInPlace(t, binding, []byte("junk\n")) },
+		"grown":       func(t *testing.T, binding Binding) { overwriteInPlace(t, binding, make([]byte, maxAnchorBody+1)) },
+		"same size":   func(t *testing.T, binding Binding) { overwriteInPlace(t, binding, []byte("coop-anchor-v2\n")) },
+		"chmod": func(t *testing.T, binding Binding) {
+			if err := os.Chmod(filepath.Join(binding.RootPath, binding.MarkerName), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			binding, closeState := testBinding(t)
+			defer closeState()
+			root, err := Create(binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = root.Close()
+			if altered, err := Altered(binding); err != nil || altered {
+				t.Fatalf("an intact binding: altered=%v err=%v", altered, err)
+			}
+			alter(t, binding)
+			if _, err := Open(binding); err == nil {
+				t.Fatal("an altered pair still proves the binding")
+			}
+			if altered, err := Altered(binding); err != nil || !altered {
+				t.Fatalf("altered=%v err=%v, want the change seen", altered, err)
+			}
+			if err := Retire(binding); err == nil {
+				t.Fatal("Retire removed a pair its bytes no longer prove")
+			}
+			if err := Discard(binding); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{
+				filepath.Join(binding.RootPath, binding.MarkerName),
+				filepath.Join(binding.AnchorRoot.Name(), binding.AnchorName),
+			} {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("discarded binding left %s: %v", path, err)
+				}
+			}
+			if err := Discard(binding); err != nil {
+				t.Fatal("a second discard of nothing failed:", err)
+			}
+		})
+	}
+}
+
+// Identity, not the name, decides what Discard removes: a marker that is another file stays, and a
+// binding whose bytes still prove it is refused, for Retire to check.
+func TestDiscardRemovesOnlyThePairItself(t *testing.T) {
+	binding, closeState := testBinding(t)
+	defer closeState()
+	root, err := Create(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = root.Close()
+	if err := Discard(binding); err == nil || !strings.Contains(err.Error(), "retire it instead") {
+		t.Fatalf("Discard of an intact binding = %v", err)
+	}
+	if root, err := Open(binding); err != nil {
+		t.Fatal("a refused discard damaged the binding:", err)
+	} else {
+		_ = root.Close()
+	}
+	overwriteInPlace(t, binding, []byte("junk\n"))
+	marker := filepath.Join(binding.RootPath, binding.MarkerName)
+	stranger := filepath.Join(binding.RootPath, "stranger")
+	if err := os.WriteFile(stranger, []byte("junk\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(stranger, marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := Discard(binding); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker); err != nil {
+		t.Fatal("Discard removed a marker that is another file:", err)
+	}
+	if _, err := binding.AnchorRoot.Lstat(binding.AnchorName); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the altered private anchor stayed: %v", err)
+	}
+}
+
+// A marker matched to the private anchor is removed only while the private name still holds that
+// inode. If something replaced the pair in between, as a concurrent review can, the marker may no
+// longer be the file Discard matched, so it stays.
+func TestDiscardKeepsTheMarkerWhenThePrivateNameChangesFirst(t *testing.T) {
+	binding, closeState := testBinding(t)
+	defer closeState()
+	root, err := Create(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = root.Close()
+	overwriteInPlace(t, binding, []byte("junk\n"))
+	beforeDiscardRemovesMarker = func() {
+		if err := binding.AnchorRoot.Remove(binding.AnchorName); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(binding.AnchorRoot.Name(), binding.AnchorName), []byte("newer\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeDiscardRemovesMarker = nil })
+	if err := Discard(binding); err == nil {
+		t.Fatal("Discard went on after the private name changed under it")
+	}
+	if _, err := os.Lstat(filepath.Join(binding.RootPath, binding.MarkerName)); err != nil {
+		t.Fatal("Discard removed a marker it could no longer prove:", err)
+	}
+}
