@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,7 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-06 — +1 leaf package and +1 edge: `secretname` (no internal imports) holds the built-in secret name list, and `shadowpath -> secretname` reads it, so the host-side hiding rules and the kernel filter's compiled name table come from one list (commit d7e272e5, live protection of secret-named files created after a box starts).
 - 2026-11-04 — +1 edge: `preset -> yamltext`, so a preset's unknown key is refused in the same plain words as `project.yaml` and `loop.yaml`.
 - 2026-11-04 — box imports workerproto for the controller-frozen project runtime selector. The
   sandbox executor consumes the same small validated runtime grant as the worker API, avoiding a
