@@ -121,8 +121,12 @@ func (a *app) ensureRuntimeContext(ctx context.Context) error {
 func Main(argv []string) int {
 	cfg, err := config.Load()
 	if err != nil {
-		ui.Error("%s", safeErrorText(err))
-		return 1
+		// The version reads no settings, and which build is installed is worth knowing most when
+		// they are broken. Every other command stops here.
+		if len(argv) > 0 && isVersionCommand(argv[0]) {
+			return cmdVersion(argv[1:], &config.Config{})
+		}
+		return reportExit(1, err)
 	}
 	box.ResolveBaseImage(cfg)
 	cfg.EnsureSettingsGitignore()
@@ -154,15 +158,9 @@ func Main(argv []string) int {
 		}
 		printHelp(cfg)
 		return 0
-	case "version", "-v", "--version":
-		if helpRequested(argv[1:]) { // `coop version --help` prints its help, not a self-referential error
-			return reportExit(helpForPath([]string{"version"}, cfg, false))
-		}
-		if err := rejectArgs("version", argv[1:]); err != nil { // reject extras like every no-arg command
-			return reportExit(2, err)
-		}
-		fmt.Println("coop " + resolveVersion())
-		return 0
+	}
+	if isVersionCommand(argv[0]) {
+		return cmdVersion(argv[1:], cfg)
 	}
 
 	// `-h`/`--help` (or a bare `help` arg) before any `--` asks for COOP's page for the command
@@ -179,6 +177,23 @@ func Main(argv []string) int {
 	// startTempReap); a detached worker reaches one only after it has proved its reservation.
 	a := &app{cfg: cfg, argv: argv, tempReapPending: true}
 	return reportExit(a.dispatch(argv))
+}
+
+// isVersionCommand is the one list of the version's spellings, so a broken settings file cannot
+// stop a spelling the normal path accepts.
+func isVersionCommand(arg string) bool { return arg == "version" || arg == "-v" || arg == "--version" }
+
+// cmdVersion prints the build. It takes no arguments, like every no-argument command, and
+// `coop version --help` prints its page rather than a self-referential error.
+func cmdVersion(args []string, cfg *config.Config) int {
+	if helpRequested(args) {
+		return reportExit(helpForPath([]string{"version"}, cfg, false))
+	}
+	if err := rejectArgs("version", args); err != nil {
+		return reportExit(2, err)
+	}
+	fmt.Println("coop " + resolveVersion())
+	return 0
 }
 
 // reportExit renders a command's error the way its kind deserves and returns the process exit code:

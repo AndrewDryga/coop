@@ -1,0 +1,7 @@
+
+✗ Could not load Coop settings
+
+      /Users/example/.config/coop/config:2
+      COOP_HOME can only be set in the environment, not in coop.conf.
+
+  Delete this line, and set it in the environment instead.

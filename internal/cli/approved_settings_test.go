@@ -33,6 +33,21 @@ func TestApprovedSettingsFailures(t *testing.T) {
 		assertApprovedOutput(t, "78-settings-unknown-setting", got)
 	})
 
+	// A real setting the file cannot hold is not a typo: the block says where it goes instead.
+	t.Run("78-settings-environment-only", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config")
+		if err := os.WriteFile(path, []byte("COOP_PIDS=512\nCOOP_HOME=/Volumes/private/coop\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("COOP_CONF", path)
+		_, err := config.Load()
+		if err == nil {
+			t.Fatal("COOP_HOME in the settings file should be refused, not ignored")
+		}
+		got := strings.ReplaceAll(usageBlock(t, err), path, "/Users/example/.config/coop/config")
+		assertApprovedOutput(t, "78-settings-environment-only", got)
+	})
+
 	t.Run("78-settings-invalid-value", func(t *testing.T) {
 		empty := filepath.Join(t.TempDir(), "config")
 		if err := os.WriteFile(empty, nil, 0o600); err != nil {

@@ -124,7 +124,7 @@ the file.
 The default file is optional, but a file you name with `COOP_CONF` must exist. If co:op can't read
 the file, the error names the path. If a line is malformed, repeats a setting or names a setting
 co:op doesn't read, the error names the path and line. Setting the same variable in the environment
-doesn't let a broken file pass.
+doesn't let a broken file pass. Every command except `coop version` stops until you fix the file.
 
 co:op reads `COOP_HOME`, `COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM`, `COOP_ACP_TRACE` and
 `COOP_SPINNER` only from the process environment, so you can't set them inside `coop.conf`. The box

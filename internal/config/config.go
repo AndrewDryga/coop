@@ -970,6 +970,23 @@ var mainConfigKeys = map[string]struct{}{
 	"COOP_WORKDIR":                    {},
 }
 
+// environmentOnlyKeys are settings Coop reads only from its own process environment: where the
+// settings live, and how this one session looks or behaves.
+var environmentOnlyKeys = map[string]struct{}{
+	"COOP_ACP_TRACE": {},
+	"COOP_ACP_WARM":  {},
+	"COOP_CONF":      {},
+	"COOP_HOME":      {},
+	"COOP_SPINNER":   {},
+	"NO_COLOR":       {},
+}
+
+// boxEnvironmentKeys are read inside the box, so they belong in agents/env.
+var boxEnvironmentKeys = map[string]struct{}{
+	"COOP_CONSULT_STREAM_LIMIT": {},
+	"COOP_NO_ASDF":              {},
+}
+
 var retiredMainConfigKeys = map[string]struct{}{
 	"COOP_AGENT_PACKAGES":    {},
 	"COOP_LOOP_CMD":          {},
@@ -1111,9 +1128,16 @@ func fileReason(err error) string {
 // validateMainConfigKey answers with the problem and the fix, or two empty strings when the setting
 // is one Coop reads. A retired setting is named as retired rather than as a typo: deleting the line
 // is the fix, and a near-miss suggestion would send the reader looking for a setting that is gone.
+// A real setting that this file cannot hold says where it goes instead.
 func validateMainConfigKey(key string) (problem, action string) {
 	if _, retired := retiredMainConfigKeys[key]; retired {
 		return fmt.Sprintf("Setting %q was retired.", key), "Delete this line — Coop no longer reads it."
+	}
+	if _, ok := environmentOnlyKeys[key]; ok {
+		return key + " can only be set in the environment, not in coop.conf.", "Delete this line, and set it in the environment instead."
+	}
+	if _, ok := boxEnvironmentKeys[key]; ok {
+		return key + " is read inside the box, not from coop.conf.", "Delete this line, and set it in agents/env instead."
 	}
 	if _, ok := mainConfigKeys[key]; ok {
 		return "", ""
@@ -1170,12 +1194,15 @@ type Failure struct {
 	Action   string
 }
 
+// Error is the one-line form, for a log or a wrap; the CLI draws the parts as a block instead.
+// Problem and Action are whole sentences, so they follow each other like sentences do.
 func (f *Failure) Error() string {
 	parts := []string{f.Headline}
-	for _, p := range []string{f.Where, f.Problem, f.Action} {
-		if p != "" {
-			parts = append(parts, p)
-		}
+	if f.Where != "" {
+		parts = append(parts, f.Where)
+	}
+	if sentences := strings.TrimSpace(f.Problem + " " + f.Action); sentences != "" {
+		parts = append(parts, sentences)
 	}
 	return strings.Join(parts, ": ")
 }

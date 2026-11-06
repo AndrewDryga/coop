@@ -433,7 +433,7 @@ the file.</p>
 <p>The default file is optional, but a file you name with <code>COOP_CONF</code> must exist. If co:op can&#39;t read
 the file, the error names the path. If a line is malformed, repeats a setting or names a setting
 co:op doesn&#39;t read, the error names the path and line. Setting the same variable in the environment
-doesn&#39;t let a broken file pass.</p>
+doesn&#39;t let a broken file pass. Every command except <code>coop version</code> stops until you fix the file.</p>
 <p>co:op reads <code>COOP_HOME</code>, <code>COOP_CONF</code>, <code>NO_COLOR</code>, <code>COOP_ACP_WARM</code>, <code>COOP_ACP_TRACE</code> and
 <code>COOP_SPINNER</code> only from the process environment, so you can&#39;t set them inside <code>coop.conf</code>. The box
 reads <code>COOP_NO_ASDF</code> and <code>COOP_CONSULT_STREAM_LIMIT</code>, so they belong in <code>agents/env</code>.</p>

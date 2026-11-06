@@ -85,6 +85,72 @@ func TestMainRejectsInvalidConfigBeforeRuntime(t *testing.T) {
 	}
 }
 
+// A broken settings file reads like every other refusal: the headline, then the file and line and
+// the problem on their own lines, then the fix. The QA run saw one line with ".:" between the parts.
+func TestMainDrawsSettingsErrorsAsABlock(t *testing.T) {
+	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
+	t.Setenv("COOP_RUNTIME", filepath.Join(t.TempDir(), "missing-runtime"))
+	for _, tc := range []struct {
+		name, body, line, problem, action string
+	}{
+		{"a line that is not a setting", "COOP_PIDS=512\nthis is not valid\n", ":2",
+			"This line is not a setting.", "Write settings as KEY=value, one per line."},
+		{"a setting twice", "COOP_PIDS=512\nCOOP_PIDS=256\n", ":2",
+			`Setting "COOP_PIDS" is set twice in this file.`, "Keep the line you want and delete the other."},
+		{"an invalid value", "COOP_CACHE=maybe\n", ":1",
+			"Invalid value for COOP_CACHE.", "Use true or false."},
+		{"an environment-only setting", "COOP_HOME=/x\n", ":1",
+			"COOP_HOME can only be set in the environment, not in coop.conf.", "Delete this line, and set it in the environment instead."},
+		{"a missing COOP_CONF file", "", "",
+			"No such file or directory.", "Fix that file, or point COOP_CONF somewhere else."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "nope.conf")
+			if tc.body != "" {
+				path = filepath.Join(t.TempDir(), "coop.conf")
+				if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("COOP_CONF", path)
+			var code int
+			var stdout string
+			stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code = Main([]string{"run", "--", "true"}) }) })
+			want := "\n✗ Could not load Coop settings\n\n      " + path + tc.line + "\n      " + tc.problem + "\n\n  " + tc.action + "\n"
+			if code != 1 || stdout != "" || stderr != want {
+				t.Errorf("coop run = %d, stdout %q\nstderr:\n%s\nwant:\n%s", code, stdout, stderr, want)
+			}
+		})
+	}
+}
+
+// The version answers even when the settings are broken: which build is installed is the first thing
+// to know about a broken setting, and the version reads none.
+func TestVersionPrintsWithBrokenSettings(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, []byte("COOP_PIDS=512\nthis is not valid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	for _, argv := range [][]string{{"version"}, {"-v"}, {"--version"}} {
+		var code int
+		var stdout string
+		stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code = Main(argv) }) })
+		if code != 0 || stdout != "coop "+resolveVersion()+"\n" || stderr != "" {
+			t.Errorf("coop %s = %d, stdout %q, stderr %q; want the version and exit 0", argv[0], code, stdout, stderr)
+		}
+	}
+	var code int
+	captureStderr(t, func() { code = Main([]string{"version", "extra"}) })
+	if code != 2 {
+		t.Errorf("coop version extra = %d, want 2: a broken file does not loosen its arguments", code)
+	}
+	captureStdout(t, func() { code = Main([]string{"version", "--help"}) })
+	if code != 0 {
+		t.Errorf("coop version --help = %d, want 0", code)
+	}
+}
+
 // A relative COOP_CONFIG_DIR would put sign-ins and the MCP file inside the working folder, usually
 // the repository a box mounts. Every command refuses it before it writes a file or asks a question:
 // init wrote rel2/mcp.json into the project, and login asked for an API key before failing.

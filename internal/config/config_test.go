@@ -166,8 +166,8 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "missing.conf")
 		t.Setenv("COOP_CONF", path)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), path) ||
-			!strings.Contains(err.Error(), "point COOP_CONF somewhere else") {
-			t.Fatalf("explicit missing config error = %v, want path and recovery", err)
+			!strings.Contains(err.Error(), "point COOP_CONF somewhere else") || strings.Contains(err.Error(), ".:") {
+			t.Fatalf("explicit missing config error = %v, want path and recovery, no \".:\"", err)
 		}
 	})
 	for _, tc := range []struct {
@@ -180,9 +180,15 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		{"unmatched quote", "COOP_GATE='make check\n", `Setting "COOP_GATE" has an unmatched quote.`},
 		{"duplicate key", "COOP_HOMES=true\nCOOP_HOMES=true\n", "is set twice"},
 		{"unknown key", "COOP_HOEMS=false\n", `Unknown setting "COOP_HOEMS".`},
-		{"relocation key", "COOP_CONF=/tmp/elsewhere\n", `Unknown setting "COOP_CONF".`},
-		{"environment-only spinner", "COOP_SPINNER=0\n", `Unknown setting "COOP_SPINNER".`},
-		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", `Unknown setting "COOP_ACP_WARM".`},
+		{"relocation key", "COOP_CONF=/tmp/elsewhere\n", "COOP_CONF can only be set in the environment, not in coop.conf."},
+		{"environment-only home", "COOP_HOME=/x\n", "COOP_HOME can only be set in the environment, not in coop.conf."},
+		{"environment-only spinner", "COOP_SPINNER=0\n", "COOP_SPINNER can only be set in the environment, not in coop.conf."},
+		{"environment-only ACP warm", "COOP_ACP_WARM=0\n", "COOP_ACP_WARM can only be set in the environment, not in coop.conf."},
+		{"environment-only ACP trace", "COOP_ACP_TRACE=1\n", "COOP_ACP_TRACE can only be set in the environment, not in coop.conf."},
+		{"environment-only color", "NO_COLOR=1\n", "NO_COLOR can only be set in the environment, not in coop.conf."},
+		{"box setting", "COOP_NO_ASDF=1\n", "COOP_NO_ASDF is read inside the box, not from coop.conf."},
+		{"box consult limit", "COOP_CONSULT_STREAM_LIMIT=10\n", "COOP_CONSULT_STREAM_LIMIT is read inside the box, not from coop.conf."},
+		{"invalid value", "COOP_CACHE=maybe\n", "Invalid value for COOP_CACHE."},
 		{"retired key", "COOP_LOOP_MODEL=old\n", `Setting "COOP_LOOP_MODEL" was retired.`},
 		{"retired package override", "COOP_AGENT_PACKAGES=@openai/codex@0.1.0\n", `Setting "COOP_AGENT_PACKAGES" was retired.`},
 		{"misspelled adapter", "COOP_CLUADE_CMD=claude\n", `Unknown setting "COOP_CLUADE_CMD".`},
@@ -196,6 +202,9 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 			_, err := Load()
 			if err == nil || !strings.Contains(err.Error(), path+":") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Load error = %v, want path:line and %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), ".:") {
+				t.Errorf("Load error = %q glues a sentence to the next part with \".:\"", err)
 			}
 		})
 	}
@@ -231,6 +240,26 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 			t.Fatalf("unreadable config error = %v, want path", err)
 		}
 	})
+}
+
+// The one-line form of a settings error, for a log or a wrap, reads like the block the CLI draws:
+// the place, then the problem and the fix as sentences, never glued together with ".:".
+func TestFailureOneLineForm(t *testing.T) {
+	for _, tc := range []struct {
+		failure Failure
+		want    string
+	}{
+		{Failure{Headline: "Could not load Coop settings", Where: "/c/coop.conf:2", Problem: "This line is not a setting.", Action: "Write settings as KEY=value, one per line."},
+			"Could not load Coop settings: /c/coop.conf:2: This line is not a setting. Write settings as KEY=value, one per line."},
+		{Failure{Headline: "Could not load Coop settings", Where: "/c/missing.conf", Problem: "No such file or directory.", Action: "Fix that file, or point COOP_CONF somewhere else."},
+			"Could not load Coop settings: /c/missing.conf: No such file or directory. Fix that file, or point COOP_CONF somewhere else."},
+		{Failure{Headline: "Invalid value for COOP_PIDS", Problem: "Use a positive whole number."},
+			"Invalid value for COOP_PIDS: Use a positive whole number."},
+	} {
+		if got := tc.failure.Error(); got != tc.want {
+			t.Errorf("Error() = %q, want %q", got, tc.want)
+		}
+	}
 }
 
 func TestMainConfSyntaxAndDynamicKeys(t *testing.T) {

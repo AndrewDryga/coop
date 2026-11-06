@@ -28,6 +28,12 @@
   changes nothing, and it asks again on every run until the folder is in Git, even where an
   earlier run left files.
 
+- **A broken `coop.conf` reads like every other Coop error, and `coop version` still works.** The
+  error was one line that glued the problem to the fix with ".:", as in "This line is not a
+  setting.: Write settings as KEY=value". It now shows the headline, then the file and line, the
+  problem and the fix on their own lines. A setting that only works from the environment, such as
+  `COOP_HOME`, is named as one instead of as an unknown setting, and `COOP_NO_ASDF` points at
+  `agents/env`. `coop version`, `-v` and `--version` print the version even when the file is broken.
 - **Coop refuses a relative path for its own folders before it writes or asks anything.** A
   relative `COOP_CONFIG_DIR` put sign-ins and `mcp.json` in the current folder, usually a
   repository: `coop init` wrote `rel2/mcp.json` into the project, and `coop login` asked for an API
