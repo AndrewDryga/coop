@@ -11,6 +11,10 @@
   without the trailer, naming the task in the message body instead. For a task that already has
   two, they say what `coop tasks done` will refuse it for.
 
+- **A fork loop takes the queues in `COOP_TASKS`, as `coop loop` does.** `coop fork <name> --loop`
+  without `--tasks` ignored `COOP_TASKS` and worked every project queue. It now takes the queues
+  `COOP_TASKS` names, in order, and `coop fork stop` repeats them as `--tasks` in its Continue line.
+  `--tasks` still replaces `COOP_TASKS` for one run.
 - **A custom `work.command` that leaves its task unfinished is retried.** An attempt that exited 0
   with the task still in progress stopped the loop at once with "Task terminal correction
   stopped", a step that resumes an agent's session, which a custom command does not have. It now

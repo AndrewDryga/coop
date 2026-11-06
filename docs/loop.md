@@ -290,12 +290,13 @@ coop fork logs -f               # tail every fork at once (compose-style, prefix
 coop fork stop perf             # halt one; coop fork logs perf -f to watch just it
 ```
 
-Without `--tasks`, a fork takes work from the repo's `.agent/tasks` and then every
-[monorepo](#monorepos) member's queue, in `project.yaml` order. Use `--tasks <path>` to choose a
-queue, and repeat it for more: like `coop loop`, the fork takes them in the order you give them. A
-fork's queue can be an absolute path outside the project. The fork uses the original queues and
-doesn't copy them or change their paths. Only a fork loop takes a queue outside the project:
-`coop loop`, `coop tasks` and `coop backlog` work queues inside it, and refuse to run in a folder
+Without `--tasks`, a fork takes the queues `COOP_TASKS` names, as `coop loop` does. Without
+either, it takes work from the repo's `.agent/tasks` and then every [monorepo](#monorepos)
+member's queue, in `project.yaml` order. Use `--tasks <path>` to choose a queue, and repeat it for
+more: like `coop loop`, the fork takes them in the order you give them. A fork's `--tasks` queue
+can be an absolute path outside the project, and the fork uses the original queues without copying
+them or changing their paths. Nothing else takes a queue outside the project: `COOP_TASKS` names
+queues inside it, and `coop loop`, `coop tasks` and `coop backlog` refuse to run in a folder
 outside a Git repository.
 
 The fork receives only its assigned task under `.coop/task-executions/`. Restarting the same

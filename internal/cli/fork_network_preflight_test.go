@@ -151,6 +151,83 @@ func TestDetachedForkLoopNotesHowToContinueIt(t *testing.T) {
 	wait.For(t, "the drained worker to clear its record", func() bool { return !pathExists(forkspace.PidPath(repo, name)) })
 }
 
+// With no --tasks, a fork loop takes the queues COOP_TASKS names, as coop loop does: relative to the
+// project, in order, skipping one that does not exist yet. coop fork stop's Continue line repeats them,
+// so pasting it in a shell without COOP_TASKS still works those queues. --tasks replaces them.
+func TestDetachedForkLoopTakesTheQueuesCOOPTASKSNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, env string
+		flagRoot  bool // --tasks names the root queue as well
+		wantQueue func(root, web, api string) []string
+		wantErr   string
+	}{
+		{name: "COOP_TASKS alone", env: "api/.agent/tasks web/.agent/tasks missing/.agent/tasks",
+			wantQueue: func(_, web, api string) []string { return []string{api, web} }},
+		{name: "COOP_TASKS and --tasks", env: "api/.agent/tasks web/.agent/tasks", flagRoot: true,
+			wantQueue: func(root, _, _ string) []string { return []string{root} }},
+		{name: "COOP_TASKS outside the project", env: "../elsewhere", wantErr: `Invalid value "../elsewhere" in COOP_TASKS`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			root := filepath.Join(repo, ".agent", "tasks")
+			web, api := filepath.Join(repo, "web", ".agent", "tasks"), filepath.Join(repo, "api", ".agent", "tasks")
+			for _, queue := range []string{root, web, api} {
+				if err := os.MkdirAll(filepath.Join(queue, tasks.StateTodo), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := forkNetworkPreflightApp(t, repo)
+			t.Setenv("COOP_TASKS", tc.env) // what the detached worker reads; this process's config is set below
+			a.cfg.TasksFiles = strings.Fields(tc.env)
+			name := "queued"
+			t.Setenv(detachedChildEnv, "1") // its worker finds no task, so it ends by itself
+			t.Cleanup(func() {
+				if pathExists(forkspace.PidPath(repo, name)) {
+					if code, err := a.forkctl().ForkStop([]string{name}); code != 0 || err != nil {
+						t.Errorf("cleanup fork stop = (%d, %v)", code, err)
+					}
+				}
+			})
+			args := []string{name, "claude", "--loop", "-d", "--egress", "open"}
+			if tc.flagRoot {
+				args = append(args, "--tasks", root)
+			}
+			var code int
+			var runErr error
+			var stderr string
+			stdout := captureStdout(t, func() {
+				stderr = captureStderr(t, func() { code, runErr = a.forkCreate(args) })
+			})
+			if tc.wantErr != "" {
+				if code != 2 || runErr == nil || !strings.Contains(runErr.Error(), tc.wantErr) {
+					t.Errorf("start = (%d, %v), want exit 2 and %q", code, runErr, tc.wantErr)
+				}
+				if pathExists(forkspace.Workspace(repo, name)) {
+					t.Error("a refused start created the fork")
+				}
+				return
+			}
+			if code != 0 || runErr != nil {
+				t.Fatalf("detached start = (%d, %v)\n%s%s", code, runErr, stdout, stderr)
+			}
+			// A COOP_TASKS queue is joined to the project as Git names it, a --tasks one kept as typed.
+			project, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "coop fork " + name + " claude --loop"
+			for _, queue := range tc.wantQueue(root, filepath.Join(project, "web", ".agent", "tasks"), filepath.Join(project, "api", ".agent", "tasks")) {
+				want += " --tasks " + shellWord(queue)
+			}
+			want += " --egress open"
+			if got := forkspace.ReadWorkerContinue(repo, name); got != want {
+				t.Errorf("the detached start noted %q, want %q", got, want)
+			}
+			wait.For(t, "the drained worker to clear its record", func() bool { return !pathExists(forkspace.PidPath(repo, name)) })
+		})
+	}
+}
+
 func TestDetachedForkLoopChecksNetworkApprovalBeforeStarting(t *testing.T) {
 	repo := initRepo(t)
 	taskID := seedForkNetworkPreflightTask(t, repo)

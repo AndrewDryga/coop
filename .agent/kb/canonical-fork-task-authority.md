@@ -14,8 +14,10 @@ under `.coop/task-executions/<generation>/<assignment>/tasks`. Existing loop pro
 between-review, and signoff run against this projection; the canonical queue is never mounted into
 the box. A fork takes its canonical queues in the order coop loop claims from them
 (`forkCanonicalQueues`, internal/cli/fork_cmd.go; `forkAssignmentCandidates`): every `--tasks`
-queue as given, else project.yaml's, then work in progress first and todo tasks by priority, queue
-order breaking ties before folder order.
+queue as given, else COOP_TASKS's, else project.yaml's, then work in progress first and todo tasks
+by priority, queue order breaking ties before folder order. `forkCreate` resolves COOP_TASKS as
+`tasks.TaskQueues` does for coop loop and makes the existing queues the loop's own `--tasks`, so a
+detached worker and every Continue line carry them.
 
 Projection state is evidence, not authority. The host opens it with rooted no-follow operations,
 rejects extra tasks/symlinks/hardlinks/oversized trees, snapshots it immutably, then syncs only the
@@ -120,6 +122,8 @@ as a problem, and the service-launch locks beside it stay.
   that a fork-side read failure counted as "brought over later"; both now refuse. The baseline check
   had asked only the project's repository, which lacks a fork's unmerged commits, and `merge-base`
   in a box-written repository follows its shallow file. Verified against landed_fork.go.
+- 2026-11-06 — a fork loop without `--tasks` takes COOP_TASKS's queues, as coop loop does, and its
+  Continue lines repeat them (task 2026-11-06-make-a-fork-loop-honor-coop-tasks-like-coop-loop).
 - 2026-11-06 — a fork takes its queues in their configured order, not by folder name, and every
   `--tasks` it is given (task 2026-11-06-make-coop-fork-loops-honor-configured-queue-orde).
 - 2026-11-06 — the unblock notes itself in the projection's log too, so the canonical "Unblocked:"

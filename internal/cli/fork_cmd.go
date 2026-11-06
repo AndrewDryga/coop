@@ -270,7 +270,7 @@ type forkArgs struct {
 	newSession bool // --new: start a fresh agent session even when re-entering a fork
 	loop       bool
 	detach     bool
-	tasks      []string // --tasks <path> (repeatable): the canonical queues to schedule, in order (default: every project queue)
+	tasks      []string // --tasks <path> (repeatable): the canonical queues to schedule, in order (default: COOP_TASKS's, else every project queue)
 	credential string   // the fork's account, from the positional target's @account (else the ladder default)
 	model      string   // the fork's model, from the positional target's :model (else the CLI/preset default)
 	effort     string   // the fork's reasoning effort, from the positional target's /effort (else the agent default)
@@ -495,7 +495,25 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			fa.agent = remembered
 		}
 	}
-	// --loop with no --tasks is the monorepo-aware default: runForkLoop schedules every
+	// --loop with no --tasks takes the queues COOP_TASKS names, as coop loop does: inside the project,
+	// relative to its root, in order. They become this loop's --tasks, so a detached worker gets them
+	// and the Continue lines repeat them. A queue that does not exist yet holds no task, as coop loop
+	// reads it.
+	if fa.loop && len(fa.tasks) == 0 && len(a.cfg.TasksFiles) > 0 {
+		rels, err := tasks.TaskQueues(a.cfg, repo, nil)
+		if err != nil {
+			return 2, err
+		}
+		for _, rel := range rels {
+			if queue := filepath.Join(repo, rel); pathExists(queue) {
+				fa.tasks = append(fa.tasks, queue)
+			}
+		}
+		if len(fa.tasks) == 0 {
+			return -1, fmt.Errorf("no task queue found (%s) — run 'coop init' or pass --tasks", strings.Join(rels, ", "))
+		}
+	}
+	// Without either, --loop is the monorepo-aware default: runForkLoop schedules every
 	// project.TaskDirs queue (just .agent/tasks in a single repo). Leaving fa.tasks empty is the
 	// signal for that; each explicit --tasks is a canonical queue, resolved+validated just below
 	// and taken in the order given, as coop loop takes them. Fail fast HERE if the repo has no queue
