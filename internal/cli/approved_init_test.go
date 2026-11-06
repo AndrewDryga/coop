@@ -97,10 +97,6 @@ func TestApprovedFirstRun(t *testing.T) {
 		// question repeats, and Enter at the services prompt means none.
 		{fixture: "13b-init-git-yes-language-retry",
 			answers: typed("y", "rustfmt", "rust", "")},
-		// Declining Git creates nothing, and the result carries `git init` as the job that
-		// finishes setup.
-		{fixture: "13c-init-git-declined",
-			answers: typed("n", "", "")},
 		// Both lists supplied and a stack detected: nothing is asked, and the box Dockerfile
 		// --stack wrote becomes the job to review before building.
 		{fixture: "13e-init-stack-services-none", git: true,
@@ -129,6 +125,29 @@ func TestApprovedFirstRun(t *testing.T) {
 			}
 			assertApprovedSession(t, tc.fixture, normalize(out))
 		})
+	}
+}
+
+// Declining Git stops init before any other question, with the refusal a run without a terminal
+// gets, and the folder and the global MCP file stay as they were. The answers after the "n" are
+// for questions that must never be asked.
+func TestApprovedInitGitDeclined(t *testing.T) {
+	hermeticGit(t)
+	repo := t.TempDir()
+	a, normalize := initApp(t, repo)
+	signIn(t, a, "codex")
+	typedAnswers(t, "n", "go", "postgres")
+	var code int
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
+	if code != 1 {
+		t.Fatalf("a declined Git question exited %d, want 1:\n%s", code, out)
+	}
+	assertApprovedSession(t, "13c-init-git-declined", normalize(out))
+	if entries, err := os.ReadDir(repo); err != nil || len(entries) != 0 {
+		t.Errorf("a declined init wrote into the folder: %v, %v", entries, err)
+	}
+	if pathExists(a.cfg.MCPFile) {
+		t.Errorf("a declined init wrote %s", a.cfg.MCPFile)
 	}
 }
 

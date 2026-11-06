@@ -1361,12 +1361,6 @@ func TestInitActions(t *testing.T) {
 	if got[1].actions[0] != "coop build" || got[1].note != "Review .agent/Dockerfile, then run:" || got[2].actions[0] != "coop up" {
 		t.Errorf("build/up actions wrong: %+v", got)
 	}
-	// Outside a git repo the first job is the one that finishes setup — the exact two commands,
-	// in order, because only the re-init can set core.hooksPath.
-	got = initActions(cfg, t.TempDir(), nil, nil, []string{"codex"}, true)
-	if len(got) == 0 || !strings.HasPrefix(got[0].title, "Finish setup") || !slices.Equal(got[0].actions, []string{"git init", "coop init"}) {
-		t.Errorf("non-git repo should lead with git init then coop init, got %+v", got)
-	}
 	// A Go project on the default box gets the exact commands that put Go in its box, with the
 	// release go.mod names; once a project Dockerfile exists, building it is the job instead.
 	goRepo := t.TempDir()

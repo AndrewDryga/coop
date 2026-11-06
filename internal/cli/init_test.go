@@ -72,29 +72,90 @@ func TestPromptExactTokens(t *testing.T) {
 	}
 }
 
-// Git is created only on an explicit yes, before the hooks that need it. A decline or a closed
-// stdin creates nothing at all — coop never invents consent to touch a directory this way.
+// Git is created only on an explicit yes, before the hooks that need it. Any other answer or a
+// closed stdin creates nothing at all and returns the refusal a run without a terminal gets —
+// coop never invents consent to touch a directory this way.
 func TestAskGitInit(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "none"))
+	refusal := notAGitRepository().Error()
 	for _, c := range []struct {
 		answer string
 		want   bool
-	}{{"y\n", true}, {"yes\n", true}, {"\n", true}, {"n\n", false}, {"no\n", false}, {"", false}} {
+	}{{"y\n", true}, {"yes\n", true}, {"\n", true}, {"n\n", false}, {"no\n", false}, {"later\n", false}, {"", false}} {
 		repo := t.TempDir()
-		out := captureStderr(t, func() {
-			if err := askGitInit(bufio.NewScanner(strings.NewReader(c.answer)), repo); err != nil {
-				t.Fatal(err)
-			}
-		})
+		var err error
+		out := captureStderr(t, func() { err = askGitInit(bufio.NewScanner(strings.NewReader(c.answer)), repo) })
 		if got := pathExists(filepath.Join(repo, ".git")); got != c.want {
 			t.Errorf("answer %q → .git exists = %v, want %v", c.answer, got, c.want)
+		}
+		if c.want && err != nil {
+			t.Errorf("answer %q → %v, want Git created", c.answer, err)
+		}
+		if !c.want && (err == nil || err.Error() != refusal) {
+			t.Errorf("answer %q → %v, want the refusal %q", c.answer, err, refusal)
 		}
 		for _, want := range []string{"This folder is not a Git repository.", "Coop uses Git for tasks, forks, and commit checks.", "Initialize Git here? [Y/n]"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("the Git question is missing %q:\n%s", want, out)
 			}
 		}
+	}
+}
+
+// The Git question depends on Git alone. A folder an earlier run filled without a repository is
+// asked again at a terminal: a no leaves every file as it was, and a yes creates the repository and
+// finishes what the earlier run could not, the commit hooks included.
+func TestInitAsksForGitAgainInAFolderAnEarlierRunFilled(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hermeticGit(t)
+	repo := t.TempDir()
+	// What a declined first run used to leave: the whole project and no repository.
+	if _, err := scaffold.Init(repo, "", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !scaffold.Initialized(repo) || pathExists(filepath.Join(repo, ".git")) {
+		t.Fatal("the fixture is not a set-up folder outside Git")
+	}
+	a, _ := initApp(t, repo)
+	before := snapshotInitTree(t, repo)
+	typedAnswers(t, "n")
+	var code int
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
+	if code != 1 || !strings.Contains(out, "Initialize Git here? [Y/n]: n\n\n✗ This folder is not a Git repository\n") {
+		t.Fatalf("a declined rerun outside Git = %d, want the Git question, then the refusal:\n%s", code, out)
+	}
+	if changed := initTreeChange(before, snapshotInitTree(t, repo)); changed != "" {
+		t.Errorf("a declined rerun changed %s", changed)
+	}
+	typedAnswers(t, "y")
+	out = captureTerminal(t, func() { code = reportExit(a.cmdInit(nil)) })
+	if code != 0 || !strings.Contains(out, "Initialize Git here? [Y/n]: y\n\n✓ Coop project updated\n") {
+		t.Fatalf("an accepted rerun = %d, want Git created and the project updated:\n%s", code, out)
+	}
+	hooks, err := exec.Command("git", "-C", repo, "config", "core.hooksPath").Output()
+	if err != nil || strings.TrimSpace(string(hooks)) != ".githooks" {
+		t.Errorf("core.hooksPath after the accepted rerun = %q, %v; want .githooks", hooks, err)
+	}
+}
+
+// A project folder inside a repository, one COOP_REPO names say, is already in Git: init never
+// offers to nest a second repository in it.
+func TestInitOffersNoGitInsideARepository(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hermeticGit(t)
+	parent := t.TempDir()
+	gitInit(t, parent)
+	repo := filepath.Join(parent, "app")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := initApp(t, repo)
+	typedAnswers(t)
+	var code int
+	out := captureTerminal(t, func() { code = reportExit(a.cmdInit([]string{"--services", "none"})) })
+	if code != 0 || strings.Contains(out, "Initialize Git here?") || pathExists(filepath.Join(repo, ".git")) {
+		t.Fatalf("init in a folder inside a repository = %d, want no Git question and no nested .git:\n%s", code, out)
 	}
 }
 

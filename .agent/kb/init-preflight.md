@@ -3,7 +3,7 @@ name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 # Stack validation precedes scaffold writes
@@ -23,7 +23,11 @@ preflight does not introduce a second CLI validation implementation.
 Without a terminal the CLI refuses two runs before anything is written: a bare `--services`
 chooser nobody can answer (exit 2, as on an initialized project), and a folder outside Git
 (`forkspace.RepositoryRoot`, exit 1), since nothing init sets up can run there and nobody can be
-asked whether to create the repository. At a terminal Git is offered as before.
+asked whether to create the repository. At a terminal Git is offered on every run while
+`forkspace.RepositoryRoot` finds no repository, even where an earlier run left files; a folder
+inside a repository, such as a `COOP_REPO` subfolder, is never offered a nested one. Any answer
+but yes returns that same refusal (`notAGitRepository`) before another question or a write, so
+init never finishes outside Git and its result has no Git job.
 
 Additive `init --services` edits (the Compose file, then the service rules a filtered project.yaml
 asks for, `AddServiceRules`), subproject registration in project.yaml and Coop's stanzas in the
@@ -127,6 +131,13 @@ yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` �
 put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-11-06 — declining the Git question at a terminal now stops init with the no-terminal
+  refusal and writes nothing (it used to ask the other questions, write the whole project into
+  the plain folder and end with a "Finish setup: git init" job, now removed). The offer follows
+  `forkspace.RepositoryRoot` instead of a first-run-only `.git` check, so a rerun in a folder an
+  earlier run filled is asked again. Pinned by TestApprovedInitGitDeclined (13c),
+  TestAskGitInit, TestInitAsksForGitAgainInAFolderAnEarlierRunFilled and
+  TestInitOffersNoGitInsideARepository (task 2026-11-06-stop-coop-init-from-writing-files-after-the-pers).
 - 2026-11-04 — `coop approve` adds rules through the same edit (`AddApprovedServiceRules`), for a service of any
   name and ports, and a file with no list and no commented example now gets a new `egress_rules:` under its `box:`,
   or a new `box:` at the end. An edited example, a flow-style box or list, and any result that does not read back

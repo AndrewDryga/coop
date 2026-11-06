@@ -511,8 +511,8 @@ func (s *scaffolder) installGitHooks(langs, agentDirs []string) error {
 		}
 	}
 	if !gitRepo(s.repo) {
-		// Nothing to point core.hooksPath at yet. The caller says so once, as the action that
-		// finishes setup ('git init', then 'coop init'), rather than half-explaining it here.
+		// Nothing to point core.hooksPath at. coop init stops in a folder outside Git before it
+		// writes anything, so only a repository git itself cannot open gets here.
 		return nil
 	}
 	switch current := gitConfigGet(s.repo, "core.hooksPath"); current {

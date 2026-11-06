@@ -235,11 +235,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// Outside Git nothing Coop sets up can be used: the loop, forks and commit checks all need a
 	// repository. A terminal is asked whether to create one; without a terminal nobody can answer,
 	// so init stops before it writes anything instead of reporting a project nothing can run.
-	if _, inGit, err := forkspace.RepositoryRoot(repo); err == nil && !inGit && !atTerminal {
-		return 1, initFailed("This folder is not a Git repository",
-			"Coop uses Git for tasks, forks, and commit checks.",
-			"Run git init, then coop init again.",
-			"No files were changed.")
+	_, inGit, gitErr := forkspace.RepositoryRoot(repo)
+	outsideGit := gitErr == nil && !inGit
+	if outsideGit && !atTerminal {
+		return 1, notAGitRepository()
 	}
 	// Detect the repo's stack(s) for the commit gate; if nothing's detected and we're at a
 	// terminal, ask rather than guess — coop never imposes a check the repo doesn't use.
@@ -247,14 +246,15 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if !already {
 		ui.Note("Setting up Coop")
 	}
-	if !already && atTerminal {
-		// Git first, and only with an explicit yes: the tracked hooks below need a repo to point
-		// core.hooksPath at, and a piped/declining run must never have one created behind its back.
-		if !pathExists(filepath.Join(repo, ".git")) {
-			if err := askGitInit(ask, repo); err != nil {
-				return 1, err
-			}
+	// Git first, and only with an explicit yes: the tracked hooks below need a repo to point
+	// core.hooksPath at, and a piped or declining run must never have one created behind its back.
+	// It is asked on every run until the folder is in Git, even where an earlier run left files.
+	if outsideGit {
+		if err := askGitInit(ask, repo); err != nil {
+			return 1, err
 		}
+	}
+	if !already && atTerminal {
 		if len(langs) == 0 {
 			langs = promptGateLangs(ask)
 		}
@@ -320,6 +320,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 	// One result, not a ledger: what this project now is, what a box may reach, and only the
 	// actions its ACTUAL state still needs.
 	if already {
+		if outsideGit {
+			// Git was just created at the question above, and the result is a paragraph of its own.
+			ui.Note("")
+		}
 		ui.OK("Coop project updated")
 		ui.Note("  %s: existing files kept, missing files added", repo)
 		if len(registered) > 0 {
@@ -646,17 +650,13 @@ func (g initAction) print() {
 	}
 }
 
-// initActions is what this project actually needs next, derived from real state — no Git repo, no
-// signed-in agent, a box image to build or a toolchain the box lacks, services to start — followed
-// on a first run by the two jobs every new project has: prove the sandbox, then start working. A
-// repo that needs none of the first five prints only those two.
+// initActions is what this project actually needs next, derived from real state — no signed-in
+// agent, a box image to build or a toolchain the box lacks, services to start — followed on a
+// first run by the two jobs every new project has: prove the sandbox, then start working. A repo
+// that needs none of the first four prints only those two. Git is never one of them: init stops
+// in a folder outside Git before it writes anything.
 func initActions(cfg *config.Config, repo string, langs, services, agentDirs []string, fresh bool) []initAction {
 	var out []initAction
-	// coop runs forks and the loop on top of git (worktrees, rebase-merge), and the commit gate
-	// needs core.hooksPath — which only the re-init after `git init` can set. Lead with both.
-	if !pathExists(filepath.Join(repo, ".git")) {
-		out = append(out, initAction{title: "Finish setup: Coop needs a Git repository", actions: []string{"git init", "coop init"}})
-	}
 	// The agent to sign in to is also the one the loop line below names, so a first run reads as
 	// one story rather than two unrelated suggestions.
 	loopTarget := agents.Default()
@@ -800,8 +800,8 @@ func (a *app) writeMCPStub() error {
 
 // askGitInit says in two plain sentences why Coop needs Git, then creates the repository only on
 // an explicit yes — before the tracked hooks are installed, so core.hooksPath lands in this same
-// run and no hook-activation command is left stranded in the result. A decline, or a closed stdin,
-// creates nothing: the result then names `git init` as the action that finishes setup.
+// run and no hook-activation command is left stranded in the result. Any other answer, or a closed
+// stdin, creates nothing and stops init with the refusal a run without a terminal gets.
 func askGitInit(ask *bufio.Scanner, repo string) error {
 	ui.Note("")
 	ui.Note("This folder is not a Git repository.")
@@ -809,13 +809,22 @@ func askGitInit(ask *bufio.Scanner, repo string) error {
 	ui.Note("")
 	answer, ok := askOneOK(ask, "Initialize Git here? [Y/n]: ")
 	if !ok || !ui.ConfirmationResponse(answer, true) {
-		return nil
+		return notAGitRepository()
 	}
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		return initFailed("Could not initialize Git in "+repo, sentence(gitInitCause(string(out), err)+" while creating .git"),
 			"Fix the folder permissions, then run coop init again.")
 	}
 	return nil
+}
+
+// notAGitRepository stops init in a folder outside Git, whether nobody could be asked to create
+// the repository or the person said no. It comes before any write, so it says nothing changed.
+func notAGitRepository() error {
+	return initFailed("This folder is not a Git repository",
+		"Coop uses Git for tasks, forks, and commit checks.",
+		"Run git init, then coop init again.",
+		"No files were changed.")
 }
 
 // gitInitCause is why git could not create the repository, in the words the OS used. git writes
