@@ -22,6 +22,12 @@
   so setting work aside meant blocking it on an invented question first. A task in progress is
   refused with the command that releases it.
 
+- **A reopened task no longer bounces between two refusals.** When a review reopened a task whose
+  commit already met the finding, workers tried to close it as "already satisfied" first and were
+  refused. When the fix needed code, workers in two forks put it in a new commit, and then neither
+  way to finish worked, so both forks stopped for a person. The task tools now say that a reopened
+  task closes the normal way, and when new commits follow the task's own commit, the refusal says
+  how to combine them into that commit.
 - **A loop worker can no longer finish a task with a required check it did not run.** Workers that
   could not run a check in the box ticked it anyway, with the excuse added to its text, such as "host
   run not possible from the box". Only the final review caught that, after the loop had moved on.

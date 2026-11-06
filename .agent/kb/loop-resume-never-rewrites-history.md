@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-10-17
+updated: 2026-11-05
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -37,6 +37,17 @@ buy one. The e2e
 `verification-only audit re-close needs fresh host authority` guards exactly that, and relaxing the
 range check breaks it. `Coop-Recovery` is never parsed by any code — it exists only to make an
 in-range commit exist.
+
+**Reopened rework committed as a follow-up.** Without host audit authority (a fork's reopened
+task, a resumed crash), a bound task whose new commits carry no binding passes neither way: a
+normal completion needs a binding in the attempt's range, and an outcome is refused for a bound
+task. Two emisar forks stopped for a person this way on 2026-11-05. `checkAssignedCompletion` now
+answers that shape with `boundReworkRecovery` instead of suggesting `already_satisfied`: when
+`git log <bound>..HEAD` shows only this task's rework, `git reset --soft <bound>` and
+`git commit --amend --no-edit --only -- <paths>` fold it into the bound commit (a `Coop-Recovery`
+amend when nothing changed); with another task's commit after it, block. Nothing but the task's own
+rework is rewritten, so no descendant is reparented. Accepting the unbound follow-up instead would
+hide its diff from reviews that find a task's commits by trailer.
 
 The cheap mitigation for a repo whose tests leak browsers is a bounded drain:
 `box: env: {COOP_DESCENDANT_TIMEOUT: "180"}` in `.agent/project.yaml` — coop itself never sets this
@@ -104,6 +115,8 @@ original diff from protected-gate review and signoff. The final report distingui
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
 ## Changelog
+- 2026-11-05 — a bound task's unbound follow-up rework gets the fold recipe, and the outcome
+  refusals name the normal completion (task 2026-11-05-say-how-to-re-close-a-reopened-task-in-tasks-com).
 - 2026-10-17 — dropped the audit.go line number after `RestoreBackgroundHandoffCompletion`, which
   the sentence already names (re-verified in internal/tasks/audit.go).
 - 2026-09-22 — retained first-task evidence across automatic retries and unified completion repair

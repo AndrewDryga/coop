@@ -166,6 +166,10 @@ func TestNoChangeCompletionAllowed(t *testing.T) {
 			if (err == nil) != wantAllowed {
 				t.Fatalf("no-change completion %s: %v", scenario, err)
 			}
+			// A reopened task's worker must learn which call closes it, not just that outcome failed.
+			if scenario == "existing binding" && !strings.Contains(err.Error(), "close it with a normal completion, calling tasks_complete without outcome") {
+				t.Fatalf("bound-task outcome refusal does not name the call that closes it: %v", err)
+			}
 		})
 	}
 }

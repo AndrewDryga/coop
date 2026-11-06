@@ -2512,7 +2512,9 @@ func TestResumeLine(t *testing.T) {
 	// A landed commit → a line that names the sha and BOTH cases (finish-the-move vs reopened-rework),
 	// so it never falsely asserts the task is done.
 	l := resumeLine("my-task", []string{"abc123"}, true)
-	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move", "exactly one reachable", "do not add a second"} {
+	for _, want := range []string{"my-task", "abc123", "log.md", "REOPENED", "Coop-Recovery", "finish the move", "exactly one reachable", "do not add a second",
+		// Fork workers committed rework as a follow-up, which no completion accepts.
+		"(at HEAD: `git commit --amend --no-edit --only -- <changed paths>`", "a follow-up commit cannot bind"} {
 		if !strings.Contains(l, want) {
 			t.Errorf("resume line missing %q:\n%s", want, l)
 		}

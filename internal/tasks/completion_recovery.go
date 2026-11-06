@@ -40,7 +40,7 @@ func NoChangeCompletionAllowed(repo, base, head, id, baseline string) error {
 		}
 		for _, value := range commit.taskValues {
 			if value == id || strings.HasPrefix(value, id+" ") || strings.HasPrefix(value, id+"\t") {
-				return errors.New("task already has a commit binding; use normal completion")
+				return errors.New("task already has a commit binding, so outcome is refused: close it with a normal completion, calling tasks_complete without outcome")
 			}
 		}
 	}

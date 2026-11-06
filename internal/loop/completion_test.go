@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -462,6 +463,69 @@ func TestWorkerTerminalCorrectionPromptReturnsExactBoundedError(t *testing.T) {
 	}
 	if strings.Count(got, "missing required fields:") != 1 {
 		t.Fatalf("validation error was rewritten or duplicated:\n%s", got)
+	}
+}
+
+// Two forks stopped for a person when a reopened task's rework landed as a follow-up commit: a normal
+// completion wanted a new binding, and the refusal sent the worker to already_satisfied, which a
+// bound task cannot use. The refusal now names the fold into the bound commit, and following it
+// completes the task.
+func TestReopenedTaskFixedInAFollowUpCommitCompletes(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	for _, rework := range []bool{true, false} {
+		t.Run(map[bool]string{true: "fixed in a follow-up commit", false: "nothing needed changing"}[rework], func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, "answer.txt"), "first\n")
+			git("add", "answer.txt")
+			git("commit", "-q", "-m", "Ship it\n\nCoop-Task: task")
+			bound := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+			base := forkspace.GitOut(repo, "rev-parse", "HEAD") // the review reopened it; this attempt starts here
+			if rework {
+				writeTaskFile(t, filepath.Join(repo, "answer.txt"), "fixed\n")
+				git("commit", "-q", "-am", "Fix the review finding")
+			}
+			err := checkAssignedCompletion(repo, base, "task", nil, nil)
+			if !errors.Is(err, errCompletionBinding) {
+				t.Fatalf("an unbound follow-up completed, or lost its bounded recovery: %v", err)
+			}
+			for _, want := range []string{
+				"already has its bound commit " + bound + " from before this attempt", "outcome is refused",
+				"git log " + bound + "..HEAD", "git reset --soft " + bound, "git commit --amend --no-edit --only -- <changed paths>",
+				"Coop-Recovery: <current UTC timestamp>", "retry tasks_complete without outcome", "block with tasks_block",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("bound rework refusal lacks %q: %v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), "outcome already_satisfied") {
+				t.Fatalf("the refusal still sends a bound task to an outcome it cannot use: %v", err)
+			}
+			if rework {
+				git("reset", "--soft", bound)
+				git("commit", "-q", "--amend", "--no-edit", "--only", "--", "answer.txt")
+			} else {
+				git("commit", "-q", "--amend", "--only", "--no-edit", "--trailer", "Coop-Recovery: 2026-11-05T12:00:00Z")
+			}
+			if err := checkAssignedCompletion(repo, base, "task", nil, nil); err != nil {
+				t.Fatalf("following the recipe did not complete the task: %v", err)
+			}
+			want := "first\n"
+			if rework {
+				want = "fixed\n"
+			}
+			if got := forkspace.GitOut(repo, "show", "HEAD:answer.txt"); got+"\n" != want || len(tasks.CommitsForTask(repo, "", "task")) != 1 {
+				t.Fatalf("history after the fold: answer %q, bindings %v", got, tasks.CommitsForTask(repo, "", "task"))
+			}
+		})
+	}
+}
+
+func TestAuditReworkOutcomeRefusalNamesTheNormalCompletion(t *testing.T) {
+	for _, want := range []string{"outcome is refused", "re-close it with a normal completion, calling tasks_complete without outcome", "zero new commits"} {
+		if !strings.Contains(errAuditReworkOutcome.Error(), want) {
+			t.Errorf("audit rework outcome refusal lacks %q: %v", want, errAuditReworkOutcome)
+		}
 	}
 }
 

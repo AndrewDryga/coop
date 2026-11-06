@@ -64,6 +64,8 @@ func TestTaskArgumentSchemasDescribeRuntimeBoundsAndExamples(t *testing.T) {
 				"Keep evidence in artifacts/, not compiled programs or rebuildable bulk", "put those in tmp/", "record a binary's commit, sha256 and build command in log.md",
 				"List every required check that did not run after your final edits in unrun_checks", "or send [] when all of them ran",
 				"a nonempty list refuses completion", "block on the missing authority with tasks_block",
+				// Reopened workers sent outcome already_satisfied first and were refused for the binding.
+				"A task the review reopened, whose existing commit already meets the finding, re-closes with a normal completion, without outcome.",
 			} {
 				if !strings.Contains(descriptor["description"].(string), want) {
 					t.Fatalf("completion descriptor lacks %q", want)

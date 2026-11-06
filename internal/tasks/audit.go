@@ -3012,7 +3012,8 @@ func resumeLine(id string, commits []string, atHead bool) string {
 		"against the acceptance criteria, amend the commit with a unique `Coop-Recovery: <current UTC timestamp>` " +
 		"trailer while preserving exactly one Coop-Task trailer, and finish the move, but do NOT redo it; or (b) the review REOPENED it " +
 		"(its log.md will say what's wrong) — independently reproduce the finding; if it is false, re-close without a receipt-only commit; " +
-		"otherwise do the rework by amending or rewriting the already-bound implementation commit, leaving exactly one reachable Coop-Task " +
+		"otherwise do the rework by amending or rewriting the already-bound implementation commit (at HEAD: `git commit --amend --no-edit --only -- <changed paths>`; " +
+		"a follow-up commit cannot bind), leaving exactly one reachable Coop-Task " +
 		"binding and semantically unchanged later task commits; do not add a second task-bound commit. Disambiguate before acting."
 	if atHead {
 		return line

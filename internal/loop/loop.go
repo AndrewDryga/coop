@@ -848,7 +848,7 @@ reviewAgain:
 					completionClaim.Store(nil)
 					if claim.NoChange() {
 						if lease.Reopen != nil {
-							return errors.New("audit rework already has a task binding; use normal verification-only completion")
+							return errAuditReworkOutcome
 						}
 						if err := checkNoChangeCompletion(repo, noChangeBase.head, assigned.Item.ID, noChangeBase.checkout); err != nil {
 							return err
