@@ -318,7 +318,11 @@ func dockerCommandOutput(ctx context.Context, binary string, env []string, timeo
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, dockerFailure{refused: dockerRefused(err, stderr.Bytes())}
+		// Fixed values, not one built from the run: the result carries only the classification.
+		if dockerRefused(err, stderr.Bytes()) {
+			return nil, dockerFailure{refused: true}
+		}
+		return nil, dockerFailure{}
 	}
 	if out.overflow {
 		return nil, errors.New("Docker observation exceeded its bound; outcome unknown")

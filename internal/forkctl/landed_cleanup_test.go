@@ -234,7 +234,7 @@ func TestForkMergeAllTerminalRefusal(t *testing.T) {
 		}
 		c := &Control{cfg: &config.Config{}}
 		code, err := c.forkMergeAll(repo, []string{"untouched"}, "", false, false)
-		if code != 2 || err == nil || err.Error() != "cancelled" || !pathExists(ws) {
+		if code != 1 || err == nil || err.Error() != "cancelled" || !pathExists(ws) {
 			t.Fatalf("terminal refusal = %d, %v; workspace exists=%v", code, err, pathExists(ws))
 		}
 		fmt.Println("terminal-refusal-kept-workspace")

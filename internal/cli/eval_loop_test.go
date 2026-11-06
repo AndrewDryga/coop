@@ -87,7 +87,7 @@ func TestEvalLoopRefusesARecipeThatDoesNotParse(t *testing.T) {
 	}
 	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
 	code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m", "--loop-config", broken, "--dry-run"})
-	if code != 1 || err == nil || !strings.HasPrefix(err.Error(), broken+": ") {
+	if code != 1 || err == nil || !strings.HasPrefix(err.Error(), broken+" line 1: ") {
 		t.Fatalf("eval with a recipe that does not parse = (%d, %v), want exit 1 naming it", code, err)
 	}
 }

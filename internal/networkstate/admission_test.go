@@ -116,7 +116,7 @@ func TestMovedCheckoutWithEmptyPolicyKeepsNetworkReviewBarrier(t *testing.T) {
 	}
 	var pending *PendingApproval
 	if _, err := previewLaunchMode(root, newPath, nil, Admission{}); !errors.As(err, &pending) ||
-		!strings.Contains(pending.Reason, "moved") {
+		!strings.Contains(pending.Reason, "no approval for its current location") {
 		t.Fatalf("moved empty-policy preview = %v, want review barrier", err)
 	}
 	if _, err := store.Admit(newPath, Admission{}); !errors.As(err, &pending) {

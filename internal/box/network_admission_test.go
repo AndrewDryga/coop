@@ -345,10 +345,10 @@ func TestAdmitNetworkRefusesRuleFlagsOnARunThatIsNotFiltered(t *testing.T) {
 		rulesFile  string // "inside" the project or "outside" it
 		want       []string
 	}{
-		"open flag and a domain":        {invocation: &open, domains: []string{"example.com"}, want: []string{"--allow-domain only adds", "this run is open"}},
-		"offline flag and a rules file": {invocation: &none, rulesFile: "outside", want: []string{"--egress-rules only adds", "this run is offline"}},
+		"open flag and a domain":        {invocation: &open, domains: []string{"example.com"}, want: []string{"--allow-domain only adds", "--egress open makes this run open"}},
+		"offline flag and a rules file": {invocation: &none, rulesFile: "outside", want: []string{"--egress-rules only adds", "--egress offline makes this run offline"}},
 		"offline flag and a repo file":  {invocation: &none, rulesFile: "inside", want: []string{"keep the rules file outside the project"}},
-		"COOP_EGRESS and both flags":    {env: "offline", domains: []string{"example.com"}, rulesFile: "outside", want: []string{"--allow-domain and --egress-rules only add", "this run is offline"}},
+		"COOP_EGRESS and both flags":    {env: "offline", domains: []string{"example.com"}, rulesFile: "outside", want: []string{"--allow-domain and --egress-rules only add", "COOP_EGRESS=offline makes this run offline"}},
 		"filtered flag and a domain":    {invocation: &filtered, domains: []string{"example.com"}, want: []string{filteredReachedRuntimePreflight}},
 	} {
 		t.Run(name, func(t *testing.T) {
