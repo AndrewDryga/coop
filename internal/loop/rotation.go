@@ -5,6 +5,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -25,6 +26,20 @@ func (c *Control) applyTarget(r *ladder.Rotation) string {
 	c.cfg.SetTargetModel(t.Provider, t.Model)
 	c.cfg.SetTargetEffort(t.Provider, t.Effort)
 	return t.Provider
+}
+
+// RecordedTarget is the target a run of t actually uses, as a task lease records it for coop tasks
+// watch: t, with a model or effort it leaves open filled in as cfg resolves it for that provider
+// (an explicit one-off choice or a COOP_<AGENT>_MODEL default), so the record names what ran. A
+// part nothing at coop's level chose (the agent CLI's own default model) stays empty.
+func RecordedTarget(cfg *config.Config, t agents.Target) string {
+	if t.Model == "" {
+		t.Model = cfg.ModelFor(t.Provider)
+	}
+	if t.Effort == "" {
+		t.Effort = cfg.EffortFor(t.Provider)
+	}
+	return t.String()
 }
 
 // rotateOnLimit handles a rate limit with more than one target: advance, point cfg at the

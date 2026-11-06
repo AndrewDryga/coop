@@ -34,6 +34,13 @@ func ReadForkAgent(ws string) string {
 
 func SaveForkAgent(ws, agent string) error { return saveForkMeta(ws, forkAgentFile(ws), agent) }
 
+// SaveForkTarget notes the full target (provider:model/effort@account) the fork's loop takes its
+// next task with, beside the agent file, so coop tasks watch names every task of the fork the same
+// way, whether or not the loop holds that task's lease right now (tasks.forkTarget reads it).
+func SaveForkTarget(ws, target string) error {
+	return saveForkMeta(ws, filepath.Join(ws, ".coop", "target"), target)
+}
+
 // forkStartErrorFile notes why a fork's first start stopped before its agent ran, so coop fork ls
 // can say the fork never started instead of listing it as idle. It lives beside the agent file.
 func forkStartErrorFile(ws string) string { return filepath.Join(ws, ".coop", "start-error") }

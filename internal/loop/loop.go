@@ -757,7 +757,7 @@ reviewAgain:
 				onlyID = pendingReopened[0]
 			}
 			assignment, assignErr := tasks.AssignLoopTaskOnly(hosts, tasks.TaskLeaseOwner{
-				RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String(),
+				RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: RecordedTarget(c.cfg, target),
 			}, onlyID)
 			if assignErr != nil {
 				return 1, assignErr
@@ -836,7 +836,7 @@ reviewAgain:
 			var completionClaim atomic.Pointer[taskmcp.CompletionClaim]
 			taskTools, toolsErr := taskmcp.New(taskmcp.Authority{
 				Workspace: repo, QueueRoots: hosts, Assigned: assigned.Item.ID, ProposalOutbox: c.proposalOutboxPath(repo),
-				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: target.String()},
+				Owner: tasks.TaskLeaseOwner{RunID: c.runID, PID: os.Getpid(), Provider: agent, Target: RecordedTarget(c.cfg, target)},
 				ValidateAssignedCompletion: func(claim taskmcp.CompletionClaim) error {
 					completionClaim.Store(nil)
 					if claim.NoChange() {

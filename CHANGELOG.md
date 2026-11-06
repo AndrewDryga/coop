@@ -24,7 +24,9 @@
   the fork it runs in and what it is doing and for how long, so a worker that is gone, a heartbeat
   that went quiet, a claim left by a closed session or a fork loop that ended reads in plain words.
   Under a stopped task is the full command that moves it on, such as `coop approve, then coop fork
-  sweep-b --loop -d`, found from the fork's recorded failure or its log. A command is never cut: one
+  sweep-b --loop -d`, found from the fork's recorded failure or its log; an error the loop reported
+  reads `loop failed`, with the error itself on up to two lines below. Every task of a fork names
+  the same target, and a task a loop let go still names who worked it. A command is never cut: one
   that does not fit gets a line of its own. A fork's finished work is one row with its task count,
   its changes and `coop fork merge <name>`, under Now while the merge runs. With several queues
   every row names its queue, and the project's own queue goes by the project's folder name. Needs

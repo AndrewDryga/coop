@@ -107,6 +107,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 		}
 		folded := map[*forkMerge]int{}
 		mergeQueues := map[*forkMerge][]string{}
+		forkTargets := readForkTargets(snapshot)
 		now := time.Now()
 		doneToday := map[string]int{} // by queue label, for the per-source lines
 		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -136,12 +137,9 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				m.fork = task.Fork.Name
 				m.live = liveForks[*task.Fork] || executionsRunning(task.Executions)
 				m.system = forkSystems[*task.Fork]
-				m.agent = forkAgent(repo, task.Fork.Name)
+				m.agent = forkTargets.of(repo, *task.Fork)
 				if task.ownerRecord != nil && task.ownerRecord.Fork != nil {
 					m.since = task.ownerRecord.Fork.UpdatedAt
-					if target := forkTaskTarget(*task.ownerRecord.Fork, task.Item.ID); target != "" {
-						m.agent = target
-					}
 					if projection := task.ownerRecord.Fork.Projection; projection != "" && m.live {
 						m.lease = observeLeaseAt(projection, task.Item.ID, now)
 					}
@@ -307,13 +305,18 @@ func folderChanged(dir string) time.Time {
 }
 
 // goneWorker is the agent and last sign of life of the worker that left a task in progress with
-// nothing holding it. A worker that crashed leaves its lease record behind with its last heartbeat;
-// otherwise the task's own files say when anyone last worked on it.
+// nothing holding it. A worker that crashed leaves its lease record behind with its last heartbeat,
+// and one that let go leaves the record of its release; the task's own files may say someone
+// worked on it later.
 func goneWorker(item Item) (string, time.Time) {
-	if meta, ok := readLeaseAuthorityMetadata(filepath.Dir(filepath.Dir(item.Dir)), item.ID); ok && !meta.HeartbeatAt.IsZero() {
-		return knownTarget(meta.Target, meta.Provider), meta.HeartbeatAt
+	last := lastTouched(item)
+	if meta, ok := lastLeaseHolder(filepath.Dir(filepath.Dir(item.Dir)), item.ID); ok && !meta.HeartbeatAt.IsZero() {
+		if meta.HeartbeatAt.After(last) {
+			last = meta.HeartbeatAt
+		}
+		return knownTarget(meta.Target, meta.Provider), last
 	}
-	return "", lastTouched(item)
+	return "", last
 }
 
 // lastTouched is when anyone last worked on a task by its own files: its folder or the files a
@@ -352,16 +355,43 @@ func knownTarget(target, provider string) string {
 	return knownAgent(provider)
 }
 
-// forkTaskTarget is the target a fork's loop recorded when it took the task: the lease it holds on
-// its own copy of the task, which the assignment names. "" when no loop has recorded one.
-func forkTaskTarget(fork ForkTaskOwner, id string) string {
-	if fork.Projection == "" {
-		return ""
+// forkTargetSet is the one target the board names each fork generation by, so every task of a fork
+// reads the same: the target its loop most recently recorded in a lease on its own copy of a task
+// (the assignment names that copy).
+type forkTargetSet map[forkspace.Identity]forkTarget
+
+type forkTarget struct {
+	target string
+	at     time.Time
+}
+
+func readForkTargets(snapshot ProjectSnapshot) forkTargetSet {
+	set := forkTargetSet{}
+	for _, task := range snapshot.Tasks {
+		if task.Fork == nil || task.ownerRecord == nil || task.ownerRecord.Fork == nil || task.ownerRecord.Fork.Projection == "" {
+			continue
+		}
+		meta, ok := lastLeaseHolder(task.ownerRecord.Fork.Projection, task.Item.ID)
+		if !ok {
+			continue
+		}
+		if target := knownTarget(meta.Target, meta.Provider); target != "" && !meta.HeartbeatAt.Before(set[*task.Fork].at) {
+			set[*task.Fork] = forkTarget{target: target, at: meta.HeartbeatAt}
+		}
 	}
-	if meta, ok := readLeaseAuthorityMetadata(fork.Projection, id); ok {
-		return knownTarget(meta.Target, meta.Provider)
+	return set
+}
+
+// of is the fork's target: from its loop's latest lease, else the target its loop noted when it
+// last took a task (forkctl.SaveForkTarget), else the agent coop fork noted (forkctl.SaveForkAgent).
+func (s forkTargetSet) of(repo string, fork forkspace.Identity) string {
+	if t := s[fork].target; t != "" {
+		return t
 	}
-	return ""
+	if t := knownTarget(forkNote(repo, fork.Name, "target"), ""); t != "" {
+		return t
+	}
+	return knownAgent(forkNote(repo, fork.Name, "agent"))
 }
 
 // queueName is how the board names a queue: the folder that holds it, so `portal/.agent/tasks`
@@ -385,20 +415,20 @@ func queueName(label, project string) string {
 	return label
 }
 
-// forkAgent is the agent a fork was last run with, from the note coop fork keeps in its workspace
-// (forkctl.SaveForkAgent). The workspace is agent-writable, so the note is read through the no-follow
-// metadata root and printed only when it reads as a name.
-func forkAgent(repo, name string) string {
+// forkNote is one of the notes coop fork keeps in a fork's workspace (its agent, its target). The
+// workspace is agent-writable, so a note is read through the no-follow metadata root, and its
+// caller prints it only when it reads as a name or a target.
+func forkNote(repo, name, file string) string {
 	root, err := OpenTaskMetadataRoot(filepath.Join(forkspace.Workspace(repo, name), ".coop"))
 	if err != nil {
 		return ""
 	}
 	defer root.Close()
-	data, err := ReadTaskMetadataFile(root, "agent")
+	data, err := ReadTaskMetadataFile(root, file)
 	if err != nil {
 		return ""
 	}
-	return knownAgent(strings.TrimSpace(string(data)))
+	return strings.TrimSpace(string(data))
 }
 
 // forkStopReason is why a fork's loop ended: the failure the loop recorded for this generation
@@ -715,6 +745,7 @@ const (
 type taskRow struct {
 	section boardSection
 	state   string
+	failure string // the error a stopped fork loop reported, shown under its detail line
 	tone    rowTone
 	fixVerb string   // "to resume, run:", "to fix, run:" or "to free it, run:"
 	fix     []string // the complete commands, in order
@@ -750,9 +781,10 @@ func classifyTask(m mergedTask) taskRow {
 	case m.owner != "" && m.live:
 		return taskRow{section: sectionNow, state: workingFor(sinceOrZero(m.since))}
 	case m.owner != "":
+		// Nothing records when the session ended; the task's files say how long nobody touched it.
 		state := "claim held by a session that has ended"
 		if !m.since.IsZero() {
-			state = "claim held by a session that ended " + shortElapsed(sinceOrZero(m.since)) + " ago"
+			state += " · idle for " + shortElapsed(sinceOrZero(m.since))
 		}
 		return taskRow{section: sectionStopped, state: state, tone: toneStopped,
 			fixVerb: "to free it, run:", fix: []string{"coop tasks release " + m.ID}}
@@ -790,27 +822,29 @@ func classifyForkTask(m mergedTask) taskRow {
 		}
 		return taskRow{section: sectionNow, state: string(m.phase) + forElapsed(m.since)}
 	}
-	state, verb, fix := forkStopNext(m.fork, m.stopReason)
-	return taskRow{section: sectionStopped, state: state, tone: toneStopped, fixVerb: verb, fix: fix}
+	state, failure, verb, fix := forkStopNext(m.fork, m.stopReason)
+	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix}
 }
 
 // forkStopNext turns why a fork's loop ended into the state a person reads and the complete set of
 // commands that move its task on. A known refusal names its fix and then the restart, because
-// fixing the cause alone does not start the loop again; an unknown one is shown as it was said.
-func forkStopNext(fork, reason string) (state, verb string, fix []string) {
+// fixing the cause alone does not start the loop again, and a start refused for a stated reason
+// reads as that reason. Any other failure is an error as the loop or its log put it: the state
+// says the loop failed, and the error comes as written, on lines of its own.
+func forkStopNext(fork, reason string) (state, failure, verb string, fix []string) {
 	restart := "coop fork " + fork + " --loop -d"
 	switch {
 	case reason == "":
-		return "loop ended unexpectedly", "to resume, run:", []string{restart}
+		return "loop ended unexpectedly", "", "to resume, run:", []string{restart}
 	case strings.Contains(reason, "has not been approved"):
-		return "network access not approved", "to fix, run:", []string{"coop approve", restart}
+		return "network access not approved", "", "to fix, run:", []string{"coop approve", restart}
 	case strings.Contains(reason, "run coop login"):
-		return "sign-in no longer accepted", "to fix, run:", []string{"coop login", restart}
+		return "sign-in no longer accepted", "", "to fix, run:", []string{"coop login", restart}
 	}
 	if _, clause, ok := strings.Cut(reason, " cannot start because "); ok && clause != "" {
-		reason = clause
+		return clause, "", "to resume, run:", []string{restart}
 	}
-	return reason, "to resume, run:", []string{restart}
+	return "loop failed", reason, "to resume, run:", []string{restart}
 }
 
 func workingFor(d time.Duration) string {
@@ -1006,6 +1040,28 @@ func listShown(sections []watchSection, budget int) []int {
 	return shown
 }
 
+// failureLimit is how many lines a stopped loop's error may take on the board.
+const failureLimit = 2
+
+// failureLines is an error wrapped to room at word boundaries, at most failureLimit lines; a
+// longer one ends its last line with an ellipsis after a whole word.
+func failureLines(text string, room int) []string {
+	if text = oneLineTitle(text); text == "" {
+		return nil
+	}
+	lines := ui.WrapLines(text, room)
+	if len(lines) <= failureLimit {
+		return lines
+	}
+	lines = lines[:failureLimit]
+	last := strings.Fields(lines[failureLimit-1])
+	for len(last) > 1 && len([]rune(strings.Join(last, " ")))+1 > room {
+		last = last[:len(last)-1]
+	}
+	lines[failureLimit-1] = truncate(strings.Join(last, " "), room-1) + "…"
+	return lines
+}
+
 // fileLink is the URL a title links to: a task's folder or decision, or a fork's folder.
 func fileLink(path string) string {
 	if path == "" {
@@ -1145,6 +1201,9 @@ func boardSections(p ui.Palette, merged []mergedTask, merges []forkMerge, spin, 
 				detailLine(m.queue, taskFacts(m), stateSpan(row))})
 		case sectionStopped:
 			lines := []string{titleLine(p.Red(stoppedMarker), m.Title, taskLink(m)), detailLine(m.queue, taskFacts(m), stateSpan(row))}
+			for _, line := range failureLines(row.failure, lineRoom) {
+				lines = append(lines, lineIndent+p.Dim(p.Red(line)))
+			}
 			stopped = append(stopped, append(lines, commandLines(nil, row.fixVerb, row.fix)...))
 		case sectionNeedsYou:
 			decisions = true

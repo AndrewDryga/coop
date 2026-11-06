@@ -198,7 +198,7 @@ func TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout(t *testing.T) {
 		"",
 		"Stopped (1)",
 		"  ✕ Fall back to the live Debian archives when the snapshot fails",
-		"    infra · 0/1 · claude · claim held by a session that ended 40m ago",
+		"    infra · 0/1 · claude · claim held by a session that has ended · idle for 40m",
 		"    to free it, run:",
 		"    coop tasks release " + release,
 		"",
@@ -211,7 +211,7 @@ func TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout(t *testing.T) {
 		"Up next (1)",
 		"  ○ Accept any Redis database index the server has · packs",
 	}
-	got := tasksWatchFrame(boardRead{merged: merged, merges: merges}, 1, 80, 0)
+	got := tasksWatchFrame(boardRead{merged: merged, merges: merges}, 1, 90, 0)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("board =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
@@ -263,7 +263,7 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 		{"live claim", mergedTask{Item: task, owner: "claimed by alice", live: true, agent: "alice", since: ago(6 * time.Minute)}, "Now (1)",
 			[]string{"  ◳ " + title, "    0/3 · alice · working for 6m"}},
 		{"claim left by a closed session", mergedTask{Item: task, owner: "claimed by codex", agent: "codex", since: ago(40 * time.Minute)}, "Stopped (1)",
-			[]string{"  ✕ " + title, "    0/3 · codex · claim held by a session that ended 40m ago", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
+			[]string{"  ✕ " + title, "    0/3 · codex · claim held by a session that has ended · idle for 40m", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
 		{"claim left by a closed session, never touched", mergedTask{Item: task, owner: "claimed by codex", agent: "codex"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex · claim held by a session that has ended", "    to free it, run: coop tasks release 2026-11-05-wire-auth"}},
 		{"claimant on another system", mergedTask{Item: task, owner: "claimed by codex", agent: "codex", system: "Linux"}, "Now (1)",
@@ -292,7 +292,7 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 		{"fork finished, nothing published, loop gone", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReady, agent: "codex", since: ago(2 * time.Hour)}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-a · loop ended unexpectedly", "    to resume, run: coop fork sweep-a --loop -d"}},
 		{"fork final review with its loop gone", mergedTask{Item: task, fork: "sweep-a", phase: ForkAssignmentReviewing, agent: "codex", stopReason: "task x projection changed after review"}, "Stopped (1)",
-			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-a · task x projection changed after review", "    to resume, run: coop fork sweep-a --loop -d"}},
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-a · loop failed", "    task x projection changed after review", "    to resume, run: coop fork sweep-a --loop -d"}},
 		{"blocked a day ago", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, since: ago(50 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
 			[]string{"  ⚑ " + title, "    decision pending for 2d"}},
 		{"answered, not resumed", mergedTask{Item: Item{ID: "b", Title: title, State: StateBlocked}, answered: true, since: ago(3 * time.Hour)}, "Needs you (1) · answer them: coop tasks decisions -i",
@@ -841,7 +841,7 @@ func TestTaskWatchOmitsClaimProcessIDs(t *testing.T) {
 						t.Errorf("TODO claim appeared in watch:\n%s", out)
 					}
 				case process == "stopped":
-					if want := "  ✕ Queued work\n    " + who + " · claim held by a session that ended <1m ago\n    to free it, run: coop tasks release " + id + "\n"; !strings.Contains(out, want) {
+					if want := "  ✕ Queued work\n    " + who + " · claim held by a session that has ended · idle for <1m\n    to free it, run: coop tasks release " + id + "\n"; !strings.Contains(out, want) {
 						t.Errorf("watch lost the ended claim; want\n%s\ngot:\n%s", want, out)
 					}
 				default:
@@ -1113,10 +1113,10 @@ func TestTaskWatchShowsAForksMergeOnce(t *testing.T) {
 }
 
 // A row names its agent by the full target the worker recorded in its lease: a local loop's lease
-// on the task, a gone worker's last lease, or a fork loop's lease on its own copy of the task, which
-// the assignment names. A fork with no recorded lease falls back to the agent coop fork noted.
+// on the task, and once it let go, the record of the last holder, so a task left in progress still
+// names who worked it.
 func TestTaskWatchNamesTheFullTargetTheWorkerRecorded(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "projection", "tasks")
+	root := filepath.Join(t.TempDir(), "project", "tasks")
 	task := taskWithCompletedChecklist(t, root, StateInProgress, "wire-auth")
 	owner := testLeaseOwner()
 	owner.Target = "codex:gpt-6-astra/xhigh@personal"
@@ -1124,23 +1124,107 @@ func TestTaskWatchNamesTheFullTargetTheWorkerRecorded(t *testing.T) {
 	if err != nil || lease == nil {
 		t.Fatalf("lease = %v, %v", lease, err)
 	}
-	t.Cleanup(func() { _ = lease.Release() })
 	if got := observeLeaseAt(root, task.ID, time.Now()); got.State == leaseUnleased || knownTarget(got.Target, got.Provider) != owner.Target {
 		t.Errorf("held lease = %+v, want it held by %s", got, owner.Target)
 	}
 	if got, _ := goneWorker(task); got != owner.Target {
-		t.Errorf("gone worker = %q, want %q", got, owner.Target)
+		t.Errorf("crashed worker = %q, want %q", got, owner.Target)
 	}
-	if got := forkTaskTarget(ForkTaskOwner{Projection: root}, task.ID); got != owner.Target {
-		t.Errorf("fork task target = %q, want %q", got, owner.Target)
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
 	}
-	if got := forkTaskTarget(ForkTaskOwner{Projection: filepath.Join(t.TempDir(), "tasks")}, task.ID); got != "" {
-		t.Errorf("fork task without a lease = %q, want none (the fork's own agent note stands)", got)
+	if got := observeLeaseAt(root, task.ID, time.Now()); got.State != leaseUnleased {
+		t.Errorf("released lease = %+v, want unleased", got)
+	}
+	if got, at := goneWorker(task); got != owner.Target || at.IsZero() {
+		t.Errorf("worker that let go = %q at %v, want %q", got, at, owner.Target)
 	}
 	for target, want := range map[string]string{"claude@personal": "claude@personal", "codex:o3/high@a,b": "codex:o3/high@a,b", "": "codex", "x y": "codex"} {
 		if got := knownTarget(target, "codex"); got != want {
 			t.Errorf("knownTarget(%q) = %q, want %q", target, got, want)
 		}
+	}
+}
+
+// Every task of a fork names the same agent: the target the fork's loop last recorded in a lease on
+// its copy of any of its tasks, else the target its loop noted, else the agent coop fork noted.
+// One task held right now and one between leases never read as two different agents.
+func TestTaskWatchNamesEveryTaskOfAForkTheSameWay(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "sweep-c")
+	projection := filepath.Join(workspace, ".coop", "task-executions", "x", "tasks")
+	held := taskWithCompletedChecklist(t, projection, StateInProgress, "held")
+	taskWithCompletedChecklist(t, projection, StateInProgress, "between")
+	owner := testLeaseOwner()
+	owner.Target = "codex:gpt-6-astra/xhigh@personal"
+	lease, _, err := TryTaskLease(projection, held, owner)
+	if err != nil || lease == nil {
+		t.Fatalf("lease = %v, %v", lease, err)
+	}
+	t.Cleanup(func() { _ = lease.Release() })
+	snapshot := ProjectSnapshot{}
+	for _, id := range []string{"held", "between"} {
+		fork := identity
+		snapshot.Tasks = append(snapshot.Tasks, ProjectTaskSnapshot{Fork: &fork, Item: Item{ID: id},
+			ownerRecord: &TaskOwnerRecord{Fork: &ForkTaskOwner{Fork: identity, Projection: projection}}})
+	}
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(workspace, ".coop", name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("agent", "codex\n")
+	if got := readForkTargets(snapshot).of(repo, identity); got != owner.Target {
+		t.Errorf("fork target = %q, want the loop's lease %q for every task", got, owner.Target)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readForkTargets(snapshot).of(repo, identity); got != owner.Target {
+		t.Errorf("fork target between leases = %q, want the last holder %q", got, owner.Target)
+	}
+	otherWorkspace, otherIdentity := testAssignmentFork(t, repo, "other")
+	if err := os.MkdirAll(filepath.Join(otherWorkspace, ".coop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherWorkspace, ".coop", "agent"), []byte("codex\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readForkTargets(snapshot).of(repo, otherIdentity); got != "codex" {
+		t.Errorf("fork with only its agent note = %q, want codex", got)
+	}
+	if err := os.WriteFile(filepath.Join(otherWorkspace, ".coop", "target"), []byte("codex:gpt-6-astra/xhigh@personal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readForkTargets(snapshot).of(repo, otherIdentity); got != "codex:gpt-6-astra/xhigh@personal" {
+		t.Errorf("fork with its loop's target note = %q, want the noted target", got)
+	}
+}
+
+// A stopped fork loop's error is never cut into its detail line: the state says the loop failed,
+// and the error follows on at most two lines, wrapped between words, then an ellipsis.
+func TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines(t *testing.T) {
+	reason := `mcp__coop-tasks__tasks_set_subtasks: invalid arguments: json: unknown field "title" in the request the agent sent while it was setting the subtasks of its task for the second time today`
+	task := mergedTask{Item: inProgress("x", "Drain sockets", 4, 4), fork: "portal-a", phase: ForkAssignmentPaused, agent: "claude", stopReason: reason}
+	got := renderSections(ui.Palette{}, []mergedTask{task}, 0, 64)[0]
+	want := []string{
+		"Stopped (1)",
+		"  ✕ Drain sockets",
+		"    4/4 · claude in fork portal-a · loop failed",
+		"    mcp__coop-tasks__tasks_set_subtasks: invalid arguments:",
+		"    json: unknown field \"title\" in the request the agent sent…",
+		"    to resume, run: coop fork portal-a --loop -d",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stopped row =\n%q\nwant\n%q", got, want)
+	}
+	p := ui.Colored()
+	if colored := renderSections(p, []mergedTask{task}, 0, 64)[0]; colored[3] != "    "+p.Dim(p.Red("mcp__coop-tasks__tasks_set_subtasks: invalid arguments:")) {
+		t.Errorf("error line = %q, want it dim red", colored[3])
+	}
+	if lines := failureLines("short error", 64); !reflect.DeepEqual(lines, []string{"short error"}) {
+		t.Errorf("short error = %q", lines)
 	}
 }
 

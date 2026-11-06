@@ -1388,11 +1388,13 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent, t
 			}
 			return 0, nil
 		}
+		target := loop.RecordedTarget(a.cfg, rot.Active())
+		_ = forkctl.SaveForkTarget(ws, target) // a hint for coop tasks watch; the lease is the authority
 		assignment, err := tasks.AssignForkTask(authorityQueues, tasks.ForkAssignmentRequest{
 			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws, BaselineHead: head,
 			LeaseOwner: tasks.TaskLeaseOwner{
 				RunID: "fork-" + name + "-" + string(identity.Generation), PID: os.Getpid(),
-				Provider: agent, Target: rot.Active().String(),
+				Provider: agent, Target: target,
 			},
 		})
 		if err != nil {

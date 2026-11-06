@@ -2,8 +2,8 @@
 name: task-watch-shows-work-not-workspace-ownership
 description: tasks watch renders task-affecting activity, never an idle workspace reservation by itself
 scope: cli-output
-sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go]
-check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles'
+sources: [internal/tasks/watch.go, internal/tasks/watch_test.go, internal/tasks/snapshot.go, internal/tasks/owner.go, internal/tasks/lease.go, internal/forkctl/meta.go, internal/forkspace/gitcommand.go, internal/loop/rotation.go]
+check: go test ./internal/tasks -run 'TestReservationOnlyForkIsNotTaskWatchActivity|TestReservedForkWithAssignmentRendersTaskActivity|TestTaskWatchKeepsForkWorkVisibleWithoutAnExecution|TestTaskWatchDropsTheStandaloneBoxInventory|TestTaskWatchHidesTodoClaims|TestTaskWatchOmitsClaimProcessIDs|TestTaskWatchCompactQueueLabels|TestTaskWatchSaysWhatAForkIsDoingWithItsTask|TestTaskWatchListsAForkOnceOnItsTaskRow|TestTaskWatchShowsDecisionsAndTodaysWork|TestTaskWatchCountsAPersonsClaimAsWork|TestTaskWatchBoardMatchesTheApprovedLayout|TestTaskWatchEdgeCaseRows|TestTaskWatchPlacesEveryFactByOneRule|TestTaskWatchCapsTheListsNeverTheWork|TestForkStopReasonReadsTheRecordThenTheLog|TestTaskWatchMultiQueueBoardMatchesTheApprovedLayout|TestTaskWatchNamesEveryRowsQueueOnlyWhenThereAreSeveral|TestTaskWatchShowsAForksMergeOnce|TestTaskWatchNamesTheFullTargetTheWorkerRecorded|TestTaskWatchFillsTheTerminalHeight|TestTaskWatchHeaderShortensInsteadOfBeingCut|TestTaskWatchTitleUsesAvailableTerminalWidth|TestTaskWatchLinksTitles|TestTaskWatchNamesEveryTaskOfAForkTheSameWay|TestTaskWatchShowsAForkLoopsErrorOnItsOwnLines'
 updated: 2026-11-05
 ---
 
@@ -21,7 +21,8 @@ say to somebody reading the queue. The execution data stays in the snapshot, whe
 accounting, auto-exit and `--json` read it. The board's sections are Now, Stopped, Needs you and Up
 next, each header with its count. Every row above Up next has a detail line in one fixed order,
 `<queue> · [<done>/<total> · ][<agent>[ in fork <name>] · ]<state> for <duration>`, where the agent
-is the full target the worker recorded (`provider:model/effort@account`, only the parts it has), and
+is the full target the worker recorded (`provider:model/effort@account`, only the parts it has; one
+target for every task of a fork), and
 a stopped one a fix line with the complete commands that move it on (never "see the logs": the
 board reads the fork's recorded failure or its log itself). A command is never cut; one that does
 not fit goes on its own line. A fork's task names its fork only as `in fork <name>`; a fork's ready
@@ -58,6 +59,15 @@ and keep standalone fork rows only for lifecycle states that affect task progres
 
 ## Changelog
 
+- 2026-11-05 — the coordinator's review of round two: one agent form per fork and per task. Every
+  lease now records the target the run used (`loop.RecordedTarget`: the rotation's target with a
+  model or effort it left open filled in from config), a fork's loop notes it in `.coop/target`, a
+  released lease leaves a `.holder.json` record of who last held the task, and the board names a
+  fork by one target for all its tasks. A claim's state says `has ended · idle for <age>` (only
+  file times are known); a fork loop's reported error reads `loop failed` with the error on up to
+  two dim red lines. Swept the three lease writers (loop assignment, loop task tools, fork
+  assignment; pinned by internal/loop TestRecordedTargetNamesWhatTheRunUsed); a claim's `--as` label
+  (`lead`) carries no target and stays as written.
 - 2026-11-05 — round two of the owner's layout (task 2026-11-05-show-fork-merges-once-name-every-
   row-s-queue-siz, spec.md), from the real emisar board: a fork's ready or merging candidate is one
   row; every row of a multi-queue board names its queue first, and the 2026-09-12 "dont show ·

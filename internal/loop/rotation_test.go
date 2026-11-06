@@ -122,3 +122,26 @@ func TestApplyTarget(t *testing.T) {
 		t.Errorf("bare target: model = %q, want cleared", c.cfg.ModelFor("claude"))
 	}
 }
+
+// A lease records the target a run actually used, in coop's own grammar: what the rotation's target
+// left open is filled in from cfg (an explicit /effort, a COOP_<AGENT>_MODEL default), and nothing
+// is made up for a part nothing at coop's level chose.
+func TestRecordedTargetNamesWhatTheRunUsed(t *testing.T) {
+	cfg := &config.Config{}
+	bare := agents.Target{Provider: "codex", Accounts: []string{"personal"}}
+	if got := RecordedTarget(cfg, bare); got != "codex@personal" {
+		t.Errorf("bare target = %q, want codex@personal", got)
+	}
+	full := agents.Target{Provider: "codex", Model: "gpt-6-astra", Effort: "xhigh", Accounts: []string{"personal"}}
+	if got := RecordedTarget(cfg, full); got != "codex:gpt-6-astra/xhigh@personal" {
+		t.Errorf("full target = %q", got)
+	}
+	t.Setenv("COOP_CODEX_MODEL", "gpt-6-astra/high")
+	if got := RecordedTarget(cfg, bare); got != "codex:gpt-6-astra/high@personal" {
+		t.Errorf("bare target with a model default = %q, want the default filled in", got)
+	}
+	cfg.SetActiveEffort("codex", "xhigh")
+	if got := RecordedTarget(cfg, bare); got != "codex:gpt-6-astra/xhigh@personal" {
+		t.Errorf("bare target with an explicit effort = %q, want it", got)
+	}
+}

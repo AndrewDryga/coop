@@ -201,6 +201,11 @@ func (l *TaskLease) ConsumeAuditReopen() error {
 func (l *TaskLease) Release() error {
 	l.releaseOnce.Do(func() {
 		l.Quiesce()
+		// Who last held the task outlives the lease: coop tasks watch names that worker under a
+		// task left in progress. Best effort, and never read as authority.
+		last := l.meta
+		last.HeartbeatAt = l.now()
+		_ = writeLeaseHolderRecord(l.root, l.id, last)
 		l.releaseErr = errors.Join(
 			removeLeaseAuthorityMetadata(l.root, l.id),
 			unlockLeaseFile(l.authority),
@@ -727,15 +732,47 @@ func writeLeaseAuthorityMetadata(root, id string, meta taskLeaseMetadata) error 
 }
 
 func readLeaseAuthorityMetadata(root, id string) (taskLeaseMetadata, bool) {
+	return readLeaseMetadataRecord(root, id, ".json")
+}
+
+func readLeaseMetadataRecord(root, id, suffix string) (taskLeaseMetadata, bool) {
 	key, err := LeaseAuthorityKey(root, id)
 	if err != nil {
 		return taskLeaseMetadata{}, false
 	}
 	var meta taskLeaseMetadata
-	if ok, err := readLeaseRecord(key+".json", &meta); err != nil || !ok || meta.Version != leaseMetadataVersion {
+	if ok, err := readLeaseRecord(key+suffix, &meta); err != nil || !ok || meta.Version != leaseMetadataVersion {
 		return taskLeaseMetadata{}, false
 	}
 	return meta, true
+}
+
+// writeLeaseHolderRecord keeps a released lease's metadata, its heartbeat set to the release, as
+// the record of who last held the task. It is display evidence only: no authority check reads it.
+func writeLeaseHolderRecord(root, id string, meta taskLeaseMetadata) error {
+	key, err := LeaseAuthorityKey(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return AtomicWriteTaskFile(registry, key+".holder.json", append(data, '\n'))
+}
+
+// lastLeaseHolder is the metadata of a task's current lease, else of the last one released: who
+// last worked the task under a lease, and when.
+func lastLeaseHolder(root, id string) (taskLeaseMetadata, bool) {
+	if meta, ok := readLeaseAuthorityMetadata(root, id); ok {
+		return meta, true
+	}
+	return readLeaseMetadataRecord(root, id, ".holder.json")
 }
 
 func leaseAuthorityMetadataExists(root, id string) bool {
