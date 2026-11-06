@@ -1508,7 +1508,7 @@ func tasksFolderUnblock(project, root string, args []string) (int, error) {
 	if answer == "" && t.HasDecision && !resolved {
 		return 2, &ui.UsageError{
 			Headline: fmt.Sprintf("Task %q has no resolution yet", t.ID),
-			Cause:    "Write the **Resolution:** in its decision.md, or give the answer here.\n" + waitingAnswerNote,
+			Cause:    "Write the answer on the Resolution line of its decision.md, or give it here.\n" + waitingAnswerNote,
 			Rows:     [][2]string{{"Example:", fmt.Sprintf("coop tasks unblock %s \"<answer>\"", args[0])}, {"Help:", "coop help tasks unblock"}},
 		}
 	}
@@ -3468,21 +3468,23 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 				fmt.Fprintf(out, "  %s\n", waitingAnswerNote)
 				continue // nothing saved: ask this question again
 			}
+			// One line says the answer was saved and where that left the task, before the next
+			// question's header: without it the page just changed, and only :q told you anything.
 			if t.State == StateBlocked {
 				if err := resolveAndUnblock(project, ref.root, t, line); err != nil {
 					return -1, unblockRetryError(t.ID, true, err)
 				}
 				answered++
+				fmt.Fprintf(out, "%s Saved. %s is back in todo.\n", p.Green("✓"), sanitizeCell(t.Title))
 				if fork != "" {
 					fmt.Fprintf(out, "\n  %s\n", forkResumeNote(project, fork))
 				}
-			} else if err := recordResolution(decPath, line); err != nil {
-				return -1, err
+			} else {
+				if err := recordResolution(decPath, line); err != nil {
+					return -1, err
+				}
+				fmt.Fprintf(out, "%s Saved your new answer to %s.\n", p.Green("✓"), sanitizeCell(t.Title))
 			}
-			// No per-answer confirmation line: auto-advancing to the next question (its bordered
-			// "Question N of M" header, drawn below) is the acknowledgement, and a "✓ recorded" line
-			// would just scroll onto that header. Re-viewing with :p shows the saved answer, and the
-			// closing summary counts what was answered.
 			i++
 		}
 		if i >= len(refs) {
@@ -3530,7 +3532,9 @@ func pluralTasks(n int) string {
 
 // fprintDecisionBody renders a decision.md for the browser: HTML comments stripped, the
 // `# Decision:` question bold, the Blocks / Resolution / `---` lines dropped (the id is in the
-// header and the answer is what we're collecting), and the rest indented.
+// header and the answer is what we're collecting), a line's leading `**Label:**` printed as text,
+// bold when color is on, the way `coop tasks decisions` prints its Recommendation, and the rest
+// indented as written.
 func fprintDecisionBody(out io.Writer, p ui.Palette, content string) {
 	prevBlank := true // the divider's task id ends the header — the question starts its own block
 	// An agent in a box can write this file, and this prints to the terminal of the person answering.
@@ -3549,10 +3553,30 @@ func fprintDecisionBody(out io.Writer, p ui.Palette, content string) {
 		prevBlank = false
 		if q, ok := strings.CutPrefix(line, "# Decision:"); ok {
 			fmt.Fprintln(out, p.Bold(strings.TrimSpace(q)))
+		} else if bullet, label, rest, ok := markdownLabel(line); ok {
+			fmt.Fprintln(out, "  "+bullet+p.Bold(label)+rest)
 		} else {
 			fmt.Fprintln(out, "  "+line)
 		}
 	}
+}
+
+// markdownLabel splits a line that opens with a bold label — "**Why it is blocked:** text", or an
+// option "- **A — disk:** text" — into its bullet, the label without its asterisks, and the rest
+// exactly as written. Only that leading label is markup to drop; the text after it is not touched.
+func markdownLabel(line string) (bullet, label, rest string, ok bool) {
+	if after, cut := strings.CutPrefix(line, "- "); cut {
+		bullet, line = "- ", after
+	}
+	inner, ok := strings.CutPrefix(line, "**")
+	if !ok {
+		return "", "", "", false
+	}
+	label, rest, ok = strings.Cut(inner, "**")
+	if !ok || !strings.HasSuffix(label, ":") || strings.TrimSpace(label) == ":" {
+		return "", "", "", false
+	}
+	return bullet, label, rest, true
 }
 
 // stripHTMLComments removes <!-- … --> spans (the per-file header coop seeds and the inline

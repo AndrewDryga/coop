@@ -109,6 +109,13 @@
   agent, Coop now sends the editor the agent's own options, and the older model list in the
   session answer names the target model and effort too.
 
+- **`coop tasks decisions -i` shows each question as text and confirms each answer.** The page
+  printed a decision's markdown as written, such as `**Why it is blocked:**` and `**Options:**`,
+  even with color on. It now prints those labels as plain text, in bold when color is on, as
+  `coop tasks decisions` does. After you answer, one line such as "✓ Saved. Fix login retries is
+  back in todo." comes before the next question, where before the page just moved on. Your answer
+  is shown as you typed it. `coop tasks unblock` without an answer now names the Resolution line
+  without asterisks.
 - **`coop tasks claim --force` ends the old holder's lease.** Taking over a claim that another
   running process held left that process's `coop tasks lease` running, so `coop tasks ls` showed
   two holders and the old process could still complete the task. The forced claim now ends that

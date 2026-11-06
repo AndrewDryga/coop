@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // What has been, or could be, left on the Resolution line in place of an answer. The first three are
@@ -454,6 +456,86 @@ func TestThePendingNoteIsNoAnswerToTheOtherCommands(t *testing.T) {
 			t.Errorf("the log does not keep the note as an unanswered question:\n%s", log)
 		}
 	})
+}
+
+// The -i page prints a decision's labels as text, bold through the palette when color is on, as
+// plain coop tasks decisions prints its Recommendation. The text after a label is left as written.
+func TestDecisionBrowserPrintsLabelsAsText(t *testing.T) {
+	body := RenderDecision("x", Decision{Question: "Which store?", Why: "W **stays** as written",
+		Options: []string{"A — disk", "**B — object storage:** scales"}, Recommendation: "B — why"})
+	var plain strings.Builder
+	fprintDecisionBody(&plain, ui.Palette{}, body)
+	want := "\nWhich store?\n\n  Why it is blocked: W **stays** as written\n\n  Options:\n\n" +
+		"  - A — disk\n  - B — object storage: scales\n\n  Recommendation: B — why\n"
+	if plain.String() != want {
+		t.Fatalf("page without color:\n%q\nwant:\n%q", plain.String(), want)
+	}
+	p := ui.Colored()
+	var colored strings.Builder
+	fprintDecisionBody(&colored, p, body)
+	for _, want := range []string{
+		"  " + p.Bold("Why it is blocked:") + " W **stays** as written\n", "  " + p.Bold("Options:") + "\n",
+		"  - " + p.Bold("B — object storage:") + " scales\n", "  " + p.Bold("Recommendation:") + " B — why\n",
+	} {
+		if !strings.Contains(colored.String(), want) {
+			t.Errorf("page with color lacks %q:\n%q", want, colored.String())
+		}
+	}
+	if rest := strings.Replace(colored.String(), "W **stays**", "", 1); strings.Contains(rest, "**") {
+		t.Errorf("page with color prints a label as markdown:\n%q", colored.String())
+	}
+}
+
+// Each saved answer gets one line before the next question, which says where it left the task. The
+// person's own answer is shown as they typed it, asterisks and all.
+func TestDecisionBrowserConfirmsEachSavedAnswer(t *testing.T) {
+	root := t.TempDir()
+	var refs []decisionRef
+	for _, id := range []string{"alpha", "beta"} {
+		dir := filepath.Join(root, StateBlocked, id)
+		writeTaskFile(t, filepath.Join(dir, "task.md"), "# "+strings.ToUpper(id[:1])+id[1:]+"\n")
+		if err := WriteDecision(dir, id, id, Decision{Question: "Which " + id + "?", Why: "W", Options: []string{"A — a", "B — b"}, Recommendation: "B"}); err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, decisionRef{root: root, id: id})
+	}
+	var out bytes.Buffer
+	if code, err := runDecisionBrowser("", refs, strings.NewReader("Use **B**, blue.\n:p\nUse A.\n:q\n"), &out); code != 0 || err != nil {
+		t.Fatalf("browser = (%d, %v)", code, err)
+	}
+	page := out.String()
+	saved := strings.Index(page, "✓ Saved. Alpha is back in todo.\n")
+	if saved < 0 || saved > strings.Index(page, "Question 2 of 2") {
+		t.Fatalf("no confirmation before the next question:\n%s", page)
+	}
+	for _, want := range []string{"Answered: Use **B**, blue.\n", "✓ Saved your new answer to Alpha.\n"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q:\n%s", want, page)
+		}
+	}
+	if dec := readFile(t, filepath.Join(root, StateTodo, "alpha", "decision.md")); !strings.Contains(dec, "**Resolution:** Use A.\n") {
+		t.Errorf("the new answer was not saved:\n%s", dec)
+	}
+	if current, ok := mustCurrentTask(t, root, "beta"); !ok || current.State != StateBlocked {
+		t.Errorf("the unanswered task moved: %+v", current)
+	}
+}
+
+// unblock without an answer names the Resolution line in words: a person reads this, not markdown.
+func TestUnblockWithoutAnAnswerNamesTheResolutionLineAsText(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, StateBlocked, "pick")
+	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Pick\n")
+	writeTaskFile(t, filepath.Join(dir, "decision.md"), renderDecisionScaffold("pick", "Pick"))
+	code, err := tasksFolderUnblock("", root, []string{"pick"})
+	var usage *ui.UsageError
+	if code != 2 || !errors.As(err, &usage) {
+		t.Fatalf("unblock without an answer = (%d, %v), want a usage refusal", code, err)
+	}
+	got := usage.Render(ui.Palette{})
+	if !strings.Contains(got, "      Write the answer on the Resolution line of its decision.md, or give it here.\n") || strings.Contains(got, "*") {
+		t.Fatalf("refusal:\n%s", got)
+	}
 }
 
 // An agent in a box can write decision.md, and the browser prints it to the terminal of the person

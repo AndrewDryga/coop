@@ -338,10 +338,13 @@ func TestDecisionsShowTheQuestionOfANewAndAnOldDecision(t *testing.T) {
 	}
 	var browser strings.Builder
 	fprintDecisionBody(&browser, ui.Palette{}, readFile(t, filepath.Join(newDir, "decision.md")))
-	for _, want := range []string{"Where should uploads be stored?\n", "  **Why it is blocked:** Uploads outgrew one disk.", "  **Recommendation:** B — more than one machine."} {
+	for _, want := range []string{"Where should uploads be stored?\n", "  Why it is blocked: Uploads outgrew one disk.", "  Recommendation: B — more than one machine."} {
 		if !strings.Contains(browser.String(), want) {
 			t.Errorf("the decision browser lacks %q:\n%s", want, browser.String())
 		}
+	}
+	if strings.Contains(browser.String(), "**") {
+		t.Errorf("the decision browser prints markdown:\n%s", browser.String())
 	}
 }
 
