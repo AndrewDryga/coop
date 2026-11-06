@@ -434,10 +434,12 @@ a task on its own.</p>
 <p>If a fork can&#39;t reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with <code>git cherry-pick</code>. Then run
 <code>coop tasks done &lt;id&gt; --from-fork</code> in your terminal. It needs exactly one commit on your branch with
-that task&#39;s <code>Coop-Task</code> trailer, made after the fork took the task, and a stopped fork with no
-candidate waiting to merge. co:op adds the tasks the fork found to your queue, completes the task with
-a note in its log, and releases the fork&#39;s assignment without deleting the fork. A later merge of the
-fork skips each commit you brought over unchanged.</p>
+that task&#39;s <code>Coop-Task</code> trailer and a stopped fork with no candidate waiting to merge. If your branch
+already had that commit when the fork took the task, such as a loop&#39;s commit whose completion was
+refused, your branch must also have every commit the fork made since then. co:op adds the tasks the
+fork found to your queue, completes the task with a note in its log, and releases the fork&#39;s
+assignment without deleting the fork. A later merge of the fork skips each commit you brought over
+unchanged.</p>
 <p>If the final candidate review finds a gap, co:op names the affected tasks and returns them to work
 in the same fork before reviewing the complete candidate again. Missing handoff records can be
 repaired without another code commit. A repeated finding after an unchanged-history repair, or a

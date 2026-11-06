@@ -1928,13 +1928,19 @@ func rawTaskBindings(repo, head string) (map[string][]string, bool) {
 	if err != nil {
 		return nil, false
 	}
+	return taskBindingsOf(commits), true
+}
+
+// taskBindingsOf is the commits that bind a task, by task: those with exactly one valid Coop-Task
+// trailer.
+func taskBindingsOf(commits []rawReachableAuditCommit) map[string][]string {
 	bindings := map[string][]string{}
 	for _, commit := range commits {
 		if !commit.taskBindingInvalid && len(commit.taskValues) == 1 {
 			bindings[commit.taskValues[0]] = append(bindings[commit.taskValues[0]], commit.sha)
 		}
 	}
-	return bindings, true
+	return bindings
 }
 
 func rawAuditHistoryCount(repo, head string, count int) (history []rawAuditCommit, err error) {

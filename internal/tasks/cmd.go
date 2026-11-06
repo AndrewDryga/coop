@@ -1104,7 +1104,12 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 
 // noteLandedFork tells the person which fork no longer holds the task, and why.
 func noteLandedFork(landed *LandedForkTask) {
-	if landed != nil {
+	switch {
+	case landed == nil:
+	case landed.Predates:
+		ui.Note("  Commit %s carrying its trailer was on this branch before fork %s took the task, and this branch has every commit the fork made since. Fork %s no longer holds it.",
+			shortCommit(landed.Commit), landed.Fork, landed.Fork)
+	default:
 		ui.Note("  Commit %s carrying its trailer is on this branch, so fork %s no longer holds it.",
 			shortCommit(landed.Commit), landed.Fork)
 	}

@@ -22,21 +22,23 @@ var errFromForkNeedsTerminal = &ui.UsageError{
 }
 
 // LandedForkTask reports a completion taken from a fork: the fork, the commit on the project's
-// branch that carries the task's trailer, and the tasks the fork had found, which Coop added to the
-// queue first.
+// branch that carries the task's trailer, whether the branch had it before the fork took the task,
+// and the tasks the fork had found, which Coop added to the queue first.
 type LandedForkTask struct {
 	Fork       string
 	Commit     string
+	Predates   bool
 	Discovered []string
 }
 
 // landedForkRelease is the exact assignment a completion takes from a fork, checked while the
 // fork's lifecycle lock is held. index is nil only after an interrupted run already removed it.
 type landedForkRelease struct {
-	repo   string
-	owner  ForkTaskOwner
-	index  *ForkAssignmentIndex
-	commit string
+	repo     string
+	owner    ForkTaskOwner
+	index    *ForkAssignmentIndex
+	commit   string
+	predates bool // commit was on the branch before the fork took the task
 }
 
 // CompleteLandedForkTask completes task, which a fork holds, because the one commit carrying its
@@ -49,10 +51,11 @@ func CompleteLandedForkTask(project, root string, task Item) (LandedForkTask, er
 
 // completeLandedForkTask refuses unless exactly one commit on the project's branch carries the
 // task's trailer, the fork that holds it is stopped, and that fork has no candidate in review or
-// ready to merge, whose merge completes the task instead. Under the fork's lifecycle lock it first
-// adds the tasks the fork found, which the released assignment could no longer import, then
-// completes the task the way `coop tasks done` does and releases the assignment last. Each step can
-// be repeated, so rerunning the command finishes an interrupted one.
+// ready to merge, whose merge completes the task instead. A commit the branch had before the fork
+// took the task also needs the branch to have every commit the fork made since. Under the fork's
+// lifecycle lock it first adds the tasks the fork found, which the released assignment could no
+// longer import, then completes the task the way `coop tasks done` does and releases the
+// assignment last. Each step can be repeated, so rerunning the command finishes an interrupted one.
 func completeLandedForkTask(project, root string, task Item, opts completionOptions) (*IncompleteChecklistError, LandedForkTask, error) {
 	id := ui.SafeInline(task.ID)
 	record, owned, err := ReadTaskOwnerRecord(root, task.ID)
@@ -72,25 +75,16 @@ func completeLandedForkTask(project, root string, task Item, opts completionOpti
 	if repo == "" || head == "" {
 		return nil, LandedForkTask{}, refused("Coop could not read this project's Git history to find the task's commit.")
 	}
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok {
+	onBranch, err := rawReachableAuditCommits(repo, head)
+	if err != nil {
 		return nil, LandedForkTask{}, refused("Coop could not read this branch's history to find the task's commit.")
 	}
-	bringIt := "Bring the fork's commit here first, or let the fork finish and merge it."
-	switch shas := bindings[task.ID]; len(shas) {
-	case 0:
-		return nil, LandedForkTask{}, refused(fmt.Sprintf("No commit on this branch carries %q.\n%s", CoopTaskTrailer+": "+task.ID, bringIt))
-	case 1:
-		// A commit the fork was handed with its task, such as an earlier completion of a task that was
-		// reopened, is not the fork's work landing.
-		if owner.BaselineHead == "" {
-			break
-		}
-		if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", shas[0], owner.BaselineHead); err == nil {
-			return nil, LandedForkTask{}, refused(fmt.Sprintf("The one commit carrying %q, %s, was already on the branch when fork %s took the task.\n%s",
-				CoopTaskTrailer+": "+task.ID, shortCommit(shas[0]), name, bringIt))
-		}
-	default:
+	bindings := taskBindingsOf(onBranch)
+	trailer := CoopTaskTrailer + ": " + task.ID
+	switch shas := bindings[task.ID]; {
+	case len(shas) == 0:
+		return nil, LandedForkTask{}, refused(fmt.Sprintf("No commit on this branch carries %q.\nBring the fork's commit here first, or let the fork finish and merge it.", trailer))
+	case len(shas) > 1:
 		return nil, LandedForkTask{}, extraBindings(repo, task.ID, shas)
 	}
 	unlock, locked := forkspace.TryLockState(project, name)
@@ -104,7 +98,37 @@ func completeLandedForkTask(project, root string, task Item, opts completionOpti
 		return nil, LandedForkTask{}, err
 	}
 	release.commit = bindings[task.ID][0]
-	landed := LandedForkTask{Fork: name, Commit: release.commit}
+	const unread = "Coop could not read the fork's history to check what it committed after taking the task."
+	// The fork took the task at its baseline, its HEAD then. The project lacks that commit while the
+	// fork has unmerged work, so the fork's own history must answer.
+	started, ok := reachableCommits(repo, owner.BaselineHead)
+	if !ok {
+		if started, ok = forkReachable(project, owner.Fork, owner.BaselineHead); !ok {
+			return nil, LandedForkTask{}, refused(unread)
+		}
+	}
+	// A commit the fork was handed with its task, such as the loop's commit before its completion was
+	// refused, is not the fork's work landing. It completes the task only while this branch has every
+	// commit the fork made since, with or without a trailer.
+	if release.predates = started[release.commit]; release.predates {
+		forkHead, ok := forkReachable(project, owner.Fork, "HEAD")
+		if !ok {
+			return nil, LandedForkTask{}, refused(unread)
+		}
+		branch := commitSet(onBranch)
+		missing := 0
+		for commit := range forkHead {
+			if !started[commit] && !branch[commit] {
+				missing++
+			}
+		}
+		if missing > 0 {
+			return nil, LandedForkTask{}, refused(fmt.Sprintf("Commit %s carrying %q was already on the branch when fork %s took the task, and the fork has %s since then that this branch does not have.",
+				shortCommit(release.commit), trailer, name, ui.Count(missing, "commit")),
+				[2]string{"Merge the fork's work first:", "coop fork merge " + name})
+		}
+	}
+	landed := LandedForkTask{Fork: name, Commit: release.commit, Predates: release.predates}
 	imported, err := importForkProposalsLocked(project, owner.Fork)
 	for _, proposal := range imported {
 		landed.Discovered = append(landed.Discovered, proposal.TaskID)
@@ -161,6 +185,33 @@ func landedForkAssignment(repo string, owner ForkTaskOwner, refused func(string,
 	return release, nil
 }
 
+// reachableCommits is every commit reachable from rev in repo. They are read as raw commit objects
+// whose IDs Coop checks, so no shallow file, graft or commit-graph that a box writes can change
+// them. It reports false when Coop cannot read the whole history.
+func reachableCommits(repo, rev string) (map[string]bool, bool) {
+	commits, err := rawReachableAuditCommits(repo, rev)
+	if err != nil {
+		return nil, false
+	}
+	return commitSet(commits), true
+}
+
+func commitSet(commits []rawReachableAuditCommit) map[string]bool {
+	set := make(map[string]bool, len(commits))
+	for _, commit := range commits {
+		set[commit.sha] = true
+	}
+	return set
+}
+
+// forkReachable is reachableCommits in the workspace the fork's generation still names.
+func forkReachable(repo string, fork forkspace.Identity, rev string) (map[string]bool, bool) {
+	if forkspace.ValidateGenerationWorkspace(repo, fork) != nil {
+		return nil, false
+	}
+	return reachableCommits(forkspace.Workspace(repo, fork.Name), rev)
+}
+
 // requireOwner is the check completeTrustedTask makes in place of refusing a fork's task: the task is
 // still owned by exactly this assignment.
 func (r *landedForkRelease) requireOwner(root, id string) error {
@@ -203,6 +254,10 @@ func (r *landedForkRelease) release(root, id string) (bool, error) {
 
 // note is the log line that records where the work landed.
 func (r *landedForkRelease) note() string {
+	if r.predates {
+		return fmt.Sprintf("Completed with coop tasks done --from-fork: commit %s carrying its trailer was on the project's branch before fork %s took this task, and the branch has every commit the fork made since, so the fork no longer holds this task.",
+			shortCommit(r.commit), r.owner.Fork.Name)
+	}
 	return fmt.Sprintf("Completed with coop tasks done --from-fork: commit %s carrying its trailer was already on the project's branch, so fork %s no longer holds this task.",
 		shortCommit(r.commit), r.owner.Fork.Name)
 }

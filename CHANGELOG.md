@@ -57,9 +57,11 @@
   yourself, `coop tasks done <id>` refused the task while the fork held it, and the only ways out
   were a merge the fork couldn't produce or deleting the fork with `coop fork rm --force`. From
   your terminal, `coop tasks done <id> --from-fork` now completes it once exactly one commit on
-  your branch, made after the fork took the task, carries its `Coop-Task` trailer: it adds the
-  tasks the fork found, notes in the log where the work landed, and releases the fork's assignment
-  without deleting the fork. The fork must be stopped and have no candidate waiting to merge. A
+  your branch carries its `Coop-Task` trailer: it adds the tasks the fork found, notes in the log
+  where the work landed, and releases the fork's assignment without deleting the fork. The fork
+  must be stopped and have no candidate waiting to merge. A commit your branch already had when the
+  fork took the task, such as a loop's commit whose completion was refused, completes it too once
+  your branch has every commit the fork made since. A
   later `coop fork merge` of that fork, isolated or not, skips each commit you brought over
   unchanged instead of conflicting with later changes to it; an isolated fork still publishes a
   commit that redoes a change you reverted. The plain `coop tasks done` refusal now points at

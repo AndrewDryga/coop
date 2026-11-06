@@ -39,11 +39,18 @@ A projected done task becomes `reviewing`; after all signoff and signing,
 one generation candidate atomically binds HEAD/tree plus every assignment and projection digest.
 Canonical tasks remain in-progress until merge lands that exact candidate. The one other done path
 is a person's `coop tasks done <id> --from-fork` (internal/tasks/landed_fork.go): with the fork
-stopped, no live candidate and exactly one reachable `Coop-Task` commit on the project's HEAD that
-is not in the assignment's baseline, it imports the fork's proposals, completes the task, then
-removes proposal records, the index and the owner record in that order, so a rerun finishes an
-interrupted one. A crash between the index and owner removal followed by `coop fork rm` leaves an
-owner record nothing clears; rerun --from-fork before removing the fork.
+stopped, no live candidate and exactly one reachable `Coop-Task` commit on the project's HEAD, it
+imports the fork's proposals, completes the task, then removes proposal records, the index and the
+owner record in that order, so a rerun finishes an interrupted one. A commit already in the
+assignment's baseline (the loop's, say, before its completion was refused) also needs the project's
+HEAD to reach every commit the fork's HEAD reaches beyond that baseline, trailer or not: any of them
+may be the fork's work for the task. The baseline is the fork's HEAD when it took the task, which
+the project lacks while the fork has unmerged work, so its history then comes from the workspace the
+fork's generation names (`forkReachable`). Every one of these reads is the audit's raw walk, which
+checks each object ID and parses parents itself, so a shallow file, graft or commit-graph a box
+writes cannot change the answer, and a history it cannot read refuses. A crash between the index and
+owner removal followed by `coop fork rm` leaves an owner record nothing clears; rerun --from-fork
+before removing the fork.
 
 The project's views of a fork's decision name the fork from the canonical owner record
 (`taskForkName`, internal/tasks/cmd.go): `coop tasks decisions` and `-i` after the task id, the
@@ -67,6 +74,13 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — `--from-fork` accepts a binding from the assignment's baseline once the project has
+  every commit the fork made since; the loop's earlier commit had left a fork-held task with no exit
+  but `coop fork rm --force` (task 2026-11-06-let-a-fork-held-task-close-when-its-only-commit).
+  A review found that counting only the fork's trailer-carrying commits missed unbound rework and
+  that a fork-side read failure counted as "brought over later"; both now refuse. The baseline check
+  had asked only the project's repository, which lacks a fork's unmerged commits, and `merge-base`
+  in a box-written repository follows its shallow file. Verified against landed_fork.go.
 - 2026-11-06 — the project's decision views name the fork, and unblock says how the fork goes on
   (task 2026-11-05-let-a-person-answer-a-fork-s-blocked-decision-fr).
 - 2026-11-06 — `coop tasks unblock` copies the answer into the fork's projection, the resumed restore
