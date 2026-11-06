@@ -417,12 +417,24 @@ func TestExplainChoosesThisProjectsNewestBlockingRunAndGroupsRepeats(t *testing.
 	if !strings.Contains(note, "No recorded block for never.example in this project's runs.") {
 		t.Errorf("an unblocked host:\n%s", note)
 	}
-	// Outside a project there is no scope to guess: the cwd is not a project.
-	t.Chdir(t.TempDir())
+	// A folder outside Git is the project `coop run` uses there, so it is searched as one; the home
+	// folder is never a project, so there is no scope to search.
+	t.Chdir(netFixtureProject(t))
 	outside := &app{cfg: &config.Config{}}
+	note = captureStdout(t, func() {
+		if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 0 || err != nil {
+			t.Fatalf("blocked in a folder outside Git = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(note, "No recorded block for example.org in this project's runs.") {
+		t.Errorf("blocked in a folder outside Git:\n%s", note)
+	}
+	home := netFixtureProject(t)
+	t.Setenv("HOME", home)
+	t.Chdir(home)
 	if code, err := outside.netDiagnostic("blocked", []string{"example.org"}); code != 1 || err == nil ||
 		!strings.Contains(err.Error(), "Could not select a network run") {
-		t.Errorf("blocked outside a project = (%d, %v)", code, err)
+		t.Errorf("blocked in the home folder = (%d, %v)", code, err)
 	}
 }
 

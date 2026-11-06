@@ -57,10 +57,10 @@ func (a *app) cmdNetForget(args []string) (int, error) {
 		return 1, netTerminalOnly("coop net forget")
 	}
 	if path == "" {
-		// No --project means this project, resolved the way every scoped net
-		// verb resolves it. A gone checkout has no git top level, which is why
+		// No --project means this project, resolved the way coop approve
+		// resolves it. A gone checkout has no git top level, which is why
 		// --project exists at all.
-		if path, err = netProject(a.cfg.RepoOverride); err != nil {
+		if path, err = netApprovalProject(a.cfg.RepoOverride); err != nil {
 			return 1, err
 		}
 	}

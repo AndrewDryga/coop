@@ -600,10 +600,12 @@ func parseNetRunsFlags(args []string) (netRunsOptions, error) {
 }
 
 // netRun is one recorded run as the listing shows it: the retained summary plus
-// what that run actually did, read from its own evidence.
+// what that run actually did, read from its own evidence, and whether it is
+// still running.
 type netRun struct {
 	networkstate.ExecutionSummary
 	Outcome string
+	Live    bool
 }
 
 func (a *app) cmdNetRuns(args []string) (int, error) {
@@ -628,12 +630,12 @@ func (a *app) cmdNetRuns(args []string) (int, error) {
 	if !opts.all && !opts.allProjects && len(runs) > netRecentRuns {
 		runs = runs[:netRecentRuns]
 	}
-	if opts.json {
-		return 0, netWriteJSON(os.Stdout, netListingDTO(runs, page))
-	}
 	listed, err := netRunOutcomes(runs)
 	if err != nil {
 		return 1, err
+	}
+	if opts.json {
+		return 0, netWriteJSON(os.Stdout, netListingDTO(listed, total, page, opts.allProjects))
 	}
 	p, now := ui.For(os.Stdout), time.Now()
 	return 0, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetRuns(b, p, now, listed, total, opts, page) })
@@ -698,16 +700,21 @@ func writeNetRunRows(w io.Writer, p ui.Palette, now time.Time, runs []netRun, he
 	}
 	for _, run := range runs {
 		line := "  " + p.Bold(p.Cyan(networkreport.ShortID(run.ID))) + "  " + padRight(networkreport.When(now, run.StartedAt), width+2) + run.Outcome
-		// A finished run says only what it did. The EXCEPTIONS — no receipt,
-		// cleanup still owed — earn a word, and neither claims the run is alive.
+		// A finished run says only what it did, and a running one that it is
+		// live: its final record and cleanup are still to come. The EXCEPTIONS —
+		// no receipt, cleanup still owed — earn a word for any other run, and
+		// neither claims the run is alive.
 		var flags []string
-		if !run.Final {
+		if !run.Final && !run.Live {
 			flags = append(flags, "final record missing")
 		}
-		if run.CleanupPending {
+		if run.CleanupPending && !run.Live {
 			flags = append(flags, "cleanup pending")
 		}
-		if len(flags) != 0 {
+		switch {
+		case run.Live:
+			line += " · " + p.Green("live")
+		case len(flags) != 0:
 			line += " · " + p.Yellow(strings.Join(flags, " · "))
 		}
 		fmt.Fprintln(w, line)
@@ -767,24 +774,36 @@ type netRunJSON struct {
 	StartedAt      time.Time `json:"started_at"`
 	Final          bool      `json:"final"`
 	CleanupPending bool      `json:"cleanup_pending"`
+	Live           bool      `json:"live"`
+	ProjectName    string    `json:"project_name,omitempty"`
+	ProjectPath    string    `json:"project_path,omitempty"`
 }
 
 type netListingJSON struct {
-	Version    int          `json:"version"`
-	Runs       []netRunJSON `json:"runs"`
-	Incomplete bool         `json:"incomplete"`
-	Unreadable int          `json:"unreadable"`
+	Version int          `json:"version"`
+	Runs    []netRunJSON `json:"runs"`
+	// Total is how many runs the listing covers; More says Runs holds only the newest of them.
+	Total      int  `json:"total"`
+	More       bool `json:"more"`
+	Incomplete bool `json:"incomplete"`
+	Unreadable int  `json:"unreadable"`
 }
 
 // netListingDTO is an ALLOWLIST. networkstate.ExecutionSummary is owner-private
 // storage — it carries the project path — so every published field is named
 // here on purpose and a field added to the record never appears by growing into
-// a serialized type.
-func netListingDTO(runs []networkstate.ExecutionSummary, page networkstate.ExecutionPage) netListingJSON {
-	out := netListingJSON{Version: networkview.Version, Runs: []netRunJSON{}, Incomplete: page.Incomplete, Unreadable: page.Unreadable}
+// a serialized type. The project is named only in the listing of every project,
+// as the text view names it there.
+func netListingDTO(runs []netRun, total int, page networkstate.ExecutionPage, withProject bool) netListingJSON {
+	out := netListingJSON{Version: networkview.Version, Runs: []netRunJSON{}, Total: total, More: total > len(runs),
+		Incomplete: page.Incomplete, Unreadable: page.Unreadable}
 	for _, run := range runs {
-		out.Runs = append(out.Runs, netRunJSON{ID: run.ID, Epoch: run.Epoch, SessionID: run.SessionID,
-			AttemptID: run.AttemptID, StartedAt: run.StartedAt.UTC(), Final: run.Final, CleanupPending: run.CleanupPending})
+		row := netRunJSON{ID: run.ID, Epoch: run.Epoch, SessionID: run.SessionID, AttemptID: run.AttemptID,
+			StartedAt: run.StartedAt.UTC(), Final: run.Final, CleanupPending: run.CleanupPending, Live: run.Live}
+		if withProject {
+			row.ProjectName, row.ProjectPath = filepath.Base(run.Project), run.Project
+		}
+		out.Runs = append(out.Runs, row)
 	}
 	return out
 }
@@ -830,7 +849,9 @@ func netExecutionsOf(evidence *networkstate.Evidence) (networkstate.ExecutionPag
 
 // netRunOutcomes reads each run's own evidence for what got through and what
 // did not. A record that cannot be projected still belongs in the list; it just
-// carries no outcome, which is not the same as a run that saw no traffic.
+// carries no outcome, which is not the same as a run that saw no traffic. A run
+// with no final record is live the way `coop net inspect` says so: it is being
+// observed now, or its supervisor is still running here.
 func netRunOutcomes(summaries []networkstate.ExecutionSummary) ([]netRun, error) {
 	if len(summaries) == 0 {
 		return nil, nil
@@ -845,6 +866,12 @@ func netRunOutcomes(summaries []networkstate.ExecutionSummary) ([]netRun, error)
 		run := netRun{ExecutionSummary: summary, Outcome: netActivityUnknown}
 		if inspection, err := evidence.Inspect(summary.ID, time.Now(), true); err == nil {
 			run.Outcome = netRunOutcome(inspection)
+			run.Live = !summary.Final && networkreport.RunLive(inspection)
+		}
+		if !summary.Final && !run.Live {
+			if record, err := evidence.Execution(summary.ID); err == nil {
+				run.Live = box.NetworkSupervisorRunning(record.Supervisor)
+			}
 		}
 		runs = append(runs, run)
 	}
@@ -957,7 +984,10 @@ func (a *app) netSelectRun(verb string, page networkstate.ExecutionPage, ref str
 		return netResolveRun(page, ref, command)
 	}
 	repo, err := netProject(a.cfg.RepoOverride)
-	if err != nil || page.Incomplete {
+	if err != nil {
+		return "", err
+	}
+	if page.Incomplete {
 		return "", netIncompleteInventoryErr(command)
 	}
 	runs := netFilterProject(page.Executions, netResolvedPath(repo))
@@ -1428,13 +1458,19 @@ func openNetRunEvidence(ref string) (*networkstate.Evidence, error) {
 	return evidence, err
 }
 
-// netProject is the project a scoped verb acts on: the override, resolved as
+// netProject is the project a view reads: the one `coop run` uses here (box.ResolveRepo), so a
+// run started in a folder outside Git is listed, checked and inspected from that same folder.
+func netProject(override string) (string, error) {
+	return box.ResolveRepo(override)
+}
+
+// netApprovalProject is the project an approval binds or forgets: the override, resolved as
 // every other command resolves it so an approval binds the project a launch
 // uses, else the repository box.FindRepo finds, never git's answer, which
 // follows a box-written core.worktree. Outside a project there is no scope to
 // guess, and guessing the cwd would bind an approval to whatever directory the
 // shell happened to be in.
-func netProject(override string) (string, error) {
+func netApprovalProject(override string) (string, error) {
 	if override != "" {
 		return box.ResolveRepo(override)
 	}

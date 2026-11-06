@@ -759,10 +759,13 @@ in <code>--json</code>. Other connections that co:op can&#39;t tie to either one
 <p>Use any unique prefix of a run&#39;s ID to select it. The eight characters shown by <code>coop net runs</code> work
 with every run command. If a prefix matches more than one run, co:op refuses it and shows the longer
 prefixes you can use.</p>
-<p><code>coop net runs</code> shows this project&#39;s 25 newest runs. When there are more, it shows a count and the
-<code>--all</code> option. Use <code>--all-projects</code> to see runs from every project, labeled by name and path. co:op
-keeps a finished run&#39;s record for 90 days after it ends. If cleanup is still pending, it keeps the
-record until cleanup finishes.</p>
+<p>These commands use the same project as <code>coop run</code>: the Git repository you&#39;re in, or the current
+folder outside Git. <code>coop net runs</code> shows this project&#39;s 25 newest runs. When there are more, it
+shows a count and the <code>--all</code> option. A run that is still going is marked <code>live</code>. Use
+<code>--all-projects</code> to see runs from every project, labeled by name and path. With <code>--json</code>, the
+listing has <code>total</code> and <code>more</code>, each run has <code>live</code>, and with <code>--all-projects</code> each run also has
+<code>project_name</code> and <code>project_path</code>. co:op keeps a finished run&#39;s record for 90 days after it ends.
+If cleanup is still pending, it keeps the record until cleanup finishes.</p>
 <p>Each run also keeps a copy of the rules it started with, which the <code>--run</code> option below reads. co:op
 removes the saved copy of a launch&#39;s rules only when no retained run record refers to it and no
 launch has used it for 90 days. It keeps the copy a worker session was created with for the whole

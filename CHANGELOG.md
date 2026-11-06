@@ -22,6 +22,13 @@
   with "The loop stopped making progress" and a `Continue:` line. A first SIGINT during such an
   attempt now ends with "Stopped before final review" and exit 130, as it does at a terminal.
 
+- **`coop net` works in the folders `coop run` works in.** Outside Git, `coop net`, `coop net runs`,
+  `coop net check`, `coop net inspect` and `coop net watch` said "Not inside a project" while
+  `coop run` used the folder, and an inspect or watch with no run ID claimed some records could not
+  be read. They now use the same project as `coop run`, and a folder Coop can't use is refused for
+  that reason. `coop net runs` marks a run that is still going as `live` instead of "final record
+  missing · cleanup pending". Its `--json` now has the `total`, whether there are `more`, each
+  run's `live`, and with `--all-projects` each run's `project_name` and `project_path`.
 - **`coop net blocked` finds a direct connection or an unlisted port again.** A refused connection
   fails in milliseconds, too fast for the socket sample that used to record it. With only TLS on 443
   approved, `curl http://example.com/` or `curl https://example.com:8443/` left just "2 packets were

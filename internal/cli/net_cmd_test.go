@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -995,6 +996,129 @@ func TestNetRunsDefaultsToTheNewestOfThisProjectAndAllStaysInIt(t *testing.T) {
 	if out, rows := listed(t, []string{"--all"}); rows != netRecentRuns+1 {
 		t.Errorf("--all showed %d of this project's runs:\n%s", rows, out)
 	}
+	// --json says the same: how many runs there are, and whether it holds only the newest of them.
+	for _, tc := range []struct {
+		args        []string
+		runs, total int
+		more        bool
+	}{
+		{[]string{"--json"}, netRecentRuns, netRecentRuns + 1, true},
+		{[]string{"--all", "--json"}, netRecentRuns + 1, netRecentRuns + 1, false},
+		{[]string{"--all-projects", "--json"}, netRecentRuns + 2, netRecentRuns + 2, false},
+	} {
+		var listing netListingJSON
+		if err := json.Unmarshal([]byte(captureStdout(t, func() {
+			if code, err := a.cmdNetRuns(tc.args); code != 0 || err != nil {
+				t.Fatalf("coop net runs %v = (%d, %v)", tc.args, code, err)
+			}
+		})), &listing); err != nil {
+			t.Fatal(err)
+		}
+		if len(listing.Runs) != tc.runs || listing.Total != tc.total || listing.More != tc.more {
+			t.Errorf("coop net runs %v = %d runs of %d, more %t; want %d of %d, more %t", tc.args, len(listing.Runs), listing.Total, listing.More, tc.runs, tc.total, tc.more)
+		}
+		for _, run := range listing.Runs {
+			if all := tc.args[0] == "--all-projects"; all != (run.ProjectPath != "") || all && run.ProjectName != filepath.Base(run.ProjectPath) {
+				t.Errorf("coop net runs %v named run %s's project as %q at %q", tc.args, run.ID, run.ProjectName, run.ProjectPath)
+			}
+		}
+	}
+}
+
+// A folder outside Git is the project `coop run` uses there, so every view reads that folder's runs
+// and access from it, and the home folder, which Coop never uses as a project, is refused for that
+// reason — never as records Coop could not read.
+func TestNetViewsFindTheProjectCoopRunUsesOutsideGit(t *testing.T) {
+	a, folder := servicesProject(t, "box:\n  egress: filtered\n", "")
+	store := netHostFixture(t)
+	a.cfg.RepoOverride = ""
+	a.rt, a.rtSet = containerruntime.Runtime{Name: "fixture-runtime"}, true // inspect tries the run's cleanup once
+	if _, err := os.Stat(filepath.Join(folder, ".git")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the fixture folder is in Git: %v", err)
+	}
+	finished := netSealRun(t, store, netRecordRun(t, store, folder))
+	t.Chdir(folder)
+	run := func(t *testing.T, name string, command func() (int, error)) (string, int, error) {
+		t.Helper()
+		var code int
+		var err error
+		out := captureStdout(t, func() { code, err = command() })
+		return out, code, err
+	}
+	if out, code, err := run(t, "runs", func() (int, error) { return a.cmdNetRuns(nil) }); code != 0 || err != nil || !strings.Contains(out, networkreport.ShortID(finished.ID)) {
+		t.Errorf("coop net runs = (%d, %v):\n%s", code, err, out)
+	}
+	if out, code, err := run(t, "inspect", func() (int, error) { return a.cmdNetRun("inspect", nil) }); code != 0 || err != nil || !strings.HasPrefix(out, "Network run "+finished.ID+"\n") {
+		t.Errorf("coop net inspect = (%d, %v):\n%s", code, err, out)
+	}
+	if _, code, err := run(t, "watch", func() (int, error) { return a.cmdNetRun("watch", nil) }); code != 1 || err == nil || !strings.Contains(err.Error(), "No unfinished network run for this project") {
+		t.Errorf("coop net watch = (%d, %v), want this project's own answer", code, err)
+	}
+	if out, code, err := run(t, "net", a.cmdNetAccess); code != 0 || err != nil || !strings.Contains(out, "For more details see:") {
+		t.Errorf("coop net = (%d, %v):\n%s", code, err, out)
+	}
+	if _, code, err := run(t, "check", func() (int, error) { return a.netDiagnostic("check", []string{"example.com"}) }); err != nil || code != netCheckExit(false) {
+		t.Errorf("coop net check example.com = (%d, %v), want the blocked answer", code, err)
+	}
+	home := netFixtureProject(t)
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+	for name, command := range map[string]func() (int, error){
+		"runs":    func() (int, error) { return a.cmdNetRuns(nil) },
+		"inspect": func() (int, error) { return a.cmdNetRun("inspect", nil) },
+		"watch":   func() (int, error) { return a.cmdNetRun("watch", nil) },
+		"net":     a.cmdNetAccess,
+	} {
+		if _, code, err := run(t, name, command); code != 1 || !errors.Is(err, box.ErrHomeProject) {
+			t.Errorf("coop net %s in the home folder = (%d, %v), want the home folder refusal", name, code, err)
+		}
+	}
+	// check names the other way it can answer, a recorded run.
+	if _, code, err := run(t, "check", func() (int, error) { return a.netDiagnostic("check", []string{"example.com"}) }); code != 1 || err == nil ||
+		!strings.Contains(err.Error(), "needs a project") || !strings.Contains(err.Error(), "--run") {
+		t.Errorf("coop net check in the home folder = (%d, %v)", code, err)
+	}
+}
+
+// A run with no final record whose supervisor still runs is live, as `coop net inspect` says, in
+// the listing and its JSON; one whose supervisor is gone keeps the words for what it still owes.
+func TestNetRunsShowsARunWhoseSupervisorRunsAsLive(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	live := netRecordRun(t, store, project)
+	dead := netRecordRun(t, store, project)
+	netDepartSupervisor(t, store, dead.ID)
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	out := captureStdout(t, func() {
+		if code, err := a.cmdNetRuns(nil); code != 0 || err != nil {
+			t.Fatalf("coop net runs = (%d, %v)", code, err)
+		}
+	})
+	rows := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if id, _, found := strings.Cut(strings.TrimPrefix(line, "  "), "  "); found {
+			rows[id] = line
+		}
+	}
+	if row := rows[networkreport.ShortID(live.ID)]; !strings.HasSuffix(row, " · live") || strings.Contains(row, "missing") || strings.Contains(row, "pending") {
+		t.Errorf("a running run's row = %q, want it live", row)
+	}
+	if row := rows[networkreport.ShortID(dead.ID)]; !strings.HasSuffix(row, " · final record missing · cleanup pending") {
+		t.Errorf("a departed run's row = %q, want what it still owes", row)
+	}
+	var listing netListingJSON
+	if err := json.Unmarshal([]byte(captureStdout(t, func() {
+		if code, err := a.cmdNetRuns([]string{"--json"}); code != 0 || err != nil {
+			t.Fatalf("coop net runs --json = (%d, %v)", code, err)
+		}
+	})), &listing); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range listing.Runs {
+		if want := run.ID == live.ID; run.Live != want || run.Final || !run.CleanupPending {
+			t.Errorf("run %s in --json: live %t final %t cleanup_pending %t; want live %t, no final record, cleanup pending", run.ID, run.Live, run.Final, run.CleanupPending, want)
+		}
+	}
 }
 
 // Acceptance: inspecting an interrupted run makes coop's own bounded recovery
@@ -1123,22 +1247,31 @@ func TestNetExportWithholdsDestinationsUnlessAsked(t *testing.T) {
 }
 
 func TestNetListingDTOPublishesOnlyItsAllowlist(t *testing.T) {
-	runs := []networkstate.ExecutionSummary{{ID: "a", Epoch: "e", Project: "/private/host/secret-project",
-		StartedAt: time.Unix(1, 0).UTC(), Final: true}}
-	dto := netListingDTO(runs, networkstate.ExecutionPage{Unreadable: 2, Incomplete: true})
-	var buf bytes.Buffer
-	if err := netWriteJSON(&buf, dto); err != nil {
-		t.Fatal(err)
+	runs := []netRun{{ExecutionSummary: networkstate.ExecutionSummary{ID: "a", Epoch: "e", Project: "/private/host/secret-project",
+		StartedAt: time.Unix(1, 0).UTC(), Final: true}, Outcome: "1 connection"}}
+	encode := func(dto netListingJSON) string {
+		var buf bytes.Buffer
+		if err := netWriteJSON(&buf, dto); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
 	}
-	data := buf.String()
+	data := encode(netListingDTO(runs, 27, networkstate.ExecutionPage{Unreadable: 2, Incomplete: true}, false))
 	// The retained record carries the owner's project path. Publishing it by
 	// growing into a serialized type is exactly what the allowlist prevents.
-	if strings.Contains(data, "secret-project") {
-		t.Errorf("listing DTO leaked the project path: %s", data)
+	if strings.Contains(data, "secret-project") || strings.Contains(data, "1 connection") {
+		t.Errorf("listing DTO leaked the project path or the text view: %s", data)
 	}
-	for _, want := range []string{`"id":"a"`, `"final":true`, `"unreadable":2`, `"incomplete":true`} {
+	for _, want := range []string{`"id":"a"`, `"final":true`, `"live":false`, `"total":27`, `"more":true`, `"unreadable":2`, `"incomplete":true`} {
 		if !strings.Contains(data, want) {
 			t.Errorf("listing DTO is missing %s: %s", want, data)
+		}
+	}
+	// Every project's listing names each run's project, as its text does, so a script can group them.
+	data = encode(netListingDTO(runs, 1, networkstate.ExecutionPage{}, true))
+	for _, want := range []string{`"project_name":"secret-project"`, `"project_path":"/private/host/secret-project"`, `"total":1`, `"more":false`} {
+		if !strings.Contains(data, want) {
+			t.Errorf("the listing of every project is missing %s: %s", want, data)
 		}
 	}
 }

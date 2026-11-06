@@ -38,7 +38,7 @@ func (a *app) cmdApprove(args []string) (int, error) {
 	if !ui.IsTerminal(os.Stdin) || !ui.IsTerminal(os.Stderr) {
 		return 1, a.approveWithoutTerminal(caseExposure)
 	}
-	repo, err := netProject(a.cfg.RepoOverride)
+	repo, err := netApprovalProject(a.cfg.RepoOverride)
 	if err != nil {
 		return 1, err
 	}
@@ -107,7 +107,7 @@ func (a *app) approveWithoutTerminal(caseExposure bool) error {
 	if caseExposure {
 		return refused
 	}
-	repo, err := netProject(a.cfg.RepoOverride)
+	repo, err := netApprovalProject(a.cfg.RepoOverride)
 	if err != nil {
 		return refused
 	}

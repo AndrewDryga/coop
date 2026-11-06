@@ -215,6 +215,13 @@ func supervisorRecordedHere(supervisor networkstate.Supervisor) bool {
 	return err == nil && supervisor.Host == host
 }
 
+// NetworkSupervisorRunning reports whether a run's supervisor is proven to be running: its pid was
+// read where this coop runs and still names the same process. A pid from another computer or
+// container, or one whose identity cannot be read, proves nothing either way.
+func NetworkSupervisorRunning(supervisor networkstate.Supervisor) bool {
+	return supervisorRecordedHere(supervisor) && processidentity.Inspect(supervisor.PID, supervisor.StartToken) == processidentity.Match
+}
+
 // networkRecoveryOrder is the same order a live cleanup uses: consumers before
 // the volumes they mount, so a volume is only ever removed once nothing holds
 // it.
