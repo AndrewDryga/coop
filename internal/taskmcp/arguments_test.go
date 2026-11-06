@@ -380,3 +380,53 @@ func TestMissingArgumentsReportEveryFieldWithoutMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskArrayArgumentCoercion(t *testing.T) {
+	for _, name := range []string{"tasks_block", "tasks_propose", "tasks_set_subtasks"} {
+		for _, encoded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/encoded=%t", name, encoded), func(t *testing.T) {
+				root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+				sess := newSession(t, newServer(t, root, "t1"))
+				args := map[string]any{"id": "t1"}
+				field, value := "subtasks", any([]map[string]any{{"text": "Step", "done": true}})
+				switch name {
+				case "tasks_block":
+					field, value = "options", []string{"A"}
+					args["question"], args["why"], args["recommendation"] = "Which?", "Reason", "A"
+				case "tasks_propose":
+					args = map[string]any{"kind": "task", "title": "Follow up", "context": "c", "acceptance": "a", "approach": "p"}
+					value = []string{"Step"}
+				}
+				before := taskFiles(t, root)
+				for _, bad := range []any{42, "invalid", `[null]`, `[1]`, `null`, `{"text":"Step"}`} {
+					args[field] = bad
+					text := sess.mustRefuse(name, args)
+					if !strings.Contains(text, field) || !strings.Contains(text, "array") {
+						t.Fatalf("missing argument shape: %s", text)
+					}
+				}
+				if name == "tasks_set_subtasks" {
+					args[field] = []map[string]any{{"title": "Step"}}
+					text := sess.mustRefuse(name, args)
+					for _, want := range []string{"subtasks", "text", "optional done"} {
+						if !strings.Contains(text, want) {
+							t.Fatalf("missing %q: %s", want, text)
+						}
+					}
+				}
+				if !maps.Equal(before, taskFiles(t, root)) {
+					t.Fatal("invalid arguments mutated tasks")
+				}
+				if encoded {
+					raw, err := json.Marshal(value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					value = string(raw)
+				}
+				args[field] = value
+				sess.mustCall(name, args)
+			})
+		}
+	}
+}

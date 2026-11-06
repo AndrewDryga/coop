@@ -283,12 +283,84 @@ func decodeArgs(raw json.RawMessage, v any) *toolResult {
 	if !utf8.Valid(raw) {
 		return refusal("invalid arguments: send valid UTF-8 JSON")
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return refusal("invalid arguments: " + err.Error())
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return refusal("invalid arguments: expected an object of named arguments")
+	}
+	target := reflect.ValueOf(v).Elem()
+	typ := target.Type()
+	for name, value := range fields {
+		index := -1
+		var expected []string
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			key := field.Tag.Get("json")
+			expected = append(expected, key)
+			if key == name {
+				index = i
+			}
+		}
+		if index < 0 {
+			return refusal(fmt.Sprintf("invalid argument %q: expected fields %s", name, strings.Join(expected, ", ")))
+		}
+		field := target.Field(index)
+		shape := argumentShape(field.Type())
+		if field.Kind() == reflect.Slice {
+			var err error
+			value, err = arrayArgument(value)
+			if err != nil {
+				return refusal(fmt.Sprintf("invalid argument %s: expected %s: %v", name, shape, err))
+			}
+		}
+		dec := json.NewDecoder(bytes.NewReader(value))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(field.Addr().Interface()); err != nil {
+			return refusal(fmt.Sprintf("invalid argument %s: expected %s: %v", name, shape, err))
+		}
 	}
 	return nil
+}
+
+// arrayArgument accepts the array itself or one JSON encoding of it. Decode elements
+// separately to keep null from silently becoming a string or a zero-valued item.
+func arrayArgument(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) > 0 && raw[0] == '"' {
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			return nil, err
+		}
+		raw = json.RawMessage(encoded)
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return nil, errors.New("null is not an array")
+	}
+	for _, item := range items {
+		if bytes.Equal(bytes.TrimSpace(item), []byte("null")) {
+			return nil, errors.New("array items must not be null")
+		}
+	}
+	return raw, nil
+}
+
+func argumentShape(typ reflect.Type) string {
+	if typ == reflect.TypeFor[optionalString]() {
+		return "a string"
+	}
+	switch typ.Kind() {
+	case reflect.Slice:
+		if typ.Elem().Kind() == reflect.String {
+			return "an array of strings (or a string containing that JSON array)"
+		}
+		return "an array of objects; each item takes text (string) and optional done (boolean)"
+	case reflect.Bool:
+		return "a boolean"
+	default:
+		return "a string"
+	}
 }
 
 // Omitted optional values keep their defaults; explicit null is not a boolean or string.
@@ -463,22 +535,18 @@ func (s *Server) listed(root string, item tasks.Item) listedTask {
 
 func (s *Server) list(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
-		State nonNullString   `json:"state"`
-		Query json.RawMessage `json:"query"`
+		State nonNullString  `json:"state"`
+		Query optionalString `json:"query"`
 	}
 	if r := decodeArgs(args, &in); r != nil {
 		return r
 	}
 	query := ""
-	if in.Query != nil {
-		var value nonNullString
-		if r := decodeArgs(in.Query, &value); r != nil {
+	if in.Query.present {
+		if r := checkText("query", in.Query.value, false, searchQueryLimit); r != nil {
 			return r
 		}
-		if r := checkText("query", string(value), false, searchQueryLimit); r != nil {
-			return r
-		}
-		query = strings.ToLower(strings.TrimSpace(string(value)))
+		query = strings.ToLower(strings.TrimSpace(in.Query.value))
 	}
 	if in.State != "" {
 		known := false
