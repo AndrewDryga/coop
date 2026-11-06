@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The installer accepts a version without the v.** `COOP_VERSION=12.1.0`, the form
+  `coop version` prints, installs release v12.1.0 as `COOP_VERSION=v12.1.0` does, instead of
+  failing with curl's 404. A version with no release now gets one plain line, such as
+  `No Coop release v0.0.0-qa. Release tags look like v12.1.0.`, and installs nothing. Other download
+  failures still show curl's error and the URL.
+
 - **`coop run` leaves your command's options alone.** Coop reads its own options only before the
   command, as `docker run` does before its image. `coop run echo a --egress offline` used to take
   `--egress offline` out of the command and turn the box's network off; now `echo` prints

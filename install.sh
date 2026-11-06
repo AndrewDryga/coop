@@ -100,6 +100,11 @@ if [ -z "$ver" ]; then
     grep '"tag_name"' | head -1 | cut -d '"' -f 4)
 fi
 [ -n "$ver" ] || { echo "Could not find the latest release. Set COOP_VERSION to choose a release." >&2; exit 1; }
+# Release tags start with v, but a release binary prints its version without it (coop 12.1.0), so
+# that is the form people copy.
+case "$ver" in
+  [0-9]*) ver="v$ver" ;;
+esac
 
 asset="coop_${ver#v}_${os}_${arch}.tar.gz"
 url="https://github.com/$repo/releases/download/$ver/$asset"
@@ -108,7 +113,18 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 printf 'Installing Coop %s\n' "${ver#v}"
 printf '  Downloading %s…\n\n' "$asset"
-curl -fsSL "$url" -o "$tmp/coop.tar.gz" || { echo "Download failed: $url" >&2; exit 1; }
+# Every release ships this archive for each supported system, so a 404 means there is no such
+# release. Say that plainly: curl's own error reads like a network problem. Any other failure keeps
+# curl's error.
+http_code=$(curl -fsSL -w '%{http_code}' -o "$tmp/coop.tar.gz" "$url" 2>"$tmp/curl.err") || {
+  if [ "$http_code" = 404 ]; then
+    echo "No Coop release $ver. Release tags look like v12.1.0." >&2
+  else
+    cat "$tmp/curl.err" >&2
+    echo "Download failed: $url" >&2
+  fi
+  exit 1
+}
 
 # Verify the download against the release's published checksums — defends against a
 # tampered or MITM'd asset. Fails closed on a mismatch, a missing entry, or a host with no

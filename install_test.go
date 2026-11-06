@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,86 +46,15 @@ func TestInstallSetupOutcome(t *testing.T) {
 					}
 				}
 			}
-			bin := filepath.Join(root, "tools")
-			if err := os.Mkdir(bin, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			for _, name := range []string{"tr", "mktemp", "rm", "awk", "cut", "tar", "gzip", "dirname", "mkdir", "install", "mv", "cp"} {
-				path, err := exec.LookPath(name)
-				if err != nil {
-					t.Skipf("%s unavailable: %v", name, err)
-				}
-				if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
-					t.Fatal(err)
-				}
-			}
-			sha, err := exec.LookPath("sha256sum")
-			if err != nil {
-				sha, err = exec.LookPath("shasum")
-			}
-			if err != nil {
-				t.Skip("no SHA-256 utility available")
-			}
-			if err := os.Symlink(sha, filepath.Join(bin, filepath.Base(sha))); err != nil {
-				t.Fatal(err)
-			}
-			write := func(path, body string, mode os.FileMode) {
-				t.Helper()
-				if err := os.WriteFile(path, []byte(body), mode); err != nil {
-					t.Fatal(err)
-				}
-			}
-			stub := `#!/bin/sh
-case "$1" in
-  version) echo fixture ;;
-  build)
-    printf 'build %s %s\n' "$2" "$3" >> "$TEST_CALLS"
-    if test "$TEST_BUILD_EXIT" = 0; then
-      printf '✓ Box image built\n  14 supervised editor sessions will reconnect with the new image.\n'
-    fi
-    exit "$TEST_BUILD_EXIT" ;;
-  doctor)
-    printf 'doctor\n' >> "$TEST_CALLS"
-    printf 'Checking the Coop box on the Docker runtime\n'
-    exit "$TEST_DOCTOR_EXIT" ;;
-  *) exit 97 ;;
-esac
-`
-			var archive bytes.Buffer
-			gz := gzip.NewWriter(&archive)
-			tw := tar.NewWriter(gz)
-			if err := tw.WriteHeader(&tar.Header{Name: "coop", Mode: 0o755, Size: int64(len(stub))}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tw.Write([]byte(stub)); err != nil {
-				t.Fatal(err)
-			}
-			if err := tw.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err := gz.Close(); err != nil {
-				t.Fatal(err)
-			}
-			write(filepath.Join(root, "archive"), archive.String(), 0o600)
-			write(filepath.Join(root, "checksums"), fmt.Sprintf("%x  coop_9.9.9_linux_amd64.tar.gz\n", sha256.Sum256(archive.Bytes())), 0o600)
-			write(filepath.Join(bin, "uname"), "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo x86_64;; *) exit 97;; esac\n", 0o755)
+			bin := installerFixture(t, root)
 			runtime := "docker"
 			if tc.noDocker {
 				runtime = "container"
 			}
-			write(filepath.Join(bin, runtime), "#!/bin/sh\nexit 97\n", 0o755)
-			write(filepath.Join(bin, "curl"), `#!/bin/sh
-test "$#" -eq 4 && test "$1" = -fsSL && test "$3" = -o || exit 97
-case "$2" in
-  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/coop_9.9.9_linux_amd64.tar.gz) cp "$TEST_ROOT/archive" "$4" ;;
-  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/checksums.txt) cp "$TEST_ROOT/checksums" "$4" ;;
-  https://github.com/AndrewDryga/coop/releases/download/v9.9.9/checksums.txt.bundle) printf fixture > "$4" ;;
-  *) exit 97 ;;
-esac
-`, 0o755)
+			writeFixture(t, filepath.Join(bin, runtime), "#!/bin/sh\nexit 97\n", 0o755)
 			shell := "/bin/sh"
 			if tc.signed {
-				write(filepath.Join(bin, "cosign"), "#!/bin/sh\ntest \"$1\" = verify-blob\n", 0o755)
+				writeFixture(t, filepath.Join(bin, "cosign"), "#!/bin/sh\ntest \"$1\" = verify-blob\n", 0o755)
 				shell = "/bin/zsh"
 			}
 			calls := filepath.Join(root, "calls")
@@ -195,13 +125,163 @@ esac
 			if tc.build != "0" && !strings.Contains(string(out), "Retry: coop build --egress open && coop doctor") {
 				t.Errorf("failed image build needs its retry action:\n%s", out)
 			}
-			if got, err := os.ReadFile(installed); err != nil || string(got) != stub {
+			if got, err := os.ReadFile(installed); err != nil || string(got) != installStub {
 				t.Errorf("installed binary was not preserved: %v", err)
 			}
 			if info, err := os.Stat(installed); err != nil || info.Mode().Perm() != 0o755 {
 				t.Errorf("installed binary is not executable: %v", err)
 			}
 		})
+	}
+}
+
+// A pinned version installs with or without the tag's v, since a release binary prints its version
+// without one. A version with no release says so in one plain line, without curl's error, and
+// installs nothing. Any other download failure keeps curl's error and the URL that failed.
+func TestInstallPinnedVersion(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	const missing = "No Coop release %s. Release tags look like v12.1.0.\n"
+	for _, tc := range []struct{ version, refusal string }{
+		{"9.9.9", ""},
+		{"v9.9.9", ""},
+		{"v0.0.0-qa", fmt.Sprintf(missing, "v0.0.0-qa")},
+		{"9.9.8", fmt.Sprintf(missing, "v9.9.8")},
+		{"v5.0.0", "curl: (22) The requested URL returned error: 500\n" +
+			"Download failed: https://github.com/AndrewDryga/coop/releases/download/v5.0.0/coop_5.0.0_linux_amd64.tar.gz\n"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			root := t.TempDir()
+			bin := installerFixture(t, root)
+			bindir := filepath.Join(root, "installed")
+			cmd := exec.Command(sh, "./install.sh")
+			cmd.Env = []string{"PATH=" + bin, "HOME=" + root, "TMPDIR=" + root, "SHELL=/bin/sh",
+				"COOP_VERSION=" + tc.version, "COOP_NO_BUILD=1", "COOP_BIN_DIR=" + bindir, "TEST_ROOT=" + root}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if tc.refusal == "" {
+				got, readErr := os.ReadFile(filepath.Join(bindir, "coop"))
+				if err != nil || readErr != nil || string(got) != installStub || !strings.HasPrefix(string(out), "Installing Coop 9.9.9\n") {
+					t.Errorf("COOP_VERSION=%s: %v %v\n%s%s", tc.version, err, readErr, out, stderr.String())
+				}
+				return
+			}
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 || stderr.String() != tc.refusal {
+				t.Errorf("COOP_VERSION=%s = %v with errors %q, want exit 1 with %q", tc.version, err, stderr.String(), tc.refusal)
+			}
+			if entries, err := os.ReadDir(bindir); !os.IsNotExist(err) || len(entries) > 0 {
+				t.Errorf("a failed download installed %v into COOP_BIN_DIR (%v)", entries, err)
+			}
+		})
+	}
+}
+
+// installStub is the coop binary in the fixture release: it prints its version, and records the
+// build and doctor calls with the exit codes the test chose.
+const installStub = `#!/bin/sh
+case "$1" in
+  version) echo fixture ;;
+  build)
+    printf 'build %s %s\n' "$2" "$3" >> "$TEST_CALLS"
+    if test "$TEST_BUILD_EXIT" = 0; then
+      printf '✓ Box image built\n  14 supervised editor sessions will reconnect with the new image.\n'
+    fi
+    exit "$TEST_BUILD_EXIT" ;;
+  doctor)
+    printf 'doctor\n' >> "$TEST_CALLS"
+    printf 'Checking the Coop box on the Docker runtime\n'
+    exit "$TEST_DOCTOR_EXIT" ;;
+  *) exit 97 ;;
+esac
+`
+
+// installerFixture puts under root the one release install.sh can download, v9.9.9 for Linux on
+// x86-64, and returns a PATH folder with the tools the installer runs. uname and curl are fakes, so
+// nothing reaches the network. Any other release download fails as GitHub's does: v5.0.0 with a 500,
+// and every other version with a 404. The run needs TEST_ROOT=root in its environment.
+func installerFixture(t *testing.T, root string) string {
+	t.Helper()
+	bin := filepath.Join(root, "tools")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tr", "mktemp", "rm", "awk", "cut", "tar", "gzip", "dirname", "mkdir", "install", "mv", "cp", "cat"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Skipf("%s unavailable: %v", name, err)
+		}
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sha, err := exec.LookPath("sha256sum")
+	if err != nil {
+		sha, err = exec.LookPath("shasum")
+	}
+	if err != nil {
+		t.Skip("no SHA-256 utility available")
+	}
+	if err := os.Symlink(sha, filepath.Join(bin, filepath.Base(sha))); err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: "coop", Mode: 0o755, Size: int64(len(installStub))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(installStub)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, "archive"), archive.String(), 0o600)
+	writeFixture(t, filepath.Join(root, "checksums"), fmt.Sprintf("%x  coop_9.9.9_linux_amd64.tar.gz\n", sha256.Sum256(archive.Bytes())), 0o600)
+	writeFixture(t, filepath.Join(bin, "uname"), "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo x86_64;; *) exit 97;; esac\n", 0o755)
+	// It takes only the forms install.sh uses: -fsSL, an optional -w '%{http_code}', -o <file> and
+	// one URL. Like curl, a failed request writes no file and still prints its status.
+	writeFixture(t, filepath.Join(bin, "curl"), `#!/bin/sh
+out= url= print_code=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -fsSL) ;;
+    -w) test "$2" = '%{http_code}' || exit 97; print_code=1; shift ;;
+    -o) out=$2; shift ;;
+    https://*) test -z "$url" || exit 97; url=$1 ;;
+    *) exit 97 ;;
+  esac
+  shift
+done
+test -n "$out" && test -n "$url" || exit 97
+release=https://github.com/AndrewDryga/coop/releases/download
+case "$url" in
+  "$release"/v9.9.9/coop_9.9.9_linux_amd64.tar.gz) cp "$TEST_ROOT/archive" "$out"; code=200 ;;
+  "$release"/v9.9.9/checksums.txt) cp "$TEST_ROOT/checksums" "$out"; code=200 ;;
+  "$release"/v9.9.9/checksums.txt.bundle) printf fixture > "$out"; code=200 ;;
+  "$release"/v5.0.0/*) code=500 ;;
+  "$release"/*) code=404 ;;
+  *) exit 97 ;;
+esac
+test -z "$print_code" || printf %s "$code"
+test "$code" = 200 && exit 0
+echo "curl: (22) The requested URL returned error: $code" >&2
+exit 22
+`, 0o755)
+	return bin
+}
+
+func writeFixture(t *testing.T, path, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
 	}
 }
 
