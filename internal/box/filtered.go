@@ -111,6 +111,7 @@ type filteredExecution struct {
 	unsafeRoots         []string
 	publish             []string           // -p options the controller carries for serve.ports
 	serveEnv            []string           // COOP_SERVE_URL_* the agent container still gets
+	serviceEnv          []string           // COOP_SERVICE_<NAME>_URL for the approved services (filteredServiceEnv)
 	servePlan           []servePublication // each serve port's outcome behind publish, for the agent's note
 	servicesNet         string             // the Compose network the controller joins, if any
 	services            []networkgateway.ServiceBinding
@@ -271,6 +272,13 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err := checkServicesHaveRules(cfg, spec, composeFile, approvedServices); err != nil {
 		return nil, err
 	}
+	// A controller job or a box that only holds prompts turns auto-up off itself; neither is the
+	// person's choice to refuse.
+	if !spec.ControllerJob && !spec.HandshakeOnly {
+		if err := checkFilteredAutoUp(cfg, approvedServices); err != nil {
+			return nil, err
+		}
+	}
 	exposed := []string{spec.Repo, project}
 	exposed = append(exposed, ConfigExposureRoots(cfg)...)
 	for _, companion := range spec.CompanionRepositories {
@@ -353,6 +361,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		if err != nil {
 			return f, err
 		}
+		f.serviceEnv = filteredServiceEnv(composeFile, spec.Repo, spec.RepoReadOnly, approvedServices)
 	}
 	// The protection envelope is inventoried AFTER Compose creates the approved
 	// sidecars and their stopped internal network. Preparing them can add a

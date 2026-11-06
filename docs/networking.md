@@ -333,7 +333,13 @@ to add and approve their rules:
 
 A filtered run that needs project services waits for every other box in the project to stop before
 starting those services. Each loop run and editor session gets its own Compose project, network and
-volumes. A run started directly uses the project's development stack.
+volumes. A run started directly uses the project's development stack. The box gets
+`COOP_SERVICE_<NAME>_URL` with the service's name and port, such as `https://keycloak:8443`, for
+each `expose` port a rule allows.
+
+The box reaches only the services co:op starts for it, so it won't start with `COOP_AUTO_UP=0` or
+`box.auto_up: false` while its approved rules name services. Unset the setting, or remove those
+rules and run `coop approve`.
 
 Service approval covers both the name and the Compose definition you reviewed, and each launch
 compares that definition with the current file. Changing `db:` to use a different image or network
@@ -447,6 +453,7 @@ base, gateway and client images, but those builds don't run instructions from yo
 | `COOP_IMAGE` | `a filtered box runs coop's own image — unset COOP_IMAGE to start one` |
 | a runtime other than Docker, including a run with no mode set | `restricted networking needs docker; <runtime> cannot run the network gateway — run this with --egress open or --egress offline, set COOP_EGRESS, or set COOP_RUNTIME=docker` |
 | `box.network: true` with no `service:` rule | `<Agent> cannot start because filtered boxes reach project services only through approved network rules`, then a complete rule to paste for each Compose service. In a terminal, `coop approve` offers to add them |
+| `COOP_AUTO_UP=0` with an approved `service:` rule | `a filtered box starts the project services its approved network rules name, and COOP_AUTO_UP=0 says not to start them — unset COOP_AUTO_UP, or drop the service rules from box.egress_rules and run coop approve`. With `box.auto_up: false` instead, it names that setting |
 | `-v /var/run:/x` (or any mount of `/run`, `/proc`, `/sys`, `/dev`, `/`, or the Docker socket's directory) | `a filtered box cannot mount …: it is or holds …, which reaches Docker or the kernel` |
 | a project file with an unapproved rule, or a changed rule or mode | `<Agent> cannot start because this project asks for network access that has not been approved` · `Review it: coop approve` |
 | a project file with a rule that `coop approve` refuses | `<Agent> cannot start because this project asks for network access that cannot be approved:` and the reason above · `Change .agent/project.yaml, then review it: coop approve` |

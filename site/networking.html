@@ -495,7 +495,12 @@ order. It also saves each service&#39;s definition, so a later edit asks again.<
 </ul>
 <p>A filtered run that needs project services waits for every other box in the project to stop before
 starting those services. Each loop run and editor session gets its own Compose project, network and
-volumes. A run started directly uses the project&#39;s development stack.</p>
+volumes. A run started directly uses the project&#39;s development stack. The box gets
+<code>COOP_SERVICE_&lt;NAME&gt;_URL</code> with the service&#39;s name and port, such as <code>https://keycloak:8443</code>, for
+each <code>expose</code> port a rule allows.</p>
+<p>The box reaches only the services co:op starts for it, so it won&#39;t start with <code>COOP_AUTO_UP=0</code> or
+<code>box.auto_up: false</code> while its approved rules name services. Unset the setting, or remove those
+rules and run <code>coop approve</code>.</p>
 <p>Service approval covers both the name and the Compose definition you reviewed, and each launch
 compares that definition with the current file. Changing <code>db:</code> to use a different image or network
 setup requires another approval. Changing an unrelated service doesn&#39;t.</p>
@@ -638,6 +643,10 @@ base, gateway and client images, but those builds don&#39;t run instructions fro
 <tr>
 <td><code>box.network: true</code> with no <code>service:</code> rule</td>
 <td><code>&lt;Agent&gt; cannot start because filtered boxes reach project services only through approved network rules</code>, then a complete rule to paste for each Compose service. In a terminal, <code>coop approve</code> offers to add them</td>
+</tr>
+<tr>
+<td><code>COOP_<wbr/>AUTO_<wbr/>UP=0</code> with an approved <code>service:</code> rule</td>
+<td><code>a filtered box starts the project services its approved network rules name, and COOP_<wbr/>AUTO_<wbr/>UP=0 says not to start them — unset COOP_<wbr/>AUTO_<wbr/>UP, or drop the service rules from box.egress_<wbr/>rules and run coop approve</code>. With <code>box.auto_<wbr/>up: false</code> instead, it names that setting</td>
 </tr>
 <tr>
 <td><code>-v /var/run:/x</code> (or any mount of <code>/run</code>, <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/</code>, or the Docker socket&#39;s directory)</td>

@@ -780,3 +780,23 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 		t.Fatalf("an old image narrated:\n%q", got)
 	}
 }
+
+// A filtered launch starts its approved services just before the box, so an interactive one names
+// them ahead of the box's own section; a loop narrates them as they start instead.
+func TestFilteredLaunchNamesTheServicesItStarts(t *testing.T) {
+	got := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Agent: "claude", AgentCommand: true})
+		s.servicesWithBox([]string{"db", "redis\x1b[31m"})
+		s.starting()
+	})
+	if !strings.HasPrefix(got, "Starting project services\n  db\n  redis\n") || !strings.Contains(got, "Starting Claude") ||
+		strings.Index(got, "Starting project services") > strings.Index(got, "Starting Claude") {
+		t.Fatalf("interactive filtered launch = %q", got)
+	}
+	got = captureStderr(t, func() {
+		newLaunchSections(RunSpec{Agent: "claude", AgentCommand: true, Batch: true, LoopPresentation: true}).servicesWithBox([]string{"db"})
+	})
+	if got != "" {
+		t.Fatalf("a loop launch named its services ahead of their start: %q", got)
+	}
+}

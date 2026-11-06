@@ -226,6 +226,14 @@
   lists the signed-in accounts and offers `coop credentials <agent> <account> default` or
   `coop <agent>@<account>` instead of a sign-in.
 
+- **A filtered box says which services it starts, gets their URLs, and honors `COOP_AUTO_UP=0`.**
+  A filtered box started the services its approved rules name without a word, even with
+  `COOP_AUTO_UP=0`, and got no `COOP_SERVICE_<NAME>_URL`, while the docs said filtered services
+  start only with `coop up`. It now lists them under "Starting project services" before the box
+  starts, and gets `COOP_SERVICE_<NAME>_URL` with the service's name and port, such as
+  `https://web:8443`, for each `expose` port its rule allows. A filtered box can reach a service
+  only when Coop starts it, so with `COOP_AUTO_UP=0` or `box.auto_up: false` a box whose approved
+  rules name services now refuses to start and names the setting, instead of starting them anyway.
 - **A run with its own `XDG_STATE_HOME` keeps its Git views there.** Coop wrote the private Git
   view of every repository it touched to `~/.local/state/coop/gitviews`, so a run with a
   throwaway state folder still wrote into the real one. Git views now live beside the network

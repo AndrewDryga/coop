@@ -31,7 +31,7 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 | `COOP_NO_ASDF` | off | Skips installing the tools pinned in `.tool-versions` when the box starts. Set it in `agents/env`, not your host shell. |
 | `COOP_NETWORK` | `1` | Joins the services network. |
 | `COOP_CACHE` | `1` | Mounts the cache volume. |
-| `COOP_AUTO_UP` | `1` | Runs `compose up` for working boxes when `.agent/compose.yml` exists and egress is `open`. Start a filtered project's services with `coop up`. Set `0` to manage development services yourself with `coop up` and `coop down`. |
+| `COOP_AUTO_UP` | `1` | Starts the `.agent/compose.yml` services for working boxes: all of them for an open box, and the ones its approved network rules name for a filtered box. Set `0` to manage development services yourself with `coop up` and `coop down`. A filtered box whose approved rules name services then won't start, because it reaches only the services co:op starts for it. |
 | `COOP_SERVICES_NET` | auto | The services network to join, so parallel forks can share one database. |
 
 Choose one of these values for `COOP_EGRESS`:

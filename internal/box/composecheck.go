@@ -348,15 +348,26 @@ func checkComposeEnvironment(service string, value any) error {
 }
 
 func checkComposeScheme(service string, labels any) error {
-	var scheme string
-	switch value := labels.(type) {
-	case map[string]any:
+	if value, ok := labels.(map[string]any); ok {
 		if raw, present := value["coop.service.scheme"]; present {
-			scheme, _ = raw.(string)
-			if scheme == "" {
+			if scheme, _ := raw.(string); scheme == "" {
 				return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
 			}
 		}
+	}
+	if !validServiceScheme(composeServiceScheme(labels)) {
+		return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
+	}
+	return nil
+}
+
+// composeServiceScheme is the scheme a service's coop.service.scheme label names, in the map or the
+// list form of labels, else http: the scheme of its COOP_SERVICE_<NAME>_URL.
+func composeServiceScheme(labels any) string {
+	var scheme string
+	switch value := labels.(type) {
+	case map[string]any:
+		scheme, _ = value["coop.service.scheme"].(string)
 	case []any:
 		for _, raw := range value {
 			entry, _ := raw.(string)
@@ -365,10 +376,10 @@ func checkComposeScheme(service string, labels any) error {
 			}
 		}
 	}
-	if scheme != "" && !validServiceScheme(scheme) {
-		return fmt.Errorf("service %q: coop.service.scheme needs a plain URI scheme", service)
+	if scheme == "" {
+		return "http"
 	}
-	return nil
+	return scheme
 }
 
 // composeDoc / serviceSpec / volumeDecl model the SAFE subset only. Fields we don't inspect are

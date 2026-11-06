@@ -488,9 +488,10 @@ coop down                    # stop services; stored data is kept
 coop down --delete-volumes   # stop them and permanently delete their volumes (asks first)
 coop init --services         # add another service to a project that already has some
 </code></pre></div>
-<p>An open box joins the services&#39; private network. A filtered box reaches each service only through
-its approved rule. Connect with a URL such as
-<code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in <code>agents/env</code>.</p>
+<p>An open box joins the services&#39; private network. A filtered box starts the services its approved
+rules name, so it needs no <code>coop up</code> first, and reaches each one only through its rule. Connect with
+a URL such as <code>DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev</code>, and put it in
+<code>agents/env</code>.</p>
 <h3 id="development-and-loop-stacks">Development and loop stacks</h3>
 <p>Your development services keep the same Compose project and data between runs. A loop gets its own
 Compose project, network, volumes and published ports for the entire run. It reuses them across
@@ -602,6 +603,10 @@ have separate ports. The host port listens only on loopback. Inside the box,
 without <code>host.docker.internal</code> or broader network access.</p>
 <p>The box receives <code>COOP_SERVICE_KEYCLOAK_URL=https://localhost:&lt;port&gt;</code>, using the scheme from the
 label. Host tools can read all workspace service URLs from <code>coop fork ls --json</code>.</p>
+<p>The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
+the service&#39;s name, so it receives <code>COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443</code> for each
+<code>expose</code> port its rule allows. The services it starts run on a private network with no host port,
+so use open egress for a service your host browser must reach too.</p>
 <h3 id="what-a-compose-file-may-do">What a Compose file may do</h3>
 <p>co:op sends <code>.agent/compose.yml</code> to your host&#39;s Docker daemon to create the service containers, and
 validates the file before <code>coop up</code> and before every networked box launch.</p>

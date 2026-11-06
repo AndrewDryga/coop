@@ -229,7 +229,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>AUTO_<wbr/>UP</code></td>
 <td><code>1</code></td>
-<td>Runs <code>compose up</code> for working boxes when <code>.agent/compose.yml</code> exists and egress is <code>open</code>. Start a filtered project&#39;s services with <code>coop up</code>. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>.</td>
+<td>Starts the <code>.agent/compose.yml</code> services for working boxes: all of them for an open box, and the ones its approved network rules name for a filtered box. Set <code>0</code> to manage development services yourself with <code>coop up</code> and <code>coop down</code>. A filtered box whose approved rules name services then won&#39;t start, because it reaches only the services co:op starts for it.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>SERVICES_<wbr/>NET</code></td>

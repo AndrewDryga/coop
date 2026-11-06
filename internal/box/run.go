@@ -1710,6 +1710,14 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, err)
 		}
 		filtered.mountRevalidate = revalidateMounts
+		// The launch starts the approved services once its gateway runs, just before the box, so
+		// they are named here, ahead of the box, as an open launch names the ones it starts.
+		if prepared := filtered.preparedServices; prepared != nil && !prepared.joined {
+			sections.servicesWithBox(prepared.names)
+			if !sections.on && !spec.Quiet {
+				ui.Note("Starting project services (%s)", filepath.Base(composeFile))
+			}
+		}
 		sections.starting()
 		code, launchErr := filtered.launch(spec.Ctx, spec, options, stdin, stdout, stderr)
 		if started = filtered.started(); started {

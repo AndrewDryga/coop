@@ -616,6 +616,19 @@ func (s *launchSections) services(names []string) {
 	ui.Pass("Services started")
 }
 
+// servicesWithBox names the services a filtered launch starts just before its box, ahead of the
+// box's own section. The services start once the box's gateway runs, so a failure to start them is
+// the box's failure. A loop narrates them as they start (servicesPreparing, services).
+func (s *launchSections) servicesWithBox(names []string) {
+	if !s.on || s.loop || len(names) == 0 {
+		return
+	}
+	s.section("Starting project services")
+	for _, name := range names {
+		ui.Note("  %s", cleanLaunchText(name))
+	}
+}
+
 func (s *launchSections) servicesPreparing() {
 	if s.loop {
 		s.section("Starting services")

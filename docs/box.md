@@ -429,9 +429,10 @@ coop down --delete-volumes   # stop them and permanently delete their volumes (a
 coop init --services         # add another service to a project that already has some
 ```
 
-An open box joins the services' private network. A filtered box reaches each service only through
-its approved rule. Connect with a URL such as
-`DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev`, and put it in `agents/env`.
+An open box joins the services' private network. A filtered box starts the services its approved
+rules name, so it needs no `coop up` first, and reaches each one only through its rule. Connect with
+a URL such as `DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev`, and put it in
+`agents/env`.
 
 ### Development and loop stacks
 
@@ -569,6 +570,11 @@ without `host.docker.internal` or broader network access.
 
 The box receives `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>`, using the scheme from the
 label. Host tools can read all workspace service URLs from `coop fork ls --json`.
+
+The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
+the service's name, so it receives `COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443` for each
+`expose` port its rule allows. The services it starts run on a private network with no host port,
+so use open egress for a service your host browser must reach too.
 
 ### What a Compose file may do
 

@@ -909,3 +909,67 @@ func TestFilteredServicesRefusalDraftsCompleteRules(t *testing.T) {
 		t.Errorf("box.network: false still refused on services: %v", err)
 	}
 }
+
+// A filtered box reaches a service only through its rule, at its Compose name, so it gets the URL
+// of each exposed port its rule allows there, with the scheme the service's label names. An open
+// box's localhost URL is never offered: nothing forwards it in a filtered box.
+func TestFilteredServiceEnvNamesTheServicesTheRulesAllow(t *testing.T) {
+	body := "services:\n" +
+		"  web:\n    image: a\n    expose: [\"8443\", \"9000\"]\n    labels: {coop.service.scheme: https}\n" +
+		"  auth-db:\n    image: b\n    expose: [5432]\n    labels: [\"coop.service.scheme=postgresql\"]\n" +
+		"  cache:\n    image: c\n    expose: [\"6379\"]\n" +
+		"  queue:\n    image: d\n    ports: [\"127.0.0.1:5672:5672\"]\n" +
+		"  unasked:\n    image: e\n    expose: [\"80\"]\n"
+	repo, path := writeCompose(t, body)
+	grant := func(service, protocol string, ports ...int) egress.Grant {
+		return egress.Grant{Rule: egress.Rule{To: egress.Destination{Service: service}, Protocol: protocol, Ports: ports}}
+	}
+	grants := []egress.Grant{
+		grant("web", "tcp", 8443), // 9000 is exposed but not allowed
+		grant("auth-db", "tcp", 5432),
+		grant("cache", "udp", 6379), // a udp rule carries no TCP URL
+		grant("queue", "tcp", 5672), // published with ports:, not exposed
+	}
+	got := filteredServiceEnv(path, repo, false, grants)
+	want := []string{"-e", "COOP_SERVICE_AUTH_DB_URL=postgresql://auth-db:5432", "-e", "COOP_SERVICE_WEB_URL=https://web:8443"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("filtered service env = %q, want %q", got, want)
+	}
+	if got := filteredServiceEnv(filepath.Join(repo, "missing.yml"), repo, false, grants); got != nil {
+		t.Fatalf("a Compose file Coop cannot read gave %q", got)
+	}
+}
+
+// A filtered box whose approved rules name services starts them itself, so turning that off, with
+// COOP_AUTO_UP=0 or box.auto_up: false, refuses the box and names the setting that did it.
+func TestFilteredBoxWithServiceRulesHonorsAutoUpOff(t *testing.T) {
+	grants := []egress.Grant{{Rule: egress.Rule{To: egress.Destination{Service: "db"}, Protocol: "tcp", Ports: []int{5432}}}}
+	if err := checkFilteredAutoUp(&config.Config{AutoUp: true}, grants); err != nil {
+		t.Fatalf("auto-up on refused the box: %v", err)
+	}
+	if err := checkFilteredAutoUp(&config.Config{AutoUp: false}, nil); err != nil {
+		t.Fatalf("a box with no service rules was refused: %v", err)
+	}
+	off := false
+	fromProject := applyProjectPolicy(&config.Config{AutoUp: true}, &project.Project{Box: project.Box{AutoUp: &off}}, &RunSpec{})
+	err := checkFilteredAutoUp(fromProject, grants)
+	if err == nil || !strings.Contains(err.Error(), "box.auto_up: false in "+project.File) || !strings.Contains(err.Error(), "remove box.auto_up") ||
+		strings.Contains(err.Error(), "COOP_AUTO_UP") {
+		t.Fatalf("box.auto_up: false = %v", err)
+	}
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	t.Setenv("COOP_AUTO_UP", "0")
+	explicit, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = checkFilteredAutoUp(applyProjectPolicy(explicit, &project.Project{}, &RunSpec{}), grants)
+	if err == nil || !strings.Contains(err.Error(), "COOP_AUTO_UP=0") || !strings.Contains(err.Error(), "unset COOP_AUTO_UP") ||
+		!strings.Contains(err.Error(), "run coop approve") {
+		t.Fatalf("COOP_AUTO_UP=0 = %v", err)
+	}
+}

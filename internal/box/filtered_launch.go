@@ -406,6 +406,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	options = append(slices.Clone(options), "--user", f.agentIdentity.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--network", "container:"+f.ref("controller").ID)
 	options = append(options, f.serveEnv...)
+	options = append(options, f.serviceEnv...)
 	command := spec.Cmd
 	if f.filesystem != nil {
 		options, command, err = f.filesystem.guarded(ctx, f.image, command, options)

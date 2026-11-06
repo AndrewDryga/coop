@@ -188,6 +188,14 @@ func serviceRuleDrafts(composeFile, repo string, repoReadOnly bool) ([]ServiceDr
 // expose entries and the container side of its ports. A range, a variable or
 // a UDP port names no single TCP port the rule could carry.
 func declaredPorts(service serviceSpec) []int {
+	expose, _ := service.Expose.([]any)
+	ports := containerPorts(append(slices.Clone(expose), service.Ports...))
+	slices.Sort(ports)
+	return ports
+}
+
+// containerPorts are the TCP container ports Compose port entries name, in their order, once each.
+func containerPorts(entries []any) []int {
 	var ports []int
 	add := func(entry any) {
 		var spec string
@@ -212,16 +220,59 @@ func declaredPorts(service serviceSpec) []int {
 			ports = append(ports, port)
 		}
 	}
-	if expose, ok := service.Expose.([]any); ok {
-		for _, entry := range expose {
-			add(entry)
-		}
-	}
-	for _, entry := range service.Ports {
+	for _, entry := range entries {
 		add(entry)
 	}
-	slices.Sort(ports)
 	return ports
+}
+
+// filteredServiceEnv sets COOP_SERVICE_<NAME>_URL in a filtered box for each `expose`d port of an
+// approved service that the service's rule allows. The box reaches a service only through its rule,
+// at its Compose name, never at the localhost port an open box forwards, so the URL names the
+// service and its own port. Like the open box's, the URLs are best-effort: a file Coop cannot read
+// gives none, and the box's rules decide what it can reach either way.
+func filteredServiceEnv(composeFile, repo string, repoReadOnly bool, grants []egress.Grant) []string {
+	data, err := readValidatedCompose(composeFile, repo, repoReadOnly)
+	if err != nil {
+		return nil
+	}
+	var doc composeDoc
+	if yaml.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	var env []string
+	for _, name := range grantedServices(grants) {
+		service, ok := doc.Services[name]
+		if !ok {
+			continue
+		}
+		expose, _ := service.Expose.([]any)
+		for _, port := range containerPorts(expose) {
+			allowed := slices.ContainsFunc(grants, func(grant egress.Grant) bool {
+				rule := grant.Rule
+				return rule.To.Service == name && rule.Protocol == "tcp" && slices.Contains(rule.Ports, port)
+			})
+			if allowed {
+				env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://%s:%d", serviceEnvName(name), composeServiceScheme(service.Labels), name, port))
+			}
+		}
+	}
+	return env
+}
+
+// checkFilteredAutoUp refuses a filtered box whose approved rules name services when the person
+// turned off starting them. The gateway grants a service only at the address Coop gives it when it
+// starts the service, so such a box cannot use services started any other way, and launching it
+// without them would run a policy other than the approved one.
+func checkFilteredAutoUp(cfg *config.Config, grants []egress.Grant) error {
+	if cfg.AutoUp || len(grants) == 0 {
+		return nil
+	}
+	setting, fix := "box.auto_up: false in "+project.File, "remove box.auto_up"
+	if cfg.Explicit("COOP_AUTO_UP") {
+		setting, fix = "COOP_AUTO_UP=0", "unset COOP_AUTO_UP"
+	}
+	return fmt.Errorf("a filtered box starts the project services its approved network rules name, and %s says not to start them — %s, or drop the service rules from box.egress_rules and run coop approve", setting, fix)
 }
 
 // serviceGrants lists the sidecars this policy actually approved. A Compose
