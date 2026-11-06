@@ -4,7 +4,7 @@ description: "`coop init` generates for the detected stack and stays neutral whe
 scope: scaffold
 sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
 check: "none"
-updated: 2026-11-03
+updated: 2026-11-06
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -20,9 +20,12 @@ Go check is dead weight and the language actually in use gets no gate at all. An
 format checks (gofmt / terraform fmt / mix format / rustfmt). The guard means a check
 runs where the toolchain is installed and, where it is not, skips with a warning naming the
 missing tool, never in silence: Coop's default box carries none of these toolchains, so a
-silent skip passed every commit in a box unchecked. A detected language the project's box
-lacks (no project Dockerfile, not pinned in `.tool-versions`) gets init's exact next step:
-the `.tool-versions` pin and `coop init --stack asdf` (`scaffold.Toolchains`).
+silent skip passed every commit in a box unchecked. Where the tool is there but fails, gofmt and
+terraform fmt stop the commit on one line naming the tool and its first complaint: they read no
+project settings, so a failure (a shim with no version set, a file they cannot parse) means
+nothing was checked. A detected language the project's box lacks (no project Dockerfile, not
+pinned in `.tool-versions`) gets init's exact next step: the `.tool-versions` pin and
+`coop init --stack asdf` (`scaffold.Toolchains`).
 
 **Preserve Git hook composition.** A repo-local `core.hooksPath` overrides the box's global path,
 so the tracked hook directory also carries `.githooks/prepare-commit-msg`: a no-op-on-host shim that
@@ -47,10 +50,15 @@ blocks. Guessing wrong is worse than doing nothing.
   gate it on `scaffold.DetectStacks` (marker files + `.tool-versions`), don't hardcode one
   language. Add the language to `GateLangs` + `gateSnippets`, keep the snippet list-based
   (`gofmt -l`, `terraform fmt -check -list`, `mix format --check-formatted` matched against its
-  stable failure text, `rustfmt --check -l`) so a tool error fails *open* — only a real diff
-  blocks the commit. If a tool's check depends on project config it won't auto-discover outside
-  its own wrapper (e.g. bare `rustfmt` doesn't read Cargo.toml's `edition` the way `cargo fmt`
-  does), read that config directly rather than silently mis-checking.
+  stable failure text, `rustfmt --check -l`) so it names exactly the files to fix. A formatter
+  that reads no project settings fails *closed*: gofmt or terraform fmt exiting non-zero without
+  listing the file stops the commit on its first complaint
+  (TestPreCommitHookStopsWhenTheFormatterFails). mix format and rustfmt also load the project's
+  own setup (its deps and formatter config, rustfmt.toml, the edition read from Cargo.toml), so
+  their other failures fail *open* — only a real diff blocks the commit. If a tool's check
+  depends on project config it won't auto-discover outside its own wrapper (e.g. bare `rustfmt`
+  doesn't read Cargo.toml's `edition` the way `cargo fmt` does), read that config directly
+  rather than silently mis-checking.
 - Keep the scaffold pure: detection lives in `scaffold`, any interactive prompt lives in
   the CLI (`cmdInit`) so `scaffold.Init` never reads stdin (a prompt there would hang
   `go test`, whose stdin is often a tty).
@@ -60,6 +68,14 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-11-06 — gofmt and terraform fmt fail closed. A formatter on PATH that failed (the asdf shim
+  with no version set exits 126, a file it cannot parse) passed the commit in silence, so
+  unformatted or unparsable Go landed (overnight QA, finding F9). The hook now stops the commit with
+  "pre-commit blocked — <tool> failed: <first complaint>", checked against the real asdf shims,
+  gofmt 1.27.3 and terraform 1.17.1 (TestPreCommitHookStopsWhenTheFormatterFails runs the rendered
+  hook through git commit). Swept the four snippets: rustfmt and mix format pass a failure in
+  silence the same way, but stay fail-open under the 2026-08-09 decision below, since their
+  failures are often the project's setup; whether they should fail closed too is the owner's call.
 - 2026-11-03 — the guard no longer skips silently: a missing formatter prints "pre-commit: <tool>
   is not installed here, so the <Language> format check was skipped" and the commit proceeds
   (TestGateWarnsWhenTheFormatterIsMissing). A Go repo's default box had no gofmt, so its promised

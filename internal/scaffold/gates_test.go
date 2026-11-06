@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
 func TestDetectStacks(t *testing.T) {
@@ -264,6 +266,91 @@ func TestGateWarnsWhenTheFormatterIsMissing(t *testing.T) {
 				if stderr.String() != want {
 					t.Errorf("staged %s: stderr = %q, want %q", staged, stderr.String(), want)
 				}
+			}
+		})
+	}
+}
+
+// The rendered pre-commit hook, run by a real git commit. With a working formatter only a real
+// diff blocks; one that fails (a shim with no version set, a file it can't parse) checked
+// nothing, so the commit stops with one line naming the tool and its complaint; a missing one
+// skips the check with a notice. PATH holds the stub formatter, git and grep, and nothing else.
+func TestPreCommitHookStopsWhenTheFormatterFails(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	grepBin, err := exec.LookPath("grep")
+	if err != nil {
+		t.Skip("grep not available")
+	}
+	// An asdf shim for a tool with no version set for the folder, as the real one answers.
+	shim := func(tool string) string {
+		return "echo 'No version is set for command " + tool + "' >&2\n" +
+			"echo 'Consider adding one of the following versions in your config file' >&2\nexit 126\n"
+	}
+	const lastArg = `for a; do f="$a"; done` + "\n"
+	for _, tc := range []struct {
+		name, lang, file, tool string
+		stub                   string // the formatter's script; "" leaves it uninstalled
+		commits                bool
+		want                   string // everything the commit prints
+	}{
+		{"go clean", "go", "main.go", "gofmt", "exit 0\n", true, ""},
+		{"go diff", "go", "main.go", "gofmt", lastArg + `echo "$f"` + "\n", false,
+			"pre-commit blocked — these need gofmt:\n  main.go\nfix: gofmt -w <files>   (skip once: git commit --no-verify)\n"},
+		{"go exit 126", "go", "main.go", "gofmt", shim("gofmt"), false,
+			"pre-commit blocked — gofmt failed: No version is set for command gofmt\n"},
+		{"go syntax error", "go", "main.go", "gofmt", lastArg + `echo "$f:2:12: expected ')', found '{'" >&2; exit 2` + "\n", false,
+			"pre-commit blocked — gofmt failed: main.go:2:12: expected ')', found '{'\n"},
+		{"go absent", "go", "main.go", "gofmt", "", true,
+			"pre-commit: gofmt is not installed here, so the Go format check was skipped\n"},
+		{"terraform clean", "terraform", "main.tf", "terraform", "exit 0\n", true, ""},
+		{"terraform diff", "terraform", "main.tf", "terraform", lastArg + `echo "$f"; exit 3` + "\n", false,
+			"pre-commit blocked — these need terraform fmt: main.tf\nfix: terraform fmt <files>   (skip once: git commit --no-verify)\n"},
+		{"terraform exit 126", "terraform", "main.tf", "terraform", shim("terraform"), false,
+			"pre-commit blocked — terraform fmt failed on main.tf: No version is set for command terraform\n"},
+		// terraform -no-color opens its diagnostics with a blank line, as terraform 1.17 does.
+		{"terraform syntax error", "terraform", "main.tf", "terraform", `printf '\nError: Invalid expression\n\n  on main.tf line 2:\n' >&2; exit 2` + "\n", false,
+			"pre-commit blocked — terraform fmt failed on main.tf: Error: Invalid expression\n"},
+		{"terraform absent", "terraform", "main.tf", "terraform", "", true,
+			"pre-commit: terraform is not installed here, so the Terraform format check was skipped\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			bin := t.TempDir()
+			for name, target := range map[string]string{"git": gitBin, "grep": grepBin} {
+				if err := os.Symlink(target, filepath.Join(bin, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write := func(path, body string, mode os.FileMode) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(body), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.stub != "" {
+				write(filepath.Join(bin, tc.tool), "#!/bin/bash\n"+tc.stub, 0o755)
+			}
+			write(filepath.Join(repo, ".githooks", "pre-commit"), preCommitHook([]string{tc.lang}), 0o755)
+			write(filepath.Join(repo, tc.file), "x\n", 0o644)
+			git("config", "core.hooksPath", ".githooks")
+			git("add", tc.file)
+			commit := exec.Command(gitBin, "-c", "maintenance.auto=false", "commit", "-q", "-m", "x")
+			commit.Dir = repo
+			commit.Env = append(os.Environ(), "PATH="+bin,
+				"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"),
+				"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
+			out, err := commit.CombinedOutput()
+			if committed := err == nil; committed != tc.commits {
+				t.Errorf("committed = %t, want %t (%v)", committed, tc.commits, err)
+			}
+			if string(out) != tc.want {
+				t.Errorf("the commit printed %q, want %q", out, tc.want)
 			}
 		})
 	}

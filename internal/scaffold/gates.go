@@ -183,29 +183,48 @@ func hasTerraformFiles(repo string) bool {
 // gateSnippets is the per-language format check, command-v guarded so it runs where the
 // toolchain is installed and, where it is not, skips with a warning rather than in silence: a box
 // without the toolchain would otherwise pass every commit unchecked. @EXIT@ is the exit code
-// to block with (1 for the git hook, 2 for the Claude hook). Every snippet is list-based —
-// it names exactly the files that need formatting — so a tool error (crash, bad syntax, a
-// missing config) fails open instead of blocking on a broken toolchain; only a real diff blocks.
+// to block with (1 for the git hook, 2 for the Claude hook). Every snippet names exactly the
+// files that need formatting. gofmt and terraform fmt read no project settings, so when either
+// fails (a file it cannot parse, a shim with no version set) nothing was checked and the commit
+// stops on the tool's first complaint. mix format and rustfmt also load the project's own setup
+// (its formatter config and dependencies, rustfmt.toml, the edition read from Cargo.toml), so a
+// failure there is often that setup rather than the staged file: they fail open, and only a
+// real diff blocks.
 var gateSnippets = map[string]string{
-	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean.
+	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean, or if gofmt can't check them.
 go_files=$(echo "$staged" | grep '\.go$' || true)
 if [ -n "$go_files" ] && ! command -v gofmt >/dev/null 2>&1; then
   echo "pre-commit: gofmt is not installed here, so the Go format check was skipped" >&2
 elif [ -n "$go_files" ]; then
   # shellcheck disable=SC2086  # intentional: split the file list into separate gofmt args
-  bad=$(gofmt -l $go_files 2>/dev/null || true)
+  bad=$(gofmt -l $go_files 2>/dev/null); status=$?
+  if [ "$status" -ne 0 ]; then
+    # A file gofmt can't parse, or a gofmt that can't run: run it again for its first complaint.
+    # shellcheck disable=SC2086  # intentional: split the file list into separate gofmt args
+    why=$(gofmt -l $go_files 2>&1 >/dev/null | grep -m1 .)
+    echo "pre-commit blocked — gofmt failed: ${why:-exit status $status}" >&2; exit @EXIT@
+  fi
   if [ -n "$bad" ]; then
     echo "pre-commit blocked — these need gofmt:" >&2; echo "  ${bad//$'\n'/$'\n'  }" >&2
     echo "fix: gofmt -w <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
-	"terraform": `# Terraform: block the commit if any staged .tf file isn't terraform-fmt clean.
+	"terraform": `# Terraform: block the commit if any staged .tf file isn't terraform-fmt clean, or if terraform
+# can't check it.
 tf_files=$(echo "$staged" | grep '\.tf$' || true)
 if [ -n "$tf_files" ] && ! command -v terraform >/dev/null 2>&1; then
   echo "pre-commit: terraform is not installed here, so the Terraform format check was skipped" >&2
 elif [ -n "$tf_files" ]; then
   bad=""
-  for f in $tf_files; do [ -n "$(terraform fmt -check -list=true "$f" 2>/dev/null)" ] && bad="$bad $f"; done
+  for f in $tf_files; do
+    # -check exits non-zero for a file it lists; a non-zero exit that lists nothing is a failure.
+    out=$(terraform fmt -check -list=true "$f" 2>/dev/null); status=$?
+    if [ "$status" -ne 0 ] && [ -z "$out" ]; then
+      why=$(terraform fmt -no-color -check -list=true "$f" 2>&1 >/dev/null | grep -m1 .)
+      echo "pre-commit blocked — terraform fmt failed on $f: ${why:-exit status $status}" >&2; exit @EXIT@
+    fi
+    [ -n "$out" ] && bad="$bad $f"
+  done
   if [ -n "$bad" ]; then
     echo "pre-commit blocked — these need terraform fmt:$bad" >&2
     echo "fix: terraform fmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@

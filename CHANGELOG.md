@@ -270,6 +270,13 @@
   task in a queue the fork was given with `--tasks`; before, it said "No task matching" unless you
   passed the same `--tasks`.
 
+- **The commit check `coop init` writes stops a commit that gofmt or terraform fmt could not
+  check.** When the formatter was installed but failed, such as an asdf shim with no version set
+  or a file it could not parse, the commit went through without a word, so unformatted or
+  unparsable Go could land. The check now stops the commit with one line naming the tool and its
+  error, such as "pre-commit blocked — gofmt failed: No version is set for command gofmt". A
+  formatter that is not installed still skips its check with a notice. `coop init` keeps the
+  hooks a project already has, so this applies to the hooks it writes from now on.
 - **`coop init` reads the same from start to end, and an unknown `--stack` is a usage error.**
   `coop init --stack nix` exited 1; it now exits 2 and says "Choose asdf.", as a bad `--agents`
   value does. The approval warning at the end of init and the `--services` refusal without a
