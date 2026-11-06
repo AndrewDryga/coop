@@ -566,6 +566,11 @@ it, so co:op still asks you to approve the files. In that prompt:</p>
 <li>Files added since your last approval are identified.</li>
 </ul>
 <p>You must approve access separately on each machine.</p>
+<p>New forks copy these files and their regular siblings that Compose binds from the parent when
+present. Copying grants no service access. Before starting services, co:op refuses a missing bind
+source by name; create the file or directory and retry. A requested real file must be a regular
+file. Compose cannot create an empty directory in place of a missing source, and <code>coop down</code>
+remains available when a source is missing.</p>
 <h3 id="one-url-inside-and-out">One URL inside and out</h3>
 <p>Some services, such as an OIDC issuer like Keycloak, need the same URL in your host browser and in
 the app running inside the box. Give the service an <code>expose:</code> port in <code>.agent/compose.yml</code>:</p>

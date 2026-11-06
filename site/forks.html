@@ -126,8 +126,10 @@ editor settings the agent writes can run code when you open the fork on your mac
 <a href="#isolated-write-forks"><code>--isolated</code></a> to give the fork independent Git storage and to check changes
 before they enter your checkout.</p>
 <p>Several forks can run at once. A fork&#39;s <code>origin</code> points to a local path, not your upstream server.
-Git-ignored secrets you never committed stay out of the clone, but secrets already in Git history
-can still be in it.</p>
+Secrets already in Git history can still be in the clone. At creation, Coop also copies present
+<code>services.require_real_files</code> and regular files in the same directories that Compose binds, such
+as a generated key&#39;s certificate. Other ignored files stay out. These are independent copies;
+reopening a fork leaves them unchanged, and existing files in the clone take precedence.</p>
 <p>Open a fork, let the agent work, review its changes, then merge them:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Overview code example" tabindex="0"><code class="language-bash">coop fork perf codex     # open: clone into ../&lt;repo&gt;-forks/perf, run codex there
 coop fork perf           # re-enter: continues codex&#39;s last session by default

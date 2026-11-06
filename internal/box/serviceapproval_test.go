@@ -178,7 +178,7 @@ func TestApprovedServiceImageStaysPinnedWhenTagMoves(t *testing.T) {
 	}
 	checkOverride := func(want string) {
 		t.Helper()
-		args, cleanup, _, err := snapshotComposeArgsForStartPinned(t.Context(), bound, repo, compose, "", []byte(body), false)
+		args, cleanup, _, err := snapshotComposeArgsForStartPinned(t.Context(), bound, repo, compose, "", []byte(body), nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}

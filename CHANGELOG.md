@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **New forks copy required service files.** Generated keys and their bound sibling certificates
+  carry over from the parent. Service startup names missing bind sources and refuses them before
+  Compose can create empty directories in their place.
+
 - **New forks carry the parent's existing approvals.** Matching network rules, service permissions
   and project build files need no repeat approval in each fork. Changed inputs still need approval
   in the fork, and later parent approvals do not carry over. `coop fork ls` shows a refused loop as

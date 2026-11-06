@@ -279,7 +279,7 @@ func TestValidateComposeReadOnlyBindNeedsExistingSource(t *testing.T) {
 			t.Fatalf("read-only missing bind %s = %v, want pre-launch refusal", volume, err)
 		}
 		if err := ValidateComposeFile(path, repo, false); err != nil {
-			t.Fatalf("writable session should preserve Compose's source creation: %v", err)
+			t.Fatalf("definition inspection should tolerate a missing source: %v", err)
 		}
 	}
 }

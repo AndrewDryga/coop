@@ -299,7 +299,7 @@ func writeServiceShadowOverride(repo string, decoys map[string][]serviceDecoy, d
 			} else if d.dir {
 				source = decoyDir
 			}
-			fmt.Fprintf(&b, "      - type: bind\n        source: %q\n        target: %q\n        read_only: true\n", source, d.target)
+			fmt.Fprintf(&b, "      - type: bind\n        source: %q\n        target: %q\n        read_only: true\n        bind: {create_host_path: false}\n", source, d.target)
 		}
 	}
 	path := filepath.Join(dir, "coop-compose-override-shadow.yml")

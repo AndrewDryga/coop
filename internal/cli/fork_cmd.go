@@ -28,8 +28,8 @@ import (
 )
 
 // A fork is a throwaway local clone of your repo handed to an agent: its origin
-// is a local path (so the agent has nowhere to push) and gitignored secrets never
-// come along. The lifecycle mirrors a contractor's PR — open, review, merge, close.
+// is a local path (so the agent has nowhere to push). Required service files are copied
+// separately. The lifecycle mirrors a contractor's PR — open, review, merge, close.
 //
 //	coop fork perf codex   open (or resume) a fork; codex works in it
 //	coop fork ls           the forks of this repo
@@ -724,6 +724,11 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			unlock()
 			return -1, err
 		}
+		if err := box.CopyForkServiceFiles(repo, ws); err != nil {
+			cleanupErr := os.RemoveAll(ws)
+			unlock()
+			return -1, errors.Join(err, cleanupErr)
+		}
 		forkIdentity, err = bindForkBoundary(repo, fa.name, fa.isolated)
 		if err != nil {
 			unlock()
@@ -750,6 +755,11 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 			if err := setupForkBoundary(a.cfg, repo, fa.name, fa.isolated); err != nil {
 				unlock()
 				return -1, err
+			}
+			if err := box.CopyForkServiceFiles(repo, ws); err != nil {
+				cleanupErr := os.RemoveAll(ws)
+				unlock()
+				return -1, errors.Join(err, cleanupErr)
 			}
 		}
 		forkIdentity, err = bindForkBoundary(repo, fa.name, fa.isolated)

@@ -11,8 +11,10 @@ editor settings the agent writes can run code when you open the fork on your mac
 before they enter your checkout.
 
 Several forks can run at once. A fork's `origin` points to a local path, not your upstream server.
-Git-ignored secrets you never committed stay out of the clone, but secrets already in Git history
-can still be in it.
+Secrets already in Git history can still be in the clone. At creation, Coop also copies present
+`services.require_real_files` and regular files in the same directories that Compose binds, such
+as a generated key's certificate. Other ignored files stay out. These are independent copies;
+reopening a fork leaves them unchanged, and existing files in the clone take precedence.
 
 Open a fork, let the agent work, review its changes, then merge them:
 

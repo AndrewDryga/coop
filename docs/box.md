@@ -526,6 +526,12 @@ it, so co:op still asks you to approve the files. In that prompt:
 
 You must approve access separately on each machine.
 
+New forks copy these files and their regular siblings that Compose binds from the parent when
+present. Copying grants no service access. Before starting services, co:op refuses a missing bind
+source by name; create the file or directory and retry. A requested real file must be a regular
+file. Compose cannot create an empty directory in place of a missing source, and `coop down`
+remains available when a source is missing.
+
 ### One URL inside and out
 
 Some services, such as an OIDC issuer like Keycloak, need the same URL in your host browser and in

@@ -393,6 +393,9 @@ func ReviewServiceStart(workspace, file string, rt runtime.Runtime, terminal boo
 	if err != nil {
 		return nil, err
 	}
+	if err := checkServiceBindSources(workspace, file, data, nil); err != nil {
+		return nil, err
+	}
 	bound, err := rt.FreezeCompose(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("inspect Docker before service review: %w", err)

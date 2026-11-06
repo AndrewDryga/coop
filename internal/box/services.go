@@ -82,7 +82,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
-	args, cleanup, hidden, err := snapshotComposeArgsForStartPinned(ctx, rt, workspace, file, owner, data, review != nil, exposedRoots...)
+	args, cleanup, hidden, err := snapshotComposeArgsForStartPinned(ctx, rt, workspace, file, owner, data, selected, review != nil, exposedRoots...)
 	if err != nil {
 		return startedServices{}, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
@@ -240,7 +240,10 @@ func snapshotComposeArgsForInspect(workspace, file, owner string, repoReadOnly b
 	return snapshotComposeArgsForStartData(workspace, file, owner, data, true, exposedRoots...)
 }
 
-func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, workspace, file, owner string, data []byte, selected []string, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+	if err := checkServiceBindSources(workspace, file, data, selected); err != nil {
+		return nil, nil, nil, err
+	}
 	if err := validateIsolatedServiceVolumes(ctx, rt, workspace, file, owner, data); err != nil {
 		return nil, nil, nil, err
 	}
@@ -282,7 +285,12 @@ func snapshotComposeArgsForStartDataMode(workspace, file, owner string, data []b
 	}
 	cleanup = func() { _ = os.RemoveAll(dir) }
 	path := filepath.Join(dir, "compose.yml")
-	if err := os.WriteFile(path, data, 0o400); err != nil {
+	snapshot, err := composeWithoutBindCreation(data)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+	if err := os.WriteFile(path, snapshot, 0o400); err != nil {
 		cleanup()
 		return nil, nil, nil, err
 	}

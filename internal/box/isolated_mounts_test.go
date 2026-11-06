@@ -82,7 +82,7 @@ func TestIsolatedServiceBindsRejectControlSourcesBeforeCompose(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx := context.WithValue(t.Context(), isolatedServiceParentKey{}, repo)
-			_, cleanup, _, err := snapshotComposeArgsForStartPinned(ctx, rt, ws, file, "", data, true)
+			_, cleanup, _, err := snapshotComposeArgsForStartPinned(ctx, rt, ws, file, "", data, nil, true)
 			if cleanup != nil {
 				cleanup()
 			}
@@ -442,7 +442,7 @@ func TestIsolatedServiceVolumesCannotExposeParentOrPrivateState(t *testing.T) {
 				t.Fatalf("service volume declaration %q exposed %s", declaration, source)
 			}
 			// A previously approved path still cannot reach start, including explicit coop up.
-			_, cleanup, _, err := snapshotComposeArgsForStartPinned(t.Context(), bound, ws, file, "", data, true)
+			_, cleanup, _, err := snapshotComposeArgsForStartPinned(t.Context(), bound, ws, file, "", data, nil, true)
 			if cleanup != nil {
 				cleanup()
 			}

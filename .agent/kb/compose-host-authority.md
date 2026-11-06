@@ -2,7 +2,7 @@
 name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
-sources: [internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
+sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
 updated: 2026-11-05
 ---
 
@@ -15,8 +15,8 @@ YAML scalar decoding precedes the import check, including `!!binary`; mapping ke
 aliases used as values are checked. Escaped `$$` container variables and literal environment values
 remain supported. Bind and port strings retain their stricter no-dollar rule.
 
-`snapshotComposeArgs` writes the approved bytes into a private directory whose canonical path must
-be outside the workspace, even when `TMPDIR` points inside it. Discovery and launch share that file,
+`snapshotComposeArgs` writes a snapshot with automatic bind directory creation disabled into a
+private directory whose canonical path must be outside the workspace, even when `TMPDIR` points inside it. Discovery and launch share that file,
 the original `--project-directory`, and an empty `--env-file`; the generated port override has the
 same placement requirement. Callers also exclude credential configuration and ACP transcript mount
 roots, with inode-aware ancestry so case aliases cannot place an artifact back in the workspace.
@@ -46,12 +46,27 @@ is the operator's recovery step; Coop does not kill it during a start. Live sour
 live; neither the snapshot nor barrier freezes ordinary file edits. A source nested beneath a
 writable service bind is refused even if the nested bind is read-only, because a restart reopens it.
 Repository binds reject SELinux relabel and propagation options, including on otherwise read-only
-mounts. A read-only session also requires every bind source to exist before Compose can create a
-host directory for a short-form missing source. Explicit long-form `type: bind` sources are host
+mounts. Every start requires selected services' bind sources and their dependencies to exist;
+`services.require_real_files` must be regular files. `checkServiceBindSources` runs before review
+and at the shared pinned-start boundary, including both filtered preparation and final start.
+Default starts skip inactive profiles; explicit service selection still checks their dependencies.
+Inspection and teardown still tolerate missing sources. `composeWithoutBindCreation` converts
+binds in the private snapshot to long form with `create_host_path: false`, closing disappearance
+after validation without changing approval or shadowing inputs. Explicit long-form `type: bind` sources are host
 paths even when spelled as bare relative names; validation, nested-bind checks, and secret
 shadowing all use that classification.
 
 ## Sidecars get the box's secret shadowing
+
+`CopyForkServiceFiles` runs only at the CLI's new-clone boundaries, before generation publication.
+It copies present requested regular files and their directly bound regular siblings; existing
+clone files win. Raw no-follow rooted opens reject symlink traversal, exclusive destination
+creation avoids replacement, and local Git excludes keep new copies out of commits. New directories
+retain the parent's group/other permissions through pinned handles after all sibling files are
+copied, with owner write retained so fork removal works. File permissions are copied unchanged.
+Invalid Compose skips sibling discovery so a fork can repair it; explicit requested files still
+copy. Missing parent files are skipped; launch names missing binds. This copies no approval and changes no
+shadowing decision. Session/controller snapshot construction does not use this copy path.
 
 A validated bind may still hand a sidecar the raw repo: Compose resolves `../:/repo` on the host,
 so every `.env`, key, and `.coopignore`'d path the box only sees as a decoy arrives in the sidecar
@@ -133,6 +148,8 @@ like coop's (`^coop-…-<8hex>$`) — never a human's compose project. "Unused" 
 containers as users (`ps -a --filter network=`), because they reconnect on the next start.
 
 ## Changelog
+- 2026-11-05: added creation-only required-file copying and start-only bind existence checks;
+  verified all three pinned-start callers, review, teardown and private Compose snapshot handling.
 - 2026-11-04: `lastApprovalFor` no longer reads version 4 service approvals (task 2026-11-04-drop-the-old-host-state-readers).
 - 2026-11-04: removed `ServiceStartReview.CaseExposed`, which nothing called; `coop up` refuses
   these names through `serviceShadowPlan`'s callers.
