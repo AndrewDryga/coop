@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -205,6 +206,13 @@ func TestDockerCgroupInventoryReconcilesOnlyProvenDisappearance(t *testing.T) {
 			}
 			if mode == "cgroup-churn" && ctx.Err() == nil {
 				t.Fatalf("churn did not reach its bounded deadline: %v", err)
+			}
+			// A busy host's teardown printed the deadline twice ("inspect Docker filesystem consumers:
+			// context deadline exceeded", then a bare "context deadline exceeded") and failed the run.
+			// The deadline is now the one unfinished inventory, and nothing else may be read as it.
+			if unfinished := errors.Is(err, ErrConsumerInventoryUnfinished); unfinished != (mode == "cgroup-churn") ||
+				unfinished && err.Error() != ErrConsumerInventoryUnfinished.Error() {
+				t.Fatalf("%s: inventory error %q, unfinished=%v", mode, err, unfinished)
 			}
 			if mode == "cgroup-disappear" {
 				if err != nil {

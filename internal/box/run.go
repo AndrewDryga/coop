@@ -1649,7 +1649,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			filesystemClosed = true
 			if filesystemCleanup != nil {
 				retainArtifacts = true
-				runErr = errors.Join(runErr, filesystemCleanup)
+				runErr = errors.Join(runErr, keptFileProtection(filesystemCleanup))
 			}
 		}
 		// A review's stack is as disposable as its candidate: containers, network and volumes.

@@ -44,7 +44,11 @@ start waits only for boxes in its workspace, while project-wide approval changes
 still wait for every box. Every holder takes the workspace lock first. Already-running Compose sidecars are outside that lock:
 before every new start, `RunningWritableBindSourcesByLabels` inspects all live Compose containers
 on the same frozen daemon as the eventual `compose up`, even if the operator changes Docker context,
-and refuses any writable bind overlapping this repository. `coop down` or stopping the container
+and refuses any writable bind overlapping this repository. It inspects every Compose container on the
+host, any project's, since a container started from another checkout or by hand can bind this one. A
+container removed between its listing and its inspect (Docker then fails the inspect, and the batch
+lacks its record) counts as gone only when the same listing, run again, no longer shows it, as
+`MountSourcesByLabel` proves a box gone; a re-listing that fails or still shows it fails closed. `coop down` or stopping the container
 is the operator's recovery step; Coop does not kill it during a start. Live source contents remain
 live; neither the snapshot nor barrier freezes ordinary file edits. A source nested beneath a
 writable service bind is refused even if the nested bind is read-only, because a restart reopens it.
@@ -156,6 +160,10 @@ By id alone, one fork's start removed a sibling's just-prepared network (measure
 Compose 5.5, 2026-11-05; `TestRuntimeComposeTwoWorkspacesStartTheirServicesTogether`).
 
 ## Changelog
+- 2026-11-06 — a container removed mid-inventory failed every start with "container mount inventory
+  is incomplete" on a busy host (task 2026-11-06-keep-busy-host-docker-inventories-from-failing-r);
+  `BindMountsByLabels` now proves it gone by listing again, in both its inspect paths. Verified with
+  `TestBindInventorySkipsAContainerRemovedBeforeItsInspect`.
 - 2026-11-05: network sweeps count created, never-started containers as users, by network name;
   the id alone missed them and a fork's start removed the network a sibling had just prepared.
 - 2026-11-05: the project lock is its own file (`.project-launch.lock`), so the main checkout's

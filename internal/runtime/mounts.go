@@ -145,11 +145,10 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		filters = append(filters, filter)
 	}
 	sort.Strings(filters)
-	var ids []string
-	var err error
-	if docker == nil {
-		ids, err = r.containerIDsContext(ctx, all, filters...)
-	} else {
+	// Containers come and go while this runs, and an inspect's wording proves nothing, so only this
+	// listing, run again and no longer showing one, proves a container gone (MountSourcesByLabel).
+	list := func() ([]string, error) { return r.containerIDsContext(ctx, all, filters...) }
+	if docker != nil {
 		args := []string{"ps", "-q", "--no-trunc"}
 		if all {
 			args = append(args, "-a")
@@ -157,10 +156,12 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		for _, filter := range filters {
 			args = append(args, "--filter", filter)
 		}
-		var out []byte
-		out, err = docker.output(ctx, 1<<20, args...)
-		ids = strings.Fields(string(out))
+		list = func() ([]string, error) {
+			out, err := docker.output(ctx, 1<<20, args...)
+			return strings.Fields(string(out)), err
+		}
 	}
+	ids, err := list()
 	if err != nil {
 		return nil, fmt.Errorf("list running Compose containers: %w", err)
 	}
@@ -170,7 +171,7 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		if err := docker.Verify(ctx); err != nil {
 			return nil, err
 		}
-		if err := docker.collectBindSources(ctx, ids, writable, seen, holders); err != nil {
+		if err := docker.collectBindSources(ctx, ids, writable, seen, holders, list); err != nil {
 			return nil, err
 		}
 		ids = nil
@@ -179,6 +180,11 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 		args := []string{"inspect", "--format", "{{json .Mounts}}", id}
 		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
 		if err != nil {
+			if ctx.Err() == nil {
+				if remaining, listErr := list(); listErr == nil && !slices.Contains(remaining, id) {
+					continue // removed after the listing: it binds nothing now
+				}
+			}
 			return nil, fmt.Errorf("inspect running Compose container %s: %w", id, commandOutputError(err, out))
 		}
 		var mounts []struct {
@@ -210,9 +216,10 @@ func (r Runtime) BindMountsByLabels(ctx context.Context, labels map[string]strin
 	return out, nil
 }
 
-// Batch process startup, not custody checks: every full ID must yield exactly one mount record.
-// Streaming keeps the existing per-container limit without imposing it on the whole inventory.
-func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable bool, sources map[string]bool, holders map[string]string) error {
+// Batch process startup, not custody checks: every full ID must yield exactly one mount record, or
+// be gone by the listing, run again (list). Streaming keeps the existing per-container limit without
+// imposing it on the whole inventory.
+func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable bool, sources map[string]bool, holders map[string]string, list func() ([]string, error)) error {
 	const batchSize = 32
 	const mountsLimit = 1 << 20
 	listed := make(map[string]bool, len(ids))
@@ -285,11 +292,26 @@ func (d *Docker) collectBindSources(ctx context.Context, ids []string, writable 
 			if err := scanner.Err(); err != nil {
 				return fmt.Errorf("container mount inventory could not be read within its bound")
 			}
-			if len(expected) != 0 {
-				return fmt.Errorf("container mount inventory is incomplete")
-			}
 			return nil
 		}, args...)
+		if len(expected) != 0 && errors.As(err, new(dockerFailure)) {
+			// docker inspect fails for a container removed after the listing, as Compose projects and
+			// test suites do all the time. One gone binds nothing, so the batch stands once the
+			// listing no longer shows any container it is missing.
+			remaining, listErr := list()
+			err = listErr
+			for _, id := range remaining {
+				if expected[id] {
+					err = fmt.Errorf("container mount inventory is incomplete") // still listed, so its record is owed
+				}
+			}
+			if err == nil {
+				clear(expected)
+			}
+		}
+		if err == nil && len(expected) != 0 {
+			err = fmt.Errorf("container mount inventory is incomplete")
+		}
 		if err != nil {
 			return fmt.Errorf("inspect container mount inventory: %w", err)
 		}

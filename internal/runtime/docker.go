@@ -421,7 +421,7 @@ func (d *Docker) read(ctx context.Context, timeout time.Duration, consume func(i
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errors.New("Docker operation failed; outcome unknown")
+		return dockerFailure{}
 	}
 	return nil
 }

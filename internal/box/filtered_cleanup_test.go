@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 func TestFilteredCleanupJoinsFilesystemBeforeSeal(t *testing.T) {
@@ -145,5 +147,41 @@ func TestFilteredCleanupRetainsUncertainConsumer(t *testing.T) {
 	record, err := f.store.Execution(f.record.ID)
 	if err != nil || record.Receipt == nil || record.Receipt.Cleanup != "pending" {
 		t.Fatal("uncertain cleanup claimed complete", err)
+	}
+}
+
+// On a host with about 58 containers, a run whose command succeeded ended with "✗ inspect Docker
+// filesystem consumers: context deadline exceeded", the deadline again on its own line, and exit 1:
+// its teardown ran out of time checking the host's other containers. The protection and its record
+// stay for the next run's sweep, so the teardown says so in one line and the run keeps its status.
+// Any other retirement failure is still the run's.
+func TestATeardownInventoryThatRunsOutOfTimeKeepsTheRunsStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retire  error
+		failed  bool
+		warning string
+	}{
+		{name: "out of time", retire: runtime.ErrConsumerInventoryUnfinished,
+			warning: "⚠ Coop could not check every Docker container in time, so this box's filesystem protection stays until the next run in this project removes it\n"},
+		{name: "another failure", retire: errors.New("filesystem consumer still present"), failed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := filteredFixture(t)
+			if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			var gone bool
+			var err error
+			out := captureStderr(t, func() {
+				gone, err = f.cleanupWithFilesystem("exited", func() error { return tc.retire })
+			})
+			if !gone || (err != nil) != tc.failed || tc.failed && !errors.Is(err, tc.retire) {
+				t.Fatalf("cleanup = (%v, %v)", gone, err)
+			}
+			if out != tc.warning {
+				t.Fatalf("teardown printed %q, want %q", out, tc.warning)
+			}
+		})
 	}
 }

@@ -98,6 +98,11 @@ func (d *Docker) ObserveContainerLogs(ctx context.Context, ref DockerRef, tail, 
 const dockerCgroupFormat = `{"ID":{{json .Id}},"Parent":{{json (index .HostConfig "CgroupParent")}}}`
 const dockerCgroupBatch = 128
 
+// ErrConsumerInventoryUnfinished is a cgroup consumer inventory that ran out of time: on a host with
+// many containers, or many coming and going, Docker could not list and inspect them all within the
+// bound. It proves nothing either way, so whatever the parent protects stays.
+var ErrConsumerInventoryUnfinished = errors.New("Docker could not check every container in time")
+
 // CgroupParentUnused includes stopped containers: Docker can resolve their
 // retained parent again on restart, even while its cgroup currently has no tasks.
 // The caller serializes creation and retirement for this parent.
@@ -110,13 +115,21 @@ func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
 	// on each changed inventory.
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	// Every step that meets the deadline reports it once, as the one unfinished inventory, rather
+	// than each in its own words: a failed inspect and the listing after it both say it.
+	unfinished := func(err error) error {
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return ErrConsumerInventoryUnfinished
+		}
+		return err
+	}
 	ids, err := d.boundContainerIDs(ctx)
 	if err != nil {
-		return err
+		return unfinished(err)
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("Docker filesystem consumer inventory did not stabilize: %w", err)
+			return unfinished(fmt.Errorf("Docker filesystem consumer inventory did not stabilize: %w", err))
 		}
 		restart := false
 		for start := 0; start < len(ids); start += dockerCgroupBatch {
@@ -126,7 +139,7 @@ func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
 			if err != nil {
 				next, observeErr := d.boundContainerIDs(ctx)
 				if observeErr != nil {
-					return errors.Join(fmt.Errorf("inspect Docker filesystem consumers: %w", err), observeErr)
+					return unfinished(errors.Join(fmt.Errorf("inspect Docker filesystem consumers: %w", err), observeErr))
 				}
 				remaining := make(map[string]bool, len(next))
 				for _, id := range next {
@@ -139,7 +152,7 @@ func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
 					}
 				}
 				if !restart {
-					return fmt.Errorf("inspect Docker filesystem consumers: %w", err)
+					return unfinished(fmt.Errorf("inspect Docker filesystem consumers: %w", err))
 				}
 				// Only exact disappearance explains this failed command. Discard
 				// all earlier batches and include every newly listed container.
@@ -151,7 +164,7 @@ func (d *Docker) CgroupParentUnused(ctx context.Context, parent string) error {
 			}
 		}
 		if !restart {
-			return d.Verify(ctx)
+			return unfinished(d.Verify(ctx))
 		}
 	}
 }

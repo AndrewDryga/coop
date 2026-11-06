@@ -38,6 +38,9 @@ func (f *filteredExecution) cleanup(workload string) (bool, error) {
 }
 
 func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func() error) (agentGone bool, result error) {
+	if closeFilesystem := retire; closeFilesystem != nil {
+		retire = func() error { return keptFileProtection(closeFilesystem()) }
+	}
 	filesystemClosed := false
 	defer func() {
 		if retire != nil && !filesystemClosed {

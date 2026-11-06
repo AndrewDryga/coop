@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/fsimage"
 	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const filesystemLabel = "coop.filesystem.parent"
@@ -416,6 +417,18 @@ func (a *filesystemAdmission) writeGuard(ctx context.Context, manifest fsfilter.
 		}
 	}
 	return dir, nil
+}
+
+// keptFileProtection is a run's filesystem retirement, judged once its command has finished. One
+// that ran out of time checking the host's other containers kept the protection and its record,
+// which the next run's sweep in this project retires (RecoverFilesystemAdmissions), so it is said in
+// one line and the run keeps the status its command returned. Any other failure is the run's.
+func keptFileProtection(err error) error {
+	if !errors.Is(err, runtime.ErrConsumerInventoryUnfinished) {
+		return err
+	}
+	ui.Warn("Coop could not check every Docker container in time, so this box's filesystem protection stays until the next run in this project removes it")
+	return nil
 }
 
 // close retains both enforcement and records whenever a consumer's removal or

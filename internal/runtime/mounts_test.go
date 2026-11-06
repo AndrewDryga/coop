@@ -301,3 +301,52 @@ func TestDockerBindInventoryLateBatchFailureReturnsNoSources(t *testing.T) {
 		t.Fatalf("late incomplete batch returned partial authority: %v, %v", mounts, err)
 	}
 }
+
+// Other sessions and test suites start and remove Compose containers all the time, so one can go
+// between the listing and its inspect: docker inspect then fails and has no record of it, and every
+// launch that checked service writers failed with "container mount inventory is incomplete". A
+// container the listing, run again, no longer shows is gone and binds nothing. One it still shows,
+// a re-listing that fails, or a record missing without a failed inspect still fails closed.
+func TestBindInventorySkipsAContainerRemovedBeforeItsInspect(t *testing.T) {
+	live, gone := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for _, path := range []string{"pinned daemon", "plain CLI"} {
+		for _, tc := range []struct {
+			name, relist, inspectExit string
+			skipped                   bool
+		}{
+			{name: "provably gone", relist: "printf '%s\\n' " + live, inspectExit: "exit 1", skipped: true},
+			{name: "still listed", relist: "printf '%s\\n%s\\n' " + live + " " + gone, inspectExit: "exit 1"},
+			{name: "re-listing failed", relist: "echo 'daemon query broke' >&2; exit 42", inspectExit: "exit 1"},
+			{name: "no failed inspect", relist: "printf '%s\\n' " + live, inspectExit: "exit 0"},
+		} {
+			if path == "plain CLI" && tc.inspectExit == "exit 0" {
+				continue // a plain inspect asks per container, so a missing record is always a failed one
+			}
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				rt, _ := mountInventoryFixture(t, nil, "")
+				all := path == "pinned daemon" // a pinned listing of stopped ones batches through the bound daemon
+				listed := filepath.Join(t.TempDir(), "listed")
+				record := `{"ID":"` + live + `","Status":"running","Mounts":[{"Type":"bind","Source":"/live","RW":true}]}`
+				script := "#!/bin/sh\ncase \"$*\" in\n*\"ps -q\"*)\n" +
+					"if [ -e " + strconv.Quote(listed) + " ]; then " + tc.relist + "; else : > " + strconv.Quote(listed) + "; printf '%s\\n%s\\n' " + live + " " + gone + "; fi ;;\n" +
+					"*\"inspect --type container --format\"*) printf '%s\\n' '" + record + "'; echo 'Error: No such container: " + gone + "' >&2; " + tc.inspectExit + " ;;\n" +
+					"*\"inspect --format {{json .Mounts}} " + live + "\"*) printf '%s\\n' '[{\"Type\":\"bind\",\"Source\":\"/live\",\"RW\":true}]' ;;\n" +
+					"*\"inspect --format {{json .Mounts}} " + gone + "\"*) echo 'Error: No such object: " + gone + "' >&2; exit 1 ;;\n" +
+					"*) exit 99 ;;\nesac\n"
+				if err := os.WriteFile(rt.Name, []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				mounts, err := rt.BindMountsByLabels(t.Context(), nil, all, true)
+				if tc.skipped {
+					if err != nil || len(mounts) != 1 || mounts[0].Source != "/live" {
+						t.Fatalf("mounts = %v, %v; want the live container's bind and the removed one skipped", mounts, err)
+					}
+					return
+				}
+				if err == nil || mounts != nil {
+					t.Fatalf("an unproven disappearance = %v, %v; want an error and no mounts", mounts, err)
+				}
+			})
+		}
+	}
+}

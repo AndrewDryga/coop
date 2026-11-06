@@ -169,6 +169,10 @@ release, exact inert probes and finally private state. Unknown outcomes retain r
 Consumer inspection uses bounded batches. If a batch fails and a fresh same-daemon inventory
 proves one of its IDs disappeared, retirement restarts the entire inventory under one deadline.
 Stable failures, malformed observations and newly discovered stopped consumers retain custody.
+An inventory that meets that deadline is `runtime.ErrConsumerInventoryUnfinished`, reported once.
+At the end of a run (`keptFileProtection`, in the filtered cleanup and the unfiltered finish) it
+keeps custody like any failure, prints one warning line and leaves the run's status to its command:
+the next run's `RecoverFilesystemAdmissions` in that workspace retires the record.
 
 Filtered launches prepare the trusted filesystem owner and network helpers concurrently. Both
 branches finish before cleanup or workload creation; errors never abandon an in-flight branch.
@@ -238,6 +242,11 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-06 — a teardown inventory that ran out of time on a host with about 58 containers turned a
+  successful run into exit 1, with the deadline printed twice (task
+  2026-11-06-keep-busy-host-docker-inventories-from-failing-r). Verified with
+  `TestATeardownInventoryThatRunsOutOfTimeKeepsTheRunsStatus` and the churn case of
+  `TestDockerCgroupInventoryReconcilesOnlyProvenDisappearance`.
 - 2026-11-06 — a refused create no longer stays `Pending`: QA's refused agent creates left
   `coop-fs-…-owner` helpers running until a later launch reaped them.
 - 2026-11-04 — a custody record with a helper image and no controller (written 2026-11-01 and

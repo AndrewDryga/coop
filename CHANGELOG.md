@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A busy host's Docker no longer fails runs it has nothing to do with.** A run's check of
+  running Compose services failed with "container mount inventory is incomplete" whenever some
+  other project's container was removed while Coop inspected it. A container the listing no longer
+  shows is now treated as gone. A run whose command succeeded no longer ends with exit 1 when its
+  teardown runs out of time checking the host's containers. It prints one line, keeps the box's
+  filesystem protection, and the next run in the project removes it.
+
 - **`coop approve` and `coop net forget` answer in plainer words.** With no terminal and nothing
   to approve, `coop approve` prints "No approval needed: this project's requested access has not
   changed." and exits 0, as it does at a terminal, and `--case-exposure` now also says whether any
