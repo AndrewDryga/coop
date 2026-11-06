@@ -141,8 +141,10 @@ offline one pending rather than letting the built-in default reopen it, and only
 removes it.
 
 The precedence ladder, one line: invocation `--egress` → remembered approval posture → explicit
-`COOP_EGRESS` → project `box.egress` → filtered (`networkstate/admission.go`, `resolveMode`). Rules
-only add to filtered access and never change a chosen mode. Under a one-off `--egress open` or
+`COOP_EGRESS` → project `box.egress` → filtered (`networkstate/admission.go`, `resolveMode`).
+`box.egress` tightens only the default: a `COOP_EGRESS` that reaches more still decides, and the
+launch and `coop net` say so (`widenedProjectEgress`); a one-off `--egress` says nothing more.
+Rules only add to filtered access and never change a chosen mode. Under a one-off `--egress open` or
 `offline` the project's request (rules, services) is set aside: `pendingApproval` returns nothing
 for it, nothing is captured, and the launch's network section says `This project's network rules
 do not apply to this run.` (`launchSections.projectRulesSetAside`). Under any other non-filtered
@@ -401,6 +403,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-06 — a `COOP_EGRESS` wider than `box.egress` keeps its documented precedence but is
+  named at launch and in `coop net` (task 2026-11-06-stop-coop-egress-open-from-silently-opening-a-pr).
 - 2026-11-06 — a refusal for another checkout's request names it with COOP_REPO; verified the fork
   loop, interactive fork and local fork ACP refusals and the board's fix line (task
   2026-11-05-make-fork-loop-network-approval-recovery-identif).

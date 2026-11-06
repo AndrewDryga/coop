@@ -59,8 +59,8 @@ mode decides what it covers:
 - For your runs, set `COOP_EGRESS`. `COOP_EGRESS=offline` always keeps a run offline unless you
   pass `--egress`. For `filtered` and `open`, a project's saved approval outranks `COOP_EGRESS`,
   and the run shows a warning.
-- For one project, set `box.egress`. A project's request for `open` needs your approval on the
-  host.
+- For one project, set `box.egress`. `COOP_EGRESS` overrides it, with a warning when that allows
+  more than the project asks for. A project's request for `open` needs your approval on the host.
 
 When the mode comes from the default, the run's `Configuring network access` section starts with
 `Filtered by default. Use --egress open for unrestricted access.`

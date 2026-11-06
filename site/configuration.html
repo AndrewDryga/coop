@@ -250,7 +250,8 @@ choose this setting explicitly.</li>
 <p>An <code>--egress</code> flag overrides <code>COOP_EGRESS</code>, and <code>COOP_EGRESS=offline</code> always keeps a run offline
 unless you pass that flag. For <code>filtered</code> and <code>open</code>, a project&#39;s saved <code>coop approve</code> decision
 overrides <code>COOP_EGRESS</code>, and the run warns. <code>COOP_EGRESS</code> itself overrides <code>box.egress</code> in
-<code>.agent/project.yaml</code>.</p>
+<code>.agent/project.yaml</code>, and the run and <code>coop net</code> warn when that allows more than the project
+asks for.</p>
 <p>The resource and privilege limits (<code>COOP_PIDS</code>, <code>COOP_MEMORY</code>, <code>COOP_CPUS</code> and
 <code>COOP_NO_NEW_PRIVILEGES</code>) apply on Docker, and co:op skips them with Apple&#39;s <code>container</code> CLI.</p>
 <p>On Docker, co:op also removes all Linux capabilities (<code>--cap-drop ALL</code>). Even if a repo&#39;s
@@ -499,7 +500,7 @@ Reporting keys belong in host environment variables, not <code>coop.conf</code>,
 Because the project settings file is committed and read on the host, it may tighten security
 restrictions but can&#39;t relax them on its own:</p>
 <ul>
-<li><code>egress</code> can pin <code>filtered</code> or <code>offline</code>.</li>
+<li><code>egress</code> can choose <code>filtered</code> or <code>offline</code> without approval.</li>
 <li><code>open</code> is a request that a human approves with <code>coop approve</code>.</li>
 <li>You can&#39;t set <code>no_new_privileges</code> here.</li>
 </ul>

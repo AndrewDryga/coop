@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/AndrewDryga/coop/internal/ui"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // NetworkStatePath is the owner-private authority root. It lives under the
@@ -217,6 +218,10 @@ func admitNetwork(cfg *config.Config, rt runtime.Runtime, spec RunSpec, options 
 	if previewed != nil {
 		*previewed = mode
 		return nil, nil
+	}
+	// Said only for a launch that goes ahead in this mode: a refused or held one never got it.
+	if notice := widenedProjectEgress(input, mode); notice != "" {
+		ui.Warn("%s", notice)
 	}
 	cfg.SetEgress(string(mode))
 	if mode != egress.Filtered {
@@ -457,14 +462,27 @@ func ignoredHostEgress(input networkstate.Admission, mode egress.Mode) string {
 	if input.HostPreference == nil || input.InvocationMode != nil || *input.HostPreference == mode {
 		return ""
 	}
-	name := func(m egress.Mode) string {
-		if m == egress.None {
-			return "offline"
-		}
-		return string(m)
-	}
 	return fmt.Sprintf("COOP_EGRESS=%s does not apply: this project's approval keeps it %s. For one run, use --egress %s.",
-		name(*input.HostPreference), name(mode), name(*input.HostPreference))
+		input.HostPreference.Word(), mode.Word(), input.HostPreference.Word())
+}
+
+// widenedProjectEgress names a COOP_EGRESS that gives a run more network access than box.egress
+// asks for. COOP_EGRESS outranks the project file, but someone who set it for every project must not
+// believe a project its team keeps offline still is. A one-off --egress is that run's own choice.
+func widenedProjectEgress(input networkstate.Admission, mode egress.Mode) string {
+	if input.InvocationMode != nil || input.HostPreference == nil || *input.HostPreference != mode ||
+		input.ProjectMode == nil || !reachesMore(mode, *input.ProjectMode) {
+		return ""
+	}
+	return fmt.Sprintf("COOP_EGRESS=%s overrides box.egress: %s in %s. For one run, use --egress %s.",
+		mode.Word(), input.ProjectMode.Word(), project.File, input.ProjectMode.Word())
+}
+
+// reachesMore orders the modes by what a run can reach: offline nothing, filtered what was
+// approved, open everything.
+func reachesMore(mode, than egress.Mode) bool {
+	order := []egress.Mode{egress.None, egress.Filtered, egress.Open}
+	return slices.Index(order, mode) > slices.Index(order, than)
 }
 
 // networkAdmissionInput separates presence from default and authority from

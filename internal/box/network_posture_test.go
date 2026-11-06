@@ -315,6 +315,30 @@ func TestPostureFollowsAnExplicitHostPreference(t *testing.T) {
 	}
 }
 
+// coop net warns exactly as a launch does when COOP_EGRESS gives runs more than the project asks for.
+func TestPostureNamesACOOPEgressThatWidensTheProject(t *testing.T) {
+	for _, tc := range []struct {
+		env    egress.Mode
+		want   egress.Mode
+		notice string
+	}{
+		{egress.Open, egress.Open, "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."},
+		{"", egress.None, ""},
+	} {
+		cfg, repo, _ := postureFixture(t, "box:\n  egress: offline\n")
+		if tc.env != "" {
+			cfg.SetEgress(string(tc.env))
+		}
+		access, err := ProjectNetworkAccess(context.Background(), cfg, repo)
+		if err != nil {
+			t.Fatalf("ProjectNetworkAccess: %v", err)
+		}
+		if access.Mode != tc.want || access.Widening != tc.notice {
+			t.Errorf("COOP_EGRESS=%q: access = %q with warning %q, want %q with %q", tc.env, access.Mode, access.Widening, tc.want, tc.notice)
+		}
+	}
+}
+
 func TestPostureRefusesToDescribeADirectoryThatIsNotThere(t *testing.T) {
 	cfg, repo, _ := postureFixture(t, "")
 	if _, err := ProjectNetworkAccess(context.Background(), cfg, filepath.Join(repo, "missing")); err == nil {

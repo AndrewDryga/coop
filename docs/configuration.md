@@ -46,7 +46,8 @@ Choose one of these values for `COOP_EGRESS`:
 An `--egress` flag overrides `COOP_EGRESS`, and `COOP_EGRESS=offline` always keeps a run offline
 unless you pass that flag. For `filtered` and `open`, a project's saved `coop approve` decision
 overrides `COOP_EGRESS`, and the run warns. `COOP_EGRESS` itself overrides `box.egress` in
-`.agent/project.yaml`.
+`.agent/project.yaml`, and the run and `coop net` warn when that allows more than the project
+asks for.
 
 The resource and privilege limits (`COOP_PIDS`, `COOP_MEMORY`, `COOP_CPUS` and
 `COOP_NO_NEW_PRIVILEGES`) apply on Docker, and co:op skips them with Apple's `container` CLI.
@@ -168,7 +169,7 @@ Explicit `COOP_*` settings in your environment or `coop.conf` override `box:` an
 Because the project settings file is committed and read on the host, it may tighten security
 restrictions but can't relax them on its own:
 
-- `egress` can pin `filtered` or `offline`.
+- `egress` can choose `filtered` or `offline` without approval.
 - `open` is a request that a human approves with `coop approve`.
 - You can't set `no_new_privileges` here.
 

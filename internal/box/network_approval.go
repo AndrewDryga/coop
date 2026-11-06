@@ -32,6 +32,9 @@ const (
 type NetworkAccess struct {
 	Mode   egress.Mode
 	Source string
+	// Widening is the warning every launch prints when COOP_EGRESS gives runs more access than
+	// box.egress asks for, or "".
+	Widening string
 	// Approval is the remembered host-owned decision, nil when this project was
 	// never approved. Requested and RequestedMode are the repo's current ask —
 	// exactly what `coop approve` would write; Add and Remove are the rule
@@ -65,7 +68,7 @@ func ProjectNetworkAccess(ctx context.Context, cfg *config.Config, repo string) 
 	if err != nil {
 		return NetworkAccess{}, err
 	}
-	out.Mode, out.Pending = preview.Mode, preview.Pending
+	out.Mode, out.Pending, out.Widening = preview.Mode, preview.Pending, widenedProjectEgress(input, preview.Mode)
 	store, err := networkstate.OpenExisting(root, nil)
 	if errors.Is(err, fs.ErrNotExist) {
 		out.Source, out.Add, out.RequestedMode = postureSource(input, nil), out.Requested, approvalMode(input, nil)

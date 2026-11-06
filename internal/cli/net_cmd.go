@@ -378,8 +378,9 @@ const (
 // writeNetAccess answers the one question a person arrives with: what can a
 // new run reach, and why. A pending request REPLACES that answer — describing a
 // policy no run can start under would be a fiction — and otherwise the view is
-// the mode in plain words, the approved network rules when there are any, and
-// where to read more. No project header, no path, no setup or run history: a
+// the mode in plain words, the warning a launch prints when COOP_EGRESS widens
+// the project's mode, the approved network rules when there are any, and where
+// to read more. No project header, no path, no setup or run history: a
 // launch sets the host up itself, and `coop net runs` owns history.
 func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 	if access.Pending != nil {
@@ -387,6 +388,9 @@ func writeNetAccess(w io.Writer, p ui.Palette, access box.NetworkAccess) {
 		return
 	}
 	fmt.Fprintln(w, netModeExplanation(access.Mode, access.Source))
+	if access.Widening != "" {
+		fmt.Fprintf(w, "%s %s\n", p.Yellow("⚠"), access.Widening)
+	}
 	// A provider bundle is included automatically, so it is never listed here as
 	// something this project asked for.
 	if access.Mode == egress.Filtered && access.Approval != nil && len(access.Approval.Envelope) != 0 {

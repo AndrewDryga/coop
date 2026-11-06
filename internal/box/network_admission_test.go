@@ -161,6 +161,78 @@ func TestAdmitNetworkResolvesThePrecedenceLadder(t *testing.T) {
 	}
 }
 
+// COOP_EGRESS outranks box.egress, as documented, and a launch it gives more access than the
+// project asks for says so: someone who set COOP_EGRESS=open for every project must not believe a
+// project its team keeps offline still is. A one-off --egress is the person's choice for that run,
+// and a saved approval that outranked COOP_EGRESS keeps its own notice.
+func TestAdmitNetworkNamesACOOPEgressThatWidensTheProject(t *testing.T) {
+	open := egress.Open
+	const offlineProject, filteredProject = "box:\n  egress: offline\n", "box:\n  egress: filtered\n"
+	for name, test := range map[string]struct {
+		projectYAML string
+		explicitEnv string
+		invocation  *egress.Mode
+		remembered  bool
+		want        string
+		notice      string
+	}{
+		"open over offline": {projectYAML: offlineProject, explicitEnv: "open", want: "open",
+			notice: "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."},
+		"filtered over offline": {projectYAML: offlineProject, explicitEnv: "filtered", want: "filtered",
+			notice: "COOP_EGRESS=filtered overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."},
+		"open over filtered": {projectYAML: filteredProject, explicitEnv: "open", want: "open",
+			notice: "COOP_EGRESS=open overrides box.egress: filtered in .agent/project.yaml. For one run, use --egress filtered."},
+		"one-off open":                  {projectYAML: offlineProject, invocation: &open, want: "open"},
+		"one-off open over COOP_EGRESS": {projectYAML: offlineProject, explicitEnv: "open", invocation: &open, want: "open"},
+		"narrower COOP_EGRESS":          {projectYAML: filteredProject, explicitEnv: "offline", want: "none"},
+		"same mode":                     {projectYAML: offlineProject, explicitEnv: "offline", want: "none"},
+		"project alone":                 {projectYAML: offlineProject, want: "none"},
+		"no project mode":               {explicitEnv: "open", want: "open"},
+		"approval keeps filtered": {projectYAML: filteredProject, explicitEnv: "open", remembered: true, want: "filtered",
+			notice: "COOP_EGRESS=open does not apply: this project's approval keeps it filtered. For one run, use --egress open."},
+		// The approval, not COOP_EGRESS, chose filtered here, so only its own notice speaks.
+		"approval over an offline file": {projectYAML: offlineProject, explicitEnv: "open", remembered: true, want: "filtered",
+			notice: "COOP_EGRESS=open does not apply: this project's approval keeps it filtered. For one run, use --egress open."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, repo, root := admissionFixture(t)
+			if test.projectYAML != "" {
+				writeCopyFixture(t, filepath.Join(repo, ".agent", "project.yaml"), test.projectYAML)
+			}
+			if test.explicitEnv != "" {
+				t.Setenv("COOP_EGRESS", test.explicitEnv)
+				loaded, err := config.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				loaded.ConfigDir, loaded.RepoOverride = cfg.ConfigDir, cfg.RepoOverride
+				cfg = loaded
+			}
+			if test.remembered {
+				rememberFilteredPosture(t, root, repo, nil)
+			}
+			var err error
+			printed := captureStderr(t, func() {
+				_, err = admitFixture(t, cfg, repo, NetworkAdmission{InvocationMode: test.invocation})
+			})
+			if test.want == "filtered" {
+				if err == nil || !strings.Contains(err.Error(), filteredReachedRuntimePreflight) {
+					t.Fatal("filtered resolution did not reach the runtime preflight", err)
+				}
+			} else if err != nil || cfg.Egress != test.want {
+				t.Fatalf("resolved %q (%v), want %q", cfg.Egress, err, test.want)
+			}
+			want := ""
+			if test.notice != "" {
+				want = "⚠ " + test.notice + "\n"
+			}
+			if printed != want {
+				t.Errorf("the launch printed %q, want %q", printed, want)
+			}
+		})
+	}
+}
+
 // A remembered restriction is host-owned. An explicit invocation may step past
 // it for one run; it must never rewrite what the operator decided.
 func TestAdmitNetworkExplicitOverrideLeavesTheRememberedPosture(t *testing.T) {

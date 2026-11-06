@@ -53,6 +53,13 @@
   preset loops recorded it. Each consultation now adds its row, and one the box cannot record says
   why once. The printed `Continue:` command, for `coop loop` and fork loops, also keeps `--peer`,
   `--no-mcp`, `--debug-on-fail` and a `--preflight` choice that differs from `.agent/loop.yaml`.
+
+- **A `COOP_EGRESS` that opens a project wider than its `box.egress` now says so.** With
+  `COOP_EGRESS=open` in your environment or `coop.conf`, a project whose `.agent/project.yaml` keeps
+  it offline ran with unrestricted access and no word about the project's setting. `COOP_EGRESS`
+  still overrides `box.egress`, as documented, but the run and `coop net` now warn, for example
+  "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use
+  --egress offline." A one-off `--egress` and a saved approval behave as before.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

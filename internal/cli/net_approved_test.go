@@ -107,6 +107,20 @@ func TestNetPostureShowsAWideningToOpen(t *testing.T) {
 	}
 }
 
+// A COOP_EGRESS that opens a project its file keeps offline is said under the mode it chose.
+func TestNetPostureWarnsWhenCOOPEgressWidensTheProject(t *testing.T) {
+	notice := "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use --egress offline."
+	access := box.NetworkAccess{Mode: egress.Open, Source: box.AccessFromHost, Widening: notice, RequestedMode: egress.None}
+	var b bytes.Buffer
+	writeNetAccess(&b, ui.Palette{}, access)
+	want := "As COOP_EGRESS sets, new runs have unrestricted internet access.\n" +
+		"⚠ " + notice + "\n\n" +
+		"For more details see:\n  coop help net\n"
+	if b.String() != want {
+		t.Errorf("widened access:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
 // ------------------------------------------------------------------ runs ----
 
 func netApprovedRuns(now time.Time) []netRun {

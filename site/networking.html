@@ -185,8 +185,8 @@ apply to that run, approved or not, and its <code>Configuring network access</co
 <li>For your runs, set <code>COOP_EGRESS</code>. <code>COOP_EGRESS=offline</code> always keeps a run offline unless you
 pass <code>--egress</code>. For <code>filtered</code> and <code>open</code>, a project&#39;s saved approval outranks <code>COOP_EGRESS</code>,
 and the run shows a warning.</li>
-<li>For one project, set <code>box.egress</code>. A project&#39;s request for <code>open</code> needs your approval on the
-host.</li>
+<li>For one project, set <code>box.egress</code>. <code>COOP_EGRESS</code> overrides it, with a warning when that allows
+more than the project asks for. A project&#39;s request for <code>open</code> needs your approval on the host.</li>
 </ul>
 <p>When the mode comes from the default, the run&#39;s <code>Configuring network access</code> section starts with
 <code>Filtered by default. Use --egress open for unrestricted access.</code></p>
