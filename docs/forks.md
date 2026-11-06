@@ -63,7 +63,9 @@ with the boxes it waits for beneath it. When a task needs your decision, it wait
 `coop tasks decisions` while the fork goes on with its other tasks. The fork stops for the decision
 only when nothing else is left. Answer it from the project with `coop tasks unblock <id> "<answer>"`
 or `coop tasks decisions -i`: the fork picks the task up on its next pass, and a stopped fork
-resumes with `coop fork <name> --loop -d`.
+resumes with `coop fork <name> --loop -d`. An answer typed into `decision.md` by hand still needs
+`coop tasks unblock <id>` to send the task back, and a stopped fork says which of its tasks have
+one. `unblock` also finds a task in a queue the fork was given with `--tasks`.
 
 ## Isolated-write forks
 

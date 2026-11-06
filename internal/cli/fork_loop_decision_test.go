@@ -14,7 +14,12 @@ import (
 
 func seedForkDecisionTask(t *testing.T, repo, id string) {
 	t.Helper()
-	dir := filepath.Join(repo, ".agent", "tasks", "00_todo", id)
+	seedForkDecisionTaskIn(t, filepath.Join(repo, ".agent", "tasks"), id)
+}
+
+func seedForkDecisionTaskIn(t *testing.T, queue, id string) {
+	t.Helper()
+	dir := filepath.Join(queue, "00_todo", id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,15 +78,40 @@ func setUpForkForDecision(t *testing.T, repo, name string) (string, forkspace.Id
 
 func runForkLoopForDecision(t *testing.T, a *app, repo, ws string, identity forkspace.Identity) (int, string, error) {
 	t.Helper()
+	return runForkLoopOnQueues(t, a, repo, ws, identity, nil)
+}
+
+// runForkLoopOnQueues runs the fork's loop on the queues given as --tasks, or the project's own queues
+// when there are none.
+func runForkLoopOnQueues(t *testing.T, a *app, repo, ws string, identity forkspace.Identity, queues []string) (int, string, error) {
+	t.Helper()
 	var code int
 	var runErr error
 	var stderr string
 	stdout := captureStdout(t, func() {
 		stderr = captureStderr(t, func() {
-			code, runErr = a.runForkLoop(repo, ws, identity, "claude", nil, "", "", "", nil, networkFlags{}, false)
+			code, runErr = a.runForkLoop(repo, ws, identity, "claude", queues, "", "", "", nil, networkFlags{}, false)
 		})
 	})
 	return code, stdout + stderr, runErr
+}
+
+// answerDecisionFile fills in the Resolution line of the decision.md at path, as a person does by hand.
+func answerDecisionFile(t *testing.T, path, answer string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "**Resolution:**") {
+			lines[i] = "**Resolution:** " + answer
+		}
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertForkTaskWaitsForDecision(t *testing.T, repo, id string) {
@@ -180,6 +210,9 @@ func TestForkLoopContinueLineKeepsItsChosenQueues(t *testing.T) {
 	if want := "Continue:  coop fork chosen claude --loop --tasks " + shellWord(web) + " --tasks " + shellWord(queue) + "\n"; code != loopDecisionExit || err != nil || !strings.Contains(stdout+stderr, want) {
 		t.Errorf("fork loop = (%d, %v), want it to stop for the decision and continue with %q:\n%s", code, err, want, stdout+stderr)
 	}
+	if want := "Answer it: coop tasks --tasks " + shellWord(web) + " --tasks " + shellWord(queue) + " decisions -i\n"; !strings.Contains(stdout+stderr, want) {
+		t.Errorf("fork loop output lacks %q:\n%s", want, stdout+stderr)
+	}
 }
 
 // A task answered in the project goes back to the same fork, whose worker reads the answer in the
@@ -220,4 +253,104 @@ func TestForkLoopKeepsAResumedTaskBlockedWhenItParksAgain(t *testing.T) {
 		t.Errorf("answers the fork's passes read = %q, want none and then the project's answer", answers)
 	}
 	assertForkTaskWaitsForDecision(t, repo, id)
+}
+
+// A fork that stops for its decisions names each task and what it still needs. An answer written in
+// the project's decision.md still waits for the unblock that sends it back, and one written in the
+// fork's own copy, which the fork's box can write too, is not taken as the answer: resuming the fork
+// never works the task again by itself.
+func TestForkLoopSaysWhatEachDecisionStillNeeds(t *testing.T) {
+	const id = "2026-11-06-fork-decision-said"
+	for _, tc := range []struct {
+		name, answerIn, want string
+		answerIt             bool
+	}{
+		{name: "unanswered", want: `Needs your answer: coop tasks unblock ` + id + ` "<answer>"`, answerIt: true},
+		{name: "answered in the project", answerIn: "project", want: "Answered · finish it: coop tasks unblock " + id + "\n"},
+		{name: "answered in the fork's copy", answerIn: "fork", answerIt: true,
+			want: `Answered only in fork said's copy · send it from the project: coop tasks unblock ` + id + ` "<answer>"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			seedForkDecisionTask(t, repo, id)
+			commitForkNetworkPreflightFixture(t, repo)
+			a := forkNetworkPreflightApp(t, repo)
+			var ran []string
+			a.forkLoopRun = parkingForkPass(t, &ran)
+			ws, identity := setUpForkForDecision(t, repo, "said")
+			if code, output, err := runForkLoopForDecision(t, a, repo, ws, identity); code != loopDecisionExit || err != nil {
+				t.Fatalf("first fork loop = (%d, %v)\n%s", code, err, output)
+			}
+			queue := filepath.Join(repo, ".agent", "tasks")
+			blocked := filepath.Join(queue, tasks.StateBlocked, id)
+			if state, err := tasks.ReadTaskState(blocked); err != nil || !strings.Contains(state.NextAction, "coop tasks unblock "+id) {
+				t.Errorf("project's next action for the parked task = %+v, %v; want the unblock command", state, err)
+			}
+			record, owned, err := tasks.ReadTaskOwnerRecord(queue, id)
+			if err != nil || !owned || record.Fork == nil {
+				t.Fatalf("owner = (%+v, %v, %v)", record, owned, err)
+			}
+			switch tc.answerIn {
+			case "project":
+				answerDecisionFile(t, filepath.Join(blocked, "decision.md"), "Go with this.")
+			case "fork":
+				answerDecisionFile(t, filepath.Join(record.Fork.Projection, tasks.StateBlocked, id, "decision.md"), "Go with this.")
+			}
+
+			code, output, err := runForkLoopForDecision(t, a, repo, ws, identity)
+			if code != loopDecisionExit || err != nil || !slices.Equal(ran, []string{id}) {
+				t.Fatalf("resumed fork loop worked %v = (%d, %v), want it to stop with the task still waiting\n%s", ran, code, err, output)
+			}
+			for _, want := range []string{"Fork said is waiting for your decision.", "Fork decision fixture " + id, tc.want} {
+				if !strings.Contains(output, want) {
+					t.Errorf("fork loop output lacks %q:\n%s", want, output)
+				}
+			}
+			if got := strings.Contains(output, "Answer it: coop tasks decisions -i"); got != tc.answerIt {
+				t.Errorf("output names the decisions browser = %v, want %v:\n%s", got, tc.answerIt, output)
+			}
+			assertForkTaskWaitsForDecision(t, repo, id)
+		})
+	}
+}
+
+// A fork started on a queue the project's task commands do not list parks its decision there, and
+// coop tasks unblock <id>, the command its decision.md names, finds it there without --tasks. A queue
+// a person names is searched as named.
+func TestTasksUnblockFindsATaskInAForksChosenQueue(t *testing.T) {
+	const id = "2026-11-06-fork-decision-queue-b"
+	repo := initRepo(t)
+	queue := filepath.Join(repo, ".agent", "tasks-b")
+	seedForkDecisionTaskIn(t, queue, id)
+	commitForkNetworkPreflightFixture(t, repo)
+	a := forkNetworkPreflightApp(t, repo)
+	var ran []string
+	a.forkLoopRun = parkingForkPass(t, &ran)
+	ws, identity := setUpForkForDecision(t, repo, "queueb")
+	code, output, err := runForkLoopOnQueues(t, a, repo, ws, identity, []string{queue})
+	if code != loopDecisionExit || err != nil {
+		t.Fatalf("fork loop = (%d, %v)\n%s", code, err, output)
+	}
+	if want := "Answer it: coop tasks --tasks " + shellWord(queue) + " decisions -i"; !strings.Contains(output, want) {
+		t.Errorf("fork loop output lacks %q:\n%s", want, output)
+	}
+	blocked := filepath.Join(queue, tasks.StateBlocked, id)
+
+	if code, err := a.cmdTasks([]string{"unblock", "2026-11-06-absent", "Go with this."}); code == 0 || err == nil || !strings.Contains(err.Error(), "No task matching") {
+		t.Errorf("unblock of an unknown task = (%d, %v), want No task matching", code, err)
+	}
+	if code, err := a.cmdTasks([]string{"--tasks", ".agent/tasks", "unblock", id, "Go with this."}); code == 0 || err == nil {
+		t.Errorf("unblock in a queue that does not hold the task = (%d, %v), want a refusal", code, err)
+	}
+	if _, err := os.Stat(blocked); err != nil {
+		t.Fatalf("a refused unblock moved the task: %v", err)
+	}
+	captureStdout(t, func() {
+		if code, err := a.cmdTasks([]string{"unblock", id, "Go with this."}); code != 0 || err != nil {
+			t.Errorf("coop tasks unblock without --tasks = (%d, %v), want the fork's queue found", code, err)
+		}
+	})
+	if answer, err := tasks.TaskResolution(filepath.Join(queue, tasks.StateTodo, id)); err != nil || answer != "Go with this." {
+		t.Errorf("unblocked task's answer = %q, %v; want it saved in the fork's chosen queue", answer, err)
+	}
 }

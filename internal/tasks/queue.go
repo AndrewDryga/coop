@@ -332,6 +332,11 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rest) > 0 {
 		sub = rest[0]
 	}
+	// A fork started with --tasks works a queue the project's task commands do not search, yet its
+	// decision.md says to answer with coop tasks unblock <id>, so unblock looks there too.
+	if sub == "unblock" && !explicitQueues {
+		rels = append(rels, forkQueuesBeyond(repo, rels)...)
+	}
 	// Aggregate commands may never reach CmdTasksFolder, and id routing performs a lookup first.
 	// Reject malformed structured arguments before either path (and before taking a done lock).
 	if spec, ok := taskArgSpecs[sub]; ok {
@@ -643,6 +648,34 @@ func tasksAcrossQueues(repo string, rels []string, sub string, rest []string) (i
 		return lookupExit(err), err
 	}
 	return CmdTasksFolder(repo, filepath.Join(repo, rel), rest)
+}
+
+// forkQueuesBeyond is every queue a fork works that rels does not already name, repo-relative like
+// rels. The host's fork assignment index says where each fork's tasks live; an index it cannot read
+// adds nothing, and the command that then acts on a task checks the task's owner itself. Queues are
+// compared as folders, since the index and rels may reach one through different paths.
+func forkQueuesBeyond(repo string, rels []string) []string {
+	indexes, _ := AllIndexedForkAssignments(repo)
+	var known []os.FileInfo
+	for _, rel := range rels {
+		if info, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			known = append(known, info)
+		}
+	}
+	var extra []string
+	for _, index := range indexes {
+		info, err := os.Stat(index.CanonicalRoot)
+		if err != nil || slices.ContainsFunc(known, func(seen os.FileInfo) bool { return os.SameFile(seen, info) }) {
+			continue
+		}
+		rel, err := filepath.Rel(repo, index.CanonicalRoot)
+		if err != nil {
+			continue
+		}
+		known = append(known, info)
+		extra = append(extra, rel)
+	}
+	return extra
 }
 
 // queueOfTask finds which configured queue holds the task id — the multi-queue analog of

@@ -2,7 +2,7 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
 updated: 2026-11-06
 ---
 
@@ -70,7 +70,14 @@ The project's views of a fork's decision name the fork from the canonical owner 
 board's Needs you in the detail line's `<agent> in fork <name>` part. The lookup only labels: a
 record it cannot read leaves no label, and the commands that act on the task read the record
 themselves. After an answer, unblock says the fork picks the task up on its next pass and that a
-stopped loop resumes with `coop fork <name> --loop -d`, the board's restart command.
+stopped loop resumes with `coop fork <name> --loop -d`, the board's restart command. A fork that
+stops for its decisions names each task and what it still needs (`forkDecisionStep`,
+internal/cli/fork_cmd.go): an answer in the project's decision.md waits only for unblock, and one
+in the projection is named but never read as the answer. Resume never unblocks by itself, because
+acceptance copies the projection's decision.md over the project's, so an answer the box wrote
+before parking reads as answered there too; only a person's unblock sends the task back. Without
+`--tasks` or `COOP_TASKS`, unblock also searches the queues the assignment index names
+(`forkQueuesBeyond`, internal/tasks/queue.go), so a fork's `--tasks` queue needs no flag.
 
 Merge writes a replayable land intent before the parent fast-forward. Recovery can therefore finish
 canonical task completion, receipts, proposal import, assignment removal, and workspace teardown
@@ -87,6 +94,10 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — a stopped fork names each blocked task and what it needs, a blocked task's next
+  action names the unblock command, and unblock finds a fork's `--tasks` queue through the
+  assignment index; resume still never unblocks, since a box-written answer reaches the project's
+  copy at acceptance (task 2026-11-05-unblock-a-fork-s-task-when-its-decision-is-answe).
 - 2026-11-06 — `--from-fork` accepts a binding from the assignment's baseline once the project has
   every commit the fork made since; the loop's earlier commit had left a fork-held task with no exit
   but `coop fork rm --force` (task 2026-11-06-let-a-fork-held-task-close-when-its-only-commit).

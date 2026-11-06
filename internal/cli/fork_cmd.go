@@ -1450,10 +1450,25 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			if inspectErr != nil {
 				return 1, inspectErr
 			}
-			if forkAssignmentsBlocked(assignments) {
+			if blocked := blockedForkAssignments(assignments); len(blocked) > 0 {
 				ui.Note("Fork %s is waiting for your decision.", name)
+				unanswered := false
+				for _, assignment := range blocked {
+					step, answered := forkDecisionStep(repo, name, assignment)
+					unanswered = unanswered || !answered
+					ui.Note("")
+					ui.Note("  %s", ui.SafeInline(assignment.Item.Title))
+					ui.Note("    %s", step)
+				}
 				ui.Note("")
-				ui.Note("  Answer it: coop tasks decisions -i")
+				if unanswered {
+					// Queues chosen with --tasks may be ones the project's task commands do not list.
+					decisions := "coop tasks"
+					for _, queue := range queues {
+						decisions += " --tasks " + shellWord(queue)
+					}
+					ui.Note("  Answer it: %s decisions -i", decisions)
+				}
 				ui.Note("  Continue:  %s", continueCmd)
 				return loopDecisionExit, nil
 			}
@@ -1673,13 +1688,30 @@ func forkCanonicalQueues(repo string, overrides []string) ([]string, error) {
 	return roots, nil
 }
 
-func forkAssignmentsBlocked(assignments []tasks.LocatedForkAssignment) bool {
+func blockedForkAssignments(assignments []tasks.LocatedForkAssignment) []tasks.LocatedForkAssignment {
+	var blocked []tasks.LocatedForkAssignment
 	for _, assignment := range assignments {
 		if assignment.Record.Fork != nil && assignment.Record.Fork.Phase == tasks.ForkAssignmentBlocked {
-			return true
+			blocked = append(blocked, assignment)
 		}
 	}
-	return false
+	return blocked
+}
+
+// forkDecisionStep says what one task a stopped fork waits on still needs, and the command that gives
+// it; answered reports that only the unblock is left. Coop takes the answer from the project's
+// decision.md alone, and writing it there does not send the task back by itself. An answer in the
+// fork's own copy, which the fork's box can change too, is named so the person sends it from the
+// project instead.
+func forkDecisionStep(repo, fork string, assignment tasks.LocatedForkAssignment) (step string, answered bool) {
+	unblock := "coop tasks unblock " + ui.SafeInline(assignment.Item.ID)
+	if answer, err := tasks.TaskResolution(assignment.Item.Dir); err == nil && answer != "" {
+		return "Answered · finish it: " + unblock, true
+	}
+	if answer, err := tasks.ForkCopyAnswer(repo, assignment); err == nil && answer != "" {
+		return "Answered only in fork " + fork + "'s copy · send it from the project: " + unblock + ` "<answer>"`, false
+	}
+	return "Needs your answer: " + unblock + ` "<answer>"`, false
 }
 
 // forkRunsFiltered is the network mode a new fork's first run would use, as far as can be told before

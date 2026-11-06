@@ -14,6 +14,13 @@
   `coop tasks unblock <id>`. When a loop parks such a task because its record no longer matches
   HEAD, it now says to unblock it first, instead of only telling you to restore an old commit.
 
+- **A fork stopped for your decision says what each task still needs.** It names each task and
+  whether it has an answer. An answer typed into the project's `decision.md` still needs
+  `coop tasks unblock <id>` to send the task back, and one typed into the fork's own copy is not
+  read, so the fork says to send it from the project. `coop tasks unblock <id>` now also finds a
+  task in a queue the fork was given with `--tasks`; before, it said "No task matching" unless you
+  passed the same `--tasks`.
+
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

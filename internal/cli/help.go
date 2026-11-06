@@ -1132,6 +1132,7 @@ Usage: coop tasks unblock <id> ["<answer>"] [--tasks <path>]...
 
   Provide your answer here, or fill in Resolution in decision.md first.
   Coop keeps the decision with the task so the next agent can continue.
+  Without --tasks, it also looks in the queues your forks work from.
 
 EXAMPLES
   coop tasks unblock login-retries "Return to sign-in after the first failure."

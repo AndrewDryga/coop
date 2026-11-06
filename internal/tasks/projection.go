@@ -876,6 +876,35 @@ func forkCopyParked(authorityRepo, root string, item Item, owner ForkTaskOwner) 
 	return decisionQuestion(string(asked)) != decisionQuestion(string(answered)), nil
 }
 
+// ForkCopyAnswer is the answer written in the fork's own copy of an assigned task's decision.md, or
+// "". Coop never acts on it, since the fork's box can write that copy: unblock reads the project's.
+// It only lets a stopped fork tell a person that an answer was written in the wrong copy.
+func ForkCopyAnswer(authorityRepo string, assignment LocatedForkAssignment) (string, error) {
+	if assignment.Record.Fork == nil {
+		return "", fmt.Errorf("task %s is not assigned to a fork", assignment.Item.ID)
+	}
+	owner := *assignment.Record.Fork
+	projection, err := openAssignedProjection(authorityRepo, owner)
+	if err != nil {
+		return "", err
+	}
+	defer projection.Close()
+	result, err := validateForkProjectionOpened(assignment.Root, assignment.Item.ID, owner, projection)
+	if err != nil {
+		return "", err
+	}
+	task, err := openProjectedTask(projection, result.State, assignment.Item.ID)
+	if err != nil {
+		return "", err
+	}
+	defer task.Close()
+	body, _, err := readOptionalTaskMetadataFile(task, "decision.md")
+	if err != nil {
+		return "", err
+	}
+	return decisionResolution(string(body)), nil
+}
+
 // PrepareForkProjectionForRun closes the crash window between an execution-local completion and
 // host acceptance. A done folder whose canonical assignment is still working was not known to have
 // passed final signoff, so it is restored for a fresh range-bound loop attempt. Once acceptance has
@@ -1261,7 +1290,9 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 		}
 		record.Fork.Phase = ForkAssignmentBlocked
 		record.Fork.ProjectionDigest = result.Digest
-		if err := NormalizeTaskState(id, canonical.Dir, "blocked in fork "+record.Fork.Fork.Name, "resolve decision.md, then resume the same fork generation", "fork synced its blocked state", "assignment is retained"); err != nil {
+		// A filled-in decision.md alone does not send the task back, so the step names the command.
+		next := "answer it with coop tasks unblock " + id + ` "<answer>"; fork ` + record.Fork.Fork.Name + " then picks it up on its next pass"
+		if err := NormalizeTaskState(id, canonical.Dir, "blocked in fork "+record.Fork.Fork.Name, next, "fork synced its blocked state", "assignment is retained"); err != nil {
 			return ProjectionResult{}, err
 		}
 	case StateInProgress:
