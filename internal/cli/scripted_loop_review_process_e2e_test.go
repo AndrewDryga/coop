@@ -1121,6 +1121,7 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			{Target: signoff, Stage: "signoff", Result: "pass"},
 		}
 		suite.reset(t, loopRecoveryScenario(taskID, attempts))
+		start := loopProcessGit(t, suite, "rev-parse", "HEAD")
 		result := runLoopReview(t, suite, work, loopReviewBudget(len(attempts)))
 		if result.Err != nil || result.ExitCode != 0 {
 			t.Fatalf("verification-only re-close = exit %d err %v\nstdout:\n%s\nstderr:\n%s",
@@ -1130,6 +1131,9 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 			t.Fatalf("verification-only re-close bindings = %v, want one unchanged binding", got)
 		}
 		assertLoopReviewContracts(t, suite, readProcessTrace(t, suite.layout.Trace), taskID, attempts)
+		// The re-close adds no commit, so only a base from before the task's commit lets its checks see
+		// the task's change.
+		assertWorkReviewBases(t, readProcessTrace(t, suite.layout.Trace), attempts, start)
 
 		doneTask, ok := currentTask(filepath.Join(suite.layout.Repo, tasksRoot), taskID)
 		if !ok || doneTask.State != stateDone {
@@ -1154,6 +1158,8 @@ func TestProviderScriptedLoopReviewProcess(t *testing.T) {
 		if !pathExists(filepath.Join(suite.layout.Repo, tasksRoot, stateInProgress, taskID)) {
 			t.Fatal("reused generation did not fail closed")
 		}
+		// A new run finds the task's commit already in history and still names where the task started.
+		assertWorkReviewBases(t, readProcessTrace(t, suite.layout.Trace), reuseAttempts, start)
 	})
 
 	t.Run("review finding cannot inject the next worker state", func(t *testing.T) {

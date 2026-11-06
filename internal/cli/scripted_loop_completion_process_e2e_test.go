@@ -66,13 +66,15 @@ func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
 	id := "terminal-correction"
 	seedLoopProcessTask(t, suite.layout.Repo, id)
 	target := "claude:loop-model@work"
+	attempts := []loopProcessAttempt{
+		{Target: target, Stage: "work", Result: "terminal-omission"},
+		{Target: target, Stage: "work", Result: "decision-complete"},
+	}
 	suite.reset(t, loopProcessScenario{
 		Version: 6, Provider: "claude", ProviderHomes: agents.Names(),
-		Loop: loopProcessPlan{TaskID: id, Attempts: []loopProcessAttempt{
-			{Target: target, Stage: "work", Result: "terminal-omission"},
-			{Target: target, Stage: "work", Result: "decision-complete"},
-		}},
+		Loop: loopProcessPlan{TaskID: id, Attempts: attempts},
 	})
+	start := loopProcessGit(t, suite, "rev-parse", "HEAD")
 	ctx, cancel := context.WithTimeout(context.Background(), scriptedLoopBudget(t, suite))
 	defer cancel()
 	result := procharness.Run(ctx, procharness.Command{
@@ -90,7 +92,9 @@ func TestProviderScriptedLoopResumesTerminalCorrectionInPlace(t *testing.T) {
 	if len(records) != 1 || records[0].Outcome != "success" {
 		t.Fatalf("terminal correction split one work attempt into extra telemetry: %#v", records)
 	}
-	assertProcessTraceGone(t, readProcessTrace(t, suite.layout.Trace))
+	trace := readProcessTrace(t, suite.layout.Trace)
+	assertWorkReviewBases(t, trace, attempts, start)
+	assertProcessTraceGone(t, trace)
 }
 
 func TestProviderScriptedLoopCompletionRepair(t *testing.T) {

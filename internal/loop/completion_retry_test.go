@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,10 +51,17 @@ func TestNoChangeCompletionKeepsFirstAttemptEvidence(t *testing.T) {
 			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
 			attempts := 0
+			reviewBase := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			c.boxRun = func(spec box.RunSpec) (int, error) {
 				attempts++
 				if attempts > 5 || spec.TaskTools == nil {
 					t.Fatalf("unexpected attempt %d", attempts)
+				}
+				if scenario == "next task baseline" && attempts == 2 {
+					reviewBase = forkspace.GitOut(repo, "rev-parse", "HEAD")
+				}
+				if !slices.Contains(spec.ExtraArgs, "COOP_REVIEW_BASE="+reviewBase) {
+					t.Fatalf("worker environment %v lacks task base %s", spec.ExtraArgs, reviewBase)
 				}
 				if attempts == 1 && scenario != "post-completion hidden edit" && scenario != "next task baseline" {
 					if scenario != "unchanged retry" && scenario != "inherited dirty retry" {

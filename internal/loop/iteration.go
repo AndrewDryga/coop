@@ -82,6 +82,9 @@ func (c *Control) runIteration(ctx context.Context, repo, img, agent, forkName s
 }
 
 type iterationRecovery struct {
+	// reviewBase is the commit the assigned task started from. A work attempt's box gets it as
+	// COOP_REVIEW_BASE, so a changed-files check still covers the task once its work is committed.
+	reviewBase         string
 	formatCorrection   bool
 	terminalCorrection bool
 	reuseServices      bool
@@ -90,6 +93,24 @@ type iterationRecovery struct {
 	// hook stamps none.
 	reviewRework      bool
 	completionWindows *tasks.CompletionWindowSet
+}
+
+// taskReviewBase is the commit a task's work started from: head, unless the task's commit is
+// already in history — committed before an interruption, or reopened by a review. Then it is
+// that commit's parent. A review reopen's own baseline already holds the commit, so a check that
+// gathers evidence without a new commit would find nothing changed against it. Empty when the
+// history cannot name that parent: head would hide the task's commit the same way.
+func taskReviewBase(repo, id, head string) string {
+	bound, err := tasks.TaskCommits(repo, "", id)
+	if err != nil {
+		return ""
+	}
+	if len(bound) == 0 {
+		return head
+	}
+	// Newest first: the oldest binding's parent also covers any later one.
+	parent, _ := forkspace.GitOutErr(repo, "rev-parse", "--verify", "--quiet", bound[len(bound)-1]+"^")
+	return parent
 }
 
 // stopsTheRun reports an error no later attempt gets past, so the run stops and returns it: a
@@ -273,6 +294,10 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		armWatchdog = watchdog.armStart
 		boxCtx = childCtx
 	}
+	var extraArgs []string
+	if recovery.reviewBase != "" {
+		extraArgs = []string{"-e", "COOP_REVIEW_BASE=" + recovery.reviewBase}
+	}
 	code, err = c.runBox(box.RunSpec{
 		Image: img, Repo: repo, Cmd: cmd, Agent: agent, Batch: true, LoopPresentation: !recovery.reuseServices, Quiet: recovery.reuseServices, ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration, ConsultLead: lead, Peers: attemptPeers, Preset: attemptPreset, RunID: c.runID, AssignedTask: stampedTask, TaskTools: taskTools, FormatCorrection: recovery.formatCorrection, ReuseServices: recovery.reuseServices,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: c.activityKind,
@@ -282,6 +307,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		RepoReadOnly:         repoReadOnly,
 		RepoReadOnlyPaths:    reviewReadOnlyPaths(windowMode, repoReadOnly, hosts),
 		ReviewSubjects:       reviewSubjects,
+		ExtraArgs:            extraArgs,
 		Homes:                c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
 		Stdout:          stdoutW,
 		Stderr:          stderrW,

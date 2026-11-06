@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -14,6 +15,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -252,6 +254,8 @@ func TestRecoveryLimitsKeepLoopExitContract(t *testing.T) {
 			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
 			git("add", ".gitignore")
 			git("commit", "-m", "base")
+			// Where the task started, for a fresh task and for the reopened one committed below alike.
+			reviewBase := forkspace.GitOut(repo, "rev-parse", "HEAD")
 			const id = "recovery-limit"
 			root := filepath.Join(repo, tasksRoot)
 			state := stateTodo
@@ -288,6 +292,9 @@ func TestRecoveryLimitsKeepLoopExitContract(t *testing.T) {
 					c.boxRun = func(spec box.RunSpec) (int, error) {
 						if attempts++; attempts > tc.attempts {
 							t.Fatalf("unexpected attempt %d", attempts)
+						}
+						if !slices.Contains(spec.ExtraArgs, "COOP_REVIEW_BASE="+reviewBase) {
+							t.Fatalf("worker environment %v lacks task base %s", spec.ExtraArgs, reviewBase)
 						}
 						if tc.outcome != outcomeStartTimeout {
 							return tc.exit, nil

@@ -2,8 +2,8 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-11-05
+sources: [internal/tasks/audit.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
+updated: 2026-11-06
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -114,7 +114,20 @@ decision; other tasks continue. Changed history or source stops instead: resetti
 original diff from protected-gate review and signoff. The final report distinguishes blocked from
 completed work. See [[loop-completion-refusals-keep-work-moving]].
 
+## The worker's review base
+
+Every work attempt's box gets `COOP_REVIEW_BASE`, the commit its task started from, so a project's
+changed-files check still sees the task after the worker commits it. `taskReviewBase` picks it once
+per task per controller run, beside the no-change baseline, and retries keep it. A task already
+bound in history (committed and then interrupted, or reopened by a review) started from its oldest
+bound commit's parent. Never use the audit reopen record's `BaselineHead` instead: it is HEAD at the
+reopen and already holds the bound commit, so the verification-only re-close that answers "the gate
+checked nothing" would again diff to nothing. For the same reason a history that cannot name that
+parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
+
 ## Changelog
+- 2026-11-06 — added the worker's review base (task
+  2026-11-05-give-loop-workers-their-task-s-base-commit-so-ch).
 - 2026-11-05 — a bound task's unbound follow-up rework gets the fold recipe, and the outcome
   refusals name the normal completion (task 2026-11-05-say-how-to-re-close-a-reopened-task-in-tasks-com).
 - 2026-10-17 — dropped the audit.go line number after `RestoreBackgroundHandoffCompletion`, which

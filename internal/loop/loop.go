@@ -656,8 +656,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	fails, waits, retries, handoffs, timeouts, stalls := 0, 0, 0, 0, 0, 0
 	completionRepairs := map[string]int{}
 	// Automatic retries must not reclassify an earlier attempt's edits as inherited work.
-	// Normal implementation audits still use each attempt's iterHead below.
-	noChangeBaselines := map[string]struct{ head, checkout string }{}
+	// Normal implementation audits still use each attempt's iterHead below. The task's review base
+	// is kept the same way, so a retry's checks still see what an earlier attempt committed.
+	noChangeBaselines := map[string]struct{ head, checkout, reviewBase string }{}
 	completedThisRun := map[string]bool{}
 	settledBaseline := c0.Done + c0.Blocked // "settled" = tasks out of the actionable set (done OR blocked)
 	// A commit between iterations is progress too (see below), and every completion is validated
@@ -844,6 +845,7 @@ reviewAgain:
 					return 1, errors.Join(fmt.Errorf("capture task %s checkout state: %w", assigned.Item.ID, captureErr), lease.Release())
 				}
 				noChangeBase.head, noChangeBase.checkout = iterHead, checkout
+				noChangeBase.reviewBase = taskReviewBase(repo, assigned.Item.ID, iterHead)
 				noChangeBaselines[baselineKey] = noChangeBase
 			}
 			if authorityErr := tasks.ValidateLeasedAuditReopen(repo, iterHead, assigned.Item.ID, lease.Reopen); authorityErr != nil {
@@ -903,7 +905,7 @@ reviewAgain:
 			serviceFingerprint := loopServiceFingerprint(repo, c.activityRepo)
 			servicesSeen = servicesSeen || serviceFingerprint != ""
 			c.reuseServices = serviceFingerprint != "" && serviceFingerprint == preparedServices
-			recovery := iterationRecovery{reuseServices: reuseWorkServices[assigned.Item.ID], reviewRework: lease.Reopen != nil}
+			recovery := iterationRecovery{reviewBase: noChangeBase.reviewBase, reuseServices: reuseWorkServices[assigned.Item.ID], reviewRework: lease.Reopen != nil}
 			delete(reuseWorkServices, assigned.Item.ID)
 			code, _, res, classification, windows, runErr := c.runIterationWithMode(iterCtx, repo, img, agent, forkName, cmd, streaming, agentCommand, hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers, active, assigned.Item.ID, taskTools, recovery)
 			c.reuseServices = false
@@ -949,7 +951,7 @@ reviewAgain:
 							iterCtx, repo, img, agent, forkName, correctionCmd, correctionStreaming, correctionAgentCommand,
 							hosts, completionWindowWork, []string{assigned.Item.ID}, nil, false, sink, peers,
 							active+": terminal correction", assigned.Item.ID, taskTools,
-							iterationRecovery{terminalCorrection: true, reuseServices: true, completionWindows: windows},
+							iterationRecovery{reviewBase: noChangeBase.reviewBase, terminalCorrection: true, reuseServices: true, completionWindows: windows},
 						)
 						windows = correctionWindows
 						if correctionUsage != nil && correctionUsage.SessionID != "" && correctionUsage.SessionID != sessionID {

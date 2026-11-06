@@ -190,8 +190,12 @@ them.
 
 `COOP_REVIEW_BASE` names the commit the changes are compared against, so a check can look only at
 what changed, for example `git diff --name-only "$COOP_REVIEW_BASE"...HEAD`. co:op sets it for the
-project checks that `coop fork merge` and `coop fork review --gate` run, and for controller reviews.
-It sets `COOP_REVIEW=1` only for a review (`coop fork review --gate` or a controller review), so a
+project checks that `coop fork merge` and `coop fork review --gate` run, for controller reviews, and
+in loop worker boxes. A worker gets the commit its task started from, so a check still covers the
+task's changes once they are committed, including after a retry or after a review reopened the task.
+A worker may also have work it hasn't committed: `git diff --name-only "$COOP_REVIEW_BASE"` compares
+the base with the working tree, and `git ls-files --others --exclude-standard` lists new files. co:op
+sets `COOP_REVIEW=1` only for a review (`coop fork review --gate` or a controller review), so a
 script can tell a review from a merge check.
 
 ## Path-routed context

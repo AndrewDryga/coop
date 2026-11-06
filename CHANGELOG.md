@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A changed-files check in a loop worker box still covers the task after it is committed.**
+  Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
+  `coop fork merge` and controller reviews already do. A check that compared the working tree with
+  HEAD found nothing once the worker had committed, passed without checking anything, and the final
+  review sent the task back. The base stays the same when an attempt is retried, an interrupted task
+  is resumed or a review reopens the task, so the worker's checks cover the task's whole change.
+
 - **A loop worker can finish review rework without stripping a trailer by hand.** After a final
   review reopened a task, the worker's repair commit had to carry no `Coop-Task` trailer, but the
   box's commit hook added one to every commit, even with `--amend` or `--no-verify`, so

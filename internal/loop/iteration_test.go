@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -211,6 +213,101 @@ func TestReviewReworkCommitsStayUnboundThroughTheHook(t *testing.T) {
 			}
 			if bound := tasks.CommitsForTask(repo, "", id); len(bound) != 1 {
 				t.Fatalf("task bindings after rework = %v, want the original one", bound)
+			}
+		})
+	}
+}
+
+// Before a task has a commit it starts at the head it was leased at. Once its commit is in history it
+// started from that commit's parent — the oldest one's, when the task has several. When history
+// cannot name that parent (a root commit, a history Git cannot read) there is no base: the lease
+// head would hide the task's commit from a changed-files check.
+func TestTaskReviewBase(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-m", "Start the repository\n\nCoop-Task: root-task")
+	git("commit", "--allow-empty", "-m", "base")
+	start := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	git("commit", "--allow-empty", "-m", "Implement the task\n\nCoop-Task: task")
+	git("commit", "--allow-empty", "-m", "Another task\n\nCoop-Task: other")
+	git("commit", "--allow-empty", "-m", "Finish the task\n\nCoop-Task: task")
+	const leaseHead = "lease-head"
+	for id, want := range map[string]string{"new-task": leaseHead, "task": start, "root-task": ""} {
+		if got := taskReviewBase(repo, id, leaseHead); got != want {
+			t.Errorf("taskReviewBase(%s) = %q, want %q", id, got, want)
+		}
+	}
+	if got := taskReviewBase(t.TempDir(), "task", leaseHead); got != "" {
+		t.Errorf("taskReviewBase outside a repository = %q, want none", got)
+	}
+}
+
+// A worker whose task is already committed — interrupted before its folder move, or reopened by a
+// review — gets the commit before the task's commit as COOP_REVIEW_BASE, so a changed-files check
+// sees exactly the task's change. The review reopen's own baseline already holds that commit: a
+// verification-only re-close checked against it would see nothing.
+func TestCommittedTaskWorkerGetsTheCommitItStartedFrom(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	for _, reopened := range []bool{false, true} {
+		t.Run(map[bool]string{false: "resumed after its commit", true: "reopened by a review"}[reopened], func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo, git := gitrepo.New(t)
+			writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+			git("add", ".gitignore")
+			git("commit", "-m", "base")
+			start := forkspace.GitOut(repo, "rev-parse", "HEAD")
+			const id = "committed"
+			writeTaskFile(t, filepath.Join(repo, "feature.txt"), "implemented\n")
+			git("add", "feature.txt")
+			git("commit", "-m", "Implement the task\n\nCoop-Task: "+id)
+			root := filepath.Join(repo, tasksRoot)
+			writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# Committed\n- [x] verified\n")
+			writeTaskFile(t, filepath.Join(root, stateInProgress, id, "log.md"), "# Log — Committed\n\n- Verified the committed work.\n")
+			if reopened {
+				record, err := tasks.CaptureAuditReopen(repo, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if record.BaselineHead == start {
+					t.Fatal("fixture reopen baseline is the task's start; the test could not tell them apart")
+				}
+				if err := tasks.WriteAuditReopenRecord(root, record); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+			c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+			refused, refusal, attempts := false, "", 0
+			c.boxRun = func(s box.RunSpec) (int, error) {
+				if attempts++; attempts > 1 {
+					t.Fatalf("attempt %d after tasks_complete refused = %v: %s", attempts, refused, refusal)
+				}
+				if !slices.Contains(s.ExtraArgs, "COOP_REVIEW_BASE="+start) {
+					t.Fatalf("worker environment %v lacks the task's starting commit %s", s.ExtraArgs, start)
+				}
+				if changed := forkspace.GitOut(repo, "diff", "--name-only", start+"...HEAD"); changed != "feature.txt" {
+					t.Fatalf("changes since the task's base = %q, want its own feature.txt", changed)
+				}
+				if !reopened {
+					// The resume recipe for an interrupted commit: verify it, mark it recovered, finish.
+					git("commit", "--amend", "-m", "Implement the task\n\nCoop-Task: "+id+"\nCoop-Recovery: 2026-11-06T00:00:00Z")
+				}
+				refused, refusal = completeThroughTools(t, s.TaskTools, id)
+				_, err := io.WriteString(s.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"done\"}\n")
+				return 0, err
+			}
+			var code int
+			var err error
+			output := captureStderr(t, func() {
+				code, err = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+			})
+			if attempts != 1 || refused || code != 0 || err != nil {
+				t.Fatalf("loop = %d, %v after %d attempts, refused %v (%s)\n%s", code, err, attempts, refused, refusal, output)
+			}
+			if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != tasks.StateDone {
+				t.Fatalf("committed task = %v, %v, %v; want done", current, ok, err)
 			}
 		})
 	}

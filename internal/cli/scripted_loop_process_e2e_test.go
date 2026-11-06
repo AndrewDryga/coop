@@ -112,6 +112,7 @@ func TestProviderScriptedLoopProcess(t *testing.T) {
 				// A loop start reaps boxes an earlier, killed coop left behind before adding its own.
 				assertDirectRunContract(t, suite, trace, provider, "work", taskToolsArgv(provider, argv), model, effort, loopWorkBox)
 				assertNoLoopServePublication(t, trace)
+				assertWorkReviewBases(t, trace, scenario.Loop.Attempts, iterationHead)
 				assertLoopProcessResult(t, suite, provider, taskID, model, effort, "work", iterationHead, 1, false)
 				for _, event := range trace {
 					awaitProcessGone(t, event.PID)
@@ -543,6 +544,30 @@ func assertNoLoopServePublication(t *testing.T, trace []*processTrace) {
 			if strings.HasPrefix(item.Name, "COOP_SERVE_URL_") {
 				t.Fatalf("loop with configured project ports published %s in %#v", item.Name, event)
 			}
+		}
+	}
+}
+
+// assertWorkReviewBases checks the COOP_REVIEW_BASE each attempt's provider saw: want, the commit the
+// task started from, in every work box, and none in a review box.
+func assertWorkReviewBases(t *testing.T, trace []*processTrace, attempts []loopProcessAttempt, want string) {
+	t.Helper()
+	var starts []*processTrace
+	for _, event := range trace {
+		if event.Source == "provider" && event.Event == "start" {
+			starts = append(starts, event)
+		}
+	}
+	if len(starts) != len(attempts) {
+		t.Fatalf("provider starts = %d, want one per attempt %#v", len(starts), attempts)
+	}
+	for i, attempt := range attempts {
+		wantHere := ""
+		if attempt.Stage == "work" {
+			wantHere = want
+		}
+		if got := processEnvironmentValue(starts[i].Environment, "COOP_REVIEW_BASE"); got != wantHere {
+			t.Fatalf("%s attempt %d saw COOP_REVIEW_BASE %q, want %q", attempt.Stage, i+1, got, wantHere)
 		}
 	}
 }

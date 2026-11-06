@@ -1391,7 +1391,7 @@ func traceEnvironment(env map[string]string) []envTrace {
 func traceableEnvValue(key string) bool {
 	switch key {
 	case "TZ", "TERM", "COOP_PRIMARY", "COOP_PEERS", "COOP_RUN_ID", "COOP_CONSULT_TIMEOUT", "COOP_DELEGATE_TIMEOUT", "COOP_DELEGATE_DEPTH", "FIXTURE_SAFE",
-		"COOP_GEMINI_THINKING", "GEMINI_CLI_SYSTEM_SETTINGS_PATH":
+		"COOP_GEMINI_THINKING", "GEMINI_CLI_SYSTEM_SETTINGS_PATH", "COOP_REVIEW_BASE":
 		return true
 	}
 	if strings.HasPrefix(key, "COOP_CONSULT_") && strings.HasSuffix(key, "_TARGETS") {

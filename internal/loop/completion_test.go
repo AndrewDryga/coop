@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,10 @@ func TestLoopCompletionMCPRepair(t *testing.T) {
 				attempts++
 				if attempts > 5 || s.TaskTools == nil {
 					t.Fatalf("unexpected attempt %d without usable task tools", attempts)
+				}
+				// The terminal corrections resume the same worker, and keep its task's base.
+				if !slices.Contains(s.ExtraArgs, "COOP_REVIEW_BASE="+base) {
+					t.Fatalf("attempt %d environment %v lacks the task's starting commit %s", attempts, s.ExtraArgs, base)
 				}
 				if scenario == "abnormal exit" {
 					if strings.Contains(strings.Join(s.Cmd, "\n"), "TERMINAL TASK CORRECTION ONLY") {
