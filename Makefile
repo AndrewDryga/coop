@@ -211,9 +211,16 @@ GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-proces
 # own copy.
 GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 
+# A main loop and its forks each run this gate in a box at the same moment, and together they loaded
+# a 12-core Mac past 40 until suites timed out. So the gate first takes one of a few slots shared by
+# every box on the host (tools/gateslot): the coop-cache volume is every box's ~/.cache, so a flock
+# there is host-wide. A gate that waits says so, and its timeouts start only once it runs.
 check: export GOCACHE := $(GATE_GOCACHE)
 check: export GOFLAGS := $(strip $(shell go env GOFLAGS) -trimpath)
-check: trim-gate-cache check-static ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
+check: ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
+	@go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots" $(MAKE) --no-print-directory full-gate
+
+full-gate: trim-gate-cache check-static
 	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
 	@$(MAKE) --no-print-directory -j4 $(addprefix gate-,$(GATE_TEST_OWNERS))
 
@@ -408,7 +415,7 @@ help: ## List targets
 .PHONY: build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
-.PHONY: trim-gate-cache check-static check-unit check-process check-race
+.PHONY: full-gate trim-gate-cache check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE
 .PHONY: require-git-lfs
