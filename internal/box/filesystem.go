@@ -331,7 +331,7 @@ func (a *filesystemAdmission) create(ctx context.Context, spec runtime.DockerCre
 		return "", err
 	}
 	id, err := a.docker.CreateContainer(ctx, spec)
-	if id != "" || errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
+	if id != "" || runtime.DockerCreateLeftNothing(err) {
 		a.record.Pending = ""
 		// Save the immutable ID together with clearing the pending intention.
 		if spec.Ref.Name == a.record.Helper.Name {

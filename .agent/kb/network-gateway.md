@@ -269,7 +269,9 @@ and run labels, remove what matches, and leave a holder of the name with other l
 (`runtime.ErrDockerOwnership`, reported as `NetworkRecovery.Unverified`). Absence proves a resource
 gone only when no create of it can still be running: Docker finishes a create whose client gave up.
 A create has its own minute (`runtime.DockerCreateTimeout`, which `filteredControlTimeout` names;
-every other Docker CLI call keeps a 15-second bound). A create with no known
+every other Docker CLI call keeps a 15-second bound). A container create Docker refused made
+nothing and is not marked (`runtime.ErrDockerCreateRefused`: the client's exit status 125, or its
+line relaying the daemon's error reply). A create with no known
 outcome is marked unfinished (`markUnfinished`), in memory and in the record as
 `Resource.UnfinishedCreate`, and teardown leaves it, and every volume it could hold, open in the
 record. Recovery takes its absence as proof only `unfinishedCreateSettle` (10 minutes) after the mark
@@ -365,6 +367,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — a container create Docker refused is a failed launch, not an unfinished one. The
+  agent's names the settings to check, never Docker's text
+  (task 2026-11-06-treat-docker-errors-and-ctrl-c-during-box-start).
 - 2026-11-06 — refused agent TCP is recorded by the filter (`refused4`) instead of a socket sample,
   which stopped seeing it once refusals failed fast; counters replies get their own 64 KiB bound
   (task 2026-11-06-record-direct-and-unlisted-port-blocks-so-coop-n).

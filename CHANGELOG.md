@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A box Docker refuses to create fails cleanly.** Coop called that outcome unknown and left the
+  run's filesystem helper running for ten minutes, past `coop net recover`. It now says Docker
+  refused to create the container for this run, names the settings to check, and removes the helper
+  and its state at once. A create Docker never answered still counts as unknown.
+
 - **`coop sessions connect` says what is wrong with a token file it refuses.** A token file other
   users could open was refused as "must be a private bounded regular file", with no fix. The
   refusal now names the failed check: a file open to other users (with the `chmod 600` that fixes

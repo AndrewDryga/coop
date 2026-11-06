@@ -42,7 +42,7 @@ type filteredDaemonFixture struct {
 	resolverStatus                         *string
 	corruptMount                           string
 	earlyGuardEnd, failStartupPersistence  bool
-	notAttempted                           string
+	notAttempted, refused                  string // roles whose create was never sent, or Docker refused
 	transientProbes, successfulProbes      int
 	stopGrace                              map[string]int
 	probeRecovered                         chan struct{}
@@ -384,6 +384,9 @@ func (d *filteredDaemonFixture) CreateContainer(_ context.Context, spec runtime.
 	d.log = append(d.log, "create:"+role)
 	if faultSelects(d.notAttempted, role) {
 		return "", runtime.ErrDockerCreateNotAttempted
+	}
+	if faultSelects(d.refused, role) {
+		return "", runtime.ErrDockerCreateRefused
 	}
 	hash := sha256.Sum256([]byte(spec.Ref.Name))
 	id := hex.EncodeToString(hash[:])

@@ -250,7 +250,7 @@ func (a *filesystemAdmission) run(ctx context.Context, image string, command, op
 	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: image, Options: options, Command: command})
 	ref.ID = id
 	if err != nil {
-		return -1, err
+		return -1, refusedBoxCreate(err)
 	}
 	if err := a.verify(ctx, ref, image); err != nil {
 		return -1, err

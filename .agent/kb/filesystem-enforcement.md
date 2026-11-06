@@ -3,7 +3,7 @@ name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
 sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 ## Selection and policy
@@ -199,7 +199,9 @@ The usual rules still apply: this host's supervisor, a free lease, a supervisor 
 run or every consumer absent for services. A helper whose workspace exists is never that pass's,
 even with a dead supervisor. A `Pending` create proves nothing while Docker may still finish it, so
 removal keeps reporting it until `unfinishedCreateSettle` after the record's last write
-(`pendingCreateSettled`), then treats the absence as a create that never landed. A record's scope
+(`pendingCreateSettled`), then treats the absence as a create that never landed. A create Docker
+refused (`runtime.DockerCreateLeftNothing`) clears `Pending` at once, so the failed launch removes
+its helper and state folder itself. A record's scope
 check allows a gone workspace, since a path spelled through a link no longer resolves to its scope;
 an unreadable record would also fail every controller recovery (`controllerReferenced`).
 
@@ -236,6 +238,8 @@ or wrong mount fails the probe instead of passing it. The separate project keeps
 from the ordinary checks on mount hosts, where an unhidden hardlink would reveal the test secret.
 
 ## Changelog
+- 2026-11-06 — a refused create no longer stays `Pending`: QA's refused agent creates left
+  `coop-fs-…-owner` helpers running until a later launch reaped them.
 - 2026-11-04 — a custody record with a helper image and no controller (written 2026-11-01 and
   2026-11-02, before the shared controller) is refused by name (`errFilesystemRecordBeforeController`,
   from `record.validate`) and left as it is; its protection keeps holding, and until a v12.1.0 build

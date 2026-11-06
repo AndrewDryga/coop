@@ -475,6 +475,64 @@ func TestRecoverFilesystemAdmissionsTakesOnlyCustodyOfWorkspacesThatAreGone(t *t
 	}
 }
 
+// A run whose container Docker refused to create left its filesystem helper running, with the
+// helper's state folder, for ten minutes: the admission kept that create pending as one Docker might
+// still finish, and closing the admission stopped there. A refused create made nothing, so closing
+// removes the helper and the folder at once. A create with no answer still keeps both.
+func TestFilesystemRefusedCreateLeavesNoHelperOrStateFolder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		create  string // what the docker client does for a container create
+		refused bool
+	}{
+		{"the daemon refuses it", "echo 'Error response from daemon: Minimum memory limit allowed is 6MB' >&2; exit 1", true},
+		{"the client rejects an argument", "exit 125", true},
+		{"no answer comes back", "exit 1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(ServiceStateRootEnv, t.TempDir())
+			state, err := serviceStateRoot("filesystem")
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := newFilesystemRecoveryDaemon(t)
+			shim := filepath.Join(t.TempDir(), "docker")
+			script := "#!/bin/sh\nfor arg; do [ \"$arg\" = create ] && { " + tc.create + "; }; done\nexit 0\n"
+			if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			workspace := t.TempDir()
+			parent := "coop-fs-" + strings.Repeat("c", 32)
+			record := filesystemRecord{Version: 1, Parent: parent, Endpoint: d.endpoint, DaemonID: "fixture-daemon", Workspace: workspace,
+				Supervisor: supervisorLabel(workspace, os.Getpid()), Helper: filesystemRef(parent, "owner")}
+			dir := writeFilesystemCustody(t, state, record)
+			d.add(record.Helper)
+			docker, err := runtime.BindDockerForSetup(t.Context(), runtime.Runtime{Name: shim}, d.endpoint, "fixture-daemon")
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &filesystemAdmission{docker: docker, dir: dir, record: record}
+			agent := runtime.DockerRef{Name: parent + "-agent", Labels: map[string]string{LabelKey: LabelBox, filesystemLabel: parent}}
+			if err := a.consumer(agent); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.create(t.Context(), runtime.DockerCreate{Ref: agent, Image: "sha256:" + strings.Repeat("b", 64)}); err == nil || errors.Is(err, runtime.ErrDockerCreateRefused) != tc.refused {
+				t.Fatalf("create = %v, want refused: %v", err, tc.refused)
+			}
+			err = a.close()
+			if tc.refused {
+				if err != nil || exists(dir) || d.has(record.Helper.Name) {
+					t.Fatalf("close = %v (state folder left: %v, helper left: %v), want both gone", err, exists(dir), d.has(record.Helper.Name))
+				}
+				return
+			}
+			if err == nil || !exists(dir) || !d.has(record.Helper.Name) {
+				t.Fatalf("close = %v (state folder left: %v, helper left: %v), want both kept while Docker may finish the create", err, exists(dir), d.has(record.Helper.Name))
+			}
+		})
+	}
+}
+
 // A workspace's own recovery still takes only that workspace's custody, gone or not.
 func TestRecoverFilesystemAdmissionsForAWorkspaceLeavesAnothersCustody(t *testing.T) {
 	t.Setenv(ServiceStateRootEnv, t.TempDir())

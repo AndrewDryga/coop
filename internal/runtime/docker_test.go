@@ -227,6 +227,16 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
 			}
+			// What docker 29 prints when it refuses: the daemon's error reply, and the client
+			// rejecting an argument before it sends anything.
+			if fixture.Mode == "create-refused" {
+				fmt.Fprintln(os.Stderr, "Error response from daemon: range of CPUs is from 0.01 to 12.00, as there are only 12 CPUs available (fixture-daemon-secret)")
+				os.Exit(1)
+			}
+			if fixture.Mode == "create-rejected" {
+				fmt.Fprintln(os.Stderr, `invalid argument "lots" for "-m, --memory" flag: invalid size: 'lots'`)
+				os.Exit(125)
+			}
 			if fixture.Mode == "slow-create" {
 				time.Sleep(slowCreateDelay)
 			}

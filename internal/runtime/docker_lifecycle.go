@@ -30,6 +30,18 @@ type DockerCreate struct {
 // Only creation methods produce it; a failed post-create inspection never does.
 var ErrDockerCreateNotAttempted = errors.New("Docker creation was not attempted")
 
+// ErrDockerCreateRefused is a container create Docker answered with a refusal: the client rejected
+// the arguments, or the daemon replied with an error. Docker's reason stays out, since a daemon
+// error can hold secrets.
+var ErrDockerCreateRefused = errors.New("Docker refused to create the container")
+
+// DockerCreateLeftNothing reports whether a failed create is known to have made nothing, so the
+// name's absence afterwards is proof: it was never submitted, or Docker refused it. Docker can still
+// finish a create that failed any other way.
+func DockerCreateLeftNothing(err error) bool {
+	return errors.Is(err, ErrDockerCreateNotAttempted) || errors.Is(err, ErrDockerCreateRefused)
+}
+
 // ErrDockerOwnership is a container or volume under an exact reference's name whose labels are
 // not the reference's: another process's, which coop never touches.
 var ErrDockerOwnership = errors.New("Docker resource ownership conflict")
@@ -93,8 +105,11 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 	args = append(args, spec.Command...)
 	data, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, args...)
 	if err != nil {
+		var failure dockerFailure
 		if errors.Is(err, errDockerCommandNotStarted) {
 			err = errors.Join(ErrDockerCreateNotAttempted, err)
+		} else if errors.As(err, &failure) && failure.refused {
+			err = ErrDockerCreateRefused
 		}
 		return "", err
 	}

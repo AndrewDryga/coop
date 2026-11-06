@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,6 +41,33 @@ func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T)
 				if err == nil || errors.Is(err, ErrDockerCreateNotAttempted) != wantNotAttempted {
 					t.Fatal("volume creation lost submission boundary", err)
 				}
+			}
+		})
+	}
+}
+
+// Docker answering a create with a refusal is a known outcome: nothing was created, so the caller
+// may take the name's absence as proof. COOP_MEMORY=lots once reached the create, the client refused
+// it, and Coop called that "outcome unknown", leaving the run's filesystem helper running for ten
+// minutes. A client that fails without saying it refused stays unknown, and Docker's own words
+// never reach the error.
+func TestDockerCreateTellsARefusalFromAnUnknownOutcome(t *testing.T) {
+	for mode, refused := range map[string]bool{"create-refused": true, "create-rejected": true, "create-fail": false} {
+		t.Run(mode, func(t *testing.T) {
+			rt, _ := fixtureDocker(t, dockerFixture{Mode: mode})
+			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			ref := dockerFixtureRef()
+			ref.ID = ""
+			id, err := d.CreateContainer(t.Context(), DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image})
+			if id != "" || err == nil || errors.Is(err, ErrDockerCreateRefused) != refused || DockerCreateLeftNothing(err) != refused {
+				t.Fatalf("create = %q, %v; want refused: %v", id, err, refused)
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "lots") {
+				t.Fatalf("Docker's own words reached the error: %v", err)
 			}
 		})
 	}
@@ -82,7 +110,7 @@ func TestDockerCreateOutlastsTheOrdinaryBound(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), slowCreateDelay/2)
 		defer cancel()
 		_, err := d.CreateContainer(ctx, DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image})
-		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrDockerCreateNotAttempted) {
+		if !errors.Is(err, context.DeadlineExceeded) || DockerCreateLeftNothing(err) {
 			t.Errorf("container create = %v, want an unknown outcome", err)
 		}
 	})

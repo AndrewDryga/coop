@@ -301,10 +301,10 @@ func dockerCommandOutput(ctx context.Context, binary string, env []string, timeo
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var out dockerBoundedOutput
-	out.limit = limit
+	var out, stderr dockerBoundedOutput
+	out.limit, stderr.limit = limit, 4096
 	cmd := contextCommand(ctx, binary, args...)
-	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, io.Discard
+	cmd.Env, cmd.Stdout, cmd.Stderr = env, &out, &stderr
 	// os/exec shares one pipe when both destinations are the same writer.
 	if combined {
 		cmd.Stderr = &out
@@ -318,12 +318,39 @@ func dockerCommandOutput(ctx context.Context, binary string, env []string, timeo
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("Docker operation failed; outcome unknown")
+		return nil, dockerFailure{refused: dockerRefused(err, stderr.Bytes())}
 	}
 	if out.overflow {
 		return nil, errors.New("Docker observation exceeded its bound; outcome unknown")
 	}
 	return out.Bytes(), nil
+}
+
+// dockerFailure is a client command that ran and failed. Its text carries none of the client's
+// output; refused is the one fact read from it.
+type dockerFailure struct{ refused bool }
+
+func (dockerFailure) Error() string { return "Docker operation failed; outcome unknown" }
+
+// dockerRefused reports whether a failed client said its request was refused: exit status 125 is
+// the client rejecting its own arguments before it sends anything, and a line opening with "Error
+// response from daemon: " relays the daemon's error reply (docker 29). Only a create may take this
+// as proof that nothing changed. A command that runs a process, such as exec, passes that process's
+// status and output through.
+func dockerRefused(err error, stderr []byte) bool {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return false
+	}
+	if exit.ExitCode() == 125 {
+		return true
+	}
+	for line := range bytes.Lines(stderr) {
+		if bytes.HasPrefix(line, []byte("Error response from daemon: ")) {
+			return true
+		}
+	}
+	return false
 }
 
 type dockerBoundedOutput struct {

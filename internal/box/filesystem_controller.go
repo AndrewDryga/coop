@@ -237,7 +237,7 @@ func (c *filesystemController) create(ctx context.Context, docker *runtime.Docke
 		return "", err
 	}
 	id, err := docker.CreateContainer(ctx, spec)
-	if id != "" || errors.Is(err, runtime.ErrDockerCreateNotAttempted) {
+	if id != "" || runtime.DockerCreateLeftNothing(err) {
 		c.record.Pending = ""
 		if spec.Ref.Name == c.record.Container.Name {
 			c.record.Container.ID = id

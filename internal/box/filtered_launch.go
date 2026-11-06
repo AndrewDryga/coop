@@ -153,7 +153,7 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	}
 	id, createErr := create(ctx, runtime.DockerCreate{Ref: f.createRef(role), Image: image, Options: options, Command: command})
 	if id == "" {
-		if errors.Is(createErr, runtime.ErrDockerCreateNotAttempted) {
+		if runtime.DockerCreateLeftNothing(createErr) {
 			return createErr
 		}
 		return errors.Join(createErr, errors.New("network container creation outcome is unknown"), f.markUnfinished(role))
@@ -168,6 +168,16 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 		return err
 	}
 	return nil
+}
+
+// refusedBoxCreate says which settings to check when Docker refused to create the run's own
+// container. Docker's reason stays out: a daemon error can hold secrets, and this text is saved
+// where the agent can read it.
+func refusedBoxCreate(err error) error {
+	if !errors.Is(err, runtime.ErrDockerCreateRefused) {
+		return err
+	}
+	return fmt.Errorf("%w for this run. Check COOP_MEMORY, COOP_CPUS, COOP_PIDS and COOP_RUN_ARGS, and the box section of .agent/project.yaml", runtime.ErrDockerCreateRefused)
 }
 
 func (f *filteredExecution) verifyContainer(ctx context.Context, role, image string, options []string) error {
@@ -415,7 +425,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		}
 	}
 	if err := f.createContainer(ctx, "agent", f.image, options, command); err != nil {
-		return -1, err
+		return -1, refusedBoxCreate(err)
 	}
 	// Both final checks observe the same stopped workload. Join them before
 	// granting execution; neither successful check can start it on its own.

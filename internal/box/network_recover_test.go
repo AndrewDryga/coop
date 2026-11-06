@@ -16,6 +16,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 )
 
@@ -471,6 +472,49 @@ func TestFilteredCreateThatFinishesAfterItsTimeoutIsRemovedLater(t *testing.T) {
 				t.Fatalf("recovery left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
 			}
 		})
+	}
+}
+
+// Docker refusing to create the run's container (the client rejecting a setting, or the daemon's
+// error reply) made nothing, so it is a failed launch with nothing left to wait for: cleanup takes
+// the container's absence as proof and recovery finds nothing to do. The person hears it in Coop's
+// words, with the settings to check. A create with no answer keeps the unknown path above.
+func TestFilteredRefusedAgentCreateIsAFailedLaunchCleanupFinishes(t *testing.T) {
+	f, d := filteredFixture(t)
+	d.refused = "agent"
+	_, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard)
+	if !errors.Is(err, runtime.ErrDockerCreateRefused) || strings.Contains(err.Error(), "unknown") ||
+		!strings.Contains(err.Error(), "Check COOP_MEMORY, COOP_CPUS, COOP_PIDS and COOP_RUN_ARGS, and the box section of .agent/project.yaml") {
+		t.Fatalf("launch = %v, want Docker's refusal in Coop's words with the settings to check", err)
+	}
+	if gone, err := f.cleanup(f.workloadOutcome(-1, err, false)); err != nil || !gone {
+		t.Fatalf("cleanup = %v, %v; want it finished", gone, err)
+	}
+	record, err := f.store.Execution(f.record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recoveredResource(record, "agent").UnfinishedCreate.IsZero() {
+		t.Fatal("the refused create was marked as one Docker may still finish")
+	}
+	if record.Receipt == nil || record.Receipt.Workload != "launch_failed" || record.Receipt.Cleanup != "complete" {
+		t.Fatalf("receipt = %+v, want a failed launch with cleanup complete", record.Receipt)
+	}
+	departSupervisor(t, f.store, f.record.ID)
+	evidence, err := networkstate.OpenEvidence(f.store.Path(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = evidence.Close() })
+	connect := func(context.Context, string) (recoverDocker, string, error) { return d, "fixture-daemon", nil }
+	// As coop net recover asks: every run that still owes cleanup.
+	if results, err := recoverNetworkRuns(context.Background(), evidence, "", connect); err != nil || len(results) != 0 {
+		t.Fatalf("recovery = %+v, %v; want nothing left to clean", results, err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatalf("cleanup left %d container(s) and %d volume(s)", len(d.containers), len(d.volumes))
 	}
 }
 
