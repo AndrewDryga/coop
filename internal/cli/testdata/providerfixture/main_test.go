@@ -648,13 +648,18 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	if err := os.WriteFile(slot, []byte(box.GateSlotScript()), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies umask; establish the exact 0755 coop gives the helper and the fixture checks.
+	if err := os.Chmod(slot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	result := procharness.Run(ctx, procharness.Command{
+	run := procharness.Command{
 		Path: fixture,
 		Args: []string{"run", "-v", layout.Repo + ":" + layout.Repo, "-v", slot + ":" + box.GateSlotPath + ":ro", "-w", layout.Repo, "fixture-image", "future-provider"},
 		Dir:  layout.Repo, Env: env, MaxOutput: 64 << 10,
-	})
+	}
+	result := procharness.Run(ctx, run)
 	if result.Err != nil || result.ExitCode != 23 {
 		t.Fatalf("fixture exit = %d, %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, result.Stdout, result.Stderr)
 	}
@@ -664,6 +669,13 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	}
 	if strings.Contains(string(trace), `"event":"error"`) || !strings.Contains(string(trace), `"exit_code":23`) {
 		t.Fatalf("exit trace =\n%s", trace)
+	}
+	// A helper that is not exactly 0755 is not the one coop mounts, so the same run is refused.
+	if err := os.Chmod(slot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if result := procharness.Run(ctx, run); result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "runtime invocation rejected") {
+		t.Fatalf("fixture with a 0700 gate slot helper exit = %d, %v\nstderr:\n%s", result.ExitCode, result.Err, result.Stderr)
 	}
 }
 
