@@ -64,6 +64,9 @@ type AuditReopenRecord struct {
 	Finding         string              `json:"finding,omitempty"`
 	DisputedReceipt string              `json:"disputed_receipt,omitempty"`
 	Repaired        bool                `json:"repaired,omitempty"`
+	// Answered marks authority a person's unblock granted a task its own attempt committed and then
+	// blocked (answeredBlockReopen), rather than a review's reopen.
+	Answered bool `json:"answered,omitempty"`
 }
 
 // TaskLeaseOwner identifies the controller in lease metadata. The kernel lock, rather than any
@@ -537,7 +540,8 @@ func AuditReopenRecordsEqual(a, b AuditReopenRecord) bool {
 	return a.Version == b.Version && a.Generation == b.Generation && a.TaskID == b.TaskID &&
 		a.BaselineHead == b.BaselineHead && a.ReviewedHead == b.ReviewedHead && a.Subject == b.Subject &&
 		slices.Equal(a.History, b.History) && a.UnblockPending == b.UnblockPending &&
-		a.Finding == b.Finding && a.DisputedReceipt == b.DisputedReceipt && a.Repaired == b.Repaired
+		a.Finding == b.Finding && a.DisputedReceipt == b.DisputedReceipt && a.Repaired == b.Repaired &&
+		a.Answered == b.Answered
 }
 
 func ReadAuditReopenRecord(root, id string) (AuditReopenRecord, bool, error) {

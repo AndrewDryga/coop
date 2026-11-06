@@ -2612,8 +2612,9 @@ func auditReopenForUnblock(repo, head, id string, record AuditReopenRecord) (Aud
 type blockedAuditUnblock struct {
 	authority                      *os.File
 	root                           string
-	previous, pending, replacement *AuditReopenRecord
+	previous, pending, replacement *AuditReopenRecord // previous is nil when this unblock grants new authority
 	pendingPersisted               bool
+	committedBlock                 string // the task whose committed-block note this unblock spends
 }
 
 // movedNote is the task log's account of an unblock that moved the record past later work, or ""
@@ -2631,7 +2632,14 @@ func (u *blockedAuditUnblock) markPending() error {
 	if u == nil || u.pending == nil {
 		return nil
 	}
-	if err := replaceAuditReopenRecordIfMatches(u.root, *u.previous, *u.pending); err != nil {
+	if u.previous == nil {
+		if _, exists, err := ReadAuditReopenRecord(u.root, u.pending.TaskID); err != nil || exists {
+			return errors.Join(err, fmt.Errorf("audit reopen authority changed while unblocking task %s", u.pending.TaskID))
+		}
+		if err := WriteAuditReopenRecord(u.root, *u.pending); err != nil {
+			return err
+		}
+	} else if err := replaceAuditReopenRecordIfMatches(u.root, *u.previous, *u.pending); err != nil {
 		return err
 	}
 	u.pendingPersisted = true
@@ -2655,6 +2663,9 @@ func (u *blockedAuditUnblock) persist() error {
 func (u *blockedAuditUnblock) restorePrevious() error {
 	if u == nil || !u.pendingPersisted {
 		return nil
+	}
+	if u.previous == nil {
+		return removeAuditReopenRecordIfMatches(u.root, u.pending.TaskID, u.pending.Generation)
 	}
 	return replaceAuditReopenRecordIfMatches(u.root, *u.pending, *u.previous)
 }
@@ -2689,6 +2700,9 @@ func prepareBlockedAuditReopenUnblock(project, root string, task Item) (*blocked
 		}
 		if !currentOK || current.State != StateBlocked || current.Dir != task.Dir {
 			return nil, transition.finish(fmt.Errorf("task %s changed state while its blocked authority was locked", task.ID))
+		}
+		if err := transition.answerCommittedBlock(project, task.ID); err != nil {
+			return nil, transition.finish(err)
 		}
 		return transition, nil
 	}
@@ -3551,12 +3565,29 @@ func auditResumeLine(id string) string {
 		"add a receipt-only commit."
 }
 
+// answeredResumeLine is the informed-resume preamble when the lease's authority came from a person's
+// unblock of a task its own attempt committed and then blocked (answeredBlockReopen). The rules are
+// the audit rework's, with the answer in place of a review finding.
+func answeredResumeLine(id string) string {
+	return "Task " + id + " already has its Coop-Task commit in history: an earlier attempt committed it, then blocked the " +
+		"task for a person, who has answered in its decision.md. This is NOT crash recovery: do not amend that commit or add a " +
+		"Coop-Recovery trailer. The host lets you re-close it under the audit rework rules below, with the answer in place of a " +
+		"review finding. If the answer asks only for checks, run them, record the exact commands and results in state.md, and " +
+		"re-close with ZERO new commits: leave history untouched and call tasks_complete without outcome. If the answer needs a " +
+		"change, add exactly one real repair commit WITHOUT a Coop-Task or Coop-Recovery trailer on top of the current HEAD. " +
+		"Never amend, rebase, squash, or fold the bound commit or any later one."
+}
+
 // ResumePrefixFor builds the informed-resume preamble for the assigned task. A lease carrying the
-// host's audit-reopen authority selects the audit-rework preamble regardless of commit presence;
-// otherwise the Coop-Task trailer already in history selects the crash/reopen disambiguation line.
-// With neither, an interrupted attempt may still have left UNCOMMITTED work behind, so that case
-// gets its own line. Empty only for a genuinely untouched resume.
+// host's audit-reopen authority selects the audit-rework preamble regardless of commit presence, or
+// the answered-block one when a person's unblock granted it; otherwise the Coop-Task trailer already
+// in history selects the crash/reopen disambiguation line. With neither, an interrupted attempt may
+// still have left UNCOMMITTED work behind, so that case gets its own line. Empty only for a
+// genuinely untouched resume.
 func ResumePrefixFor(repo, id, state string, reopen *AuditReopenRecord) string {
+	if reopen != nil && reopen.Answered {
+		return answeredResumeLine(id)
+	}
 	if reopen != nil {
 		return auditResumeLine(id)
 	}
@@ -3958,8 +3989,9 @@ func AssignLoopTaskOnly(hosts []string, owner TaskLeaseOwner, onlyID string) (Ta
 // UnblockResolved is the loop's built-in preflight, run host-side (no box, no model): every
 // ordinary blocked task whose decision.md now carries a filled-in Resolution — the same bar
 // `coop tasks unblock` applies (decisionResolved) — moves back to 00_todo/ with a log note.
-// Audit-reopened tasks require an explicit host `coop tasks unblock`: provider-writable prose can
-// never invoke the host-authority rebase path.
+// Audit-reopened tasks, and tasks their own attempt committed before blocking them, require an
+// explicit host `coop tasks unblock`: provider-writable prose can never invoke the host-authority
+// rebase path or grant re-close authority.
 // A task with no decision.md or an unanswered one stays parked. An unreadable decision or queue
 // stops the pass before it can be mistaken for an unanswered/empty state; move failures still
 // warn and skip the affected task.
@@ -3989,6 +4021,15 @@ func UnblockResolved(hosts []string) ([]string, error) {
 			}
 			if hasAuthority {
 				ui.Warn("pre-flight: %s has host audit-reopen authority — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
+				continue
+			}
+			// Only a person's unblock may turn the note into re-close authority, and a box can write
+			// the Resolution this pass reads.
+			if _, committed, err := readCommittedBlock(host, t.ID); err != nil {
+				ui.Warn("pre-flight: could not inspect host records for %s: %v — task remains blocked; repair the host authority registry, then retry: coop tasks unblock %s", t.ID, err, t.ID)
+				continue
+			} else if committed {
+				ui.Warn("pre-flight: %s was committed before it blocked — unblock it explicitly so the next worker can close it: coop tasks unblock %s", t.ID, t.ID)
 				continue
 			}
 			if err := MoveTaskDir(host, t, StateTodo); err != nil {

@@ -1428,6 +1428,13 @@ reviewAgain:
 				refRelease()
 				return 1, errors.Join(fmt.Errorf("preserve task %s blocked audit reopen authority: %w", assigned.Item.ID, err), releaseErr)
 			}
+			// A person's explicit unblock turns this note into authority to close the task without a
+			// new commit; nothing the box writes can.
+			if err := lease.RecordCommittedBlock(repo, iterHead, headAfter); err != nil {
+				releaseErr := errors.Join(lease.Release(), windows.Close())
+				refRelease()
+				return 1, errors.Join(fmt.Errorf("record that task %s was committed before it blocked: %w", assigned.Item.ID, err), releaseErr)
+			}
 			// Finalize only the completion whose lease this controller owns. Concurrent controllers
 			// close their own crash boundaries and unowned moves have already failed closed above.
 			if assignedCompletion != nil {

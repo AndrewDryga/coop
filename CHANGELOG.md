@@ -60,6 +60,14 @@
   still overrides `box.egress`, as documented, but the run and `coop net` now warn, for example
   "COOP_EGRESS=open overrides box.egress: offline in .agent/project.yaml. For one run, use
   --egress offline." A one-off `--egress` and a saved approval behave as before.
+
+- **Answering a task its worker committed and then blocked lets the next worker close it.** A
+  worker that committed its task and then blocked it, say for a check the box could not run, left a
+  task the loop could not finish once other commits landed on top: the next worker was told to
+  amend the old commit, which is unsafe below HEAD, so it blocked again. The loop now notes such an
+  attempt, and `coop tasks unblock <id> "<answer>"` lets the next worker run the checks and close
+  the task with no new commit, or with one repair commit. `--preflight` leaves such a task blocked
+  for that command, because a box can write the answer it would read.
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed

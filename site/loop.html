@@ -146,7 +146,9 @@ every target is limited, it waits with a countdown until one can run, then retri
 task. A rate limit doesn&#39;t count as a failed task attempt.</p>
 <p>Add <code>--preflight</code> to check the queue before work starts. This pass unblocks tasks in
 <code>50_blocked/</code> when their <code>decision.md</code> has an answer. It leaves backlog tasks parked with
-<code>coop tasks park</code> alone, does no task work and makes no commits. Preflight is off by default.</p>
+<code>coop tasks park</code> alone, does no task work and makes no commits. Preflight is off by default.
+A task its worker committed before blocking it waits for <code>coop tasks unblock</code>, which lets the next
+worker close it without a new commit.</p>
 </section><section class="doc-section reference-section" id="exit-codes"><h2>Exit codes</h2>
 <p>A cron job or CI can act on the loop&#39;s exit code without parsing its output:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Exit codes table"><table class="ref">

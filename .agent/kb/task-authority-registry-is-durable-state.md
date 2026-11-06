@@ -2,14 +2,16 @@
 name: task-authority-registry-is-durable-state
 description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; records are read plainly, and only completion-window locks are ever unlinked
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/loop_note.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/sessionsvc/http.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-05
+sources: [internal/tasks/lease.go, internal/tasks/loop_note.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/committed_block.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/sessionsvc/http.go, internal/testutil/teststate/teststate.go]
+updated: 2026-11-06
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
 writer for a task (and which carry the completion receipt in their bytes), `<sha>.json` lease
 metadata, `<sha>.reopen.json` audit-reopen authority, `<sha>.departure.json` trusted-done
-departures, and `<sha>.windows.json`, the completion-window journal crash recovery replays.
+departures, `<sha>.committed-block.json` (the loop saw one attempt commit the task and block it; a
+person's explicit unblock turns it into re-close authority), and `<sha>.windows.json`, the
+completion-window journal crash recovery replays.
 Filenames are `sha256(resolved-repo-queue-root + "\x00" + task-id)`, so the registry is
 location-independent: moving the registry itself never renames a record.
 
@@ -64,6 +66,8 @@ collision followed by an unlink also fails the reopen, so it must retry first. T
 2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
 
 ## Changelog
+- 2026-11-06 — added `<sha>.committed-block.json` (task
+  2026-11-05-let-a-loop-worker-close-a-task-that-committed-bl).
 - 2026-11-05 — named the two display records beside the leases, `.holder.json` and the per-queue
   `.loop.json` loop note (task 2026-11-05-record-deliberate-stops-usage-limit-waits-and-se).
 - 2026-10-18 — records read plainly through `readLeaseRecord`; the post-flock inode re-check and

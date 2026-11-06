@@ -1391,7 +1391,7 @@ func carryAuditReopen(repo, root, id, oldHead string, rework map[AuditReopenComm
 			return nil
 		}
 	}
-	current.Generation = record.Generation
+	current.Generation, current.Answered = record.Generation, record.Answered
 	current.Finding, current.DisputedReceipt, current.Repaired = record.Finding, record.DisputedReceipt, record.Repaired
 	for _, commit := range current.History[len(record.History):] {
 		if commit.TaskID == "" {

@@ -1603,6 +1603,9 @@ func returnBlockedToTodo(project, root string, t Item) error {
 	if note := transition.movedNote(); note != "" {
 		appendTaskLog(dir, note)
 	}
+	if note := transition.answeredNote(); note != "" {
+		appendTaskLog(dir, note)
+	}
 	return nil
 }
 
@@ -1699,6 +1702,13 @@ func moveBlockedAuditUnblock(root string, t Item, transition *blockedAuditUnbloc
 		return &unblockStageError{
 			stage: "audit authority persistence", state: state,
 			err: transition.finish(errors.Join(err, rollbackErr, recordRollbackErr, ownerLock.Close())),
+		}
+	}
+	// This unblock answered the note. One left behind only lets a later unblock check the same commit
+	// again, so failing to remove it keeps the unblock.
+	if transition.committedBlock != "" {
+		if err := removeCommittedBlock(root, transition.committedBlock); err != nil {
+			return &unblockStageError{stage: "committed-block note cleanup", state: StateTodo, err: transition.finish(errors.Join(err, ownerLock.Close()))}
 		}
 	}
 	if err := ownerLock.Close(); err != nil {
@@ -2647,6 +2657,7 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 		removePendingReviewRecord(root, task.ID),
 		removeLeaseAuthorityMetadata(root, task.ID),
 		removeAuditReopenRecord(root, task.ID),
+		removeCommittedBlock(root, task.ID),
 		removeTrustedDoneDeparture(root, task.ID),
 		removeTaskOwnerRecord(root, task.ID),
 	); err != nil {
