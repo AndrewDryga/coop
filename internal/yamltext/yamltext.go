@@ -3,6 +3,7 @@ package yamltext
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -31,6 +32,39 @@ func Plain(err error) error {
 	}
 	return &yaml.TypeError{Errors: plain}
 }
+
+// InFile is Plain for a file the person edits, worded the way they look for it: each problem on a
+// line of its own, after the file's name and with no "yaml:" header from the parser
+// (`.agent/loop.yaml line 2: unknown setting "bogus"`). The yaml.TypeError stays underneath, so
+// the CLI still escapes each problem exactly as written.
+func InFile(name string, err error) error {
+	var problems *yaml.TypeError
+	if errors.As(Plain(err), &problems) {
+		return &fileProblems{name: name, problems: problems}
+	}
+	if rest, ok := strings.CutPrefix(err.Error(), "yaml: "); ok {
+		if strings.HasPrefix(rest, "line ") {
+			return errors.New(name + " " + rest)
+		}
+		return errors.New(name + ": " + rest)
+	}
+	return fmt.Errorf("%s: %w", name, err)
+}
+
+type fileProblems struct {
+	name     string
+	problems *yaml.TypeError
+}
+
+func (e *fileProblems) Error() string {
+	lines := make([]string, len(e.problems.Errors))
+	for i, problem := range e.problems.Errors {
+		lines[i] = e.name + " " + problem
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (e *fileProblems) Unwrap() error { return e.problems }
 
 func yamlExpected(goType string) string {
 	switch {

@@ -36,6 +36,13 @@
   run cannot reach Anthropic, which Claude Code needs" and exit 2. A loop that only runs a custom
   `work.command` still runs offline, and a loop made offline by `COOP_EGRESS` is unchanged.
 
+- **`.agent/loop.yaml` mistakes read plainly, and `signoff.rounds` must be 1 or more.** An unknown
+  key printed `.agent/loop.yaml: yaml: unmarshal errors:` above its line; it now prints
+  `.agent/loop.yaml line 2: unknown setting "bogus"`. A `signoff.rounds` of 0 or less used to mean
+  the default of 5 without a word; the loop now refuses it before any box starts. A task the review
+  blocks at a one-round limit reads "after 1 round" and "1 time" in its `decision.md` and the
+  closing banner.
+
 - **`coop tasks claim` and `coop tasks unblock` say when a task's commit is already in history.**
   Someone taking a task up again, often after a partial commit made before a decision, could
   commit more work with the same `Coop-Task` trailer, and nothing said so until a final review

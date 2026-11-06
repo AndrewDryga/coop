@@ -84,7 +84,7 @@ type Between struct {
 
 // Signoff is the end-of-loop pass: the senior review that accepts the batch or reopens tasks.
 type Signoff struct {
-	Rounds int          `yaml:"rounds"` // work→signoff round cap; 0 = the built-in default (5)
+	Rounds *int         `yaml:"rounds"` // work→signoff round cap, 1 or more; nil = the built-in default (5)
 	Agent  []string     `yaml:"agent"`  // signoff model ladder; empty = the work model
 	Prompt string       `yaml:"prompt"` // APPENDED to the built-in senior review; "" = nothing appended
 	Writes ReviewWrites `yaml:"writes"` // tasks = read-only/report-only (default); repo = source writable
@@ -163,7 +163,7 @@ func Parse(name string, data []byte) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
-		return nil, fmt.Errorf("%s: %w", name, yamltext.Plain(err))
+		return nil, yamltext.InFile(name, err)
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
@@ -195,6 +195,11 @@ func Parse(name string, data []byte) (*Config, error) {
 		if stage.writes != "" && stage.writes != ReviewWritesTasks && stage.writes != ReviewWritesRepo {
 			return nil, fmt.Errorf("%s: %s.writes must be tasks or repo, got %q", name, stage.name, stage.writes)
 		}
+	}
+	// Leave rounds out for the default. A value below 1 has no meaning, and the loop used to read it
+	// as the default without a word.
+	if c.Signoff.Rounds != nil && *c.Signoff.Rounds < 1 {
+		return nil, fmt.Errorf("%s: signoff.rounds must be 1 or more, got %d", name, *c.Signoff.Rounds)
 	}
 	return &c, nil
 }

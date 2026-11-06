@@ -130,7 +130,8 @@ func applyStoredReviewPlan(lc *loopcfg.Config, plan tasks.PendingReviewPlan) {
 	}
 	lc.Signoff.Prompt = plan.Signoff.Prompt
 	lc.Signoff.Writes = loopcfg.ReviewWrites(plan.Signoff.Writes)
-	lc.Signoff.Rounds = plan.SignoffRounds
+	rounds := plan.SignoffRounds // a stored plan holds at least 1
+	lc.Signoff.Rounds = &rounds
 	lc.Verify.Enabled = plan.VerifyEnabled
 	if len(lc.Verify.Agent) == 0 {
 		lc.Verify.Agent = slices.Clone(plan.Verify.Targets)

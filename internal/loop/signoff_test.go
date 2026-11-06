@@ -83,6 +83,33 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	}
 }
 
+// With signoff.rounds: 1 the review limit counts in the singular. Before, decision.md said "after 1
+// rounds" and "reopened this task 1 times", and the closing banner "after 1 rounds".
+func TestReviewLimitCountsOneRoundInTheSingular(t *testing.T) {
+	q := filepath.Join(t.TempDir(), ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(q, stateInProgress, "review-reopen", "task.md"), "# Add hello.txt\n")
+	var err error
+	out := captureStderr(t, func() { err = parkCappedReview([]string{q}, []string{"review-reopen"}, 1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := os.ReadFile(filepath.Join(q, stateBlocked, "review-reopen", "decision.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`keeps reopening "Add hello.txt" after 1 round` + "\n", "reopened this task 1 time without"} {
+		if !strings.Contains(string(decision), want) {
+			t.Errorf("decision.md lacks %q:\n%s", want, decision)
+		}
+	}
+	if !strings.Contains(out, "Could not resolve this task after 1 round.") {
+		t.Errorf("the review limit banner lacks the singular round:\n%s", out)
+	}
+	if text := string(decision) + out; strings.Contains(text, "1 rounds") || strings.Contains(text, "1 times") {
+		t.Errorf("a count of one kept its plural:\n%s", text)
+	}
+}
+
 // A block that fails parked nothing, so nothing may report the review limit or point at decisions;
 // the caller fails the run with the error instead of exit 3, which promises only decisions remain.
 func TestParkCappedReviewReportsNothingWhenTheBlockFails(t *testing.T) {

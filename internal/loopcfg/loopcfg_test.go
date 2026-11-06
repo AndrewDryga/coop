@@ -1,10 +1,13 @@
 package loopcfg
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func write(t *testing.T, body string) string {
@@ -25,7 +28,7 @@ func TestLoadAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent loop.yaml should be nil error, got %v", err)
 	}
-	if c == nil || len(c.Work.Agent) != 0 || c.Signoff.Rounds != 0 || c.Preflight.Enabled || c.Between.Enabled {
+	if c == nil || len(c.Work.Agent) != 0 || c.Signoff.Rounds != nil || c.Preflight.Enabled || c.Between.Enabled {
 		t.Errorf("absent file should decode to a zero Config, got %+v", c)
 	}
 	if c.MCPDisabled() {
@@ -85,7 +88,7 @@ verify:
 	if len(c.Work.Agent) != 3 || c.Work.Agent[0] != "frontier" {
 		t.Errorf("work.agent = %v", c.Work.Agent)
 	}
-	if c.Signoff.Rounds != 7 || len(c.Signoff.Agent) != 2 {
+	if c.Signoff.Rounds == nil || *c.Signoff.Rounds != 7 || len(c.Signoff.Agent) != 2 {
 		t.Errorf("signoff = %+v", c.Signoff)
 	}
 	if !c.Preflight.Enabled || c.Preflight.Prompt == "" {
@@ -126,6 +129,45 @@ func TestLoadRejects(t *testing.T) {
 	}
 }
 
+// A refusal names the file and the line the person edits, never the parser behind it: before, an
+// unknown key printed "yaml: unmarshal errors:" ahead of the line. The YAML problem stays underneath
+// so the CLI can escape it exactly as written.
+func TestLoadNamesTheFileAndLineWithoutTheParser(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"unknown key", "# comment\nwork: {bogus: 1}\n", File + ` line 2: unknown setting "bogus"`},
+		{"two unknown keys", "work:\n  bogus: 1\nsignoff:\n  round: 2\n",
+			File + ` line 2: unknown setting "bogus"` + "\n" + File + ` line 4: unknown setting "round"`},
+		{"wrong type", "signoff:\n  rounds: two\n", File + ` line 2: "two" should be a number`},
+		{"broken syntax", "work: [\n", File + " line 1: did not find expected node content"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(write(t, tc.body))
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("Load = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	_, err := Load(write(t, "work: {bogus: 1}\n"))
+	if problems := new(yaml.TypeError); !errors.As(err, &problems) || len(problems.Errors) != 1 {
+		t.Fatalf("Load = %#v, want the YAML problem underneath", err)
+	}
+}
+
+// signoff.rounds caps the final review's rounds, so it takes a whole number of 1 or more. Before, a
+// negative or zero value silently meant the default of 5; leaving the key out still does.
+func TestLoadRefusesSignoffRoundsBelowOne(t *testing.T) {
+	for _, rounds := range []string{"-1", "0"} {
+		_, err := Load(write(t, "signoff:\n  rounds: "+rounds+"\n"))
+		if want := File + ": signoff.rounds must be 1 or more, got " + rounds; err == nil || err.Error() != want {
+			t.Errorf("rounds %s: Load = %v, want %q", rounds, err, want)
+		}
+	}
+	c, err := Load(write(t, "signoff:\n  rounds: 1\n"))
+	if err != nil || c.Signoff.Rounds == nil || *c.Signoff.Rounds != 1 {
+		t.Fatalf("rounds 1: Load = %+v, %v", c, err)
+	}
+}
+
 func TestLoadRejectsMalformedVerifyAgent(t *testing.T) {
 	_, err := Load(write(t, "verify:\n  agent: [\"claude:opus:extra\"]\n"))
 	if err == nil || !strings.Contains(err.Error(), File+" verify.agent:") {
@@ -141,7 +183,7 @@ func TestLoadSnapshotDigest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSnapshot: %v", err)
 	}
-	if c.Signoff.Rounds != 7 {
+	if c.Signoff.Rounds == nil || *c.Signoff.Rounds != 7 {
 		t.Errorf("snapshot config = %+v, want the parsed file", c)
 	}
 	if want := Digest([]byte(body)); !snap.Configured() || snap.Digest() != want {

@@ -13,6 +13,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -55,6 +56,20 @@ func TestFallbackErrorLineEscapesBoxChosenText(t *testing.T) {
 	out := color.ReplaceAllString(captureStderr(t, func() { reportExit(-1, errors.New("could not commit\n\tgit: index.lock exists")) }), "")
 	if out != "✗ could not commit\n\tgit: index.lock exists\n" {
 		t.Errorf("multi-line error = %q, want its own line break and tab kept", out)
+	}
+}
+
+// A box can write .agent/loop.yaml too. Its refusal names the file and line with no "yaml:" header,
+// and a newline inside an unknown key still cannot start a line of its own.
+func TestLoopConfigErrorLineNamesTheFileAndEscapesTheKey(t *testing.T) {
+	color := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	_, err := loopcfg.Parse(loopcfg.File, []byte("work: {\"evil\\nfake\": 1}\n"))
+	if err == nil {
+		t.Fatal("loop.yaml parsed")
+	}
+	out := color.ReplaceAllString(captureStderr(t, func() { reportExit(-1, err) }), "")
+	if want := "✗ .agent/loop.yaml line 1: unknown setting \"evil\\u000Afake\"\n"; out != want {
+		t.Errorf("error line = %q, want %q", out, want)
 	}
 }
 

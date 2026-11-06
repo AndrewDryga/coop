@@ -139,8 +139,8 @@ The loop then works the queue and reviews again, until nothing is reopened or th
 reached. At the limit, co:op blocks that task for your decision and doesn't report it as done.
 
 The loop allows half as many review rounds as tasks worked, rounded down, within the range
-`[3, signoff.rounds]`. `signoff.rounds` defaults to `5`, and setting it below three overrides the
-minimum.
+`[3, signoff.rounds]`. `signoff.rounds` defaults to `5` and must be 1 or more. Setting it below
+three overrides the minimum.
 
 Each completed task must match exactly one commit through its `Coop-Task: <id>` trailer. That
 commit must be in the current iteration's commit range, and it must be the only match reachable

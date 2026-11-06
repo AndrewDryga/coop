@@ -98,11 +98,11 @@ func taskIDsOf(finished []string) []string {
 // signoff.rounds is unset.
 const defaultSignoffRounds = 5
 
-// signoffRounds is the work→signoff round ceiling: .agent/loop.yaml signoff.rounds when set (>0),
-// else the built-in default of 5. signoffRoundCap scales it by the batch.
+// signoffRounds is the work→signoff round ceiling: .agent/loop.yaml signoff.rounds when set (loopcfg
+// refuses one below 1), else the built-in default of 5. signoffRoundCap scales it by the batch.
 func signoffRounds(lc *loopcfg.Config) int {
-	if lc.Signoff.Rounds > 0 {
-		return lc.Signoff.Rounds
+	if lc.Signoff.Rounds != nil {
+		return *lc.Signoff.Rounds
 	}
 	return defaultSignoffRounds
 }
@@ -168,15 +168,15 @@ func writeReviewBlockDecision(path, id, title string, rounds, others int) error 
 	if others > 0 {
 		queue = fmt.Sprintf("The loop parked it here with %s still in the queue.", ui.Count(others, "other task"))
 	}
-	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %d rounds\n\n"+
+	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %s\n\n"+
 		"**Blocks:** this task (`%s`).\n\n"+
-		"**The decision:** The final review reopened this task %d times without it converging — "+
+		"**The decision:** The final review reopened this task %s without it converging — "+
 		"the work loop can't get it to a state the review accepts. %s A human needs to look at why "+
 		"(a gate it can't make green, a spec gap, a flaky test) before it goes back in the queue.\n\n"+
 		"**Recommendation:** Read the review's reopen notes in this task's log.md, fix the underlying "+
 		"issue (or split/redefine the task), then `coop tasks unblock %s`.\n\n"+
 		"---\n\n"+
 		"**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock %s -->\n",
-		title, rounds, id, rounds, queue, id, id)
+		title, ui.Count(rounds, "round"), id, ui.Count(rounds, "time"), queue, id, id)
 	return os.WriteFile(path, []byte(body), 0o644)
 }

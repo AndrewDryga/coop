@@ -17,8 +17,9 @@ func TestPendingReviewHonorsConfiguredModelsWithoutChangingAcceptance(t *testing
 		Verify:        tasks.PendingReviewStage{Targets: []string{"codex:old"}, Prompt: "saved verification", Writes: "tasks"},
 	}
 	for _, configured := range []bool{false, true} {
+		configuredRounds := 20
 		lc := loopcfg.Config{
-			Signoff: loopcfg.Signoff{Prompt: "different review", Writes: loopcfg.ReviewWritesRepo, Rounds: 20},
+			Signoff: loopcfg.Signoff{Prompt: "different review", Writes: loopcfg.ReviewWritesRepo, Rounds: &configuredRounds},
 			Verify:  loopcfg.Verify{Enabled: false, Prompt: "different verification", Writes: loopcfg.ReviewWritesRepo},
 		}
 		wantModels := []string{"codex:old"}
@@ -31,7 +32,7 @@ func TestPendingReviewHonorsConfiguredModelsWithoutChangingAcceptance(t *testing
 		if !reflect.DeepEqual(lc.Signoff.Agent, wantModels) || !reflect.DeepEqual(lc.Verify.Agent, wantModels) {
 			t.Fatalf("configured=%t: models = %v / %v, want %v", configured, lc.Signoff.Agent, lc.Verify.Agent, wantModels)
 		}
-		if lc.Signoff.Prompt != plan.Signoff.Prompt || lc.Signoff.Writes != loopcfg.ReviewWritesTasks || lc.Signoff.Rounds != 3 ||
+		if lc.Signoff.Prompt != plan.Signoff.Prompt || lc.Signoff.Writes != loopcfg.ReviewWritesTasks || signoffRounds(&lc) != 3 ||
 			!lc.Verify.Enabled || lc.Verify.Prompt != plan.Verify.Prompt || lc.Verify.Writes != loopcfg.ReviewWritesTasks {
 			t.Fatalf("configured=%t: saved acceptance changed: %+v", configured, lc)
 		}

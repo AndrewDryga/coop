@@ -472,7 +472,7 @@ func printReviewLimit(titles []string, rounds int) {
 	if len(titles) == 1 {
 		work = "this task"
 	}
-	ui.Note("%s", p.Dim(fmt.Sprintf(" Could not resolve %s after %d rounds.", work, rounds)))
+	ui.Note("%s", p.Dim(fmt.Sprintf(" Could not resolve %s after %s.", work, ui.Count(rounds, "round"))))
 	ui.Note("%s", p.Dim(" Blocked for your decision."))
 	ui.Note("%s", rule)
 	ui.Note("")
