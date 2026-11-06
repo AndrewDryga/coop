@@ -1583,18 +1583,23 @@ func TestNetWhenReadsLikeAClock(t *testing.T) {
 	}
 }
 
-func TestNetProjectRefusesToGuessOutsideAProject(t *testing.T) {
+// An approval binds only a Git repository or the folder COOP_REPO names, while the views read the
+// folder `coop run` uses (TestNetViewsFindTheProjectCoopRunUsesOutsideGit).
+func TestNetApprovalProjectRefusesToGuessOutsideAProject(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if _, err := netProject(""); err == nil || !strings.Contains(err.Error(), "coop net runs --all-projects") {
-		t.Fatalf("netProject outside a project = %v, want a pointer at the explicit scope", err)
+	if _, err := netApprovalProject(""); err == nil || !strings.Contains(err.Error(), "coop net runs --all-projects") {
+		t.Fatalf("netApprovalProject outside a project = %v, want a pointer at the explicit scope", err)
 	}
 	want, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := netProject(dir); err != nil || got != want {
-		t.Errorf("netProject(%q) = (%q, %v), want %s", dir, got, err, want)
+	if got, err := netApprovalProject(dir); err != nil || got != want {
+		t.Errorf("netApprovalProject(%q) = (%q, %v), want %s", dir, got, err, want)
+	}
+	if got, err := netProject(""); err != nil || got != want {
+		t.Errorf("netProject outside Git = (%q, %v), want the folder %s", got, err, want)
 	}
 }
 
