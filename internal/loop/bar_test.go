@@ -75,8 +75,18 @@ func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 
 func TestLoopBarShowsTinyActiveShare(t *testing.T) {
 	bar := newLoopBar(nil, loopWidth(80), time.Now(), tasks.TaskCounts{Todo: 99, Doing: 1}, "demo")
-	if line := bar.line(); !strings.Contains(line, "█") {
+	if line := bar.line(); !strings.ContainsAny(line, "█▒") {
 		t.Errorf("loop bar should keep a visible active cell: %q", line)
+	}
+}
+
+// Without color (NO_COLOR, or no terminal as under go test) the bar's states differ only by their
+// characters: a queue with one task in progress and none done must not draw a full bar.
+func TestLoopBarWithoutColorDoesNotReadAsComplete(t *testing.T) {
+	bar := newLoopBar(nil, loopWidth(80), time.Now(), tasks.TaskCounts{Doing: 1}, "demo")
+	line := bar.line()
+	if strings.Contains(line, "█") || !strings.Contains(line, "["+strings.Repeat("▒", 20)+"] 0/1 done") {
+		t.Errorf("a colorless bar with no task done reads as complete: %q", line)
 	}
 }
 

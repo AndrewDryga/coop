@@ -323,6 +323,11 @@ func asUsage(err error) *ui.UsageError {
 		return ui.CommandFailed("Final review cannot continue", commits.Cause(),
 			[2]string{"", commits.Remedy() + ", then run the loop again."})
 	}
+	var unrecorded *tasks.UnrecordedCompletionError
+	if errors.As(err, &unrecorded) && !errors.Is(err, ui.ErrReported) {
+		return ui.CommandFailed("Final review cannot continue", unrecorded.Cause(),
+			[2]string{"", unrecorded.Remedy() + ", then run the loop again."})
+	}
 	var policy box.UnreadableCoopignore
 	if errors.As(err, &policy) {
 		headline, reason, fix := unreadableCoopignoreBlock(policy, "")

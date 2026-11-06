@@ -295,24 +295,26 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return 1, errors.New("--review-task requires the built-in loop review; remove work.command or omit the import")
 	}
 	limit := loopTaskLimit{max: maxTasks}
-	// A task-limited run with no actionable work is a pure host-side no-op: it does not need an
-	// image and must not launch a configured preflight agent. Its built-in preflight may first
-	// unblock answered decisions, since that is host-only and can make work actionable.
+	// A run with no actionable work and no review to settle is a pure host-side no-op: it does not
+	// need an image, must not launch a configured preflight agent, and has no review verdict to
+	// claim. Its built-in preflight may first unblock answered decisions, since that is host-only
+	// and can make work actionable.
 	preflightBuiltinRan := false
 	var builtinResult preflightResult
-	if limit.enabled() && preflight && len(custom) == 0 && !resumingCohort {
+	if preflight && len(custom) == 0 && !resumingCohort {
 		builtinResult, err = builtinPreflight(hosts)
 		if err != nil {
 			return 1, err
 		}
 		preflightBuiltinRan = true
 	}
-	if limit.enabled() {
+	{
 		cf, _, err := tasks.QueueProgress(hosts)
 		if err != nil {
 			return 1, err
 		}
-		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 && spec.CandidateReview == nil {
+		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 &&
+			len(recoveredReviewCompletions) == 0 && spec.CandidateReview == nil {
 			if preflightBuiltinRan {
 				printPreflight(hosts, builtinResult)
 			}
@@ -1612,11 +1614,15 @@ reviewAgain:
 				break
 			}
 			// --debug-on-fail: on a non-rate-limit failure, open an interactive box shell
-			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop.
+			// (same repo/image) to inspect, then retry — instead of the auto-retry/stop. Ctrl-C in
+			// the shell reaches only the box, so the retry waits out a short countdown the loop's
+			// own Ctrl-C can end.
 			if (action == actRetry || action == actStop) && debugOnFail && ui.IsTerminal(os.Stdin) {
 				ui.Note("Opening a box shell to investigate this failed attempt.")
-				ui.Note("  Exit the shell to retry. Press Ctrl-C to stop.")
 				c.debugShell(repo, img, agent, spec.ForkName)
+				ui.Note("")
+				ui.Note("Retrying in 10 seconds. Press Ctrl-C to stop.")
+				ladder.SleepOrWake(10*time.Second, wake)
 				fails = 0 // the developer intervened; don't count this toward the stop cap
 				continue
 			}
@@ -1672,7 +1678,8 @@ reviewAgain:
 				noteTaskStop(assigned, fmt.Sprintf("loop stopped after %d failed attempts; last attempt: %s", fails, cause))
 				ui.Failure(fmt.Sprintf("Stopped after %d failed attempts", fails),
 					wrappedLoopText("Last attempt: "+cause, 6)+"\n"+fmt.Sprintf("%s did not finish.", active),
-					[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
+					[2]string{"Task:", "coop tasks path " + assigned.Item.ID},
+					[2]string{"Continue:", continueCmd})
 				// The worker's raw status belongs to attempt telemetry, not the loop's
 				// public exit contract (2 is usage; 3 means only blocked work remains).
 				return 1, ui.Reported(fmt.Errorf("iteration failed %d times since the last success", fails))

@@ -37,7 +37,7 @@ func TestTaskWatchBarsShowTinyActiveShare(t *testing.T) {
 	c := TaskCounts{Todo: 99, Doing: 1}
 	b := boardCounts{TaskCounts: c}
 	for _, line := range []string{tasksProgressLine(ui.Colored(), b, 120), sourceLine(ui.Colored(), "api", 3, c)} {
-		if !strings.Contains(line, "█") {
+		if !strings.ContainsAny(line, "█▒") {
 			t.Errorf("task-watch overall and source bars should keep a visible active cell: %q", line)
 		}
 	}

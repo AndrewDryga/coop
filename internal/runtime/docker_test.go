@@ -1081,6 +1081,49 @@ func TestDockerLateWorkloadStartIsReportedNotFailed(t *testing.T) {
 	}
 }
 
+// The notice says Docker has not started the box yet, so a probe has to have seen that. A workload
+// that started after one probe and ran to its end before the next, as a quick command does, is
+// never reported as waiting, however long the start took: each probe here sees it already started.
+func TestDockerSlowStartNoticeNeedsAProbeThatSawNoStart(t *testing.T) {
+	previous := slowStartupAfter
+	slowStartupAfter = time.Nanosecond
+	t.Cleanup(func() { slowStartupAfter = previous })
+	rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
+	ordinary := fixtureDockerAPI(file)
+	var inspects atomic.Int32
+	endpoint := dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The first container read is the check before the start; every later one is a startup
+		// probe, held until the client has started the workload.
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/containers/") && inspects.Add(1) > 1 {
+			for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				var fixture dockerFixture
+				if data, err := os.ReadFile(file); err == nil && json.Unmarshal(data, &fixture) == nil && fixture.ClientPID != 0 {
+					break
+				}
+			}
+		}
+		ordinary.ServeHTTP(w, r)
+	}))
+	t.Setenv("COOP_DOCKER_FIXTURE_ENDPOINT", endpoint)
+	d, err := BindDocker(t.Context(), rt, endpoint, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	notices := 0
+	d.OnSlowStart = func(time.Duration) { notices++ }
+	code, err := d.StartAttached(t.Context(), dockerFixtureRef(), nil, io.Discard, io.Discard, nil)
+	if err != nil || code != 7 {
+		t.Fatal("the workload's outcome was lost", code, err)
+	}
+	if inspects.Load() < 2 {
+		t.Fatal("no startup probe ran", inspects.Load())
+	}
+	if notices != 0 {
+		t.Fatal("a workload that had already started was reported as waiting for Docker", notices)
+	}
+}
+
 // writeCopyArchive is the tar stream `docker cp <container>:<path> -` produces.
 // Each mode is one shape a replaced pinned client would arrive in.
 func writeCopyArchive(fixture dockerFixture) {

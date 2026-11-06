@@ -79,6 +79,9 @@ func (s *launchSections) section(title string) {
 }
 
 func launchSubject(spec RunSpec) string {
+	if spec.Subject != "" {
+		return cleanLaunchText(spec.Subject)
+	}
 	if spec.LoopPresentation && !spec.AgentCommand && len(spec.Cmd) > 0 {
 		return cleanLaunchText(strings.Join(spec.Cmd, " "))
 	}

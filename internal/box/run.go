@@ -257,6 +257,10 @@ type RunSpec struct {
 	// StartingNotice is optional interactive guidance directly below the Starting heading.
 	// It is presentation only, never a runtime callback or serialized launch authority.
 	StartingNotice string `json:"-"`
+	// Subject, when set, is what the Starting and Stopping lines name instead of the agent: a
+	// command run with an agent's account that is not the agent, such as the loop's debug shell.
+	// It is presentation only, like StartingNotice.
+	Subject string `json:"-"`
 
 	// ConsultLead names the lead agent of a consult-capable run: it gets a
 	// light, optional "second opinion" directive merged into its instruction file,

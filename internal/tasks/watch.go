@@ -1040,8 +1040,9 @@ func tasksProgressLine(p ui.Palette, b boardCounts, width int) string {
 	return line
 }
 
-// progressBar is a state bar of width cells and the gap after it, or "" without color: its segments
-// differ only by color, and a pipe or NO_COLOR would show one solid bar that says nothing.
+// progressBar is a state bar of width cells and the gap after it, or "" without color: the bar
+// colors itself for coop's stderr, not this view's stream, so a pipe or NO_COLOR view shows the
+// counts alone.
 func progressBar(p ui.Palette, c TaskCounts, width int) string {
 	if !p.Enabled() {
 		return ""

@@ -506,6 +506,21 @@ func TestPendingReviewCommitsRefusalIsAFailureBlock(t *testing.T) {
 	}
 }
 
+// A --review-task import of a task Coop never recorded as complete is a refusal with a headline,
+// the cause in plain words and the command that records it, not a bare internal error line.
+func TestUnrecordedCompletionRefusalIsAFailureBlock(t *testing.T) {
+	err := fmt.Errorf("import archived task for final review: %w", &tasks.UnrecordedCompletionError{TaskID: "fix-login"})
+	want := "\n✗ Final review cannot continue\n\n" +
+		"      Task fix-login is done, but Coop has no record of its completion.\n\n" +
+		"  Record it with coop tasks done fix-login, then run the loop again.\n"
+	if got := usageBlock(t, err); got != want {
+		t.Errorf("--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if usage := asUsage(err); usage == nil || usage.ExitCode != 1 {
+		t.Errorf("refusal = %+v, want a failure that exits 1", usage)
+	}
+}
+
 // `coop help claude` prints the page generated from Claude's adapter, to the byte, and no generic
 // all-commands footer: the page ends with its own pointer. docs/cli.md pins the page's bytes
 // (make docs-check); this pins the help ROUTE that prints it.

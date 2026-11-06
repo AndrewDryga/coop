@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,8 @@ import (
 
 // debugShell opens an interactive shell in the box against the same repo/image as the
 // loop iteration, so --debug-on-fail can inspect the failed state. The box is disposable
-// per iteration, so this is a fresh shell in the same context, not the failed container.
+// per iteration, so this is a fresh shell in the same context, not the failed container. It keeps
+// the agent's account, so the agent can be run by hand, but the box narrates the shell it runs.
 func (c *Control) debugShell(repo, img, agent, forkName string) {
 	kind := forkspace.ExecutionInteractive
 	if forkName != "" {
@@ -31,8 +33,13 @@ func (c *Control) debugShell(repo, img, agent, forkName string) {
 		ForkName: forkName, ForkOwner: c.forkOwner, ForkGeneration: c.forkGeneration,
 		ForkWorker: c.forkWorker, ActivityRepo: c.activityRepo, ActivityKind: kind,
 		ActivityTask: c.activityTask, ActivitySource: c.runID,
+		Subject: path.Base(c.cfg.Shell), StartingNotice: debugShellNotice,
 	})
 }
+
+// debugShellNotice sits right above the shell's prompt. Ctrl-C at that prompt reaches the box's
+// shell, not the loop, so stopping is a step taken after leaving it.
+const debugShellNotice = "Exit the shell to retry. To stop the loop, press Ctrl-C after you exit."
 
 const progressPoll = 2 * time.Second // how often the live bar checks the queue while an iteration runs
 

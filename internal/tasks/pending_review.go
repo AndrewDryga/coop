@@ -314,6 +314,24 @@ func (e *PendingReviewCommitsError) Remedy() string {
 	}
 }
 
+// UnrecordedCompletionError is an archived task Coop never accepted as complete, such as one moved
+// to done by hand. A final review only takes work whose completion Coop recorded.
+type UnrecordedCompletionError struct{ TaskID string }
+
+func (e *UnrecordedCompletionError) Error() string {
+	return "task " + e.TaskID + " has no host-accepted completion receipt"
+}
+
+// Cause is the refusal as a sentence.
+func (e *UnrecordedCompletionError) Cause() string {
+	return "Task " + e.TaskID + " is done, but Coop has no record of its completion."
+}
+
+// Remedy records the completion, after the same checks a completion gets.
+func (e *UnrecordedCompletionError) Remedy() string {
+	return "Record it with coop tasks done " + e.TaskID
+}
+
 // pendingReviewSubjectBase is where a subject's review range starts.
 func pendingReviewSubjectBase(subject PendingReviewRecord) string {
 	if subject.Base != "" {
@@ -1514,8 +1532,11 @@ func enrollExistingPendingReviewLocked(repo string, task QueuedTask, authority *
 		return err
 	}
 	fingerprint, err := completionFingerprintLocked(task.Item, crashCompletionLock{authority: authority})
-	if err != nil || fingerprint.Receipt == "" {
-		return errors.Join(err, fmt.Errorf("task %s has no host-accepted completion receipt", task.Item.ID))
+	if err != nil {
+		return fmt.Errorf("read task %s completion record: %w", task.Item.ID, err)
+	}
+	if fingerprint.Receipt == "" {
+		return &UnrecordedCompletionError{TaskID: task.Item.ID}
 	}
 	if prior, ok, readErr := readPendingReviewRecord(task.Root, task.Item.ID); readErr != nil {
 		return readErr

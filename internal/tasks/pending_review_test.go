@@ -667,9 +667,22 @@ func TestPendingReviewExplicitImportIsExactAndIdempotent(t *testing.T) {
 		t.Fatalf("imported cohort = %+v, %v", cohort, err)
 	}
 
+	// Moved to done by hand, beside a commit that carries its trailer: only the record is missing.
 	unaccepted := taskWithCompletedChecklist(t, root, StateDone, "unaccepted-import")
-	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{unaccepted.ID}, plan); err == nil || !strings.Contains(err.Error(), "no host-accepted completion receipt") {
+	writeTaskFile(t, filepath.Join(repo, "unaccepted.txt"), "completed by hand\n")
+	git(t, repo, "add", "unaccepted.txt")
+	git(t, repo, "commit", "-qm", "finish by hand\n\nCoop-Task: "+unaccepted.ID)
+	err = EnrollExistingPendingReviews(repo, []string{root}, []string{unaccepted.ID}, plan)
+	var unrecorded *UnrecordedCompletionError
+	if !errors.As(err, &unrecorded) || unrecorded.TaskID != unaccepted.ID || !strings.Contains(err.Error(), "no host-accepted completion receipt") {
 		t.Fatalf("unaccepted import error = %v", err)
+	}
+	// The way out the refusal names: recording the completion lets the same import succeed.
+	if err := CompleteTrustedTask("", root, unaccepted); err != nil {
+		t.Fatalf("record the unaccepted completion: %v", err)
+	}
+	if err := EnrollExistingPendingReviews(repo, []string{root}, []string{unaccepted.ID}, plan); err != nil {
+		t.Fatalf("import after recording the completion: %v", err)
 	}
 }
 

@@ -193,7 +193,8 @@ func (s *AltScreen) Leave() { fmt.Fprint(s.w, "\033[?25h\033[?1049l") }
 // ProgressBarStates renders done (cyan), in-progress (yellow), blocked (red), then todo (empty).
 // Non-zero in-progress and blocked counts each claim at least one cell when the width permits; done
 // yields overflow to both. On a bar too narrow for both protected segments, blocked wins because a
-// hidden decision would make an unfinished queue look actionable or complete.
+// hidden decision would make an unfinished queue look actionable or complete. Without color the
+// in-progress and blocked cells take their own characters, so the bar never reads as complete.
 func ProgressBarStates(done, doing, blocked, total, width int) string {
 	if width < 0 {
 		width = 0
@@ -233,7 +234,11 @@ func ProgressBarStates(done, doing, blocked, total, width int) string {
 	if d+a+b > width {
 		d = width - a - b // completed work yields to live/blocked state, not the reverse
 	}
-	return "[" + Cyan(strings.Repeat("█", d)) + Yellow(strings.Repeat("█", a)) + Red(strings.Repeat("█", b)) + strings.Repeat("░", width-d-a-b) + "]"
+	doingCell, blockedCell := "█", "█"
+	if cReset == "" {
+		doingCell, blockedCell = "▒", "!"
+	}
+	return "[" + Cyan(strings.Repeat("█", d)) + Yellow(strings.Repeat(doingCell, a)) + Red(strings.Repeat(blockedCell, b)) + strings.Repeat("░", width-d-a-b) + "]"
 }
 
 // clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes or OSC 8

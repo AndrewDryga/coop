@@ -317,6 +317,36 @@ func TestLoopTaskLimitWithNoActionableTaskNeedsNoImage(t *testing.T) {
 	}
 }
 
+// A loop over a queue with nothing to work on ran no review, so it never claims one passed: with or
+// without --max-tasks it says there is nothing ready, needs no image, and exits as the queue stands.
+func TestLoopWithNoActionableTaskClaimsNoReview(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, want string
+		maxTasks, code    int
+	}{
+		{"empty queue", stateDone, "No tasks ready to work on.\n", 0, 0},
+		{"empty queue with a task limit", stateDone, "No tasks ready to work on.\n", 2, 0},
+		{"only a decision left", stateBlocked, "No tasks ready to work on. 1 task needs your decision.\n", 0, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			writeTaskFile(t, filepath.Join(repo, tasksRoot, tc.state, "2026-01-01-settled", "task.md"), "# Settled\n")
+			c := New(&config.Config{RepoOverride: repo}, runtime.Runtime{Name: "false"}, "test", Host{})
+			var code int
+			var err error
+			out := captureStderr(t, func() {
+				code, err = c.Run(RunSpec{Repo: repo, Image: "no-such-image", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: tc.maxTasks})
+			})
+			if err != nil || code != tc.code {
+				t.Fatalf("idle loop = (%d, %v), want exit %d without an image\n%s", code, err, tc.code, out)
+			}
+			if !strings.Contains(out, tc.want) || strings.Contains(out, "final review") || strings.Contains(out, "✓") {
+				t.Errorf("idle loop output = %q, want %q and no review verdict", out, tc.want)
+			}
+		})
+	}
+}
+
 // Pre-flight releases a claim whose owning process is gone, so the loop can resume that task
 // instead of skipping it forever as "claimed".
 func TestLoopPreflightReleasesGoneOwnerClaims(t *testing.T) {

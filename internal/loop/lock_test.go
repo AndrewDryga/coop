@@ -29,6 +29,8 @@ func TestLoopCheckoutLockRefusesASecondLoopInTheSameTree(t *testing.T) {
 		t.Errorf("second lockLoopCheckout error = %q, want it to say another loop holds the checkout", err)
 	} else if !strings.Contains(err.Error(), fmt.Sprintf("pid %d", os.Getpid())) {
 		t.Errorf("second lockLoopCheckout error = %q, want it to name the holding pid", err)
+	} else if !strings.Contains(err.Error(), "run this one in a fork: coop fork <name> <target|preset> -d") || strings.Contains(err.Error(), "coop fork add") {
+		t.Errorf("second lockLoopCheckout error = %q, want it to name the real fork loop command", err)
 	}
 	if waited := time.Since(started); waited > stoppingWait/2 {
 		t.Errorf("a loop that is working was waited on for %s; only a stopping one may be", waited)

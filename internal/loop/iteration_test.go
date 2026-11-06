@@ -139,6 +139,22 @@ func TestConsultBoxesNameTheRunsPeerLedger(t *testing.T) {
 	}
 }
 
+// The --debug-on-fail shell keeps the agent's account, but it is a shell: its box announces the
+// shell, and the hint above the prompt says how to stop the loop, since Ctrl-C there reaches only
+// the shell.
+func TestDebugShellIsAnnouncedAsAShell(t *testing.T) {
+	var launched box.RunSpec
+	c := &Control{cfg: &config.Config{Shell: "/bin/bash"}, net: newNetworkLog(),
+		boxRun: func(spec box.RunSpec) (int, error) { launched = spec; return 0, nil }}
+	c.debugShell(t.TempDir(), "img", "claude", "")
+	if launched.Agent != "claude" || !slices.Equal(launched.Cmd, []string{"/bin/bash"}) || launched.Subject != "bash" {
+		t.Errorf("debug shell = agent %q cmd %q subject %q, want the claude account running bash, named bash", launched.Agent, launched.Cmd, launched.Subject)
+	}
+	if launched.StartingNotice != "Exit the shell to retry. To stop the loop, press Ctrl-C after you exit." {
+		t.Errorf("debug shell hint = %q", launched.StartingNotice)
+	}
+}
+
 func TestLoopIdentityIsCapturedButRawTraceStaysRaw(t *testing.T) {
 	repo, root := t.TempDir(), t.TempDir()
 	events := "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-5\"}\n" +

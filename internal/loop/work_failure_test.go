@@ -165,7 +165,8 @@ func TestFailedTaskAttemptsNameTheirCause(t *testing.T) {
 					t.Errorf("attempt %d does not say why it failed; want\n%s\ngot\n%s", attempt-1, retry, output)
 				}
 			}
-			stop := fmt.Sprintf("\n✗ Stopped after %d failed attempts\n\n      Last attempt: %s\n      Create hello.txt did not finish.\n\n  Task: coop tasks path %s\n", maxLoopFailures, tc.cause, id)
+			stop := fmt.Sprintf("\n✗ Stopped after %d failed attempts\n\n      Last attempt: %s\n      Create hello.txt did not finish.\n\n"+
+				"  Task:     coop tasks path %s\n  Continue: coop loop\n", maxLoopFailures, tc.cause, id)
 			if !strings.Contains(output, stop) {
 				t.Errorf("the stop does not name the last cause; want\n%s\ngot\n%s", stop, output)
 			}

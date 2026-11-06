@@ -271,20 +271,24 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 	}()
 	started, noticed := false, false
 	attachedAt := time.Now()
-	observe := func() error {
-		if started {
-			return nil
-		}
-		// A daemon that has not started the workload yet is slow, not broken: an
-		// ordinary `docker run` waits on exactly this with no bound, and a
-		// loaded host, a cold bind mount or a busy VM routinely take longer than
-		// any number picked here. The caller's context is the bound; all this
-		// does is stop the wait from being silent.
-		if elapsed := time.Since(attachedAt); !noticed && elapsed >= slowStartupAfter {
+	// A daemon that has not started the workload yet is slow, not broken: an
+	// ordinary `docker run` waits on exactly this with no bound, and a
+	// loaded host, a cold bind mount or a busy VM routinely take longer than
+	// any number picked here. The caller's context is the bound; all this
+	// does is stop the wait from being silent. It speaks only after a probe
+	// that did not see the start, while the client still runs: a workload that
+	// started between two probes, or has already run to its end, is not waiting.
+	noticeSlowStart := func() {
+		if elapsed := time.Since(attachedAt); !started && !noticed && elapsed >= slowStartupAfter {
 			noticed = true
 			if d.OnSlowStart != nil {
 				d.OnSlowStart(elapsed)
 			}
+		}
+	}
+	observe := func() error {
+		if started {
+			return nil
 		}
 		probe, stop := context.WithTimeout(ctx, 2*time.Second)
 		defer stop()
@@ -366,12 +370,14 @@ func (d *Docker) StartAttached(ctx context.Context, ref DockerRef, stdin io.Read
 		case <-ticker.C:
 			if err := observe(); err != nil {
 				if errors.Is(err, errDockerStartupProbe) && ctx.Err() == nil {
+					noticeSlowStart()
 					continue // a failed observation is not workload failure; the context bounds the wait
 				}
 				cancel()
 				outcome := <-done
 				return -1, errors.Join(err, outcome.err)
 			}
+			noticeSlowStart()
 		}
 	}
 }

@@ -130,22 +130,25 @@ func visible(s string) int {
 }
 
 func TestProgressBarStates(t *testing.T) {
-	// Colors are off under `go test`, so every state segment renders as plain █. Assert the total
-	// filled-cell layout here; the protected-segment test below distinguishes colors with sentinels.
+	// Colors are off under `go test`, as with NO_COLOR, so in-progress (▒) and blocked (!) cells
+	// carry their own characters and only done cells are solid. The protected-segment test below
+	// keeps colors on with sentinels, where every state is a solid cell as before.
 	for _, c := range []struct {
 		done, doing, blocked, total, w int
 		want                           string
 	}{
-		{0, 0, 0, 0, 4, "[░░░░]"},        // no tasks → empty
-		{1, 1, 1, -1, 4, "[░░░░]"},       // non-positive total → empty
-		{1, 1, 1, 3, 0, "[]"},            // zero width → no cells
-		{1, 1, 1, 3, -2, "[]"},           // negative width clamps to zero
-		{-1, -1, -1, 3, 4, "[░░░░]"},     // negative counts cannot create segments
-		{2, 0, 0, 4, 4, "[██░░]"},        // half done
-		{0, 2, 0, 4, 4, "[██░░]"},        // half in progress
-		{2, 1, 1, 4, 4, "[████]"},        // all non-todo states fill
-		{5, 1, 5, 10, 4, "[████]"},       // segments cannot exceed the width
-		{2, 0, 0, 4, 10, "[█████░░░░░]"}, // 2/4 done scaled to width 10
+		{0, 0, 0, 0, 4, "[░░░░]"},                             // no tasks → empty
+		{1, 1, 1, -1, 4, "[░░░░]"},                            // non-positive total → empty
+		{1, 1, 1, 3, 0, "[]"},                                 // zero width → no cells
+		{1, 1, 1, 3, -2, "[]"},                                // negative width clamps to zero
+		{-1, -1, -1, 3, 4, "[░░░░]"},                          // negative counts cannot create segments
+		{2, 0, 0, 4, 4, "[██░░]"},                             // half done
+		{0, 2, 0, 4, 4, "[▒▒░░]"},                             // half in progress
+		{2, 1, 1, 4, 4, "[██▒!]"},                             // all non-todo states fill
+		{5, 1, 5, 10, 4, "[█▒!!]"},                            // segments cannot exceed the width
+		{2, 0, 0, 4, 10, "[█████░░░░░]"},                      // 2/4 done scaled to width 10
+		{0, 1, 0, 1, 20, "[" + strings.Repeat("▒", 20) + "]"}, // one task in progress is not a complete bar
+		{0, 0, 1, 1, 4, "[!!!!]"},                             // nor is one blocked task
 	} {
 		if got := ProgressBarStates(c.done, c.doing, c.blocked, c.total, c.w); got != c.want {
 			t.Errorf("ProgressBarStates(d=%d,a=%d,b=%d,t=%d,w=%d) = %q, want %q", c.done, c.doing, c.blocked, c.total, c.w, got, c.want)

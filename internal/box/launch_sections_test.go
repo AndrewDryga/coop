@@ -368,6 +368,19 @@ func TestLaunchStoppingImmediatelyPrecedesCleanup(t *testing.T) {
 	}
 }
 
+// A command run with an agent's account that is not the agent, such as the loop's debug shell, is
+// started and stopped under its own name, with its guidance right above its prompt.
+func TestLaunchSubjectNamesACommandThatIsNotTheAgent(t *testing.T) {
+	got := captureStderr(t, func() {
+		s := newLaunchSections(RunSpec{Agent: "claude", Cmd: []string{"/bin/bash"}, Subject: "bash", StartingNotice: "Exit the shell to retry."})
+		s.starting()
+		s.stopping()
+	})
+	if want := "Starting bash\nExit the shell to retry.\n\nStopping bash\n"; got != want {
+		t.Fatalf("shell launch = %q, want %q", got, want)
+	}
+}
+
 // Ordinary batch runs, quiet probes and ACP children keep their bounded output: every narration
 // call is a no-op and a failure comes back exactly as it was, for the caller's own reporting.
 func TestLaunchSectionsAreSilentOutsideInteractiveRuns(t *testing.T) {

@@ -67,6 +67,6 @@ func lockLoopCheckout(cfg *config.Config, repo string) (release, markStopping fu
 		if stopping {
 			return nil, nil, fmt.Errorf("the coop loop stopping in %s%s did not finish within %s — wait for it to exit, then run this again", checkout, holder, stoppingWait)
 		}
-		return nil, nil, fmt.Errorf("another coop loop is already working %s%s — two loops in one checkout commit over each other and both completions get rejected; wait for it to finish, or give this one its own worktree with 'coop fork add'", checkout, holder)
+		return nil, nil, fmt.Errorf("another coop loop is already working %s%s — two loops in one checkout reject each other's work; wait for it to finish, or run this one in a fork: coop fork <name> <target|preset> -d", checkout, holder)
 	}
 }

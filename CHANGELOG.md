@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop loop` closes with what really happened.** A queue with nothing to work on now ends
+  "No tasks ready to work on." without a review checkmark, with or without `--max-tasks`. The stop
+  after 5 failed attempts prints the `Continue:` command. The `--debug-on-fail` shell is announced as
+  your shell, not the agent, and Ctrl-C after you exit it stops the loop during a 10-second
+  countdown. The "waiting for Docker" notice no longer appears after the command already ran, a
+  `--review-task` for a task Coop never recorded as done says to record it with `coop tasks done`,
+  a second loop in one checkout names the real fork command, and with `NO_COLOR` the progress bar
+  marks tasks in progress with ▒ and blocked ones with !, so it no longer looks complete.
+
 - **The installer accepts a version without the v.** `COOP_VERSION=12.1.0`, the form
   `coop version` prints, installs release v12.1.0 as `COOP_VERSION=v12.1.0` does, instead of
   failing with curl's 404. A version with no release now gets one plain line, such as
@@ -102,6 +111,7 @@
   offers `coop tasks claim <id> --force`, instead of a release that was refused too. A lease ends
   with "Lease on <id> ended" and who still holds the claim, instead of "Released", and a lease
   taken at a terminal shows the person, not "agent".
+
 - **`coop tasks unblock` works on a reopened task after other work landed.** A task a final review
   reopened could not be unblocked once main gained commits the review's record could not replay,
   such as one task bound by several commits or one commit that closes two tasks. Every try failed
