@@ -23,9 +23,10 @@ missing tool, never in silence: Coop's default box carries none of these toolcha
 silent skip passed every commit in a box unchecked. Where the tool is there but fails, gofmt and
 terraform fmt stop the commit on one line naming the tool and its first complaint: they read no
 project settings, so a failure (a shim with no version set, a file they cannot parse) means
-nothing was checked. A detected language the project's box lacks (no project Dockerfile, not
-pinned in `.tool-versions`) gets init's exact next step: the `.tool-versions` pin and
-`coop init --stack asdf` (`scaffold.Toolchains`).
+nothing was checked. mix format and rustfmt let the commit through on a failure, with one warning
+naming the tool, the files it could not check and its first complaint. A detected language the
+project's box lacks (no project Dockerfile, not pinned in `.tool-versions`) gets init's exact next
+step: the `.tool-versions` pin and `coop init --stack asdf` (`scaffold.Toolchains`).
 
 **Preserve Git hook composition.** A repo-local `core.hooksPath` overrides the box's global path,
 so the tracked hook directory also carries `.githooks/prepare-commit-msg`: a no-op-on-host shim that
@@ -55,10 +56,10 @@ blocks. Guessing wrong is worse than doing nothing.
   listing the file stops the commit on its first complaint
   (TestPreCommitHookStopsWhenTheFormatterFails). mix format and rustfmt also load the project's
   own setup (its deps and formatter config, rustfmt.toml, the edition read from Cargo.toml), so
-  their other failures fail *open* — only a real diff blocks the commit. If a tool's check
-  depends on project config it won't auto-discover outside its own wrapper (e.g. bare `rustfmt`
-  doesn't read Cargo.toml's `edition` the way `cargo fmt` does), read that config directly
-  rather than silently mis-checking.
+  their other failures fail *open* with that one warning (TestElixirRustGateListBased) — only a
+  real diff blocks the commit. If a tool's check depends on project config it won't auto-discover
+  outside its own wrapper (e.g. bare `rustfmt` doesn't read Cargo.toml's `edition` the way
+  `cargo fmt` does), read that config directly rather than silently mis-checking.
 - Keep the scaffold pure: detection lives in `scaffold`, any interactive prompt lives in
   the CLI (`cmdInit`) so `scaffold.Init` never reads stdin (a prompt there would hang
   `go test`, whose stdin is often a tty).
@@ -68,6 +69,12 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-11-06 — rustfmt and mix format no longer fail open in silence (the lead's call on the
+  question below: warn, don't block). A failure that is not a formatting diff prints "pre-commit:
+  <tool> failed on <files>, so formatting was not checked: <first complaint>" and lets the commit
+  through; a diff still blocks. mix's "mix format failed for file:" line is skipped, since the
+  cause is the line after it. Checked against real rustfmt 1.9.0 and Elixir 1.18.2 (a parse error,
+  an unknown `import_deps`, a diff) through the hook a real coop init wrote.
 - 2026-11-06 — gofmt and terraform fmt fail closed. A formatter on PATH that failed (the asdf shim
   with no version set exits 126, a file it cannot parse) passed the commit in silence, so
   unformatted or unparsable Go landed (overnight QA, finding F9). The hook now stops the commit with

@@ -188,7 +188,8 @@ func hasTerraformFiles(repo string) bool {
 // fails (a file it cannot parse, a shim with no version set) nothing was checked and the commit
 // stops on the tool's first complaint. mix format and rustfmt also load the project's own setup
 // (its formatter config and dependencies, rustfmt.toml, the edition read from Cargo.toml), so a
-// failure there is often that setup rather than the staged file: they fail open, and only a
+// failure there is often that setup rather than the staged file: they fail open, with one
+// warning naming the tool, the files it could not check and its first complaint, and only a
 // real diff blocks.
 var gateSnippets = map[string]string{
 	"go": `# Go: block the commit if any staged .go file isn't gofmt-clean, or if gofmt can't check them.
@@ -232,16 +233,28 @@ elif [ -n "$tf_files" ]; then
 fi`,
 	"elixir": `# Elixir: block the commit if any staged .ex/.exs file isn't mix-format clean. mix has no
 # flag to list many files at once, so check one at a time and match its stable
-# "--check-formatted" failure text — any other failure (crash, syntax error) fails open.
+# "--check-formatted" failure text — any other failure (crash, syntax error, missing deps) fails
+# open, with one warning naming it.
 ex_files=$(echo "$staged" | grep -E '\.exs?$' || true)
 if [ -n "$ex_files" ] && ! command -v mix >/dev/null 2>&1; then
   echo "pre-commit: mix is not installed here, so the Elixir format check was skipped" >&2
 elif [ -n "$ex_files" ]; then
-  bad=""
+  bad=""; failed=""
   for f in $ex_files; do
-    out=$(mix format --check-formatted "$f" 2>&1 >/dev/null)
-    echo "$out" | grep -q "failed due to --check-formatted" && bad="$bad $f"
+    out=$(mix format --check-formatted "$f" 2>&1 >/dev/null); status=$?
+    if echo "$out" | grep -q "failed due to --check-formatted"; then
+      bad="$bad $f"
+    elif [ "$status" -ne 0 ]; then
+      if [ -z "$failed" ]; then
+        # The cause, not the "mix format failed for file:" line that only repeats the file.
+        why=$(echo "$out" | grep -v '^mix format failed for file' | grep -m1 .); why=${why:-exit status $status}
+      fi
+      failed="$failed $f"
+    fi
   done
+  if [ -n "$failed" ]; then
+    echo "pre-commit: mix format failed on$failed, so formatting was not checked: $why" >&2
+  fi
   if [ -n "$bad" ]; then
     echo "pre-commit blocked — these need mix format:$bad" >&2
     echo "fix: mix format <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
@@ -250,7 +263,8 @@ fi`,
 	"rust": `# Rust: block the commit if staged .rs files aren't rustfmt-clean. rustfmt defaults to the
 # 2015 edition unless told otherwise, which hard-fails to parse async/gen code, so read the
 # crate's real edition off Cargo.toml first. -l lists exactly the files that need formatting;
-# any other failure (crash, syntax error) fails open.
+# any other failure (crash, syntax error, a broken rustfmt.toml) fails open, with one warning
+# naming it.
 rs_files=$(echo "$staged" | grep '\.rs$' || true)
 if [ -n "$rs_files" ] && ! command -v rustfmt >/dev/null 2>&1; then
   echo "pre-commit: rustfmt is not installed here, so the Rust format check was skipped" >&2
@@ -258,11 +272,23 @@ elif [ -n "$rs_files" ]; then
   edition_line=$(grep -m1 '^edition' Cargo.toml 2>/dev/null)
   edition=${edition_line#*\"}; edition=${edition%%\"*}
   edflag=""; [ -n "$edition" ] && edflag="--edition=$edition"
-  bad=""
+  bad=""; failed=""
   for f in $rs_files; do
     # shellcheck disable=SC2086  # intentional: $edflag is empty or exactly one --edition=X token
-    [ -n "$(rustfmt --check -l $edflag "$f" 2>/dev/null)" ] && bad="$bad $f"
+    out=$(rustfmt --check -l $edflag "$f" 2>/dev/null); status=$?
+    if [ -n "$out" ]; then
+      bad="$bad $f"
+    elif [ "$status" -ne 0 ]; then
+      if [ -z "$failed" ]; then
+        # shellcheck disable=SC2086  # intentional: $edflag is empty or exactly one --edition=X token
+        why=$(rustfmt --check -l $edflag "$f" 2>&1 >/dev/null | grep -m1 .); why=${why:-exit status $status}
+      fi
+      failed="$failed $f"
+    fi
   done
+  if [ -n "$failed" ]; then
+    echo "pre-commit: rustfmt failed on$failed, so formatting was not checked: $why" >&2
+  fi
   if [ -n "$bad" ]; then
     echo "pre-commit blocked — these need rustfmt:$bad" >&2
     echo "fix: rustfmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@

@@ -38,6 +38,12 @@
   and unreadable marker messages drop "two-link anchor" and "pending network identity" and name
   `coop approve` once.
 
+- **The commit check `coop init` writes says when rustfmt or mix format could not check a file.**
+  When either tool failed for a reason other than formatting, such as a syntax error, a broken
+  `rustfmt.toml`, missing dependencies or an asdf shim with no version set, the commit went through
+  without a word. It still goes through, with one line naming the tool, the files and its error,
+  such as "pre-commit: rustfmt failed on src/main.rs, so formatting was not checked: error: this
+  file contains an unclosed delimiter". A formatting diff still stops the commit.
 - **A project can be approved again after its approval marker is written over.** Writing
   `.coop-network-approval` in place, as `printf junk > .coop-network-approval` does, also changes
   Coop's private copy through the hard link. Every run was then refused, and `coop approve` and

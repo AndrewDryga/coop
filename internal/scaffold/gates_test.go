@@ -85,9 +85,10 @@ func TestGateGeneration(t *testing.T) {
 }
 
 // TestElixirRustGateListBased proves the elixir and rust snippets tell a real formatting diff
-// (block) apart from a tool failure — a crash, a parse error, a broken toolchain (fail open) —
-// the same way the go/terraform snippets already do. These snippets are shell embedded in a Go
-// string: shellcheck never sees them, and CI has no mix/cargo toolchain to catch a regression
+// (block) apart from a tool failure — a crash, a parse error, a broken toolchain — which fails
+// open with one warning naming the tool, the files it could not check and its first complaint,
+// unlike gofmt and terraform fmt, which stop the commit. These snippets are shell embedded in a
+// Go string: shellcheck never sees them, and CI has no mix/cargo toolchain to catch a regression
 // either, so this test is the only guard on their behavior. It runs the generated text in bash
 // against stub mix/rustfmt binaries shaped like the real tools' documented exit code and
 // stdout/stderr split (verified by hand against installed Elixir 1.14–1.20 and rustfmt 1.9).
@@ -142,21 +143,30 @@ esac
 `)
 		path := bin + string(os.PathListSeparator) + os.Getenv("PATH")
 
-		if code, stderr := run(t, repo, "elixir", path, []string{"lib/good.ex"}); code != 0 {
-			t.Errorf("clean file: exit=%d stderr=%q, want 0 (not blocked)", code, stderr)
+		if code, stderr := run(t, repo, "elixir", path, []string{"lib/good.ex"}); code != 0 || stderr != "" {
+			t.Errorf("clean file: exit=%d stderr=%q, want 0 and nothing said", code, stderr)
 		}
+		const blocked = "pre-commit blocked — these need mix format: lib/needs_format.ex\n"
 		if code, stderr := run(t, repo, "elixir", path, []string{"lib/good.ex", "lib/needs_format.ex"}); code != 9 ||
-			!strings.Contains(stderr, "lib/needs_format.ex") || strings.Contains(stderr, "lib/good.ex") {
+			!strings.Contains(stderr, blocked) || strings.Contains(stderr, "lib/good.ex") {
 			t.Errorf("real diff: exit=%d stderr=%q, want 9 naming only needs_format.ex", code, stderr)
 		}
-		// The regression this task fixes: a broken toolchain must not block like a real diff.
-		if code, stderr := run(t, repo, "elixir", path, []string{"lib/crash.ex"}); code != 0 {
-			t.Errorf("tool crash: exit=%d stderr=%q, want 0 (fail open, not a block)", code, stderr)
+		// A tool error is no formatting diff, so the commit goes through, but never in silence.
+		const crashed = "pre-commit: mix format failed on lib/crash.ex, so formatting was not checked: ** (TokenMissingError) boom\n"
+		if code, stderr := run(t, repo, "elixir", path, []string{"lib/crash.ex"}); code != 0 || stderr != crashed {
+			t.Errorf("tool crash: exit=%d stderr=%q, want 0 (fail open) and %q", code, stderr, crashed)
 		}
-		// A crash on one file must not swallow a real diff reported on another.
+		// A crash on one file must not swallow a real diff reported on another, nor join its list.
 		if code, stderr := run(t, repo, "elixir", path, []string{"lib/needs_format.ex", "lib/crash.ex"}); code != 9 ||
-			!strings.Contains(stderr, "lib/needs_format.ex") || strings.Contains(stderr, "lib/crash.ex") {
-			t.Errorf("diff + crash: exit=%d stderr=%q, want 9 naming only needs_format.ex", code, stderr)
+			!strings.Contains(stderr, blocked) || !strings.Contains(stderr, crashed) {
+			t.Errorf("diff + crash: exit=%d stderr=%q, want 9 with %q and %q", code, stderr, blocked, crashed)
+		}
+		// A shim with no version set fails on every file; one line names them all.
+		shim := t.TempDir()
+		writeStub(t, shim, "mix", "echo 'No version is set for command mix' >&2\nexit 126\n")
+		const unset = "pre-commit: mix format failed on lib/a.ex lib/b.ex, so formatting was not checked: No version is set for command mix\n"
+		if code, stderr := run(t, repo, "elixir", shim+string(os.PathListSeparator)+os.Getenv("PATH"), []string{"lib/a.ex", "lib/b.ex"}); code != 0 || stderr != unset {
+			t.Errorf("no version set: exit=%d stderr=%q, want 0 and %q", code, stderr, unset)
 		}
 	})
 
@@ -178,21 +188,30 @@ esac
 `)
 		path := bin + string(os.PathListSeparator) + os.Getenv("PATH")
 
-		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/good.rs"}); code != 0 {
-			t.Errorf("clean file: exit=%d stderr=%q, want 0 (not blocked)", code, stderr)
+		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/good.rs"}); code != 0 || stderr != "" {
+			t.Errorf("clean file: exit=%d stderr=%q, want 0 and nothing said", code, stderr)
 		}
+		const blocked = "pre-commit blocked — these need rustfmt: src/needs_format.rs\n"
 		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/good.rs", "src/needs_format.rs"}); code != 9 ||
-			!strings.Contains(stderr, "src/needs_format.rs") || strings.Contains(stderr, "src/good.rs") {
+			!strings.Contains(stderr, blocked) || strings.Contains(stderr, "src/good.rs") {
 			t.Errorf("real diff: exit=%d stderr=%q, want 9 naming only needs_format.rs", code, stderr)
 		}
-		// The regression this task fixes: a broken toolchain must not block like a real diff.
-		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/crash.rs"}); code != 0 {
-			t.Errorf("tool crash: exit=%d stderr=%q, want 0 (fail open, not a block)", code, stderr)
+		// A tool error is no formatting diff, so the commit goes through, but never in silence.
+		const crashed = "pre-commit: rustfmt failed on src/crash.rs, so formatting was not checked: error: this file contains an unclosed delimiter\n"
+		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/crash.rs"}); code != 0 || stderr != crashed {
+			t.Errorf("tool crash: exit=%d stderr=%q, want 0 (fail open) and %q", code, stderr, crashed)
 		}
-		// A crash on one file must not swallow a real diff reported on another.
+		// A crash on one file must not swallow a real diff reported on another, nor join its list.
 		if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/needs_format.rs", "src/crash.rs"}); code != 9 ||
-			!strings.Contains(stderr, "src/needs_format.rs") || strings.Contains(stderr, "src/crash.rs") {
-			t.Errorf("diff + crash: exit=%d stderr=%q, want 9 naming only needs_format.rs", code, stderr)
+			!strings.Contains(stderr, blocked) || !strings.Contains(stderr, crashed) {
+			t.Errorf("diff + crash: exit=%d stderr=%q, want 9 with %q and %q", code, stderr, blocked, crashed)
+		}
+		// A shim with no version set fails on every file; one line names them all.
+		shim := t.TempDir()
+		writeStub(t, shim, "rustfmt", "echo 'No version is set for command rustfmt' >&2\nexit 126\n")
+		const unset = "pre-commit: rustfmt failed on src/a.rs src/b.rs, so formatting was not checked: No version is set for command rustfmt\n"
+		if code, stderr := run(t, noCargoToml, "rust", shim+string(os.PathListSeparator)+os.Getenv("PATH"), []string{"src/a.rs", "src/b.rs"}); code != 0 || stderr != unset {
+			t.Errorf("no version set: exit=%d stderr=%q, want 0 and %q", code, stderr, unset)
 		}
 
 		t.Run("reads the crate's edition off Cargo.toml", func(t *testing.T) {
