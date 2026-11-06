@@ -117,6 +117,7 @@
   A `COOP_MCP_FILE` that names no file now stops the launch and names the path, where the run used
   to start without any MCP servers. When an MCP token has no value, the error now says to set it in
   `agents/env`, because Coop doesn't read MCP tokens from your shell.
+
 - **A changed-files check in a loop worker box still covers the task after it is committed.**
   Worker boxes now get `COOP_REVIEW_BASE`, the commit the task started from, as the checks of
   `coop fork merge` and controller reviews already do. A check that compared the working tree with

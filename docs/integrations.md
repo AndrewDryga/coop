@@ -302,16 +302,11 @@ no servers until you add them:
 ### Where the file lives
 
 Set `COOP_MCP_FILE` to the shared file's absolute path. The default is
-`~/.config/coop/agents/mcp.json`. Keep it outside repositories, companion repositories, agent
+`~/.config/coop/agents/mcp.json`. If you set `COOP_MCP_FILE` to a path with no file, co:op names
+the path and won't start the run. Keep the file outside repositories, companion repositories, agent
 credential homes and ACP session stores. co:op mounts those directories in full, which would expose
 the file to the box, so it refuses a `COOP_MCP_FILE` in any of them before launch, even if the file
 is empty or doesn't exist yet. The file must also:
-Set `COOP_MCP_FILE` to choose the shared file. The default is `mcp.json`. If you set
-`COOP_MCP_FILE` to a path with no file, co:op names the path and won't start the run. Keep the
-file outside repositories, companion repositories, agent credential homes and ACP session stores.
-co:op mounts those directories in full, which would expose the file to the box, so it refuses a
-`COOP_MCP_FILE` in any of them before launch, even if the file is empty or doesn't exist yet. The
-file must also:
 
 - be a regular file, not a symlink or special file
 - be 4 MiB or smaller
