@@ -4,18 +4,24 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"github.com/AndrewDryga/coop/internal/testutil/workertls"
 	"github.com/AndrewDryga/coop/internal/workerconnector"
+	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +102,121 @@ func TestSessionConnectExplainsAnUnusableTokenFile(t *testing.T) {
 	if usage := asUsage(err); usage == nil || usage.Rows[0] != [2]string{"Usage:", "coop sessions connect --controller <https-url> [--token-file <path>]"} {
 		t.Errorf("the usage line = %#v, want --token-file shown as optional", err)
 	}
+}
+
+// connectTo runs a first `coop sessions connect` to controller with a valid token file and a fresh
+// state folder, and returns the token file's path, the exit code and error, and what it printed.
+func connectTo(t *testing.T, controller, caFile string) (token string, code int, out string, err error) {
+	t.Helper()
+	home := shortHome(t)
+	t.Setenv("HOME", home)
+	token = filepath.Join(home, "token")
+	if err := os.WriteFile(token, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := signedInConfig(t)
+	cfg.RuntimeName = fakeSessionRuntime(t)
+	options := sessionConnectOptions{Controller: controller, TokenFile: token, CAFile: caFile, State: filepath.Join(home, "w1")}
+	out = captureStderr(t, func() { code, err = runSessionConnect(cfg, options) })
+	return token, code, out, err
+}
+
+// writeCertificateFile saves a PEM file for --ca-file in a folder of its own.
+func writeCertificateFile(t *testing.T, certificatePEM []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, certificatePEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// enrollmentController is a TLS controller that answers every enrollment with status. It returns
+// the controller, a --ca-file that trusts it, and the count of enrollments it was asked for.
+func enrollmentController(t *testing.T, status int) (*httptest.Server, string, *atomic.Int32) {
+	t.Helper()
+	var enrollments atomic.Int32
+	controller := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/coop-workers/enroll" {
+			t.Errorf("the worker asked for %s, want only the enrollment", request.URL.Path)
+		}
+		enrollments.Add(1)
+		response.WriteHeader(status)
+	}))
+	t.Cleanup(controller.Close)
+	trusted := writeCertificateFile(t, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: controller.Certificate().Raw}))
+	return controller, trusted, &enrollments
+}
+
+// A controller that refuses the enrollment token ends a first connection at once, naming what it
+// answered and what to do, and leaves the token file for the new token.
+func TestSessionConnectExplainsARefusedEnrollmentToken(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusUnauthorized} {
+		controller, trusted, enrollments := enrollmentController(t, status)
+		token, code, out, err := connectTo(t, controller.URL, trusted)
+		want := &ui.UsageError{
+			Headline: "The controller refused the enrollment token",
+			Cause: fmt.Sprintf("It answered HTTP %d to the enrollment request.\n", status) +
+				"Get a new token from the controller and save it in the file you gave --token-file.",
+			Rows:     [][2]string{{"Help:", "coop help sessions connect"}},
+			ExitCode: 1,
+		}
+		if usage := asUsage(err); code != 1 || !reflect.DeepEqual(usage, want) {
+			t.Errorf("connect with a %d from the controller = (%d, %#v), want %#v", status, code, err, want)
+		}
+		if enrollments.Load() != 1 || strings.Contains(out, "Trying again") {
+			t.Errorf("a refused token was retried: %d enrollments\n%s", enrollments.Load(), out)
+		}
+		if _, err := os.Stat(token); err != nil {
+			t.Errorf("the refused token file was removed: %v", err)
+		}
+	}
+}
+
+// Any other status is not something a person can fix, so it keeps its one status line.
+func TestSessionConnectKeepsTheStatusLineForAnotherEnrollmentStatus(t *testing.T) {
+	controller, trusted, _ := enrollmentController(t, http.StatusInternalServerError)
+	_, code, _, err := connectTo(t, controller.URL, trusted)
+	if code != 1 || err == nil || asUsage(err) != nil || err.Error() != "worker identity endpoint returned HTTP 500" {
+		t.Errorf("connect with a controller that answers 500 = (%d, %#v), want its one status line", code, err)
+	}
+}
+
+// A controller certificate from an authority this machine does not trust ends a first connection at
+// once and names --ca-file. When --ca-file was given, the block says its file lacks the authority
+// instead of blaming the system trust store, which --ca-file replaced.
+func TestSessionConnectExplainsAnUntrustedControllerCertificate(t *testing.T) {
+	var requests atomic.Int32
+	controller := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	controller.Config.ErrorLog = log.New(io.Discard, "", 0) // the refused handshakes are the point
+	controller.StartTLS()
+	defer controller.Close()
+	check := func(caFile, cause string) {
+		t.Helper()
+		token, code, out, err := connectTo(t, controller.URL, caFile)
+		want := &ui.UsageError{
+			Headline: "This machine does not trust the controller's certificate",
+			Cause:    cause,
+			Rows:     [][2]string{{"Help:", "coop help sessions connect"}},
+			ExitCode: 1,
+		}
+		if usage := asUsage(err); code != 1 || !reflect.DeepEqual(usage, want) {
+			t.Errorf("connect with --ca-file %q = (%d, %#v), want %#v", caFile, code, err, want)
+		}
+		if requests.Load() != 0 || strings.Contains(out, "Trying again") {
+			t.Errorf("a controller that could not be trusted was asked or retried: %d requests\n%s", requests.Load(), out)
+		}
+		if _, err := os.Stat(token); err != nil {
+			t.Errorf("the token file was removed: %v", err)
+		}
+	}
+
+	const advice = "\nIf you trust that authority, give --ca-file its certificate file."
+	// The controller's certificate is in no system trust store.
+	check("", "The authority that signed it is not in the system trust store."+advice)
+	// A --ca-file for some other authority replaces the system store, so it is the one that lacks it.
+	other := writeCertificateFile(t, workertls.NewCA(t).PEM)
+	check(other, "The authority that signed it is not in "+other+"."+advice)
 }
 
 // shortHome is a REAL, short directory for a session state root. t.TempDir() will not do: on macOS

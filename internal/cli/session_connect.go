@@ -124,6 +124,29 @@ func tokenFileRefusal(err error) error {
 	return ui.CommandFailed("Could not use the enrollment token file", cause, rows...)
 }
 
+// identityRefusal is the block for a controller that will not give this worker an identity: it
+// refused the enrollment token, or its certificate comes from an authority this machine does not
+// trust. Both stay that way however long the worker waits. Any other failure keeps its own text.
+func identityRefusal(err error, options sessionConnectOptions) error {
+	help := [2]string{"Help:", ui.HelpCommand("coop sessions connect")}
+	var status *workerconnector.IdentityStatusError
+	switch {
+	case errors.As(err, &status) && status.TokenRefused():
+		return ui.CommandFailed("The controller refused the enrollment token",
+			fmt.Sprintf("It answered HTTP %d to the enrollment request.\n", status.Status)+
+				"Get a new token from the controller and save it in the file you gave --token-file.", help)
+	case workerconnector.ControllerCertificateUntrusted(err):
+		store := "the system trust store"
+		if options.CAFile != "" {
+			store = ui.SafeInline(options.CAFile) // --ca-file replaces the system roots, so the file is the whole store
+		}
+		return ui.CommandFailed("This machine does not trust the controller's certificate",
+			"The authority that signed it is not in "+store+".\n"+
+				"If you trust that authority, give --ca-file its certificate file.", help)
+	}
+	return err
+}
+
 func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, error) {
 	state, socket, err := sessionSocketPath(options.State, "")
 	if err != nil {
@@ -161,7 +184,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		return 0, nil
 	}
 	if err != nil {
-		return 1, err
+		return 1, identityRefusal(err, options)
 	}
 	ui.Pass("Worker identity ready: %s", identity.ID)
 	privateAPI, err := workerconnector.NewUnixAPI(socket, time.Minute)

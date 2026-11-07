@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -314,6 +315,130 @@ func TestControllerUnreachableOnlyForLostRequests(t *testing.T) {
 	} {
 		if got := ControllerUnreachable(tc.err); got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A controller's own answer reaches the caller with the route it was given for. A refused enrollment
+// token (401 or 403, and the token file stays for a new one) is told apart from the same status on a
+// renewal, which sends no token.
+func TestIdentityRequestsReturnTheStatusTheControllerAnswered(t *testing.T) {
+	ca := workertls.NewCA(t)
+	var enrolling atomic.Bool
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1/coop-workers/enroll" && enrolling.Load() {
+			writeWorkerIdentityResponse(t, response, request, ca, http.StatusCreated)
+			return
+		}
+		response.WriteHeader(http.StatusForbidden) // a refused token, and later a refused renewal
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{ca.ServerCertificate(t)}, MinVersion: tls.VersionTLS13}
+	server.StartTLS()
+	defer server.Close()
+
+	directory := t.TempDir()
+	caPath := filepath.Join(directory, "ca.pem")
+	tokenPath := filepath.Join(directory, "enrollment-token")
+	identityPath := filepath.Join(directory, "identity.json")
+	if err := os.WriteFile(caPath, ca.PEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transport, err := NewHTTPTransport(HTTPTransportConfig{
+		BaseURL: server.URL, CAFile: caPath, EnrollmentTokenFile: tokenPath,
+		IdentityFile: identityPath, RenewBefore: time.Minute, Timeout: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = transport.Identity(context.Background())
+	var status *IdentityStatusError
+	if !errors.As(err, &status) || status.Path != "/v1/coop-workers/enroll" || status.Status != http.StatusForbidden || !status.TokenRefused() {
+		t.Fatalf("a refused enrollment = %#v, want the enrollment route's 403 as a refused token", err)
+	}
+	if err.Error() != "worker identity endpoint returned HTTP 403" {
+		t.Errorf("the status line = %q", err)
+	}
+	if _, err := os.Stat(tokenPath); err != nil {
+		t.Errorf("a refused token file was removed: %v", err)
+	}
+	if _, err := os.Stat(identityPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused enrollment saved an identity: %v", err)
+	}
+
+	enrolling.Store(true)
+	if _, err := transport.Identity(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	transport.identity.mu.Lock()
+	transport.identity.expiresAt = time.Now()
+	transport.identity.mu.Unlock()
+	_, err = transport.Identity(context.Background())
+	if !errors.As(err, &status) || status.Path != "/v1/coop-workers/renew" || status.Status != http.StatusForbidden || status.TokenRefused() {
+		t.Fatalf("a refused renewal = %#v, want the renewal route's 403, which is not a refused token", err)
+	}
+}
+
+// Only the enrollment route's 401 and 403 are a refused token.
+func TestIdentityStatusErrorTokenRefused(t *testing.T) {
+	for _, tc := range []struct {
+		path   string
+		status int
+		want   bool
+	}{
+		{"/v1/coop-workers/enroll", http.StatusUnauthorized, true},
+		{"/v1/coop-workers/enroll", http.StatusForbidden, true},
+		{"/v1/coop-workers/enroll", http.StatusNotFound, false},
+		{"/v1/coop-workers/enroll", http.StatusInternalServerError, false},
+		{"/v1/coop-workers/renew", http.StatusUnauthorized, false},
+		{"/v1/coop-workers/renew", http.StatusForbidden, false},
+	} {
+		if got := (&IdentityStatusError{Path: tc.path, Status: tc.status}).TokenRefused(); got != tc.want {
+			t.Errorf("TokenRefused() for %d on %s = %v, want %v", tc.status, tc.path, got, tc.want)
+		}
+	}
+}
+
+// Only a certificate from an authority the worker does not know is the --ca-file problem. One for
+// another name, or an expired one, is not fixed by it and keeps its own error.
+func TestControllerCertificateUntrustedOnlyForAnUnknownAuthority(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the worker sent a request over a connection it could not verify")
+	}))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0) // the refused handshake is the point
+	server.StartTLS()
+	defer server.Close()
+	directory := t.TempDir()
+	tokenPath := filepath.Join(directory, "enrollment-token")
+	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The server's own certificate is in no trust store this machine has.
+	transport, err := NewHTTPTransport(HTTPTransportConfig{
+		BaseURL: server.URL, EnrollmentTokenFile: tokenPath, IdentityFile: filepath.Join(directory, "identity.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = transport.Identity(context.Background())
+	if !ControllerCertificateUntrusted(err) || ControllerUnreachable(err) {
+		t.Errorf("a certificate from an unknown authority = %v, want it untrusted and not unreachable", err)
+	}
+
+	verification := func(cause error) error {
+		return &url.Error{Op: "Post", URL: server.URL, Err: &tls.CertificateVerificationError{Err: cause}}
+	}
+	for name, err := range map[string]error{
+		"another name": verification(x509.HostnameError{Certificate: server.Certificate(), Host: "controller.example"}),
+		"expired":      verification(x509.CertificateInvalidError{Cert: server.Certificate(), Reason: x509.Expired}),
+		"status line":  errors.New("worker identity endpoint returned HTTP 403"),
+	} {
+		if ControllerCertificateUntrusted(err) {
+			t.Errorf("%s was called untrusted", name)
 		}
 	}
 }

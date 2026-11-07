@@ -25,7 +25,10 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
-const maxEnrollmentTokenBytes = 128
+const (
+	maxEnrollmentTokenBytes = 128
+	enrollPath              = "/v1/coop-workers/enroll"
+)
 
 type identityConfig struct {
 	baseURL             *url.URL
@@ -122,7 +125,7 @@ func (m *identityManager) enroll(ctx context.Context, now time.Time) error {
 		"token":          token,
 	}
 	bootstrap := m.httpClient(nil)
-	response, err := m.postIdentity(ctx, bootstrap, "/v1/coop-workers/enroll", document, http.StatusCreated)
+	response, err := m.postIdentity(ctx, bootstrap, enrollPath, document, http.StatusCreated)
 	if err != nil {
 		return err
 	}
@@ -261,7 +264,7 @@ func (m *identityManager) postIdentity(ctx context.Context, client *http.Client,
 		return identityResponse{}, fmt.Errorf("read worker identity response: %w", err)
 	}
 	if len(responseBody) > workerproto.MaxDocumentBytes || response.StatusCode != expectedStatus {
-		return identityResponse{}, fmt.Errorf("worker identity endpoint returned HTTP %d", response.StatusCode)
+		return identityResponse{}, &IdentityStatusError{Path: path, Status: response.StatusCode}
 	}
 	var result identityResponse
 	decoder := json.NewDecoder(bytes.NewReader(responseBody))
@@ -358,6 +361,31 @@ func ControllerUnreachable(err error) bool {
 	}
 	var lookup *net.DNSError
 	return errors.As(err, &lookup) || request.Timeout() || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// ControllerCertificateUntrusted reports a controller whose certificate was signed by an authority
+// this worker does not trust, which --ca-file can add. A certificate for another name, or one that
+// has expired, is a different problem that --ca-file does not fix.
+func ControllerCertificateUntrusted(err error) bool {
+	var unknownAuthority x509.UnknownAuthorityError
+	return errors.As(err, &unknownAuthority)
+}
+
+// IdentityStatusError is a controller's answer to a worker identity request that was not the success
+// status. Its text is a bare status line, and TokenRefused names the one answer a person can fix.
+type IdentityStatusError struct {
+	Path   string // the route asked, such as /v1/coop-workers/enroll
+	Status int
+}
+
+func (e *IdentityStatusError) Error() string {
+	return fmt.Sprintf("worker identity endpoint returned HTTP %d", e.Status)
+}
+
+// TokenRefused reports a 401 or 403 to the enrollment request: the controller does not accept the
+// token, and sending it again cannot change that. A renewal sends no token, so its 401 or 403 is not this.
+func (e *IdentityStatusError) TokenRefused() bool {
+	return e.Path == enrollPath && (e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden)
 }
 
 // CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words

@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions connect` explains a refused enrollment token and an untrusted controller
+  certificate.** An enrollment the controller answered with HTTP 401 or 403 ended in `worker identity
+  endpoint returned HTTP 403`, and a certificate from an authority this machine does not trust ended
+  in Go's `x509: certificate signed by unknown authority`. Each now ends in the usual refusal block
+  (exit 1). The first says the controller refused the token, keeps the status and says to get a new
+  token for the `--token-file` file. The second says the certificate is not trusted and names
+  `--ca-file`. Any other status keeps its one-line message.
+
 - **An editor session pinned to an account waits for it at a usage limit, and a filtered session lets
   no image address through.** `coop acp claude@work`, or an account chosen in the editor's Account
   menu, moved to the next signed-in account when that account hit its limit, though `@account`
