@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Gemini can commit in the box.** Gemini CLI runs its shell commands with Git's global settings
+  turned off, which hid the identity Coop sets up in every box, so `git commit` from Gemini failed with
+  "unable to auto-detect email address". Gemini's launcher now passes the identity Git finds when Gemini
+  starts (the repository's own, or else yours). It holds for the whole session, also in other
+  repositories Gemini's shell uses, because Git has no weaker place to put a name.
+
 - **Filtered runs stay ready when another user or state folder sets up the same Docker.** On Docker's
   containerd image store (the default for new Docker 29 installs) every rebuild of Coop's network images
   got a new image ID, even from cache, because of BuildKit's default provenance record. A setup from a

@@ -813,8 +813,38 @@ func (geminiAgent) UpdateControls() UpdateControls {
 			files = append(files, SystemFile{Path: geminiBrokerSettingsDir + "/" + selection + "/" + level + ".json", Content: geminiBrokerSettings(selection, effort)})
 		}
 	}
+	files = append(files, SystemFile{Path: geminiGitIdentitySetup, Content: geminiGitIdentityScript})
 	return UpdateControls{Files: files}
 }
+
+// geminiGitIdentitySetup is sourced by the Gemini launcher. The pinned 0.62.0 runs every shell
+// command with GIT_CONFIG_GLOBAL=/dev/null and no system file, which hides the box's ~/.gitconfig, so
+// its commits failed with "unable to auto-detect email address". It keeps GIT_CONFIG_* variables
+// (whatever its redaction settings) and appends its own overrides after them, so the identity git
+// resolves in the box at launch, the repository's own or else the box's, travels that way. Being
+// command-line configuration, it holds for the whole session and wins over any repository's own
+// identity in Gemini's shell (a test fixture, or a later `git config user.email`): Git has no weaker
+// place for a name. A count Git would read differently than the shell (a leading zero or space) is
+// left alone.
+const geminiGitIdentitySetup = "/etc/gemini-cli/git-identity.sh"
+
+const geminiGitIdentityScript = `case ${GIT_CONFIG_COUNT:-0} in
+*[!0-9]*|0?*) ;;
+*)
+  coop_git_n=${GIT_CONFIG_COUNT:-0}
+  for coop_git_key in user.name user.email; do
+    if coop_git_value=$(git config --get "$coop_git_key" 2>/dev/null) && [ -n "$coop_git_value" ]; then
+      export "GIT_CONFIG_KEY_$coop_git_n=$coop_git_key" "GIT_CONFIG_VALUE_$coop_git_n=$coop_git_value"
+      coop_git_n=$((coop_git_n + 1))
+    fi
+  done
+  if [ "$coop_git_n" != "${GIT_CONFIG_COUNT:-0}" ]; then
+    export GIT_CONFIG_COUNT="$coop_git_n"
+  fi
+  unset coop_git_n coop_git_key coop_git_value
+  ;;
+esac
+`
 
 // Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
 func (geminiAgent) Models() []string {
@@ -1203,7 +1233,7 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	client := LockedClient{Package: "@google/gemini-cli", Version: "0.62.0", Binary: "gemini",
+	client := LockedClient{Package: "@google/gemini-cli", Version: "0.62.0", Binary: "gemini", SetupFile: geminiGitIdentitySetup,
 		Exec:                []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js"},
 		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.62.0"}}}
 	cli, acp := client, client

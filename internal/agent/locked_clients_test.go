@@ -21,7 +21,7 @@ func TestLockedClientsAreCompletePinnedAndFresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(closure.Clients) != 8 || len(closure.Files) != 21 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
+		if len(closure.Clients) != 8 || len(closure.Files) != 22 || closure.ClientRoot != "/opt/coop/clients" || len(closure.Digest) != 64 || closure.Digest == previous {
 			t.Fatal("incomplete or platform-ambiguous closure", closure.Digest)
 		}
 		previous = closure.Digest

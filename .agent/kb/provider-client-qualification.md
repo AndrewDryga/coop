@@ -2,8 +2,8 @@
 name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-11-06
+sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
+updated: 2026-11-07
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -187,6 +187,18 @@ the captured `login-failures` and `grok-*-tools.jsonl` fixtures), and run the af
 closure/request/adaptor tests. Offer the smallest affected live check with its scope and billing
 clear; a missing live run is reported, not waived.
 `validateClientClosure` also pins Playwright's version.
+A bump also re-reads how each client runs its shell tool. Gemini 0.62.0 runs every command with
+`GIT_CONFIG_GLOBAL=/dev/null`, no system file, and its own `GIT_CONFIG_*` overrides appended
+(`core.hooksPath=`, `diff.external=` and more), so the box's `~/.gitconfig` is invisible there.
+Its launcher sources `/etc/gemini-cli/git-identity.sh`, which exports the identity git resolves at
+launch as `GIT_CONFIG_*` (the one form Gemini keeps whatever its redaction settings). That is
+command-line scope, so for the whole session it beats any repository's own identity in Gemini's
+shell, test fixtures included; Git has no weaker place for a name.
+`TestGeminiLauncherCarriesTheGitIdentityPastItsShellHardening` recreates the environment Gemini's
+shell sets. Still missing there: Coop's `prepare-commit-msg` hook never runs for Gemini's commits;
+the user's global ignore file (`core.excludesFile`) and the brokered-download `url.*.insteadOf`
+rewrites are not seen, so `git add -A` can stage globally ignored files; and with the box's git 2.39
+the empty `diff.external` makes a plain `git diff` fail ("external diff died"; `--no-ext-diff` works).
 
 A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
 holds the request line each client version really sends (a synthetic fixture once hid that Claude
@@ -239,6 +251,9 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-07 — Gemini's shell hides the box gitconfig: every commit failed with "unable to
+  auto-detect email address" (found on the Linux VM guide run; the box is the same on macOS). Its
+  launcher now carries the identity as `GIT_CONFIG_*`; verified with a real Gemini commit on the VM.
 - 2026-11-06 — recorded the native sign-in capture recipe and its trap (a 403-everything listener
   hides follow-up requests) after it found Codex's catalog page and Grok's probe (task
   2026-11-06-find-and-fix-the-provider-request-codex-and-grok).
