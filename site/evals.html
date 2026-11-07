@@ -199,6 +199,8 @@ case:</p>
   verifier_timeout: 15m
 </code></pre></div>
 <p>Set the case&#39;s <code>timeout</code> long enough to cover preparation, the agent&#39;s work and verification.
+The verifier runs in <code>/app</code> too, so it reads the candidate&#39;s work from its working directory, not
+<code>/workspace</code>.
 Loop suites don&#39;t support runtime profiles.</p>
 <p>Keep the profile outside both the suite and co:op&#39;s evaluation state. It must contain no Git
 metadata, symlinks or special files. Its project Dockerfile defaults to <code>.agent/Dockerfile</code> and

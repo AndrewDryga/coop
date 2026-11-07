@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The starter eval grader works in runtime profile cases.** `coop eval init`'s `verify.sh` read
+  `/workspace/greeting.txt`, but a runtime profile case grades in `/app`, so every such trial failed
+  though the work was right. The starter grader and its README now read the grader's working
+  directory, and the eval docs say a profile's grader runs in `/app`.
+
 - **An eval runtime profile with `.git` names the profile.** `coop eval run` said "freeze suite inputs:
   ... suite tree contains .git" for a profile folder holding Git metadata. It now says "prepare the suite:
   ... runtime profile contains .git; use a clean export".

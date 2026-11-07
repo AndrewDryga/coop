@@ -109,16 +109,17 @@ cases:
 // scaffoldVerifier grades the scaffolded case for real. It is deliberately tiny and uses only the
 // three exit codes, so it doubles as the worked example the README describes.
 const scaffoldVerifier = `#!/bin/sh
-# Grades the "greeting" case. Runs in a clean container with the candidate's finished
-# workspace at /workspace — no model credentials, no network.
+# Grades the "greeting" case. Runs in a clean container whose working directory is the
+# candidate's finished workspace (/workspace, or /app in a runtime profile case), with no
+# model credentials and no network.
 #
 #   exit 0 = passed    exit 1 = did not pass    anything else = the GRADER broke
 
-test -f /workspace/greeting.txt || {
+test -f greeting.txt || {
 	echo "greeting.txt was not created"
 	exit 1
 }
-if [ "$(cat /workspace/greeting.txt)" != "hello" ]; then
+if [ "$(cat greeting.txt)" != "hello" ]; then
 	echo "greeting.txt does not contain exactly: hello"
 	exit 1
 fi
@@ -135,13 +136,13 @@ images or tools. Coop runs it in a clean sandbox after the candidate has stopped
 ## Write one
 
 Edit the generated ` + "`verify.sh`" + ` (or replace it with an executable ` + "`verify`" + `). It runs with the graded
-workspace at /workspace and this directory at /coop-verifier, in a container with no
-model credentials and no network.
+workspace as its working directory (/workspace, or /app in a runtime profile case) and
+this directory at /coop-verifier, in a container with no model credentials and no network.
 
     #!/bin/sh
     # exit 0 = passed, exit 1 = did not pass, anything else = the grader itself broke
-    test -f /workspace/greeting.txt || exit 1
-    test "$(cat /workspace/greeting.txt)" = "hello" || exit 1
+    test -f greeting.txt || exit 1
+    test "$(cat greeting.txt)" = "hello" || exit 1
 
 ## The three exit codes matter
 
@@ -160,7 +161,7 @@ build tool with its own exit codes: ` + "`make test`" + ` exits 2 on a missing t
 
 The workspace is a separate SNAPSHOT taken after the candidate exited, including
 its ` + "`.git`" + ` — so you can check whether it committed, and what. Writing into
-/workspace is fine: Coop measures the snapshot before grading and discards the
+the workspace is fine: Coop measures the snapshot before grading and discards the
 writable grading copy afterwards. Non-passing trials retain the candidate's original
 workspace, not verifier build artifacts. Files the candidate left as symlinks pointing
 outside the workspace are not carried into the grading snapshot.

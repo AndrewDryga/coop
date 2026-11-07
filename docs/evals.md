@@ -84,6 +84,8 @@ runtime:
 ```
 
 Set the case's `timeout` long enough to cover preparation, the agent's work and verification.
+The verifier runs in `/app` too, so it reads the candidate's work from its working directory, not
+`/workspace`.
 Loop suites don't support runtime profiles.
 
 Keep the profile outside both the suite and co:op's evaluation state. It must contain no Git

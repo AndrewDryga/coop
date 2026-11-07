@@ -1,8 +1,11 @@
 package eval
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +77,45 @@ func TestScaffoldRefusesKeptFileBeforeCreatingOtherFiles(t *testing.T) {
 	}
 	if body, err := os.ReadFile(kept); err != nil || string(body) != "mine" {
 		t.Fatalf("kept file was changed: %q, %v", body, err)
+	}
+}
+
+// The scaffolded verifier grades its working directory, which is the candidate's workspace both in
+// an ordinary case (/workspace) and in a runtime profile case (/app), so it never names either path.
+func TestScaffoldVerifierGradesItsWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := Scaffold(dir); err != nil {
+		t.Fatal(err)
+	}
+	verifier := filepath.Join(dir, "verifiers", "greeting", "verify.sh")
+	for _, tc := range []struct {
+		name, content, want string
+		code                int
+	}{
+		{name: "correct", content: "hello", want: "greeting.txt is correct", code: 0},
+		{name: "wrong", content: "hi", want: "does not contain exactly: hello", code: 1},
+		{name: "missing", want: "greeting.txt was not created", code: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir() // not /workspace: the grader's directory is where the work is
+			if tc.content != "" {
+				if err := os.WriteFile(filepath.Join(workspace, "greeting.txt"), []byte(tc.content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("sh", verifier)
+			cmd.Dir = workspace
+			out, err := cmd.CombinedOutput()
+			code := 0
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				code = exit.ExitCode()
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if code != tc.code || !strings.Contains(string(out), tc.want) {
+				t.Fatalf("verify.sh in %s = exit %d, %q; want exit %d with %q", tc.name, code, out, tc.code, tc.want)
+			}
+		})
 	}
 }
