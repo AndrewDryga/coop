@@ -318,6 +318,69 @@ func TestSessionConnectExplainsAnUntrustedControllerCertificate(t *testing.T) {
 	check(other, "The authority that signed it is not in "+other+"."+advice)
 }
 
+// A state folder holding an identity this worker cannot use is refused with the reason: one saved for
+// another controller names it and the two ways forward, and a damaged file is called damaged and
+// named. The file is never replaced, and the token passed beside it is not used.
+func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", home)
+	cfg := signedInConfig(t)
+	cfg.RuntimeName = fakeSessionRuntime(t)
+	token := filepath.Join(home, "token")
+	if err := os.WriteFile(token, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	help := [2]string{"Help:", "coop help sessions connect"}
+	for _, tc := range []struct {
+		name, saved string
+		block       func(file string) *ui.UsageError
+	}{
+		{"another-controller", `{"controller_url":"https://prod.example","worker_id":"worker-a","workspace_ref":"main"}`, func(file string) *ui.UsageError {
+			return &ui.UsageError{
+				Headline: "The saved worker identity is for another controller",
+				Cause: "The identity in " + filepath.Dir(file) + " belongs to https://prod.example, not https://staging.example.\n" +
+					"Use that address for --controller, or a new --state folder with a new --token-file.",
+				Rows: [][2]string{help}, ExitCode: 1,
+			}
+		}},
+		{"damaged", "{not json", func(file string) *ui.UsageError {
+			return &ui.UsageError{
+				Headline: "The saved worker identity is damaged",
+				Cause: file + " cannot be read as a worker identity.\n" +
+					"Coop will not replace it, even with a new token.\n" +
+					"Restore it from a backup, or ask the controller's operator how to recover this worker.",
+				Rows: [][2]string{help}, ExitCode: 1,
+			}
+		}},
+	} {
+		state := filepath.Join(home, tc.name)
+		file := filepath.Join(state, "identity.json")
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(tc.saved), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var code int
+		var err error
+		out := captureStderr(t, func() {
+			code, err = runSessionConnect(cfg, sessionConnectOptions{Controller: "https://staging.example", TokenFile: token, State: state})
+		})
+		if usage := asUsage(err); code != 1 || !reflect.DeepEqual(usage, tc.block(file)) {
+			t.Errorf("connect with %s saved = (%d, %#v), want %#v", tc.name, code, err, tc.block(file))
+		}
+		if strings.Contains(out, "Trying again") {
+			t.Errorf("%s: an identity that cannot be used was retried\n%s", tc.name, out)
+		}
+		if after, readErr := os.ReadFile(file); readErr != nil || string(after) != tc.saved {
+			t.Errorf("%s: the saved identity was changed: %q, %v", tc.name, after, readErr)
+		}
+		if _, statErr := os.Stat(token); statErr != nil {
+			t.Errorf("%s: the token was used over a saved identity: %v", tc.name, statErr)
+		}
+	}
+}
+
 // shortHome is a REAL, short directory for a session state root. t.TempDir() will not do: on macOS
 // it is a symlinked /var/folders path (the service refuses a state parent that is not a real
 // directory) and it is long enough to exceed the 104-byte sun_path limit for a Unix socket.

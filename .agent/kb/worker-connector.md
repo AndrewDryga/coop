@@ -76,7 +76,10 @@ The traps the code does not make obvious:
   Any other status stays `worker identity endpoint returned HTTP n`. A state folder with no saved
   identity and no `--token-file` is refused earlier still (`firstConnectionRefusal`), before the
   service starts or the controller is contacted, with the command to run; a saved identity needs
-  no token.
+  no token. A saved identity for another controller, or one that does not read as an identity
+  (`SavedIdentityError` from `loadIdentity`), gets a block too. It is never replaced, with a token
+  or without, as the recovery rule in `docs/session-api.md` says. An expired identity and a file
+  open to other users keep their own errors.
 - **Journal before execute; the receipt is the authority.** `journal.begin` publishes a receipt
   before the executor touches the daemon: a redelivered command with the same digest replays the
   stored result, a changed payload under the same id is `ErrCommandConflict`. Receipts are published
@@ -184,6 +187,8 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-07 — a saved identity for another controller, or a damaged one, ends `coop sessions connect` in the
+  shared block (task 2026-11-07-say-plainly-when-coop-sessions-connect-finds-ano).
 - 2026-11-07 — a first `coop sessions connect` with no saved identity and no `--token-file` is refused
   before anything starts, in the shared block (task 2026-11-07-say-what-to-pass-when-coop-sessions-connect-has).
 - 2026-11-07 — a refused enrollment token and an untrusted controller certificate end `coop sessions connect`

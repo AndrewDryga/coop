@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions connect` says why it cannot use a saved identity.** A `--state` folder holding an
+  identity saved for another controller, or a damaged one, ended in `load worker identity: invalid
+  identity or another controller`. The first now says which controller the identity belongs to and
+  the two ways forward: that controller's address, or a new `--state` folder with a new `--token-file`.
+  A damaged file is called damaged and named. Coop replaces neither, with a token or without. An
+  expired identity and one open to other users keep their own errors.
+
 - **`coop sessions connect` says what to pass when there is no saved identity and no token.** A first
   connection without `--token-file` started the local service, then ended with `worker identity is
   absent and no enrollment token file is configured`. It now refuses at once, before it starts

@@ -171,14 +171,15 @@ func (m *identityManager) renew(ctx context.Context, now time.Time) error {
 }
 
 func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, error) {
-	info, err := os.Lstat(m.config.identityFile)
+	path := m.config.identityFile
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 64<<10 {
 		return nil, time.Time{}, errors.New("worker identity file must be a private regular file")
 	}
-	document, err := os.ReadFile(m.config.identityFile)
+	document, err := os.ReadFile(path)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -186,17 +187,23 @@ func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, 
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&identity) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
-		identity.ControllerURL != m.config.baseURL.String() ||
 		!reference(identity.WorkerID, 256) || !reference(identity.WorkspaceRef, 256) {
-		return nil, time.Time{}, errors.New("load worker identity: invalid identity or another controller")
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "it does not hold a worker identity"}
+	}
+	if identity.ControllerURL != m.config.baseURL.String() {
+		// Only an address a worker could have enrolled with is shown as the other controller.
+		if _, err := parseControlPlaneURL(identity.ControllerURL, true); err != nil {
+			return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "it names no usable controller"}
+		}
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Controller: identity.ControllerURL}
 	}
 	certificate, err := tls.X509KeyPair([]byte(identity.CertificatePEM), []byte(identity.PrivateKeyPEM))
 	if err != nil {
-		return nil, time.Time{}, errors.New("worker identity key pair is invalid")
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "its key pair is invalid"}
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM([]byte(identity.CACertificatePEM)) {
-		return nil, time.Time{}, errors.New("worker identity issuer is invalid")
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "its issuer is invalid"}
 	}
 	leaf, err := validateIdentityCertificate(certificate, roots, identity.WorkerID, now)
 	if err != nil {
@@ -386,6 +393,24 @@ func (e *IdentityStatusError) Error() string {
 // token, and sending it again cannot change that. A renewal sends no token, so its 401 or 403 is not this.
 func (e *IdentityStatusError) TokenRefused() bool {
 	return e.Path == enrollPath && (e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden)
+}
+
+// SavedIdentityError is a saved worker identity this worker cannot use. Controller is the controller
+// it was saved for, when that is not the one asked for; otherwise the file is damaged and Problem says
+// how. Neither is repaired or replaced, and a token never enrolls over it: the saved identity is the
+// worker's only credential, and its controller decides how to recover one. Expiry, and a file open to
+// other users, are not this: they keep their own errors.
+type SavedIdentityError struct {
+	Path       string // the identity file
+	Controller string // the controller it was saved for, when that is another one
+	Problem    string // what keeps a damaged file from reading as an identity
+}
+
+func (e *SavedIdentityError) Error() string {
+	if e.Controller != "" {
+		return "worker identity " + e.Path + " was saved for another controller, " + e.Controller
+	}
+	return "worker identity " + e.Path + " is damaged: " + e.Problem
 }
 
 // CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words

@@ -1,6 +1,7 @@
 package workerconnector
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -439,6 +441,92 @@ func TestControllerCertificateUntrustedOnlyForAnUnknownAuthority(t *testing.T) {
 	} {
 		if ControllerCertificateUntrusted(err) {
 			t.Errorf("%s was called untrusted", name)
+		}
+	}
+}
+
+// A saved identity this worker cannot use says why. One saved for another controller carries that
+// controller's address, and a damaged file, or one with an unusable address, key pair or issuer, says
+// it is damaged. The file is never touched, and a token never enrolls over it.
+func TestLoadIdentityNamesAnotherControllerAndADamagedFile(t *testing.T) {
+	_, publicKey, privateKey, err := newWorkerKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := workertls.NewCA(t).Identity(publicKey, "worker-a", "workspace-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const controller = "https://controller.example"
+	valid, err := json.Marshal(persistedIdentity{
+		ControllerURL: controller, WorkerID: "worker-a", WorkspaceRef: "workspace-main",
+		CertificatePEM: issued["certificate_pem"], PrivateKeyPEM: string(privateKey), CACertificatePEM: issued["ca_certificate_pem"],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(valid, &fields); err != nil {
+		t.Fatal(err)
+	}
+	with := func(key string, value any) []byte {
+		changed := maps.Clone(fields)
+		changed[key] = value
+		document, err := json.Marshal(changed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+
+	directory := t.TempDir()
+	identityPath := filepath.Join(directory, "identity.json")
+	tokenPath := filepath.Join(directory, "enrollment-token")
+	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load := func(file []byte, asked string) error {
+		t.Helper()
+		if err := os.WriteFile(identityPath, file, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// A minute, so the ten-minute test certificate is not due for a renewal over the network.
+		transport, err := NewHTTPTransport(HTTPTransportConfig{
+			BaseURL: asked, EnrollmentTokenFile: tokenPath, IdentityFile: identityPath, RenewBefore: time.Minute,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = transport.Identity(context.Background())
+		if after, readErr := os.ReadFile(identityPath); readErr != nil || !bytes.Equal(after, file) {
+			t.Errorf("the saved identity was changed: %v", readErr)
+		}
+		if _, statErr := os.Stat(tokenPath); statErr != nil {
+			t.Errorf("a token was used over a saved identity: %v", statErr)
+		}
+		return err
+	}
+
+	if err := load(valid, controller); err != nil {
+		t.Fatalf("a saved identity for this controller = %v", err)
+	}
+	var unusable *SavedIdentityError
+	if err := load(valid, "https://other.example"); !errors.As(err, &unusable) || unusable.Controller != controller || unusable.Path != identityPath {
+		t.Errorf("an identity saved for another controller = %#v, want %s and %s", err, controller, identityPath)
+	}
+	for _, tc := range []struct {
+		name string
+		file []byte
+	}{
+		{"not JSON", []byte("{not json")},
+		{"an unknown field", with("extra", true)},
+		{"no worker", with("worker_id", "")},
+		{"an address no worker enrolls with", with("controller_url", "http://insecure.example")},
+		{"a key pair that does not match", with("private_key_pem", "nope")},
+		{"an issuer that is no certificate", with("ca_certificate_pem", "nope")},
+	} {
+		if err := load(tc.file, controller); !errors.As(err, &unusable) || unusable.Controller != "" || unusable.Problem == "" || unusable.Path != identityPath {
+			t.Errorf("a saved identity with %s = %#v, want a damaged file at %s", tc.name, err, identityPath)
 		}
 	}
 }
