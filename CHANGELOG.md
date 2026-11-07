@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The `/sweep` Stop hook leaves another live agent's task alone again.** It read claims from `coop tasks
+  ls` in a layout the listing no longer prints, so it counted every claimed task and could keep a sweep
+  going until it finished or parked someone else's in-flight work. It now reads today's listing, and a
+  test runs it against what the listing prints, so the two cannot drift apart unnoticed.
+
 - **`coop sessions compact` says a backup inside the session-data folder is refused.** It used to say
   "The session backup could not be verified", with no next step, though no backup had started. It now
   says "The backup file is inside the session-data directory." and "Choose a backup path outside it."

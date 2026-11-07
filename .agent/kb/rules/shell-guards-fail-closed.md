@@ -2,9 +2,9 @@
 name: shell-guards-fail-closed
 description: "a shell guard checks every command's status and fails CLOSED on ambiguity; a script that fails open says so in its header"
 scope: agent-workflow
-sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
+sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, internal/tasks/sweep_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-10-17
+updated: 2026-11-07
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -52,6 +52,11 @@ Related: [[fix-the-bug-not-the-feature]] (a guard that keeps firing is fixed at 
 loosening it) and [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-11-07 — the sweep queue guard parsed claims with a pattern for an old `coop tasks ls` layout, so
+  it counted every claimed task (it still failed closed, but held a sweep on another live agent's
+  work). It now pairs each `claimed by X (PID N)` line with the ID below it. A claim from another system
+  counts, since its PID cannot be checked. internal/tasks TestSweepQueueGuardReadsClaimsFromTheListing
+  runs the guard against the real listing, so the layout cannot drift from it unnoticed.
 - 2026-10-17 — named commit-gate.sh's header comment and `baseDockerfileTemplate` (the entrypoint
   heredoc) instead of line numbers.
 - 2026-09-21 — full offline installer execution reproduced `build && doctor` falling through to

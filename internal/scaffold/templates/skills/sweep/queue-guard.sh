@@ -4,7 +4,7 @@
 #
 # Actionable means: every folder in 00_todo/, and every folder in 10_in_progress/ EXCEPT one whose
 # claim names another agent's live process. A claim is bound to the claiming agent's pid
-# (`coop tasks claim`; `coop tasks ls` prints "claimed by codex (pid N)"), and the loop never adopts a
+# (`coop tasks claim`; `coop tasks ls` prints "claimed by codex (PID N)"), and the loop never adopts a
 # task whose claimant is alive — so neither may a sweep finish it (it would overwrite that agent's
 # uncommitted work) nor block it (it would park someone else's in-flight task). A dead claimant, an
 # unbound claim, or a claim held by this very agent (the pid sits in this hook's own ancestry) stays
@@ -31,11 +31,18 @@ ancestry() {
 }
 
 # claimant_pids prints "<task id> <pid>" per in-progress task whose claim is process-bound, from
-# the one listing coop prints for every configured queue. Empty when coop is unavailable.
+# the one listing coop prints for every configured queue. A task prints its claim on the line above
+# its ID ("0/1 subtasks · claimed by codex (PID 123)"). A claim made on another system ("(PID 123 on
+# Linux)") names a PID this host cannot check, so it is left out and its task counts. Empty when
+# coop is unavailable.
 claimant_pids() {
   command -v coop >/dev/null 2>&1 || return 0
   listing=$(cd "$CLAUDE_PROJECT_DIR" && coop tasks ls --in-progress </dev/null 2>/dev/null) || return 0
-  printf '%s\n' "$listing" | sed -n 's/.*claimed by [^(]*(pid \([0-9][0-9]*\)).*  \([^ ][^ ]*\)$/\2 \1/p'
+  printf '%s\n' "$listing" | awk '
+    match($0, /claimed by [^(]*\(PID [0-9]+\)/) {
+      pid = substr($0, RSTART, RLENGTH); sub(/.*\(PID /, "", pid); sub(/\)$/, "", pid); next
+    }
+    pid != "" { if (NF == 1) print $1, pid; pid = "" }'
 }
 
 paths=$(queue_paths) || {
