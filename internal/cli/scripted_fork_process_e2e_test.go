@@ -52,10 +52,11 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// With no target, the fork remembers Claude and the marked-default personal account.
+		// With no target, the fork reopens on the whole target it was made with: Claude, its model and
+		// effort, and the personal account.
 		result, trace = runForkProcess(t, suite, []string{name}, provider)
 		assertForkProcessSuccess(t, result, provider)
-		assertForkProcessContract(t, suite, trace, ws, provider, account, forkResumeArgv(provider, "env-claude", "medium", id), "env-claude", "medium")
+		assertForkProcessContract(t, suite, trace, ws, provider, account, forkResumeArgv(provider, model, effort, id), model, effort)
 		if data, err := os.ReadFile(persistent); err != nil || string(data) != "keep across re-entry\n" {
 			t.Fatalf("fork work did not persist across re-entry: %q, %v", data, err)
 		}
@@ -63,16 +64,16 @@ func TestProviderScriptedForkSessionProcess(t *testing.T) {
 		result, trace = runForkProcess(t, suite, []string{name, "--new"}, provider)
 		newID := forkctl.ReadForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
-		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, "env-claude", "medium", newID), "env-claude", "medium")
+		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, model, effort, newID), model, effort)
 		if newID == "" || newID == id {
 			t.Fatalf("--new id = %q, want a new value distinct from %q", newID, id)
 		}
 
-		// --fresh still remembers the provider before destroying the old workspace.
+		// --fresh still remembers the target before destroying the old workspace.
 		result, trace = runForkProcess(t, suite, []string{name, "--fresh", "--force", "--yes"}, provider)
 		freshID := forkctl.ReadForkSession(ws, provider, account)
 		assertForkProcessSuccess(t, result, provider)
-		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, "env-claude", "medium", freshID), "env-claude", "medium")
+		assertForkProcessContract(t, suite, trace, ws, provider, account, forkStartArgv(provider, model, effort, freshID), model, effort)
 		if freshID == "" || freshID == newID {
 			t.Fatalf("--fresh id = %q, prior %q", freshID, newID)
 		}
