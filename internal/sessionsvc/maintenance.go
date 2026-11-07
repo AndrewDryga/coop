@@ -19,3 +19,6 @@ type CompactionResult = session.TurnOperationCompactionResult
 
 // ErrCompactionUnfinished marks a failure AFTER the retry-receipt rewrite committed.
 var ErrCompactionUnfinished = session.ErrCompactionUnfinished
+
+// ErrBackupInsideState refuses a backup path inside the session state root, before any backup starts.
+var ErrBackupInsideState = session.ErrBackupInsideState

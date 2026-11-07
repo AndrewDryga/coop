@@ -368,6 +368,10 @@ func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error 
 	case strings.Contains(detail, "inspect existing session"):
 		return ui.CommandFailed("Could not compact session data", "There is no session data at this path.\n"+detail,
 			[2]string{"", "Check the --state path."})
+	case errors.Is(err, sessionsvc.ErrBackupInsideState):
+		// Refused before any backup started: nothing was verified, or failed to verify.
+		return ui.CommandFailed("Could not compact session data", "The backup file is inside the session-data directory.",
+			[2]string{"", "Choose a backup path outside it."})
 	case result.BackupPath == "":
 		// Nothing was retained: backupSQLiteDatabase deletes its output when it cannot verify it.
 		return ui.CommandFailed("Could not compact session data",

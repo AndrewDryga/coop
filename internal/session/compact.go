@@ -33,6 +33,9 @@ type TurnOperationCompactionResult struct {
 // about a transaction that never committed — so the stage is carried on the error itself.
 var ErrCompactionUnfinished = errors.New("retry receipts were compacted, but compaction did not finish")
 
+// ErrBackupInsideState refuses a backup path inside the session state root, before any backup starts.
+var ErrBackupInsideState = errors.New("backup path must be outside the session state root")
+
 // CompactTurnOperationResults opens an existing session database exclusively,
 // creates and verifies a new backup, rewrites legacy full-turn receipts, checks
 // database integrity, and only then vacuums reclaimed pages. It deliberately is
@@ -229,7 +232,7 @@ func validateBackupPath(root, backupPath string) (string, error) {
 	}
 	realBackup := filepath.Join(realParent, filepath.Base(absolute))
 	if pathWithin(realRoot, realBackup) {
-		return "", errors.New("backup path must be outside the session state root")
+		return "", ErrBackupInsideState
 	}
 	return absolute, nil
 }

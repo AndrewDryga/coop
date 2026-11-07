@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -119,9 +120,8 @@ func TestCompactTurnOperationResultsRefusesBackupInsideStateRoot(t *testing.T) {
 		filepath.Join(root, databaseName+"-shm"),
 		filepath.Join(inside, "backup.sqlite"),
 	} {
-		if _, err := CompactTurnOperationResults(context.Background(), root, backup); err == nil ||
-			!strings.Contains(err.Error(), "outside the session state root") {
-			t.Errorf("inside-root backup %q error = %v", backup, err)
+		if _, err := CompactTurnOperationResults(context.Background(), root, backup); !errors.Is(err, ErrBackupInsideState) {
+			t.Errorf("inside-root backup %q error = %v, want ErrBackupInsideState", backup, err)
 		}
 		if _, err := os.Lstat(backup); !os.IsNotExist(err) {
 			t.Errorf("inside-root backup %q was created: %v", backup, err)
@@ -133,9 +133,8 @@ func TestCompactTurnOperationResultsRefusesBackupInsideStateRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	aliasedBackup := filepath.Join(aliasRoot, "state-link", "nested", "backup.sqlite")
-	if _, err := CompactTurnOperationResults(context.Background(), root, aliasedBackup); err == nil ||
-		!strings.Contains(err.Error(), "outside the session state root") {
-		t.Fatalf("aliased inside-root backup error = %v", err)
+	if _, err := CompactTurnOperationResults(context.Background(), root, aliasedBackup); !errors.Is(err, ErrBackupInsideState) {
+		t.Fatalf("aliased inside-root backup error = %v, want ErrBackupInsideState", err)
 	}
 }
 

@@ -1,0 +1,6 @@
+
+✗ Could not compact session data
+
+      The backup file is inside the session-data directory.
+
+  Choose a backup path outside it.

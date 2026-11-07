@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions compact` says a backup inside the session-data folder is refused.** It used to say
+  "The session backup could not be verified", with no next step, though no backup had started. It now
+  says "The backup file is inside the session-data directory." and "Choose a backup path outside it."
+
 - **An editor session started with `--egress offline` says it is offline instead of asking you to sign
   in again.** When its agent failed its sign-in check (it cannot reach its provider offline), coop answered
   "Sign in to codex@personal on the host", and could rotate to another account, though the account was

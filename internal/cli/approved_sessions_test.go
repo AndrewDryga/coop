@@ -46,6 +46,7 @@ func TestApprovedSessionCompactFailures(t *testing.T) {
 			errors.New("another session daemon owns this state root")},
 		{"72-compact-existing-backup", sessionsvc.CompactionResult{},
 			errors.New(backup + " already exists.")},
+		{"72-compact-backup-inside-state", sessionsvc.CompactionResult{}, sessionsvc.ErrBackupInsideState},
 		{"72-compact-unfinished", retained,
 			errors.Join(sessionsvc.ErrCompactionUnfinished, errors.New("database or disk is full"))},
 	}
