@@ -548,7 +548,7 @@ func TestRunDoesNotReportALeakWhenTheLeaderSimplyExits(t *testing.T) {
 // The survivor listing excludes the leader, because the leader being in its own group makes it no
 // survivor. Proven on a real group leader with a real child, so neither side of the comparison is
 // hypothetical.
-func TestListGroupExcludesTheLeaderItself(t *testing.T) {
+func TestGroupSurvivorsExcludeTheLeaderItself(t *testing.T) {
 	// Publish the one child before listing. A second foreground sleep can start between
 	// the two snapshots and hide the removed leader in their row counts.
 	ready := filepath.Join(t.TempDir(), "child")
@@ -567,11 +567,12 @@ func TestListGroupExcludesTheLeaderItself(t *testing.T) {
 	if childPID, err := strconv.Atoi(child); err != nil || childPID <= 0 || childPID == pid {
 		t.Fatalf("invalid fixture child PID %q", child)
 	}
-	withLeader, err := listGroup(pid, true)
+	table, err := readProcesses()
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutLeader, err := listGroup(pid, false)
+	withLeader := boundedRows(table.group(pid, true))
+	withoutLeader, err := groupSurvivors(pid, readProcesses, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,5 +597,161 @@ func TestListGroupExcludesTheLeaderItself(t *testing.T) {
 				t.Errorf("%s = %v, missing PID %s", tc.name, tc.rows, want)
 			}
 		}
+	}
+}
+
+// The stat column is how the survivor check tells a process on its way out from one that is running.
+// `?E` and `?NE` are what macOS printed for the survivors that once failed a gate while they were
+// still exiting; Z is a zombie on both systems.
+func TestExitingIsReadFromTheStatColumn(t *testing.T) {
+	for stat, want := range map[string]bool{
+		"Z": true, "Z+": true, "?E": true, "?NE": true,
+		"S": false, "Ss": false, "S+": false, "Ss+": false, "Sl": false, "SN": false, "S<": false,
+		"R": false, "R+": false, "U": false, "I": false, "T": false,
+	} {
+		if got := (processRow{stat: stat}).exiting(); got != want {
+			t.Errorf("stat %q: exiting = %v, want %v", stat, got, want)
+		}
+	}
+}
+
+// groupRow is a process in the group led by pgid, as one reading of the process table shows it.
+func groupRow(pid, pgid int, stat string) processRow {
+	return processRow{pid: pid, ppid: 1, pgid: pgid, stat: stat, line: fmt.Sprintf("%d 1 %d %s 00:01 docker", pid, pgid, stat)}
+}
+
+// stagedTables returns a table reader that plays back one table per reading, the last again once they
+// run out, and counts the readings. It is how the table changes while a survivor check waits, which
+// no real process can be made to do on cue.
+func stagedTables(tables ...processTable) (read func() (processTable, error), reads *int) {
+	reads = new(int)
+	return func() (processTable, error) {
+		table := tables[min(*reads, len(tables)-1)]
+		*reads++
+		return table, nil
+	}, reads
+}
+
+// A survivor that is only exiting is a process leaving, not a leak: the leader can exit before the rest
+// of its group has finished, and a host under heavy load once showed the survivor check the ?E rows
+// below, mid-exit. It waits for those, for a bounded time. A process that is alive is a survivor on
+// the first reading, with no wait: the grace is never a delay on a real leak.
+func TestGroupSurvivorsWaitForExitingProcessesOnly(t *testing.T) {
+	const leader = 71054
+	exiting := processTable{groupRow(leader, leader, "Z"), groupRow(71111, leader, "?E"), groupRow(71118, leader, "?NE")}
+	gone := processTable{groupRow(leader, leader, "Z")} // the leader is no survivor, whatever its state
+	running := processTable{groupRow(71111, leader, "?E"), groupRow(71200, leader, "S")}
+	const patient = 10 * time.Second // never used up: each case that has it returns long before
+
+	t.Run("exiting processes that leave are no survivors", func(t *testing.T) {
+		read, reads := stagedTables(exiting, exiting, gone)
+		survivors, err := groupSurvivors(leader, read, patient)
+		if err != nil || len(survivors) != 0 || *reads != 3 {
+			t.Fatalf("survivors = %q, err %v after %d readings; want none, found by waiting for the third", survivors, err, *reads)
+		}
+	})
+
+	t.Run("exiting processes that stay are reported when the wait is over", func(t *testing.T) {
+		const grace = 50 * time.Millisecond
+		read, _ := stagedTables(exiting)
+		start := time.Now()
+		survivors, err := groupSurvivors(leader, read, grace)
+		if err != nil || len(survivors) != 2 || time.Since(start) < grace {
+			t.Fatalf("survivors = %q, err %v after %v; want both exiting processes, after the whole %v", survivors, err, time.Since(start), grace)
+		}
+		for _, want := range []string{"71111 1 71054 ?E", "71118 1 71054 ?NE"} {
+			if !strings.Contains(strings.Join(survivors, "\n"), want) {
+				t.Errorf("survivors %q do not report %q", survivors, want)
+			}
+		}
+	})
+
+	t.Run("a running process is reported on the first reading", func(t *testing.T) {
+		read, reads := stagedTables(running, gone)
+		survivors, err := groupSurvivors(leader, read, patient)
+		if err != nil || len(survivors) != 2 || *reads != 1 {
+			t.Fatalf("survivors = %q, err %v after %d readings; want the exiting and the running process from one reading", survivors, err, *reads)
+		}
+		if !strings.Contains(survivors[1], "71200 1 71054 S") {
+			t.Errorf("survivors %q do not report the running process", survivors)
+		}
+	})
+
+	t.Run("an unreadable table is reported, not waited out", func(t *testing.T) {
+		readings := 0
+		read := func() (processTable, error) {
+			readings++
+			if readings == 1 {
+				return exiting, nil
+			}
+			return nil, errors.New("ps failed")
+		}
+		survivors, err := groupSurvivors(leader, read, patient)
+		if err == nil || len(survivors) != 0 || readings != 2 {
+			t.Fatalf("survivors = %q, err %v after %d readings; want the read error at the second", survivors, err, readings)
+		}
+	})
+}
+
+// listedRow is pid's row in a fresh reading of the process table.
+func listedRow(t *testing.T, pid int) (processRow, bool) {
+	t.Helper()
+	table, err := readProcesses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range table {
+		if row.pid == pid {
+			return row, true
+		}
+	}
+	return processRow{}, false
+}
+
+// The same case with real processes, through Run: a child that has exited and not yet been reaped is a
+// zombie in the leader's group, and the leader exiting first must not read as a leak while the child is
+// being reaped. This test is the child's parent, so the zombie stays until the test reaps it. The
+// leader is the running process, and is not exiting.
+func TestRunWaitsForAnExitingProcessToBeReaped(t *testing.T) {
+	layout, err := NewLayout(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := Start(Command{
+		Path: "/bin/sh", Args: []string{"-c", "exec sleep 30"}, Dir: layout.Root,
+		Env: []string{"PATH=/usr/bin:/bin"}, KillGrace: 50 * time.Millisecond, MaxOutput: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leader.Cleanup()
+	child := exec.Command("/bin/sh", "-c", "exit 0")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: leader.PID()} // born into the leader's group
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Wait() }()
+	wait.For(t, "the finished child to be listed in the leader's group as exiting", func() bool {
+		row, listed := listedRow(t, child.Process.Pid)
+		return listed && row.pgid == leader.PID() && row.exiting()
+	})
+	if row, listed := listedRow(t, leader.PID()); !listed || row.exiting() {
+		t.Fatalf("running leader %d is listed = %v with stat %q, want a listed process that is not exiting", leader.PID(), listed, row.stat)
+	}
+
+	if err := leader.SignalGroup(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+	defer cancel()
+	results := make(chan Result, 1)
+	go func() { results <- leader.Wait(ctx) }()
+	// Hold the zombie while the leader goes, then reap it. A check that looked once, as this one used
+	// to, finds it and reports a leak. A host too slow to look within the hold passes without proving
+	// the wait, which is the only way this test can pass wrongly.
+	time.Sleep(300 * time.Millisecond)
+	_ = child.Wait()
+	if result := <-results; result.Err != nil {
+		t.Fatalf("a leader that exited before its child was reaped = %v, want no survivors", result.Err)
 	}
 }

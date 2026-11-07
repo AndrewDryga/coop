@@ -306,7 +306,8 @@ func (p *Process) SignalGroup(sig syscall.Signal) error {
 }
 
 // Wait drains a started process. Context cancellation performs the same TERM/grace/KILL group
-// cleanup as Run. A normal leader exit with surviving descendants is a test failure and is cleaned.
+// cleanup as Run. A normal leader exit with surviving descendants is a test failure and is cleaned;
+// a descendant that is only exiting gets a moment to be reaped first.
 func (p *Process) Wait(ctx context.Context) Result {
 	p.waitOnce.Do(func() { p.result = p.wait(ctx) })
 	return p.result
@@ -319,8 +320,9 @@ func (p *Process) wait(ctx context.Context) Result {
 		result.ExitCode, result.Err = processExit(err)
 		// Did any DESCENDANT outlive the leader? Decided from one listing that excludes the leader
 		// itself, because a leader is a member of its own group and sits there as a zombie between
-		// its exit and its reaping, which makes it no survivor.
-		if survivors, listErr := listGroup(result.PID, false); listErr != nil || len(survivors) > 0 {
+		// its exit and its reaping, which makes it no survivor. A descendant that is itself only
+		// exiting is waited for, a moment at most; a running one is reported at once.
+		if survivors, listErr := groupSurvivors(result.PID, readProcesses, exitingGrace); listErr != nil || len(survivors) > 0 {
 			var survivorErr error
 			if listErr != nil {
 				// Undecidable, and said so: cleaning up regardless is the safe side, but the run
@@ -445,27 +447,60 @@ func describeGroup(pid int, heading string) string {
 	return "; " + heading + " (pid ppid pgid stat elapsed command):\n  " + strings.Join(rows, "\n  ")
 }
 
-// listGroup returns the processes in pid's group from ONE reading of the process table. When
-// includeLeader is false the leader itself is left out, which is what makes the result mean
-// "descendants survived": a leader is a member of its own group, and between its exit and its reaping
-// it is still there as a zombie.
+// groupSurvivors returns the processes left in pid's group once its leader has exited, the leader
+// itself left out, which is what makes the result mean "descendants survived": a leader is a member
+// of its own group, and between its exit and its reaping it is still there as a zombie.
 //
-// The survivor check and the message it prints both come from this one listing on purpose. They used
-// to be two observations — `kill(-pid, 0)` to decide, then `ps` to explain — and a leader caught
-// mid-exit satisfied the first and vanished before the second, producing the self-contradiction
-// "process group N survived leader exit (nothing was left in the group by the time it was listed)".
-func listGroup(pid int, includeLeader bool) ([]string, error) {
-	table, err := readProcesses()
-	if err != nil {
-		return nil, err
+// The survivor check and the message it prints both come from one reading of the process table on
+// purpose. They used to be two observations — `kill(-pid, 0)` to decide, then `ps` to explain — and a
+// leader caught mid-exit satisfied the first and vanished before the second, producing the
+// self-contradiction "process group N survived leader exit (nothing was left in the group by the
+// time it was listed)".
+//
+// A survivor that is only exiting (see processRow.exiting) is a process leaving, not a leak. A leader
+// can exit before the rest of its group has finished, and a host under heavy load has shown this check
+// the survivors in the middle of it. While every one of them is exiting, the table is read again, for
+// at most grace. Anything else is reported on the first reading: the wait is for processes that are
+// going, never a delay on one that is not.
+func groupSurvivors(pid int, read func() (processTable, error), grace time.Duration) ([]string, error) {
+	deadline := time.Now().Add(grace)
+	for {
+		table, err := read()
+		if err != nil {
+			return nil, err
+		}
+		rows := table.group(pid, false)
+		if len(rows) == 0 || hasLive(rows) || !time.Now().Before(deadline) {
+			return boundedRows(rows), nil
+		}
+		time.Sleep(exitingPoll)
 	}
-	return boundedRows(table.group(pid, includeLeader)), nil
 }
 
-// processRow is one line of the process table, with the three numbers the listings select by.
+// processRow is one line of the process table, with the numbers the listings select by and the state
+// the survivor check judges by.
 type processRow struct {
 	pid, ppid, pgid int
+	stat            string
 	line            string
+}
+
+// exiting reports whether the process is already on its way out: a zombie (state Z) waiting to be
+// reaped, or one the macOS ps flags E, "trying to exit", which it printed as `?E` and `?NE` for the
+// survivors of a failed gate. Either leaves without anyone's help, where a running or sleeping
+// process leaves only if something makes it.
+func (p processRow) exiting() bool {
+	return strings.HasPrefix(p.stat, "Z") || strings.Contains(p.stat, "E")
+}
+
+// hasLive reports whether any of rows is not already exiting.
+func hasLive(rows []processRow) bool {
+	for _, row := range rows {
+		if !row.exiting() {
+			return true
+		}
+	}
+	return false
 }
 
 type processTable []processRow
@@ -491,29 +526,29 @@ func readProcesses() (processTable, error) {
 		if pidErr != nil || ppidErr != nil || pgidErr != nil {
 			continue
 		}
-		table = append(table, processRow{pid: pid, ppid: ppid, pgid: pgid, line: strings.TrimSpace(line)})
+		table = append(table, processRow{pid: pid, ppid: ppid, pgid: pgid, stat: fields[3], line: strings.TrimSpace(line)})
 	}
 	return table, nil
 }
 
 // group is pid's process group, the leader left out unless includeLeader.
-func (t processTable) group(pid int, includeLeader bool) []string {
-	var rows []string
+func (t processTable) group(pid int, includeLeader bool) []processRow {
+	var rows []processRow
 	for _, p := range t {
 		if p.pgid == pid && (includeLeader || p.pid != pid) {
-			rows = append(rows, p.line)
+			rows = append(rows, p)
 		}
 	}
 	return rows
 }
 
 // departed is every descendant of pid, by parent links, that is in some other group.
-func (t processTable) departed(pid int) []string {
+func (t processTable) departed(pid int) []processRow {
 	children := map[int][]processRow{}
 	for _, p := range t {
 		children[p.ppid] = append(children[p.ppid], p)
 	}
-	var rows []string
+	var rows []processRow
 	queue := []int{pid}
 	seen := map[int]bool{pid: true}
 	for len(queue) > 0 {
@@ -526,7 +561,7 @@ func (t processTable) departed(pid int) []string {
 			seen[child.pid] = true
 			queue = append(queue, child.pid)
 			if child.pgid != pid {
-				rows = append(rows, child.line)
+				rows = append(rows, child)
 			}
 		}
 	}
@@ -534,9 +569,10 @@ func (t processTable) departed(pid int) []string {
 }
 
 // boundedRows keeps at most describeGroupLimit rows, each cut to describeGroupRowBytes.
-func boundedRows(lines []string) []string {
+func boundedRows(members []processRow) []string {
 	var rows []string
-	for _, line := range lines {
+	for _, member := range members {
+		line := member.line
 		if len(rows) == describeGroupLimit {
 			return append(rows, "…")
 		}
@@ -559,6 +595,14 @@ const describeGroupRowBytes = 512
 // describeGroupTimeout bounds the one `ps`. Collecting evidence must never become the reason a
 // failing test hangs to its package deadline instead of reporting.
 const describeGroupTimeout = 5 * time.Second
+
+// exitingGrace is how long the survivor check waits for processes that are already exiting. They
+// leave on their own, but a host under heavy load can be slow enough about it for the table to be
+// read halfway through. A process that is not exiting gets no wait.
+const exitingGrace = 2 * time.Second
+
+// exitingPoll is the pause between readings of the process table while waiting for them.
+const exitingPoll = 20 * time.Millisecond
 
 func waitGroupGone(pid int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)

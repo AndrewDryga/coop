@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-11-05
+updated: 2026-11-07
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -23,7 +23,11 @@ see [[provider-consult-e2e]] for the state and live-ring contracts.
 A failed process test carries its own evidence (`describeGroup`): a leader that exits with group
 members left lists them as `survivors (pid ppid pgid stat elapsed command)`, and a deadline lists
 what was `still running at the deadline`, captured before the kill erases the stall (rows are cut
-short: a provider's argv can carry its whole prompt). The consult stalls once filed as unexplained
+short: a provider's argv can carry its whole prompt). Survivors that are only exiting (a zombie, or
+macOS's `E` flag, printed `?E`) are waited for up to 2 s before they count (`groupSurvivors`): a
+cancelled run's leader can exit while the rest of its group is still leaving, and a loaded host
+once caught two `docker` fixture processes that way. A survivor that is running or sleeping is
+reported on the first reading. The consult stalls once filed as unexplained
 (a fallback pair after its final grok resume exited 0; `TestProviderScriptedConsultFailureMatrix/gemini`
 stuck 19 s in one capture; the 2026-10-10 recovery row whose deadline rows showed the wrapper in its
 capture wait with one capture shell and its `cat` left) have the shape of a capture reader that
@@ -170,6 +174,10 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-07 — the survivor check waits up to 2 s for survivors that are only exiting, after one
+  gate run failed `TestProviderScriptedDirectMatrix/grok/cancellation` on two `docker` fixture
+  processes caught in `?E`; a running survivor is still reported at once (task
+  2026-11-07-stop-the-process-group-survivor-check-from-flagg).
 - 2026-11-05 — a pty-bound loop stopped at its deadline keeps the loop lock through its teardown
   (script(1) puts coop in its own session); the next loop now waits for a stopping holder, proved
   by the recovery row with the new `runtime-teardown-hold` (task
