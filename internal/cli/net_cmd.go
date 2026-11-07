@@ -308,6 +308,11 @@ func (a *app) cmdNetSetup() (int, error) {
 	if errors.Is(err, box.ErrNetworkSetupFailed) {
 		return 1, nil // the transcript already named the failed check and the verdict
 	}
+	if errors.Is(err, context.Canceled) {
+		// A stop is no verdict on the host, so no transcript names one.
+		ui.Note("\nSetup stopped. No setup was saved.")
+		return interruptedStatus, nil
+	}
 	if err != nil {
 		return 1, err
 	}

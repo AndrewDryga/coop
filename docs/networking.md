@@ -101,6 +101,11 @@ after upgrading Docker or co:op, or when troubleshooting network setup:
 If a check fails, co:op shows the error and the checks that passed before it. The output ends with
 `✗ this host is not ready for filtered runs` and `No setup was saved`.
 
+If you press Ctrl-C during the checks, co:op stops them and removes what they set up. A launch
+prints `Stopped before the box started.` and exits `130`. `coop net setup` prints
+`Setup stopped. No setup was saved.` and exits `130`. Neither lists results, because the checks
+didn't finish.
+
 ### Fleet workers and Docker-in-Docker
 
 Install a Docker CLI and a matching Buildx plugin that work together through `docker build`.

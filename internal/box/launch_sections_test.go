@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -402,7 +403,7 @@ func TestExplainedMarksOnlyANamedInterruption(t *testing.T) {
 // signal, whatever the stop broke on the way. A failure nobody caused, one that cleanup could not
 // undo and a batch run's errors keep their message and the launch's own status.
 func TestEndedSaysOnlyThatAStoppedLaunchNeverStarted(t *testing.T) {
-	ctrlC, term := &hostInterrupt{sig: os.Interrupt}, &hostInterrupt{sig: syscall.SIGTERM}
+	ctrlC, term, hangup := &hostInterrupt{sig: os.Interrupt}, &hostInterrupt{sig: syscall.SIGTERM}, &hostInterrupt{sig: syscall.SIGHUP}
 	raw := errors.New("Docker file copy requires one bounded regular file") // what a call the stop killed says
 	cleanup := errors.New("filesystem custody retained at /state/coop-fs-1")
 	for _, test := range []struct {
@@ -418,6 +419,8 @@ func TestEndedSaysOnlyThatAStoppedLaunchNeverStarted(t *testing.T) {
 	}{
 		{"Ctrl-C before the box started", RunSpec{}, false, ctrlC, nil, raw, "\nStopped before the box started.\n", 130, true},
 		{"SIGTERM before the box started", RunSpec{}, false, term, nil, raw, "\nStopped before the box started.\n", 143, true},
+		{"a closed terminal before the box started", RunSpec{}, false, hangup, nil, raw, "\nStopped before the box started.\n", 129, true},
+		{"a closed terminal after the box started", RunSpec{}, true, hangup, nil, interruptedRun{}, "", 129, true},
 		{"a Ctrl-C only the box heard", RunSpec{}, false, nil, nil, fmt.Errorf("%w: %w", runtime.ErrDockerStartInterrupted, raw), "\nStopped before the box started.\n", 130, true},
 		{"cleanup could not finish", RunSpec{}, false, ctrlC, cleanup, errors.Join(raw, cleanup), "~✗ Could not start sleep", -1, true},
 		{"a failure nobody caused", RunSpec{}, false, nil, nil, raw, "~✗ Could not start sleep", -1, true},
@@ -455,7 +458,7 @@ func TestHostInterruptExitCodeIsTheShellsForASignal(t *testing.T) {
 	for _, test := range []struct {
 		recorder *hostInterrupt
 		want     int
-	}{{&hostInterrupt{sig: os.Interrupt}, 130}, {&hostInterrupt{sig: syscall.SIGTERM}, 143}, {&hostInterrupt{}, 0}, {none, 0}} {
+	}{{&hostInterrupt{sig: os.Interrupt}, 130}, {&hostInterrupt{sig: syscall.SIGTERM}, 143}, {&hostInterrupt{sig: syscall.SIGHUP}, 129}, {&hostInterrupt{}, 0}, {none, 0}} {
 		if got := test.recorder.exitCode(); got != test.want {
 			t.Errorf("exitCode() = %d, want %d", got, test.want)
 		}
@@ -743,6 +746,9 @@ func TestStopReasonNeverInfersASignalFromAnExitStatus(t *testing.T) {
 	if got := stopReason(-1, interruptedRun{}, &hostInterrupt{sig: syscall.SIGTERM}); got != "stopped by SIGTERM" {
 		t.Fatalf("SIGTERM read as %q", got)
 	}
+	if got := stopReason(-1, interruptedRun{}, &hostInterrupt{sig: syscall.SIGHUP}); got != "stopped by SIGHUP" {
+		t.Fatalf("SIGHUP read as %q", got)
+	}
 	if got := stopReason(-1, errors.New("restricted network health lost: probe\nsecond line"), nil); got != "restricted network health lost: probe" {
 		t.Fatalf("failure read as %q", got)
 	}
@@ -772,6 +778,119 @@ func TestHostInterruptRecordsTheSignalAndCancels(t *testing.T) {
 	}
 	if got := interrupt.reason(); got != "interrupted by Ctrl-C" {
 		t.Fatalf("reason = %q", got)
+	}
+}
+
+// A closed terminal, a kill and Ctrl-C all stop a launch the same way: the context cancels so cleanup
+// runs, and the recorder names which signal it was and the status a shell gives for it. A terminal
+// closing used to kill Coop where it stood, with the box's gateway and volumes still running.
+func TestEverySignalAPersonSendsAStopRecordsItself(t *testing.T) {
+	for _, tc := range []struct {
+		sig    syscall.Signal
+		reason string
+		status int
+	}{
+		{syscall.SIGINT, "interrupted by Ctrl-C", 130},
+		{syscall.SIGHUP, "stopped by SIGHUP", 129},
+		{syscall.SIGTERM, "stopped by SIGTERM", 143},
+	} {
+		t.Run(tc.sig.String(), func(t *testing.T) {
+			ctx, interrupt, stop := listenForInterrupt(context.Background())
+			defer stop()
+			if err := syscall.Kill(os.Getpid(), tc.sig); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s did not cancel the launch", tc.sig)
+			}
+			if interrupt.reason() != tc.reason || interrupt.exitCode() != tc.status {
+				t.Fatalf("recorded %q with status %d, want %q with %d", interrupt.reason(), interrupt.exitCode(), tc.reason, tc.status)
+			}
+		})
+	}
+}
+
+// UntilInterrupted gives the work before a launch the same stop: the step's context cancels on the
+// signal and the caller gets the signal's status. A step nothing interrupts reports none, and the
+// signals take their default action again afterwards, so a Ctrl-C in the stretches no handler covers
+// still ends Coop as it always did, instead of being swallowed by a handler nobody reads.
+func TestUntilInterruptedStopsItsStepAndHandsTheSignalsBack(t *testing.T) {
+	for _, tc := range []struct {
+		sig    syscall.Signal
+		status int
+	}{{syscall.SIGINT, 130}, {syscall.SIGHUP, 129}, {syscall.SIGTERM, 143}} {
+		t.Run(tc.sig.String(), func(t *testing.T) {
+			var seen error
+			status, err := UntilInterrupted(func(ctx context.Context) error {
+				if err := syscall.Kill(os.Getpid(), tc.sig); err != nil {
+					return err
+				}
+				select {
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+					t.Error("the signal did not cancel the step")
+				}
+				seen = ctx.Err()
+				return seen
+			})
+			if status != tc.status || !errors.Is(seen, context.Canceled) || !errors.Is(err, context.Canceled) {
+				t.Fatalf("UntilInterrupted = (%d, %v) with step context %v, want status %d and a cancellation", status, err, seen, tc.status)
+			}
+		})
+	}
+	sentinel := errors.New("step failed")
+	if status, err := UntilInterrupted(func(context.Context) error { return sentinel }); status != 0 || !errors.Is(err, sentinel) {
+		t.Fatalf("an uninterrupted step = (%d, %v), want its own error and no status", status, err)
+	}
+}
+
+// Once UntilInterrupted returns, a hangup ends the process the way it does with no handler: the
+// handler it registered is gone. Checked in a child, because the default action is death.
+func TestUntilInterruptedLeavesNoHandlerBehind(t *testing.T) {
+	if os.Getenv("COOP_TEST_UNTIL_INTERRUPTED") == "child" {
+		_, _ = UntilInterrupted(func(context.Context) error { return nil })
+		_ = syscall.Kill(os.Getpid(), syscall.SIGHUP)
+		time.Sleep(10 * time.Second)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestUntilInterruptedLeavesNoHandlerBehind$")
+	cmd.Env = append(os.Environ(), "COOP_TEST_UNTIL_INTERRUPTED=child")
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("the child survived a hangup after UntilInterrupted returned: %v", err)
+	}
+	if status, ok := exit.Sys().(syscall.WaitStatus); !ok || !status.Signaled() || status.Signal() != syscall.SIGHUP {
+		t.Fatalf("the child ended %v, want killed by SIGHUP", exit)
+	}
+}
+
+// A stop during the host check is no verdict on the host: it comes back as the cancellation, with no
+// pass or failure to print. A check that reached a verdict first keeps it, and so does one nobody
+// stopped.
+func TestSetupStoppedIsOnlyAStopThatBeatTheVerdict(t *testing.T) {
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	failure := errors.New("the setup check did not finish")
+	for _, tc := range []struct {
+		name    string
+		ctx     context.Context
+		code    int
+		err     error
+		wantErr bool
+	}{
+		{"stopped before it ran to the end", stopped, 0, failure, true},
+		{"stopped with a failing check", stopped, 33, nil, true},
+		{"passed before the stop landed", stopped, 0, nil, false},
+		{"failed with nobody stopping it", context.Background(), 0, failure, false},
+		{"a check that failed by itself", context.Background(), 33, nil, false},
+	} {
+		got := setupStopped(tc.ctx, tc.code, tc.err)
+		if (got != nil) != tc.wantErr || got != nil && !errors.Is(got, context.Canceled) {
+			t.Errorf("%s: setupStopped = %v, want a cancellation: %v", tc.name, got, tc.wantErr)
+		}
 	}
 }
 

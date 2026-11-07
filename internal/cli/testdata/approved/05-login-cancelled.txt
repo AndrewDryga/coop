@@ -1,2 +1,2 @@
 
-Sign-in stopped.
+Sign-in cancelled. Nothing was saved.

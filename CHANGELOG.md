@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Cancelling `coop login` stops cleanly wherever you do it.** Ctrl-C at Codex's one-time code
+  ended in "could not save the sign-in", exit 1 and a leftover `.sign-in-…` folder, because Codex
+  answers Ctrl-C with status 0 and no login. Closing the terminal killed Coop with the box still
+  running, and Ctrl-C during a new host's first "Checking filtered access" killed it with the
+  check's containers still up and nothing printed. Ctrl-D at Gemini's key prompt was taken for an
+  empty key. Each now ends with `Sign-in cancelled. Nothing was saved.`, exits 130 (129 when the
+  terminal closes), saves no account, removes the sign-in's staging folder and leaves no container
+  or volume. A closed terminal and that first check stop every filtered launch the same way, and
+  `coop net setup` says `Setup stopped. No setup was saved.` instead of calling the host not ready.
+  Claude's own code prompt still ignores Ctrl-C after a Ctrl-D, with or without Coop.
+
 - **A gate run under `coop-gate-slot` keeps its temp files in memory, so Go tests no longer wait on
   the box's disk.** A box's `/tmp` sits on the runtime's disk, where `fsync` can take several times
   as long as on the host, and Go's race tests sync many small files. On Docker, every box now has

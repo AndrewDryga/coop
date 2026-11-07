@@ -219,6 +219,10 @@ Checking filtered access:
 </code></pre></div>
 <p>If a check fails, co:op shows the error and the checks that passed before it. The output ends with
 <code>✗ this host is not ready for filtered runs</code> and <code>No setup was saved</code>.</p>
+<p>If you press Ctrl-C during the checks, co:op stops them and removes what they set up. A launch
+prints <code>Stopped before the box started.</code> and exits <code>130</code>. <code>coop net setup</code> prints
+<code>Setup stopped. No setup was saved.</code> and exits <code>130</code>. Neither lists results, because the checks
+didn&#39;t finish.</p>
 <h3 id="fleet-workers-and-docker-in-docker">Fleet workers and Docker-in-Docker</h3>
 <p>Install a Docker CLI and a matching Buildx plugin that work together through <code>docker build</code>.
 Buildx alone isn&#39;t enough: Debian bookworm&#39;s Docker CLI 20.10 doesn&#39;t pass that command to the

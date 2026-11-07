@@ -15,7 +15,9 @@ const secretInputLimit = 64 << 10
 
 // ReadSecret reads one terminal line with echo disabled. It never accepts a pipe or redirected
 // input: credentials must not be smuggled through process arguments, shell history or a shared
-// stream. The returned bytes exclude only the terminal line ending.
+// stream. The returned bytes exclude only the terminal line ending. Ctrl-C, or Ctrl-D before
+// anything was typed, is ErrCancelled: the person gave no secret, and Coop used to die of the first
+// and take the second for an empty one.
 func ReadSecret(prompt string) ([]byte, error) {
 	if !IsTerminal(os.Stdin) {
 		return nil, errors.New("secret input requires an interactive terminal")
@@ -35,33 +37,44 @@ func ReadSecret(prompt string) ([]byte, error) {
 		return restoreErr
 	}
 	interrupts := make(chan os.Signal, 1)
-	done := make(chan struct{})
 	signal.Notify(interrupts, os.Interrupt)
+	type input struct {
+		line string
+		err  error
+	}
+	typed := make(chan input, 1)
 	go func() {
-		select {
-		case sig := <-interrupts:
-			_ = restoreEcho()
-			fmt.Fprintln(os.Stderr)
-			signal.Stop(interrupts)
-			if process, err := os.FindProcess(os.Getpid()); err == nil {
-				_ = process.Signal(sig)
-			}
-		case <-done:
-		}
+		reader := bufio.NewReader(io.LimitReader(os.Stdin, secretInputLimit+1))
+		line, err := reader.ReadString('\n')
+		typed <- input{line, err}
 	}()
-	reader := bufio.NewReader(io.LimitReader(os.Stdin, secretInputLimit+1))
-	line, readErr := reader.ReadString('\n')
-	signal.Stop(interrupts)
-	close(done)
+	var got input
+	interrupted := false
+	select {
+	case got = <-typed:
+	case <-interrupts:
+		interrupted = true
+	}
+	signal.Stop(interrupts) // a second Ctrl-C takes the default action
+	if interrupted {
+		// The read stays blocked on the terminal until the process ends, and nothing reads the
+		// terminal after a cancelled prompt.
+		_ = restoreEcho()
+		fmt.Fprintln(os.Stderr)
+		return nil, ErrCancelled
+	}
 	restored := restoreEcho()
 	fmt.Fprintln(os.Stderr)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return nil, fmt.Errorf("read secret input: %w", readErr)
+	if got.err != nil && !errors.Is(got.err, io.EOF) {
+		return nil, fmt.Errorf("read secret input: %w", got.err)
 	}
 	if restored != nil {
 		return nil, fmt.Errorf("restore terminal echo: %w", restored)
 	}
-	line = strings.TrimSuffix(line, "\n")
+	if got.line == "" && errors.Is(got.err, io.EOF) {
+		return nil, ErrCancelled
+	}
+	line := strings.TrimSuffix(got.line, "\n")
 	line = strings.TrimSuffix(line, "\r")
 	return []byte(line), nil
 }

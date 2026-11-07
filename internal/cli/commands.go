@@ -232,7 +232,7 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	// exactly as it does today.
 	capture, err := a.admitInteractiveNetwork(spec, session)
 	if err != nil {
-		return 1, err
+		return admissionStatus(err), err
 	}
 	defer capture.Close()
 	if err := refuseOfflineOnePrompt(a.cfg, spec); err != nil {
@@ -759,7 +759,7 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	keepStage := false
 	defer func() {
 		if !keepStage {
-			_ = os.RemoveAll(stagingRoot)
+			_ = box.RemoveNativeSignInStage(originalConfig, stagingRoot)
 		}
 	}()
 	// Sign-in needs no project and gets none: the box works in an empty folder of its own, so a
@@ -773,20 +773,25 @@ func (a *app) loginTo(tool, profile string) (int, error) {
 	a.loginProvider = tool
 	defer func() { a.loginProvider, a.cfg = previousLogin, originalConfig }()
 	code, err := a.runInBox(ag.Login(a.cfg), tool, nil) // mounts only the agent being logged in to
-	switch {
-	case errors.Is(err, context.Canceled):
-		// The human stopped the provider's flow. Say only that: whether a token was written is
-		// the provider's business, and claiming either way would be a guess.
-		loginStopped()
-		return code, err
-	case err != nil || code != 0:
+	if status, stopped := signInStopped(code, err); stopped {
+		loginCancelled()
+		return status, err
+	}
+	if err != nil || code != 0 {
 		return code, err // the box already reported how the command ended
 	}
 	if err := box.ImportNativeSignIn(context.Background(), originalConfig, tool, profile, stagingConfig.AgentDir(tool)); err != nil {
+		if errors.Is(err, box.ErrNoNativeSignIn) {
+			// The provider ended cleanly with no login to save: it took a Ctrl-C itself (Codex
+			// answers one with status 0) or was closed before the sign-in finished. Nothing was
+			// written, so there is nothing to keep and no failure to report.
+			loginCancelled()
+			return interruptedStatus, nil
+		}
 		keepStage = true
 		return -1, fmt.Errorf("could not save the sign-in. The provider's files are kept at %s: %w", stagingRoot, err)
 	}
-	if err := os.RemoveAll(stagingRoot); err != nil {
+	if err := box.RemoveNativeSignInStage(originalConfig, stagingRoot); err != nil {
 		return -1, fmt.Errorf("sign-in saved; temporary sign-in cleanup failed: %w", err)
 	}
 	// Exiting zero is not proof: the provider may have been dismissed without writing a usable
@@ -820,6 +825,10 @@ func (a *app) loginWithHostCredential(ag agents.Agent, profile string) (int, err
 		ui.Note("%s\n", spec.Instructions)
 	}
 	secret, err := readLoginSecret(spec.Prompt)
+	if errors.Is(err, ui.ErrCancelled) { // Ctrl-C, or Ctrl-D before anything was typed
+		loginCancelled()
+		return interruptedStatus, nil
+	}
 	if err != nil {
 		return -1, err
 	}
@@ -862,8 +871,36 @@ func loginResult(tool, profile string, ready, madeDefault bool) {
 	ui.Note("\nStart %s:\n  %s", title, "coop "+start)
 }
 
-// loginStopped is coop's whole say after an interrupted provider flow.
-func loginStopped() { ui.Note("\nSign-in stopped.") }
+// interruptedStatus is the status a shell gives a command Ctrl-C stopped: 128 plus SIGINT.
+const interruptedStatus = 130
+
+// stoppedStatuses are the statuses of a launch that a signal Coop heard stopped: 128 plus SIGHUP,
+// SIGINT and SIGTERM.
+var stoppedStatuses = []int{129, interruptedStatus, 143}
+
+// signInStopped reports a sign-in a person ended, and the status Coop exits with. Three shapes: a
+// stop Coop heard once the box ran, which comes back as a cancellation; a stop before the box
+// started, which the launch already reported and ended with the status of its signal whatever the
+// stop broke on the way; and a provider that took the Ctrl-C itself and quit with 130. Any other
+// ending is the provider's own, however it went.
+func signInStopped(code int, err error) (int, bool) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		if code <= 0 {
+			code = interruptedStatus
+		}
+		return code, true
+	case errors.Is(err, ui.ErrReported) && slices.Contains(stoppedStatuses, code):
+		return code, true
+	case err == nil && code == interruptedStatus:
+		return code, true
+	}
+	return 0, false
+}
+
+// loginCancelled is coop's whole say after a sign-in a person stopped. The promise is true on every
+// path that reaches it: a stopped sign-in is never saved, and its staging folder is removed.
+func loginCancelled() { ui.Note("\nSign-in cancelled. Nothing was saved.") }
 
 // loginTargetName is the target a person would type for this account: the bare agent for its
 // built-in default slot, agent@account for a named one.

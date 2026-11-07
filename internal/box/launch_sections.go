@@ -552,7 +552,7 @@ func (s *launchSections) ended(started bool, interrupt *hostInterrupt, teardownE
 	switch {
 	case !started && result != nil && stopStatus != 0:
 		if s.interactive {
-			ui.Note("\nStopped before the box started.")
+			NoteStoppedBeforeStart()
 			result = ui.Reported(result)
 		}
 	case !started:
@@ -565,6 +565,11 @@ func (s *launchSections) ended(started bool, interrupt *hostInterrupt, teardownE
 	}
 	return exitCode, result
 }
+
+// NoteStoppedBeforeStart is the one line a launch ends with when a person stopped it before its main
+// process ran, once cleanup has removed what it set up. Admission says it too, for a stop that lands
+// there, so both read the same.
+func NoteStoppedBeforeStart() { ui.Note("\nStopped before the box started.") }
 
 // stoppedStatus is the exit status of a launch a person stopped, or 0 when nobody did. The stop
 // reached coop as a host signal, or reached only the box: runtime.ErrDockerStartInterrupted is a
@@ -612,10 +617,11 @@ func stopReason(code int, err error, interrupt *hostInterrupt) string {
 	return "main process ended without an exit status"
 }
 
-// hostInterrupt turns the first SIGINT/SIGTERM into a cancellation the filtered cleanup can act
-// on — a box's gateway, volumes and receipt are exact-owned, none of it is --rm, so a signal that
-// killed coop where it stood would strand three containers — and REMEMBERS which signal it was,
-// so teardown can name it instead of inferring it from an exit status. A second signal takes the
+// hostInterrupt turns the first SIGINT, SIGTERM or SIGHUP into a cancellation the filtered cleanup
+// can act on — a box's gateway, volumes and receipt are exact-owned, none of it is --rm, so a
+// signal that killed coop where it stood would strand three containers — and REMEMBERS which signal
+// it was, so teardown can name it instead of inferring it from an exit status. SIGHUP is the
+// terminal closing: coop used to die of it with the box still running. A second signal takes the
 // default action, so a wedged teardown is still escapable.
 type hostInterrupt struct {
 	mu  sync.Mutex
@@ -623,19 +629,66 @@ type hostInterrupt struct {
 }
 
 func newHostInterrupt() (context.Context, *hostInterrupt) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, h, _ := listenForInterrupt(context.Background())
+	return ctx, h
+}
+
+// listenForInterrupt is newHostInterrupt over parent, for a stretch of the launch that ends before
+// the process does. Its stop gives the signals their default action back, and after it returns the
+// recorder is final: a signal that landed while stop ran is recorded, so a caller reads one it
+// would otherwise have lost.
+func listenForInterrupt(parent context.Context) (context.Context, *hostInterrupt, func()) {
+	ctx, cancel := context.WithCancel(parent)
 	h := &hostInterrupt{}
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	stopped, finished := make(chan struct{}), make(chan struct{})
 	go func() {
-		sig := <-signals
-		h.mu.Lock()
-		h.sig = sig
-		h.mu.Unlock()
-		signal.Stop(signals)
-		cancel()
+		defer close(finished)
+		select {
+		case sig := <-signals:
+			h.record(sig)
+			signal.Stop(signals)
+			cancel()
+		case <-stopped:
+		}
 	}()
-	return ctx, h
+	var once sync.Once
+	return ctx, h, func() {
+		once.Do(func() {
+			signal.Stop(signals)
+			close(stopped)
+			<-finished
+			select {
+			case sig := <-signals:
+				h.record(sig)
+			default:
+			}
+			cancel()
+		})
+	}
+}
+
+// UntilInterrupted runs step under a context the first SIGINT, SIGTERM or SIGHUP cancels, as a
+// launch does once it is running, for the work before one that a signal used to kill coop in: the
+// first filtered launch on a host qualifies it there, which takes seconds and runs a box of its own.
+// It returns the status a shell gives a command that signal ended, 130 for Ctrl-C, or 0 when none
+// arrived. The signals have their default action again by then, and one that landed after step
+// finished still counts: it was this launch's to stop.
+func UntilInterrupted(step func(context.Context) error) (status int, err error) {
+	ctx, interrupt, stop := listenForInterrupt(context.Background())
+	defer stop()
+	err = step(ctx)
+	stop()
+	return interrupt.exitCode(), err
+}
+
+func (h *hostInterrupt) record(sig os.Signal) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.sig == nil {
+		h.sig = sig
+	}
 }
 
 // reason names the signal that arrived, or "" when none did. A nil recorder never saw one.
@@ -652,6 +705,8 @@ func (h *hostInterrupt) reason() string {
 		return "interrupted by Ctrl-C"
 	case syscall.SIGTERM:
 		return "stopped by SIGTERM"
+	case syscall.SIGHUP:
+		return "stopped by SIGHUP"
 	}
 	return "stopped by signal " + h.sig.String()
 }

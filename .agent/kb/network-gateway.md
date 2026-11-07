@@ -2,7 +2,7 @@
 name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
-sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go]
+sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go, internal/box/native_account.go, internal/cli/project_build.go]
 updated: 2026-11-06
 ---
 
@@ -320,6 +320,26 @@ workload runs and dropped when the caller cancelled or the start was interrupted
 A pty with no controlling terminal can drive only the second case, which is how it was checked
 against real Docker (2026-11-06).
 
+Two stretches had no stop handling, and a signal killed coop there with its containers running. A
+closed terminal is SIGHUP, which `hostInterrupt` now takes like SIGINT and SIGTERM (129 for it; a
+filtered box was left running until the next launch settled it). And the first filtered launch on a
+host qualifies it inside admission, before the launch has a context: `SetupNetwork` ran on
+`context.Background()`, so Ctrl-C at `Checking filtered access:` killed coop with the check's
+guard, controller, agent and volumes still up. The interactive launch now admits under
+`box.UntilInterrupted` (`cli.admitUntilInterrupted`), which hands the signals back when admission
+ends, and `qualifyNetworkHost` returns the cancellation (`setupStopped`) instead of the "host is not
+ready" transcript, since a stop is no verdict on the host. Admission is the only stretch wrapped; the
+steps between it and `box.Run`'s own handler start no container, so a signal there leaves only the
+sign-in's empty staging folder. Open and offline launches have no handler of their own: their box is
+a plain `docker run --rm`. A sign-in that stops this way, or whose provider quits
+with status 130 (Claude, Grok) or 0 with no login written (Codex answers Ctrl-C that way,
+`box.ErrNoNativeSignIn`), prints `Sign-in cancelled. Nothing was saved.`, exits 130 (129 for a
+hangup) and removes its staging folder through `box.RemoveNativeSignInStage`, which refuses any
+path but a `.sign-in-*` folder directly under the configuration folder. Claude's own code prompt
+stops reading keys after Ctrl-D and then ignores Ctrl-C, with or without coop (a plain
+`docker run -it --network none` of the client image does the same); Docker's client owns the raw
+terminal, so only a key it handles itself (`--detach-keys`) could cancel from there.
+
 The first case must not kill a create that is out. Every control call runs in its own process group,
 so the terminal's SIGINT reaches only coop, and it was coop's cancelled context that SIGKILLed a
 running `docker container create`. Docker finishes such a create anyway, so a Ctrl-C a fraction of a
@@ -410,6 +430,12 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — a closed terminal (SIGHUP) stops a filtered launch like Ctrl-C, and Ctrl-C during the
+  first launch's host check stops that check, both with the box's own cleanup; a cancelled
+  `coop login` says `Sign-in cancelled. Nothing was saved.`, exits 130 (129) and removes its staging
+  folder (task 2026-11-06-stop-coop-login-cleanly-at-every-point-a-person). Claude's own code prompt
+  still cannot be cancelled from the keyboard after Ctrl-D: its screen stops reading keys, with or
+  without coop.
 - 2026-11-06 — a Ctrl-C while Docker's client creates a container or volume no longer kills the
   client (`runtime.settleCreate`), so the create's outcome is known, cleanup removes it by name and
   the stop is `Stopped before the box started.`, exit 130, instead of `outcome is unknown` with the

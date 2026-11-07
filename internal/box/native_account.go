@@ -31,9 +31,13 @@ func nativeAccountSpec(ag agents.Agent) accountAuthoritySpec {
 		Complete: native.Complete}
 }
 
+// nativeSignInStagePrefix names every sign-in staging folder, directly under the configuration folder.
+const nativeSignInStagePrefix = ".sign-in-"
+
 // NativeSignInStage has no existing credentials, repository or user history.
 // The caller removes it when the sign-in stops or fails, keeps it and names it when saving fails, and
-// removes a successful stage only after canonical publication is confirmed.
+// removes a successful stage only after canonical publication is confirmed. RemoveNativeSignInStage
+// is how it goes.
 func NativeSignInStage(cfg *config.Config) (*config.Config, string, error) {
 	if cfg == nil || !filepath.IsAbs(cfg.ConfigDir) {
 		return nil, "", errors.New("invalid sign-in storage root")
@@ -41,7 +45,7 @@ func NativeSignInStage(cfg *config.Config) (*config.Config, string, error) {
 	if err := config.EnsurePrivateDir(cfg.ConfigDir); err != nil {
 		return nil, "", err
 	}
-	root, err := os.MkdirTemp(cfg.ConfigDir, ".sign-in-")
+	root, err := os.MkdirTemp(cfg.ConfigDir, nativeSignInStagePrefix)
 	if err != nil {
 		return nil, "", err
 	}
@@ -49,6 +53,39 @@ func NativeSignInStage(cfg *config.Config) (*config.Config, string, error) {
 	stage.ConfigDir = root
 	return stage, root, nil
 }
+
+// RemoveNativeSignInStage removes the one sign-in staging folder it is given, with everything the
+// provider left in it, and nothing else. A sign-in that is stopped, cancelled by a signal or
+// finished runs this on whatever path it ends by, and the staging folder holds the provider's own
+// files, a half-written credential among them, so the removal checks what it is about to delete: a
+// real folder named like a staging folder, directly under the configuration folder. The
+// configuration folder itself, anything else in it, a path elsewhere and a link are refused, and
+// the stage's siblings, another sign-in's stage among them, are never touched. A stage that is
+// already gone is not an error.
+func RemoveNativeSignInStage(cfg *config.Config, root string) error {
+	if cfg == nil || !filepath.IsAbs(cfg.ConfigDir) || !filepath.IsAbs(root) {
+		return errors.New("invalid sign-in storage root")
+	}
+	if filepath.Dir(root) != filepath.Clean(cfg.ConfigDir) || !strings.HasPrefix(filepath.Base(root), nativeSignInStagePrefix) {
+		return fmt.Errorf("refusing to remove %s: it is not a sign-in staging folder of %s", root, cfg.ConfigDir)
+	}
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("refusing to remove %s: it is not a folder", root)
+	}
+	return os.RemoveAll(root)
+}
+
+// ErrNoNativeSignIn says a provider's sign-in ended without writing the file that holds the login:
+// it was stopped, or closed before it finished, so there is nothing to save. A sign-in that wrote a
+// file Coop cannot use is a different failure, and stays one.
+var ErrNoNativeSignIn = errors.New("the sign-in wrote no login")
 
 // Readiness never falls back to old model-writable files after canonical state
 // exists, including a revoked, interrupted or unreadable canonical account.
@@ -143,6 +180,9 @@ func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, accou
 		data, err := safefile.ReadRegular(root, artifact.Name, artifact.Limit)
 		if errors.Is(err, os.ErrNotExist) && !artifact.Required {
 			continue
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read native sign-in artifact %s: %w: %w", artifact.Name, ErrNoNativeSignIn, err)
 		}
 		if err != nil {
 			return fmt.Errorf("read native sign-in artifact %s: %w", artifact.Name, err)

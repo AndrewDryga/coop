@@ -143,10 +143,25 @@ func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	}
 	fmt.Fprintf(out, "\n%s\n", p.Bold("Checking filtered access:"))
 	code, runErr := runSetupSmoke(ctx, cfg, rt, store, smoke, project, out)
+	if err := setupStopped(ctx, code, runErr); err != nil {
+		return networkstate.Qualification{}, err
+	}
 	if err := writeSetupChecks(out, p, code, runErr); err != nil {
 		return networkstate.Qualification{}, err
 	}
 	return smoke.Complete(SmokeDomain)
+}
+
+// setupStopped is the cancellation that ended the smoke before it reached a verdict, or nil. A stop
+// is no verdict on the host: the checks never finished, so the transcript would list some as passed
+// or failed that nobody ran to the end, and call this host not ready. The smoke's own cleanup has
+// already removed what it made, by name. A smoke that passed before the stop is kept: the stop
+// belongs to what comes next.
+func setupStopped(ctx context.Context, code int, runErr error) error {
+	if err := ctx.Err(); err != nil && (runErr != nil || code != 0) {
+		return err
+	}
+	return nil
 }
 
 // setupPalette colors the transcript for the stream it is written to, and not

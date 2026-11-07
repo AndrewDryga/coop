@@ -154,7 +154,7 @@ func TestApprovedLoginStates(t *testing.T) {
 	assertApprovedOutput(t, "05-login-success", captureStderr(t, func() { loginResult("claude", "work", true, false) }))
 	assertApprovedOutput(t, "05-login-first-account", captureStderr(t, func() { loginResult("claude", "work", true, true) }))
 	assertApprovedOutput(t, "05-login-unconfirmed", captureStderr(t, func() { loginResult("claude", "work", false, false) }))
-	assertApprovedOutput(t, "05-login-cancelled", captureStderr(t, loginStopped))
+	assertApprovedOutput(t, "05-login-cancelled", captureStderr(t, loginCancelled))
 }
 
 // TestApprovedCredentialViews pins the overview's exceptional states and every detail variant.
