@@ -134,3 +134,39 @@ func TestEditorChildStoppedBySupervisorIsQuiet(t *testing.T) {
 		})
 	}
 }
+
+// Only a session's own --egress offline turns an agent's failed sign-in check into the offline
+// explanation; an open session, and an offline mode from the configuration, keep the sign-in recovery.
+func TestACPOwnOfflineFlagNamesTheNetworkOnAFailedSignIn(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name, egress string
+		args         []string
+		offline      bool
+	}{
+		{name: "its own --egress offline", args: []string{"claude", "--egress", "offline"}, offline: true},
+		{name: "--egress open", args: []string{"claude", "--egress", "open"}},
+		{name: "offline from the configuration", egress: "none", args: []string{"claude"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+			if tc.egress != "" {
+				cfg.SetEgress(tc.egress) // as COOP_EGRESS sets it
+			}
+			signInCred(t, cfg, "claude", "default")
+			var got string
+			a := &app{cfg: cfg, acpSupervise: func(_ []string, ctrl *acpctl.Control) (int, error) {
+				line := []byte(`{"jsonrpc":"2.0","id":7,"error":{"code":-32603,"message":"Failed to authenticate","data":{"errorKind":"authentication_failed"}}}` + "\n")
+				out, _ := ctrl.Hooks().ToEditor(line)
+				got = string(out)
+				return 0, nil
+			}}
+			if code, err := a.cmdACP(tc.args); code != 0 || err != nil {
+				t.Fatalf("cmdACP = (%d, %v)", code, err)
+			}
+			if offline := strings.Contains(got, "An offline session cannot reach Anthropic"); offline != tc.offline || offline == strings.Contains(got, "coop login") {
+				t.Fatalf("recovery = %s; want the offline explanation: %v", got, tc.offline)
+			}
+		})
+	}
+}

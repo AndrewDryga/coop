@@ -338,6 +338,12 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if a.acpCapture != nil {
 			ctrl.LimitNetworkTargets(scope)
 		}
+		// An offline box reaches no provider, so its agent's failed sign-in check reads like a lost
+		// sign-in. This session's own --egress offline says so instead; an offline mode from COOP_EGRESS
+		// or the project runs as before, as a loop's does.
+		if mode := a.network.Mode; mode != nil && *mode == egress.None {
+			ctrl.MarkOffline()
+		}
 		a.startEditorNotice(ctrl, skipped)
 		if a.acpSupervise != nil {
 			return a.acpSupervise(inner, ctrl)

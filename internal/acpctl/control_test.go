@@ -1492,6 +1492,46 @@ func TestACPControlAuthenticationRotatesAutomaticAccountAndResends(t *testing.T)
 	}
 }
 
+// A session started with --egress offline reaches no provider, so its agent's failed sign-in check is
+// no sign-in problem: the session says it is offline, keeps its account, and never asks for coop login.
+// That holds for an Auto, a pinned and a preset-owned account, and for a session re-created after a
+// restart (the replay hook is the same recovery).
+func TestACPControlOfflineAuthenticationNamesTheNetwork(t *testing.T) {
+	offline := "An offline session cannot reach Anthropic, which Claude Code needs. Start it without --egress offline."
+	authChunk := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}}}}` + "\n")
+	authError := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32603,"message":"Failed to authenticate: OAuth session expired and could not be refreshed","data":{"errorKind":"authentication_failed"}}}` + "\n")
+	for name, sel := range map[string]Selection{
+		"auto":   {}, // online, this would rotate to work and resend
+		"pinned": {Account: "work"},
+		"preset": {Preset: "frontier"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestControl(t)
+			c.accounts = []string{"personal", "work"}
+			c.sel = sel
+			c.MarkOffline()
+			before, _, _ := c.SpawnTarget()
+			fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hello"}]}}`+"\n"))
+			if out, restart := c.toEditor(authChunk); out != nil || restart {
+				t.Fatalf("the auth chunk should be held for the turn's outcome, out=%s restart=%v", out, restart)
+			}
+			out, restart := c.toEditor(authError)
+			if restart || !bytes.Contains(out, []byte(offline)) || bytes.Contains(out, []byte("coop login")) || bytes.Contains(out, []byte("OAuth session expired")) || !bytes.Contains(out, []byte(`"code":-32603`)) {
+				t.Fatalf("an offline session's auth failure = restart %v, %s; want the offline explanation and no sign-in advice", restart, out)
+			}
+			if after, _, _ := c.SpawnTarget(); after.String() != before.String() || c.resend["S"] || c.heldChunk["S"] != nil || c.turnActive["S"] {
+				t.Fatalf("an offline session changed account or kept turn state: %s -> %s, resend %v, held %s, active %v", before.String(), after.String(), c.resend, c.heldChunk["S"], c.turnActive["S"])
+			}
+		})
+	}
+	c := newTestControl(t)
+	c.MarkOffline()
+	replayed := []byte(`{"jsonrpc":"2.0","id":"coop-replay-new-S","error":{"code":-32603,"message":"Failed to authenticate","data":{"errorKind":"authentication_failed"}}}` + "\n")
+	if out, restart, handled := c.maybeRecoverAuthentication(replayed); !handled || restart || !bytes.Contains(out, []byte(offline)) {
+		t.Fatalf("a session re-created offline = handled %v, restart %v, %s; want the offline explanation", handled, restart, out)
+	}
+}
+
 func TestACPControlAuthenticationGivesPinnedLoginRecovery(t *testing.T) {
 	c := newTestControl(t)
 	c.sel = Selection{Account: "personal"}

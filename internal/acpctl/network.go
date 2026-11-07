@@ -28,6 +28,11 @@ func (c *Control) LimitNetworkTargets(targets []agents.Target) {
 	c.creds = slices.Clone(c.accounts)
 }
 
+// MarkOffline records a session started with --egress offline: its boxes reach no provider, so a
+// failed sign-in check there is no sign-in problem and recovery names the network instead. Call only
+// before serving the editor.
+func (c *Control) MarkOffline() { c.offline = true }
+
 func (c *Control) networkProviderAllowed(provider string) bool {
 	return c.networkAccounts == nil || len(c.networkAccounts[provider]) > 0
 }

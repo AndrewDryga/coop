@@ -86,6 +86,7 @@ type Control struct {
 	presets         []string                    // the repo's presets, in order
 	accounts        []string                    // the lead's runnable accounts, for rate-limit auto-rotation (default first)
 	networkAccounts map[string]map[string]bool  // immutable provider/account scope; nil for open/offline sessions
+	offline         bool                        // started with --egress offline: its boxes reach no provider (MarkOffline)
 
 	mu          sync.Mutex
 	sel         Selection                    // tagged plain lead or preset-owned selection, never both (normalizeACPSelection)
@@ -658,6 +659,11 @@ func (c *Control) maybeRecoverAuthentication(line []byte) (out []byte, restart, 
 		currentAccount = accounts[0]
 	}
 	c.mu.Unlock()
+	if c.offline {
+		// An offline box reaches no provider, so the failed check says nothing about the sign-in on
+		// the host and no other account could pass it: rotating or asking for coop login would mislead.
+		return rewriteErrorMessage(line, offlineAuthenticationText(provider)), false, true
+	}
 	if currentAccount == "" {
 		currentAccount = c.cfg.ActiveProfile(provider)
 	}
@@ -726,6 +732,16 @@ func rewriteAuthenticationRecovery(line []byte, provider, account string) []byte
 	// Authentication is not a usage limit: the account has to be signed in again on the HOST,
 	// where the credential lives, and no wait or resend will fix it.
 	return rewriteErrorMessage(line, signInText(target))
+}
+
+// offlineAuthenticationText explains a failed sign-in check in a session started with --egress
+// offline, where the agent cannot reach its provider at all.
+func offlineAuthenticationText(provider string) string {
+	name, vendor := provider, "its provider"
+	if ag, ok := agents.Get(provider); ok {
+		name, vendor = ag.DisplayName(), ag.Vendor()
+	}
+	return fmt.Sprintf("An offline session cannot reach %s, which %s needs. Start it without --egress offline.", vendor, name)
 }
 
 // signInText names the account to sign in to and the command that does it.

@@ -3,7 +3,7 @@ name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
 sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-11-04
+updated: 2026-11-07
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -33,6 +33,12 @@ the selected provider/model/account stays exact and the editor receives its `coo
 Pinned or exhausted plain accounts use the same explicit recovery instead of entering a restart loop.
 The rewritten RPC error preserves its structural code and names the exact
 `coop login provider@account` command instead of forwarding provider-specific dead-end prose.
+A session started with `--egress offline` (`MarkOffline`) is the exception. Its box reaches no
+provider, so a failed sign-in check says nothing about the host credential. Recovery neither rotates
+nor names `coop login`; it says the session is offline. Prompts and replay re-creates take the same
+path, because ReplayFailure is `maybeRecoverAuthentication`. Offline from COOP_EGRESS or the project
+keeps the sign-in recovery, as a loop's does (298ae529): the scripted ACP harness pins
+COOP_EGRESS=offline and tests rotation, and its fixture cannot run those tests open.
 
 Filtered ACP freezes provider **and account** eligibility at supervisor admission. An adapter whose
 network bundle depends on its auth family describes the selected family without exposing secret
@@ -56,6 +62,11 @@ the provider's active one.
 
 ## Changelog
 
+- 2026-11-07 - an offline editor session said "Sign in to codex@personal on the host" when a restored
+  session failed its sign-in check (the account was signed in; offline boxes cannot reach OpenAI). A session
+  started with --egress offline now says it is offline and does not rotate. Pinned by
+  `TestACPControlOfflineAuthenticationNamesTheNetwork` and `TestACPOwnOfflineFlagNamesTheNetworkOnAFailedSignIn`
+  (task 2026-11-07-say-an-offline-editor-session-is-offline-instead).
 - 2026-11-04 - the pin now holds in a session-service child's account authority, which rereads the defaults file
 - 2026-11-04 - a changed default account no longer refuses filtered children; they pin the admitted default
 - 2026-09-19 - API-key accounts are ACP-eligible again, through the broker; the scope offers one

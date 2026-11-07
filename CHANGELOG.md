@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor session started with `--egress offline` says it is offline instead of asking you to sign
+  in again.** When its agent failed its sign-in check (it cannot reach its provider offline), coop answered
+  "Sign in to codex@personal on the host", and could rotate to another account, though the account was
+  fine. It now says "An offline session cannot reach OpenAI, which Codex needs. Start it without
+  --egress offline." Offline from COOP_EGRESS or the project keeps the sign-in recovery, as a loop does.
+
 - **Closing an editor session no longer warns about a filesystem controller that is not its own.**
   When a filesystem controller's recorded Docker endpoint was gone (a socket that no longer exists,
   or a Docker that is no longer running), every `coop acp` close and service stop warned "could not

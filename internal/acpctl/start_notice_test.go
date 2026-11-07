@@ -254,6 +254,7 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 		"server taken":    ServeUpText(ServePort{Box: 1, Host: 2, Taken: true}, "npm run dev"),
 		"server loopback": ServeLoopbackText(ServePort{Box: 1, Host: 2}, "npm run dev"),
 		"sign in":         signInText("grok@default"),
+		"offline":         offlineAuthenticationText("codex"),
 	} {
 		t.Run(name, func(t *testing.T) { threadtext.Check(t, text) })
 	}
