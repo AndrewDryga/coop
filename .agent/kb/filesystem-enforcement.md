@@ -263,7 +263,8 @@ is its proof; a missing stop line on an offline or open run points here first.
   tried; only the host-wide pass returns them). The same error also failed service starts. There is
   no endpoint fallback and custody is kept. Pinned by `TestWorkspaceRecoveryReportsOnlyControllersInUse`
   and `TestReferencedControllersNamesWhatAdmissionsBind`, whose controller-bound admission fixture copies
-  fsfilter's hook list (task 2026-11-07-keep-another-controller-s-stale-custody-record-o).
+  fsfilter's hook list. A helper exported from internal/fsfilter would change `fsimage.Fingerprint()` and
+  replace live controllers on upgrade (task 2026-11-07-keep-another-controller-s-stale-custody-record-o).
 - 2026-11-06 — an offline or open run on this backend printed no stop line, because its branch of
   `box.Run` never narrated one (`coop run --egress offline -- true` ended at `Starting true` on the
   owner's Mac); `retireFilesystem` now says it once `close` confirms the box gone. Checked with the

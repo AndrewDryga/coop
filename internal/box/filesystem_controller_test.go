@@ -163,7 +163,9 @@ func TestReferencedControllersNamesWhatAdmissionsBind(t *testing.T) {
 }
 
 // controllerHooks are fsfilter's LSM hooks, one guard program each. When fsfilter's list changes,
-// readyControllerRecord fails: copy the new list from internal/fsfilter/protocol.go.
+// readyControllerRecord fails: copy the new list from internal/fsfilter/protocol.go. It is a copy
+// because a helper exported from internal/fsfilter would change the filesystem image's fingerprint
+// (internal/fsimage hashes that folder), and so replace every live controller on upgrade.
 var controllerHooks = []string{
 	"file_open", "file_permission", "file_truncate", "file_receive", "mmap_file", "file_mprotect",
 	"inode_setattr", "inode_unlink", "inode_rmdir", "inode_link", "inode_rename", "inode_create",
