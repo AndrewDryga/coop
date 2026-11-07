@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A killed fork loop is cleaned up and resumes, and a slow Docker no longer ends a quit in a raw
+  error.** After a fork's loop was killed, `coop fork stop` removed only the agent's box, so the
+  run's gateway containers, volumes and filesystem helper kept running until the next launch. It now
+  settles that fork's filtered runs too, and names `coop net recover` for any it cannot. The first
+  resume after a kill during a task's final review failed with "completion ownership changed before
+  recovery" (the queue was not the cause), and only the second worked. The resume now settles the
+  review's leftover record before it restores the task. Quitting an agent on a loaded Docker ended
+  in "Docker archive read failed / context deadline exceeded" after 15 seconds. The final network
+  record now gets a minute, and one that still times out says in a sentence that the record is
+  incomplete, the box has stopped and your work is kept.
+
 - **A refused Codex review receipt quotes the reviewer's real last line.** The log named an internal
   marker as the last line (`the last line "\x00coop-codex-…\x00" is not a valid receipt`), not what
   the reviewer wrote last, such as `Review finished, thank you.` after its receipt. The refusal and

@@ -289,6 +289,12 @@ var dockerControlTimeout = 15 * time.Second
 // filtered launch's limit on a helper's create is this same number (filteredControlTimeout).
 const DockerCreateTimeout = 60 * time.Second
 
+// dockerArchiveTimeout bounds one evidence archive read, from its inspect to the daemon check after it.
+// It is a create's minute and not a control call's 15 seconds: the archive is a few kilobytes, but a
+// host loaded enough to keep Docker waiting past 15 seconds is the one whose final network record that
+// bound lost. A var so a test need not wait this long.
+var dockerArchiveTimeout = DockerCreateTimeout
+
 // Every control call is finite and retains bounded output. Error prose never
 // contains runtime stderr: image labels and daemon errors can contain secrets.
 func dockerOutput(ctx context.Context, binary string, env []string, limit int, args ...string) ([]byte, error) {

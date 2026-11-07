@@ -128,6 +128,9 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 				// agent might still survive. Never accept that misleading final frame.
 				ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 				data, captureErr := f.docker.CopyArchive(ctx, guard, networkgateway.FinalObservationPath, networkgateway.MaxSnapshotBytes+64<<10)
+				if errors.Is(captureErr, context.DeadlineExceeded) {
+					captureErr = errFinalRecordSlow
+				}
 				if captureErr == nil {
 					var observation []byte
 					observation, captureErr = finalObservationFile(data)
@@ -257,6 +260,13 @@ func (f *filteredExecution) confirmGone(evidence *networkstate.Evidence, role st
 		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
 }
+
+// errFinalRecordSlow is what a person reads when Docker did not hand over a run's final network record
+// in time. By then the agent's box has stopped and the run's work is on the host, so it says what the
+// record lost and what to do about it, not Docker's own "context deadline exceeded".
+//
+//lint:ignore ST1005 it is a sentence for a person, and Docker is a name
+var errFinalRecordSlow = errors.New("Docker was too slow to hand over this run's final network record, so the record is incomplete. The box has stopped and your work is kept. Run it again when Docker is less busy if you need the full record")
 
 func finalObservationFile(data []byte) ([]byte, error) {
 	reader := tar.NewReader(bytes.NewReader(data))

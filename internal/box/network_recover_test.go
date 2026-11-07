@@ -684,6 +684,112 @@ func TestRecoverNetworkRunsSettlesOnlyTheRunItWasGiven(t *testing.T) {
 	}
 }
 
+// A command that has just proved one workspace's coop gone (coop fork stop after a worker was killed)
+// settles that workspace's runs and nothing else's: the dead run of another workspace stays owed for
+// the host-wide pass, and a run of this workspace whose supervisor still lives keeps its gateway. A
+// path spelled through a link names the same workspace.
+func TestRecoverWorkspaceNetworkRunsSettlesOnlyThatWorkspacesDeadRuns(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	newRun := func(project, fingerprint string) networkstate.Execution {
+		t.Helper()
+		// One preflight runs one smoke, so each run needs its own.
+		smoke, err := f.store.BeginQualification(d.smoke.Candidate(),
+			[]networkstate.QualifiedClient{{Provider: "claude", Client: egress.ClientCLI, Version: "2.1.260"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := smoke.CreateExecution(context.Background(), networkstate.ExecutionSpec{
+			Host: f.record.Supervisor.Host, Project: project, PolicyFingerprint: fingerprint,
+			Runtime: "docker", DaemonID: f.record.DaemonID, Endpoint: f.record.Endpoint,
+			GatewayImage: f.record.GatewayImage, ClientImage: f.record.ClientImage})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := egress.Filtered
+	policy, err := f.store.Admit(elsewhere, networkstate.Admission{InvocationMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := newRun(elsewhere, policy.Fingerprint)            // another workspace, its supervisor dead
+	running := newRun(f.record.Project, f.policy.Fingerprint) // this workspace, its supervisor alive
+	departSupervisor(t, f.store, f.record.ID)
+	departSupervisor(t, f.store, other.ID)
+
+	link := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(f.record.Project, link); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := recoverWorkspaceNetworkRuns(context.Background(), evidence, link, connect)
+	if err != nil || settled != 1 {
+		t.Fatalf("workspace recovery = %d settled, %v; want this workspace's dead run only", settled, err)
+	}
+	if record, err := evidence.Execution(f.record.ID); err != nil || record.Receipt == nil || record.Receipt.Workload != "supervisor_lost" ||
+		slices.ContainsFunc(record.Resources, func(r networkstate.Resource) bool { return r.State != "gone" }) {
+		t.Fatalf("the workspace's dead run was not settled whole: %+v %v", record.Receipt, err)
+	}
+	d.mu.Lock()
+	left := len(d.containers) + len(d.volumes)
+	d.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("recovery left %d of the dead run's containers and volumes", left)
+	}
+	for name, id := range map[string]string{"another workspace's dead run": other.ID, "this workspace's live run": running.ID} {
+		if record, err := evidence.Execution(id); err != nil || record.Receipt != nil {
+			t.Fatalf("%s was settled by a pass that was not its to make: %+v %v", name, record.Receipt, err)
+		}
+	}
+	if again, err := recoverWorkspaceNetworkRuns(context.Background(), evidence, link, connect); err != nil || again != 0 {
+		t.Fatalf("second workspace pass = %d settled, %v; want nothing left", again, err)
+	}
+	// The other workspace's run was only out of scope: the host-wide pass settles it, and still leaves
+	// the run whose supervisor lives.
+	rest, err := recoverNetworkRuns(context.Background(), evidence, "", connect)
+	if err != nil || len(rest) != 2 {
+		t.Fatalf("host-wide pass = %+v %v, want the dead run and the live one", rest, err)
+	}
+	for _, result := range rest {
+		if result.RunID == other.ID && !result.Sealed || result.RunID == running.ID && !result.Live {
+			t.Fatalf("host-wide pass result %+v", result)
+		}
+	}
+}
+
+// A host that never recorded a filtered run has nothing to settle, and a stop on it must not reach for a
+// runtime or fail: the runtime here is one that cannot run. An empty workspace is no workspace, never
+// the filesystem recovery's every-gone-workspace sweep.
+func TestRecoverWorkspaceRunsWithNothingRecordedSettlesNothing(t *testing.T) {
+	rt := runtime.Runtime{Name: filepath.Join(t.TempDir(), "no-such-docker")}
+	for _, workspace := range []string{"", t.TempDir()} {
+		settled, err := RecoverWorkspaceRuns(context.Background(), rt, workspace)
+		if err != nil || settled != 0 {
+			t.Fatalf("RecoverWorkspaceRuns(%q) on a host with no record = %d, %v; want nothing", workspace, settled, err)
+		}
+	}
+}
+
+// A run this workspace owns that Docker would not let go is a failure of the pass, so the command
+// that asked can say so and be retried, and the next pass finishes the cleanup.
+func TestRecoverWorkspaceNetworkRunsReportsARemovalDockerRefused(t *testing.T) {
+	f, d, evidence, connect := recoveryFixture(t)
+	departSupervisor(t, f.store, f.record.ID)
+	d.refuseRemoval = "controller"
+	settled, err := recoverWorkspaceNetworkRuns(context.Background(), evidence, f.record.Project, connect)
+	if err == nil || settled != 0 {
+		t.Fatalf("a refused removal = %d settled, %v; want it reported and the run not counted", settled, err)
+	}
+	d.refuseRemoval = ""
+	settled, err = recoverWorkspaceNetworkRuns(context.Background(), evidence, f.record.Project, connect)
+	if err != nil || settled != 1 {
+		t.Fatalf("the retry = %d settled, %v; want the cleanup finished", settled, err)
+	}
+}
+
 // Cleanup nobody could finish stays owed, so the next ordinary coop start
 // retries it — one bounded pass per start, never a loop of its own. Once it
 // settles, later passes have nothing left to do.

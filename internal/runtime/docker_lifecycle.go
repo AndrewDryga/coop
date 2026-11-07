@@ -535,7 +535,7 @@ func (d *Docker) CopyArchive(ctx context.Context, ref DockerRef, source string, 
 	if ctx == nil || limit <= 0 || limit > 4<<20 {
 		return nil, errors.New("invalid bounded Docker archive read")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, dockerArchiveTimeout)
 	defer cancel()
 	_, present, err := d.InspectContainer(ctx, ref)
 	if err != nil || !dockerHexID(ref.ID) || !present || !strings.HasPrefix(source, "/") || strings.ContainsAny(source, "\x00\r\n") {

@@ -9,6 +9,7 @@
 package forkctl
 
 import (
+	"context"
 	"io"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -79,6 +80,9 @@ type Control struct {
 
 	// gateOK is the merge-gate test seam: nil runs the real gate in the box.
 	gateOK func(gateRepo, treeDir, img string) bool
+	// settleRuns is the test seam for what a stop settles after the fork's coop is gone: nil runs
+	// box.RecoverWorkspaceRuns. It returns how many filtered runs it settled whole.
+	settleRuns func(ctx context.Context, rt runtime.Runtime, workspace string) (int, error)
 	// askDelete is the test seam for rm's delete question: a test answers it as a person at the
 	// terminal would. nil asks the terminal, through ui.DestroyGate's own prompt.
 	askDelete func(question string) bool

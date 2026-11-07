@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -86,14 +87,72 @@ func RecoverNetworkRuns(ctx context.Context, rt runtime.Runtime, runID string) (
 		return nil, err
 	}
 	defer evidence.Close()
-	connect := func(ctx context.Context, endpoint string) (recoverDocker, string, error) {
+	return recoverNetworkRuns(ctx, evidence, runID, bindRecoveryDocker(rt))
+}
+
+// bindRecoveryDocker reaches the daemon a run recorded, for the recoveries that remove what it left.
+func bindRecoveryDocker(rt runtime.Runtime) recoverConnect {
+	return func(ctx context.Context, endpoint string) (recoverDocker, string, error) {
 		docker, err := runtime.BindDocker(ctx, rt, endpoint, "")
 		if err != nil {
 			return nil, "", err
 		}
 		return docker, docker.Info().ID, nil
 	}
-	return recoverNetworkRuns(ctx, evidence, runID, connect)
+}
+
+// RecoverWorkspaceRuns settles what a coop that died left running for one workspace: the filtered runs
+// it supervised (their gateway pair, volumes and receipt) and the filesystem helper of its admissions.
+// It is RecoverNetworkRuns and RecoverFilesystemAdmissions narrowed to that workspace, for a command that
+// has just proved the workspace's coop gone, such as coop fork stop after a worker was killed: the
+// worker's agent box carries the fork's labels, but its gateway pair and helper carry the run's own,
+// so nothing else removes them until the next launch. The proof is the same as theirs. A supervisor
+// that still runs, or whose identity cannot be read, keeps its run, and so does a run of another
+// workspace. It returns how many runs it settled whole and what stopped a run it reached from being
+// settled. A run it could not reach (another computer, another Docker daemon, a daemon that is not
+// running) is no failure of this pass: a later launch or coop net recover settles it. The filesystem
+// helper is best effort, as a launch treats it: its recovery reads every workspace's custody records,
+// so an error there may be another workspace's.
+func RecoverWorkspaceRuns(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
+	if workspace == "" {
+		return 0, nil // an empty workspace would mean every gone workspace to the filesystem recovery
+	}
+	_, _ = RecoverFilesystemAdmissions(ctx, rt, workspace)
+	root, err := NetworkStatePath()
+	if err != nil {
+		return 0, nil // a host with no usable state folder has recorded no filtered run
+	}
+	evidence, err := networkstate.OpenEvidence(root, nil)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil // no filtered run was ever recorded on this host
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer evidence.Close()
+	return recoverWorkspaceNetworkRuns(ctx, evidence, workspace, bindRecoveryDocker(rt))
+}
+
+func recoverWorkspaceNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, workspace string, connect recoverConnect) (int, error) {
+	now := time.Now()
+	runs, err := pendingNetworkRuns(evidence, "", now)
+	var unreadable *UnreadableNetworkRuns
+	if err != nil && !errors.As(err, &unreadable) {
+		return 0, err // an unread record is never a reason to touch the others
+	}
+	want, settled := canonicalWorkspace(workspace), 0
+	var failures []error
+	for _, record := range runs.pending {
+		if canonicalWorkspace(record.Project) != want {
+			continue
+		}
+		result := recoverNetworkRun(ctx, evidence, record, connect, now)
+		failures = append(failures, result.Failures...)
+		if result.Skipped == "" && len(result.Pending) == 0 && len(result.Failures) == 0 {
+			settled++
+		}
+	}
+	return settled, errors.Join(failures...)
 }
 
 func recoverNetworkRuns(ctx context.Context, evidence *networkstate.Evidence, runID string, connect recoverConnect) ([]NetworkRecovery, error) {

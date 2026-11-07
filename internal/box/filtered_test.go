@@ -40,6 +40,7 @@ type filteredDaemonFixture struct {
 	sequence                               networkview.Count
 	ambiguous, refuseRemoval, corruptRole  string
 	brokenProbe, holdAgent, malformedFinal bool
+	slowFinal                              bool // the final observation's archive read outlasts its deadline
 	ctrlCAtStart                           bool // the agent's start is recorded as ended by Ctrl-C, not as a refusal
 	resolverStatus                         *string
 	corruptMount                           string
@@ -633,6 +634,10 @@ func (d *filteredDaemonFixture) CopyArchive(_ context.Context, ref runtime.Docke
 	if d.containers[ref.Name].State.StartedAt.IsZero() {
 		return nil, errors.New("Could not find the file " + path)
 	}
+	if d.slowFinal {
+		// What the runtime returns when a loaded Docker outlasts the archive read's bound.
+		return nil, errors.Join(errors.New("Docker archive read failed"), context.DeadlineExceeded)
+	}
 	if d.malformedFinal {
 		return []byte("invalid archive"), nil
 	}
@@ -1200,6 +1205,47 @@ func TestFilteredMissingFinalEvidenceIsPartialButCleanupContinues(t *testing.T) 
 	r, err := f.store.Execution(f.record.ID)
 	if err != nil || r.Receipt == nil || r.Receipt.Completeness != "partial" || r.Receipt.Cleanup != "complete" {
 		t.Fatal("missing final evidence lied about completeness", err)
+	}
+}
+
+// A Docker too slow to hand over the final record still gets the run sealed as partial and every
+// resource removed, and the person reads one plain sentence that says what failed and what is kept,
+// not Docker's own "Docker archive read failed" and "context deadline exceeded".
+func TestFilteredSlowFinalEvidenceReadsAsOnePlainLine(t *testing.T) {
+	f, d := filteredFixture(t)
+	d.slowFinal = true
+	if _, err := f.launch(context.Background(), RunSpec{}, nil, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := f.cleanup("exited")
+	if err == nil || !gone {
+		t.Fatalf("slow final evidence was hidden or blocked cleanup: gone %v, err %v", gone, err)
+	}
+	if !errors.Is(err, errFinalRecordSlow) {
+		t.Fatalf("the slow read is reported as %q, want the plain sentence", err)
+	}
+	text := err.Error()
+	for _, raw := range []string{"archive read failed", "context deadline exceeded"} {
+		if strings.Contains(text, raw) {
+			t.Errorf("the error still carries Docker's %q:\n%s", raw, text)
+		}
+	}
+	if strings.Contains(strings.TrimSpace(text), "\n") {
+		t.Errorf("the error is more than one line:\n%s", text)
+	}
+	for _, want := range []string{"too slow", "final network record", "your work is kept", "less busy"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the error does not say %q:\n%s", want, text)
+		}
+	}
+	r, rerr := f.store.Execution(f.record.ID)
+	if rerr != nil || r.Receipt == nil || r.Receipt.Completeness != "partial" || r.Receipt.Cleanup != "complete" {
+		t.Fatal("a slow final read was not sealed as partial with its cleanup complete", rerr)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.containers) != 0 || len(d.volumes) != 0 {
+		t.Fatalf("cleanup stopped at the slow read: %d container(s) and %d volume(s) remain", len(d.containers), len(d.volumes))
 	}
 }
 

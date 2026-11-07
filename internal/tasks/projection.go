@@ -958,6 +958,25 @@ func prepareForkProjection(authorityRepo, root, id string, expected ForkTaskOwne
 	if expected.Phase != ForkAssignmentPreparing && expected.Phase != ForkAssignmentWorking && expected.Phase != ForkAssignmentPaused {
 		return fmt.Errorf("done projection is already in assignment phase %s", expected.Phase)
 	}
+	// A worker killed during its final review leaves that review's completion window, with this folder
+	// archived in its baseline. Settle the window the way a loop's own start does, now, while the folder
+	// is still done: once the restore below has moved it, the loop's recovery would read the host's own
+	// move as a lifecycle change nobody was entitled to make, and the first resume after a crash would
+	// end there. Only a window nobody holds is settled, and a change it cannot explain still stops the run.
+	queue, err := forkProjectionQueue(authorityRepo, expected)
+	if err != nil {
+		return err
+	}
+	if _, err := ReconcileCompletionWindowsWithActivity([]string{queue}); err != nil {
+		return fmt.Errorf("recover interrupted completion window: %w", err)
+	}
+	// The recovery restores an unreceipted completion itself, so the folder may no longer be done.
+	if result, err = validateForkProjectionOpened(root, id, expected, projection); err != nil {
+		return err
+	}
+	if result.State != StateDone {
+		return nil
+	}
 	// The next projection lease clears the old completion receipt under the same global authority
 	// flock. Avoid reopening a sandbox-controlled pathname here merely to clear it early.
 	if err := moveProjectedTask(projection, StateDone, StateInProgress, id); err != nil {

@@ -2,7 +2,7 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
 updated: 2026-11-06
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
@@ -57,7 +57,9 @@ container sharing the folder with macOS, or the reverse) is refused before the r
 naming the system whose coop can check that pid (`forkForeignWorker`); a detached start refuses it
 the same way. Then it reaps the boxes labelled with the fork's exact owner, generation and worker
 flag, retires provably dead `fork-loop` sandbox records of that generation after their own exact
-runtime reap, and removes the file last. Any failure leaves the record as it was: a dead worker's
+runtime reap, settles the fork's filtered runs (`settleForkRuns`: the gateway pair, volumes and
+filesystem helper a killed worker leaves under the run's own labels), and removes the file last. A
+settle that cannot finish warns and never fails the stop. Any other failure leaves the record as it was: a dead worker's
 record is the retry handle, so a new start refuses it and the next stop finishes. Live, unknown,
 other-system, foreign-generation and foreground/editor records stay held. With no file, stop still
 reaps provably dead execution records of the exact generation. Nothing else clears a dead worker's
@@ -271,6 +273,11 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-06 — stop settles the fork's filtered runs after its label reap (`settleForkRuns` →
+  `box.RecoverWorkspaceRuns`), once the worker is proved gone: a killed worker's guard, controller,
+  volumes and filesystem helper carry the run's labels, not the fork's. A run it cannot settle warns
+  and names `coop net recover`; the stop still ends (task
+  2026-11-06-survive-a-killed-fork-worker-and-a-slow-docker-a).
 - 2026-11-06 — a loop that takes no task leaves a `.coop/loop-end` hint beside `loop-error` and says
   why in its own output; a merge moves the fork's `origin/HEAD` so `coop fork ls` counts changes
   from the fork's real base; a loop on a kept merged fork is refused up front (task

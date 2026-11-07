@@ -110,6 +110,15 @@ Execution records live beside fork state. The per-project fallback folder older 
 as a problem, and the service-launch locks beside it stay.
 
 ## Changelog
+- 2026-11-06 — restoring a done projection (`prepareForkProjection`, which both the resume and the
+  failed-pass restore use) first settles the projection's completion windows with
+  `ReconcileCompletionWindowsWithActivity`, as a loop's own start does, after it has proved the
+  owner and before the move. A worker killed in its final review leaves a window that archives the
+  folder, and the resume's own move out of done then read as an unexplained departure
+  ("completion ownership changed before recovery") and failed the first resume; the second worked
+  only because that error consumed the window. The queue the task came from was never a cause: the
+  windows are keyed by the projection. A window someone holds, and a change the journal cannot
+  explain, are left as they were (task 2026-11-06-survive-a-killed-fork-worker-and-a-slow-docker-a).
 - 2026-11-06 — a changed copy that still asks the person's question keeps their answer: any byte the
   fork changed, such as one line it added, had reset the canonical answer to the placeholder and
   lost it; an old answer still never carries onto a new question (task

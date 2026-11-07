@@ -27,6 +27,11 @@ import (
 // and a timeout here fails the stop with "fix the container runtime", which a slow daemon isn't.
 const forkStopReapTimeout = 30 * time.Second
 
+// forkStopSettleTimeout bounds the settling of one stopped fork's filtered runs: a gateway pair, two
+// volumes and a filesystem helper are a few dozen Docker calls, each of which a busy host answers in
+// seconds. Like forkStopReapTimeout it guards a wedged runtime, not speed.
+const forkStopSettleTimeout = 2 * time.Minute
+
 // ForkContainerOwner scopes runtime cleanup to one parent repo, fork name, and the immutable
 // workspace generation.
 func ForkContainerOwner(repo, name string, generation forkspace.Generation) string {
@@ -536,6 +541,9 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 				return 1, fmt.Errorf("fork %s runtime is gone, but its activity record cleanup failed: %w", name, err)
 			}
 		}
+		if needsWorkerReap || len(stale) > 0 {
+			c.settleForkRuns(name, forkspace.Workspace(repo, name))
+		}
 		if hasGeneration && (needsWorkerReap || len(stale) > 0) {
 			if err := pauseForkTaskAssignments(c.cfg, repo, forkIdentity); err != nil {
 				return 1, fmt.Errorf("fork %s stopped, but pausing its task assignment failed: %w", name, err)
@@ -668,6 +676,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	if n > 0 {
 		ui.Detail("removed %s", ui.Count(n, "orphaned box container"))
 	}
+	c.settleForkRuns(name, forkspace.Workspace(repo, name))
 	if err := forkspace.RemoveWorkerState(repo, name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: ls -ld %q %q; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), forkspace.StateDir(repo), name)
 	}
@@ -690,6 +699,30 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 		ui.Note("  Continue: %s", resume)
 	}
 	return 0, nil
+}
+
+// settleForkRuns finishes what the fork's coop left at the runtime once it is gone. A worker that was
+// killed, by a person or by this stop's own escalation, cannot tear down its filtered runs, and the
+// box reap above finds only the agent's box: the gateway pair, the volumes and the filesystem helper of
+// each run carry the run's own labels, not the fork's, so they would run until the next launch settled
+// them. It never fails the stop: what it could not finish stays pending for the next launch, and
+// refusing to stop would hold a fork that nothing else can free. A run it could not finish is named
+// with the command that finishes it.
+func (c *Control) settleForkRuns(name, workspace string) {
+	settle := c.settleRuns
+	if settle == nil {
+		settle = box.RecoverWorkspaceRuns
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), forkStopSettleTimeout)
+	defer cancel()
+	settled, err := settle(ctx, c.rt, workspace)
+	if settled > 0 {
+		ui.Detail("recovered %s whose coop process is gone (coop net runs)", ui.Count(settled, "interrupted filtered run"))
+	}
+	if err != nil {
+		ui.Warning("Coop could not finish removing the network containers of fork "+name,
+			err.Error(), "Remove them with: coop net recover")
+	}
 }
 
 func pauseForkTaskAssignments(_ *config.Config, repo string, identity forkspace.Identity) error {

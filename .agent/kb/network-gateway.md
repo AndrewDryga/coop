@@ -269,7 +269,11 @@ and run labels, remove what matches, and leave a holder of the name with other l
 (`runtime.ErrDockerOwnership`, reported as `NetworkRecovery.Unverified`). Absence proves a resource
 gone only when no create of it can still be running: Docker finishes a create whose client gave up.
 A create has its own minute (`runtime.DockerCreateTimeout`, which `filteredControlTimeout` names;
-every other Docker CLI call keeps a 15-second bound). A container create Docker refused made
+every other Docker CLI call keeps a 15-second bound). The final observation's archive read gets that
+minute too (`dockerArchiveTimeout`, from the inspect to the daemon check after it), and a read that
+outlasts it reaches the person as one sentence (`errFinalRecordSlow`: the record is incomplete, the box
+has stopped, the work is kept), not Docker's `Docker archive read failed` over `context deadline
+exceeded`; the receipt is sealed partial and the cleanup carries on either way. A container create Docker refused made
 nothing and is not marked (`runtime.ErrDockerCreateRefused`: the client's exit status 125, or its
 line relaying the daemon's error reply). A create with no known
 outcome is marked unfinished (`markUnfinished`), in memory and in the record as
@@ -286,7 +290,12 @@ no host is judged only by a coop outside a container, as v1 labels are. It runs 
 owed either (scoped to that run), from the orphan sweep at a loop, fork or build start, and before
 every other filtered host launch — `runBox` in `cli/boxsweep.go`, and a fork or session review gate
 through `forkctl.Host.SettleFilteredRuns` — never before an open or offline one, because finding the
-pending runs reads every retained record. The guard and controller carry only `coop.network.*`
+pending runs reads every retained record. `coop fork stop` settles one workspace's runs itself
+(`box.RecoverWorkspaceRuns`: the runs whose `Project` is the fork's workspace and whose supervisor is
+gone, plus that workspace's filesystem helper): a killed fork worker's agent box carries the fork's
+labels, but its guard, controller and volumes carry only the run's, which the stop's label reap never
+matches, so before 2026-11-06 a stopped fork kept them running until the next launch. A run it cannot
+settle makes the stop warn and name `coop net recover`; it never fails the stop. The guard and controller carry only `coop.network.*`
 labels (the agent also carries `coop=box`), so the box sweep alone never reclaimed them: a run
 killed mid-teardown, followed only by direct launches, kept both containers and both volumes until
 2026-09-18. `coop net setup` drives its ONE smoke through this same engine behind a host-only
@@ -384,6 +393,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — `coop fork stop` settles the stopped fork's filtered runs (`box.RecoverWorkspaceRuns`),
+  so a killed worker no longer leaves its guard, controller, volumes and filesystem helper running; the
+  final observation's archive read has a minute, not 15 seconds, and a read that still times out is one
+  plain sentence (task 2026-11-06-survive-a-killed-fork-worker-and-a-slow-docker-a).
 - 2026-11-06 — Ctrl-C before the box starts is a stop, not a failure: one plain line, exit 130, the
   attach client's raw words held back, and a Ctrl-C only the box heard recognized from the daemon's
   record (task 2026-11-06-stop-a-box-start-cleanly-on-ctrl-c).

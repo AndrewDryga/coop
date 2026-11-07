@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
@@ -91,6 +93,69 @@ func TestDockerCopyArchiveUsesBoundAPI(t *testing.T) {
 			wantCopy := fault != "wrong-owner" && fault != "invalid-limit" && fault != "invalid-source" && fault != "closed"
 			if copied.Load() != wantCopy {
 				t.Fatalf("archive request = %v, want %v", copied.Load(), wantCopy)
+			}
+		})
+	}
+}
+
+// A loaded Docker answers late, not never. The read keeps waiting for its whole bound, which is a
+// create's minute and not a control call's 15 seconds. One that outlasts the bound fails as a
+// deadline, which the caller turns into a sentence, and the read stops at the bound rather than
+// waiting on a daemon that never answers.
+func TestDockerCopyArchiveWaitsForASlowDaemonUpToItsBound(t *testing.T) {
+	if dockerArchiveTimeout < DockerCreateTimeout {
+		t.Fatalf("archive read bound = %s, want at least a create's %s", dockerArchiveTimeout, DockerCreateTimeout)
+	}
+	const source, payload = "/observations/final.tar", "slow archive bytes"
+	for _, tc := range []struct {
+		name    string
+		bound   time.Duration
+		answer  time.Duration // how long the daemon takes to start answering; 0 is never
+		wantErr bool
+	}{
+		{name: "answers late, inside the bound", bound: 5 * time.Second, answer: 150 * time.Millisecond},
+		{name: "never answers, so the bound ends the read", bound: 400 * time.Millisecond, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := dockerArchiveTimeout
+			dockerArchiveTimeout = tc.bound
+			t.Cleanup(func() { dockerArchiveTimeout = old })
+			rt, file := fixtureDocker(t, dockerFixture{Container: dockerFixtureContainer()})
+			ordinary := fixtureDockerAPI(file)
+			endpoint := dockersock.ServeHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/containers/"+dockerFixtureRef().ID+"/archive" {
+					ordinary.ServeHTTP(w, r)
+					return
+				}
+				if tc.answer == 0 {
+					<-r.Context().Done()
+					return
+				}
+				select {
+				case <-time.After(tc.answer):
+					fmt.Fprint(w, payload)
+				case <-r.Context().Done():
+				}
+			}))
+			d, err := BindDocker(t.Context(), rt, endpoint, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			d.binary = "/unavailable-docker"
+			started := time.Now()
+			data, err := d.CopyArchive(t.Context(), dockerFixtureRef(), source, len(payload))
+			if !tc.wantErr {
+				if err != nil || string(data) != payload {
+					t.Fatalf("a slow answer inside the bound was lost: %q %v", data, err)
+				}
+				return
+			}
+			if err == nil || data != nil || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("a read that outlasts its bound = %q, %v; want a deadline error", data, err)
+			}
+			if elapsed := time.Since(started); elapsed > tc.bound+3*time.Second {
+				t.Fatalf("the read ran %s, long past its %s bound", elapsed, tc.bound)
 			}
 		})
 	}

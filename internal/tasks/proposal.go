@@ -271,6 +271,16 @@ func forkProjectionRel(authorityRepo string, owner ForkTaskOwner) (string, error
 	return rel, nil
 }
 
+// forkProjectionQueue is the projection's folder as a loop names its queue: the path forkProjectionRel
+// checks, below the fork's workspace.
+func forkProjectionQueue(authorityRepo string, owner ForkTaskOwner) (string, error) {
+	rel, err := forkProjectionRel(authorityRepo, owner)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(forkspace.Workspace(authorityRepo, owner.Fork.Name), rel), nil
+}
+
 func forkProposalParentRel(authorityRepo string, owner ForkTaskOwner) (string, error) {
 	projection, err := forkProjectionRel(authorityRepo, owner)
 	if err != nil {
