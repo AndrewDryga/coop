@@ -188,6 +188,13 @@ edit files on the host.</p>
 shows the cover&#39;s size and times, not the real ones. On a case-insensitive disk, it also covers the
 uppercase and lowercase spellings of a hidden filename with up to 11 letters, and every spelling of
 <code>.coopignore</code>.</p>
+<p>Mount protection lays its covers when the agent or service starts. A secret you create on the host
+afterwards at a public path, such as a new <code>late.pem</code> or <code>.env.local</code>, stays readable in that box until
+it restarts. A file created inside a folder that is already hidden stays out of reach, because the box
+sees only the folder&#39;s empty cover. So create secrets before you start an agent, keep them in a hidden
+folder such as <code>secrets/</code>, or restart the agent after you add one. The box can&#39;t rename a hidden
+folder, but it can rename a folder that only holds a covered file; the file stays covered at its new
+path.</p>
 <p>A longer filename, or a project with too many spellings, can exceed the mount limit. The box or
 service could then read the file under another letter case, so co:op refuses to launch the agent
 or service. Either:</p>
@@ -202,6 +209,8 @@ service runs. Newly exposed paths need another approval, and running boxes stay 
 <code>.coopignore</code> cannot be approved this way. <code>COOP_ALLOW_CASE_EXPOSED_SECRETS=1</code> exposes the files
 for a single run. eBPF protects these paths without either kind of approval.</p>
 <h3 id="filesystem-protection-contract">Filesystem protection contract</h3>
+<p>This contract describes eBPF protection. Mount protection hides only what exists at start, as
+described above.</p>
 <p>co:op trusts the host and its editors. Each time it starts an agent or service with eBPF protection,
 it captures the current hiding rules and the protected files and folders, and it keeps checking
 every file name the box opens against the built-in list. In practice:</p>
