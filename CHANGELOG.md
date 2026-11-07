@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A rules file made on Ubuntu works with `--egress-rules`.** Ubuntu's default umask makes every new file
+  group-writable, so a file you had just written was refused as "not writable by others". Group write is
+  now accepted when the group is your own private one, with no ACL and only local accounts on the host.
+  Elsewhere the refusal stands; `chmod g-w` the file.
+
 - **Forks of a project with a Dockerfile work on Linux.** A fork's checkout gets its file modes from your
   umask, and `coop init`'s empty folders never reach it, so every fork was refused for "changed" files it
   had not changed. Project builds now follow what Git records: files are 0644 or 0755, and a folder with

@@ -210,3 +210,73 @@ func TestRuleFlagsNameWhatMadeTheRunOpenOrOffline(t *testing.T) {
 		t.Fatalf("a filtered run refused its rule flags: %v", err)
 	}
 }
+
+// Debian, Ubuntu and Fedora create files at 0664 in the user's own group, where only the owner can use
+// the write bit. Any sign that someone else could use it, or that the files cannot say, is a refusal.
+func TestPrivateGroupIsOnlyTheOwnersOwnGroup(t *testing.T) {
+	const me = "root:x:0:0::/root:/bin/sh\nme:x:1000:1000::/home/me:/bin/bash\nother:x:1001:1001::/home/other:/bin/bash\n"
+	const groups = "root:x:0:\nme:x:1000:\nother:x:1001:\nstaff:x:50:me,other\n"
+	for _, tc := range []struct {
+		name          string
+		passwd, group string
+		uid           int
+		gid           uint32
+		want          bool
+	}{
+		{"own group", me, groups, 1000, 1000, true},
+		{"own group listing only the owner", me, "me:x:1000:me\n", 1000, 1000, true},
+		{"a shared group", me, groups, 1000, 50, false},
+		{"someone else's group", me, groups, 1000, 1001, false},
+		{"another member", me, "me:x:1000:me,other\n", 1000, 1000, false},
+		{"another user's primary group", me + "guest:x:1002:1000::/home/guest:/bin/sh\n", groups, 1000, 1000, false},
+		{"a group not named after the user", me, "devs:x:1000:\n", 1000, 1000, false},
+		{"a second entry for the group", me, groups + "devs:x:1000:\n", 1000, 1000, false},
+		{"a user the file does not hold", me, groups, 2000, 1000, false},
+		{"a group the file does not hold", me, "root:x:0:\n", 1000, 1000, false},
+		{"a second entry for the user", me + "me2:x:1000:1000::/home/me:/bin/sh\n", groups, 1000, 1000, false},
+		{"a primary group that differs", "me:x:1000:50::/home/me:/bin/bash\n", groups, 1000, 1000, false},
+	} {
+		if got := privateGroup(tc.passwd, tc.group, tc.uid, tc.gid); got != tc.want {
+			t.Errorf("%s: privateGroup = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	for _, malformed := range []string{"+::::::\n", "guest:x:1002:01000::/home/guest\n", "guest:x:abc:1000::/home/guest:/bin/sh\n"} {
+		if privateGroup(me+malformed, groups, 1000, 1000) {
+			t.Errorf("an unreadable passwd line %q did not refuse", malformed)
+		}
+	}
+	for _, malformed := range []string{"+:::\n", "me2:x:1000\n", "me2:x:01000x:\n"} {
+		if privateGroup(me, groups+malformed, 1000, 1000) {
+			t.Errorf("an unreadable group line %q did not refuse", malformed)
+		}
+	}
+	for text, want := range map[string]bool{
+		"passwd: files systemd\ngroup: files systemd\nhosts: files dns\n": true,
+		"# comment\npasswd: files\ngroup: files [NOTFOUND=return]\n":      true,
+		"passwd: files sss systemd\ngroup: files systemd\n":               false,
+		"passwd: files\ngroup: files ldap\n":                              false,
+		"passwd: compat\ngroup: compat\n":                                 false,
+		"passwd: files\n":                                                 false,
+		"":                                                                false,
+	} {
+		if got := localAccountsOnly(text); got != want {
+			t.Errorf("localAccountsOnly(%q) = %v, want %v", text, got, want)
+		}
+	}
+	file, err := os.Create(filepath.Join(t.TempDir(), "rules.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for _, tc := range []struct {
+		perm os.FileMode
+		want bool
+	}{{0o644, true}, {0o600, true}, {0o646, false}, {0o666, false}, {0o602, false}} {
+		if got := rulesFileWritableOnlyByOwner(file, tc.perm, 1<<31); got != tc.want {
+			t.Errorf("mode %o: writable only by owner = %v, want %v", tc.perm, got, tc.want)
+		}
+	}
+	if rulesFileWritableOnlyByOwner(file, 0o664, 1<<31) {
+		t.Error("group write in a group the host's files do not hold was allowed")
+	}
+}

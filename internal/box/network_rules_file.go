@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"golang.org/x/sys/unix"
 )
 
 // captureNetworkRulesFile reads one bounded regular-file descriptor. Its rules
@@ -52,7 +54,8 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) || info.Size() > egress.MaxDocumentBytes {
 		return nil, errors.New("egress rules file changed or exceeds its limit")
 	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Nlink != 1 || int(stat.Uid) != os.Getuid() || info.Mode().Perm()&0o022 != 0 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 || int(stat.Uid) != os.Getuid() || !rulesFileWritableOnlyByOwner(file, info.Mode().Perm(), stat.Gid) {
 		return nil, fmt.Errorf("egress rules file %s must be yours alone: owned by you, with no other hard links, and not writable by others", path)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, egress.MaxDocumentBytes+1))
@@ -142,4 +145,101 @@ func hostSourceOverlap(candidates []string, roots []MCPSourceRoot) (*MCPSourceRo
 		}
 	}
 	return overlap, nil
+}
+
+// rulesFileWritableOnlyByOwner allows group write only in the owner's private group. Debian and
+// Ubuntu give each user a group of their own and a umask of 0002, so every file a person creates
+// there is 0664; OpenSSH's Debian packaging accepts the same case. Anyone else who can write the file
+// could grant a box network access, so anything these checks cannot rule out stays refused: an
+// access ACL (the mode's group bits then show its mask, not the group), a group or account source
+// beyond the local files, or an unreadable file. Hosts on such sources (Fedora's sss) use `chmod g-w`.
+func rulesFileWritableOnlyByOwner(file *os.File, perm os.FileMode, gid uint32) bool {
+	switch {
+	case perm&0o002 != 0:
+		return false
+	case perm&0o020 == 0:
+		return true
+	}
+	if _, err := unix.Fgetxattr(int(file.Fd()), "system.posix_acl_access", nil); !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) {
+		return false
+	}
+	nsswitch, nsswitchErr := os.ReadFile("/etc/nsswitch.conf")
+	passwd, passwdErr := os.ReadFile("/etc/passwd")
+	group, groupErr := os.ReadFile("/etc/group")
+	return nsswitchErr == nil && passwdErr == nil && groupErr == nil && localAccountsOnly(string(nsswitch)) &&
+		privateGroup(string(passwd), string(group), os.Getuid(), gid)
+}
+
+// localAccountsOnly reports whether users and groups come only from the files privateGroup reads, so
+// that a member it cannot see cannot exist. systemd's source holds only its own dynamic users.
+func localAccountsOnly(nsswitch string) bool {
+	seen := 0
+	for line := range strings.Lines(nsswitch) {
+		text, _, _ := strings.Cut(line, "#")
+		database, sources, ok := strings.Cut(text, ":")
+		if database = strings.TrimSpace(database); !ok || database != "passwd" && database != "group" {
+			continue
+		}
+		seen++
+		for _, source := range strings.Fields(sources) {
+			if source != "files" && source != "systemd" && !strings.HasPrefix(source, "[") {
+				return false
+			}
+		}
+	}
+	return seen == 2
+}
+
+// privateGroup reports whether gid is uid's primary group, named after the user, with no other
+// member: nobody else lists it as their primary group and its member list names only the user. A user
+// or group these files do not hold is not known to be private, and a line it cannot read could be
+// anything (a NIS "+" entry, a differently written number), so any such line says no.
+func privateGroup(passwd, group string, uid int, gid uint32) bool {
+	name := ""
+	for line := range strings.Lines(passwd) {
+		fields := strings.Split(strings.TrimRight(line, "\r\n"), ":")
+		if len(fields) != 7 {
+			return false
+		}
+		lineUID, uidErr := strconv.ParseUint(fields[2], 10, 32)
+		lineGID, gidErr := strconv.ParseUint(fields[3], 10, 32)
+		if uidErr != nil || gidErr != nil {
+			return false
+		}
+		if lineUID == uint64(uid) {
+			if name != "" || lineGID != uint64(gid) {
+				return false
+			}
+			name = fields[0]
+		} else if lineGID == uint64(gid) {
+			return false
+		}
+	}
+	if name == "" {
+		return false
+	}
+	found := false
+	for line := range strings.Lines(group) {
+		fields := strings.Split(strings.TrimRight(line, "\r\n"), ":")
+		if len(fields) != 4 {
+			return false
+		}
+		lineGID, err := strconv.ParseUint(fields[2], 10, 32)
+		if err != nil {
+			return false
+		}
+		if lineGID != uint64(gid) {
+			continue
+		}
+		if found || fields[0] != name {
+			return false
+		}
+		found = true
+		for _, member := range strings.Split(fields[3], ",") {
+			if member != "" && member != name {
+				return false
+			}
+		}
+	}
+	return found
 }

@@ -415,6 +415,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-07 — an `--egress-rules` file may be group-writable only in the owner's private group, with
+  no access ACL and local accounts only (Ubuntu's umask 0002 refused every file a person wrote).
 - 2026-11-07 — build digests and staging follow Git's model (Ubuntu's umask 0002 and `coop init`'s empty
   directories refused every fork of a project with a Dockerfile).
 - 2026-11-07 — builds set `BUILDX_NO_DEFAULT_ATTESTATIONS=1`: on Docker 29's containerd image
