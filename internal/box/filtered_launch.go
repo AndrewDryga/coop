@@ -183,6 +183,9 @@ func refusedBoxCreate(err error) error {
 	if !errors.Is(err, runtime.ErrDockerCreateRefused) {
 		return err
 	}
+	if errors.Is(err, runtime.ErrDockerImageMissing) {
+		return fmt.Errorf("%w: the image this run uses was removed while the box was starting — run it again", runtime.ErrDockerCreateRefused)
+	}
 	return fmt.Errorf("%w for this run. Check COOP_MEMORY, COOP_CPUS, COOP_PIDS and COOP_RUN_ARGS, and the box section of .agent/project.yaml", runtime.ErrDockerCreateRefused)
 }
 

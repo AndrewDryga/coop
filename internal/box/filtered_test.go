@@ -1783,3 +1783,19 @@ func TestFilteredMountsExemptTheOwnedTaskChannelVolume(t *testing.T) {
 		t.Fatal("an unowned named volume skipped the exposure inspection")
 	}
 }
+
+// A refusal for an image removed while the box started points at the image, not at settings that
+// were never the cause; any other refusal keeps the settings advice, and no Docker text gets in.
+func TestRefusedBoxCreateNamesAMissingImage(t *testing.T) {
+	gone := refusedBoxCreate(errors.Join(runtime.ErrDockerCreateRefused, runtime.ErrDockerImageMissing))
+	if !errors.Is(gone, runtime.ErrDockerCreateRefused) || !strings.Contains(gone.Error(), "image this run uses was removed") || strings.Contains(gone.Error(), "COOP_MEMORY") {
+		t.Fatalf("missing image: %v", gone)
+	}
+	limits := refusedBoxCreate(runtime.ErrDockerCreateRefused)
+	if !strings.Contains(limits.Error(), "COOP_MEMORY") || strings.Contains(limits.Error(), "removed") {
+		t.Fatalf("settings refusal: %v", limits)
+	}
+	if other := errors.New("outcome unknown"); refusedBoxCreate(other) != other {
+		t.Fatal("an unrelated error was rewritten")
+	}
+}

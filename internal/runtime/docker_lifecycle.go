@@ -143,6 +143,11 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 			err = errors.Join(ErrDockerCreateNotAttempted, err)
 		} else if errors.As(err, &failure) && failure.refused {
 			err = ErrDockerCreateRefused
+			// An image removed or replaced while the run started is refused too, and the run's
+			// settings are not why. Ask Docker for the image itself rather than read its words.
+			if _, imageErr := d.inspectImageJSON(settled, spec.Image); errors.Is(imageErr, ErrDockerImageMissing) {
+				err = errors.Join(ErrDockerCreateRefused, ErrDockerImageMissing)
+			}
 		}
 		return "", err
 	}

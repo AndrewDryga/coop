@@ -54,7 +54,7 @@ func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T)
 // minutes. A client that fails without saying it refused stays unknown, and Docker's own words
 // never reach the error.
 func TestDockerCreateTellsARefusalFromAnUnknownOutcome(t *testing.T) {
-	for mode, refused := range map[string]bool{"create-refused": true, "create-rejected": true, "create-fail": false} {
+	for mode, refused := range map[string]bool{"create-refused": true, "create-rejected": true, "create-image-gone": true, "create-fail": false} {
 		t.Run(mode, func(t *testing.T) {
 			rt, _ := fixtureDocker(t, dockerFixture{Mode: mode})
 			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
@@ -67,6 +67,10 @@ func TestDockerCreateTellsARefusalFromAnUnknownOutcome(t *testing.T) {
 			id, err := d.CreateContainer(t.Context(), DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image})
 			if id != "" || err == nil || errors.Is(err, ErrDockerCreateRefused) != refused || DockerCreateLeftNothing(err) != refused {
 				t.Fatalf("create = %q, %v; want refused: %v", id, err, refused)
+			}
+			// A refusal for an image that is gone says so; any other refusal does not claim it.
+			if errors.Is(err, ErrDockerImageMissing) != (mode == "create-image-gone") {
+				t.Fatalf("%s: image missing = %v", mode, errors.Is(err, ErrDockerImageMissing))
 			}
 			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "lots") {
 				t.Fatalf("Docker's own words reached the error: %v", err)

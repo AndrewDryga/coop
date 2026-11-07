@@ -247,6 +247,10 @@ func TestDockerFixtureProcess(t *testing.T) {
 				fmt.Fprintln(os.Stderr, "Error response from daemon: range of CPUs is from 0.01 to 12.00, as there are only 12 CPUs available (fixture-daemon-secret)")
 				os.Exit(1)
 			}
+			if fixture.Mode == "create-image-gone" {
+				fmt.Fprintln(os.Stderr, "Error response from daemon: No such image: sha256:fixture-daemon-secret")
+				os.Exit(1)
+			}
 			if fixture.Mode == "create-rejected" {
 				fmt.Fprintln(os.Stderr, `invalid argument "lots" for "-m, --memory" flag: invalid size: 'lots'`)
 				os.Exit(125)

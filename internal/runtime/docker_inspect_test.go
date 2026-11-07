@@ -96,6 +96,8 @@ func fixtureDockerAPI(file string) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json") {
 			if fixture.Mode == "execution-malformed" {
 				fmt.Fprint(w, "invalid JSON")
+			} else if fixture.Mode == "create-image-gone" {
+				http.NotFound(w, r)
 			} else {
 				_ = json.NewEncoder(w).Encode(fixtureImageAPI(fixture))
 			}
