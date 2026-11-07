@@ -67,7 +67,7 @@ func cleanupTestFilesystemControllerImage(image string) error {
 			problems = append(problems, err)
 		}
 	}
-	_, err = recoverFilesystemControllers(ctx, rt)
+	_, err = recoverFilesystemControllers(ctx, rt, nil)
 	return errors.Join(append(problems, err)...)
 }
 

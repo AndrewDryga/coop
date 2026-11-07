@@ -443,18 +443,32 @@ func (c *filesystemController) remove(ctx context.Context, docker *runtime.Docke
 	return docker.RemoveContainer(ctx, ref)
 }
 
+// controllerReferenced reports whether an admission binds the controller. A readable record that
+// binds it is enough even when another record cannot be read: either answer keeps it from recovery.
 func controllerReferenced(name string) (bool, error) {
+	used, err := referencedControllers()
+	if used[name] {
+		return true, nil
+	}
+	return false, err
+}
+
+// referencedControllers names the controllers that admission records bind. A record it cannot read
+// is the error, returned with the names from every record it could read.
+func referencedControllers() (map[string]bool, error) {
 	state, err := serviceStateRoot("filesystem")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	entries, err := os.ReadDir(state)
 	if os.IsNotExist(err) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+	used := map[string]bool{}
+	var unreadable error
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "coop-fs-") {
 			continue
@@ -464,19 +478,35 @@ func controllerReferenced(name string) (bool, error) {
 			continue
 		}
 		if err != nil {
-			return false, err
+			if unreadable == nil {
+				unreadable = err
+			}
+			continue
 		}
-		if r.Controller != nil && r.Controller.Name == name {
-			return true, nil
+		if r.Controller != nil {
+			used[r.Controller.Name] = true
 		}
 	}
-	return false, nil
+	return used, unreadable
+}
+
+// controllerOfDirectory is the controller whose state a folder holds: the folder is the controller's
+// name, a "-" and a random suffix. "" for a folder of any other shape.
+func controllerOfDirectory(dir string) string {
+	const length = len("coop-fs-controller-") + 32
+	if len(dir) > length && dir[length] == '-' && fsfilter.ValidController(dir[:length]) {
+		return dir[:length]
+	}
+	return ""
 }
 
 // An exclusive generation lease excludes enrollment, active runs and their
 // cleanup. Durable service records additionally protect generations after their
 // host process has released that lease. Never lock admissions under registry.
-func recoverFilesystemControllers(ctx context.Context, rt runtime.Runtime) (int, error) {
+//
+// Every controller's recovery is tried; report picks the controllers whose failures are returned
+// (nil: all of them).
+func recoverFilesystemControllers(ctx context.Context, rt runtime.Runtime, report func(name string) bool) (int, error) {
 	state, err := serviceStateRoot("filesystem-controllers")
 	if err != nil {
 		return 0, err
@@ -502,12 +532,15 @@ func recoverFilesystemControllers(ctx context.Context, rt runtime.Runtime) (int,
 			continue
 		}
 		dir := filepath.Join(state, entry.Name())
+		reported := report == nil || report(controllerOfDirectory(entry.Name()))
 		lease, err := filesystemControllerLock(ctx, filepath.Join(dir, "lease"), true, false)
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			continue
 		}
 		if err != nil {
-			problems = append(problems, err)
+			if reported {
+				problems = append(problems, fmt.Errorf("filesystem controller custody retained at %s: %w", dir, err))
+			}
 			continue
 		}
 		removed, err := recoverFilesystemController(ctx, rt, dir)
@@ -515,7 +548,7 @@ func recoverFilesystemControllers(ctx context.Context, rt runtime.Runtime) (int,
 		if removed {
 			count++
 		}
-		if err != nil {
+		if err != nil && reported {
 			problems = append(problems, fmt.Errorf("filesystem controller custody retained at %s: %w", dir, err))
 		}
 	}

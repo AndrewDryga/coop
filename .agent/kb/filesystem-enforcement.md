@@ -3,7 +3,7 @@ name: filesystem-enforcement
 description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
 subsystem: box
 sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
-updated: 2026-11-06
+updated: 2026-11-07
 ---
 
 ## Selection and policy
@@ -207,7 +207,15 @@ removal keeps reporting it until `unfinishedCreateSettle` after the record's las
 refused (`runtime.DockerCreateLeftNothing`) clears `Pending` at once, so the failed launch removes
 its helper and state folder itself. A record's scope
 check allows a gone workspace, since a path spelled through a link no longer resolves to its scope;
-an unreadable record would also fail every controller recovery (`controllerReferenced`).
+an unreadable record would also block every controller recovery (`controllerReferenced`).
+
+A workspace's pass tries every controller's recovery but reports a failure only for a controller
+that an admission bound when the pass began (`referencedControllers`). Recovery binds only the
+recorded endpoint and daemon, so a controller whose endpoint is gone (a test's proxy socket, or
+Docker Desktop no longer running after a move to OrbStack) keeps its custody. Only the host-wide pass
+(no workspace) returns it, and the daily sweep that runs that pass keeps quiet. Before 2026-11-07, every
+session's service stop warned about it, and a service start with filesystem admissions
+(`startServicesFileContext`, `preparedFilteredServices.start`) failed over it.
 
 Records written before 2026-11-03 list `.coop-fs-probe-*` folders the old per-launch probe made
 at each root, so the record keeps an `omitempty` `Probes` field and retirement still removes one a
@@ -248,6 +256,14 @@ that branch (`rt.Name != "docker"` skips admission), so `TestFilesystemBoxRunNam
 is its proof; a missing stop line on an offline or open run points here first.
 
 ## Changelog
+- 2026-11-07 — every `coop acp` close warned "could not remove this editor session's services ...
+  filesystem controller custody retained at ...: Docker daemon observation failed". The cause was a
+  controller record bound to a QA proxy socket that no longer existed. `RecoverFilesystemAdmissions`
+  with a workspace now reports only controllers an admission bound when it began (others are still
+  tried; only the host-wide pass returns them). The same error also failed service starts. There is
+  no endpoint fallback and custody is kept. Pinned by `TestWorkspaceRecoveryReportsOnlyControllersInUse`
+  and `TestReferencedControllersNamesWhatAdmissionsBind`, whose controller-bound admission fixture copies
+  fsfilter's hook list (task 2026-11-07-keep-another-controller-s-stale-custody-record-o).
 - 2026-11-06 — an offline or open run on this backend printed no stop line, because its branch of
   `box.Run` never narrated one (`coop run --egress offline -- true` ended at `Starting true` on the
   owner's Mac); `retireFilesystem` now says it once `close` confirms the box gone. Checked with the

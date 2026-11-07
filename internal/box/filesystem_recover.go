@@ -154,8 +154,26 @@ func pendingCreateSettled(dir string) bool {
 // reach, the admissions whose workspace no longer exists: a host setup check's scratch folder, or a
 // deleted worktree. The helper of a workspace that still exists is never that pass's to touch.
 func RecoverFilesystemAdmissions(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
-	admissions, err := recoverFilesystemAdmissions(ctx, rt, workspace)
-	controllers, controllerErr := recoverFilesystemControllers(ctx, rt)
+	return recoverFilesystem(ctx, rt, workspace, recoverFilesystemAdmissions)
+}
+
+// recoverFilesystem is RecoverFilesystemAdmissions with its admissions pass passed in, so a test can
+// retire an admission that binds a controller without running that controller's cleanup.
+func recoverFilesystem(ctx context.Context, rt runtime.Runtime, workspace string, admissionsPass func(context.Context, runtime.Runtime, string) (int, error)) (int, error) {
+	// A controller that no admission bound when a workspace's pass began is not that workspace's.
+	// Its recovery is still tried, so it goes once its recorded Docker answers again, but only the
+	// host-wide pass returns why it could not. That Docker may be gone for good (one that is no longer
+	// running), and every project's service start and session cleanup would otherwise fail over it.
+	// The snapshot comes first: a controller whose last admission this pass retires is this
+	// workspace's. When admissions cannot all be read, the pass reports every controller, as before.
+	var report func(string) bool
+	if workspace != "" {
+		if used, err := referencedControllers(); err == nil {
+			report = func(name string) bool { return used[name] }
+		}
+	}
+	admissions, err := admissionsPass(ctx, rt, workspace)
+	controllers, controllerErr := recoverFilesystemControllers(ctx, rt, report)
 	orphans := 0
 	var orphanErr error
 	if workspace == "" && rt.SupportsRestrictedFilesystem() {

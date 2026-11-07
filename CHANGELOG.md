@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Closing an editor session no longer warns about a filesystem controller that is not its own.**
+  When a filesystem controller's recorded Docker endpoint was gone (a socket that no longer exists,
+  or a Docker that is no longer running), every `coop acp` close and service stop warned "could not
+  remove this editor session's services ... custody retained ... Docker daemon observation failed".
+  The same error could also fail a project's service start. A session's cleanup and service start now
+  report only controllers its admissions were using. Coop still keeps the other record and cleans it
+  up once that Docker answers again.
+
 - **A saved worker identity matches its controller however the address is spelled, and an expired or
   exposed one says so.** `https://controller.example/`, `https://Controller.Example:443` and
   `https://controller.example` are one controller, so a reconnect typed another way is no longer
