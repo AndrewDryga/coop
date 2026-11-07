@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -237,5 +239,176 @@ func TestRunMountsTheGateSlotHelperInEveryBox(t *testing.T) {
 	}
 	if strings.Count(string(args), ":"+GateSlotPath+":ro") != 1 {
 		t.Fatalf("runtime args mount the gate slot helper %d times, want once:\n%s", strings.Count(string(args), ":"+GateSlotPath+":ro"), args)
+	}
+	// This runtime is not Docker, whose flags the memory folder needs, so the gate keeps its temp folder.
+	if strings.Contains(string(args), "--tmpfs") {
+		t.Fatalf("a runtime that does not take Docker's flags was handed a tmpfs:\n%s", args)
+	}
+}
+
+// A Docker box that carries the helper also gets the memory folder the helper points a gate at: a
+// quarter of the box's memory limit, or 2g with none. A sign-in box has no helper and no folder.
+func TestRunMountsTheGateTmpfsWhereTheGateHelperIs(t *testing.T) {
+	const folder = GateTmpPath + ":rw,exec,nosuid,nodev,size="
+	for _, tc := range []struct {
+		name, memory string
+		login        bool
+		want         []string // every --tmpfs value in the run
+	}{
+		{"no memory limit", "", false, []string{folder + "2g"}},
+		{"a 4g box", "4g", false, []string{folder + "1g"}},
+		{"a 6g box", "6g", false, []string{folder + "1536m"}},
+		{"a small box keeps the minimum", "1g", false, []string{folder + "512m"}},
+		{"a sign-in box has neither", "4g", true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(forkspace.TestExecutionRegistryRootEnv, t.TempDir())
+			cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", Memory: tc.memory}
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"true"}, Batch: true, Quiet: true}
+			if tc.login {
+				spec.Agent, spec.Homes, spec.Login = "codex", true, true
+			}
+			if code, err := Run(cfg, dockerRecorder(t, recorder), spec); err != nil || code != 0 {
+				t.Fatalf("Run = (%d, %v), want success", code, err)
+			}
+			var got []string
+			args := recordedRun(t, recorder)
+			for i, arg := range args {
+				if arg == "--tmpfs" {
+					got = append(got, args[i+1])
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("--tmpfs values = %q, want %q:\n%q", got, tc.want, args)
+			}
+			if hasHelper := slices.ContainsFunc(args, func(arg string) bool { return strings.HasSuffix(arg, ":"+GateSlotPath+":ro") }); hasHelper == tc.login {
+				t.Errorf("gate slot helper mounted = %t in a box with login = %t", hasHelper, tc.login)
+			}
+		})
+	}
+}
+
+// The folder is a quarter of the memory limit, as Docker reads the limit, and never under 512m.
+func TestGateTmpfsIsAQuarterOfTheBoxMemory(t *testing.T) {
+	const folder = GateTmpPath + ":rw,exec,nosuid,nodev,size="
+	for memory, size := range map[string]string{
+		"": "2g", "0": "2g", "lots": "2g", "9999p": "2g", // no limit, or none that can be read
+		"4g": "1g", "4G": "1g", "4GiB": "1g", "4 gb": "1g", "8g": "2g", "10g": "2560m", "6g": "1536m",
+		"4194304k": "1g", "4096m": "1g", "4294967296": "1g", "0.5t": "128g",
+		"2g": "512m", "1g": "512m", "1.5G": "512m", "512m": "512m", "64m": "512m", "1": "512m", // the minimum
+	} {
+		got := gateTmpfs(memory)
+		if got != folder+size {
+			t.Errorf("gateTmpfs(%q) = %q, want size %s", memory, got, size)
+		}
+		if !IsGateTmpfs(got) {
+			t.Errorf("IsGateTmpfs refuses its own value %q", got)
+		}
+	}
+}
+
+// A filtered box may ask for one tmpfs, and only in the shape coop makes. Anything wider, or at
+// another path, would hide or widen something the box was not meant to touch.
+func TestIsGateTmpfsAcceptsOnlyTheGatesFolder(t *testing.T) {
+	const folder = GateTmpPath + ":rw,exec,nosuid,nodev,size="
+	for value, want := range map[string]bool{
+		folder + "2g": true, folder + "512m": true, folder + "1536m": true,
+		folder + "0m": false, folder + "g": false, folder + "2": false, folder + "2g,uid=0": false, folder + "2t": false,
+		GateTmpPath + ":rw,exec,suid,nodev,size=2g":       false,
+		GateTmpPath + ":rw,noexec,nosuid,nodev,size=2g":   false,
+		GateTmpPath + ":rw,exec,nosuid,nodev":             false,
+		GateTmpPath:                                       false,
+		"/tmp:rw,exec,nosuid,nodev,size=2g":               false,
+		"/home/node:rw,exec,nosuid,nodev,size=2g":         false,
+		GateTmpPath + "/sub:rw,exec,nosuid,nodev,size=2g": false,
+		"": false,
+	} {
+		if got := IsGateTmpfs(value); got != want {
+			t.Errorf("IsGateTmpfs(%q) = %t, want %t", value, got, want)
+		}
+	}
+}
+
+// The helper writes the same folder the run mounts.
+func TestGateSlotScriptNamesTheGateTmpPath(t *testing.T) {
+	if !strings.Contains(GateSlotScript(), "\ntmp="+GateTmpPath+"\n") {
+		t.Fatalf("coop-gate-slot does not use %s", GateTmpPath)
+	}
+}
+
+// envWithout returns the test's own environment less the named variables, plus the given
+// assignments: a gate under coop-gate-slot has TMPDIR and GOTMPDIR set, and so may this test.
+func envWithout(drop []string, set ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(drop, name) {
+			env = append(env, kv)
+		}
+	}
+	return append(env, set...)
+}
+
+// The gate runs with TMPDIR and GOTMPDIR at the memory folder when the box has it and can write to
+// it. Otherwise the gate keeps the temp folder it had: a box from before the folder existed, a
+// runtime that mounts none, or one whose folder this user cannot write all still run the gate.
+func TestGateSlotPointsAGatesTempFilesAtTheMemoryFolder(t *testing.T) {
+	root := t.TempDir()
+	usable := filepath.Join(root, "usable")
+	readOnly := filepath.Join(root, "read-only")
+	notAFolder := filepath.Join(root, "file")
+	for _, dir := range []string{usable, readOnly} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(notAFolder, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(readOnly, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(readOnly, 0o755)  // so the test's temp folder can be removed
+	cannotWrite := os.Geteuid() != 0 // root writes anywhere, so a read-only folder proves nothing
+
+	line := "tmp=" + GateTmpPath + "\n"
+	for _, tc := range []struct {
+		name, dir string
+		tempFiles bool // whether the gate gets the folder
+		skip      bool
+	}{
+		{"a folder the box can write", usable, true, false},
+		{"no folder", filepath.Join(root, "missing"), false, false},
+		{"a file where the folder should be", notAFolder, false, false},
+		{"a folder the user cannot write", readOnly, false, !cannotWrite},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip {
+				t.Skip("running as root")
+			}
+			if !strings.Contains(GateSlotScript(), line) {
+				t.Fatalf("the script has no %q line to point at the test folder", line)
+			}
+			helper := filepath.Join(t.TempDir(), "coop-gate-slot")
+			script := strings.Replace(GateSlotScript(), line, "tmp="+tc.dir+"\n", 1)
+			if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// COOP_GATE_SLOT_HELD makes it a gate inside a gate, which runs at once: no slot, no flock.
+			gate := exec.Command(helper, "--", "sh", "-c", `printf '%s|%s' "${TMPDIR-unset}" "${GOTMPDIR-unset}"`)
+			gate.Env = envWithout([]string{"TMPDIR", "GOTMPDIR", "COOP_GATE_SLOT_HELD"}, "TMPDIR=/prior", "COOP_GATE_SLOT_HELD=1")
+			out, err := gate.CombinedOutput()
+			if err != nil {
+				t.Fatalf("gate under the helper: %v\n%s", err, out)
+			}
+			want := "/prior|unset"
+			if tc.tempFiles {
+				want = tc.dir + "|" + tc.dir
+			}
+			if string(out) != want {
+				t.Errorf("TMPDIR|GOTMPDIR in the gate = %q, want %q", out, want)
+			}
+		})
 	}
 }

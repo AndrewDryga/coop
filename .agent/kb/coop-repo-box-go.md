@@ -45,10 +45,18 @@ gate's `coop-gate-slot make check` takes one slot, not two. Without that, two me
 both slots and each make check inside waited forever. `make check-local` runs its `go test` step
 under the same slots (`GATE_SLOT` in the Makefile); its vet steps run without one.
 
+On Docker, a box with that helper also mounts a tmpfs at `/tmp/coop-gate` (a quarter of `--memory`,
+at least 512m, 2g with no limit), and `coop-gate-slot` points `TMPDIR` and `GOTMPDIR` at it for the
+gate it runs. A box's `/tmp` is on OrbStack's VM disk, where an fsync takes several times what it
+takes on the host, and Go's race tests sync many small files. `tools/gateslot` does not set them,
+so coop's own `make check` keeps `/tmp` unless it runs under `coop-gate-slot`.
+
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-06 — Docker boxes mount a tmpfs at `/tmp/coop-gate`, and `coop-gate-slot` points `TMPDIR`
+  and `GOTMPDIR` at it (task 2026-11-05-find-why-go-race-tests-run-several-times-slower).
 - 2026-11-06 — a gate inside a gate runs in the outer gate's slot, and check-local's tests take a
   slot (task 2026-11-06-make-gate-slots-re-entrant-and-cover-check-local).
 - 2026-11-06 — every box mounts `coop-gate-slot` on the same slot files, and the fork merge gate runs

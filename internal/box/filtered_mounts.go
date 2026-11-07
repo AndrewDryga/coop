@@ -217,6 +217,13 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 				return errors.New("restricted workload security options cannot be overridden")
 			}
 			continue
+		case "--tmpfs":
+			// Memory that holds no host path, and the only kind a workload gets: the gate's temp folder.
+			i++
+			if i >= len(options) || !IsGateTmpfs(options[i]) {
+				return errors.New("restricted workload tmpfs is not the gate's temp folder")
+			}
+			continue
 		case "-v", "--mount", "--env-file":
 		default:
 			return errors.New("restricted workload option is not supported")

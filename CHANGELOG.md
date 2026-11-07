@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A gate run under `coop-gate-slot` keeps its temp files in memory, so Go tests no longer wait on
+  the box's disk.** A box's `/tmp` sits on the runtime's disk, where `fsync` can take several times
+  as long as on the host, and Go's race tests sync many small files. On Docker, every box now has
+  `/tmp/coop-gate`, a folder in memory, and `coop-gate-slot` sets `TMPDIR` and `GOTMPDIR` to it for
+  the gate command only. That includes the `coop fork merge` gate. The agent and the rest of `/tmp`
+  are unchanged. The folder is a quarter of the box's memory limit, but never under 512 MB, and 2 GB
+  in a box with no limit. In a box, 2,000 small synced writes took 3.5 to 3.9 s on `/tmp` and 0.7 to
+  0.8 s there.
+
 - **A killed fork loop is cleaned up and resumes, and a slow Docker no longer ends a quit in a raw
   error.** After a fork's loop was killed, `coop fork stop` removed only the agent's box, so the
   run's gateway containers, volumes and filesystem helper kept running until the next launch. It now

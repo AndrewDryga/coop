@@ -94,6 +94,35 @@ func TestParseRuntimeAcceptsTheNarrowRunDialect(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeTakesOnlyTheGatesTmpfs(t *testing.T) {
+	root := canonicalTemp(t)
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gate := box.GateTmpPath + ":rw,exec,nosuid,nodev,size=1g"
+	args := func(tmpfs ...string) []string {
+		run := []string{"run", "-v", repo + ":" + repo}
+		for _, value := range tmpfs {
+			run = append(run, "--tmpfs", value)
+		}
+		return append(run, "-w", repo, "fixture-image", "claude")
+	}
+	got, err := parseRuntime(root, "fixture-image", args(gate))
+	if err != nil || !slices.Equal(got.Run.Tmpfs, []string{gate}) {
+		t.Fatalf("the gate's tmpfs = %q, %v", got.Run.Tmpfs, err)
+	}
+	for name, tmpfs := range map[string][]string{
+		"twice":         {gate, gate},
+		"another path":  {"/home/node:rw,exec,nosuid,nodev,size=1g"},
+		"wider options": {box.GateTmpPath + ":rw,exec,suid,nodev,size=1g"},
+	} {
+		if _, err := parseRuntime(root, "fixture-image", args(tmpfs...)); err == nil {
+			t.Errorf("accepted a run with the gate's tmpfs %s", name)
+		}
+	}
+}
+
 func TestNativeHomeMountKeepsRepositoryIdentityBehindReviewDecoy(t *testing.T) {
 	root := canonicalTemp(t)
 	repo, other := filepath.Join(root, "repo"), filepath.Join(root, "other")
@@ -654,9 +683,11 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// On Docker the helper comes with the memory folder it points a gate's temp files at.
+	gateTmpfs := box.GateTmpPath + ":rw,exec,nosuid,nodev,size=2g"
 	run := procharness.Command{
 		Path: fixture,
-		Args: []string{"run", "-v", layout.Repo + ":" + layout.Repo, "-v", slot + ":" + box.GateSlotPath + ":ro", "-w", layout.Repo, "fixture-image", "future-provider"},
+		Args: []string{"run", "-v", layout.Repo + ":" + layout.Repo, "-v", slot + ":" + box.GateSlotPath + ":ro", "--tmpfs", gateTmpfs, "-w", layout.Repo, "fixture-image", "future-provider"},
 		Dir:  layout.Repo, Env: env, MaxOutput: 64 << 10,
 	}
 	result := procharness.Run(ctx, run)
@@ -669,6 +700,16 @@ func TestFixturePropagatesProviderExitCode(t *testing.T) {
 	}
 	if strings.Contains(string(trace), `"event":"error"`) || !strings.Contains(string(trace), `"exit_code":23`) {
 		t.Fatalf("exit trace =\n%s", trace)
+	}
+	// A run without the gate's memory folder, or with any other tmpfs, is not the run coop makes.
+	withoutTmpfs := run
+	withoutTmpfs.Args = slices.DeleteFunc(slices.Clone(run.Args), func(arg string) bool { return arg == "--tmpfs" || arg == gateTmpfs })
+	otherTmpfs := run
+	otherTmpfs.Args = slices.Replace(slices.Clone(run.Args), slices.Index(run.Args, gateTmpfs), slices.Index(run.Args, gateTmpfs)+1, "/home/node:rw,exec,size=1g")
+	for name, refused := range map[string]procharness.Command{"no tmpfs": withoutTmpfs, "another tmpfs": otherTmpfs} {
+		if result := procharness.Run(ctx, refused); result.Err != nil || result.ExitCode != 1 || !strings.Contains(result.Stderr, "runtime invocation rejected") {
+			t.Fatalf("fixture with %s exit = %d, %v\nstderr:\n%s", name, result.ExitCode, result.Err, result.Stderr)
+		}
 	}
 	// A helper that is not exactly 0755 is not the one coop mounts, so the same run is refused.
 	if err := os.Chmod(slot, 0o700); err != nil {

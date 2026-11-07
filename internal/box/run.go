@@ -226,6 +226,9 @@ type RunSpec struct {
 	claudeMCPFile string
 	// gateSlotFile is this run's generated coop-gate-slot helper, mounted at GateSlotPath.
 	gateSlotFile string
+	// gateTmpfs is the --tmpfs value for GateTmpPath, where that helper puts a gate's temp files;
+	// empty where the runtime does not take Docker's flags.
+	gateTmpfs string
 	// MCPHandoffID binds an editor's tool handoff to one child generation without changing
 	// RunID's runtime and service ownership. Remote sessions use their existing RunID instead.
 	MCPHandoffID string
@@ -1435,6 +1438,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return -1, fmt.Errorf("make gate slot helper executable: %w", err)
 		}
 		spec.gateSlotFile = slot
+		if rt.SupportsRunLimits() {
+			spec.gateTmpfs = gateTmpfs(cfg.Memory)
+		}
 	}
 
 	// Every agent gets the box environment note, then the user's instructions (a per-agent
@@ -3522,6 +3528,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)
 	if spec.gateSlotFile != "" {
 		args = append(args, "-v", spec.gateSlotFile+":"+GateSlotPath+":ro")
+	}
+	if spec.gateTmpfs != "" {
+		args = append(args, "--tmpfs", spec.gateTmpfs)
 	}
 
 	if spec.Homes {

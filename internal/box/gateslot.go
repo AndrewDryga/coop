@@ -1,8 +1,71 @@
 package box
 
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
 // GateSlotPath is where coop mounts coop-gate-slot in every box, on PATH, so a project's full gate
 // opts into the host-wide gate slots with one word in front of it: `coop-gate-slot make check`.
 const GateSlotPath = "/usr/local/bin/coop-gate-slot"
+
+// GateTmpPath is the folder a gate keeps its temp files in. A Docker box that carries coop-gate-slot
+// mounts it as memory (gateTmpfs), because a box's /tmp sits on the runtime's disk: on OrbStack an
+// fsync there takes several times what it takes on the host, with stalls of over a second, and Go's
+// race tests sync many small files. coop-gate-slot points TMPDIR and GOTMPDIR here for the gate it
+// runs; the agent's own work and /tmp stay as they were.
+const GateTmpPath = "/tmp/coop-gate"
+
+// gateTmpfsOptions are that folder's mount options. Go runs its test binaries from there, so it
+// allows programs; nothing else is granted.
+const gateTmpfsOptions = "rw,exec,nosuid,nodev"
+
+// gateTmpfs is the --tmpfs value for GateTmpPath. memory is the box's limit (COOP_MEMORY), empty for
+// none. Files in a tmpfs count against that limit, so the folder may take a quarter of it, and never
+// less than 512m, which a build needs. A box with no limit gets 2g.
+func gateTmpfs(memory string) string {
+	size := int64(2 << 30)
+	if limit, ok := memoryBytes(memory); ok && limit > 0 {
+		size = max(limit/4, 512<<20)
+	}
+	unit, shift := "m", 20
+	if size%(1<<30) == 0 {
+		unit, shift = "g", 30
+	}
+	return GateTmpPath + ":" + gateTmpfsOptions + ",size=" + strconv.FormatInt(size>>shift, 10) + unit
+}
+
+var (
+	// memoryForm is what COOP_MEMORY and box.memory accept: Docker's --memory forms.
+	memoryForm = regexp.MustCompile(`(?i)^(\d+(?:\.\d*)?|\.\d+) ?(?:([kmgtp])(?:i?b)?|b)?$`)
+	// gateTmpfsForm is the one --tmpfs value gateTmpfs makes.
+	gateTmpfsForm = regexp.MustCompile(`^` + regexp.QuoteMeta(GateTmpPath+":"+gateTmpfsOptions+",size=") + `[1-9][0-9]*[mg]$`)
+)
+
+// memoryBytes reads a --memory value as Docker does: k, m, g, t and p are powers of 1024, with or
+// without the b or ib after them. It reports false for a value it cannot read or hold.
+func memoryBytes(memory string) (int64, bool) {
+	m := memoryForm.FindStringSubmatch(strings.TrimSpace(memory))
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	if m[2] != "" {
+		n *= float64(int64(1) << (10 * (1 + strings.Index("kmgtp", strings.ToLower(m[2])))))
+	}
+	if n >= 1<<62 {
+		return 0, false
+	}
+	return int64(n), true
+}
+
+// IsGateTmpfs reports whether value is a --tmpfs value gateTmpfs makes. A filtered box may ask for
+// no other tmpfs.
+func IsGateTmpfs(value string) bool { return gateTmpfsForm.MatchString(value) }
 
 // GateSlotScript is the coop-gate-slot helper. Every box mounts the same coop-cache volume as
 // ~/.cache, so a flock on a file there is seen by every box on the host. Each of the two slots is
@@ -20,6 +83,10 @@ const GateSlotPath = "/usr/local/bin/coop-gate-slot"
 // check under the fork merge gate, runs at once in the outer gate's slot. Waiting for a second slot
 // there would let two merges, each holding one, wait for each other forever. tools/gateslot sets and
 // reads the same variable.
+//
+// The gate also runs with TMPDIR and GOTMPDIR at GateTmpPath, when the box has that folder and can
+// write to it. Where it does not, such as a runtime that mounts no memory folder, the gate keeps the
+// temp folder it had.
 func GateSlotScript() string { return gateSlotScript }
 
 const gateSlotScript = `#!/bin/sh
@@ -29,9 +96,14 @@ const gateSlotScript = `#!/bin/sh
 #
 # Every coop box shares ~/.cache, so the slots there are host-wide. A third gate waits for one of
 # the first two to finish, and its command starts only then. A gate inside a gate runs at once, in
-# the outer gate's slot.
+# the outer gate's slot. The gate keeps its temp files in /tmp/coop-gate, which is memory where the
+# runtime allows it: a box's /tmp is on a disk where every fsync is slow.
 [ "${1-}" != "--" ] || shift
 [ "$#" -gt 0 ] || { echo "usage: coop-gate-slot [--] <command> [args...]" >&2; exit 2; }
+tmp=/tmp/coop-gate
+if [ -d "$tmp" ] && [ -w "$tmp" ]; then
+	export TMPDIR="$tmp" GOTMPDIR="$tmp"
+fi
 [ -z "${COOP_GATE_SLOT_HELD-}" ] || exec "$@"
 dir="$HOME/.cache/coop-gate/slots"
 if ! command -v flock >/dev/null 2>&1 || ! mkdir -p "$dir" 2>/dev/null; then

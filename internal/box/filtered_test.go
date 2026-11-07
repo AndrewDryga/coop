@@ -753,6 +753,23 @@ func TestFilteredLaunchOrdersReadinessAndExactCleanup(t *testing.T) {
 	}
 }
 
+// A filtered box gets the gate's memory folder like any Docker box. The daemon reports exactly the
+// planned folder before the agent starts, and the agent runs.
+func TestFilteredLaunchCreatesTheAgentWithTheGateTmpfs(t *testing.T) {
+	f, d := filteredFixture(t)
+	gate := gateTmpfs("4g")
+	code, err := f.launch(context.Background(), RunSpec{Cmd: []string{"fixture"}}, []string{"--tmpfs", gate}, nil, io.Discard, io.Discard)
+	if err != nil || code != 7 {
+		t.Fatalf("launch with the gate's tmpfs: code=%d err=%v", code, err)
+	}
+	if got, want := d.containers[f.ref("agent").Name].Tmpfs, map[string]string{GateTmpPath: "rw,exec,nosuid,nodev,size=1g"}; !maps.Equal(got, want) {
+		t.Fatalf("the agent's tmpfs mounts = %v, want %v", got, want)
+	}
+	if gone, err := f.cleanup("exited"); err != nil || !gone {
+		t.Fatal("cleanup", gone, err)
+	}
+}
+
 func TestFilteredLaunchRevalidatesMountsBeforeCreatingAgent(t *testing.T) {
 	f, d := filteredFixture(t)
 	want := errors.New("mount authority changed before agent creation")
@@ -1172,6 +1189,10 @@ func TestFilteredMountsRequireExactGeneratedSources(t *testing.T) {
 		{"host-network", []string{"--network", "host"}, nil, false},
 		{"alternate-mount", []string{"--mount", "type=bind,src=/,dst=/host"}, nil, false},
 		{"relax-seccomp", []string{"--security-opt", "seccomp=unconfined"}, nil, false},
+		{"gate-tmpfs", []string{"--tmpfs", gateTmpfs("4g")}, nil, true},
+		{"other-tmpfs", []string{"--tmpfs", "/home/node:rw,exec,size=1g"}, nil, false},
+		{"wider-gate-tmpfs", []string{"--tmpfs", GateTmpPath + ":rw,exec,suid,nodev,size=2g"}, nil, false},
+		{"tmpfs-without-value", []string{"--tmpfs"}, nil, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := f.validateMounts(test.args, test.files, nil); (err == nil) != test.valid {

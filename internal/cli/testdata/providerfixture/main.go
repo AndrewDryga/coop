@@ -63,6 +63,7 @@ type runCommand struct {
 	Env          map[string]string `json:"-"`
 	EnvFiles     []string          `json:"env_files,omitempty"`
 	Labels       []string          `json:"labels,omitempty"`
+	Tmpfs        []string          `json:"-"`
 	Network      string            `json:"network,omitempty"`
 	Init         bool              `json:"init,omitempty"`
 	Interactive  bool              `json:"interactive,omitempty"`
@@ -240,6 +241,10 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		}
 		// Every box carries the gate slot helper, so any project's gate can opt in with one word.
 		if err := validateWrapperMountCardinality(parsed.Run, box.GateSlotPath, true); err != nil {
+			return errors.New("runtime invocation rejected")
+		}
+		// On Docker the helper comes with the memory folder it points a gate's temp files at.
+		if len(parsed.Run.Tmpfs) != 1 {
 			return errors.New("runtime invocation rejected")
 		}
 	}
@@ -551,7 +556,7 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 			}
 			run.Interactive, run.TTY = true, true
 			i++
-		case "--label", "-e", "-v", "--mount", "--env-file", "--network", "-w", "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus":
+		case "--label", "-e", "-v", "--mount", "--env-file", "--network", "-w", "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus", "--tmpfs":
 			if i+1 >= len(args) || args[i+1] == image {
 				return runCommand{}, fmt.Errorf("runtime flag %s has no value", arg)
 			}
@@ -589,6 +594,12 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 					err = readEnvFile(root, run.Env, path)
 					run.EnvFiles = append(run.EnvFiles, path)
 				}
+			case "--tmpfs":
+				// The gate's temp folder is the one tmpfs coop gives a box.
+				if !box.IsGateTmpfs(value) {
+					err = fmt.Errorf("%q is not the gate's temp folder", value)
+				}
+				run.Tmpfs = append(run.Tmpfs, value)
 			case "--network":
 				run.Network = value
 			case "-w":
@@ -1513,7 +1524,7 @@ func traceRuntimeArgv(root, image string, args []string) []string {
 			}
 			out = append(out, value)
 			i += 2
-		case "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus":
+		case "--security-opt", "--cap-drop", "--pids-limit", "--memory", "--cpus", "--tmpfs":
 			if i+1 >= len(args) {
 				return append(out, "<missing>")
 			}
