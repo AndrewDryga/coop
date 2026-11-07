@@ -210,6 +210,11 @@ indexes stay together.</p>
 <p>co:op sets its own defaults in a new provider folder once. Later changes stay with that
 repository, and changing the defaults doesn&#39;t overwrite an existing folder. A fork co:op created
 shares its parent&#39;s history storage, and unrelated repositories keep separate history.</p>
+<p>When Claude exits, it prints <code>claude --resume &lt;id&gt;</code>. That command runs Claude on your computer,
+which doesn&#39;t have the session. After the box stops, co:op prints the command that does: the one you
+typed, plus <code>--resume &lt;id&gt;</code>, such as <code>coop claude@work --resume &lt;id&gt;</code>. It prints nothing when the
+run saved no session, or when it can&#39;t tell which one to name: you used <code>/clear</code>, or another box
+for the same project and account saved a session too.</p>
 </section><section class="doc-section reference-section" id="what-each-run-can-see"><h2>What each run can see</h2>
 <p>A box gets provider folders only for its lead, named peers and preset roles. Shell, raw-command
 and maintenance boxes get none. Sign-in runs in a separate sign-in home for the selected

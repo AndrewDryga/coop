@@ -661,6 +661,61 @@ func (a claudeAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, 
 	return a.Interactive(cfg), false
 }
 
+// WatchSessions finds the sessions a run wrote by reading the projects/<cwd>/<id>.jsonl file Claude
+// keeps for each, the same path Resume checks, before and after it: a session the run began is not
+// there before, and one it continued has grown. Claude prints its own `claude --resume <id>` as it
+// exits, and only when that file exists.
+func (claudeAgent) WatchSessions(home, cwd string) func() []string {
+	before := claudeSessionStamps(home, cwd)
+	return func() []string {
+		var written []string
+		for id, stamp := range claudeSessionStamps(home, cwd) {
+			if before[id] != stamp {
+				written = append(written, id)
+			}
+		}
+		slices.Sort(written)
+		return written
+	}
+}
+
+// claudeSessionStamps maps each session in cwd's folder to its size and modification time, which
+// differ after any write. The box can write here, so only a regular file named for a valid session
+// id counts, and nothing in it is read.
+func claudeSessionStamps(home, cwd string) map[string]string {
+	root, err := openSessionRoot(filepath.Join(home, "projects"))
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	bucket := ClaudeProjectKey(cwd)
+	info, err := root.Lstat(bucket)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	dir, err := root.Open(bucket)
+	if err != nil {
+		return nil
+	}
+	defer dir.Close()
+	stamps := map[string]string{}
+	scanSessionDir(dir, func(entry os.DirEntry) bool {
+		id, isSession := strings.CutSuffix(entry.Name(), ".jsonl")
+		if !isSession || !ValidSessionID(id) || !entry.Type().IsRegular() {
+			return false
+		}
+		if info, err := entry.Info(); err == nil {
+			stamps[id] = fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+		}
+		return false
+	})
+	return stamps
+}
+
+// ResumeArgs: `coop claude --resume <id>` passes --resume through to Claude, which finds the id in
+// the repository's native home.
+func (claudeAgent) ResumeArgs(id string) []string { return []string{"--resume", id} }
+
 // Login forces the sign-in flow via the explicit subcommand. Bare `claude` only
 // prompts to log in when no credentials exist, so it's a no-op once authenticated
 // (it just opens a session) — `auth login` re-authenticates and switches accounts.

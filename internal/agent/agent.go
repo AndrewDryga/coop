@@ -122,6 +122,21 @@ type SessionDiscoverer interface {
 	ProducesSession(args []string) bool
 }
 
+// SessionResumer is the optional capability for an adapter whose own CLI prints a command for
+// resuming the session as it exits. That command runs the CLI on the host, which cannot see the
+// sessions Coop keeps in the repository's native home, and Coop cannot rewrite the line because it
+// hands the terminal straight to the container runtime. So once the box has stopped, Coop prints
+// the command that does work, and this tells it which session the run wrote.
+type SessionResumer interface {
+	// WatchSessions reads the sessions the agent keeps in home for cwd before a run, and returns a
+	// function that lists the ones the run wrote once it is over, whether it began them or
+	// continued them. A box that shares the home can write sessions too, so the list may hold
+	// more than the run's own.
+	WatchSessions(home, cwd string) func() []string
+	// ResumeArgs is what follows the agent's name on a Coop command to resume session id.
+	ResumeArgs(id string) []string
+}
+
 // ValidSessionID accepts the canonical UUID form used by provider session stores. Session
 // metadata is provider-writable, so unchecked values must never reach provider argv.
 func ValidSessionID(id string) bool {

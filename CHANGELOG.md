@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop claude` prints the command that resumes the session when the box stops.** Claude prints
+  its own `claude --resume <id>` as it exits. That command would run Claude on your computer, which
+  doesn't have the session: it lives in Coop's folder for the project. Coop can't change Claude's
+  line, because it hands the terminal straight to Docker. So once the box has stopped, Coop prints
+  the command you typed plus `--resume <id>`, for example `coop claude@work --resume 6f1d2b3c-…`.
+  It prints nothing when the run saved no session, or saved more than one: a `/clear`, or another
+  box sharing the project and account. Claude's own line stays.
+
 - **An editor thread says why Coop refused a project's build.** For build files Coop refused, such
   as a `.agent/Dockerfile` or `.dockerignore` that is a symlink, `coop run` gave the reason, but the
   thread of `coop acp` still said the box "needs a build" and offered `/build`, which refuses the

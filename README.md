@@ -91,7 +91,8 @@ copy of your repo, so you can keep working in yours without risking your local c
 [forks](https://coop.dryga.com/forks.html).
 
 Arguments after the agent's name go to the agent, so `coop claude --continue` resumes Claude's last
-session in the box. On every agent, `-p "…"` runs one prompt and exits.
+session in the box. When Claude exits, co:op prints the command that resumes that session, such as
+`coop claude --resume <id>`. On every agent, `-p "…"` runs one prompt and exits.
 
 co:op answers `--help`, `-h` and a leading `help` or `login` itself, and takes its own options
 such as `--peer` and `--egress`. Put `--` before them to pass them to the agent, as in

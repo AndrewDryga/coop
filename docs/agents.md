@@ -33,6 +33,12 @@ co:op sets its own defaults in a new provider folder once. Later changes stay wi
 repository, and changing the defaults doesn't overwrite an existing folder. A fork co:op created
 shares its parent's history storage, and unrelated repositories keep separate history.
 
+When Claude exits, it prints `claude --resume <id>`. That command runs Claude on your computer,
+which doesn't have the session. After the box stops, co:op prints the command that does: the one you
+typed, plus `--resume <id>`, such as `coop claude@work --resume <id>`. It prints nothing when the
+run saved no session, or when it can't tell which one to name: you used `/clear`, or another box
+for the same project and account saved a session too.
+
 ## What each run can see
 
 A box gets provider folders only for its lead, named peers and preset roles. Shell, raw-command

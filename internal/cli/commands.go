@@ -252,12 +252,17 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if !spec.Login { // a login box starts no services
 		a.sweepBeforeFirstBox(repo)
 	}
+	resumeNote := func() {}
+	if session && !spec.Login {
+		resumeNote = a.resumeNoteAfter(agent, repo, cmd)
+	}
 	code, err := a.runBox(spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
 	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree.
 	if !spec.Login {
 		a.signOnBoxExit(repo, pre, false)
 	}
+	resumeNote() // last, so the way back in is the final thing on the screen
 	return code, err
 }
 
