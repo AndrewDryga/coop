@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered runs stay ready when another user or state folder sets up the same Docker.** On Docker's
+  containerd image store (the default for new Docker 29 installs) every rebuild of Coop's network images
+  got a new image ID, even from cache, because of BuildKit's default provenance record. A setup from a
+  second OS user or state folder then replaced the images the first one had recorded, and its filtered
+  runs failed with "the images this host was set up with disappeared". Coop now builds without default
+  attestations, so a rebuild keeps the same ID.
+
 - **The provider guides show what `coop doctor` prints on Linux.** Their sample showed only macOS (40 checks).
   Linux runs 37 with mount-based filesystem protection, so each guide now shows both, as its secret check
   already does.

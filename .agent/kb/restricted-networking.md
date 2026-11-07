@@ -2,8 +2,8 @@
 name: restricted-networking
 description: the layers between an --egress filtered flag and docker run, where network authority lives, the precedence ladder, and what a filtered run refuses
 subsystem: networking
-sources: [internal/box/fork_approvals.go, internal/networkstate/fork_approvals.go, internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/box/launch_sections.go]
-updated: 2026-11-06
+sources: [internal/runtime/docker_build.go, internal/box/fork_approvals.go, internal/networkstate/fork_approvals.go, internal/box/build_context_ignore.go, internal/cli/fork_cmd.go, internal/cli/fork_cmd_test.go, internal/box/filtered_test.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_test.go, internal/egress/snapshot.go, internal/networkgateway/controller.go, internal/networkgateway/credential_broker.go, internal/networkgateway/events.go, internal/networkgateway/guard.go, internal/networkview/records.go, internal/networkreport/report.go, internal/networkstate/admission.go, internal/networkstate/authority.go, internal/networkstate/snapshot_retention.go, internal/networkstate/project_anchor.go, internal/networkstate/approval_forget.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/networkstate/bundles.go, internal/box/network_admission.go, internal/box/network_bundles.go, internal/box/network_approval.go, internal/box/network_forget.go, internal/box/network_setup.go, internal/box/authority_mounts.go, internal/box/credential_broker.go, internal/box/filtered_mounts.go, internal/box/filtered_services.go, internal/box/composecheck.go, internal/box/derived_image.go, internal/box/project_build.go, internal/box/locked_image.go, internal/box/run.go, internal/networkstate/image_files.go, internal/networkstate/image_trees.go, internal/networkstate/project_builds.go, internal/agent/network_bundle.go, internal/agent/locked_clients.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/network.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/net_cmd.go, internal/cli/modelscache.go, docs/networking.md, internal/sessionsvc/acp.go, internal/networkstate/approval_generation.go, internal/cli/acp_refresh.go, internal/acpproxy/restarter.go, internal/box/network_transports_live_test.go, Makefile, internal/egress/policy.go, internal/cli/network_flags.go, internal/sessionsvc/network.go, internal/config/config.go, internal/cli/doctor.go, internal/cli/eval_trial.go, internal/cli/eval_loop.go, internal/box/launch_sections.go]
+updated: 2026-11-07
 ---
 
 A filtered box — the built-in default, or `coop <agent> --egress filtered` — runs behind a per-run
@@ -201,6 +201,11 @@ filtered launch runs it itself when
 coop's definitions AND still names an image pair that exists (`box/network_admission.go`); the
 launch continues on the record setup left. Setups serialize on `Store.LockSetup` (`setup-lock`
 under the root, 30 min bound), so two first launches never build the same images side by side.
+That lock is per state root, and another root or OS user on the same daemon rebuilds the same
+tags, so a cached build must reproduce the ID a record pinned. `dockerBuildEnvironment` turns off
+BuildKit's default attestations for that: on the containerd image store (Docker 29's default for
+new installs) the ID is the index digest, and the default provenance record gave every cached
+rebuild a new one, so each root's setup invalidated every other root's record.
 The session daemon passes no qualifier (`network_session.go`): an API request never builds images,
 so a host must be prepared with `coop net setup` before a filtered session. The transcript is the
 whole result — two sentences, one `✓`/`✗` line per proved property, one verdict; a check failure is
@@ -407,6 +412,10 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-07 — builds set `BUILDX_NO_DEFAULT_ATTESTATIONS=1`: on Docker 29's containerd image
+  store a cached rebuild got a new ID from the provenance record, so five QA state roots on one Linux
+  daemon kept invalidating each other's setup ("the images this host was set up with disappeared").
+  Verified on the andrew-dev VM: two roots' setups now produce one ID pair and both launch.
 - 2026-11-06 — a `box.egress` changed after an approval is pending under `COOP_EGRESS` open or
   filtered too: the `overridden` exemption had let such a run keep the approved filtered access while
   the file asked for offline, and `coop approve` already offered the change the launch never asked

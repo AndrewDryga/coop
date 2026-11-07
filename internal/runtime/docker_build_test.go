@@ -101,6 +101,10 @@ func TestDockerBuildFixtureProcess(t *testing.T) {
 		if os.Getenv("DOCKER_BUILDKIT") != "1" || os.Getenv("HOME") != clientConfig || os.Getenv("BUILDX_CONFIG") != filepath.Join(clientConfig, "buildx") {
 			os.Exit(95)
 		}
+		// A default provenance record gives every containerd-store build a new ID, even from cache.
+		if os.Getenv("BUILDX_NO_DEFAULT_ATTESTATIONS") != "1" {
+			os.Exit(106)
+		}
 		if _, err := os.Stat(filepath.Join(clientConfig, "config.json")); !errors.Is(err, os.ErrNotExist) {
 			os.Exit(96)
 		}

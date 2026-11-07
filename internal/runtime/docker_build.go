@@ -195,7 +195,14 @@ func (d *Docker) buildxExecutable(ctx context.Context) (string, error) {
 func dockerBuildEnvironment(binary, clientConfig string) []string {
 	// Buildx has controls beyond DOCKER_* (source policies, remote builders,
 	// source epoch, Git metadata). Start from a finite host-process environment.
-	return []string{"PATH=" + filepath.Dir(binary) + ":/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + clientConfig, "TMPDIR=" + filepath.Join(clientConfig, "tmp"), "LANG=C", "LC_ALL=C", "DOCKER_BUILDKIT=1", "BUILDX_CONFIG=" + filepath.Join(clientConfig, "buildx")}
+	//
+	// No default attestations: on Docker's containerd image store the ID is the
+	// image index digest, and the default provenance record (build times, an
+	// invocation ID) gives every build, even a fully cached one, a new ID. Setup
+	// records pin these IDs, so each rebuild elsewhere on the daemon (another state
+	// folder or OS user) would invalidate them. Older Buildx ignores the variable,
+	// where an unknown --provenance flag would fail the build.
+	return []string{"PATH=" + filepath.Dir(binary) + ":/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + clientConfig, "TMPDIR=" + filepath.Join(clientConfig, "tmp"), "LANG=C", "LC_ALL=C", "DOCKER_BUILDKIT=1", "BUILDX_CONFIG=" + filepath.Join(clientConfig, "buildx"), "BUILDX_NO_DEFAULT_ATTESTATIONS=1"}
 }
 
 func readDockerBuildID(root *os.Root) (string, error) {
