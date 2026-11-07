@@ -216,7 +216,7 @@ func (a *app) evalRun(args []string) (int, error) {
 	}
 	staged, err := eval.StageSuite(ctx, root, suite)
 	if err != nil {
-		return 1, fmt.Errorf("freeze suite inputs: %w", err)
+		return 1, fmt.Errorf("prepare the suite: %w", err)
 	}
 	stagedDir := staged.Dir
 	defer eval.RemoveStagedSuite(stagedDir) // a real run moves these exact bytes under its own record

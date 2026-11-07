@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An eval runtime profile with `.git` names the profile.** `coop eval run` said "freeze suite inputs:
+  ... suite tree contains .git" for a profile folder holding Git metadata. It now says "prepare the suite:
+  ... runtime profile contains .git; use a clean export".
+
 - **The `/sweep` Stop hook leaves another live agent's task alone again.** It read claims from `coop tasks
   ls` in a layout the listing no longer prints, so it counted every claimed task and could keep a sweep
   going until it finished or parked someone else's in-flight work. It now reads today's listing, and a

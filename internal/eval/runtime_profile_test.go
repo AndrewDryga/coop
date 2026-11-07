@@ -232,8 +232,13 @@ func TestRuntimeProfileRefusesDirtyOrOverlappingTrees(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := StageSuite(context.Background(), state, s); err == nil {
+			_, err = StageSuite(context.Background(), state, s)
+			if err == nil {
 				t.Fatal("unsafe profile tree was accepted")
+			}
+			// The refusal names the folder at fault: the profile, not the suite.
+			if strings.Contains(kind, "git") && !strings.Contains(err.Error(), "runtime profile contains .git") {
+				t.Fatalf("a profile with .git was refused as %q", err)
 			}
 		})
 	}

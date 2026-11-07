@@ -140,8 +140,11 @@ func walkOpenedSuiteTree(ctx context.Context, root *os.Root, profile bool, visit
 			}
 			name := entry.Name()
 			if strings.EqualFold(name, ".git") {
-				if prefix == "" || profile {
-					return fmt.Errorf("suite tree contains .git; export a clean tree before freezing")
+				if profile {
+					return fmt.Errorf("runtime profile contains .git; use a clean export")
+				}
+				if prefix == "" {
+					return fmt.Errorf("suite tree contains .git; export a clean tree")
 				}
 				continue
 			}
