@@ -184,7 +184,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>PIDS</code></td>
 <td><code>4096</code></td>
-<td>Limits the number of processes in the box. <code>0</code>, <code>unlimited</code> or empty turns it off.</td>
+<td>Limits the number of processes in the box. <code>0</code>, <code>unlimited</code> or empty turns off Coop&#39;s limit; the host&#39;s own still applies (on systemd hosts, <code>DefaultTasksMax</code>).</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>MEMORY</code>, <code>COOP_<wbr/>CPUS</code></td>
