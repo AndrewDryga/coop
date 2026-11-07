@@ -2,7 +2,7 @@
 name: review-host-owned-verdicts
 description: reviews report bounded evidence; Coop alone applies validated task lifecycle changes
 subsystem: box
-sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/loop/loop.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
+sources: [internal/tasks/review_dispute.go, internal/box/run.go, internal/loop/review.go, internal/loop/receipt.go, internal/loop/pending_review.go, internal/loop/loop.go, internal/tasks/audit.go, internal/tasks/pending_review.go, internal/loop/changes.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/agent/agent.go, internal/agent/codex.go, internal/tasks/cmd.go, internal/tasks/lease.go, internal/tasks/queue.go, internal/loopcfg/loopcfg.go]
 updated: 2026-11-06
 ---
 
@@ -56,6 +56,14 @@ a blank line before its receipt — which the evidence parser allows but the ech
 not match — looked like an earlier receipt, and every Haiku review was refused once. The stream
 decoder now skips a result equal to the last assistant text it already copied to the tail
 (`streamDecoder.result`); the anti-spoof rule itself is unchanged.
+
+A reply Codex's adapter refuses (a footer or echo it cannot match) ends with
+`agents.RejectedReviewEnvelope`, a line no receipt survives. That line is not the reviewer's: the
+refusal skips it to quote the reviewer's own last line, says in words that the text around the
+receipt did not match when the receipt itself reads fine, and neither the refusal nor the
+correction request's tail shows it. A log once named the line itself as the last line of a reply
+that really ended "Review finished, thank you." (`reviewReopenReceipt`, `withoutRejectedEnvelope`).
+The skip never accepts: every path past the line ends in a refusal.
 
 Each accepted reopen also writes one random generation in the host-only task-authority registry.
 Current records anchor the full baseline HEAD and every ordered later commit, whether task-bound or
@@ -167,6 +175,9 @@ back to signoff. They never derive authority by scanning historical archives.
 
 ## Changelog
 
+- 2026-11-06 — a refused Codex reply quotes the reviewer's own last line, never the adapter's
+  rejection mark, and the mark is gone from the correction request too (task
+  2026-11-06-quote-a-codex-reviewer-s-real-last-line-when-its).
 - 2026-11-06 — a refused receipt names its rule, and Claude's repeated final text no longer voids a
   valid one (task 2026-11-06-say-why-a-loop-review-receipt-was-refused-and-sh).
 - 2026-11-06 — `writes: repo` works: a filtered launch admits the queue snapshot tree, and the

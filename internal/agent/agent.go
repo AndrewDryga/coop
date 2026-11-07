@@ -472,7 +472,8 @@ type Agent interface {
 	Name() string
 	// SkillsCapable reports whether the native client discovers project skills.
 	SkillsCapable() bool
-	// ReviewOutput removes native transport envelopes without owning host verdict grammar.
+	// ReviewOutput removes native transport envelopes without owning host verdict grammar. A reply
+	// whose envelope it cannot read comes back false and ending in RejectedReviewEnvelope.
 	ReviewOutput(string, ReviewOutputContract) (string, bool)
 	ReviewFooterLine(string) bool
 	// PlainOutputProbe recognizes only a complete native denial, not assistant prose.
@@ -1016,6 +1017,12 @@ type ReviewOutputContract struct {
 	ValidOutput      func(string) bool
 	ValidReceiptLine func(string) bool
 }
+
+// RejectedReviewEnvelope is the last line ReviewOutput appends when it refuses a reply. No receipt
+// is accepted behind it, so a reply whose transport envelope could not be read never reaches a
+// later valid-looking receipt. It is not the reviewer's text: the host looks past it for the
+// reviewer's real last line and never shows it.
+const RejectedReviewEnvelope = "\x00coop-review-envelope-invalid\x00"
 
 type PlainOutputProbe interface {
 	io.Writer

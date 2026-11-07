@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A refused Codex review receipt quotes the reviewer's real last line.** The log named an internal
+  marker as the last line (`the last line "\x00coop-codex-…\x00" is not a valid receipt`), not what
+  the reviewer wrote last, such as `Review finished, thank you.` after its receipt. The refusal and
+  the format-only correction now show the reviewer's own last line and output tail, and the refusal
+  says so when the receipt reads fine but the footer or repeated reply around it does not match
+  what the agent prints.
+
 - **A `/build` that Coop refuses in an editor thread says why and is remembered.** Where the files
   were refused as it saved them for review, such as a `.agent/Dockerfile` that is a symlink or
   copies `.agent/project.yaml`, the answer was only "the reason is in the agent log", and the next

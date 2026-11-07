@@ -1463,18 +1463,13 @@ func (a codexAgent) ShellPrelude() string {
 	return a.UsagePrelude() + consultCaptureShell("codex", "Codex")
 }
 
-const (
-	codexReviewFooter = "tokens used"
-	// This marker is returned only through the internal response tail. It keeps an adapter-owned
-	// envelope that failed validation from accidentally reaching a later valid-looking receipt.
-	codexMalformedReviewEnvelope = "\x00coop-codex-review-envelope-invalid\x00"
-)
+const codexReviewFooter = "tokens used"
 
 // ReviewOutput removes only the footer shape emitted by the Codex transport wrapper.
 // The wrapper appends `tokens used` plus a formatted count and may repeat the final agent message
 // or its exact terminal evidence/receipt block before or after that footer. Earlier agent messages
 // are narration, not part of the echoed response. A different trailing block is not a second answer
-// to merge: it is an invalid envelope and gets an impossible terminal marker so strict receipt
+// to merge: it is an invalid envelope and ends with RejectedReviewEnvelope so strict receipt
 // parsing fails.
 func (codexAgent) ReviewOutput(output string, contract ReviewOutputContract) (string, bool) {
 	return (codexReviewNormalizer{contract}).normalize(output)
@@ -1599,7 +1594,7 @@ func (n codexReviewNormalizer) duplicatedCodexReviewSuffix(lines []string) (stri
 }
 
 func rejectCodexReviewEnvelope(output string) (string, bool) {
-	return strings.TrimRight(output, "\r\n") + "\n" + codexMalformedReviewEnvelope, false
+	return strings.TrimRight(output, "\r\n") + "\n" + RejectedReviewEnvelope, false
 }
 
 func codexTokenCount(value string) bool {

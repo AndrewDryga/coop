@@ -3,6 +3,7 @@ package loop
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -441,11 +442,15 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := normalizeAgentReviewOutput("codex", tc.output)
-			if ok || !strings.Contains(got, "\x00coop-codex-review-envelope-invalid\x00") {
+			if ok || !strings.HasSuffix(got, "\n"+agents.RejectedReviewEnvelope) {
 				t.Fatalf("malformed envelope = %q/%v, want internal rejection marker", got, ok)
 			}
-			if _, err := reviewReopenReceipt(got); err == nil {
+			_, err := reviewReopenReceipt(got)
+			if err == nil {
 				t.Fatal("malformed Codex envelope retained a usable receipt")
+			}
+			if strings.Contains(err.Error(), "envelope-invalid") || strings.ContainsRune(err.Error(), 0) {
+				t.Fatalf("the refusal quotes the internal rejection marker: %q", err)
 			}
 		})
 	}
@@ -466,6 +471,93 @@ func TestNormalizeCodexReviewOutput(t *testing.T) {
 		if !ok || got != pass {
 			t.Fatalf("Codex footer reordered before response = %q/%v, want %q/true", got, ok, pass)
 		}
+	}
+}
+
+// codexReviewTail returns what an iteration holds after a Codex review. The reply is one JSON
+// message through the stream decoder, the wrapper's own plain lines come after it as the real
+// wrapper prints them, and the adapter normalizes the resulting tail.
+func codexReviewTail(t *testing.T, reply string, wrapper ...string) string {
+	t.Helper()
+	message, err := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"id": "item_0", "type": "agent_message", "text": reply}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := append([]string{string(message)}, wrapper...)
+	stream = append(stream, `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`)
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	_, _ = d.Write([]byte(strings.Join(stream, "\n") + "\n"))
+	d.flush()
+	normalized, _ := normalizeAgentReviewOutput("codex", tail.String())
+	return normalized
+}
+
+// A refused Codex receipt quotes the reviewer's own last line, never the mark the adapter appends
+// to a reply it refuses. The mark made a log read `the last line "\x00coop-…\x00" is not a valid
+// receipt` over a reply that really ended "Review finished, thank you.". When only the text around
+// a good receipt was refused, the refusal says that in words.
+func TestRefusedCodexReceiptQuotesTheReviewersLastLine(t *testing.T) {
+	const evidence = "AUDIT EVIDENCE — task-a — gate: make check — findings: none\n"
+	const receipt = "REVIEW COMPLETE — PASS — reopened: none"
+	for _, tc := range []struct {
+		name, reply string
+		wrapper     []string
+		rule, last  string
+	}{
+		{
+			name: "a line after the receipt", reply: evidence + receipt + "\nReview finished, thank you.",
+			rule: `the last line "Review finished, thank you." is not a valid receipt: it does not start with "REVIEW COMPLETE — "`,
+			last: "Review finished, thank you.",
+		},
+		{
+			name: "a usage footer printed twice", reply: evidence + receipt,
+			wrapper: []string{"tokens used", "162,824", "tokens used", "1,234"},
+			rule:    `the last line "` + receipt + `" is a receipt, but the text around it, such as a usage footer or a copy of the reply, does not match what the agent prints`,
+			last:    "1,234",
+		},
+		{
+			name: "a usage footer with no count", reply: evidence + receipt,
+			wrapper: []string{"tokens used", "not-a-count"},
+			rule:    `the last line "not-a-count" is not a valid receipt`,
+			last:    "not-a-count",
+		},
+		{
+			name: "a long last line", reply: evidence + receipt + "\n\x1b[31m" + strings.Repeat("x", 500),
+			rule: `the last line "\x1b[31m` + strings.Repeat("x", 100),
+			last: "\x1b[31m" + strings.Repeat("x", 500),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := codexReviewTail(t, tc.reply, tc.wrapper...)
+			if !strings.HasSuffix(output, "\n"+agents.RejectedReviewEnvelope) {
+				t.Fatalf("the adapter accepted the reply:\n%q", output)
+			}
+			root := t.TempDir()
+			taskForLease(t, root, stateDone, "task-a")
+			_, applyErr := applyReviewVerdictInRepo("", []string{root}, []string{"task-a"}, output)
+			_, candidateErr := candidateReviewVerdict([]string{"task-a"}, output)
+			for name, err := range map[string]error{"final review": applyErr, "candidate review": candidateErr} {
+				if !errors.Is(err, errReviewVerdictMalformed) {
+					t.Fatalf("%s: verdict = %v, want a malformed-verdict refusal", name, err)
+				}
+				text := err.Error()
+				for what, shown := range map[string]string{"refusal": text, "correction request": reviewVerdictCorrection(err, output, []string{"task-a"})} {
+					if strings.Contains(shown, "envelope-invalid") || strings.ContainsRune(shown, 0) || strings.ContainsRune(shown, '\x1b') {
+						t.Errorf("%s: the %s shows the internal mark or a raw control byte:\n%q", name, what, shown)
+					}
+				}
+				if !strings.Contains(text, tc.rule) {
+					t.Errorf("%s: refusal = %q\nwant it to say %q", name, text, tc.rule)
+				}
+				if strings.Contains(text, strings.Repeat("x", 200)) {
+					t.Errorf("%s: the quoted line is not bounded:\n%s", name, text)
+				}
+				if !strings.HasSuffix(text, quoteReceiptLine(tc.last)) {
+					t.Errorf("%s: the output tail does not end with the reviewer's last line:\n%s", name, text)
+				}
+			}
+		})
 	}
 }
 

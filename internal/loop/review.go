@@ -343,7 +343,7 @@ func reviewVerdictCorrection(verdictErr error, output string, subjects []string)
 
 func reviewEnvelopeTail(output string) string {
 	const maxLines, maxRunes = 16, 512
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(withoutRejectedEnvelope(output), "\n")
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}

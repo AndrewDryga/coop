@@ -82,6 +82,16 @@ func quoteReceiptLine(line string) string {
 	return strconv.Quote(truncate(line, 160))
 }
 
+// withoutRejectedEnvelope drops the line an adapter appends when it refuses a reply's transport
+// envelope. It marks the refusal and was never part of the reply, so no text a person or a reviewer
+// reads as the reviewer's output may carry it.
+func withoutRejectedEnvelope(output string) string {
+	lines := strings.Split(output, "\n")
+	return strings.Join(slices.DeleteFunc(lines, func(line string) bool {
+		return strings.TrimSpace(line) == agents.RejectedReviewEnvelope
+	}), "\n")
+}
+
 // receiptFailureTail renders the last few non-empty lines of a rejected review output so the
 // failure can be diagnosed from the log alone: a malformed receipt can look perfect in the rendered
 // log, the captured output is not otherwise persisted, and reproducing a protected audit is expensive.
@@ -91,7 +101,7 @@ func quoteReceiptLine(line string) string {
 // requires the receipt to be terminal.
 func receiptFailureTail(output string) string {
 	const maxLines = 3
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(withoutRejectedEnvelope(output), "\n")
 	var tail []string
 	for i := len(lines) - 1; i >= 0 && len(tail) < maxLines; i-- {
 		if strings.TrimSpace(lines[i]) == "" {
@@ -150,10 +160,20 @@ func normalizeAgentReviewOutput(name, raw string) (string, bool) {
 // line earlier in the response is rejected too: otherwise ordinary prose could contain an old
 // verdict while the parser silently trusted a later block. A refusal names the rule that broke, so
 // the log and the format-only correction can say exactly what to fix.
+//
+// An adapter that refused the reply's transport envelope ends it with agents.RejectedReviewEnvelope.
+// That line is not the reviewer's: the refusal looks past it, quotes the reviewer's own last line,
+// and says the envelope is wrong when the receipt itself reads fine. Nothing behind the line is
+// ever accepted, so every path below it ends in a refusal.
 func reviewReopenReceipt(output string) (reviewReceipt, error) {
 	lines := strings.Split(output, "\n")
+	envelopeRejected := false
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
+		if line == agents.RejectedReviewEnvelope {
+			envelopeRejected = true
+			continue
+		}
 		if line == "" || wrapperFooterLine(line) {
 			continue
 		}
@@ -166,6 +186,10 @@ func reviewReopenReceipt(output string) (reviewReceipt, error) {
 				return reviewReceipt{}, fmt.Errorf("an earlier line also contains %q: %s. The receipt may appear only once, as the last line",
 					reviewReceiptPrefix, quoteReceiptLine(strings.TrimSpace(earlier)))
 			}
+		}
+		if envelopeRejected {
+			return reviewReceipt{}, fmt.Errorf("the last line %s is a receipt, but the text around it, such as a usage footer or a copy of the reply, does not match what the agent prints",
+				quoteReceiptLine(line))
 		}
 		return receipt, nil
 	}

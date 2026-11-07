@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -658,6 +659,17 @@ func TestReceiptFailureTailMakesTheRejectionDiagnosable(t *testing.T) {
 	t.Run("empty output says so instead of being blank", func(t *testing.T) {
 		if got := receiptFailureTail("\n\n  \n"); got != "(empty)" {
 			t.Errorf("receiptFailureTail(blank) = %q, want %q", got, "(empty)")
+		}
+	})
+
+	// The line an adapter appends to a reply it refuses is not the reviewer's text.
+	t.Run("never shows the adapter's rejection mark", func(t *testing.T) {
+		got := receiptFailureTail("REVIEW COMPLETE — PASS — reopened: none\nOne more thing.\n" + agents.RejectedReviewEnvelope)
+		if want := `"REVIEW COMPLETE — PASS — reopened: none" ⏎ "One more thing."`; got != want {
+			t.Errorf("tail = %s, want %s", got, want)
+		}
+		if got := receiptFailureTail(agents.RejectedReviewEnvelope); got != "(empty)" {
+			t.Errorf("receiptFailureTail(mark only) = %q, want %q", got, "(empty)")
 		}
 	})
 }
