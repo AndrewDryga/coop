@@ -52,6 +52,7 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 	token := "opaque-" + strings.Repeat("Zm9v", 512) // a page token is the provider's own cursor
 	for _, tc := range []struct {
 		name, provider, selection, host, account string
+		credentialed                             bool // a credential with no account selector
 		admitted                                 []string
 		refused                                  map[string]string // request -> recorded class
 	}{
@@ -63,6 +64,10 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 				"/backend-api/ps/plugins/installed?limit=200&pageToken=" + token,
 				"/backend-api/ps/plugins/installed?limit=200&includeDownloadUrls=true",
 				"/backend-api/ps/plugins/installed?limit=200&includeDownloadUrls=true&pageToken=" + token,
+				"/backend-api/ps/plugins/installed?scope=GLOBAL",
+				"/backend-api/ps/plugins/installed?scope=WORKSPACE",
+				"/backend-api/ps/plugins/installed?scope=WORKSPACE&includeDownloadUrls=true&pageToken=" + token,
+				"/backend-api/wham/rate-limit-reset-credits",
 			},
 			refused: map[string]string{
 				"/backend-api/ps/plugins/list?scope=GLOBAL&limit=200&pageToken=a&pageToken=b":                "GET /backend-api/ps/plugins/list?limit&pageToken&scope",
@@ -73,17 +78,24 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 				"/backend-api/ps/plugins/list?scope=GLOBAL&pageToken=" + token:                               "GET /backend-api/ps/plugins/list?pageToken&scope",
 				"/backend-api/ps/plugins/list?scope=GLOBAL&limit=200&collection=x":                           "GET /backend-api/ps/plugins/list?collection&limit&scope",
 				"/backend-api/ps/plugins/installed?limit=200&includeDownloadUrls=false":                      "GET /backend-api/ps/plugins/installed?includeDownloadUrls&limit",
-				"/backend-api/ps/plugins/installed?scope=GLOBAL":                                             "GET /backend-api/ps/plugins/installed?scope",
+				"/backend-api/ps/plugins/installed?scope=USER":                                               "GET /backend-api/ps/plugins/installed?scope",
+				"/backend-api/ps/plugins/installed?scope=GLOBAL&limit=200":                                   "GET /backend-api/ps/plugins/installed?limit&scope",
+				"/backend-api/wham/rate-limit-reset-credits?id=1":                                            "GET /backend-api/wham/rate-limit-reset-credits?id",
+				"/backend-api/ps/plugins/installed?scope=GLOBAL&scope=WORKSPACE":                             "GET /backend-api/ps/plugins/installed?scope",
+				"POST /backend-api/wham/rate-limit-reset-credits":                                            "POST /backend-api/wham/rate-limit-reset-credits",
 				"/backend-api/ps/plugins/plugin_ab12c3?pageToken=" + token:                                   "GET /backend-api/ps/plugins/*?pageToken",
 			}},
 		{name: "grok probe", provider: "grok", selection: "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828", host: "cli-chat-proxy.grok.com",
 			admitted: []string{"/"},
 			refused:  map[string]string{"/?probe=1": "GET /?probe", "//": "GET //", "/v1": "GET /v1"}},
+		{name: "grok hosted MCP tools", provider: "grok", selection: "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828", host: "cli-chat-proxy.grok.com", credentialed: true,
+			admitted: []string{"/v1/mcp/tools/list"},
+			refused:  map[string]string{"/v1/mcp/tools/list?all=1": "GET /v1/mcp/tools/list?all", "/v1/mcp/tools/call": "GET /v1/mcp/tools/call", "POST /v1/mcp/tools/list": "POST /v1/mcp/tools/list"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// An authenticated line gets the selected credential and account; the probe gets neither.
 			wantAuth, wantAccount := "Bearer private-access-one", tc.account
-			if tc.account == "" {
+			if tc.account == "" && !tc.credentialed {
 				wantAuth = ""
 			}
 			f := newNativeTransportFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,8 +106,14 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 			}), nativeAdapterRoutes(t, tc.provider, tc.selection, tc.host, tc.account))
 			events := NewGuardEvents(nil)
 			f.broker.events = events
+			// A target may name its method ("POST /path"); the rest are GETs.
 			send := func(target string) (*http.Response, string) {
-				request := f.request(t, target)
+				method, path, found := strings.Cut(target, " ")
+				if !found {
+					method, path = http.MethodGet, target
+				}
+				request := f.request(t, path)
+				request.Method = method
 				request.Header.Set("ChatGPT-Account-ID", "public-account")
 				request.Header.Set("Cookie", "guest=1")
 				if tc.account == "" {

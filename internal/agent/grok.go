@@ -85,7 +85,9 @@ func grokBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		out = append(out, NativeBrokerRoute{Host: "cli-chat-proxy.grok.com", Method: method, Path: path, Query: query, Header: "Authorization", HeaderPrefix: "Bearer "})
 	}
 	add("POST", "/v1/responses", "")
-	for _, path := range []string{"/v1/user", "/v1/models", "/v1/settings", "/v1/bundle/archive", "/v1/subagents/bundle", "/v1/feedback/config"} {
+	// The pinned client lists its provider's hosted MCP tools at start (GET /v1/mcp/tools/list, seen
+	// refused on every run before 2026-11-07); it reads, like the lines beside it.
+	for _, path := range []string{"/v1/user", "/v1/models", "/v1/settings", "/v1/bundle/archive", "/v1/subagents/bundle", "/v1/feedback/config", "/v1/mcp/tools/list"} {
 		add("GET", path, "")
 	}
 	add("GET", "/v1/billing", "format=credits")

@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Codex workspace accounts and Grok runs no longer end with a block warning.** Coop's sign-in proxy
+  refused three read-only requests the pinned clients make: Codex's per-scope installed-plugins list and
+  reset-credit list, and Grok's list of hosted MCP tools. They are now allowed exactly as sent.
+
 - **`coop models codex --refresh` works without a host Codex CLI.** It ran `codex debug models` on your
   computer and said "Codex is unavailable on this host" when there was none. It now asks the pinned
   client in a box, as for the other agents, so the list matches the Codex your boxes run.

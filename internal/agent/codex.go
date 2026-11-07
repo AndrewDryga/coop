@@ -146,7 +146,9 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		Header: "Chatgpt-Account-Id", CollectionKey: "accounts", IDKey: "id",
 		LegacyObjectKey: "account", LegacyIDKey: "account_id", OrderingKey: "account_ordering", DefaultIDKey: "default_account_id",
 	}
-	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
+	// The reset-credit list is read-only (backend-client list_rate_limit_reset_credits); spending one
+	// is a POST and stays refused.
+	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
 		add("GET", path, "")
 	}
 	add("POST", "/backend-api/codex/analytics-events/events", "")
@@ -164,6 +166,9 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		out[len(out)-1].Queries = append(queries, page)
 	}
 	paged("/backend-api/ps/plugins/installed", limit, NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true})
+	// A workspace account also reads one scope's installed list at a time, with no limit
+	// (get_remote_plugin_installed_page, RemoteInstalledPluginScope::Single).
+	paged("/backend-api/ps/plugins/installed", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL", "WORKSPACE"}}, NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true})
 	paged("/backend-api/ps/plugins/list", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL"}}, limit)
 	add("GET", "/backend-api/ps/plugins/suggested/codex", "scope=GLOBAL")
 	return out, nil
