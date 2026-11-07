@@ -483,11 +483,13 @@ second one. Boxes share the slots through their common
 sharing slots there hasn&#39;t been tested, so don&#39;t count on the limit there.</p>
 <p>On Docker, a gate under <code>coop-gate-slot</code> also keeps its temp files in memory. A box&#39;s <code>/tmp</code> is on
 the runtime&#39;s disk, where <code>fsync</code> can take several times as long as on the host, and Go tests write
-and sync many small files. The helper sets <code>TMPDIR</code> and <code>GOTMPDIR</code> to <code>/tmp/coop-gate</code>, a folder in
-memory, for the gate command only. The agent and the rest of <code>/tmp</code> are unchanged. The folder is a
-quarter of the box&#39;s memory limit (<code>COOP_MEMORY</code>), but never under 512 MB, and 2 GB in a box with no
-limit. A gate that writes more fails with <code>no space left on device</code>, and its files count against
-the box&#39;s memory.</p>
+and sync many small files. If the gate has no <code>TMPDIR</code>, the helper makes it a folder of its own in
+<code>/tmp/coop-gate</code>, which is memory, and sets <code>TMPDIR</code> and <code>GOTMPDIR</code> to it for the gate command only.
+The folder is removed when the gate ends. A gate that already has a <code>TMPDIR</code> keeps it. The agent and
+the rest of <code>/tmp</code> are unchanged. <code>/tmp/coop-gate</code> is a quarter of the box&#39;s memory limit
+(<code>COOP_MEMORY</code>), but never under 512 MB, and 2 GB in a box with no limit. A gate that writes more
+fails with <code>no space left on device</code>, and its files count against the box&#39;s memory. A gate that is
+killed leaves its folder, and the next gate removes folders more than four hours old.</p>
 <p>A stale or crashed worker shows as <code>cleanup</code> in <code>coop fork ls</code>. Run <code>coop fork stop &lt;name&gt;</code> to
 clean it up. If co:op started the worker on another operating system, such as a Linux container
 that shares the folder, the listing says so. Stop that worker on the system where it started,

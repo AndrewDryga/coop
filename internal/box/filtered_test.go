@@ -1189,10 +1189,6 @@ func TestFilteredMountsRequireExactGeneratedSources(t *testing.T) {
 		{"host-network", []string{"--network", "host"}, nil, false},
 		{"alternate-mount", []string{"--mount", "type=bind,src=/,dst=/host"}, nil, false},
 		{"relax-seccomp", []string{"--security-opt", "seccomp=unconfined"}, nil, false},
-		{"gate-tmpfs", []string{"--tmpfs", gateTmpfs("4g")}, nil, true},
-		{"other-tmpfs", []string{"--tmpfs", "/home/node:rw,exec,size=1g"}, nil, false},
-		{"wider-gate-tmpfs", []string{"--tmpfs", GateTmpPath + ":rw,exec,suid,nodev,size=2g"}, nil, false},
-		{"tmpfs-without-value", []string{"--tmpfs"}, nil, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := f.validateMounts(test.args, test.files, nil); (err == nil) != test.valid {
@@ -1206,6 +1202,39 @@ func TestFilteredMountsRequireExactGeneratedSources(t *testing.T) {
 	}
 	if err := f.validateMounts([]string{"-v", alias + ":/transcripts"}, nil, nil); err == nil {
 		t.Fatal("ACP alias exposed authority")
+	}
+}
+
+// A filtered workload may carry one tmpfs, the gate's temp folder, and exactly the size coop plans
+// for the memory limit it runs with. A larger size, a second tmpfs, another path or other options
+// are refused, wherever the --memory sits among the options.
+func TestFilteredMountsTakeOnlyThePlannedGateTmpfs(t *testing.T) {
+	f, _ := filteredFixture(t)
+	planned, noLimit := gateTmpfs("4g"), gateTmpfs("")
+	for _, test := range []struct {
+		name  string
+		args  []string
+		valid bool
+	}{
+		{"no tmpfs", []string{"--memory", "4g"}, true},
+		{"planned for the limit", []string{"--memory", "4g", "--tmpfs", planned}, true},
+		{"planned for the limit, memory last", []string{"--tmpfs", planned, "--memory", "4g"}, true},
+		{"planned for no limit", []string{"--tmpfs", noLimit}, true},
+		{"far larger than planned", []string{"--memory", "4g", "--tmpfs", GateTmpPath + ":rw,exec,nosuid,nodev,size=99999g"}, false},
+		{"far larger, no limit", []string{"--tmpfs", GateTmpPath + ":rw,exec,nosuid,nodev,size=99999g"}, false},
+		{"planned for no limit, in a limited box", []string{"--memory", "4g", "--tmpfs", noLimit}, false},
+		{"planned for a limit, in a box with none", []string{"--tmpfs", planned}, false},
+		{"twice", []string{"--memory", "4g", "--tmpfs", planned, "--tmpfs", planned}, false},
+		{"twice, no limit", []string{"--tmpfs", noLimit, "--tmpfs", noLimit}, false},
+		{"another path", []string{"--tmpfs", "/home/node:rw,exec,size=1g"}, false},
+		{"wider options", []string{"--tmpfs", GateTmpPath + ":rw,exec,suid,nodev,size=2g"}, false},
+		{"no value", []string{"--tmpfs"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := f.validateMounts(test.args, nil, nil); (err == nil) != test.valid {
+				t.Fatal("tmpfs decision", err)
+			}
+		})
 	}
 }
 

@@ -13,8 +13,8 @@ const GateSlotPath = "/usr/local/bin/coop-gate-slot"
 // GateTmpPath is the folder a gate keeps its temp files in. A Docker box that carries coop-gate-slot
 // mounts it as memory (gateTmpfs), because a box's /tmp sits on the runtime's disk: on OrbStack an
 // fsync there takes several times what it takes on the host, with stalls of over a second, and Go's
-// race tests sync many small files. coop-gate-slot points TMPDIR and GOTMPDIR here for the gate it
-// runs; the agent's own work and /tmp stay as they were.
+// race tests sync many small files. coop-gate-slot gives each gate a folder of its own in it and
+// points TMPDIR and GOTMPDIR there; the agent's own work and /tmp stay as they were.
 const GateTmpPath = "/tmp/coop-gate"
 
 // gateTmpfsOptions are that folder's mount options. Go runs its test binaries from there, so it
@@ -36,12 +36,8 @@ func gateTmpfs(memory string) string {
 	return GateTmpPath + ":" + gateTmpfsOptions + ",size=" + strconv.FormatInt(size>>shift, 10) + unit
 }
 
-var (
-	// memoryForm is what COOP_MEMORY and box.memory accept: Docker's --memory forms.
-	memoryForm = regexp.MustCompile(`(?i)^(\d+(?:\.\d*)?|\.\d+) ?(?:([kmgtp])(?:i?b)?|b)?$`)
-	// gateTmpfsForm is the one --tmpfs value gateTmpfs makes.
-	gateTmpfsForm = regexp.MustCompile(`^` + regexp.QuoteMeta(GateTmpPath+":"+gateTmpfsOptions+",size=") + `[1-9][0-9]*[mg]$`)
-)
+// memoryForm is what COOP_MEMORY and box.memory accept: Docker's --memory forms.
+var memoryForm = regexp.MustCompile(`(?i)^(\d+(?:\.\d*)?|\.\d+) ?(?:([kmgtp])(?:i?b)?|b)?$`)
 
 // memoryBytes reads a --memory value as Docker does: k, m, g, t and p are powers of 1024, with or
 // without the b or ib after them. It reports false for a value it cannot read or hold.
@@ -63,9 +59,9 @@ func memoryBytes(memory string) (int64, bool) {
 	return int64(n), true
 }
 
-// IsGateTmpfs reports whether value is a --tmpfs value gateTmpfs makes. A filtered box may ask for
-// no other tmpfs.
-func IsGateTmpfs(value string) bool { return gateTmpfsForm.MatchString(value) }
+// IsGateTmpfs reports whether value is the --tmpfs value a box with that memory limit gets, size
+// included. A filtered box may ask for no other tmpfs.
+func IsGateTmpfs(value, memory string) bool { return value == gateTmpfs(memory) }
 
 // GateSlotScript is the coop-gate-slot helper. Every box mounts the same coop-cache volume as
 // ~/.cache, so a flock on a file there is seen by every box on the host. Each of the two slots is
@@ -84,9 +80,13 @@ func IsGateTmpfs(value string) bool { return gateTmpfsForm.MatchString(value) }
 // there would let two merges, each holding one, wait for each other forever. tools/gateslot sets and
 // reads the same variable.
 //
-// The gate also runs with TMPDIR and GOTMPDIR at GateTmpPath, when the box has that folder and can
-// write to it. Where it does not, such as a runtime that mounts no memory folder, the gate keeps the
-// temp folder it had.
+// A gate with no TMPDIR gets a temp folder of its own, made inside GateTmpPath when the box has that
+// folder and the helper can write to it, and removed when the gate ends. TMPDIR is set to it, and so
+// is GOTMPDIR unless the gate set one. A gate that already has a TMPDIR keeps it, and Go's temp
+// folder, which follows it, so a project that points its temp files at a bigger disk is left alone.
+// Where the box has no such folder, such as a runtime that mounts no memory folder, the gate keeps
+// the temp folder it had. A gate killed before it can clean up leaves its folder, so each gate starts
+// by removing the folders more than four hours old.
 func GateSlotScript() string { return gateSlotScript }
 
 const gateSlotScript = `#!/bin/sh
@@ -96,19 +96,32 @@ const gateSlotScript = `#!/bin/sh
 #
 # Every coop box shares ~/.cache, so the slots there are host-wide. A third gate waits for one of
 # the first two to finish, and its command starts only then. A gate inside a gate runs at once, in
-# the outer gate's slot. The gate keeps its temp files in /tmp/coop-gate, which is memory where the
-# runtime allows it: a box's /tmp is on a disk where every fsync is slow.
+# the outer gate's slot. A gate with no TMPDIR keeps its temp files in a folder of its own in
+# /tmp/coop-gate, which is memory where the runtime allows it: a box's /tmp is on a disk where every
+# fsync is slow.
 [ "${1-}" != "--" ] || shift
 [ "$#" -gt 0 ] || { echo "usage: coop-gate-slot [--] <command> [args...]" >&2; exit 2; }
 tmp=/tmp/coop-gate
-if [ -d "$tmp" ] && [ -w "$tmp" ]; then
-	export TMPDIR="$tmp" GOTMPDIR="$tmp"
+run=
+if [ -z "${TMPDIR-}" ] && [ -d "$tmp" ] && [ -w "$tmp" ]; then
+	# A gate killed before it could clean up leaves its folder, so clear the ones that are hours old.
+	find "$tmp" -maxdepth 1 -type d -name 'run.*' -mmin +240 -exec rm -rf {} + 2>/dev/null
+	if run=$(mktemp -d "$tmp/run.XXXXXX" 2>/dev/null); then
+		# Only an exit runs this: a trap on TERM or INT would hold the signal until the gate ends.
+		trap 'rm -rf "$run"' EXIT
+		export TMPDIR="$run" GOTMPDIR="${GOTMPDIR:-$run}"
+	else
+		run=
+	fi
 fi
-[ -z "${COOP_GATE_SLOT_HELD-}" ] || exec "$@"
+# With a folder to remove, the gate runs under this script, which removes it after. Without one the
+# gate takes this script's place.
+launch() { [ -n "$run" ] || exec "$@"; "$@"; exit $?; }
+[ -z "${COOP_GATE_SLOT_HELD-}" ] || launch "$@"
 dir="$HOME/.cache/coop-gate/slots"
 if ! command -v flock >/dev/null 2>&1 || ! mkdir -p "$dir" 2>/dev/null; then
 	echo "coop-gate-slot: no gate slot is available here (flock or $dir is missing); running the gate without one" >&2
-	exec "$@"
+	launch "$@"
 fi
 start=$(date +%s)
 told=

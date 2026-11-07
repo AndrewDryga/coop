@@ -200,11 +200,13 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 	for _, observation := range observations {
 		directoryRoots = append(directoryRoots, observation.Record.Workspace)
 	}
+	var memory string  // the box's --memory in these options, empty for none
+	var tmpfs []string // every --tmpfs in these options
 	for i := 0; i < len(options); i++ {
 		switch options[i] {
 		case "--init", "-i", "-t", "-it":
 			continue
-		case "--label", "-e", "-w", "--memory", "--pids-limit", "--cpus":
+		case "--label", "-e", "-w", "--pids-limit", "--cpus":
 			i++
 			if i >= len(options) {
 				return errors.New("incomplete restricted workload option")
@@ -217,11 +219,18 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 				return errors.New("restricted workload security options cannot be overridden")
 			}
 			continue
-		case "--tmpfs":
-			// Memory that holds no host path, and the only kind a workload gets: the gate's temp folder.
+		case "--memory", "--tmpfs":
+			// A tmpfs holds no host path. The workload may carry one, the gate's temp folder, sized for
+			// the --memory it runs with, so both are read here and compared once the scan is done.
+			key := options[i]
 			i++
-			if i >= len(options) || !IsGateTmpfs(options[i]) {
-				return errors.New("restricted workload tmpfs is not the gate's temp folder")
+			if i >= len(options) {
+				return errors.New("incomplete restricted workload option")
+			}
+			if key == "--memory" {
+				memory = options[i]
+			} else {
+				tmpfs = append(tmpfs, options[i])
 			}
 			continue
 		case "-v", "--mount", "--env-file":
@@ -316,6 +325,10 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 		if info.IsDir() {
 			directoryRoots = append(directoryRoots, canonical)
 		}
+	}
+	// One tmpfs at most, and exactly the one coop plans for this box, size included.
+	if len(tmpfs) > 1 || len(tmpfs) == 1 && !IsGateTmpfs(tmpfs[0], memory) {
+		return errors.New("restricted workload tmpfs is not the gate's temp folder")
 	}
 	if err := f.store.CheckExposure(exposed); err != nil {
 		return err

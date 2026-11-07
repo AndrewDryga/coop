@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -45,7 +46,7 @@ func TestGateSlotScriptKeepsTheGateslotToolsSlots(t *testing.T) {
 		t.Fatal("coop-gate-slot and tools/gateslot no longer take the same two slot files")
 	}
 	if !strings.Contains(string(tool), "\nconst held = \"COOP_GATE_SLOT_HELD\"\n") ||
-		!strings.Contains(GateSlotScript(), "\n\t\t\texport COOP_GATE_SLOT_HELD=1\n") || !strings.Contains(GateSlotScript(), "\n[ -z \"${COOP_GATE_SLOT_HELD-}\" ] || exec \"$@\"\n") {
+		!strings.Contains(GateSlotScript(), "\n\t\t\texport COOP_GATE_SLOT_HELD=1\n") || !strings.Contains(GateSlotScript(), "\n[ -z \"${COOP_GATE_SLOT_HELD-}\" ] || launch \"$@\"\n") {
 		t.Fatal("coop-gate-slot and tools/gateslot no longer mark the gates they run with the same variable")
 	}
 }
@@ -302,30 +303,41 @@ func TestGateTmpfsIsAQuarterOfTheBoxMemory(t *testing.T) {
 		if got != folder+size {
 			t.Errorf("gateTmpfs(%q) = %q, want size %s", memory, got, size)
 		}
-		if !IsGateTmpfs(got) {
+		if !IsGateTmpfs(got, memory) {
 			t.Errorf("IsGateTmpfs refuses its own value %q", got)
 		}
 	}
 }
 
-// A filtered box may ask for one tmpfs, and only in the shape coop makes. Anything wider, or at
-// another path, would hide or widen something the box was not meant to touch.
-func TestIsGateTmpfsAcceptsOnlyTheGatesFolder(t *testing.T) {
+// A filtered box may ask for one tmpfs, and only the one coop plans for its memory limit, size
+// included. Anything else, such as a far larger size, a wider mount or another path, would give the
+// box memory or a place it was not meant to have.
+func TestIsGateTmpfsAcceptsOnlyThePlannedFolder(t *testing.T) {
 	const folder = GateTmpPath + ":rw,exec,nosuid,nodev,size="
-	for value, want := range map[string]bool{
-		folder + "2g": true, folder + "512m": true, folder + "1536m": true,
-		folder + "0m": false, folder + "g": false, folder + "2": false, folder + "2g,uid=0": false, folder + "2t": false,
-		GateTmpPath + ":rw,exec,suid,nodev,size=2g":       false,
-		GateTmpPath + ":rw,noexec,nosuid,nodev,size=2g":   false,
-		GateTmpPath + ":rw,exec,nosuid,nodev":             false,
-		GateTmpPath:                                       false,
-		"/tmp:rw,exec,nosuid,nodev,size=2g":               false,
-		"/home/node:rw,exec,nosuid,nodev,size=2g":         false,
-		GateTmpPath + "/sub:rw,exec,nosuid,nodev,size=2g": false,
-		"": false,
+	for _, tc := range []struct {
+		name, value, memory string
+		want                bool
+	}{
+		{"no limit", folder + "2g", "", true},
+		{"a 4g box", folder + "1g", "4g", true},
+		{"the minimum", folder + "512m", "1g", true},
+		{"far larger than planned", folder + "99999g", "4g", false},
+		{"far larger, no limit", folder + "99999g", "", false},
+		{"slightly larger", folder + "1025m", "4g", false},
+		{"planned for another limit", folder + "2g", "4g", false},
+		{"no size", GateTmpPath + ":rw,exec,nosuid,nodev", "", false},
+		{"a unit that is not a size", folder + "2t", "", false},
+		{"more options", folder + "2g,uid=0", "", false},
+		{"suid", GateTmpPath + ":rw,exec,suid,nodev,size=2g", "", false},
+		{"no exec", GateTmpPath + ":rw,noexec,nosuid,nodev,size=2g", "", false},
+		{"no options", GateTmpPath, "", false},
+		{"another path", "/tmp:rw,exec,nosuid,nodev,size=2g", "", false},
+		{"a home folder", "/home/node:rw,exec,nosuid,nodev,size=2g", "", false},
+		{"a folder below it", GateTmpPath + "/sub:rw,exec,nosuid,nodev,size=2g", "", false},
+		{"nothing", "", "", false},
 	} {
-		if got := IsGateTmpfs(value); got != want {
-			t.Errorf("IsGateTmpfs(%q) = %t, want %t", value, got, want)
+		if got := IsGateTmpfs(tc.value, tc.memory); got != tc.want {
+			t.Errorf("%s: IsGateTmpfs(%q, %q) = %t, want %t", tc.name, tc.value, tc.memory, got, tc.want)
 		}
 	}
 }
@@ -350,65 +362,244 @@ func envWithout(drop []string, set ...string) []string {
 	return append(env, set...)
 }
 
-// The gate runs with TMPDIR and GOTMPDIR at the memory folder when the box has it and can write to
-// it. Otherwise the gate keeps the temp folder it had: a box from before the folder existed, a
-// runtime that mounts none, or one whose folder this user cannot write all still run the gate.
-func TestGateSlotPointsAGatesTempFilesAtTheMemoryFolder(t *testing.T) {
-	root := t.TempDir()
-	usable := filepath.Join(root, "usable")
-	readOnly := filepath.Join(root, "read-only")
-	notAFolder := filepath.Join(root, "file")
-	for _, dir := range []string{usable, readOnly} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
+// gateTmpHelper writes coop-gate-slot with its memory folder moved to tmp, which stands in for
+// /tmp/coop-gate: a developer's computer has none, and a box's would be shared with the gate running
+// these tests.
+func gateTmpHelper(t *testing.T, tmp string) string {
+	t.Helper()
+	line := "tmp=" + GateTmpPath + "\n"
+	if !strings.Contains(GateSlotScript(), line) {
+		t.Fatalf("the script has no %q line to point at the test folder", line)
+	}
+	helper := filepath.Join(t.TempDir(), "coop-gate-slot")
+	if err := os.WriteFile(helper, []byte(strings.Replace(GateSlotScript(), line, "tmp="+tmp+"\n", 1)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return helper
+}
+
+// gateTmpCommand is a gate under that helper with the given temp variables, as a gate inside a
+// gate: COOP_GATE_SLOT_HELD makes it run at once, with no slot and no flock.
+func gateTmpCommand(helper string, vars []string, gate ...string) *exec.Cmd {
+	cmd := exec.Command(helper, append([]string{"--"}, gate...)...)
+	cmd.Env = envWithout([]string{"TMPDIR", "GOTMPDIR", "COOP_GATE_SLOT_HELD"}, append(vars, "COOP_GATE_SLOT_HELD=1")...)
+	return cmd
+}
+
+// endedWith is the status a command ended with, or -1 when it did not end on its own.
+func endedWith(err error) int {
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &exit):
+		return exit.ExitCode()
+	}
+	return -1
+}
+
+// A gate with no TMPDIR gets a temp folder of its own inside the memory folder, with TMPDIR and
+// GOTMPDIR set to it, and the folder is gone when the gate ends, whatever its status. Two gates at
+// once get two folders, so one cannot fill the other's.
+func TestGateSlotGivesEachGateAFolderOfItsOwn(t *testing.T) {
+	tmp := t.TempDir()
+	helper := gateTmpHelper(t, tmp)
+	show := `printf '%s|%s|' "$TMPDIR" "$GOTMPDIR"; if [ -w "$TMPDIR" ]; then echo writable; else echo no; fi; exit "$1"`
+	for _, status := range []int{0, 3} {
+		out, err := gateTmpCommand(helper, nil, "sh", "-c", show, "gate", strconv.Itoa(status)).Output()
+		if code := endedWith(err); code != status {
+			t.Fatalf("gate that exits %d ended with %d (%v): the helper must pass its status on", status, code, err)
+		}
+		parts := strings.Split(strings.TrimSpace(string(out)), "|")
+		if len(parts) != 3 || parts[0] != parts[1] || filepath.Dir(parts[0]) != tmp || !strings.HasPrefix(filepath.Base(parts[0]), "run.") || parts[2] != "writable" {
+			t.Fatalf("TMPDIR|GOTMPDIR|state in a gate that exits %d = %q, want one writable run.* folder in %s for both", status, out, tmp)
+		}
+		if _, err := os.Stat(parts[0]); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the folder of a gate that exited %d is still there after it: %v", status, err)
 		}
 	}
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Errorf("the memory folder holds %d entries after every gate ended", len(left))
+	}
+
+	// Gate A keeps running until gate B has started and written its folder.
+	scratch := t.TempDir()
+	a, b, done := filepath.Join(scratch, "a"), filepath.Join(scratch, "b"), filepath.Join(scratch, "done")
+	first := gateTmpCommand(helper, nil, "sh", "-c", `echo "$TMPDIR" >"$1"; while [ ! -e "$2" ]; do sleep 0.05; done`, "gate", a, done)
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wait.For(t, "the first gate to start", func() bool { data, _ := os.ReadFile(a); return strings.HasSuffix(string(data), "\n") })
+	second := gateTmpCommand(helper, nil, "sh", "-c", `echo "$TMPDIR" >"$1"`, "gate", b)
+	if out, err := second.CombinedOutput(); err != nil {
+		t.Fatalf("second gate: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(done, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := os.ReadFile(a)
+	two, _ := os.ReadFile(b)
+	if string(one) == "" || string(one) == string(two) {
+		t.Errorf("two gates at once shared a temp folder: %q and %q", one, two)
+	}
+}
+
+// A gate that already has a TMPDIR keeps it, and Go's temp folder with it, which follows it: a
+// project that points its temp files at a bigger disk is left alone, and no folder is made. A gate
+// that set only GOTMPDIR keeps that and gets the rest from the memory folder. An empty TMPDIR is none.
+func TestGateSlotKeepsATempFolderTheGateAlreadyHas(t *testing.T) {
+	const folder = "<a folder of its own>"
+	for _, tc := range []struct {
+		name         string
+		vars         []string
+		tmpdir, goTm string // what the gate sees: unset, the value it had, or folder
+	}{
+		{"TMPDIR set", []string{"TMPDIR=/big"}, "/big", "unset"},
+		{"TMPDIR and GOTMPDIR set", []string{"TMPDIR=/big", "GOTMPDIR=/bigger"}, "/big", "/bigger"},
+		{"only GOTMPDIR set", []string{"GOTMPDIR=/bigger"}, folder, "/bigger"},
+		{"TMPDIR empty", []string{"TMPDIR="}, folder, folder},
+		{"neither set", nil, folder, folder},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			out, err := gateTmpCommand(gateTmpHelper(t, tmp), tc.vars, "sh", "-c", `printf '%s|%s' "${TMPDIR-unset}" "${GOTMPDIR-unset}"`).Output()
+			if err != nil {
+				t.Fatalf("gate under the helper: %v\n%s", err, out)
+			}
+			got := strings.Split(string(out), "|")
+			if len(got) != 2 {
+				t.Fatalf("gate printed %q", out)
+			}
+			madeFolder := false
+			for i, want := range []string{tc.tmpdir, tc.goTm} {
+				if want != folder {
+					if got[i] != want {
+						t.Errorf("temp variable %d in the gate = %q, want %q", i, got[i], want)
+					}
+					continue
+				}
+				madeFolder = true
+				if filepath.Dir(got[i]) != tmp || !strings.HasPrefix(filepath.Base(got[i]), "run.") {
+					t.Errorf("temp variable %d in the gate = %q, want a run.* folder in %s", i, got[i], tmp)
+				}
+			}
+			// Nothing is made for a gate that keeps its TMPDIR, and what was made is gone with the gate.
+			if left, _ := os.ReadDir(tmp); len(left) != 0 {
+				t.Errorf("the memory folder holds %d entries after the gate ended (a folder was made: %t)", len(left), madeFolder)
+			}
+		})
+	}
+}
+
+// Where the box has no usable memory folder, a gate keeps the temp folder it had: a box from before
+// the folder existed, a runtime that mounts none, or a folder this user cannot write all still run
+// the gate.
+func TestGateSlotLeavesTheTempFolderAloneWithoutAUsableMemoryFolder(t *testing.T) {
+	root := t.TempDir()
+	readOnly := filepath.Join(root, "read-only")
+	notAFolder := filepath.Join(root, "file")
+	if err := os.Mkdir(readOnly, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(readOnly, 0o755) // so the test's temp folder can be removed
 	if err := os.WriteFile(notAFolder, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(readOnly, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(readOnly, 0o755)  // so the test's temp folder can be removed
-	cannotWrite := os.Geteuid() != 0 // root writes anywhere, so a read-only folder proves nothing
-
-	line := "tmp=" + GateTmpPath + "\n"
 	for _, tc := range []struct {
 		name, dir string
-		tempFiles bool // whether the gate gets the folder
 		skip      bool
 	}{
-		{"a folder the box can write", usable, true, false},
-		{"no folder", filepath.Join(root, "missing"), false, false},
-		{"a file where the folder should be", notAFolder, false, false},
-		{"a folder the user cannot write", readOnly, false, !cannotWrite},
+		{"no folder", filepath.Join(root, "missing"), false},
+		{"a file where the folder should be", notAFolder, false},
+		{"a folder the user cannot write", readOnly, os.Geteuid() == 0}, // root writes anywhere
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.skip {
 				t.Skip("running as root")
 			}
-			if !strings.Contains(GateSlotScript(), line) {
-				t.Fatalf("the script has no %q line to point at the test folder", line)
-			}
-			helper := filepath.Join(t.TempDir(), "coop-gate-slot")
-			script := strings.Replace(GateSlotScript(), line, "tmp="+tc.dir+"\n", 1)
-			if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			// COOP_GATE_SLOT_HELD makes it a gate inside a gate, which runs at once: no slot, no flock.
-			gate := exec.Command(helper, "--", "sh", "-c", `printf '%s|%s' "${TMPDIR-unset}" "${GOTMPDIR-unset}"`)
-			gate.Env = envWithout([]string{"TMPDIR", "GOTMPDIR", "COOP_GATE_SLOT_HELD"}, "TMPDIR=/prior", "COOP_GATE_SLOT_HELD=1")
-			out, err := gate.CombinedOutput()
+			out, err := gateTmpCommand(gateTmpHelper(t, tc.dir), []string{"TMPDIR="}, "sh", "-c", `printf '%s|%s' "${TMPDIR-unset}" "${GOTMPDIR-unset}"`).Output()
 			if err != nil {
 				t.Fatalf("gate under the helper: %v\n%s", err, out)
 			}
-			want := "/prior|unset"
-			if tc.tempFiles {
-				want = tc.dir + "|" + tc.dir
-			}
-			if string(out) != want {
-				t.Errorf("TMPDIR|GOTMPDIR in the gate = %q, want %q", out, want)
+			if string(out) != "|unset" {
+				t.Errorf("TMPDIR|GOTMPDIR in the gate = %q, want its own empty TMPDIR and no GOTMPDIR", out)
 			}
 		})
+	}
+}
+
+// A gate killed before it can clean up, as a timeout kills one, leaves its folder behind. The next
+// gate removes such folders once they are hours old, and only run.* folders: a recent one may belong
+// to a gate still running.
+func TestGateSlotClearsTheFoldersOfGatesKilledHoursAgo(t *testing.T) {
+	tmp := t.TempDir()
+	helper := gateTmpHelper(t, tmp)
+	marker := filepath.Join(t.TempDir(), "folder")
+	// The gate kills the helper that runs it, so nothing is left to remove its folder.
+	killed := gateTmpCommand(helper, nil, "sh", "-c", `echo "$TMPDIR" >"$1"; kill -KILL "$PPID"`, "gate", marker)
+	if err := killed.Run(); err == nil {
+		t.Fatal("the helper was not killed")
+	}
+	data, _ := os.ReadFile(marker)
+	leftover := strings.TrimSpace(string(data))
+	if filepath.Dir(leftover) != tmp {
+		t.Fatalf("the killed gate's folder = %q, want one in %s", leftover, tmp)
+	}
+	if _, err := os.Stat(leftover); err != nil {
+		t.Fatalf("a killed gate's folder was removed with nobody to remove it: %v", err)
+	}
+
+	// Others the next gate meets: an old folder with something in it, an old file named like a folder,
+	// an old entry that is not a run folder, and a recent run folder.
+	old := time.Now().Add(-24 * time.Hour)
+	staleDir, staleFile := filepath.Join(tmp, "run.stale"), filepath.Join(tmp, "run.file")
+	notRun, recent := filepath.Join(tmp, "go-build-kept"), filepath.Join(tmp, "run.recent")
+	for _, dir := range []string{staleDir, notRun, recent} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, "left"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staleFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{staleDir, staleFile, notRun} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nextGate := func() {
+		t.Helper()
+		if out, err := gateTmpCommand(helper, nil, "true").CombinedOutput(); err != nil {
+			t.Fatalf("next gate: %v\n%s", err, out)
+		}
+	}
+	// Minutes after the kill, the leftover may still be a running gate's: it stays.
+	nextGate()
+	for _, path := range []string{leftover, staleFile, notRun, recent} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed by a gate that started minutes after it was made: %v", filepath.Base(path), err)
+		}
+	}
+	if _, err := os.Stat(staleDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a run folder a day old was kept: %v", err)
+	}
+	// Hours later it is not.
+	if err := os.Chtimes(leftover, old, old); err != nil {
+		t.Fatal(err)
+	}
+	nextGate()
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the killed gate's folder was kept a day after it: %v", err)
+	}
+	for _, path := range []string{staleFile, notRun, recent} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed, and is not an old run folder: %v", filepath.Base(path), err)
+		}
 	}
 }

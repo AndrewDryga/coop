@@ -595,8 +595,9 @@ func parseRun(root, image string, args []string, provider string, providerHomes 
 					run.EnvFiles = append(run.EnvFiles, path)
 				}
 			case "--tmpfs":
-				// The gate's temp folder is the one tmpfs coop gives a box.
-				if !box.IsGateTmpfs(value) {
+				// The gate's temp folder is the one tmpfs coop gives a box, sized for its memory limit,
+				// which the scripted suites leave unset (procharness pins COOP_MEMORY empty).
+				if !box.IsGateTmpfs(value, os.Getenv("COOP_MEMORY")) {
 					err = fmt.Errorf("%q is not the gate's temp folder", value)
 				}
 				run.Tmpfs = append(run.Tmpfs, value)

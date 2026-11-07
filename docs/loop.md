@@ -340,11 +340,13 @@ sharing slots there hasn't been tested, so don't count on the limit there.
 
 On Docker, a gate under `coop-gate-slot` also keeps its temp files in memory. A box's `/tmp` is on
 the runtime's disk, where `fsync` can take several times as long as on the host, and Go tests write
-and sync many small files. The helper sets `TMPDIR` and `GOTMPDIR` to `/tmp/coop-gate`, a folder in
-memory, for the gate command only. The agent and the rest of `/tmp` are unchanged. The folder is a
-quarter of the box's memory limit (`COOP_MEMORY`), but never under 512 MB, and 2 GB in a box with no
-limit. A gate that writes more fails with `no space left on device`, and its files count against
-the box's memory.
+and sync many small files. If the gate has no `TMPDIR`, the helper makes it a folder of its own in
+`/tmp/coop-gate`, which is memory, and sets `TMPDIR` and `GOTMPDIR` to it for the gate command only.
+The folder is removed when the gate ends. A gate that already has a `TMPDIR` keeps it. The agent and
+the rest of `/tmp` are unchanged. `/tmp/coop-gate` is a quarter of the box's memory limit
+(`COOP_MEMORY`), but never under 512 MB, and 2 GB in a box with no limit. A gate that writes more
+fails with `no space left on device`, and its files count against the box's memory. A gate that is
+killed leaves its folder, and the next gate removes folders more than four hours old.
 
 A stale or crashed worker shows as `cleanup` in `coop fork ls`. Run `coop fork stop <name>` to
 clean it up. If co:op started the worker on another operating system, such as a Linux container

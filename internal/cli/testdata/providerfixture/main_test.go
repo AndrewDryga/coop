@@ -100,6 +100,8 @@ func TestParseRuntimeTakesOnlyTheGatesTmpfs(t *testing.T) {
 	if err := os.Mkdir(repo, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A 4g box gets a quarter of that, 1g; the fixture reads the limit from COOP_MEMORY as coop does.
+	t.Setenv("COOP_MEMORY", "4g")
 	gate := box.GateTmpPath + ":rw,exec,nosuid,nodev,size=1g"
 	args := func(tmpfs ...string) []string {
 		run := []string{"run", "-v", repo + ":" + repo}
@@ -113,9 +115,11 @@ func TestParseRuntimeTakesOnlyTheGatesTmpfs(t *testing.T) {
 		t.Fatalf("the gate's tmpfs = %q, %v", got.Run.Tmpfs, err)
 	}
 	for name, tmpfs := range map[string][]string{
-		"twice":         {gate, gate},
-		"another path":  {"/home/node:rw,exec,nosuid,nodev,size=1g"},
-		"wider options": {box.GateTmpPath + ":rw,exec,suid,nodev,size=1g"},
+		"twice":                {gate, gate},
+		"another path":         {"/home/node:rw,exec,nosuid,nodev,size=1g"},
+		"wider options":        {box.GateTmpPath + ":rw,exec,suid,nodev,size=1g"},
+		"larger than planned":  {box.GateTmpPath + ":rw,exec,nosuid,nodev,size=99999g"},
+		"planned for no limit": {box.GateTmpPath + ":rw,exec,nosuid,nodev,size=2g"},
 	} {
 		if _, err := parseRuntime(root, "fixture-image", args(tmpfs...)); err == nil {
 			t.Errorf("accepted a run with the gate's tmpfs %s", name)

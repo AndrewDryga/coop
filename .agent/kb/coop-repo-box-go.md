@@ -46,15 +46,24 @@ both slots and each make check inside waited forever. `make check-local` runs it
 under the same slots (`GATE_SLOT` in the Makefile); its vet steps run without one.
 
 On Docker, a box with that helper also mounts a tmpfs at `/tmp/coop-gate` (a quarter of `--memory`,
-at least 512m, 2g with no limit), and `coop-gate-slot` points `TMPDIR` and `GOTMPDIR` at it for the
-gate it runs. A box's `/tmp` is on OrbStack's VM disk, where an fsync takes several times what it
-takes on the host, and Go's race tests sync many small files. `tools/gateslot` does not set them,
-so coop's own `make check` keeps `/tmp` unless it runs under `coop-gate-slot`.
+at least 512m, 2g with no limit), and a gate with no `TMPDIR` gets a folder of its own in it
+(`run.XXXXXX`): `coop-gate-slot` points `TMPDIR` and `GOTMPDIR` there for the gate it runs and removes
+the folder on exit. A box's `/tmp` is on OrbStack's VM disk, where an fsync takes several times what
+it takes on the host, and Go's race tests sync many small files. A gate that already has a `TMPDIR`
+keeps it, and Go's folder with it. The exit trap does not run when dash is killed by a signal, and a
+trap on TERM would hold a helper-only SIGTERM until the gate ends, so a killed gate leaves its folder
+and each gate starts by removing `run.*` folders more than four hours old. A filtered launch accepts
+exactly that tmpfs: `validateMountsContext` recomputes it from the `--memory` in the same options.
+`tools/gateslot` sets none of this, so coop's own `make check` keeps `/tmp` unless it runs under
+`coop-gate-slot`.
 
 `coop init` in this repo also installs its generic `.githooks/` gate and sets `core.hooksPath`; coop
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-06 — each gate gets its own `run.*` folder in the memory folder, removed on exit and swept
+  when hours old; a TMPDIR the gate has is kept; a filtered launch takes only the planned tmpfs, once
+  (follow-up to task 2026-11-05-find-why-go-race-tests-run-several-times-slower).
 - 2026-11-06 — Docker boxes mount a tmpfs at `/tmp/coop-gate`, and `coop-gate-slot` points `TMPDIR`
   and `GOTMPDIR` at it (task 2026-11-05-find-why-go-race-tests-run-several-times-slower).
 - 2026-11-06 — a gate inside a gate runs in the outer gate's slot, and check-local's tests take a
