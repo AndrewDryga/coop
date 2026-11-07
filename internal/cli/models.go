@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -283,8 +282,7 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 // fetchNeedsBox reports whether refreshing agent has to launch a container — the ACP-only
 // providers, unless a test seam has replaced the fetch.
 func (a *app) fetchNeedsBox(agent string) bool {
-	ag, ok := agents.Get(agent)
-	return a.acpModels == nil && (!ok || len(ag.ModelCatalog().HostCommand) == 0)
+	return a.acpModels == nil
 }
 
 // probeBoxRuntime resolves the container runtime a boxed catalog fetch needs, naming what is
@@ -324,8 +322,6 @@ func modelFetchCause(agent string, err error) string {
 	switch {
 	case errors.As(err, &named):
 		return named.cause
-	case errors.Is(err, exec.ErrNotFound):
-		return titleName(agent) + " is unavailable on this host."
 	case errors.Is(err, context.DeadlineExceeded):
 		return "The model request timed out."
 	case errors.Is(err, context.Canceled):

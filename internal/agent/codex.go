@@ -1626,35 +1626,10 @@ func (codexAgent) ReviewFooterLine(line string) bool {
 
 func (codexAgent) PlainOutputProbe() PlainOutputProbe { return nil }
 
+// ModelCatalog asks the pinned codex-acp in a box, as the box's client sees it: a host codex CLI, when
+// there is one at all, can be another version than the one Coop runs.
 func (codexAgent) ModelCatalog() ModelCatalogSpec {
-	return ModelCatalogSpec{HostCommand: []string{"codex", "debug", "models"}, ParseHost: parseCodexModels}
-}
-
-// parseCodexModels reads `codex debug models` JSON, keeping only list-visible models
-// (visibility=="list", dropping bundled/internal ones) with their slug + display name.
-func parseCodexModels(out []byte) ([]Model, error) {
-	var doc struct {
-		Models []struct {
-			Slug        string `json:"slug"`
-			DisplayName string `json:"display_name"`
-			Visibility  string `json:"visibility"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(out, &doc); err != nil {
-		return nil, err
-	}
-	var models []Model
-	for _, m := range doc.Models {
-		if m.Visibility != "list" || m.Slug == "" {
-			continue
-		}
-		name := m.DisplayName
-		if name == "" {
-			name = m.Slug
-		}
-		models = append(models, Model{ID: m.Slug, Name: name})
-	}
-	return models, nil
+	return ModelCatalogSpec{ParseACP: ParseACPModelConfig}
 }
 
 // OnePrompt is codex exec (or e): one prompt, then exit. Its help and version stay usable offline.

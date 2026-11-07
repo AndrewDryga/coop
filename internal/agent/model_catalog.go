@@ -12,12 +12,10 @@ type Model struct {
 	Name string `json:"name,omitempty"`
 }
 
-// ModelCatalogSpec selects exactly one source. Host commands are run by the caller;
-// ACP parsers receive the complete session/new result from its scoped probe.
+// ModelCatalogSpec reads a provider's models from the complete session/new result of a scoped ACP
+// probe in a box, so the list is the pinned client's and needs no agent CLI on the host.
 type ModelCatalogSpec struct {
-	HostCommand []string
-	ParseHost   func([]byte) ([]Model, error)
-	ParseACP    func(json.RawMessage) []Model
+	ParseACP func(json.RawMessage) []Model
 	// ACPAuthMethod selects only a noninteractive broker bootstrap proven by initialize.
 	ACPAuthMethod func(json.RawMessage) (string, error)
 	// Aliases are family names the CLI resolves to that family's current model (Claude's opus).
@@ -90,6 +88,21 @@ func ParseACPModelOption(raw json.RawMessage) []Model {
 	// Opportunistic control has always retained valid entries from a partial decode.
 	_ = json.Unmarshal(raw, &option)
 	return modelsFromOptions(option.Options)
+}
+
+// ParseACPModelConfig reads the "model" config option of a session/new result, the shape
+// claude-agent-acp and codex-acp advertise.
+func ParseACPModelConfig(raw json.RawMessage) []Model {
+	var doc acpModelCatalog
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	for _, option := range doc.ConfigOptions {
+		if option.ID == "model" {
+			return modelsFromOptions(option.Options)
+		}
+	}
+	return nil
 }
 
 func modelsFromOptions(options []catalogOptionValue) []Model {

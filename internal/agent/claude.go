@@ -514,18 +514,7 @@ staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
 }
 
 func (claudeAgent) ModelCatalog() ModelCatalogSpec {
-	return ModelCatalogSpec{Aliases: claudeAliases, ParseACP: func(raw json.RawMessage) []Model {
-		var doc acpModelCatalog
-		if json.Unmarshal(raw, &doc) != nil {
-			return nil
-		}
-		for _, option := range doc.ConfigOptions {
-			if option.ID == "model" {
-				return modelsFromOptions(option.Options)
-			}
-		}
-		return nil
-	}}
+	return ModelCatalogSpec{Aliases: claudeAliases, ParseACP: ParseACPModelConfig}
 }
 
 func (claudeAgent) ReviewOutput(raw string, _ ReviewOutputContract) (string, bool) { return raw, true }

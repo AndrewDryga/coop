@@ -457,7 +457,7 @@ func TestApprovedModelMenus(t *testing.T) {
 				"gpt-5.5", "gpt-5.3-codex-spark"),
 			FetchedAt:    time.Now().Add(-30 * time.Hour),
 			AttemptedAt:  time.Now().Add(-5 * time.Minute),
-			AttemptError: "Codex is unavailable on this host.",
+			AttemptError: "The model request timed out.",
 		})
 		a := &app{cfg: cfg, acpModels: noFetch(t)}
 		out := captureStdout(t, func() {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -144,18 +143,6 @@ func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 	return config.WriteFileAtomic(modelsCachePath(cfg, agent), b)
 }
 
-// runModelCLI runs an agent's list command on the host and returns its stdout, timeout-bounded. An
-// error (CLI not on PATH, non-zero exit, timeout) tells the caller to keep the cached/static list.
-// Account-independent catalogs can ask the host CLI; account-dependent catalogs use ACP.
-func runModelCLI(name string, args ...string) ([]byte, error) {
-	if _, err := exec.LookPath(name); err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), modelFetchTimeout)
-	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Output()
-}
-
 // fetchModelCatalog selects the cheapest real catalog source per provider. The ACP seam is
 // deliberately app-local: unit tests can prove refresh wiring without detecting a runtime, while
 // production always launches the real credential-scoped box.
@@ -165,13 +152,6 @@ func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
 		return nil, fmt.Errorf("%s has no model fetcher", agent)
 	}
 	spec := ag.ModelCatalog()
-	if len(spec.HostCommand) > 0 {
-		out, err := runModelCLI(spec.HostCommand[0], spec.HostCommand[1:]...)
-		if err != nil {
-			return nil, err
-		}
-		return spec.ParseHost(out)
-	}
 	if spec.ParseACP == nil {
 		return nil, fmt.Errorf("%s has no model fetcher", agent)
 	}

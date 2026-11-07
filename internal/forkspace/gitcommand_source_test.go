@@ -25,7 +25,6 @@ var reviewedGitConstructors = map[string]string{
 
 	"internal/cli/acp_cmd.go:spawnBox:exec.Command(self, inner...)":                                                                                  "Reexecutes os.Executable for the editor child; argv invokes Coop.",
 	"internal/cli/eval_loop.go:runLoopTrial:exec.Command(self, args...)":                                                                             "Reexecutes os.Executable for a Coop loop trial.",
-	"internal/cli/modelscache.go:runModelCLI:exec.CommandContext(ctx, name, args...)":                                                                "Provider catalog spec selects the fixed codex debug models command.",
 	"internal/forkctl/review.go:openInEditor:exec.Command(parts[0], parts[1:]...)":                                                                   "Explicit editor launch selected from host settings/global config, never repository config.",
 	"internal/forkctl/supervise.go:DetachForkLoop:exec.Command(self, reExec...)":                                                                     "Reexecutes os.Executable as the detached Coop fork worker.",
 	"internal/loop/keepawake.go:armKeepAwake:exec.Command(argv[0], argv[1:]...)":                                                                     "sleepInhibitorCmd supplies only the platform caffeinate executable.",

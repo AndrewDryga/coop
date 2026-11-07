@@ -53,42 +53,31 @@ func TestModelsCacheRoundTrip(t *testing.T) {
 	}
 }
 
-func TestModelCatalogHostDispatchAndFailure(t *testing.T) {
-	for _, tc := range []struct{ provider, args, output, id, cause string }{
-		{"codex", "debug models", `{"models":[{"slug":"native-codex","visibility":"list"}]}`, "native-codex", ""},
-		{"codex", "debug models", `{broken`, "", "The agent returned a model list Coop could not read."},
-	} {
-		t.Run(tc.provider+tc.id, func(t *testing.T) {
-			a := modelsApp(t)
-			dir := t.TempDir()
-			// An independent executable pins host argv; the injected ACP seam must not run.
-			argv := strings.Fields(tc.args)
-			script := fmt.Sprintf("#!/bin/sh\n[ \"$#\" -eq %d ] || exit 92\n", len(argv))
-			for i, arg := range argv {
-				script += fmt.Sprintf("[ \"${%d}\" = '%s' ] || exit 92\n", i+1, arg)
-			}
-			script += "printf '%s\\n' '" + tc.output + "'\n"
-			if err := os.WriteFile(filepath.Join(dir, tc.provider), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", dir)
-			a.acpModels = func(string) ([]agents.Model, error) { t.Fatal("host discovery reached ACP seam"); return nil, nil }
-			if err := writeModelsCache(a.cfg, tc.provider, []agents.Model{{ID: "last-good"}}); err != nil {
-				t.Fatal(err)
-			}
-			cause, failed := a.refreshCatalog(tc.provider, nil)
-			if cause != tc.cause || failed != (tc.cause != "") {
-				t.Fatalf("refresh = %q/%v", cause, failed)
-			}
-			cache, ok := loadModelsCache(a.cfg, tc.provider)
-			want := tc.id
-			if failed {
-				want = "last-good"
-			}
-			if !ok || len(cache.Models) != 1 || cache.Models[0].ID != want || cache.AttemptError != tc.cause {
-				t.Fatalf("cache = %+v/%v, want %s", cache, ok, want)
-			}
-		})
+// Codex's list comes from the pinned client in a box, never a host codex CLI, which may be missing
+// or another version than the box runs. A host codex on PATH is not even run.
+func TestCodexModelDiscoveryNeverUsesHostCLI(t *testing.T) {
+	a := modelsApp(t)
+	dir := t.TempDir()
+	called := filepath.Join(dir, "host-called")
+	script := "#!/bin/sh\nprintf called > '" + called + "'\nprintf '{\"models\":[{\"slug\":\"host-only\",\"visibility\":\"list\"}]}'\n"
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	a.acpModels = func(provider string) ([]agents.Model, error) {
+		if provider != "codex" {
+			t.Fatalf("wrong provider: %s", provider)
+		}
+		return []agents.Model{{ID: "box-catalog"}}, nil
+	}
+	if cause, failed := a.refreshCatalog("codex", nil); failed || cause != "" {
+		t.Fatalf("refresh: %q, %v", cause, failed)
+	}
+	if cache, _ := loadModelsCache(a.cfg, "codex"); len(cache.Models) != 1 || cache.Models[0].ID != "box-catalog" {
+		t.Fatal(cache)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatal("host codex was invoked")
 	}
 }
 
@@ -149,7 +138,7 @@ func TestModelCatalogNeedsBox(t *testing.T) {
 			a.acpModels = func(string) ([]agents.Model, error) { return nil, nil }
 		}
 		for _, name := range agents.Names() {
-			want := !seam && (name == "claude" || name == "gemini" || name == "grok")
+			want := !seam
 			if got := a.fetchNeedsBox(name); got != want {
 				t.Errorf("%s seam=%v needs box=%v, want %v", name, seam, got, want)
 			}
@@ -453,7 +442,7 @@ func TestModelsFailureWarnsOnlyTheAffectedAgent(t *testing.T) {
 	if !strings.Contains(out, "still-good") {
 		t.Errorf("a failed refresh must keep the last-known list:\n%s", out)
 	}
-	if n := strings.Count(out, "⚠"); n != 3 { // claude (last-known) + codex and grok (no CLI on PATH)
+	if n := strings.Count(out, "⚠"); n != 3 { // claude (last-known) + codex and grok (no catalog: the box is down)
 		t.Errorf("warnings = %d, want one per affected agent:\n%s", n, out)
 	}
 	gemini := out[strings.Index(out, "Gemini"):]
@@ -470,11 +459,12 @@ func TestModelsFailureWarnsOnlyTheAffectedAgent(t *testing.T) {
 	}
 }
 
-// TestRefreshFallsBackToExamples: a forced refresh for an agent whose native CLI is absent writes
-// no catalog, so the block shows the bundled examples under one warning that names the real cause
-// — never an error, never a blank menu.
+// TestRefreshFallsBackToExamples: a forced refresh whose catalog probe fails writes no catalog, so the
+// block shows the bundled examples under one warning that names the real cause — never an error,
+// never a blank menu.
 func TestRefreshFallsBackToExamples(t *testing.T) {
-	a := modelsApp(t) // modelsApp already scrubs PATH: no codex binary is reachable
+	a := modelsApp(t)
+	a.acpModels = func(string) ([]agents.Model, error) { return nil, context.DeadlineExceeded }
 	out := captureStdout(t, func() {
 		if code, err := a.cmdModels([]string{"codex", "--refresh"}); code != 0 || err != nil {
 			t.Fatalf("cmdModels --refresh = (%d, %v), want a clean (0, nil)", code, err)
@@ -483,7 +473,7 @@ func TestRefreshFallsBackToExamples(t *testing.T) {
 	if mc, _ := loadModelsCache(a.cfg, "codex"); len(mc.Models) != 0 {
 		t.Error("a failed refresh must not write a catalog")
 	}
-	want := "  ⚠ Could not refresh. Showing example models\n\n      Codex is unavailable on this host.\n"
+	want := "  ⚠ Could not refresh. Showing example models\n\n      The model request timed out.\n"
 	if !strings.Contains(out, "gpt-6.1-sol") || !strings.Contains(out, "gpt-5.5") ||
 		!strings.Contains(out, want) {
 		t.Errorf("after a failed refresh the codex block should show examples and %q:\n%s", want, out)

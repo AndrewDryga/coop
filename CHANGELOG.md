@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop models codex --refresh` works without a host Codex CLI.** It ran `codex debug models` on your
+  computer and said "Codex is unavailable on this host" when there was none. It now asks the pinned
+  client in a box, as for the other agents, so the list matches the Codex your boxes run.
+
 - **The installer shows Bash users how to turn on completion.** It printed setup lines only for Zsh,
   though Bash is the default shell on most Linux hosts.
 

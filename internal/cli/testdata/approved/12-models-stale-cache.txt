@@ -3,7 +3,7 @@ Codex
   gpt-5.5 · gpt-5.3-codex-spark
   ⚠ Could not refresh. Showing the list saved yesterday
 
-      Codex is unavailable on this host.
+      The model request timed out.
 
 Start Codex with a model
   → coop codex:gpt-6-astra

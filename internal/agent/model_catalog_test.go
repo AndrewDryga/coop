@@ -7,13 +7,12 @@ import (
 )
 
 func TestModelCatalogDescriptors(t *testing.T) {
-	want := map[string][]string{"claude": nil, "gemini": nil, "codex": {"codex", "debug", "models"}, "grok": nil}
+	// Every catalog comes from the pinned client in a box: a host CLI may be missing or another version.
 	for _, name := range Names() {
 		ag, _ := Get(name)
 		spec := ag.ModelCatalog()
-		command, covered := want[name]
-		if !covered || !slices.Equal(spec.HostCommand, command) || (spec.ParseHost != nil) != (len(command) > 0) || (spec.ParseACP != nil) != (len(command) == 0) {
-			t.Errorf("%s catalog descriptor = %+v, covered=%v", name, spec, covered)
+		if spec.ParseACP == nil {
+			t.Errorf("%s has no catalog source in the box", name)
 		}
 		if (spec.ACPAuthMethod != nil) != (name == "grok") {
 			t.Errorf("%s unexpected broker bootstrap declaration", name)
@@ -103,30 +102,18 @@ func TestGrokACPModelCatalog(t *testing.T) {
 	}
 }
 
-// TestParseCodexModels: only visibility=="list" models survive, slug + display_name captured,
-// a missing display_name falls back to the slug.
-func TestParseCodexModels(t *testing.T) {
-	out := `{"models":[
-	  {"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list"},
-	  {"slug":"gpt-5.4","display_name":"","visibility":"list"},
-	  {"slug":"internal-only","display_name":"Hidden","visibility":"hidden"},
-	  {"slug":"","display_name":"Blank","visibility":"list"}
-	]}`
-	got, err := parseCodexModels([]byte(out))
-	if err != nil {
-		t.Fatal(err)
+// Codex's catalog is codex-acp's "model" config option, as an editor session shows it.
+func TestCodexCatalogReadsTheModelOption(t *testing.T) {
+	codex, _ := Get("codex")
+	raw := json.RawMessage(`{"sessionId":"s","configOptions":[
+	  {"id":"reasoning_effort","options":[{"value":"low","name":"Low"}]},
+	  {"id":"model","currentValue":"gpt-6-luna","options":[{"value":"gpt-6-astra","name":"GPT-6-Astra"},{"value":""},{"value":"gpt-6-luna","name":"GPT-6-Luna"}]}]}`)
+	got := codex.ModelCatalog().ParseACP(raw)
+	if len(got) != 2 || got[0] != (Model{ID: "gpt-6-astra", Name: "GPT-6-Astra"}) || got[1].ID != "gpt-6-luna" {
+		t.Fatalf("codex catalog = %v", got)
 	}
-	if len(got) != 2 {
-		t.Fatalf("parseCodexModels = %v, want only the two list-visible, non-blank models", got)
-	}
-	if got[0].ID != "gpt-5.5" || got[0].Name != "GPT-5.5" {
-		t.Errorf("model 0 = %+v", got[0])
-	}
-	if got[1].ID != "gpt-5.4" || got[1].Name != "gpt-5.4" {
-		t.Errorf("model 1 = %+v, want display_name to fall back to the slug", got[1])
-	}
-	if _, err := parseCodexModels([]byte("not json")); err == nil {
-		t.Error("malformed JSON must error (→ caller keeps static)")
+	if got := codex.ModelCatalog().ParseACP(json.RawMessage(`{"configOptions":[{"id":"mode","options":[{"value":"x"}]}]}`)); len(got) != 0 {
+		t.Fatalf("a result without a model option gave %v", got)
 	}
 }
 
