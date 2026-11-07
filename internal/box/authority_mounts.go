@@ -308,9 +308,16 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 			return fmt.Errorf("validate isolated shared markers: %w", err)
 		}
 	}
-	checkSource := func(source string, writable bool, allowed map[string]bool, trees []string, trustedOpaque bool) error {
+	checkSource := func(source string, writable bool, allowed map[string]bool, trees []string, trustedOpaque, daemonStore bool) error {
 		if writable {
-			if err := forkspace.RefuseImmutablePrimaryMutation(source); err != nil {
+			marked := source
+			if daemonStore {
+				// The runtime proved this is a root-owned daemon store this user cannot search
+				// (runtime.VolumeExposure.ManagedParents: Docker's volume data on Linux), so it is no
+				// checkout this user's Coop marked. Its ancestors still could be.
+				marked = filepath.Dir(source)
+			}
+			if err := forkspace.RefuseImmutablePrimaryMutation(marked); err != nil {
 				return err
 			}
 		}
@@ -403,7 +410,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		if bind.writable && readonlySources[canonical] {
 			return fmt.Errorf("runtime mount %q must be read-only", bind.source)
 		}
-		if err := checkSource(bind.source, bind.writable, allowedSources, allowedSourceTrees, false); err != nil {
+		if err := checkSource(bind.source, bind.writable, allowedSources, allowedSourceTrees, false, false); err != nil {
 			return err
 		}
 	}
@@ -450,7 +457,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 				trustedOpaque = err != nil
 			}
 			for _, source := range exposure.Sources {
-				if err := checkSource(source, group.writable, nil, nil, trustedOpaque); err != nil {
+				if err := checkSource(source, group.writable, nil, nil, trustedOpaque, slices.Contains(exposure.ManagedParents, source)); err != nil {
 					return err
 				}
 				sources = append(sources, authorityBind{source: source, writable: group.writable})

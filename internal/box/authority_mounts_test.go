@@ -179,6 +179,51 @@ func TestAuthorityMountGuardInspectsNamedVolumesAndOpaqueInheritance(t *testing.
 	}
 }
 
+// A rootful daemon keeps volume data under a directory this user cannot search, which the runtime
+// reports as a managed parent (Docker's /var/lib/docker on Linux). A writable volume there, such as a
+// project's task channel, must start. The same unsearchable path the runtime did not vouch for still
+// fails closed, and a marked checkout above the store is still refused.
+func TestAuthorityMountGuardAcceptsAWritableVolumeInADaemonStore(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can search any directory, so the store is not unsearchable")
+	}
+	spec, state := anchoredProjectFixture(t)
+	root := t.TempDir()
+	store := filepath.Join(root, "docker")
+	if err := os.Mkdir(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(store, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(store, 0o700) })
+	exposure := func(managed bool) volumeExposureReader {
+		return func(context.Context, []string) (runtime.VolumeExposure, error) {
+			e := runtime.VolumeExposure{Sources: []string{store}}
+			if managed {
+				e.ManagedParents = []string{store}
+			}
+			return e, nil
+		}
+	}
+	options := []string{"-v", "tasks:/coop/tasks"}
+	if err := validateAuthorityMounts(context.Background(), spec, options, state, exposure(true), authorityMountAllowlist{}); err != nil {
+		t.Fatalf("a writable volume in a daemon store was refused: %v", err)
+	}
+	if err := validateAuthorityMounts(context.Background(), spec, options, state, exposure(false), authorityMountAllowlist{}); err == nil {
+		t.Fatal("an unsearchable source the runtime did not vouch for was accepted")
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", forkspace.ImmutablePrimaryMarker), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuthorityMounts(context.Background(), spec, options, state, exposure(true), authorityMountAllowlist{}); err == nil || !strings.Contains(err.Error(), "immutable read-only primary") {
+		t.Fatalf("a daemon store inside a marked checkout = %v, want the immutable primary refusal", err)
+	}
+}
+
 func TestAuthorityMountGuardProtectsForkAnchorState(t *testing.T) {
 	parent := t.TempDir()
 	repo := filepath.Join(parent, "project")
