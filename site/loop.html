@@ -253,6 +253,10 @@ three overrides the minimum.</p>
 commit must be in the current iteration&#39;s commit range, and it must be the only match reachable
 from <code>HEAD</code>. When review requests rework, the worker must amend or rewrite the existing task
 commit. co:op rejects a second matching commit and returns the task to in-progress.</p>
+<p>co:op adds that trailer, and a <code>Co-authored-by</code> line naming co:op and the target, to the box&#39;s commits
+itself with a Git hook. Gemini CLI runs its shell commands with Git hooks turned off, so a Gemini
+worker writes the <code>Coop-Task</code> trailer as the loop asks, and its commits carry no co:op co-author line.
+If a worker forgets the trailer, <code>tasks_complete</code> refuses and the worker repairs its commit.</p>
 <p>The worker also can&#39;t add a trailer for another task or rewrite that task&#39;s commit. co:op checks
 every attempt, including failed attempts, before allowing a retry. Review covers only tasks that
 the host accepted as completed during this run.</p>
