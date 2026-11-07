@@ -128,6 +128,11 @@ completed:
 - the change is polished, with docs and the CHANGELOG updated
 - the bookkeeping is right
 
+Each worker runs the checks your project requires for its own task. If your project runs its broad
+gate once at the end of the batch (say so in `AGENTS.md` and in `signoff.prompt`), workers on narrow
+tasks leave it to the final review, which reopens the latest task to run it. When the gate passes,
+that worker records the result without a new commit; when it fails, the worker fixes the cause.
+
 The worker records its final checks in the task's `state.md`, which co:op finalizes before review.
 Reviewers inspect the code and test coverage, and they rely on the worker's record of which tests
 ran instead of running them again.

@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Loop workers run their task's checks, not the whole gate for every task.** The worker prompt said
+  "run the gate, then commit", so each small task ran the full repository gate. Workers now run what
+  the project requires for their task; a broad gate the project defers to the end runs once, when the
+  final review reopens the latest task to run it, and a passing run needs no new commit.
+
 - **Codex workspace accounts and Grok runs no longer end with a block warning.** Coop's sign-in proxy
   refused three read-only requests the pinned clients make: Codex's per-scope installed-plugins list and
   reset-credit list, and Grok's list of hosted MCP tools. They are now allowed exactly as sent.

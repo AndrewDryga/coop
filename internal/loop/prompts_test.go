@@ -193,7 +193,8 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 	work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, true)
 	for _, want := range []string{
 		"host-authorized audit rework",
-		"finding is false, do NOT create, amend, or rewrite any commit",
+		"finding is false, or the finding only asks for missing check evidence",
+		"do NOT create, amend, or rewrite any commit",
 		"zero new commits",
 		"finding is real",
 		"exactly one real repair commit",
@@ -209,6 +210,45 @@ func TestLoopWorkPromptAuditFinalization(t *testing.T) {
 	for _, forbidden := range []string{"then commit your work", "AFTER the commit", "git commit --allow-empty --only", "amend or rewrite"} {
 		if strings.Contains(work, forbidden) {
 			t.Errorf("audit work prompt retained unconditional commit guidance %q:\n%s", forbidden, work)
+		}
+	}
+}
+
+// Each task owns its checks and the final review owns a batch gate the project defers to it: small
+// tasks kept running the repository's broad gate because the prompt said "run the gate, then
+// commit". A gate the review names in rework is then required for that task, and needs no fake
+// commit to record.
+func TestLoopWorkPromptSeparatesTaskChecksFromTheBatchGate(t *testing.T) {
+	work := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, false)
+	for _, want := range []string{
+		"run the checks this task requires",
+		"when the project runs its full gate for every task, run it",
+		"When the project contract defers its broad gate to one run at the end of the batch",
+		"leave it out of unrun_checks, note it as deferred to final review in the Verification block",
+		"never record it as passed",
+		"A check the task requires, or one that failed, is never deferred.",
+	} {
+		if !strings.Contains(work, want) {
+			t.Errorf("work prompt lacks %q", want)
+		}
+	}
+	rework := LoopWorkPrompt("/repo", ".agent/tasks", "task-42", "claude", nil, nil, true)
+	for _, want := range []string{
+		"including every check the review named",
+		"only asks for missing check evidence",
+		"if it passes, complete it with zero new commits and record the evidence. If it fails, the finding is real",
+		"A check the review named is required for this task: list it in unrun_checks until it has run.",
+		"AFTER the required checks, including those the review named",
+	} {
+		if !strings.Contains(rework, want) {
+			t.Errorf("rework prompt lacks %q", want)
+		}
+	}
+	for _, prompt := range []string{work, rework} {
+		for _, stale := range []string{"run the gate, then commit", "Run the final gate", "AFTER the gate"} {
+			if strings.Contains(prompt, stale) {
+				t.Errorf("a prompt still says %q", stale)
+			}
 		}
 	}
 }

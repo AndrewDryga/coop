@@ -21,7 +21,7 @@ func TestDelegateContractAsksForOneSummary(t *testing.T) {
 	if n := strings.Count(contract, ask); n != 1 {
 		t.Errorf("the summary must be requested exactly once, got %d:\n%s", n, contract)
 	}
-	if !strings.Contains(contract, "YOU review its `git diff`, run the gate") {
+	if !strings.Contains(contract, "YOU review its `git diff`, run the checks the task requires") {
 		t.Errorf("the lead's duties belong in the contract:\n%s", contract)
 	}
 }

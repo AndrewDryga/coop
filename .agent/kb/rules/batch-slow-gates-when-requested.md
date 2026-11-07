@@ -2,9 +2,9 @@
 name: batch-slow-gates-when-requested
 description: validation matches the changed surface; unrelated slow suites run only when the requested outcome needs them
 scope: agent-workflow
-sources: [AGENTS.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, .agent/skills/review-board/SKILL.md, Makefile]
+sources: [AGENTS.md, internal/loop/prompts.go, .agent/loop.yaml, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, .agent/skills/review-board/SKILL.md, Makefile]
 check: none
-updated: 2026-10-14
+updated: 2026-11-07
 ---
 
 # Match validation to the changed surface and honor focused verification requests
@@ -73,6 +73,11 @@ operation approval. CI stays Make-owned and preserves its complete free acceptan
 do not change runtime acceptance to speed supervision.
 
 ## Changelog
+- 2026-11-07 — loop worker prompts follow this rule: a task runs the checks its project requires
+  ("run the gate, then commit" and "Run the final gate" made every small task run the full gate);
+  a broad gate a project defers to final signoff is run by the reopened latest task, which may
+  finish with no new commit. Sibling sweep: this repo's loop.yaml, AGENTS.md, the scaffold AGENTS
+  template and loop.yaml, and the work/sweep skills already said so; no other contradiction found.
 - 2026-10-14 — user approved scoped iteration as the default, proportional review and one broad
   proof on the final executable candidate. Swept AGENTS, project gate, task template and
   work/spec/sweep/review/release skills. Preserved broad fork landing and explicit pending-proof

@@ -12,7 +12,7 @@ import (
 func TestLoopShellGuidance(t *testing.T) {
 	for _, audit := range []bool{false, true} {
 		prompt := LoopWorkPrompt("/repo", ".agent/tasks", "task", "claude", nil, nil, audit)
-		for _, want := range []string{"Run the final gate in the foreground", "independent work to do", "wait on that job"} {
+		for _, want := range []string{"Run long checks and gates in the foreground", "independent work to do", "wait on that job"} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("missing foreground-first guidance %q", want)
 			}
