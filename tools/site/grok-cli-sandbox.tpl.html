@@ -141,14 +141,33 @@ wc -c &lt; .env.coop-demo</code></li></ul>
 <p>Run this command to check your setup:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>coop doctor</code></li></ul>
+<div data-terminal-outputs>
+<div id="doctor-output-macos" data-output-platform="macOS">
+<p class="terminal-platform">macOS</p>
 <pre class="code"><samp>Checking the Coop box on the Docker runtime
 
 Protecting secrets
+  Filesystem protection: kernel BPF
   ✓ .env is hidden
   ✓ .envrc is hidden
   …
 
 ✓ All 40 checks passed</samp></pre>
+</div>
+<div id="doctor-output-linux" data-output-platform="Linux">
+<p class="terminal-platform">Linux</p>
+<pre class="code"><samp>Checking the Coop box on the Docker runtime
+
+Protecting secrets
+  Filesystem protection: mounts
+        This launch uses mount-based filesystem protection
+  ✓ .env is hidden
+  ✓ .envrc is hidden
+  …
+
+✓ All 37 checks passed</samp></pre>
+</div>
+</div>
 </div>
 <p>Start Grok CLI:</p>
 <ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="start the agent">coop_review_base=$(git rev-parse HEAD) &amp;&amp;

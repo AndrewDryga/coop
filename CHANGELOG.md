@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The provider guides show what `coop doctor` prints on Linux.** Their sample showed only macOS (40 checks).
+  Linux runs 37 with mount-based filesystem protection, so each guide now shows both, as its secret check
+  already does.
+
 - **Boxes start in a project on Linux.** In any project with a task queue, `coop claude` (or any agent) and
   `coop doctor` failed on Linux with "lstat /var/lib/docker/.git/coop-primary-snapshot.json: permission
   denied". The check that keeps a writable mount out of a protected checkout searched Docker's own volume
