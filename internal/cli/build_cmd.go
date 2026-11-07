@@ -68,7 +68,7 @@ func (a *app) cmdBuild(args []string) (int, error) {
 		if err != nil {
 			// A build refused here ran nothing, so say why to the next run as well: a run on these files
 			// would only send you back to this build.
-			box.RememberRefusedProjectBuild(context.Background(), a.rt, a.cfg, repo, err)
+			box.RememberRefusedProjectBuild(context.Background(), a.rt, a.cfg, box.RunSpec{Repo: repo}, err)
 			return 1, buildFailure("Could not build the filtered box image", err, a.rt.Name, "coop build --egress filtered")
 		}
 		warnUntrackedBuild(plan)

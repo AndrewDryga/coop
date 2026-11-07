@@ -146,20 +146,27 @@ func checkFilteredProjectReadiness(ctx context.Context, docker filteredDocker, s
 // already reading, so a slow daemon must not hold that refusal back.
 const rememberRefusalTimeout = 15 * time.Second
 
-// RememberRefusedProjectBuild saves why `coop build --egress filtered` refused repo's files before it
-// ran anything, such as a Dockerfile that is a link (PlanBuild), as it saves a refusal made after the
-// image was built (buildPreparedFilteredProject): a launch on the same files then says why, with the
-// fix, instead of asking for this build again. An error the project's files did not cause is ignored.
-// It only explains, so a step it cannot take, such as a daemon that is gone or a client image not
-// prepared yet, leaves the plain miss and no word of its own.
-func RememberRefusedProjectBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, refusal error) {
+// RememberRefusedProjectBuild saves why a build of the project's files was refused before it ran
+// anything, such as a Dockerfile that is a link (`coop build --egress filtered` in PlanBuild, or a
+// thread's /build saving the files for review), as it saves a refusal made after the image was built
+// (buildPreparedFilteredProject): a launch on the same files then says why, with the fix, instead of
+// asking for this build again. An error the project's files did not cause is ignored. It returns the
+// reason, saved or not, for a caller with a person to tell, and "" for an error it ignored.
+func RememberRefusedProjectBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, refusal error) string {
 	var refused *projectImageRefusal
-	if repo == "" || !errors.As(refusal, &refused) {
-		return
+	if projectPolicyRepo(spec) == "" || !errors.As(refusal, &refused) {
+		return ""
 	}
+	saveRefusedProjectBuild(ctx, rt, cfg, spec, refused)
+	return refused.Error()
+}
+
+// saveRefusedProjectBuild only explains, so a step it cannot take, such as a daemon that is gone or a
+// client image not prepared yet, leaves the plain miss and no word of its own.
+func saveRefusedProjectBuild(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, refused *projectImageRefusal) {
 	ctx, cancel := context.WithTimeout(ctx, rememberRefusalTimeout)
 	defer cancel()
-	canonical, err := canonicalProjectDir(repo)
+	canonical, err := canonicalProjectDir(projectPolicyRepo(spec))
 	if err != nil {
 		return
 	}
@@ -167,7 +174,7 @@ func RememberRefusedProjectBuild(ctx context.Context, rt runtime.Runtime, cfg *c
 	if err != nil {
 		return
 	}
-	exposed, err := networkExposureRoots(cfg, RunSpec{Repo: repo})
+	exposed, err := networkExposureRoots(cfg, spec)
 	if err != nil {
 		return
 	}

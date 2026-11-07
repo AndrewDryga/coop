@@ -77,13 +77,24 @@ func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 }
 
 // offerBuild saves the build files as they are now and says where to review them. A new offer replaces
-// the last one, whose code stops working. command builds them on the host instead.
+// the last one, whose code stops working. command builds them on the host instead. Files Coop refuses to
+// save are remembered as refused, as a host build remembers them, and the answer says why.
 func (w *acpBoxWait) offerBuild(command string) string {
 	ctx, cancel := context.WithTimeout(w.ctx, acpBuildPrepareLimit)
 	defer cancel()
 	prepared, err := w.prepareBuild(ctx)
 	if err != nil {
 		w.log(err)
+		if reason := w.recordRefusal(ctx, err); reason != "" {
+			// The same files would be refused again, so the thread says why, as it does for a refusal a
+			// host build found, and every thread hears it at once.
+			w.mu.Lock()
+			w.seen = "" // ask again at once
+			w.mu.Unlock()
+			w.kick()
+			refused := &box.ProjectBuildRequired{Reason: reason, Refused: true, Command: command}
+			return acpBoxWaitText(refused, refused, false)
+		}
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not save this project's build files for review.",
 			Detail:  "The reason is in the agent log. Your messages go out once the box is ready.",
 			Command: command, Purpose: "in this project, on the host"})

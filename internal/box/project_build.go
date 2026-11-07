@@ -63,9 +63,15 @@ func dockerIgnoreFiles(dockerfile string) []string {
 // the system words that refusal as a loop of links.
 func refuseLinkedBuildFile(repo, rel string) error {
 	if info, err := os.Lstat(filepath.Join(repo, rel)); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return refusedImage("%s is a symbolic link. Replace it with the file it points to", filepath.ToSlash(rel))
+		return linkedBuildFile(rel)
 	}
 	return nil
+}
+
+// linkedBuildFile is the refusal of a build file that is a link, whether it is found in the project or in the
+// files staged from it.
+func linkedBuildFile(rel string) error {
+	return refusedImage("%s is a symbolic link. Replace it with the file it points to", filepath.ToSlash(rel))
 }
 
 // Docker follows linked control files outside its context. Require regular staged files covered
@@ -78,6 +84,9 @@ func validateProjectBuildFiles(dir string, entries []contextEntry, dfRel string)
 	dockerfile := filepath.FromSlash(dfRel)
 	for _, rel := range append([]string{dockerfile}, dockerIgnoreFiles(dockerfile)...) {
 		mode, covered := modes[rel]
+		if covered && mode&fs.ModeSymlink != 0 {
+			return linkedBuildFile(rel) // a build saved for review never saw PlanBuild's check of the Dockerfile
+		}
 		if covered && !mode.IsRegular() || !covered && rel == dockerfile {
 			return refusedImage("%s must be a regular file inside the build context", rel)
 		}

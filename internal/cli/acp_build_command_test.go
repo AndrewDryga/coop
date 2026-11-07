@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
+	"github.com/AndrewDryga/coop/internal/acpproxy"
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -40,13 +43,18 @@ func (b *fakeReviewedBuild) closes() int {
 	return b.closed
 }
 
-// buildCommandHarness is a filtered session's wait whose snapshots and builds are fakes.
+// buildCommandHarness is a filtered session's wait whose snapshots and builds are fakes. Setting
+// prepareErr makes saving the files fail, and refusal is what Coop then says of the failure: "" is no
+// refusal at all. Every failure it was asked about is in recorded.
 type buildCommandHarness struct {
 	*boxWaitHarness
-	mu        sync.Mutex
-	snapshots []*fakeReviewedBuild
-	built     []acpPreparedBuild
-	result    chan error
+	mu         sync.Mutex
+	snapshots  []*fakeReviewedBuild
+	built      []acpPreparedBuild
+	result     chan error
+	prepareErr error
+	refusal    string
+	recorded   []error
 }
 
 func newBuildCommandHarness(t *testing.T) *buildCommandHarness {
@@ -56,9 +64,18 @@ func newBuildCommandHarness(t *testing.T) *buildCommandHarness {
 	h.w.prepareBuild = func(context.Context) (acpPreparedBuild, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if h.prepareErr != nil {
+			return nil, h.prepareErr
+		}
 		b := &fakeReviewedBuild{dir: "/private/coop/review-" + string(rune('a'+len(h.snapshots)))}
 		h.snapshots = append(h.snapshots, b)
 		return b, nil
+	}
+	h.w.recordRefusal = func(_ context.Context, err error) string {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.recorded = append(h.recorded, err)
+		return h.refusal
 	}
 	h.w.buildReviewed = func(ctx context.Context, prepared acpPreparedBuild) error {
 		h.mu.Lock()
@@ -297,8 +314,9 @@ func TestBuildCommandLetsGoOfTheSnapshotWhenTheWaitEnds(t *testing.T) {
 }
 
 // linkedDockerfileRefusal is the miss readiness hands a session whose project's Dockerfile is a
-// symbolic link: Coop refused the build, and the reason is the one `coop build` found.
-func linkedDockerfileRefusal(t *testing.T) *box.ProjectBuildRequired {
+// symbolic link: Coop refused the build, and the reason is the one `coop build` found. It also returns
+// the project.
+func linkedDockerfileRefusal(t *testing.T) (*box.ProjectBuildRequired, string) {
 	t.Helper()
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
@@ -318,14 +336,14 @@ func linkedDockerfileRefusal(t *testing.T) *box.ProjectBuildRequired {
 	if err == nil {
 		t.Fatal("a Dockerfile that is a link was planned")
 	}
-	return &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: err.Error(), Refused: true}
+	return &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: err.Error(), Refused: true}, repo
 }
 
 // Build files Coop refused would be refused again by a /build or a review, so the thread says why and
 // what to fix, as `coop run` does, and offers neither. A project that only has not been built keeps
 // its offer, and so does one whose files were fixed (QA, 2026-11-06: a linked Dockerfile).
 func TestBuildCommandSaysWhyTheBuildFilesWereRefused(t *testing.T) {
-	refused := linkedDockerfileRefusal(t)
+	refused, _ := linkedDockerfileRefusal(t)
 	h := newBuildCommandHarness(t)
 	if said := h.lastSaid(); !strings.Contains(said, "needs a build") || !strings.Contains(said, "/build") {
 		t.Fatalf("a project that is not built heard %q, want the offer to build it here", said)
@@ -382,6 +400,98 @@ func TestBuildCommandSaysWhyTheBuildFilesWereRefused(t *testing.T) {
 	if answer := h.send(t, "5", "/build"); !strings.Contains(answer, "Review this project's box build") || len(h.snapshots) != 2 {
 		t.Fatalf("/build after the fix got %s with %d snapshots, want a review", answer, len(h.snapshots))
 	}
+}
+
+// A /build whose files Coop refuses to save is a refusal too: it is remembered as a host `coop build`
+// remembers one, the answer says why and what to fix instead of sending the person to the agent log,
+// and every thread is told at once. A failure the files did not cause still points at the log.
+func TestBuildCommandRecordsAndNamesARefusalOfItsOwn(t *testing.T) {
+	refused, _ := linkedDockerfileRefusal(t)
+	h := newBuildCommandHarness(t)
+	failure := errors.New("staging the build context: " + refused.Reason)
+	h.mu.Lock()
+	h.prepareErr, h.refusal = failure, refused.Reason
+	h.mu.Unlock()
+	h.w.mu.Lock()
+	h.w.seen = "answered"
+	h.w.mu.Unlock()
+
+	answer := h.send(t, "3", "/build")
+	if said := strings.TrimSpace(h.saidIn(t, answer)); said != acpBoxWaitText(refused, refused, false) {
+		t.Fatalf("/build got %q, want the words a refusal found by a host build gets", said)
+	}
+	if strings.Contains(answer, "agent log") {
+		t.Errorf("/build sent the person to the agent log: %s", answer)
+	}
+	h.mu.Lock()
+	recorded, saved := slices.Clone(h.recorded), len(h.snapshots)
+	h.mu.Unlock()
+	if len(recorded) != 1 || recorded[0] != failure || saved != 0 {
+		t.Errorf("recorded %v and saved %d copies of the files, want the one failure recorded and nothing saved", recorded, saved)
+	}
+	h.w.mu.Lock()
+	seen := h.w.seen
+	h.w.mu.Unlock()
+	if seen != "" || len(h.w.kicks) != 1 {
+		t.Errorf("seen=%q kicks=%d, want the wait to look again at once, so every thread hears it", seen, len(h.w.kicks))
+	}
+	h.read(func() {
+		if !slices.Contains(h.logged, failure) {
+			t.Errorf("the agent log got %v, want the whole failure", h.logged)
+		}
+	})
+
+	// Some other failure is no refusal: nothing to remember, and the reason is in the log.
+	select {
+	case <-h.w.kicks:
+	default:
+	}
+	other := errors.New("no space left on device")
+	h.mu.Lock()
+	h.prepareErr, h.refusal = other, ""
+	h.mu.Unlock()
+	h.w.mu.Lock()
+	h.w.seen = "answered"
+	h.w.mu.Unlock()
+	answer = h.send(t, "4", "/build")
+	if said := h.saidIn(t, answer); !strings.Contains(said, "could not save this project's build files") || !strings.Contains(said, "agent log") || strings.Contains(said, "refused") {
+		t.Errorf("a failure the files did not cause got %q", said)
+	}
+	h.w.mu.Lock()
+	seen = h.w.seen
+	h.w.mu.Unlock()
+	if seen != "answered" || len(h.w.kicks) != 0 {
+		t.Errorf("seen=%q kicks=%d, want a failure that is no refusal to leave the wait alone", seen, len(h.w.kicks))
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.recorded) != 2 || h.recorded[1] != other {
+		t.Errorf("recorded %v, want every failure put to the record, which keeps only refusals", h.recorded)
+	}
+}
+
+// The same, through the real saving of the build files and the real record: a project whose Dockerfile
+// is a link gets, from its thread's /build, the words `coop build` gives it.
+func TestBuildCommandOnALinkedDockerfileGivesWhatCoopBuildGives(t *testing.T) {
+	host, repo := linkedDockerfileRefusal(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	a := &app{cfg: &config.Config{BoxHome: t.TempDir(), ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: fakeDocker(t)}}
+	w := a.newACPBoxWait(&acpctl.Control{}, &acpproxy.Restarter{}, box.RunSpec{Repo: repo}, func() {}, func() {})
+	t.Cleanup(w.cancel)
+	w.log = func(error) {}
+	said := w.offerBuild("coop build --egress filtered")
+	if want := acpBoxWaitText(host, host, false); said != want {
+		t.Fatalf("/build got\n%s\nwant what a refusal found by `coop build` says:\n%s", said, want)
+	}
+	for _, want := range []string{"Dockerfile is a symbolic link. Replace it with the file it points to.", "After you fix it, build it again."} {
+		if !strings.Contains(said, want) {
+			t.Errorf("/build got %q, want %q in it", said, want)
+		}
+	}
+	if strings.Contains(said, "agent log") {
+		t.Errorf("/build sent the person to the agent log: %s", said)
+	}
+	threadtext.Check(t, said)
 }
 
 // The proxy runs the command under the lock that telling the threads takes, so the command itself must

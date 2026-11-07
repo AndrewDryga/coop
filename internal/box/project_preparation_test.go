@@ -883,6 +883,78 @@ func planThenRemember(x *approvedRebuildFixture, daemon string) error {
 	return err
 }
 
+// A thread's own /build saves the files for review before anything builds, and Coop can refuse them
+// there. It finds what `coop build` finds, in the same words, and RememberRefusedProjectBuild saves it
+// the same way and gives the reason back, so the thread can say it and a later launch repeats it.
+func TestABuildRefusedWhileSavingTheFilesForReviewIsRememberedLikeAHostBuilds(t *testing.T) {
+	for name, test := range map[string]struct {
+		spoil func(x *approvedRebuildFixture)
+		want  string
+	}{
+		"a Dockerfile that is a link": {
+			spoil: func(x *approvedRebuildFixture) {
+				x.write("docker/real.Dockerfile", reusableDockerfile)
+				if err := os.Remove(filepath.Join(x.repo, ".agent", "Dockerfile")); err != nil {
+					x.t.Fatal(err)
+				}
+				if err := os.Symlink("../docker/real.Dockerfile", filepath.Join(x.repo, ".agent", "Dockerfile")); err != nil {
+					x.t.Fatal(err)
+				}
+			},
+			want: ".agent/Dockerfile is a symbolic link. Replace it with the file it points to",
+		},
+		"a Dockerfile that copies the project settings": {
+			spoil: func(x *approvedRebuildFixture) {
+				x.write(".agent/Dockerfile", reusableDockerfile+"COPY .agent/project.yaml /opt/project.yaml\n")
+			},
+			want: ".agent/Dockerfile copies .agent/project.yaml, and Coop leaves that file out of every project build " +
+				"so that changing a network rule needs no new image. Copy another file instead",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := newApprovedRebuildFixture(t)
+			daemon := filepath.Join(t.TempDir(), "docker")
+			if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			test.spoil(x)
+
+			_, saving := PrepareFilteredProjectBuild(t.Context(), x.cfg, RunSpec{Repo: x.repo})
+			var refusal *projectImageRefusal
+			if !errors.As(saving, &refusal) || refusal.Error() != test.want {
+				t.Fatalf("saving the files for review = %v, want the refusal %q", saving, test.want)
+			}
+			if _, planned := PlanBuild(runtime.Runtime{Name: daemon}, x.cfg, x.repo, false); planned == nil || planned.Error() != test.want {
+				t.Fatalf("coop build = %v, want the same words", planned)
+			}
+			if x.builds() != 0 {
+				t.Fatalf("the builder ran %d times, but the files were refused first", x.builds())
+			}
+			if required := x.miss(); required.Refused || !strings.Contains(required.Reason, "no explicit project build") {
+				t.Fatalf("readiness before anything was remembered = %+v, want the plain miss", required)
+			}
+
+			// The reason comes back for a refusal, saved or not, and only for one. With no daemon to find
+			// the client image through, nothing is saved here: the record is rememberUnbuiltRefusal's.
+			noDaemon := runtime.Runtime{Name: filepath.Join(t.TempDir(), "no-docker")}
+			if got := RememberRefusedProjectBuild(t.Context(), noDaemon, x.cfg, RunSpec{Repo: x.repo}, saving); got != test.want {
+				t.Errorf("reason = %q, want %q", got, test.want)
+			}
+			if got := RememberRefusedProjectBuild(t.Context(), noDaemon, x.cfg, RunSpec{Repo: x.repo}, errors.New("Docker is not running")); got != "" {
+				t.Errorf("an error the files did not cause gave the reason %q", got)
+			}
+			if got := RememberRefusedProjectBuild(t.Context(), noDaemon, x.cfg, RunSpec{}, saving); got != "" {
+				t.Errorf("a refusal with no project gave the reason %q", got)
+			}
+			rememberUnbuiltRefusal(t.Context(), x.d, x.f.store, x.repo, x.candidate.Runtime, saving)
+			required := x.miss()
+			if !required.Refused || required.Approved || required.Reason != test.want {
+				t.Fatalf("readiness on the refused files = %+v, want the refusal %q", required, test.want)
+			}
+		})
+	}
+}
+
 // An ignore file that is a link is refused in the plain words a linked Dockerfile gets, wherever a build
 // reads it, instead of the system's "too many levels of symbolic links" for a link nobody followed (QA,
 // 2026-11-06). Following it would build, so the link's target is a good ignore file on purpose. The next

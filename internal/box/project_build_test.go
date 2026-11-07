@@ -346,6 +346,11 @@ func TestProjectBuildNeedsRegularDockerfileAndIgnoreFiles(t *testing.T) {
 			t.Errorf("%s: a build that read outside its digest was reusable", name)
 		}
 	}
+	// A link is refused in the plain words PlanBuild gives it, not as a file that is not regular.
+	linked := []contextEntry{{rel: filepath.Join(".agent", "Dockerfile"), mode: fs.ModeSymlink, target: "/elsewhere"}}
+	if err := validateProjectBuildFiles(dir, linked, ".agent/Dockerfile"); err == nil || err.Error() != ".agent/Dockerfile is a symbolic link. Replace it with the file it points to" {
+		t.Errorf("a linked Dockerfile = %v, want the plain refusal", err)
+	}
 }
 
 func TestFilteredProjectBuildCancellationCleansStaging(t *testing.T) {

@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A `/build` that Coop refuses in an editor thread says why and is remembered.** Where the files
+  were refused as it saved them for review, such as a `.agent/Dockerfile` that is a symlink or
+  copies `.agent/project.yaml`, the answer was only "the reason is in the agent log", and the next
+  `coop run` still asked for a build. The answer now gives the reason and what to fix, and Coop
+  saves the refusal as `coop build` does. A linked Dockerfile reads `.agent/Dockerfile is a symbolic
+  link. Replace it with the file it points to.` there too, not "must be a regular file".
+
 - **`coop claude` prints the command that resumes the session when the box stops.** Claude prints
   its own `claude --resume <id>` as it exits. That command would run Claude on your computer, which
   doesn't have the session: it lives in Coop's folder for the project. Coop can't change Claude's

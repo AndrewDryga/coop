@@ -92,6 +92,10 @@ type acpBoxWait struct {
 	// builds such a snapshot. A thread offers them only in a filtered session (heldCommand).
 	prepareBuild  func(context.Context) (acpPreparedBuild, error)
 	buildReviewed func(context.Context, acpPreparedBuild) error
+	// recordRefusal is what a thread's /build does when prepareBuild fails (box.RememberRefusedProjectBuild):
+	// if Coop refused the files themselves, it saves why as `coop build` does, and returns that reason.
+	// It returns "" for any other failure.
+	recordRefusal func(context.Context, error) string
 	holding       func() bool  // the live child only holds prompts
 	serving       func() bool  // the live child runs turns and has answered initialize
 	move          func() bool  // replace it, once it owes the editor nothing
@@ -181,6 +185,9 @@ func (a *app) newACPBoxWait(ctrl *acpctl.Control, restarter *acpproxy.Restarter,
 				return err
 			}
 			return build.Build(ctx, rt, a.cfg, os.Stderr, os.Stderr) // stdout is the editor's wire
+		},
+		recordRefusal: func(ctx context.Context, err error) string {
+			return box.RememberRefusedProjectBuild(ctx, a.rt, a.cfg, spec, err)
 		},
 		holding: restarter.Holding,
 		serving: restarter.Serving,

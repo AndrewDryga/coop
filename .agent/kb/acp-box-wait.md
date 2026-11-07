@@ -47,10 +47,14 @@ A build miss is one of three. Files a person approved before rebuild by themselv
 which a filtered thread offers as `/build` (`acp_build_command.go`). The third, `Refused`, is files Coop will
 not build, such as a linked Dockerfile or ignore file, or an image that failed a proof. The reason is the one
 `coop run` gives: `checkFilteredProjectReadiness` finds a linked ignore file itself, and reads the rest from what
-`RememberRefusedProjectBuild` or `rememberRefusal` saved. The thread shows it as one escaped line with the host
-build command and offers no `/build`, which would refuse the same files again. `settle` lets go of any copy a
-review had saved, and a `/build` typed meanwhile gets the same words. Fixing the files brings back the plain
-miss and its offer.
+`RememberRefusedProjectBuild` or `rememberRefusal` saved. A refusal can come from the thread's own `/build`, as
+it saves the files for review: `offerBuild` hands the failure to `recordRefusal`, which is
+`RememberRefusedProjectBuild` with the session's spec, as `coop build` calls it. It saves the refusal and returns
+the reason, and `offerBuild` answers with it and asks the wait to look again at once. Any other failure keeps
+"the reason is in the agent log". The thread shows the reason as one escaped line with the host build command
+and offers no `/build`, which would refuse the same files again. `settle` lets go of any copy a review had
+saved, and a `/build` typed meanwhile gets the same words. Fixing the files brings back the plain miss and its
+offer.
 
 Trap: a first approval takes `LockServiceLaunch` exclusively, and every box holds the shared side for
 its lifetime, so a holding child would deadlock the approval it waits for. A holding child therefore
@@ -237,6 +241,9 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-06 — a `/build` Coop refuses while saving the files for review is remembered as a host build's refusal is, and
+  its answer names the reason; a Dockerfile that is a link reads "is a symbolic link" there as in `coop build`.
+  Covered by tests of the real saving and of the record, and of the thread's answer.
 - 2026-11-06 — a build Coop refused says why in the thread and offers no `/build`; before, the thread said "needs a build" for it,
   and `/build` refused the same files. Covered by a test against the refusal a linked Dockerfile really gets.
 - 2026-11-06 — a fork box that waits for the launch lock leaves a `fork-launch-waits/` note, so `coop fork ls` shows
