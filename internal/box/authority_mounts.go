@@ -457,7 +457,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 				trustedOpaque = err != nil
 			}
 			for _, source := range exposure.Sources {
-				if err := checkSource(source, group.writable, nil, nil, trustedOpaque, slices.Contains(exposure.ManagedParents, source)); err != nil {
+				if err := checkSource(source, group.writable, nil, nil, trustedOpaque, slices.Contains(exposure.ManagedParents, source) && !slices.Contains(exposure.BindSources, source)); err != nil {
 					return err
 				}
 				sources = append(sources, authorityBind{source: source, writable: group.writable})

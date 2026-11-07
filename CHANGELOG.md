@@ -8,11 +8,11 @@
   Linux runs 37 with mount-based filesystem protection, so each guide now shows both, as its secret check
   already does.
 
-- **Boxes start in a project on Linux.** In any project with a task queue, `coop claude` (or any agent) and
-  `coop doctor` failed on Linux with "lstat /var/lib/docker/.git/coop-primary-snapshot.json: permission
-  denied". The check that keeps a writable mount out of a protected checkout searched Docker's own volume
-  store, which only root can open on Linux. It now starts above that store, which Coop has already
-  confirmed is root-owned Docker storage, and still checks every folder above it.
+- **Boxes start in a project on Linux.** In a project, `coop claude` (or any agent) and `coop doctor`
+  failed on Linux with "lstat /var/lib/docker/.git/coop-primary-snapshot.json: permission denied". The
+  check that keeps a writable mount out of a protected checkout searched Docker's own volume store, behind
+  the shared cache volumes, which only root can open on Linux. It now starts above that store, which Coop
+  has already confirmed is root-owned Docker storage, and still checks every folder above it.
 
 - **The starter eval grader works in runtime profile cases.** `coop eval init`'s `verify.sh` read
   `/workspace/greeting.txt`, but a runtime profile case grades in `/app`, so every such trial failed

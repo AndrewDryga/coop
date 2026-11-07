@@ -180,9 +180,9 @@ func TestAuthorityMountGuardInspectsNamedVolumesAndOpaqueInheritance(t *testing.
 }
 
 // A rootful daemon keeps volume data under a directory this user cannot search, which the runtime
-// reports as a managed parent (Docker's /var/lib/docker on Linux). A writable volume there, such as a
-// project's task channel, must start. The same unsearchable path the runtime did not vouch for still
-// fails closed, and a marked checkout above the store is still refused.
+// reports as a managed parent (Docker's /var/lib/docker on Linux). A writable volume there, such as the
+// shared coop-cache, must start. The same unsearchable path the runtime did not vouch for, or one a bind
+// device names, still fails closed, and a marked checkout above the store is still refused.
 func TestAuthorityMountGuardAcceptsAWritableVolumeInADaemonStore(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root can search any directory, so the store is not unsearchable")
@@ -206,12 +206,18 @@ func TestAuthorityMountGuardAcceptsAWritableVolumeInADaemonStore(t *testing.T) {
 			return e, nil
 		}
 	}
+	bindDevice := func(context.Context, []string) (runtime.VolumeExposure, error) {
+		return runtime.VolumeExposure{Sources: []string{store}, BindSources: []string{store}, ManagedParents: []string{store}}, nil
+	}
 	options := []string{"-v", "tasks:/coop/tasks"}
 	if err := validateAuthorityMounts(context.Background(), spec, options, state, exposure(true), authorityMountAllowlist{}); err != nil {
 		t.Fatalf("a writable volume in a daemon store was refused: %v", err)
 	}
 	if err := validateAuthorityMounts(context.Background(), spec, options, state, exposure(false), authorityMountAllowlist{}); err == nil {
 		t.Fatal("an unsearchable source the runtime did not vouch for was accepted")
+	}
+	if err := validateAuthorityMounts(context.Background(), spec, options, state, bindDevice, authorityMountAllowlist{}); err == nil {
+		t.Fatal("a bind device naming the daemon store was vouched for as the store")
 	}
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o700); err != nil {
 		t.Fatal(err)
