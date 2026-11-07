@@ -147,23 +147,56 @@ func identityRefusal(err error, options sessionConnectOptions) error {
 	return err
 }
 
+// firstConnectionRefusal refuses, before anything starts or is contacted, a connection that has to
+// enroll but has no usable token: a state folder holding no saved identity enrolls, and enrolling
+// needs one. A saved identity needs none, since enrolling removed the token, so a service restarting
+// with the same flag or without it is fine.
+func firstConnectionRefusal(state string, options sessionConnectOptions) error {
+	if _, err := os.Lstat(filepath.Join(state, "identity.json")); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if options.TokenFile == "" {
+		return noTokenRefusal(state, options)
+	}
+	if err := workerconnector.CheckEnrollmentTokenFile(options.TokenFile); err != nil {
+		return tokenFileRefusal(err)
+	}
+	return nil
+}
+
+// noTokenRefusal is the block for a connection with no saved identity and no --token-file. It shows
+// this command with a token file added, so it keeps the --state and --ca-file it was given: without
+// them the command would enroll in another folder, or fail the certificate check. The address is
+// one the transport already accepted, so it has no user name to leak.
+func noTokenRefusal(state string, options sessionConnectOptions) error {
+	command := "coop sessions connect --controller " + shellWord(options.Controller)
+	if options.CAFile != "" {
+		command += " --ca-file " + shellWord(options.CAFile)
+	}
+	if def, err := sessionStatePath(""); err != nil || state != def {
+		command += " --state " + shellWord(state)
+	}
+	return ui.CommandFailed("A first connection needs an enrollment token",
+		"No worker identity is saved in "+ui.SafeInline(state)+".\n"+
+			"Save the token the controller gave you in a file and pass it with --token-file.",
+		[2]string{"Example:", command + " --token-file /path/to/token"},
+		[2]string{"Help:", ui.HelpCommand("coop sessions connect")})
+}
+
 func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, error) {
 	state, socket, err := sessionSocketPath(options.State, "")
 	if err != nil {
 		return 1, err
-	}
-	// A worker with a saved identity never reads the token, which enrolling removed, so a service
-	// restarting with the same flag is fine.
-	if _, statErr := os.Lstat(filepath.Join(state, "identity.json")); options.TokenFile != "" && errors.Is(statErr, os.ErrNotExist) {
-		if err := workerconnector.CheckEnrollmentTokenFile(options.TokenFile); err != nil {
-			return 1, tokenFileRefusal(err)
-		}
 	}
 	transport, err := workerconnector.NewHTTPTransport(workerconnector.HTTPTransportConfig{
 		BaseURL: options.Controller, CAFile: options.CAFile, EnrollmentTokenFile: options.TokenFile,
 		IdentityFile: filepath.Join(state, "identity.json"),
 	})
 	if err != nil {
+		return 1, err
+	}
+	// Only after the transport has accepted the address, which a refusal may repeat in its command.
+	if err := firstConnectionRefusal(state, options); err != nil {
 		return 1, err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

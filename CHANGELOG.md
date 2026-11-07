@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop sessions connect` says what to pass when there is no saved identity and no token.** A first
+  connection without `--token-file` started the local service, then ended with `worker identity is
+  absent and no enrollment token file is configured`. It now refuses at once, before it starts
+  anything or contacts the controller, in the usual refusal block (exit 1). The block names the state
+  folder that holds no identity and shows your command with `--token-file` added, keeping the
+  `--state` and `--ca-file` you gave. A saved identity still reconnects without a token.
+
 - **`coop sessions connect` explains a refused enrollment token and an untrusted controller
   certificate.** An enrollment the controller answered with HTTP 401 or 403 ended in `worker identity
   endpoint returned HTTP 403`, and a certificate from an authority this machine does not trust ended

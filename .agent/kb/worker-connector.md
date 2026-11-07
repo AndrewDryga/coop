@@ -67,13 +67,16 @@ The traps the code does not make obvious:
   Real TLS plus Unix-service integration rebuilds
   the transport/executor/connector before receipt and event ACKs, proving disk recovery rather
   than reuse of one in-memory identity manager. Test-only CA helpers never load production trust.
-- **Two first-connection failures get a plain block; the rest keep their one line.** The enrollment
+- **First-connection failures a person can fix get a plain block; the rest keep one line.** The enrollment
   route's 401/403 (`IdentityStatusError.TokenRefused`; a renewal sends no token, so its 401/403 is
   not a refused one) and a certificate from an unknown authority (`ControllerCertificateUntrusted`;
   a wrong host name or an expired certificate is not fixed by `--ca-file`) end `coop sessions
   connect` in the shared refusal block (`identityRefusal`), with the status kept. `--ca-file`
   replaces the system roots, so when it is given the block says that file lacks the authority.
-  Any other status stays `worker identity endpoint returned HTTP n`.
+  Any other status stays `worker identity endpoint returned HTTP n`. A state folder with no saved
+  identity and no `--token-file` is refused earlier still (`firstConnectionRefusal`), before the
+  service starts or the controller is contacted, with the command to run; a saved identity needs
+  no token.
 - **Journal before execute; the receipt is the authority.** `journal.begin` publishes a receipt
   before the executor touches the daemon: a redelivered command with the same digest replays the
   stored result, a changed payload under the same id is `ErrCommandConflict`. Receipts are published
@@ -181,6 +184,8 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-07 — a first `coop sessions connect` with no saved identity and no `--token-file` is refused
+  before anything starts, in the shared block (task 2026-11-07-say-what-to-pass-when-coop-sessions-connect-has).
 - 2026-11-07 — a refused enrollment token and an untrusted controller certificate end `coop sessions connect`
   in the shared refusal block (task 2026-11-07-explain-refused-coop-sessions-connect-enrollment).
 - 2026-11-04 — sessions no longer read a `.stable-workdir` marker: every session runs at `/workspace`.

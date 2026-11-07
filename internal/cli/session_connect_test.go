@@ -104,6 +104,105 @@ func TestSessionConnectExplainsAnUnusableTokenFile(t *testing.T) {
 	}
 }
 
+// A first connection with no token is refused before anything starts or is contacted. The block says
+// no identity is saved and shows this command with a token file added, keeping the --state and
+// --ca-file it was given: without them the command would enroll in another folder, or fail the
+// certificate check.
+func TestSessionConnectExplainsAFirstConnectionWithoutAToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // the default state folder follows it
+	var contacts atomic.Int32
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			contacts.Add(1)
+			conn.Close()
+		}
+	}()
+	controller := "https://" + listener.Addr().String()
+	ca := filepath.Join(home, "ca.pem")
+	if err := os.WriteFile(ca, workertls.NewCA(t).PEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	refuse := func(options sessionConnectOptions, state, example string) {
+		t.Helper()
+		code, err := runSessionConnect(&config.Config{}, options)
+		want := &ui.UsageError{
+			Headline: "A first connection needs an enrollment token",
+			Cause: "No worker identity is saved in " + state + ".\n" +
+				"Save the token the controller gave you in a file and pass it with --token-file.",
+			Rows:     [][2]string{{"Example:", example}, {"Help:", "coop help sessions connect"}},
+			ExitCode: 1,
+		}
+		if usage := asUsage(err); code != 1 || !reflect.DeepEqual(usage, want) {
+			t.Errorf("connect with no token = (%d, %#v), want %#v", code, err, want)
+		}
+		if _, err := os.Lstat(state); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("a refused connect made its state folder: %v", err)
+		}
+	}
+	state := filepath.Join(home, "w1")
+	refuse(sessionConnectOptions{Controller: controller, CAFile: ca, State: state}, state,
+		"coop sessions connect --controller "+shellWord(controller)+" --ca-file "+shellWord(ca)+" --state "+shellWord(state)+
+			" --token-file /path/to/token")
+	// The default state folder is left out, as it is when it is not typed.
+	refuse(sessionConnectOptions{Controller: controller}, filepath.Join(home, ".local", "state", "coop", "sessions"),
+		"coop sessions connect --controller "+shellWord(controller)+" --token-file /path/to/token")
+	if contacts.Load() != 0 {
+		t.Errorf("a connection with no token contacted the controller %d times", contacts.Load())
+	}
+}
+
+// Only a connection that has to enroll needs a token. A saved identity is reused with the flag or
+// without it, and a token file is checked only when nothing is saved.
+func TestFirstConnectionRefusalNeedsATokenOnlyWithoutASavedIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	token := filepath.Join(home, "token")
+	if err := os.WriteFile(token, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(home, "gone")
+	saved := filepath.Join(home, "saved")
+	if err := os.Mkdir(saved, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saved, "identity.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(home, "empty")
+	for _, tc := range []struct {
+		name, state, token string
+		refusal            string // the headline of the block, or "" for no refusal
+	}{
+		{"nothing saved, no token", empty, "", "A first connection needs an enrollment token"},
+		{"nothing saved, a token file that is gone", empty, gone, "Could not use the enrollment token file"},
+		{"nothing saved, a usable token", empty, token, ""},
+		{"identity saved, no token", saved, "", ""},
+		{"identity saved, the flag it enrolled with", saved, gone, ""},
+	} {
+		got := ""
+		if err := firstConnectionRefusal(tc.state, sessionConnectOptions{Controller: "https://controller.example", TokenFile: tc.token}); err != nil {
+			got = err.Error()
+			if usage := asUsage(err); usage != nil {
+				got = usage.Headline
+			}
+		}
+		if got != tc.refusal {
+			t.Errorf("%s refused with %q, want %q", tc.name, got, tc.refusal)
+		}
+	}
+}
+
 // connectTo runs a first `coop sessions connect` to controller with a valid token file and a fresh
 // state folder, and returns the token file's path, the exit code and error, and what it printed.
 func connectTo(t *testing.T, controller, caFile string) (token string, code int, out string, err error) {
