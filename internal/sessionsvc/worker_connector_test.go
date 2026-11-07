@@ -324,7 +324,7 @@ func TestWorkerActivitySurvivesAsyncCreateAcknowledgementAndRestart(t *testing.T
 		t.Fatal(err)
 	}
 	beforePolls := polls.Load()
-	if _, err := newTransport().Poll(ctx, first); err == nil || !strings.Contains(err.Error(), "load worker identity") {
+	if _, err := newTransport().Poll(ctx, first); err == nil || !strings.Contains(err.Error(), "is damaged") {
 		t.Fatalf("malformed identity did not fail at identity loading: %v", err)
 	}
 	if enrolls.Load() != 1 || polls.Load() != beforePolls || creates.Load() != 1 {
