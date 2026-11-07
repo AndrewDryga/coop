@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor session pinned to an account waits for it at a usage limit, and a filtered session lets
+  no image address through.** `coop acp claude@work`, or an account chosen in the editor's Account
+  menu, moved to the next signed-in account when that account hit its limit, though `@account`
+  means use only that account. The session now waits for that account's reset and sends the prompt
+  again, and Auto still moves on. A filtered session passed an image block's `uri` to the editor
+  unchanged, against the docs. The address is now removed: a block with image data keeps its data,
+  and a block with none becomes a plain link to click.
+
 - **Cancelling `coop login` stops cleanly wherever you do it.** Ctrl-C at Codex's one-time code
   ended in "could not save the sign-in", exit 1 and a leftover `.sign-in-…` folder, because Codex
   answers Ctrl-C with status 0 and no login. Closing the terminal killed Coop with the box still

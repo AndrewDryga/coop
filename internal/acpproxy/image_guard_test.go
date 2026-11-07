@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -126,7 +127,7 @@ func zedMarkdown(t *testing.T, lines []byte) []string {
 			for _, item := range content {
 				block, _ := item.(map[string]any)
 				if inner, wrapped := block["content"].(map[string]any); wrapped {
-					joined[stream] = inner["text"].(string) // a tool's block stands alone, until a chunk adds to the last
+					joined[stream], _ = inner["text"].(string) // a tool's block stands alone, until a chunk adds to the last; an image is not Markdown
 				} else if text, isText := block["text"].(string); isText {
 					joined[stream] += text
 				}
@@ -310,6 +311,82 @@ func TestALinkThatSpellsAnImageGoesNowhere(t *testing.T) {
 			t.Errorf("spellsImage(%q) = %v", uri, !spells)
 		}
 	}
+}
+
+// An image block may name where its image came from. Zed shows only a block's data, but another editor
+// may fetch the address, and the docs promise a filtered session shows an image only from its data. So the
+// address never goes out: a block with data keeps the data, and one with nothing else becomes a link.
+func TestAnImageBlockKeepsNoAddress(t *testing.T) {
+	const remote = "https://evil.example/?data=1"
+	const data = "iVBORw0KGgo="
+	image := func(members map[string]any) map[string]any {
+		members["type"] = "image"
+		return members
+	}
+	asLink := func(address string) map[string]any { return textBlock("[image](" + address + ")") }
+	// A block sits in a message's content, or in the list of content a tool call holds.
+	places := map[string]struct {
+		line    func(block map[string]any) string
+		blockIn func(update map[string]any) map[string]any
+	}{
+		"a message": {
+			func(block map[string]any) string {
+				return updateLine(t, "agent_message_chunk", map[string]any{"messageId": "m", "content": block})
+			},
+			func(update map[string]any) map[string]any { return update["content"].(map[string]any) },
+		},
+		"a tool's content": {
+			func(block map[string]any) string {
+				return updateLine(t, "tool_call_update", map[string]any{"toolCallId": "t", "content": []any{map[string]any{"type": "content", "content": block}}})
+			},
+			func(update map[string]any) map[string]any {
+				return update["content"].([]any)[0].(map[string]any)["content"].(map[string]any)
+			},
+		},
+	}
+	for name, tc := range map[string]struct{ block, want map[string]any }{
+		"an address and empty data": {image(map[string]any{"data": "", "mimeType": "image/png", "uri": remote}), asLink(remote)},
+		"an address and no data":    {image(map[string]any{"mimeType": "image/png", "uri": remote}), asLink(remote)},
+		"data and an address": {image(map[string]any{"data": data, "mimeType": "image/png", "uri": remote}),
+			image(map[string]any{"data": data, "mimeType": "image/png"})},
+		"a project path": {image(map[string]any{"data": "", "mimeType": "image/png", "uri": "file:///private/tmp/a b.png"}),
+			asLink("file:///private/tmp/a%20b.png")},
+		"an address that ends the link and starts an image": {image(map[string]any{"uri": "x)![y](https://evil.example/?d=1"}),
+			asLink("x%29![y]%28https://evil.example/?d=1")},
+	} {
+		for place, at := range places {
+			t.Run(name+" in "+place, func(t *testing.T) {
+				out := throughGuard(t, at.line(tc.block))
+				var message struct {
+					Params struct{ Update map[string]any }
+				}
+				if err := json.Unmarshal(bytes.TrimSpace(out), &message); err != nil {
+					t.Fatalf("the editor got %q", out)
+				}
+				if got := at.blockIn(message.Params.Update); !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("the editor got %v, want %v", got, tc.want)
+				}
+				if images := fetches(t, out); len(images) > 0 {
+					t.Errorf("the editor fetches %v from %s", images, out)
+				}
+			})
+		}
+	}
+	// The link joins the message right after what came before it, so a `!` that was sent as it was (the turn
+	// ended on it) must not turn the link into an image.
+	t.Run("a link after a `!`", func(t *testing.T) {
+		out := throughGuard(t, messageLine(t, "look!"), turnAnswer, updateLine(t, "agent_message_chunk", map[string]any{"content": image(map[string]any{"data": "", "uri": remote})}))
+		if images := fetches(t, out); len(images) > 0 {
+			t.Errorf("the editor fetches %v from:\n%s", images, out)
+		}
+	})
+	// An image that keeps its data is no link, so the `!` before it needs no backslash.
+	t.Run("data after a `!`", func(t *testing.T) {
+		out := throughGuard(t, messageLine(t, "look!"), turnAnswer, updateLine(t, "agent_message_chunk", map[string]any{"content": image(map[string]any{"data": data, "mimeType": "image/png", "uri": remote})}))
+		if bytes.Contains(out, []byte(`"text":"\\"`)) {
+			t.Errorf("a stray backslash reached the editor:\n%s", out)
+		}
+	})
 }
 
 // A parser that keeps the first copy of a key would show what a check of the last one never saw.

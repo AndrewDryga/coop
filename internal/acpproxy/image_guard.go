@@ -156,7 +156,10 @@ func (g *imageGuard) rewriteChunk(line []byte, message map[string]any, id stream
 		if sent := stream.text.finish(sealText); len(sent) > 0 {
 			out = append(out, stream.line(sent)...)
 		}
-		if stream.text.exposed && (block["type"] == "resource_link" || block["type"] == "resource") {
+		// An image with an address and no data becomes a link in this message, so it needs the guard a link gets.
+		_, addressed := block["uri"].(string)
+		data, _ := block["data"].(string)
+		if stream.text.exposed && (block["type"] == "resource_link" || block["type"] == "resource" || block["type"] == "image" && addressed && data == "") {
 			out = append(out, stream.line([]byte(`\`))...)
 		}
 		stream.text.exposed = false
@@ -332,6 +335,9 @@ func (t *lineText) rewrite(value any, inList bool) any {
 			value[i] = t.rewrite(item, true)
 		}
 	case map[string]any:
+		if value["type"] == "image" {
+			t.image(value)
+		}
 		for key, member := range value {
 			text, isString := member.(string)
 			switch {
@@ -356,6 +362,29 @@ func (t *lineText) escape(text string, end textEnd) string {
 	t.changed = t.changed || escaped != text
 	return escaped
 }
+
+// image keeps a remote image out of a filtered session: an image block may name where it came from, an
+// editor may fetch that, and only the block's own data may show. The address goes, and a block that held
+// nothing else becomes the plain link a person has to click. The link is text from here on, so it gets the
+// same escaping as every other string in the line.
+func (t *lineText) image(block map[string]any) {
+	address, named := block["uri"].(string)
+	if !named {
+		return
+	}
+	delete(block, "uri")
+	t.changed = true
+	if data, _ := block["data"].(string); data != "" {
+		return
+	}
+	delete(block, "data")
+	delete(block, "mimeType")
+	block["type"], block["text"] = "text", "[image]("+linkAddress(address)+")"
+}
+
+// linkAddress writes an address so that it ends where the box ended it: the characters that would end the
+// link early, or start another one, are percent-encoded.
+var linkAddress = strings.NewReplacer(" ", "%20", "(", "%28", ")", "%29", "<", "%3C", ">", "%3E", `\`, "%5C", "\n", "%0A", "\r", "%0D", "\t", "%09").Replace
 
 // spellsImage reports a link no backslash can fix. Zed writes a resource link into a message as
 // `[@name](uri)`, or as the bare uri if it cannot read it, and takes the name from the uri with its %

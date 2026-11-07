@@ -3,7 +3,7 @@ name: acp-editor-host-access
 description: a filtered session's box cannot reach the host through the editor; what it may still ask, and why lines are read strictly
 subsystem: acp
 sources: [internal/acpproxy/host_access.go, internal/acpproxy/image_guard.go, internal/acpproxy/markdown_images.go, internal/acpproxy/proxy.go, internal/cli/acp_cmd.go, internal/cli/fork_acp.go, internal/box/editor_box_wait_live_test.go]
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 ACP's `fs/*` and `terminal/*` run on the editor's computer, outside the box, and a login button can run
 a command there. Any program in a box can write these straight onto the adapter's stdout: from inside a
@@ -73,7 +73,11 @@ nothing to load. Only `![text](data:...)` may stay an image. Traps:
   such as `[key: string]: number;`. Telling code from text would mean trusting a parser that can disagree with the
   editor's. Outside a code block the backslash does not show, but a reference link's definition and a footnote's stop
   working, a `data:` image over 16 KB in text becomes a link, and a resource link with `]:` in it, such as an IPv6 port,
-  is dropped. An image block the agent sends is not Markdown and is not touched.
+  is dropped. An image block the agent sends is not Markdown, but it keeps only its data: `lineText.image` removes its
+  `uri`, which an editor may fetch (Zed at v1.26.2 ignores it and decodes `data`; the rule is for another editor and a
+  later Zed), and a block left with no data becomes the text `[image](address)`, with the address percent-encoded where it
+  could end the link, so it gets the escaping every string does. That text joins the message like a resource link, so it
+  gets the same `\` after a raw `!`.
 
 Not closed: a `session/update` can name paths (tool call `locations`, resource links) the editor may show or open, and links a
 person can click. The agent gets nothing back from those. Mermaid fences render in the thread, and Zed's renderer for
@@ -84,6 +88,9 @@ Proof: `host_access_test.go`, `image_guard_test.go`, `markdown_images_test.go`, 
 cannot be driven from an agent session, so it is read from source at v1.26.2.
 
 ## Changelog
+- 2026-11-06 — an image block no longer reaches the editor with an address (QA: `uri` on a block with empty data came
+  through unchanged, against the docs). Checked with `TestAnImageBlockKeepsNoAddress`, and by turning each half of the rule
+  off to see that test fail.
 - 2026-11-04 — a last byte is guarded only when it can begin something (`\`, `!`, `]`), so a one-letter last
   line, or a letter before a pause, stays byte for byte.
 - 2026-11-03 — created with the guard. Verified on real Docker: with the guard off the live test fails with

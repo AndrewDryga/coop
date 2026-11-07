@@ -1045,8 +1045,9 @@ func (c *Control) rewriteUpdateConfigOptions(update json.RawMessage, sid string)
 // triggered it and, if a free target exists, swaps to it and flags the prompt for an automatic re-send
 // (returns nil,true — the error is swallowed, the turn completes on the new target); if none is free it
 // points at the one that resets soonest, returns a "waiting" status (true, the factory blocks until the
-// reset), and flags the same re-send. Falls back to the switch-and-ask-to-resend note (or forwarding the
-// error) when it can't identify the prompt. Returns (nil,false) to leave the line untouched.
+// reset), and flags the same re-send. An account the person pinned has no other to move to: it waits for its
+// own reset. Falls back to the switch-and-ask-to-resend note (or forwarding the error) when it can't identify
+// the prompt. Returns (nil,false) to leave the line untouched.
 func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 	if !bytes.Contains(line, []byte(`"error"`)) {
 		return nil, false
@@ -1096,7 +1097,17 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 		return c.rotatePreset(session, canResend, until, now)
 	}
 
-	next := c.nextAccount(provider, currentAccount, until, now)
+	// An account the person chose, in the target or in the Account menu, is the only one this session runs
+	// on: its limit is a wait for its own reset, never a move to another account (Auto does that).
+	var next string
+	acct, at := currentAccount, until
+	if sel.Account == "" {
+		next = c.nextAccount(provider, currentAccount, until, now)
+	} else {
+		c.mu.Lock()
+		c.limited[accountLimitKey(provider, currentAccount)] = until
+		c.mu.Unlock()
+	}
 	if next != "" {
 		c.clearWait(session) // a free rotation breaks the consecutive-wait chain
 		c.mu.Lock()
@@ -1121,7 +1132,9 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 
 	// Nothing free right now: wait for the nearest reset, then re-send on that account. Needs a known
 	// reset and a captured prompt; otherwise forward the error so the user can wait/retry themselves.
-	acct, at := c.nearestReset(provider)
+	if sel.Account == "" {
+		acct, at = c.nearestReset(provider)
+	}
 	if acct == "" || !canResend {
 		return nil, false
 	}
@@ -1139,7 +1152,7 @@ func (c *Control) maybeRotate(line []byte) (out []byte, rotated bool) {
 	}
 	c.resend[session] = true
 	c.mu.Unlock()
-	acpproxy.Trace("all accounts rate limited: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
+	acpproxy.Trace("rate limited with no account to move to: waiting for %s until %s + auto-resending", acct, at.Format(time.RFC3339))
 	// Move the dropdown to the account we'll resume on, then the "waiting…" status line.
 	return append(c.configOptionUpdate(session), c.waitStatus(session, provider, acct, at, now)...), true
 }

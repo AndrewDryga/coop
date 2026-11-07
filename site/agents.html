@@ -332,7 +332,8 @@ coop usage codex@work         # include history and pricing details for one acco
 <p>When <code>coop loop</code> (or a <code>coop fork --loop</code>) reaches a rate or usage limit, it switches to the next
 target. It waits only when every target has reached its limit. A
 <a href="integrations.html">Zed (ACP) session</a> also switches targets, sends your prompt again and updates
-the toolbar selection. If every account is limited, it waits until the first limit resets.</p>
+the toolbar selection. If every account is limited, it waits until the first limit resets. A session
+pinned to an account never switches: it waits for that account&#39;s reset.</p>
 <p>The lead&#39;s <code>agent:</code> list, called a ladder, sets the order of models and accounts to try. You don&#39;t
 need to configure a separate account pool:</p>
 <ul>

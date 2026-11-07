@@ -132,9 +132,10 @@ provider currently in use, and Account is set to Auto.
 
 ### Usage limits
 
-If a provider reports a usage limit during a turn, co:op hides the error, switches to your next
-signed-in account and sends the prompt again, updating the account dropdown to match. If no
-account is available, it posts
+If a provider reports a usage limit during a turn, co:op hides the error and sends the prompt
+again. With the Account menu on Auto, it first switches to your next signed-in account and updates
+the menu to match. An account you chose, with `@account` in the target or in the menu, is the only
+one that session uses, so co:op waits for its reset instead. If no account is available, it posts
 `Waiting for account "<name>" on <Provider> to reset its usage limit at <Mon 15:04 MST> (in MM:SS). Your message will send automatically.`
 and sends your prompt when the limit resets.
 

@@ -133,6 +133,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [acp-replay-publication](acp-replay-publication.md) — publish replacement native bindings atomically before releasing held editor work
 - [acp-thread-bindings](acp-thread-bindings.md) — persist each thread's provider + native session id so a fresh coop acp reopens the transcript the conversation continued on, not the pre-switch stub
 - [acp-target-commit](acp-target-commit.md) — commit model/effort truth from the effective provider response, including Grok migrations
+- [acp-codex-turn-after-a-cancel](acp-codex-turn-after-a-cancel.md) — a Codex editor session's turn after a cancelled turn sometimes skips its tools although the request carries them; refused settings play no part; how to read Codex's own request trace
 - [acp-editor-host-access](acp-editor-host-access.md) — a filtered session's box cannot reach the host through the editor: what it may still ask, and why lines are read strictly
 - [acp-box-wait](acp-box-wait.md) — how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 - [acp-carry-echo](acp-carry-echo.md) — inject best-effort context once and hide only its exact provider echo from the editor

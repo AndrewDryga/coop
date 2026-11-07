@@ -257,9 +257,10 @@ choices from the editor.</p>
 <p>Select None to choose a provider or account yourself. Both menus return: Provider shows the
 provider currently in use, and Account is set to Auto.</p>
 <h3 id="usage-limits">Usage limits</h3>
-<p>If a provider reports a usage limit during a turn, co:op hides the error, switches to your next
-signed-in account and sends the prompt again, updating the account dropdown to match. If no
-account is available, it posts
+<p>If a provider reports a usage limit during a turn, co:op hides the error and sends the prompt
+again. With the Account menu on Auto, it first switches to your next signed-in account and updates
+the menu to match. An account you chose, with <code>@account</code> in the target or in the menu, is the only
+one that session uses, so co:op waits for its reset instead. If no account is available, it posts
 <code>Waiting for account &#34;&lt;name&gt;&#34; on &lt;Provider&gt; to reset its usage limit at &lt;Mon 15:04 MST&gt; (in MM:SS). Your message will send automatically.</code>
 and sends your prompt when the limit resets.</p>
 <h3 id="restarts">Restarts</h3>

@@ -1019,21 +1019,21 @@ func TestACPControlAutoReply(t *testing.T) {
 	}
 }
 
-// TestACPControlAutoRotate: a rate-limit error on a credential session rotates to the next signed-in
-// account and asks for a restart; once every account is cooling it forwards the error unchanged; a
-// preset session and non-error lines never credential-rotate.
+// TestACPControlAutoRotate: a rate-limit error on an automatic (Auto) account rotates to the next
+// signed-in account and asks for a restart; once every account is cooling it forwards the error
+// unchanged; a preset session and non-error lines never credential-rotate.
 func TestACPControlAutoRotate(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal", "work"} // the temp cfg isn't "authed", so set the rotation set
-	c.sel = Selection{Account: "personal"}
+	c.autoAccount = "personal"
 
 	limitErr := []byte(`{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"HTTP 429: usage limit reached"}}` + "\n")
 	out, restart := c.toEditor(limitErr)
 	if !restart {
 		t.Fatal("a rate-limit error on a credential session must trigger a restart (rotation)")
 	}
-	if sel := c.selection(); sel.Account != "work" {
-		t.Errorf("expected rotation to work, selection = %+v", sel)
+	if c.autoAccount != "work" {
+		t.Errorf("expected rotation to work, auto account = %q", c.autoAccount)
 	}
 	if !strings.Contains(string(out), `Claude Code account \"personal\" reached its usage limit. Switched to Claude Code account \"work\". Send your last message again.`) {
 		t.Errorf("editor should get coop's switched-to note, got: %s", out)
@@ -1084,7 +1084,7 @@ func TestChooseAllow(t *testing.T) {
 func TestACPControlAutoResendOnRotate(t *testing.T) {
 	c := newTestControl(t)
 	c.accounts = []string{"personal", "work"}
-	c.sel = Selection{Account: "personal"}
+	c.autoAccount = "personal"
 
 	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
 	if handled, _, _, _ := fromEditorPrompt(c, prompt); handled {
@@ -1099,16 +1099,16 @@ func TestACPControlAutoResendOnRotate(t *testing.T) {
 	if !restart {
 		t.Fatal("a rate-limit error must restart")
 	}
-	// The error is swallowed; the only thing the editor sees is a config_option_update moving the
-	// Account dropdown to the new credential (no chat message).
-	if !strings.Contains(string(out), "config_option_update") || !strings.Contains(string(out), `"currentValue":"work"`) {
-		t.Errorf("rotate should push a dropdown update onto account work, got: %s", out)
+	// The error is swallowed; the editor sees a config_option_update (the Account menu stays on Auto)
+	// and the note that work is being tried.
+	if !strings.Contains(string(out), "config_option_update") || !strings.Contains(string(out), `Trying Claude Code account \"work\"`) {
+		t.Errorf("rotate should push a dropdown update and say work is tried, got: %s", out)
 	}
 	if strings.Contains(string(out), `"error"`) || strings.Contains(string(out), "session limit") {
 		t.Errorf("the rate-limit error must not reach the editor, got: %s", out)
 	}
-	if sel := c.selection(); sel.Account != "work" {
-		t.Errorf("must rotate to work, got %+v", sel)
+	if c.autoAccount != "work" {
+		t.Errorf("must rotate to work, got %q", c.autoAccount)
 	}
 	if !c.resend["S"] {
 		t.Error("session S must be flagged for resend")
@@ -1156,6 +1156,72 @@ func TestACPControlAutomaticAccountRateLimitKeepsPolicy(t *testing.T) {
 	if !c.resend["S"] {
 		t.Fatal("automatic rate-limit recovery did not arm the prompt resend")
 	}
+}
+
+// An account the person chose, in the target or in the Account menu, is used alone (docs/agents.md: "A
+// pinned model@account runs just that one account"). At its usage limit the session waits for that
+// account's reset and sends the prompt again there; only Auto moves to another account.
+func TestACPControlPinnedAccountWaitsForItsOwnReset(t *testing.T) {
+	prompt := []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"hi"}]}}` + "\n")
+	limitErr := []byte(`{"jsonrpc":"2.0","id":"p1","error":{"code":-32000,"message":"You've hit your session limit"}}` + "\n")
+	newPinned := func(t *testing.T) *Control {
+		c := newTestControl(t)
+		c.accounts = []string{"personal", "work"}
+		c.sel = Selection{Account: "personal"}
+		fromEditorPrompt(c, prompt)
+		return c
+	}
+
+	t.Run("waits on the same account and sends the prompt again", func(t *testing.T) {
+		c := newPinned(t)
+		out, restart := c.toEditor(limitErr)
+		if !restart {
+			t.Fatal("a limit on a pinned account must restart the box, to wait for the reset and send the prompt again")
+		}
+		if sel := c.selection(); sel != (Selection{Account: "personal"}) || c.autoAccount != "" {
+			t.Fatalf("the session left its pinned account: selection %+v, auto account %q", sel, c.autoAccount)
+		}
+		if !bytes.Contains(out, []byte(`Waiting for account \"personal\" on Claude Code to reset its usage limit`)) ||
+			bytes.Contains(out, []byte("Trying")) || bytes.Contains(out, []byte("session limit")) {
+			t.Fatalf("the editor should hear that it waits for personal, and nothing about another account or the raw error: %s", out)
+		}
+		if !c.Cooling("claude", "personal") || c.Cooling("claude", "work") {
+			t.Fatalf("only the pinned account cools: %v", c.limited)
+		}
+		if !c.resend["S"] {
+			t.Fatal("the prompt must be sent again once the account is back")
+		}
+		// The next box starts on the pinned account, which is what the factory waits on.
+		if target, _, ok := c.SpawnTarget(); !ok || target.Account() != "personal" {
+			t.Fatalf("the next box would run on %q (ok=%v), want personal", target.Account(), ok)
+		}
+	})
+
+	t.Run("passes the limit on when there is no prompt to send again", func(t *testing.T) {
+		c := newTestControl(t)
+		c.accounts = []string{"personal", "work"}
+		c.sel = Selection{Account: "personal"}
+		out, restart := c.toEditor(limitErr)
+		if restart || !bytes.Contains(out, []byte("session limit")) {
+			t.Fatalf("with no prompt to send again the editor gets the provider's own error: restart=%v %s", restart, out)
+		}
+		if sel := c.selection(); sel != (Selection{Account: "personal"}) {
+			t.Fatalf("the session left its pinned account: %+v", sel)
+		}
+	})
+
+	t.Run("hands over the limit after many waits with no turn completing", func(t *testing.T) {
+		c := newPinned(t)
+		for i := 1; i <= maxACPLimitWaits; i++ {
+			if _, restart := c.toEditor(limitErr); !restart {
+				t.Fatalf("wait %d should still wait", i)
+			}
+			fromEditorPrompt(c, prompt)
+		}
+		if out, restart := c.toEditor(limitErr); restart || !bytes.Contains(out, []byte("session limit")) {
+			t.Fatalf("after %d waits the editor gets the limit error: restart=%v %s", maxACPLimitWaits, restart, out)
+		}
+	})
 }
 
 func TestACPControlCooldownsAreProviderScoped(t *testing.T) {

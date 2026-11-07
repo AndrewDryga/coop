@@ -4,7 +4,7 @@ description: "loop, editor ACP, and remote sessions share target rotation but ke
 scope: architecture
 sources: [internal/ladder/ladder.go, internal/cli/rotation.go, internal/loop/rotation.go, internal/loop/loop.go, internal/acpctl/control.go, internal/sessionsvc/acp.go, internal/session/store.go]
 check: "none"
-updated: 2026-10-09
+updated: 2026-11-06
 ---
 
 # Preserve each surface's session lifecycle when rotating targets
@@ -22,8 +22,10 @@ policy matches, but continuation and authentication behavior remain surface-owne
   provider session; cross-provider recreation carries bounded text history best-effort and an
   in-flight prompt is re-sent after the replacement is ready. When every usable rung is cooling,
   ACP can wait and resume transparently rather than abandoning the editor request. An automatic
-  plain-account selection may move past a failed credential, while pinned and preset selections
-  surface the login repair instead.
+  plain-account selection may move past a failed credential or a usage limit. A pinned account (`@account`
+  in the target, or chosen in the Account menu) never moves: a failed login surfaces the repair, and a
+  usage limit waits for that account's own reset and sends the prompt again
+  (`TestACPControlPinnedAccountWaitsForItsOwnReset`). A preset surfaces the login repair too.
 - The remote-session service owns a durable session row. A rate limit or an explicit target floor
   advances that recorded target transactionally, rewinds the turn delivery ledger, and clears a
   provider-native session ID when the provider changes. Same-provider account rotation keeps the
@@ -54,6 +56,10 @@ or durable replay behavior as if it were obsolete compatibility.
 Related: [[model-is-the-rotation-axis]] and [[credentials-not-profiles]].
 
 ## Changelog
+- 2026-11-06 — QA found an editor session pinned with `@account` moving to another account at a usage limit, against
+  docs/agents.md ("A pinned `model@account` runs just that one account") and `coop help models`. `maybeRotate` now
+  records the limit on the pinned account and waits for its reset; Auto still rotates. The loop, presets and remote
+  sessions already expand a pinned target to one rung (`expandLadder`), so only the plain editor path moved.
 - 2026-10-09 — swept editor ACP and remote quota/floor/failback rotation after complete native
   homes landed. Same-provider account changes now preserve native conversation state; provider
   changes still reset it, and restricted turns remain ephemeral. Updated the former account-reset

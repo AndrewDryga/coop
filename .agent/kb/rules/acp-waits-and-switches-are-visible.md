@@ -3,8 +3,8 @@ name: acp-waits-and-switches-are-visible
 description: Announce automatic quota fallback and give each newly queued prompt its actual selected-account wait
 scope: cli-output
 sources: [internal/acpctl/control.go, internal/acpctl/held_status_test.go, internal/acpproxy/proxy.go, internal/acpproxy/held_status_test.go, internal/acpproxy/scripted_cancel_e2e_test.go]
-check: go test ./internal/acpctl -run 'TestACPSelectedCoolingAccountStatus|TestACPControlAutomaticAccountRateLimitKeepsPolicy'
-updated: 2026-09-12
+check: go test ./internal/acpctl -run 'TestACPSelectedCoolingAccountStatus|TestACPControlAutomaticAccountRateLimitKeepsPolicy|TestACPControlPinnedAccountWaitsForItsOwnReset'
+updated: 2026-11-06
 ---
 
 # Show account fallback and every newly queued quota wait
@@ -22,4 +22,6 @@ for a retained prompt. Use the selected account's reset, not another account's s
 Preserve cancellation, replay admission, and exactly-once delivery.
 
 ## Changelog
+- 2026-11-06 — a pinned account at a usage limit now waits for its own reset and says so, instead of moving to another
+  account (`TestACPControlPinnedAccountWaitsForItsOwnReset`, added to the check).
 - 2026-09-12 — swept credential/preset quota rotation and replacement-held prompt admission; added target notices and presentation-only notification with controller/proxy/process cancellation regressions. No reset times, credentials, or network grants changed.
