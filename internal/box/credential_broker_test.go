@@ -253,7 +253,7 @@ func TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 		version  string
 		requests []string
 	}
-	gemini := capture{"0.62.0", []string{"POST /v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"}}
+	gemini := capture{"0.67.0", []string{"POST /v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"}}
 	captured := map[string]map[egress.Client]capture{
 		// claude-agent-acp runs its SDK's own claude (2.1.284), which sends the same line.
 		"claude": {egress.ClientCLI: {"2.1.285", []string{"POST /v1/messages?beta=true"}},

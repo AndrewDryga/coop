@@ -517,7 +517,7 @@ func TestMCPRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 		"claude": {egress.ClientCLI: {"2.1.285", lines, headers}, egress.ClientACP: {"0.84.0", lines, headers}}, // the adapter's SDK claude, 2.1.284
 		// codex-acp drives the same codex, and Coop refuses text before a reference for Codex.
 		"codex":  {egress.ClientCLI: {"0.159.2", lines, headers[:1]}, egress.ClientACP: {"2.0.1", lines, headers[:1]}},
-		"gemini": {egress.ClientCLI: {"0.62.0", lines, headers}, egress.ClientACP: {"0.62.0", lines, headers}},
+		"gemini": {egress.ClientCLI: {"0.67.0", lines, headers}, egress.ClientACP: {"0.67.0", lines, headers}},
 		"grok":   {egress.ClientCLI: {"1.0.44", lines, headers}, egress.ClientACP: {"1.0.44", lines, headers}},
 	}
 	cfg, spec := brokerFixture(t, "TOKEN=secret\nKEY=secret\nAUTH=secret\n")

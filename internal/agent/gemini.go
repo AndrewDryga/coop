@@ -783,13 +783,13 @@ func (geminiAgent) LoginConfig(*config.Config) (MCPConfig, error) {
 }
 
 // geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
-// is the pinned 0.62.0's system layer, which overrides both the user's and a workspace's settings
+// is the pinned 0.67.0's system layer, which overrides both the user's and a workspace's settings
 // (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file
 // replaces that layer instead of merging with it, so every system file Coop writes repeats the block.
 var geminiNoUpdates = map[string]any{"enableAutoUpdate": false, "enableAutoUpdateNotification": false}
 
 func (geminiAgent) UpdateControls() UpdateControls {
-	// Gemini 0.62 requires every system file and ancestor to be root-owned and non-writable
+	// The pinned Gemini (0.67) requires every system file and ancestor to be root-owned and non-writable
 	// by others. Image-owned files satisfy that; host-generated mounts below the user home do not.
 	files := []SystemFile{
 		{Path: "/etc/gemini-cli/settings.json", Content: geminiSystemSettings(map[string]any{"general": geminiNoUpdates})},
@@ -813,38 +813,8 @@ func (geminiAgent) UpdateControls() UpdateControls {
 			files = append(files, SystemFile{Path: geminiBrokerSettingsDir + "/" + selection + "/" + level + ".json", Content: geminiBrokerSettings(selection, effort)})
 		}
 	}
-	files = append(files, SystemFile{Path: geminiGitIdentitySetup, Content: geminiGitIdentityScript})
 	return UpdateControls{Files: files}
 }
-
-// geminiGitIdentitySetup is sourced by the Gemini launcher. The pinned 0.62.0 runs every shell
-// command with GIT_CONFIG_GLOBAL=/dev/null and no system file, which hides the box's ~/.gitconfig, so
-// its commits failed with "unable to auto-detect email address". It keeps GIT_CONFIG_* variables
-// (whatever its redaction settings) and appends its own overrides after them, so the identity git
-// resolves in the box at launch, the repository's own or else the box's, travels that way. Being
-// command-line configuration, it holds for the whole session and wins over any repository's own
-// identity in Gemini's shell (a test fixture, or a later `git config user.email`): Git has no weaker
-// place for a name. A count Git would read differently than the shell (a leading zero or space) is
-// left alone.
-const geminiGitIdentitySetup = "/etc/gemini-cli/git-identity.sh"
-
-const geminiGitIdentityScript = `case ${GIT_CONFIG_COUNT:-0} in
-*[!0-9]*|0?*) ;;
-*)
-  coop_git_n=${GIT_CONFIG_COUNT:-0}
-  for coop_git_key in user.name user.email; do
-    if coop_git_value=$(git config --get "$coop_git_key" 2>/dev/null) && [ -n "$coop_git_value" ]; then
-      export "GIT_CONFIG_KEY_$coop_git_n=$coop_git_key" "GIT_CONFIG_VALUE_$coop_git_n=$coop_git_value"
-      coop_git_n=$((coop_git_n + 1))
-    fi
-  done
-  if [ "$coop_git_n" != "${GIT_CONFIG_COUNT:-0}" ]; then
-    export GIT_CONFIG_COUNT="$coop_git_n"
-  fi
-  unset coop_git_n coop_git_key coop_git_value
-  ;;
-esac
-`
 
 // Models are common Gemini model ids. Illustrative — any id the CLI accepts works.
 func (geminiAgent) Models() []string {
@@ -1233,9 +1203,9 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	client := LockedClient{Package: "@google/gemini-cli", Version: "0.62.0", Binary: "gemini", SetupFile: geminiGitIdentitySetup,
+	client := LockedClient{Package: "@google/gemini-cli", Version: "0.67.0", Binary: "gemini",
 		Exec:                []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js"},
-		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.62.0"}}}
+		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.67.0"}}}
 	cli, acp := client, client
 	cli.Client, acp.Client = egress.ClientCLI, egress.ClientACP
 	return []LockedClient{cli, acp}
@@ -1244,7 +1214,7 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a geminiAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "api-key", input,
 		[]string{"generativelanguage.googleapis.com"},
-		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.62.0/packages/core/src/core/contentGenerator.ts"})
+		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/contentGenerator.ts"})
 }
 
 // NetworkAuthSelection refuses native OAuth and Vertex until each has its own
@@ -1264,7 +1234,7 @@ func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (
 	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil
 }
 
-// Gemini has no reasoning-effort flag or variable: the pinned client (0.62.0) takes thinking only
+// Gemini has no reasoning-effort flag or variable: the pinned client (0.67.0) takes thinking only
 // from its settings. What it does with them was captured at the request level, against a local
 // listener (.agent/kb/gemini-effort-thinking-settings.md), and two facts decide the shape here.
 //

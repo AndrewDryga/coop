@@ -182,27 +182,17 @@ read-only and the client unprivileged. A Mac pass at umask 022 does not prove Li
 --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org` in `locked-clients/`);
 move the adapter's `LockedClients` (versions, platform paths; Grok's URL and both digests) and any
 `NetworkBundle` source URLs; re-read what the pins encode (`TestGeminiThinkingIsQualifiedOnTheLockedClient`,
-`TestUsageGeminiQuotaModuleIsQualifiedOnTheLockedClient` for the quota helper's hashed bundle module,
 the captured `login-failures` and `grok-*-tools.jsonl` fixtures), and run the affected deterministic
 closure/request/adaptor tests. Offer the smallest affected live check with its scope and billing
 clear; a missing live run is reported, not waived.
 `validateClientClosure` also pins Playwright's version.
-A bump also re-reads how each client runs its shell tool. Gemini 0.62.0 runs every command with
-`GIT_CONFIG_GLOBAL=/dev/null`, no system file, and its own `GIT_CONFIG_*` overrides appended
-(`core.hooksPath=`, `diff.external=` and more), so the box's `~/.gitconfig` is invisible there.
-Its launcher sources `/etc/gemini-cli/git-identity.sh`, which exports the identity git resolves at
-launch as `GIT_CONFIG_*` (the one form Gemini keeps whatever its redaction settings). That is
-command-line scope, so for the whole session it beats any repository's own identity in Gemini's
-shell, test fixtures included; Git has no weaker place for a name.
-`TestGeminiLauncherCarriesTheGitIdentityPastItsShellHardening` recreates the environment Gemini's
-shell sets. Still missing there: Coop's `prepare-commit-msg` hook never runs for Gemini's commits;
-the user's global ignore file (`core.excludesFile`) and the brokered-download `url.*.insteadOf`
-rewrites are not seen, so `git add -A` can stage globally ignored files; and with the box's git 2.39
-the empty `diff.external` makes a plain `git diff` fail ("external diff died"; `--no-ext-diff` works).
-Gemini 0.67.0 (2026-11-04) drops the `diff.external` override and keeps a `GIT_CONFIG_GLOBAL` the
-environment sets; git 2.47 and 2.49 fail on an empty `diff.external` exactly as 2.39 does. On the
-bump to 0.67+, re-check that the box's `~/.gitconfig` is visible in Gemini's shell and drop
-`git-identity.sh` if it is; `core.hooksPath=` is still appended, so Coop's hook still never runs.
+A bump also re-reads how each client runs its shell tool. Gemini 0.62.0 ran every command with
+`GIT_CONFIG_GLOBAL=/dev/null` and an empty `diff.external`, so the box's `~/.gitconfig` was invisible
+and a plain `git diff` failed (git 2.39 to 2.49 alike); 0.67.0 keeps the global file and drops that
+override, so the box identity applies at normal precedence (498a08be's launcher workaround was
+removed with the bump). It still turns the system file off and appends `GIT_CONFIG_*` overrides,
+`core.hooksPath=` among them, so Coop's `prepare-commit-msg` hook never runs for Gemini's commits
+(docs/loop.md says so).
 
 A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
 holds the request line each client version really sends (a synthetic fixture once hid that Claude
@@ -255,6 +245,10 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-07 — Gemini bumped to 0.67.0: thinking bases, ThinkingLevel, models, system-settings keys and
+  ownership rule, the request line and the MCP transport re-read unchanged in the bundle; real filtered
+  prompt (git diff, commit with the box identity) and ACP session/new on the Mac. Dropped the stale quota
+  tripwire name from the checklist (no such test exists).
 - 2026-11-07 — Gemini 0.67.0 fixes the empty diff.external and the hidden global config upstream;
   noted on the bump checklist (task 2026-11-07-make-a-plain-git-diff-work-in-gemini-s-shell-in).
 - 2026-11-07 — Gemini's shell hides the box gitconfig: every commit failed with "unable to

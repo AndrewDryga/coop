@@ -16,7 +16,7 @@ import (
 // list, its LOW/HIGH enum. Moving the locked client must send someone back to re-read them, so the
 // version the mapping was captured on is pinned here, apart from the locked declaration it guards.
 func TestGeminiThinkingIsQualifiedOnTheLockedClient(t *testing.T) {
-	const qualified = "0.62.0"
+	const qualified = "0.67.0"
 	gemini, _ := Get("gemini")
 	clients := gemini.LockedClients(ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
 	if len(clients) == 0 {
@@ -189,87 +189,5 @@ func TestGeminiEffortArmsChooseSettingsPerCall(t *testing.T) {
 	}
 	if got, want := run(""), "unset|--yolo --model gemini-2.5-pro -o stream-json -p do it"; got != want {
 		t.Errorf("delegate with no effort anywhere ran %q, want no settings: %q", got, want)
-	}
-}
-
-// Gemini 0.62.0 runs each shell command with the global and system git config set to /dev/null and
-// its own overrides appended to GIT_CONFIG_*, which hid the box's ~/.gitconfig: every commit failed
-// with "unable to auto-detect email address". Its launcher carries the identity git resolves at
-// launch in the GIT_CONFIG_* form Gemini keeps, and a repository's own identity still wins.
-func TestGeminiLauncherCarriesTheGitIdentityPastItsShellHardening(t *testing.T) {
-	closure, err := LockedClientClosure(ClientPlatform{OS: "linux", Architecture: "amd64", Libc: "glibc"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if launcher := string(closure.Files["launchers/gemini"]); !strings.Contains(launcher, ". '"+geminiGitIdentitySetup+"'\n") {
-		t.Fatalf("the Gemini launcher does not source its git identity setup:\n%s", launcher)
-	}
-	tmp := t.TempDir()
-	setup := filepath.Join(tmp, "git-identity.sh")
-	if err := os.WriteFile(setup, closure.Files["system"+geminiGitIdentitySetup], 0o644); err != nil {
-		t.Fatal(err)
-	}
-	boxConfig, noIdentity := filepath.Join(tmp, "box-gitconfig"), filepath.Join(tmp, "empty-gitconfig")
-	if err := os.WriteFile(boxConfig, []byte("[user]\n\tname = Box User\n\temail = box@example.invalid\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(noIdentity, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The box's own git view at launch: its ~/.gitconfig and no system file. No identity variable
-	// from the developer's environment may reach git.
-	launchEnv := func(global string, extra ...string) []string {
-		return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "LANG=C",
-			"GIT_CONFIG_GLOBAL=" + global, "GIT_CONFIG_SYSTEM=" + os.DevNull}, extra...)
-	}
-	sh := func(dir, script string, env []string) string {
-		t.Helper()
-		cmd := exec.Command("sh", "-c", "set -eu\n. \"$1\"\n"+script, "sh", setup)
-		cmd.Dir, cmd.Env = dir, env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	newRepo := func(localIdentity bool) string {
-		t.Helper()
-		dir := t.TempDir()
-		for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Repo User"}, {"config", "user.email", "repo@example.invalid"}} {
-			if !localIdentity && args[0] == "config" {
-				continue
-			}
-			cmd := exec.Command("git", args...)
-			cmd.Dir, cmd.Env = dir, launchEnv(noIdentity)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("git %v: %v\n%s", args, err, out)
-			}
-		}
-		return dir
-	}
-	// How Gemini runs a shell command: its overrides after the count it found, both files off.
-	const geminiShell = `n=${GIT_CONFIG_COUNT:-0}
-export "GIT_CONFIG_KEY_$n=core.hooksPath" "GIT_CONFIG_VALUE_$n="
-export GIT_CONFIG_COUNT=$((n + 1)) GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
-git var GIT_AUTHOR_IDENT`
-	if got := sh(newRepo(false), geminiShell, launchEnv(boxConfig)); !strings.HasPrefix(got, "Box User <box@example.invalid> ") {
-		t.Fatalf("Gemini's shell lost the box identity: %q", got)
-	}
-	if got := sh(newRepo(true), geminiShell, launchEnv(boxConfig)); !strings.HasPrefix(got, "Repo User <repo@example.invalid> ") {
-		t.Fatalf("the repository's own identity did not win: %q", got)
-	}
-	if got := sh(newRepo(false), `printf '%s' "${GIT_CONFIG_COUNT-unset}"`, launchEnv(noIdentity)); got != "unset" {
-		t.Fatalf("no identity anywhere still exported a git config count: %q", got)
-	}
-	// A count the shell cannot count from is left as it is; dash would otherwise stop the launcher.
-	for _, count := range []string{" 1", "01"} {
-		odd := []string{"GIT_CONFIG_COUNT=" + count, "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false"}
-		if got := sh(newRepo(false), `printf '[%s]|%s' "$GIT_CONFIG_COUNT" "${GIT_CONFIG_KEY_1-unset}"`, launchEnv(boxConfig, odd...)); got != "["+count+"]|unset" {
-			t.Fatalf("count %q was not left alone: %q", count, got)
-		}
-	}
-	existing := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false"}
-	if got := sh(newRepo(false), `printf '%s|' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_KEY_1" "$GIT_CONFIG_VALUE_2"`, launchEnv(boxConfig, existing...)); got != "3|maintenance.auto|user.name|box@example.invalid|" {
-		t.Fatalf("existing git config variables were not kept ahead of the identity: %q", got)
 	}
 }

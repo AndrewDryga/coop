@@ -27,11 +27,11 @@
   Dockerfile), `COPY . .` leaves empty folders out, and a project whose files or folders change this way
   needs one new `coop build`.
 
-- **Gemini can commit in the box.** Gemini CLI runs its shell commands with Git's global settings
-  turned off, which hid the identity Coop sets up in every box, so `git commit` from Gemini failed with
-  "unable to auto-detect email address". Gemini's launcher now passes the identity Git finds when Gemini
-  starts (the repository's own, or else yours). It holds for the whole session, also in other
-  repositories Gemini's shell uses, because Git has no weaker place to put a name.
+- **Gemini CLI is now 0.67.0, so Gemini can commit and diff in the box.** 0.62.0 ran its shell commands
+  with Git's global settings turned off, so `git commit` failed with "unable to auto-detect email
+  address", and set an empty external diff tool, so every plain `git diff` failed. 0.67.0 does neither.
+  Its commits still carry no co:op co-author line, because it turns Git hooks off. Hosts run filtered
+  setup once for the new client image.
 
 - **Filtered runs stay ready when another user or state folder sets up the same Docker.** On Docker's
   containerd image store (the default for new Docker 29 installs) every rebuild of Coop's network images

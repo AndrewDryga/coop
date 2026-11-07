@@ -3,10 +3,10 @@ name: gemini-effort-thinking-settings
 description: Gemini has no effort flag; coop's low/high become per-call system-settings files overriding the client's two thinking family bases — why bases not model names, why only low/high, and the traps
 subsystem: agent
 sources: [internal/agent/gemini.go, internal/agent/agent.go, internal/agent/target.go, internal/box/run.go, internal/acpctl/control.go, internal/cli/testdata/providerfixture/timeout.go]
-updated: 2026-09-30
+updated: 2026-11-07
 ---
 
-The pinned Gemini CLI (0.62.0) takes thinking from its settings. Coop maps an effort to it
+The pinned Gemini CLI (0.67.0; mapping captured on 0.62.0 and re-read unchanged in the 0.67.0 bundle on 2026-11-07) takes thinking from its settings. Coop maps an effort to it
 in `internal/agent/gemini.go`. Fresh offline Linux/arm64 captures on 2026-09-30 prove LOW/HIGH
 on the remapped `gemini-3.8-flash` request and budgets of 1,024/24,576 on `gemini-2.5-pro`.
 Artifacts `capture-root-gemini-*.log` in dependency task
@@ -24,7 +24,7 @@ provider/model-quality proofs or request-level coverage of every accepted alias.
   rest are refused by `EffortSpec.Validate` rather than rounded. An effort on a model no base
   reaches is refused too — it would change nothing.
 - **Per call, through `GEMINI_CLI_SYSTEM_SETTINGS_PATH`.** One file per level is baked at
-  `/etc/gemini-cli/thinking/<level>.json`. Version 0.62 ignores a system file or ancestor owned by
+  `/etc/gemini-cli/thinking/<level>.json`. Versions 0.62 and 0.67 ignore a system file or ancestor owned by
   a nonroot user or writable by group/others; user-home runtime mounts no longer work.
   Both image builders carry these root-owned `0644` files with root-owned `0755` ancestors. The box's own Gemini
   gets the variable from `MCP` for `cfg.EffortFor`; consult/delegate arms re-choose by `$effort`
