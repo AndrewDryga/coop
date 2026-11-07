@@ -199,6 +199,10 @@ shell sets. Still missing there: Coop's `prepare-commit-msg` hook never runs for
 the user's global ignore file (`core.excludesFile`) and the brokered-download `url.*.insteadOf`
 rewrites are not seen, so `git add -A` can stage globally ignored files; and with the box's git 2.39
 the empty `diff.external` makes a plain `git diff` fail ("external diff died"; `--no-ext-diff` works).
+Gemini 0.67.0 (2026-11-04) drops the `diff.external` override and keeps a `GIT_CONFIG_GLOBAL` the
+environment sets; git 2.47 and 2.49 fail on an empty `diff.external` exactly as 2.39 does. On the
+bump to 0.67+, re-check that the box's `~/.gitconfig` is visible in Gemini's shell and drop
+`git-identity.sh` if it is; `core.hooksPath=` is still appended, so Coop's hook still never runs.
 
 A brokered client's request shape is pinned too: `TestCredentialBrokerRoutesAdmitWhatThePinnedClientsSend`
 holds the request line each client version really sends (a synthetic fixture once hid that Claude
@@ -251,6 +255,8 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-07 — Gemini 0.67.0 fixes the empty diff.external and the hidden global config upstream;
+  noted on the bump checklist (task 2026-11-07-make-a-plain-git-diff-work-in-gemini-s-shell-in).
 - 2026-11-07 — Gemini's shell hides the box gitconfig: every commit failed with "unable to
   auto-detect email address" (found on the Linux VM guide run; the box is the same on macOS). Its
   launcher now carries the identity as `GIT_CONFIG_*`; verified with a real Gemini commit on the VM.
