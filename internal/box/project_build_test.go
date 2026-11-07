@@ -122,11 +122,28 @@ func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
 		{"a file beside the settings", func() { write(".agent/setup.sh", "true\n") }, true},
 		{"another project's settings in this tree", func() { write("web/.agent/project.yaml", "box:\n") }, true},
 		{"a file's bytes", func() { write("main.go", "package main // edited\n") }, true},
-		{"a file's mode", func() {
+		// A checkout's other bits are its umask's (Ubuntu's 0002 gives 0664), so a fork of the same commit
+		// must match the approval its parent got under another umask.
+		{"a file's group write bit", func() {
+			if err := os.Chmod(filepath.Join(repo, "main.go"), 0o664); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"a file's read bits", func() {
+			if err := os.Chmod(filepath.Join(repo, "main.go"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"a file's execute bit", func() {
 			if err := os.Chmod(filepath.Join(repo, "main.go"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}, true},
+		{"another umask's execute bits", func() {
+			if err := os.Chmod(filepath.Join(repo, "main.go"), 0o775); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
 		{"an authored untracked file", func() { write("notes.txt", "draft\n") }, true},
 		{"a link's target", func() {
 			if err := os.Remove(filepath.Join(repo, "link")); err != nil {
@@ -136,11 +153,13 @@ func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, true},
+		// Git cannot carry an empty directory, so a fork of the same commit would never have it.
 		{"an empty directory", func() {
-			if err := os.Mkdir(filepath.Join(repo, "empty"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(repo, "empty", "nested"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-		}, true},
+		}, false},
+		{"a file in that directory", func() { write("empty/nested/kept.txt", "kept\n") }, true},
 		{"an ignore rule", func() { write(".gitignore", "build/\nnotes.txt\n") }, true},
 	} {
 		step.change()
@@ -153,8 +172,8 @@ func TestContextDigestFollowsWhatTheBuildReads(t *testing.T) {
 }
 
 // A staged context is exactly what its digest says, read once: the same digest as the check that
-// reads without copying, and each file with the repository's own mode — not the one the process
-// umask would have given the copy.
+// reads without copying, and each file with the mode Git would record — not one the umask of a
+// checkout or of this process would have given it.
 func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
 	pinHome(t)
 	repo, write := gitProject(t, reusableDockerfile)
@@ -162,6 +181,11 @@ func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
 	if err := os.Chmod(filepath.Join(repo, "shared.txt"), 0o666); err != nil {
 		t.Fatal(err)
 	}
+	write("run.sh", "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(repo, "run.sh"), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Umask(syscall.Umask(0o077))
 	if err := os.Symlink("../outside", filepath.Join(repo, "dangling")); err != nil {
 		t.Fatal(err)
 	}
@@ -181,10 +205,12 @@ func TestStagedContextIsWhatItsDigestSays(t *testing.T) {
 	if staged != checked {
 		t.Fatalf("the staged context hashed %s, the check %s", staged, checked)
 	}
-	if info, err := os.Lstat(filepath.Join(dir, "shared.txt")); err != nil {
-		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o666 {
-		t.Fatalf("staged mode = %v, want the repository's 0666", info.Mode().Perm())
+	for name, want := range map[string]fs.FileMode{"shared.txt": 0o644, "run.sh": 0o755} {
+		if info, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		} else if info.Mode().Perm() != want {
+			t.Fatalf("%s staged with mode %v, want %v", name, info.Mode().Perm(), want)
+		}
 	}
 	if target, err := os.Readlink(filepath.Join(dir, "dangling")); err != nil || target != "../outside" {
 		t.Fatalf("a link was not staged as itself: %q (%v)", target, err)
@@ -223,6 +249,9 @@ func TestAGitFileStaysOutOfTheBuildContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(linked, "vendored", ".git"), []byte("gitdir: /host/modules/vendored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(linked, "vendored", "lib.go"), []byte("package vendored\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

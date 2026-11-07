@@ -290,7 +290,10 @@ Traps:
   Publication failure fails the command. A launch requires matching inputs, a present immutable ID
   and both proofs. The old cache-purity Dockerfile parser is gone: external inputs are fetched only
   while building, explicitly or as a rebuild of approved files. Linked Dockerfiles/ignore files are refused BEFORE building, not just
-  excluded from cache reuse. Staging preserves source modes and excludes shadowed secrets/Git.
+  excluded from cache reuse. Staging and the digest use Git's model (`contextFileMode`: 0644 or 0755
+  from the owner's execute bit; `withoutEmptyDirectories`), because a checkout's other bits are its
+  umask's and Git carries no empty directory, so a fork of a commit must match its parent's approval.
+  A 0600 file therefore reaches an image as 0644. Staging excludes shadowed secrets/Git.
   The configured Dockerfile's `.dockerignore` takes precedence over root `.dockerignore`, including
   an empty specific file. Both staging and readiness omit Docker-excluded source; the Dockerfile,
   active ignore file and required parent directories remain covered. Docker exceptions cannot
@@ -412,6 +415,8 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-07 — build digests and staging follow Git's model (Ubuntu's umask 0002 and `coop init`'s empty
+  directories refused every fork of a project with a Dockerfile).
 - 2026-11-07 — builds set `BUILDX_NO_DEFAULT_ATTESTATIONS=1`: on Docker 29's containerd image
   store a cached rebuild got a new ID from the provenance record, so five QA state roots on one Linux
   daemon kept invalidating each other's setup ("the images this host was set up with disappeared").

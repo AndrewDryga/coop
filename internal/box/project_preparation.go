@@ -257,6 +257,9 @@ func (b *PreparedProjectBuild) verifySnapshot(ctx context.Context) error {
 		if info.IsDir() && info.Mode().Perm() != 0o755 {
 			return errors.New("saved build snapshot directory permissions changed — run it again")
 		}
+		if info.Mode().IsRegular() && info.Mode().Perm() != contextFileMode(info.Mode()) {
+			return errors.New("saved build snapshot file permissions changed — run it again")
+		}
 		e := contextEntry{rel: rel, mode: info.Mode(), file: info}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			e.target, err = os.Readlink(path)

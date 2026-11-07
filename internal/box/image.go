@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -943,7 +944,28 @@ func buildContextSelection(ctx context.Context, repo string) ([]contextEntry, er
 	if err != nil {
 		return nil, err
 	}
-	return filterDockerBuildContext(ctx, repo, entries)
+	entries, err = filterDockerBuildContext(ctx, repo, entries)
+	if err != nil {
+		return nil, err
+	}
+	return withoutEmptyDirectories(entries), nil
+}
+
+// withoutEmptyDirectories drops a directory with nothing selected under it. Git cannot carry one, so
+// a fork or a fresh clone of the same commit lacks it (`coop init` leaves .agent/presets empty) and
+// would never match the approval its parent got. A COPY naming one fails loudly and `COPY . .` leaves
+// it out, as on a fresh clone.
+func withoutEmptyDirectories(entries []contextEntry) []contextEntry {
+	used := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if entry.mode.IsDir() {
+			continue
+		}
+		for dir := filepath.Dir(entry.rel); dir != "." && !used[dir]; dir = filepath.Dir(dir) {
+			used[dir] = true
+		}
+	}
+	return slices.DeleteFunc(entries, func(entry contextEntry) bool { return entry.mode.IsDir() && !used[entry.rel] })
 }
 
 // contextDigest hashes entries as a build reads them: each entry's kind, path, and mode or link
@@ -1016,7 +1038,7 @@ func contextDigestFiles(ctx context.Context, repo string, entries []contextEntry
 		if err != nil {
 			return "", nil, err
 		}
-		record(rel, fmt.Sprintf("file\x00%s\x00%o\x00%x\x00", rel, entry.mode.Perm(), content.Sum(nil)))
+		record(rel, fmt.Sprintf("file\x00%s\x00%o\x00%x\x00", rel, contextFileMode(entry.mode), content.Sum(nil)))
 	}
 	return hex.EncodeToString(sum.Sum(nil)), files, nil
 }
@@ -1049,6 +1071,17 @@ func stageContextEntriesUnder(ctx context.Context, repo string, entries []contex
 	return dir, digest, cleanup, nil
 }
 
+// contextFileMode is the mode a staged file carries and its digest names: Git's model, where only the
+// owner's execute bit means anything. The other bits come from the umask of whoever checked the file
+// out (Ubuntu's default 0002 gives 0664, and a fork's checkout differs from a parent Coop wrote at
+// 0644), so the same commit has to stage, and match its approval, the same way under any umask.
+func contextFileMode(mode fs.FileMode) fs.FileMode {
+	if mode&0o100 != 0 {
+		return 0o755
+	}
+	return 0o644
+}
+
 // stageEntry writes one entry into the staged context. Modes are set, not left to the umask: a file
 // created under a `umask 077` shell would carry a mode the repository does not, and the image would
 // inherit it. Every write goes through the root, and a file must be new: an agent chooses these names,
@@ -1064,13 +1097,14 @@ func stageEntry(root *os.Root, entry contextEntry, content io.Reader) error {
 	case entry.mode&fs.ModeSymlink != 0:
 		return root.Symlink(entry.target, entry.rel)
 	}
-	out, err := root.OpenFile(entry.rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, entry.mode.Perm())
+	mode := contextFileMode(entry.mode)
+	out, err := root.OpenFile(entry.rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
 	_, err = io.Copy(out, content)
 	if err == nil {
-		err = out.Chmod(entry.mode.Perm())
+		err = out.Chmod(mode)
 	}
 	return errors.Join(err, out.Close())
 }

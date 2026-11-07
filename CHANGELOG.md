@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Forks of a project with a Dockerfile work on Linux.** A fork's checkout gets its file modes from your
+  umask, and `coop init`'s empty folders never reach it, so every fork was refused for "changed" files it
+  had not changed. Project builds now follow what Git records: files are 0644 or 0755, and a folder with
+  nothing in it stays out of the build. So a 0600 or 0666 file reaches the image as 0644 (`chmod` it in the
+  Dockerfile), `COPY . .` leaves empty folders out, and a project whose files or folders change this way
+  needs one new `coop build`.
+
 - **Gemini can commit in the box.** Gemini CLI runs its shell commands with Git's global settings
   turned off, which hid the identity Coop sets up in every box, so `git commit` from Gemini failed with
   "unable to auto-detect email address". Gemini's launcher now passes the identity Git finds when Gemini
