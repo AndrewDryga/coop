@@ -4,12 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A saved worker identity matches its controller however the address is spelled, and an expired or
+  exposed one says so.** `https://controller.example/`, `https://Controller.Example:443` and
+  `https://controller.example` are one controller, so a reconnect typed another way is no longer
+  refused as another controller. A different host or port still is, and an identity is now saved with
+  the plain spelling. An identity whose certificate has expired says when, that coop will not replace
+  it, and to ask the controller's operator how to recover. An identity file other users can open
+  names its mode and the `chmod 600` that makes it private. Both use the usual refusal block (exit 1).
+
 - **`coop sessions connect` says why it cannot use a saved identity.** A `--state` folder holding an
   identity saved for another controller, or a damaged one, ended in `load worker identity: invalid
   identity or another controller`. The first now says which controller the identity belongs to and
   the two ways forward: that controller's address, or a new `--state` folder with a new `--token-file`.
-  A damaged file is called damaged and named. Coop replaces neither, with a token or without. An
-  expired identity and one open to other users keep their own errors.
+  A damaged file is called damaged and named. Coop replaces neither, with a token or without.
 
 - **`coop sessions connect` says what to pass when there is no saved identity and no token.** A first
   connection without `--token-file` started the local service, then ended with `worker identity is

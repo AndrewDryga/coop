@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -13,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -318,9 +322,38 @@ func TestSessionConnectExplainsAnUntrustedControllerCertificate(t *testing.T) {
 	check(other, "The authority that signed it is not in "+other+"."+advice)
 }
 
+// expiredIdentity is a saved identity for controller whose certificate ended an hour ago.
+func expiredIdentity(t *testing.T, controller string) (document string, ended time.Time) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "worker-a"}, NotBefore: ended.Add(-time.Hour), NotAfter: ended}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	saved, err := json.Marshal(map[string]string{
+		"controller_url": controller, "worker_id": "worker-a", "workspace_ref": "main", "certificate_pem": string(certificate),
+		"private_key_pem": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), "ca_certificate_pem": string(certificate),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(saved), ended
+}
+
 // A state folder holding an identity this worker cannot use is refused with the reason: one saved for
-// another controller names it and the two ways forward, and a damaged file is called damaged and
-// named. The file is never replaced, and the token passed beside it is not used.
+// another controller names it and the two ways forward, a damaged file is called damaged and named,
+// an expired one says when, and one other users can open comes with the chmod that makes it private.
+// The file is never replaced or tightened, and the token passed beside it is not used.
 func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
 	home := shortHome(t)
 	t.Setenv("HOME", home)
@@ -331,11 +364,13 @@ func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := [2]string{"Help:", "coop help sessions connect"}
+	expired, ended := expiredIdentity(t, "https://staging.example")
 	for _, tc := range []struct {
 		name, saved string
+		mode        os.FileMode
 		block       func(file string) *ui.UsageError
 	}{
-		{"another-controller", `{"controller_url":"https://prod.example","worker_id":"worker-a","workspace_ref":"main"}`, func(file string) *ui.UsageError {
+		{"another-controller", `{"controller_url":"https://prod.example","worker_id":"worker-a","workspace_ref":"main"}`, 0o600, func(file string) *ui.UsageError {
 			return &ui.UsageError{
 				Headline: "The saved worker identity is for another controller",
 				Cause: "The identity in " + filepath.Dir(file) + " belongs to https://prod.example, not https://staging.example.\n" +
@@ -343,13 +378,29 @@ func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
 				Rows: [][2]string{help}, ExitCode: 1,
 			}
 		}},
-		{"damaged", "{not json", func(file string) *ui.UsageError {
+		{"damaged", "{not json", 0o600, func(file string) *ui.UsageError {
 			return &ui.UsageError{
 				Headline: "The saved worker identity is damaged",
 				Cause: file + " cannot be read as a worker identity.\n" +
 					"Coop will not replace it, even with a new token.\n" +
 					"Restore it from a backup, or ask the controller's operator how to recover this worker.",
 				Rows: [][2]string{help}, ExitCode: 1,
+			}
+		}},
+		{"expired", expired, 0o600, func(string) *ui.UsageError {
+			return &ui.UsageError{
+				Headline: "The saved worker identity has expired",
+				Cause: "Its certificate expired on " + ended.Format("2006-01-02 15:04 UTC") + ".\n" +
+					"Coop will not replace it, even with a new token.\n" +
+					"If this machine's clock is right, ask the controller's operator how to recover this worker.",
+				Rows: [][2]string{help}, ExitCode: 1,
+			}
+		}},
+		{"exposed", expired, 0o644, func(file string) *ui.UsageError {
+			return &ui.UsageError{
+				Headline: "The saved worker identity is open to other users",
+				Cause:    file + " has mode 0644.",
+				Rows:     [][2]string{{"Make it private:", "chmod 600 " + file}, help}, ExitCode: 1,
 			}
 		}},
 	} {
@@ -359,6 +410,9 @@ func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(file, []byte(tc.saved), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(file, tc.mode); err != nil { // past the umask
 			t.Fatal(err)
 		}
 		var code int
@@ -374,6 +428,9 @@ func TestSessionConnectExplainsASavedIdentityItCannotUse(t *testing.T) {
 		}
 		if after, readErr := os.ReadFile(file); readErr != nil || string(after) != tc.saved {
 			t.Errorf("%s: the saved identity was changed: %q, %v", tc.name, after, readErr)
+		}
+		if info, statErr := os.Lstat(file); statErr != nil || info.Mode().Perm() != tc.mode {
+			t.Errorf("%s: the saved identity's mode was changed: %v, %v", tc.name, info, statErr)
 		}
 		if _, statErr := os.Stat(token); statErr != nil {
 			t.Errorf("%s: the token was used over a saved identity: %v", tc.name, statErr)

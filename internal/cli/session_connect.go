@@ -124,25 +124,48 @@ func tokenFileRefusal(err error) error {
 	return ui.CommandFailed("Could not use the enrollment token file", cause, rows...)
 }
 
-// identityRefusal is the block for an identity this worker cannot get or use: a saved one for another
-// controller or damaged, a token the controller refused, or a certificate from an authority this
-// machine does not trust. All stay that way however long the worker waits. Any other failure keeps
-// its own text.
+// savedIdentityRefusal is the block for a saved identity this worker cannot use, by what is wrong with
+// it. None is replaced, with a token or without: the saved identity is the worker's only credential.
+func savedIdentityRefusal(saved *workerconnector.SavedIdentityError, options sessionConnectOptions) error {
+	help := [2]string{"Help:", ui.HelpCommand("coop sessions connect")}
+	file := ui.SafeInline(saved.Path)
+	switch {
+	case saved.Controller != "":
+		return ui.CommandFailed("The saved worker identity is for another controller",
+			fmt.Sprintf("The identity in %s belongs to %s, not %s.\n",
+				ui.SafeInline(filepath.Dir(saved.Path)), saved.Controller, options.Controller)+
+				"Use that address for --controller, or a new --state folder with a new --token-file.", help)
+	case !saved.Expired.IsZero():
+		return ui.CommandFailed("The saved worker identity has expired",
+			"Its certificate expired on "+saved.Expired.UTC().Format("2006-01-02 15:04 UTC")+".\n"+
+				"Coop will not replace it, even with a new token.\n"+
+				"If this machine's clock is right, ask the controller's operator how to recover this worker.", help)
+	case saved.Mode != 0:
+		cause := fmt.Sprintf("%s has mode %04o.", file, saved.Mode)
+		rows := [][2]string{help}
+		if word, ok := ui.ShellWord(saved.Path); ok {
+			rows = [][2]string{{"Make it private:", "chmod 600 " + word}, help}
+		} else {
+			cause += "\nMake it private with chmod 600."
+		}
+		return ui.CommandFailed("The saved worker identity is open to other users", cause, rows...)
+	}
+	return ui.CommandFailed("The saved worker identity is damaged",
+		file+" cannot be read as a worker identity.\n"+
+			"Coop will not replace it, even with a new token.\n"+
+			"Restore it from a backup, or ask the controller's operator how to recover this worker.", help)
+}
+
+// identityRefusal is the block for an identity this worker cannot get or use: a saved one it cannot
+// use, a token the controller refused, or a certificate from an authority this machine does not
+// trust. All stay that way however long the worker waits. Any other failure keeps its own text.
 func identityRefusal(err error, options sessionConnectOptions) error {
 	help := [2]string{"Help:", ui.HelpCommand("coop sessions connect")}
 	var saved *workerconnector.SavedIdentityError
 	var status *workerconnector.IdentityStatusError
 	switch {
-	case errors.As(err, &saved) && saved.Controller != "":
-		return ui.CommandFailed("The saved worker identity is for another controller",
-			fmt.Sprintf("The identity in %s belongs to %s, not %s.\n",
-				ui.SafeInline(filepath.Dir(saved.Path)), saved.Controller, options.Controller)+
-				"Use that address for --controller, or a new --state folder with a new --token-file.", help)
 	case errors.As(err, &saved):
-		return ui.CommandFailed("The saved worker identity is damaged",
-			ui.SafeInline(saved.Path)+" cannot be read as a worker identity.\n"+
-				"Coop will not replace it, even with a new token.\n"+
-				"Restore it from a backup, or ask the controller's operator how to recover this worker.", help)
+		return savedIdentityRefusal(saved, options)
 	case errors.As(err, &status) && status.TokenRefused():
 		return ui.CommandFailed("The controller refused the enrollment token",
 			fmt.Sprintf("It answered HTTP %d to the enrollment request.\n", status.Status)+

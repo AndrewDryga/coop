@@ -445,10 +445,18 @@ func TestControllerCertificateUntrustedOnlyForAnUnknownAuthority(t *testing.T) {
 	}
 }
 
-// A saved identity this worker cannot use says why. One saved for another controller carries that
-// controller's address, and a damaged file, or one with an unusable address, key pair or issuer, says
-// it is damaged. The file is never touched, and a token never enrolls over it.
-func TestLoadIdentityNamesAnotherControllerAndADamagedFile(t *testing.T) {
+// savedIdentity is a state folder holding a valid saved identity for a controller, with what a test
+// needs to change it: the fields of the file and when its certificate ends.
+type savedIdentity struct {
+	t                       *testing.T
+	document                []byte
+	fields                  map[string]any
+	notAfter                time.Time
+	identityPath, tokenPath string
+}
+
+func newSavedIdentity(t *testing.T, controller string) *savedIdentity {
+	t.Helper()
 	_, publicKey, privateKey, err := newWorkerKey()
 	if err != nil {
 		t.Fatal(err)
@@ -457,8 +465,11 @@ func TestLoadIdentityNamesAnotherControllerAndADamagedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const controller = "https://controller.example"
-	valid, err := json.Marshal(persistedIdentity{
+	notAfter, err := time.Parse(time.RFC3339, issued["certificate_expires_at"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := json.Marshal(persistedIdentity{
 		ControllerURL: controller, WorkerID: "worker-a", WorkspaceRef: "workspace-main",
 		CertificatePEM: issued["certificate_pem"], PrivateKeyPEM: string(privateKey), CACertificatePEM: issued["ca_certificate_pem"],
 	})
@@ -466,67 +477,195 @@ func TestLoadIdentityNamesAnotherControllerAndADamagedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fields map[string]any
-	if err := json.Unmarshal(valid, &fields); err != nil {
+	if err := json.Unmarshal(document, &fields); err != nil {
 		t.Fatal(err)
 	}
-	with := func(key string, value any) []byte {
-		changed := maps.Clone(fields)
-		changed[key] = value
-		document, err := json.Marshal(changed)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return document
-	}
-
 	directory := t.TempDir()
-	identityPath := filepath.Join(directory, "identity.json")
-	tokenPath := filepath.Join(directory, "enrollment-token")
-	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+	saved := &savedIdentity{
+		t: t, document: document, fields: fields, notAfter: notAfter,
+		identityPath: filepath.Join(directory, "identity.json"), tokenPath: filepath.Join(directory, "enrollment-token"),
+	}
+	if err := os.WriteFile(saved.tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	load := func(file []byte, asked string) error {
-		t.Helper()
-		if err := os.WriteFile(identityPath, file, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		// A minute, so the ten-minute test certificate is not due for a renewal over the network.
-		transport, err := NewHTTPTransport(HTTPTransportConfig{
-			BaseURL: asked, EnrollmentTokenFile: tokenPath, IdentityFile: identityPath, RenewBefore: time.Minute,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = transport.Identity(context.Background())
-		if after, readErr := os.ReadFile(identityPath); readErr != nil || !bytes.Equal(after, file) {
-			t.Errorf("the saved identity was changed: %v", readErr)
-		}
-		if _, statErr := os.Stat(tokenPath); statErr != nil {
-			t.Errorf("a token was used over a saved identity: %v", statErr)
-		}
-		return err
-	}
+	return saved
+}
 
-	if err := load(valid, controller); err != nil {
+// with is the valid file with one field changed.
+func (s *savedIdentity) with(key string, value any) []byte {
+	s.t.Helper()
+	changed := maps.Clone(s.fields)
+	changed[key] = value
+	document, err := json.Marshal(changed)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return document
+}
+
+// load saves file with mode as the identity of a worker asked for controller and loads it at now. A
+// load never changes the file or its mode, and never uses the token waiting beside it.
+func (s *savedIdentity) load(file []byte, mode os.FileMode, controller string, now time.Time) error {
+	t := s.t
+	t.Helper()
+	if err := os.Remove(s.identityPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.identityPath, file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(s.identityPath, mode); err != nil {
+		t.Fatal(err)
+	}
+	transport, err := NewHTTPTransport(HTTPTransportConfig{BaseURL: controller, EnrollmentTokenFile: s.tokenPath, IdentityFile: s.identityPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = transport.identity.loadIdentity(now)
+	if after, readErr := os.ReadFile(s.identityPath); readErr != nil || !bytes.Equal(after, file) {
+		t.Errorf("the saved identity was changed: %v", readErr)
+	}
+	if info, statErr := os.Lstat(s.identityPath); statErr != nil || info.Mode().Perm() != mode {
+		t.Errorf("the saved identity's mode was changed: %v, %v", info, statErr)
+	}
+	if _, statErr := os.Stat(s.tokenPath); statErr != nil {
+		t.Errorf("a token was used over a saved identity: %v", statErr)
+	}
+	return err
+}
+
+// A saved identity this worker cannot use says why. One saved for another controller carries that
+// controller's address, and a damaged file, or one with an unusable address, key pair or issuer, says
+// it is damaged. The file is never touched, and a token never enrolls over it.
+func TestLoadIdentityNamesAnotherControllerAndADamagedFile(t *testing.T) {
+	const controller = "https://controller.example"
+	saved := newSavedIdentity(t, controller)
+	now := time.Now().UTC()
+	if err := saved.load(saved.document, 0o600, controller, now); err != nil {
 		t.Fatalf("a saved identity for this controller = %v", err)
 	}
 	var unusable *SavedIdentityError
-	if err := load(valid, "https://other.example"); !errors.As(err, &unusable) || unusable.Controller != controller || unusable.Path != identityPath {
-		t.Errorf("an identity saved for another controller = %#v, want %s and %s", err, controller, identityPath)
+	if err := saved.load(saved.document, 0o600, "https://other.example", now); !errors.As(err, &unusable) || unusable.Controller != controller || unusable.Path != saved.identityPath {
+		t.Errorf("an identity saved for another controller = %#v, want %s and %s", err, controller, saved.identityPath)
 	}
 	for _, tc := range []struct {
 		name string
 		file []byte
 	}{
 		{"not JSON", []byte("{not json")},
-		{"an unknown field", with("extra", true)},
-		{"no worker", with("worker_id", "")},
-		{"an address no worker enrolls with", with("controller_url", "http://insecure.example")},
-		{"a key pair that does not match", with("private_key_pem", "nope")},
-		{"an issuer that is no certificate", with("ca_certificate_pem", "nope")},
+		{"an unknown field", saved.with("extra", true)},
+		{"no worker", saved.with("worker_id", "")},
+		{"an address no worker enrolls with", saved.with("controller_url", "http://insecure.example")},
+		{"a key pair that does not match", saved.with("private_key_pem", "nope")},
+		{"an issuer that is no certificate", saved.with("ca_certificate_pem", "nope")},
 	} {
-		if err := load(tc.file, controller); !errors.As(err, &unusable) || unusable.Controller != "" || unusable.Problem == "" || unusable.Path != identityPath {
-			t.Errorf("a saved identity with %s = %#v, want a damaged file at %s", tc.name, err, identityPath)
+		if err := saved.load(tc.file, 0o600, controller, now); !errors.As(err, &unusable) || unusable.Controller != "" || unusable.Problem == "" || unusable.Path != saved.identityPath {
+			t.Errorf("a saved identity with %s = %#v, want a damaged file at %s", tc.name, err, saved.identityPath)
+		}
+	}
+}
+
+// The controller a saved identity is bound to is the same however its address is spelled: with or
+// without a trailing slash or the default port, in any case. Another host or port is another
+// controller whatever the spelling.
+func TestSavedIdentityIsForTheSameControllerInAnySpelling(t *testing.T) {
+	const controller = "https://controller.example"
+	saved := newSavedIdentity(t, controller)
+	now := time.Now().UTC()
+	for _, asked := range []string{controller + "/", "https://CONTROLLER.Example", controller + ":443", "https://Controller.Example:443/"} {
+		if err := saved.load(saved.document, 0o600, asked, now); err != nil {
+			t.Errorf("an identity saved for %s, asked for %s = %v", controller, asked, err)
+		}
+	}
+	spelled := "https://Controller.Example:443/"
+	if err := saved.load(saved.with("controller_url", spelled), 0o600, controller, now); err != nil {
+		t.Errorf("an identity saved for %s, asked for %s = %v", spelled, controller, err)
+	}
+	for _, asked := range []string{"https://other.example", controller + ":8443", "https://sub.controller.example", "https://controller.example.other"} {
+		var unusable *SavedIdentityError
+		if err := saved.load(saved.document, 0o600, asked, now); !errors.As(err, &unusable) || unusable.Controller != controller {
+			t.Errorf("an identity saved for %s, asked for %s = %#v, want another controller", controller, asked, err)
+		}
+	}
+}
+
+// An identity is saved with the plain spelling of its controller, whichever way it was typed, so the
+// next load compares like with like.
+func TestEnrollmentSavesTheControllerInOneSpelling(t *testing.T) {
+	privateKey, publicKey, privateKeyPEM, err := newWorkerKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := workertls.NewCA(t).Identity(publicKey, "worker-a", "workspace-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := NewHTTPTransport(HTTPTransportConfig{
+		BaseURL: "https://Controller.Example:443/", IdentityFile: filepath.Join(t.TempDir(), "identity.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, bundle, err := transport.identity.prepareIdentity(identityResponse{
+		CACertificatePEM: issued["ca_certificate_pem"], CertificateExpires: issued["certificate_expires_at"],
+		CertificatePEM: issued["certificate_pem"], CertificateSHA256: issued["certificate_sha256"],
+		WorkerID: issued["worker_id"], WorkspaceRef: issued["workspace_ref"],
+	}, privateKey, privateKeyPEM, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved persistedIdentity
+	if err := json.Unmarshal(bundle, &saved); err != nil || saved.ControllerURL != "https://controller.example" {
+		t.Errorf("the saved controller = %q, %v, want https://controller.example", saved.ControllerURL, err)
+	}
+}
+
+// An identity whose certificate has ended says when, and one other users can open says its mode.
+// A certificate that is not valid yet means a clock that is behind, which keeps its own error. Neither
+// file is changed: coop never tightens a mode itself.
+func TestLoadIdentityNamesAnExpiredIdentityAndAnExposedFile(t *testing.T) {
+	const controller = "https://controller.example"
+	saved := newSavedIdentity(t, controller)
+	now := time.Now().UTC()
+	var unusable *SavedIdentityError
+	if err := saved.load(saved.document, 0o600, controller, now.Add(time.Hour)); !errors.As(err, &unusable) || !unusable.Expired.Equal(saved.notAfter) || unusable.Path != saved.identityPath {
+		t.Errorf("an identity an hour past its certificate = %#v, want it expired at %s", err, saved.notAfter)
+	}
+	if err := saved.load(saved.document, 0o600, controller, now.Add(-time.Hour)); err == nil || errors.As(err, &unusable) {
+		t.Errorf("an identity before its certificate is valid = %#v, want the x509 error", err)
+	}
+	for _, mode := range []os.FileMode{0o644, 0o640, 0o604, 0o660} {
+		if err := saved.load(saved.document, mode, controller, now); !errors.As(err, &unusable) || unusable.Mode != mode || unusable.Path != saved.identityPath {
+			t.Errorf("an identity file with mode %04o = %#v, want it open to other users", mode, err)
+		}
+	}
+	for _, mode := range []os.FileMode{0o600, 0o400} {
+		if err := saved.load(saved.document, mode, controller, now); err != nil {
+			t.Errorf("an identity file with mode %04o = %v, want it private", mode, err)
+		}
+	}
+}
+
+// canonicalController keeps the host and the port that is not the default, and nothing else.
+func TestCanonicalControllerIsOneSpellingOfAnOrigin(t *testing.T) {
+	for asked, want := range map[string]string{
+		"https://controller.example":           "https://controller.example",
+		"https://controller.example/":          "https://controller.example",
+		"https://Controller.Example":           "https://controller.example",
+		"https://controller.example:443/":      "https://controller.example",
+		"https://controller.example:8443":      "https://controller.example:8443",
+		"https://127.0.0.1:59442/":             "https://127.0.0.1:59442",
+		"https://[::1]:8443/":                  "https://[::1]:8443",
+		"https://[::1]:443":                    "https://[::1]",
+		"https://sub.controller.example":       "https://sub.controller.example",
+		"https://controller.example.other:443": "https://controller.example.other",
+	} {
+		parsed, err := parseControlPlaneURL(asked, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := canonicalController(parsed); got != want {
+			t.Errorf("canonicalController(%s) = %s, want %s", asked, got, want)
 		}
 	}
 }

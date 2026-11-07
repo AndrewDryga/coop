@@ -76,10 +76,14 @@ The traps the code does not make obvious:
   Any other status stays `worker identity endpoint returned HTTP n`. A state folder with no saved
   identity and no `--token-file` is refused earlier still (`firstConnectionRefusal`), before the
   service starts or the controller is contacted, with the command to run; a saved identity needs
-  no token. A saved identity for another controller, or one that does not read as an identity
-  (`SavedIdentityError` from `loadIdentity`), gets a block too. It is never replaced, with a token
-  or without, as the recovery rule in `docs/session-api.md` says. An expired identity and a file
-  open to other users keep their own errors.
+  no token. A saved identity that cannot be used (`SavedIdentityError` from `loadIdentity`) gets a
+  block too: it was saved for another controller, it does not read as an identity, its certificate
+  has ended, or the file is open to other users, which `chmod 600` fixes. It is never replaced or
+  tightened, with a token or without, as the recovery rule in `docs/session-api.md` says. A
+  certificate that is not valid yet means a clock that is behind and keeps its x509 error. The saved
+  controller is compared with the asked one in a single spelling (`canonicalController`: lower-case
+  host, no default port, no trailing slash) and saved that way, so a reconnect typed with a slash
+  is the same controller; another host or port is not.
 - **Journal before execute; the receipt is the authority.** `journal.begin` publishes a receipt
   before the executor touches the daemon: a redelivered command with the same digest replays the
   stored result, a changed payload under the same id is `ErrCommandConflict`. Receipts are published
@@ -187,6 +191,8 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-07 — a saved identity is bound to its controller in one spelling, and an expired one and a file open
+  to other users end `coop sessions connect` in the shared block (task 2026-11-07-treat-a-controller-url-with-a-trailing-slash-as).
 - 2026-11-07 — a saved identity for another controller, or a damaged one, ends `coop sessions connect` in the
   shared block (task 2026-11-07-say-plainly-when-coop-sessions-connect-finds-ano).
 - 2026-11-07 — a first `coop sessions connect` with no saved identity and no `--token-file` is refused

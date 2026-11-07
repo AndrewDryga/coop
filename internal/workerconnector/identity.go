@@ -176,8 +176,11 @@ func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, 
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 64<<10 {
+	if !info.Mode().IsRegular() || info.Size() > 64<<10 {
 		return nil, time.Time{}, errors.New("worker identity file must be a private regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Mode: info.Mode().Perm()}
 	}
 	document, err := os.ReadFile(path)
 	if err != nil {
@@ -190,11 +193,12 @@ func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, 
 		!reference(identity.WorkerID, 256) || !reference(identity.WorkspaceRef, 256) {
 		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "it does not hold a worker identity"}
 	}
-	if identity.ControllerURL != m.config.baseURL.String() {
-		// Only an address a worker could have enrolled with is shown as the other controller.
-		if _, err := parseControlPlaneURL(identity.ControllerURL, true); err != nil {
-			return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "it names no usable controller"}
-		}
+	// Only an address a worker could have enrolled with is shown as the other controller.
+	saved, err := parseControlPlaneURL(identity.ControllerURL, true)
+	if err != nil {
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "it names no usable controller"}
+	}
+	if canonicalController(saved) != canonicalController(m.config.baseURL) {
 		return nil, time.Time{}, &SavedIdentityError{Path: path, Controller: identity.ControllerURL}
 	}
 	certificate, err := tls.X509KeyPair([]byte(identity.CertificatePEM), []byte(identity.PrivateKeyPEM))
@@ -204,6 +208,10 @@ func (m *identityManager) loadIdentity(now time.Time) (*http.Client, time.Time, 
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM([]byte(identity.CACertificatePEM)) {
 		return nil, time.Time{}, &SavedIdentityError{Path: path, Problem: "its issuer is invalid"}
+	}
+	// A certificate that is not valid yet means a clock that is behind, which keeps the x509 error.
+	if now.After(certificate.Leaf.NotAfter) {
+		return nil, time.Time{}, &SavedIdentityError{Path: path, Expired: certificate.Leaf.NotAfter}
 	}
 	leaf, err := validateIdentityCertificate(certificate, roots, identity.WorkerID, now)
 	if err != nil {
@@ -240,7 +248,7 @@ func (m *identityManager) prepareIdentity(response identityResponse, privateKey 
 		return nil, time.Time{}, nil, errors.New("worker enrollment expiry does not match certificate")
 	}
 	bundle, err := json.Marshal(persistedIdentity{
-		ControllerURL: m.config.baseURL.String(), WorkerID: response.WorkerID, WorkspaceRef: response.WorkspaceRef,
+		ControllerURL: canonicalController(m.config.baseURL), WorkerID: response.WorkerID, WorkspaceRef: response.WorkspaceRef,
 		CertificatePEM: response.CertificatePEM, PrivateKeyPEM: string(privateKeyPEM), CACertificatePEM: response.CACertificatePEM,
 	})
 	if err != nil {
@@ -395,22 +403,43 @@ func (e *IdentityStatusError) TokenRefused() bool {
 	return e.Path == enrollPath && (e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden)
 }
 
-// SavedIdentityError is a saved worker identity this worker cannot use. Controller is the controller
-// it was saved for, when that is not the one asked for; otherwise the file is damaged and Problem says
-// how. Neither is repaired or replaced, and a token never enrolls over it: the saved identity is the
-// worker's only credential, and its controller decides how to recover one. Expiry, and a file open to
-// other users, are not this: they keep their own errors.
+// SavedIdentityError is a saved worker identity this worker cannot use, and which field is set says
+// why: Controller, it was saved for another controller; Expired, its certificate ended then; Mode,
+// other users can open the file; otherwise the file is damaged and Problem says how. None is
+// repaired or replaced, and a token never enrolls over it: the saved identity is the worker's only
+// credential, and its controller decides how to recover one.
 type SavedIdentityError struct {
-	Path       string // the identity file
-	Controller string // the controller it was saved for, when that is another one
-	Problem    string // what keeps a damaged file from reading as an identity
+	Path       string      // the identity file
+	Controller string      // the controller it was saved for, when that is another one
+	Expired    time.Time   // when its certificate ended, when that has passed
+	Mode       os.FileMode // its permissions, when group or others can open it
+	Problem    string      // what keeps a damaged file from reading as an identity
 }
 
 func (e *SavedIdentityError) Error() string {
-	if e.Controller != "" {
+	switch {
+	case e.Controller != "":
 		return "worker identity " + e.Path + " was saved for another controller, " + e.Controller
+	case !e.Expired.IsZero():
+		return "worker identity " + e.Path + " expired at " + e.Expired.UTC().Format(time.RFC3339)
+	case e.Mode != 0:
+		return fmt.Sprintf("worker identity file %s is open to other users (mode %04o)", e.Path, e.Mode)
 	}
 	return "worker identity " + e.Path + " is damaged: " + e.Problem
+}
+
+// canonicalController is the one spelling of a controller's origin that a saved identity is bound to:
+// a lower-case host, with no default port and no trailing slash. https://Controller.example:443/ and
+// https://controller.example are one controller; another host or port is another.
+func canonicalController(address *url.URL) string {
+	host := strings.ToLower(address.Hostname())
+	if strings.Contains(host, ":") { // an IPv6 address
+		host = "[" + host + "]"
+	}
+	if port := address.Port(); port != "" && port != "443" { // a saved identity is only ever for https
+		host += ":" + port
+	}
+	return address.Scheme + "://" + host
 }
 
 // CheckEnrollmentTokenFile refuses an unusable token file before a worker starts anything, in words
