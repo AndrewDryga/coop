@@ -218,6 +218,9 @@ never works without your project's tools.
   project. Or send `/build` in the thread: co:op saves the files and shows where they are on this
   computer, and `/build` with the code it gives builds exactly those saved files. The code works
   once, for ten minutes.
+- If co:op refused the build files, for example because the Dockerfile is a symlink, the thread
+  gives the reason. It doesn't offer `/build`, which would refuse the same files. Fix them and
+  build again as above.
 - If the project has services and no network rules for them, the thread says to run `coop approve`,
   which lists the services and offers to add their rules. Or set `box.network: false` to start
   without services.

@@ -342,6 +342,9 @@ them with ordinary networking. Review them, then run <code>coop build --egress f
 project. Or send <code>/build</code> in the thread: co:op saves the files and shows where they are on this
 computer, and <code>/build</code> with the code it gives builds exactly those saved files. The code works
 once, for ten minutes.</li>
+<li>If co:op refused the build files, for example because the Dockerfile is a symlink, the thread
+gives the reason. It doesn&#39;t offer <code>/build</code>, which would refuse the same files. Fix them and
+build again as above.</li>
 <li>If the project has services and no network rules for them, the thread says to run <code>coop approve</code>,
 which lists the services and offers to add their rules. Or set <code>box.network: false</code> to start
 without services.</li>

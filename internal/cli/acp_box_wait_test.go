@@ -229,9 +229,11 @@ func TestBoxWaitSaysTheBuildCommandItsMissNames(t *testing.T) {
 	command := "COOP_REPO=/private/coop-forks/review coop build --egress filtered"
 	waits := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "project build inputs or settings changed", Command: command}
 	approved := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "the image is missing", Approved: true, Command: command}
+	refused := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: ".dockerignore is a symbolic link. Replace it with the file it points to", Refused: true, Command: command}
 	for name, text := range map[string]string{
 		"needs a build":  acpBoxWaitText(waits, waits, false),
 		"rebuild failed": acpBoxWaitText(approved, approved, true),
+		"refused":        acpBoxWaitText(refused, refused, false),
 		"buildable":      acpBuildableWaitText(false, command),
 	} {
 		if !strings.Contains(text, command) {
@@ -1456,6 +1458,31 @@ func TestBrokenFileTextKeepsTheFilesWordsInert(t *testing.T) {
 	threadtext.Check(t, acpBoxWaitText(&box.BrokenProjectFile{Err: errors.New(strings.Repeat("did not find expected key ", 30))}, nil, false))
 	if got := brokenFileReason(errors.New(strings.Repeat("é", acpBrokenFileReasonLimit+1))); !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
 		t.Fatalf("cut short = %q", got)
+	}
+}
+
+// The reason a build was refused can quote the project's files, which anyone who can edit the project
+// wrote. As with a broken file's words, it reads as ordinary text on one line, its line breaks as
+// spaces: no block, link or heading of its own, and no character that hides or acts on a terminal.
+func TestRefusedBuildTextKeepsTheReasonInert(t *testing.T) {
+	hostile := ".agent/x\n```\n\n# heading\n---\n**bold** [link](https://evil.example) <img src=x> www.evil.example \x1b[31m \u202eevil \u200bword coop approve"
+	refused := &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: hostile, Refused: true}
+	text := acpBoxWaitText(refused, refused, false)
+	paragraphs := strings.Split(text, "\n\n")
+	if len(paragraphs) != 4 || !strings.HasPrefix(paragraphs[1], "Why: ") || strings.Contains(paragraphs[1], "\n") || strings.Count(text, "```") != 2 {
+		t.Fatalf("the reason did not stay in its one line, in front of the one block that builds:\n%s", text)
+	}
+	if strings.Contains(text, "u000A") {
+		t.Fatalf("a line break showed as an escape code, which no one can read:\n%s", text)
+	}
+	unescaped := regexp.MustCompile(`(^|[^\\])[\[\]()<>*_` + "`" + `#!]|[^\\]\.[^\s\\]|[^\\]:/`)
+	if bad := unescaped.FindString(strings.TrimPrefix(paragraphs[1], "Why: ")); bad != "" {
+		t.Fatalf("%q is still Markdown in\n%s", bad, text)
+	}
+	for _, r := range text {
+		if r < 0x20 && r != '\n' || r == 0x7f || r == 0x202E || r == 0x200B {
+			t.Fatalf("a hidden character %U reached the thread:\n%q", r, text)
+		}
 	}
 }
 

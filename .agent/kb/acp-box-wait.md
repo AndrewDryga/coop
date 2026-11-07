@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go]
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go]
 updated: 2026-11-06
 ---
 
@@ -42,6 +42,15 @@ The file's text reaches the thread only through `brokenFileReason`: `safeErrorTe
 characters, in a `CodeBlock`. yaml quotes unknown keys as written, so an edit can put a fence, a link or
 an escape sequence in the error, and the whole file can be a megabyte. The agent log gets the whole
 reason through `safeErrorText`.
+
+A build miss is one of three. Files a person approved before rebuild by themselves. Others wait for a review,
+which a filtered thread offers as `/build` (`acp_build_command.go`). The third, `Refused`, is files Coop will
+not build, such as a linked Dockerfile or ignore file, or an image that failed a proof. The reason is the one
+`coop run` gives: `checkFilteredProjectReadiness` finds a linked ignore file itself, and reads the rest from what
+`RememberRefusedProjectBuild` or `rememberRefusal` saved. The thread shows it as one escaped line with the host
+build command and offers no `/build`, which would refuse the same files again. `settle` lets go of any copy a
+review had saved, and a `/build` typed meanwhile gets the same words. Fixing the files brings back the plain
+miss and its offer.
 
 Trap: a first approval takes `LockServiceLaunch` exclusively, and every box holds the shared side for
 its lifetime, so a holding child would deadlock the approval it waits for. A holding child therefore
@@ -228,6 +237,8 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-06 — a build Coop refused says why in the thread and offers no `/build`; before, the thread said "needs a build" for it,
+  and `/build` refused the same files. Covered by a test against the refusal a linked Dockerfile really gets.
 - 2026-11-06 — a fork box that waits for the launch lock leaves a `fork-launch-waits/` note, so `coop fork ls` shows
   the fork as waiting, with what for, instead of a running loop.
 - 2026-11-05 — a waiting box notes its wait in `launch-waiters/` for `coop tasks watch`; `EndExecution`

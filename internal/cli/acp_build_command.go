@@ -41,8 +41,9 @@ type acpBuildOffer struct {
 }
 
 // heldCommand is acpproxy.Hooks.HeldCommand: it answers /build while this session waits on build files
-// nobody approved, and lets every other prompt be held as usual. It runs under the proxy's controlMu, so
-// nothing it calls may tell the threads (publish): that takes controlMu too.
+// nobody approved, and lets every other prompt be held as usual. Files Coop refused are answered with the
+// refusal, since no review could build them. It runs under the proxy's controlMu, so nothing it calls
+// may tell the threads (publish): that takes controlMu too.
 func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 	if w == nil || !w.filtered || w.prepareBuild == nil {
 		return nil
@@ -53,7 +54,8 @@ func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 	}
 	w.mu.Lock()
 	var required *box.ProjectBuildRequired
-	waiting := errors.As(w.blocked, &required) && !required.Approved && !w.closed
+	blocked := w.blocked
+	waiting := errors.As(blocked, &required) && !required.Approved && !w.closed
 	building, reviewing := w.building, w.reviewing
 	w.mu.Unlock()
 	var text string
@@ -64,6 +66,8 @@ func (w *acpBoxWait) heldCommand(session string, line []byte) []byte {
 		text = acpReviewedBuildText
 	case building:
 		text = acpRebuildingText
+	case required.Refused:
+		text = acpBoxWaitText(blocked, required, false)
 	case len(args) == 0:
 		text = w.offerBuild(required.BuildCommand())
 	default:

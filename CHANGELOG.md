@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **An editor thread says why Coop refused a project's build.** For build files Coop refused, such
+  as a `.agent/Dockerfile` or `.dockerignore` that is a symlink, `coop run` gave the reason, but the
+  thread of `coop acp` still said the box "needs a build" and offered `/build`, which refuses the
+  same files. The thread now gives the reason and asks you to build again once you have fixed it,
+  and `/build` answers with the same words. A project that has only not been built keeps the offer.
+
 - **Offline and open runs say the box has stopped.** On a host with kernel filesystem protection,
   such as a Mac with Docker on APFS, `coop claude --egress offline` and `coop run --egress open`
   ended at "Starting …" with nothing to say the box was gone, while a filtered run printed "The

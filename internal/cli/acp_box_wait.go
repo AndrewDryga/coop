@@ -424,19 +424,21 @@ func (w *acpBoxWait) settle(blocked error, required *box.ProjectBuildRequired, s
 		go w.runRebuild(required.Dockerfile)
 	}
 	text := acpBoxWaitText(blocked, required, w.failed)
-	unapproved := required != nil && !required.Approved
+	// Build files a person can still review and build. Refused ones are not: the same files would be
+	// refused again, so there is nothing to offer and any saved copy of them is let go.
+	buildable := required != nil && !required.Approved && !required.Refused
 	switch {
 	case text == "" && w.startFailed:
 		text = acpBoxFailedText(w.failedHow)
-	case unapproved && w.building && w.reviewing:
+	case buildable && w.building && w.reviewing:
 		text = acpReviewedBuildText
-	case unapproved && w.building:
+	case buildable && w.building:
 		text = acpRebuildingText
-	case unapproved && w.filtered && w.prepareBuild != nil:
+	case buildable && w.filtered && w.prepareBuild != nil:
 		text = acpBuildableWaitText(w.reviewFailed, required.BuildCommand())
 	}
 	var stale *acpBuildOffer
-	if !unapproved {
+	if !buildable {
 		stale, w.offer, w.reviewFailed = w.offer, nil, false
 	}
 	repeat := text == w.said
@@ -514,6 +516,13 @@ func acpBoxWaitText(blocked error, required *box.ProjectBuildRequired, failed bo
 	case errors.Is(blocked, errACPNetworkModeChanged):
 		return acpctl.ProblemText(acpctl.Problem{Title: "Reconnect your editor.",
 			Detail: "This session cannot switch to the network access this project now uses, so no agent runs here. A message you sent stays unsent: send it again after you reconnect."})
+	case required != nil && required.Refused:
+		// The reason `coop run` gives. It can quote the project's files: line breaks read as spaces
+		// here, and ProblemText makes the rest literal.
+		why := strings.TrimSuffix(strings.Join(strings.Fields(required.Reason), " "), ".")
+		return acpctl.ProblemText(acpctl.Problem{Title: "Coop refused the last build of this project's box.",
+			Detail:  "Why: " + why + ". After you fix it, build it again. " + waits,
+			Command: required.BuildCommand(), Purpose: "in this project, on the host"})
 	case required != nil && failed:
 		return acpctl.ProblemText(acpctl.Problem{Title: "Coop could not rebuild this project's box.",
 			Detail:  "The reason is in the agent log. Fix it, then build it. " + waits,

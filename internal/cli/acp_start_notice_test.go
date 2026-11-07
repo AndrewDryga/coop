@@ -73,6 +73,7 @@ func TestEditorStartProblemsNameSkippedPresets(t *testing.T) {
 func TestThreadMessagesAreStructured(t *testing.T) {
 	required := &box.ProjectBuildRequired{}
 	approved := &box.ProjectBuildRequired{Approved: true}
+	refused := &box.ProjectBuildRequired{Refused: true, Reason: ".agent/Dockerfile is a symbolic link. Replace it with the file it points to"}
 	pending := &networkstate.PendingApproval{}
 	for name, text := range map[string]string{
 		"box start failed":   acpBoxFailedText(acpproxy.ChildExited),
@@ -85,6 +86,7 @@ func TestThreadMessagesAreStructured(t *testing.T) {
 		"wait: build fails":  acpBoxWaitText(errors.New("no"), required, true),
 		"wait: rebuilding":   acpBoxWaitText(errors.New("no"), approved, false),
 		"wait: build":        acpBoxWaitText(errors.New("no"), required, false),
+		"wait: refused":      acpBoxWaitText(errors.New("no"), refused, false),
 		"wait: services":     acpBoxWaitText(servicesRefusal(t, servicesCompose, ""), nil, false),
 		"wait: network":      acpBoxWaitText(servicesRefusal(t, "", "shared"), nil, false),
 		"wait: other":        acpBoxWaitText(errors.New("Some services could not start:\n\n  db failed its healthcheck"), nil, false),

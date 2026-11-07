@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/threadtext"
 )
 
@@ -288,6 +293,94 @@ func TestBuildCommandLetsGoOfTheSnapshotWhenTheWaitEnds(t *testing.T) {
 	}
 	if h.snapshots[0].closes() != 1 {
 		t.Fatal("the snapshot outlived its wait")
+	}
+}
+
+// linkedDockerfileRefusal is the miss readiness hands a session whose project's Dockerfile is a
+// symbolic link: Coop refused the build, and the reason is the one `coop build` found.
+func linkedDockerfileRefusal(t *testing.T) *box.ProjectBuildRequired {
+	t.Helper()
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "real.Dockerfile"), []byte("FROM ${COOP_BASE_IMAGE}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../real.Dockerfile", filepath.Join(repo, ".agent", "Dockerfile")); err != nil {
+		t.Fatal(err)
+	}
+	daemon := filepath.Join(t.TempDir(), "docker") // one that answers, since a plan asks before it reads
+	if err := os.WriteFile(daemon, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := box.PlanBuild(runtime.Runtime{Name: daemon}, &config.Config{}, repo, false)
+	if err == nil {
+		t.Fatal("a Dockerfile that is a link was planned")
+	}
+	return &box.ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: err.Error(), Refused: true}
+}
+
+// Build files Coop refused would be refused again by a /build or a review, so the thread says why and
+// what to fix, as `coop run` does, and offers neither. A project that only has not been built keeps
+// its offer, and so does one whose files were fixed (QA, 2026-11-06: a linked Dockerfile).
+func TestBuildCommandSaysWhyTheBuildFilesWereRefused(t *testing.T) {
+	refused := linkedDockerfileRefusal(t)
+	h := newBuildCommandHarness(t)
+	if said := h.lastSaid(); !strings.Contains(said, "needs a build") || !strings.Contains(said, "/build") {
+		t.Fatalf("a project that is not built heard %q, want the offer to build it here", said)
+	}
+	h.send(t, "3", "/build") // a review saves the files, which a refusal must not leave open
+
+	h.set(func() { h.answer, h.sign = refused, "linked" })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	said := h.lastSaid()
+	for _, want := range []string{
+		"Coop refused the last build of this project's box.",
+		"Dockerfile is a symbolic link. Replace it with the file it points to.",
+		"After you fix it, build it again.",
+		"go out once",
+		"```\ncoop build --egress filtered\n```",
+	} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the thread heard %q, want %q in it", said, want)
+		}
+	}
+	for _, unwanted := range []string{"/build", "needs a build", "review"} {
+		if strings.Contains(said, unwanted) {
+			t.Errorf("the thread heard %q, which offers %q for files that would be refused again", said, unwanted)
+		}
+	}
+	threadtext.Check(t, said)
+	if h.snapshots[0].closes() != 1 {
+		t.Error("the files saved for a review stayed open after Coop refused them")
+	}
+	h.read(func() {
+		if len(h.logged) == 0 || h.logged[len(h.logged)-1].Error() != refused.Error() {
+			t.Errorf("the agent log got %v, want the refusal as `coop run` words it: %q", h.logged, refused.Error())
+		}
+	})
+
+	// /build is answered with the same words, and saves and builds nothing.
+	if answer := h.send(t, "4", "/build"); strings.TrimSpace(h.saidIn(t, answer)) != said {
+		t.Fatalf("/build got %s, want the thread's own words", answer)
+	}
+	if len(h.snapshots) != 1 || len(h.builds()) != 0 {
+		t.Fatalf("%d snapshots saved and %d builds started for files Coop refused", len(h.snapshots), len(h.builds()))
+	}
+
+	// Fixing the files brings back the plain wait, and its offer.
+	h.set(func() { h.answer, h.sign = errNeedsAPerson, "fixed" })
+	if err := h.w.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if said := h.lastSaid(); !strings.Contains(said, "needs a build") || !strings.Contains(said, "/build") {
+		t.Fatalf("after the fix the thread heard %q, want the offer back", said)
+	}
+	if answer := h.send(t, "5", "/build"); !strings.Contains(answer, "Review this project's box build") || len(h.snapshots) != 2 {
+		t.Fatalf("/build after the fix got %s with %d snapshots, want a review", answer, len(h.snapshots))
 	}
 }
 
