@@ -320,6 +320,23 @@ workload runs and dropped when the caller cancelled or the start was interrupted
 A pty with no controlling terminal can drive only the second case, which is how it was checked
 against real Docker (2026-11-06).
 
+The first case must not kill a create that is out. Every control call runs in its own process group,
+so the terminal's SIGINT reaches only coop, and it was coop's cancelled context that SIGKILLed a
+running `docker container create`. Docker finishes such a create anyway, so a Ctrl-C a fraction of a
+second after `Starting …` (2 of 14 sub-second tries, agent create) ended `✗ context canceled /
+network container creation outcome is unknown`, exit 1, with the run `cleanup pending` and its
+volumes held until `unfinishedCreateSettle` or `coop net recover`. `runtime.settleCreate` now keeps a
+cancellation from ending a create once its request is going out (before that the create is
+`ErrDockerCreateNotAttempted`; a deadline still ends it): the client answers, the launch knows the
+container by its ID or the volume by its name, `createContainer` then returns the plain
+cancellation, and cleanup removes it by exact name like any other. Every `CreateContainer` and
+`CreateVolume` goes through it, the filesystem helper's and controller's included. A second Ctrl-C
+still takes the default action, which is the way out of a create that hangs its whole minute.
+Checked live on OrbStack (2026-11-06): 54 cancels 0 to 250 ms into `CreateContainer`. With
+`settleCreate` 44 answered with the container on the daemon, 10 went out before the request and
+none were unknown; without it 22 were unknown, and 13 of those had the container on the daemon after
+all.
+
 The image is built from an embedded source tar plus a pinned Dockerfile, with no host compiler and
 no repository build context (`Context` in `gatewayimage/image.go`). `gatewayimage.Pack` defines the
 tar and `tools/gennetimage` writes it: the non-test Go files of `sourceDirs` (`cmd/coop-net`,
@@ -393,6 +410,10 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-06 — a Ctrl-C while Docker's client creates a container or volume no longer kills the
+  client (`runtime.settleCreate`), so the create's outcome is known, cleanup removes it by name and
+  the stop is `Stopped before the box started.`, exit 130, instead of `outcome is unknown` with the
+  run left `cleanup pending` (task 2026-11-06-stop-cleanly-on-a-ctrl-c-during-the-filtered-net).
 - 2026-11-06 — `coop fork stop` settles the stopped fork's filtered runs (`box.RecoverWorkspaceRuns`),
   so a killed worker no longer leaves its guard, controller, volumes and filesystem helper running; the
   final observation's archive read has a minute, not 15 seconds, and a read that still times out is one

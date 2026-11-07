@@ -79,6 +79,7 @@ type dockerFixture struct {
 	Execution                 *DockerImageExecution
 	CgroupParents             map[string]string
 	SettleAt                  time.Time
+	CreateDelay               time.Duration // how long the "slow-create" client takes to answer; slowCreateDelay when zero
 }
 
 func fixtureDocker(t *testing.T, value dockerFixture) (Runtime, string) {
@@ -203,6 +204,18 @@ func TestDockerFixtureProcess(t *testing.T) {
 	if len(args) == 0 {
 		os.Exit(96)
 	}
+	// A slow create says its client is running before it waits, so a test can cancel mid-request.
+	slowCreate := func() {
+		if fixture.Mode != "slow-create" {
+			return
+		}
+		_ = os.WriteFile(file+".creating", nil, 0o600)
+		delay := slowCreateDelay
+		if fixture.CreateDelay > 0 {
+			delay = fixture.CreateDelay
+		}
+		time.Sleep(delay)
+	}
 	switch args[0] {
 	case "run":
 		if !bound || len(args) != 2 || args[1] != "--ordinary-binding-test" {
@@ -238,9 +251,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 				fmt.Fprintln(os.Stderr, `invalid argument "lots" for "-m, --memory" flag: invalid size: 'lots'`)
 				os.Exit(125)
 			}
-			if fixture.Mode == "slow-create" {
-				time.Sleep(slowCreateDelay)
-			}
+			slowCreate()
 			fixture.Container = dockerFixtureContainer()
 			for i := 2; i+1 < len(args); i++ {
 				if args[i] == "-v" {
@@ -461,9 +472,7 @@ func TestDockerFixtureProcess(t *testing.T) {
 			if fixture.Mode == "create-fail" {
 				os.Exit(1)
 			}
-			if fixture.Mode == "slow-create" {
-				time.Sleep(slowCreateDelay)
-			}
+			slowCreate()
 			fixture.Volume = &DockerVolume{Name: "coop-test", Driver: "local", Scope: "local", CreatedAt: "fixture-time", Labels: dockerFixtureRef().Labels}
 			fixture.Mutations++
 			store()

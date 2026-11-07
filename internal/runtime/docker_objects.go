@@ -179,7 +179,12 @@ func (d *Docker) CreateVolume(ctx context.Context, ref DockerRef) (DockerVolume,
 		return DockerVolume{}, errors.Join(ErrDockerCreateNotAttempted, errors.New("Docker volume creation requires a fresh intention"), err)
 	}
 	args := append([]string{"volume", "create", "--driver", "local"}, dockerLabelArgs(ref.Labels)...)
-	data, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, append(args, ref.Name)...)
+	settled, release, err := settleCreate(ctx)
+	if err != nil {
+		return DockerVolume{}, err
+	}
+	defer release()
+	data, err := d.outputWithin(settled, DockerCreateTimeout, 1024, append(args, ref.Name)...)
 	if err != nil {
 		if errors.Is(err, errDockerCommandNotStarted) {
 			err = errors.Join(ErrDockerCreateNotAttempted, err)
@@ -189,7 +194,7 @@ func (d *Docker) CreateVolume(ctx context.Context, ref DockerRef) (DockerVolume,
 	if strings.TrimSpace(string(data)) != ref.Name {
 		return DockerVolume{}, errors.New("Docker volume create outcome is invalid")
 	}
-	value, present, err := d.InspectVolume(ctx, ref)
+	value, present, err := d.InspectVolume(settled, ref)
 	if err != nil || !present {
 		return DockerVolume{}, errors.Join(errors.New("Docker volume create outcome is unavailable"), err)
 	}

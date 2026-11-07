@@ -164,6 +164,12 @@ func (f *filteredExecution) createContainer(ctx context.Context, role, image str
 	if createErr != nil {
 		return createErr
 	}
+	// A stop that landed while the create ran lets the create finish (runtime.settleCreate), so the
+	// container is known by its ID and cleanup removes exactly it. Checking it now would only fail on
+	// the cancelled context, and read as a fault of the container.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := f.verifyContainer(ctx, role, image, options); err != nil {
 		return err
 	}

@@ -142,6 +142,14 @@
   first process before it runs. Docker's words about a start you stopped are no longer shown. A box
   with its input redirected that Ctrl-C or SIGTERM stops also exits 130 or 143, not 1.
 
+- **Ctrl-C a moment after "Starting …" stops a filtered run cleanly too.** Pressed while Docker was
+  creating one of the run's containers or volumes, it could end in `✗ context canceled` and `network
+  container creation outcome is unknown`, exit 1, and leave the run "cleanup pending" with its
+  volumes for ten minutes, until `coop net recover` could remove them. Coop had killed Docker's
+  create half way, so it could not tell whether the container existed. A create that is already
+  under way now finishes, Coop removes what it made by name, prints `Stopped before the box
+  started.` and exits 130.
+
 - **Four task-command slips are fixed.** `coop tasks claim --force` over a person's claim now says
   whose claim it took, as it does over a process's. `coop tasks ls` no longer shows "Waits for" once
   the task it names is done, as the board and the loop already read it. Every answer typed in

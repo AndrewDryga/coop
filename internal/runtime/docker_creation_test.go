@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
 func TestDockerCreationDistinguishesNoSubmissionFromUnknownOutcome(t *testing.T) {
@@ -114,6 +116,80 @@ func TestDockerCreateOutlastsTheOrdinaryBound(t *testing.T) {
 			t.Errorf("container create = %v, want an unknown outcome", err)
 		}
 	})
+}
+
+// A Ctrl-C that lands while a create's client runs must not kill it. Killed, the client leaves Docker
+// finishing the create anyway, and nobody knows whether the container or volume exists: a filtered
+// launch stopped that way ended in "outcome is unknown" with its run "cleanup pending" for ten minutes.
+// Left to answer, the create tells the caller what Docker made, so cleanup can remove exactly that.
+func TestDockerCreateAnswersWhenItsCallerIsCancelledMidRequest(t *testing.T) {
+	for _, kind := range []string{"container", "volume"} {
+		t.Run(kind, func(t *testing.T) {
+			rt, file := fixtureDocker(t, dockerFixture{Mode: "slow-create", CreateDelay: 500 * time.Millisecond})
+			d, err := BindDocker(t.Context(), rt, fixtureSock(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			ref := dockerFixtureRef()
+			ref.ID = ""
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			type answer struct {
+				id  string
+				err error
+			}
+			answered := make(chan answer, 1)
+			go func() {
+				if kind == "volume" {
+					volume, err := d.CreateVolume(ctx, ref)
+					answered <- answer{volume.Name, err}
+					return
+				}
+				id, err := d.CreateContainer(ctx, DockerCreate{Ref: ref, Image: dockerFixtureContainer().Image})
+				answered <- answer{id, err}
+			}()
+			wait.ForFile(t, file+".creating") // the client is running, so the request is out
+			cancel()
+			got := <-answered
+			if got.err != nil || got.id == "" {
+				t.Fatalf("%s create = %q, %v after a cancel mid-request; want what Docker made, not an unknown outcome", kind, got.id, got.err)
+			}
+		})
+	}
+}
+
+// A create is stopped by a cancel only before its request goes out, and by a deadline at any time.
+func TestSettleCreateDropsACancelAndKeepsADeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	settled, release, err := settleCreate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	cancel()
+	if settled.Err() != nil {
+		t.Fatalf("a cancel ended a create that was out: %v", settled.Err())
+	}
+	if _, bounded := settled.Deadline(); bounded {
+		t.Fatal("a caller with no deadline gave its create one")
+	}
+
+	deadline := time.Now().Add(time.Hour)
+	bounded, stop := context.WithDeadline(t.Context(), deadline)
+	settled, release, err = settleCreate(bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	stop()
+	if got, ok := settled.Deadline(); !ok || !got.Equal(deadline) || settled.Err() != nil {
+		t.Fatalf("a create under a caller's deadline = %v (bounded %v), error %v; want that deadline and no cancel", got, ok, settled.Err())
+	}
+
+	if _, _, err := settleCreate(ctx); !errors.Is(err, ErrDockerCreateNotAttempted) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled caller's create = %v, want nothing sent", err)
+	}
 }
 
 func TestDockerOutputCancelledBeforeSpawnIsNotSubmitted(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/wait"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -957,6 +958,69 @@ func TestStoppingTheStartAtAnyStepCleansUpAndExits130(t *testing.T) {
 				t.Fatalf("exit status %d, error %v; want 130 and the stop marked reported", status, shown)
 			}
 		})
+	}
+}
+
+// The stops above land on a daemon whose create always answers. Docker's client does not: a Ctrl-C
+// that killed it mid-create left Docker finishing the create with nobody told, so a stopped launch
+// ended "network container creation outcome is unknown" and its run stayed "cleanup pending" until
+// coop net recover. Against the real runtime and a client that takes its time, the create is left to
+// answer: the launch stops there knowing the container by its ID, and removing it takes its exact name
+// and nothing beside it.
+func TestStopWhileDockerCreatesAGatewayContainerKnowsAndRemovesExactlyThatContainer(t *testing.T) {
+	f, _ := filteredFixture(t)
+	d := newFilesystemRecoveryDaemon(t)
+	d.image = f.record.GatewayImage
+	mine := f.createRef("controller")
+	sum := sha256.Sum256([]byte(mine.Name))
+	id := hex.EncodeToString(sum[:]) // what filesystemRecoveryDaemon.add calls it
+	// Another run's controller: the same role under another name and run.
+	other := runtime.DockerRef{Name: "coop-net-0000000000000000-controller", Labels: map[string]string{LabelNetworkRun: "0000000000000000", "coop.network.role": "controller"}}
+	d.add(other)
+	creating := filepath.Join(t.TempDir(), "creating")
+	shim := filepath.Join(t.TempDir(), "docker")
+	// The client says it is running, takes its time, then answers with the container's ID.
+	script := "#!/bin/sh\nfor arg; do [ \"$arg\" = create ] && { : > " + creating + "; sleep 0.5; echo " + id + "; }; done\nexit 0\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	docker, err := runtime.BindDockerForSetup(t.Context(), runtime.Runtime{Name: shim}, d.endpoint, "fixture-daemon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docker.Close()
+	f.docker = docker
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	created := make(chan error, 1)
+	go func() {
+		created <- f.createContainer(ctx, "controller", f.record.GatewayImage, f.helperOptions("controller"), []string{"controller"})
+	}()
+	wait.ForFile(t, creating) // Docker's client is creating the container
+	cancel()                  // Ctrl-C
+	d.add(mine)               // Docker finishes the create
+	// Nothing else: not the unknown outcome, and not a fault of the container the stop cut short.
+	if err := <-created; err == nil || err.Error() != context.Canceled.Error() {
+		t.Fatalf("the stopped create = %v; want only the cancellation", err)
+	}
+	if got := f.ref("controller").ID; got != id || f.createUnfinished("controller") {
+		t.Fatalf("the launch knows the controller as %q (create unfinished: %v); want its ID %q", got, f.createUnfinished("controller"), id)
+	}
+	evidence, err := networkstate.OpenEvidence(f.store.Path(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.Close()
+	if err := f.removeResource(evidence, "controller"); err != nil {
+		t.Fatalf("removing the controller = %v", err)
+	}
+	if d.has(mine.Name) || !d.has(other.Name) {
+		t.Fatalf("after the removal this run's controller is still there: %v, another run's is: %v; want it gone and the other kept", d.has(mine.Name), d.has(other.Name))
+	}
+	record, err := f.store.Execution(f.record.ID)
+	if state := recoveredResource(record, "controller").State; err != nil || state != "gone" {
+		t.Fatalf("the record calls the controller %q (%v); want gone", state, err)
 	}
 }
 

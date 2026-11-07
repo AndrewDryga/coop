@@ -304,6 +304,7 @@ func TestFilesystemProbeCleanupFinishesWhenTheProjectIsGone(t *testing.T) {
 type filesystemRecoveryDaemon struct {
 	mu         sync.Mutex
 	containers map[string]runtime.DockerRef
+	image      string // what every container on it was created from
 	endpoint   string
 	rt         runtime.Runtime
 }
@@ -339,8 +340,8 @@ func (d *filesystemRecoveryDaemon) serve(w http.ResponseWriter, r *http.Request)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"Id": ref.ID, "Name": "/" + name, "State": map[string]any{"Status": "created"},
-			"Config": map[string]any{"Labels": ref.Labels}, "HostConfig": map[string]any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"Id": ref.ID, "Name": "/" + name, "Image": d.image, "State": map[string]any{"Status": "created"},
+			"Config": map[string]any{"Labels": ref.Labels}, "HostConfig": map[string]any{"RestartPolicy": map[string]any{"Name": "no"}}})
 		return
 	}
 	http.NotFound(w, r)

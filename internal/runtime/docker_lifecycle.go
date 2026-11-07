@@ -43,6 +43,23 @@ func DockerCreateLeftNothing(err error) bool {
 	return errors.Is(err, ErrDockerCreateNotAttempted) || errors.Is(err, ErrDockerCreateRefused)
 }
 
+// settleCreate is the context a create runs under from the moment its request goes out. A caller
+// cancelled before that sends nothing. One cancelled after it, a Ctrl-C while the client runs, does
+// not end the request: killing the client leaves Docker finishing the create anyway, and then nobody
+// knows whether the container exists, so a launch's cleanup could neither remove it nor prove it
+// absent. A create normally answers in a fraction of a second, so the client is left to answer. The
+// caller's deadline and DockerCreateTimeout still end it.
+func settleCreate(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, errors.Join(ErrDockerCreateNotAttempted, err)
+	}
+	settled, release := context.WithoutCancel(ctx), func() {}
+	if deadline, ok := ctx.Deadline(); ok {
+		settled, release = context.WithDeadline(settled, deadline)
+	}
+	return settled, release, nil
+}
+
 // ErrDockerOwnership is a container or volume under an exact reference's name whose labels are
 // not the reference's: another process's, which coop never touches.
 var ErrDockerOwnership = errors.New("Docker resource ownership conflict")
@@ -114,7 +131,12 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 	args = append(args, dockerLabelArgs(spec.Ref.Labels)...)
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
-	data, err := d.outputWithin(ctx, DockerCreateTimeout, 1024, args...)
+	settled, release, err := settleCreate(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	data, err := d.outputWithin(settled, DockerCreateTimeout, 1024, args...)
 	if err != nil {
 		var failure dockerFailure
 		if errors.Is(err, errDockerCommandNotStarted) {
@@ -130,7 +152,7 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 	}
 	ref := spec.Ref
 	ref.ID = id
-	value, present, err := d.InspectContainer(ctx, ref)
+	value, present, err := d.InspectContainer(settled, ref)
 	if err != nil || !present || value.Image != spec.Image || value.AutoRemove || value.RestartPolicy != "no" || value.State.Status != "created" || !value.State.StartedAt.IsZero() {
 		return id, errors.Join(errors.New("Docker container create outcome requires reconciliation"), err)
 	}

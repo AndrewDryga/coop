@@ -283,10 +283,11 @@ func dockerName(value string) bool {
 // so a test need not wait this long.
 var dockerControlTimeout = 15 * time.Second
 
-// DockerCreateTimeout bounds one create instead, unless its caller's context ends sooner. A create
-// prepares a writable layer and every mount, which a loaded host answers far slower than an inspect,
-// and Docker still finishes a create whose client gave up, leaving an object nobody waited for. A
-// filtered launch's limit on a helper's create is this same number (filteredControlTimeout).
+// DockerCreateTimeout bounds one create instead, unless its caller's deadline ends sooner; a caller's
+// cancellation does not end a create already out (settleCreate). A create prepares a writable layer
+// and every mount, which a loaded host answers far slower than an inspect, and Docker still finishes
+// a create whose client gave up, leaving an object nobody waited for. A filtered launch's limit on a
+// helper's create is this same number (filteredControlTimeout).
 const DockerCreateTimeout = 60 * time.Second
 
 // dockerArchiveTimeout bounds one evidence archive read, from its inspect to the daemon check after it.
