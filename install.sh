@@ -173,7 +173,8 @@ case ":$PATH:" in
   *) printf "\n  %s is not on your PATH. Add this to your shell startup file:\n    export PATH=\"%s:\$PATH\"\n" "$bindir" "$bindir" ;;
 esac
 
-# Zsh only, and only ever as instructions: the installer never edits a shell startup file.
+# Instructions only: the installer never edits a shell startup file. Bash is the default shell on
+# most Linux hosts, so it gets its lines too.
 # The path is the user's own ~/.config/coop, the same one `coop completion` prints, never the first
 # fpath entry, which is not theirs: on a clean macOS Zsh it is /usr/local/share/zsh/site-functions,
 # missing and unwritable, and where another tool's completions come first, it is that tool's directory.
@@ -189,6 +190,14 @@ case "${SHELL:-}" in
     printf "\n  Then add this to ~/.zshrc, after your compinit line:\n\n"
     printf "    source ~/.config/coop/completion.zsh\n\n"
     printf "  Spelling correction stays on everywhere; only Coop's own arguments are exempt.\n"
+    ;;
+  *bash)
+    printf "\nBash completion (optional)\n\n"
+    printf "  Coop does not edit your shell files. Run once:\n\n"
+    printf "    mkdir -p ~/.config/coop\n"
+    printf "    coop completion bash > ~/.config/coop/completion.bash\n"
+    printf "\n  Then add this to ~/.bashrc:\n\n"
+    printf "    source ~/.config/coop/completion.bash\n\n"
     ;;
 esac
 

@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The installer shows Bash users how to turn on completion.** It printed setup lines only for Zsh,
+  though Bash is the default shell on most Linux hosts.
+
 - **A rules file made on Ubuntu works with `--egress-rules`.** Ubuntu's default umask makes every new file
   group-writable, so a file you had just written was refused as "not writable by others". Group write is
   now accepted when the group is your own private one, with no ACL and only local accounts on the host.
