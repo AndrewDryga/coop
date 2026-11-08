@@ -62,7 +62,10 @@ each time — this is the contract; follow it.
   Keep entries as `- **Bold headline.** explanation`.
 - Replace `.github/release-notes.md`'s section with the new `## <version>` summary (keep the
   comment at its top).
-- Commit only those two files: `changelog: finalize <version> (<one-line summary>)`.
+- Rename MIGRATING.md's `## Unreleased:` sections to `## v<version>:` too.
+- Regenerate the site, which prints the latest version and the migration page: `make docs`, then
+  `make docs-check` must pass. (v13.0.0's first release run failed on six stale pages.)
+- Commit only those files and the regenerated `site/`: `changelog: finalize <version> (<one-line summary>)`.
 - Annotated tag on THAT finalize commit: `git tag -a "v<version>" -m "v<version>"`
   (tags are annotated and point at the finalize commit, never the re-open commit).
 - Still on that commit, run the release workflow's own check:
@@ -70,7 +73,7 @@ each time — this is the contract; follow it.
   refuses as the workflow would (tag not at HEAD; the changelog section or the summary
   unfinalized, for another version, empty or malformed). Fix and re-tag locally rather than
   push a tag that fails publication.
-- Re-open: add a fresh `## Unreleased` + the placeholder comment back; commit
+- Re-open: add a fresh `## Unreleased` + the placeholder comment back, rerun `make docs`; commit
   `changelog: open an Unreleased section after v<version>`.
 
 ## 4. Push — public, irreversible: CONFIRM FIRST
