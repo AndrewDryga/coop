@@ -3,7 +3,7 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
-## Unreleased: old host state is refused or read as unknown
+## v13.0.0: old host state is refused or read as unknown
 
 Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.
 
@@ -24,7 +24,7 @@ Coop no longer reads these records of builds up to v12.1.0. None is changed or d
   account once with Coop v12.1.0 to finish it, or run `coop login <agent>@<account>`.
 - **Version 4 service approvals** grant nothing and are not read. `coop up` shows the review again.
 
-## Unreleased: old session store data is refused by name
+## v13.0.0: old session store data is refused by name
 
 Coop no longer converts session data below schema 26 and no longer reads a few old session shapes.
 Nothing is deleted: the data is refused or quarantined until you act. A turn that was running when
@@ -42,7 +42,7 @@ the worker stopped is still marked interrupted, as before.
 4. A read-only fork that the error says has no primary snapshot receipt: discard its session with a
    build at or before commit 29133b0e, then upgrade.
 
-## Unreleased: old network records are refused by name
+## v13.0.0: old network records are refused by name
 
 Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
 earlier. If your network folder (`~/.local/state/coop/network`) still holds any, a project they
@@ -62,7 +62,7 @@ closed.
   starts as usual.
 - Policy copies an old `coop net setup` check saved without a marker stay on disk, unused.
 
-## Unreleased: logins and history from before v11 are not converted
+## v13.0.0: logins and history from before v11 are not converted
 
 Coop no longer moves a login out of `profiles/<account>` or `host-credentials/<account>`, and no
 longer imports history or editor thread bindings from the folders Coop before v11 used.
@@ -77,7 +77,7 @@ longer imports history or editor thread bindings from the folders Coop before v1
 - History and editor threads never imported stay in the old folders. They are not read, and a thread
   from before v11 reopens by its editor id only.
 
-## Unreleased: old fork and task records are refused, not converted
+## v13.0.0: old fork and task records are refused, not converted
 
 co:op no longer converts the fork and task records that builds up to v12.1.0 could. It refuses
 them by name and leaves them as they are. Coop v12.1.0 is the last release that converts them. If
@@ -109,12 +109,12 @@ come back. Check before you upgrade; most installations have none.
 
 Nothing the new version refuses is changed, so v12.1.0 reads it as it always did.
 
-## Unreleased: `coop codex -p` runs one prompt
+## v13.0.0: `coop codex -p` runs one prompt
 
 `coop codex -p <name>` used to pick a Codex profile. It now runs `<name>` as a prompt, as `-p` does
 on every other agent. To pick a profile, use `coop codex --profile <name>`.
 
-## Unreleased: boxes use filtered networking by default
+## v13.0.0: boxes use filtered networking by default
 
 Boxes now use filtered networking unless you choose another mode. An agent can reach its provider
 and the destinations you approved. A plain `coop run` or `coop shell` can reach only the destinations
@@ -135,7 +135,7 @@ you approved.
 - The first filtered run on a host prepares the network images and checks the host, as
   `coop net setup` does.
 
-## Unreleased: the no-network mode is called offline
+## v13.0.0: the no-network mode is called offline
 
 The command line and `COOP_EGRESS` now say `offline`, as `.agent/project.yaml` already did. co:op
 refuses `none` with a message that names `offline`.
