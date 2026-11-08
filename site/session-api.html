@@ -625,6 +625,10 @@ slots until it has checked which runtimes it owns.</p>
 runtime remains with that session&#39;s exact labels. This doesn&#39;t make the workspace safe to run
 again. If co:op can&#39;t read capacity, it reports busy. The worker still polls for requests that
 read data or clean up existing work.</p>
+<p>After a worker restart, an unused prepared read-only session may retain a warm-process receipt
+whose owner cannot be checked here. co:op quarantines that session before admitting new work,
+preserves its files and receipt, and checks its exact runtime labels separately. Create a fresh
+session for new work; quarantine retirement preserves the old workspace and history.</p>
 <p><code>/v1/storage</code> measures the disk blocks allocated to files, not the file sizes that applications
 report. It reads file metadata without opening file contents, so it can count private session data
 without reading the credentials in it.</p>
@@ -639,6 +643,14 @@ base history its job approved. Private caches stay separate for each controller 
 for each repository binding.</p>
 <p>Only read-only jobs with a frozen source use this storage. Checkpoint, restore and writable jobs
 keep independent payloads, and existing sessions with independent payloads stay as they are.</p>
+<p>After a Docker-volume copy, a complete current snapshot receipt may name old inodes.
+A new session preserves that cache under <code>.cache-held-*</code> and rebuilds from its authorized
+frozen source. It never rewrites the old receipt or changes existing session projections.
+Held bytes remain counted as protected storage. The upgrade check reports copied caches
+as rebuildable and held copies as preserved; malformed or unsupported receipts still refuse.</p>
+<p>Existing read-only primary workspaces whose current receipt names a copied inode are
+quarantined at startup. Their files and completed-turn history stay intact. Explicit quarantine
+retirement removes only session custody; it neither repairs ownership nor proves runtime cleanup.</p>
 <p>A missing, damaged or newer ownership receipt stops co:op from reusing the shared data, and an
 unsupported receipt also prevents destructive cleanup. Local fork commands and other writable mounts
 can&#39;t take over a read-only primary whose creation was interrupted. The normal authorized discard
@@ -909,6 +921,9 @@ Repeating the exact binding leaves the session unchanged.</p>
 </tr>
 </tbody>
 </table></div></div>
+<p>A credential found in newly exported content refuses capture with HTTP 409
+<code>invalid_session_state</code>, including on replay of the same operation key. The workspace remains
+intact and no checkpoint bundle is published; correct the content before requesting a new capture.</p>
 <p>To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can&#39;t restart model execution. To restore a checkpoint, create an unused replacement session

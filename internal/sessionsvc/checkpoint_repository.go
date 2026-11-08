@@ -19,6 +19,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/secretscan"
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
@@ -281,7 +282,7 @@ func copyCheckpointContent(ctx context.Context, output io.Writer, input io.Reade
 		return err
 	}
 	if found {
-		return errors.New("workspace checkpoint contains a credential")
+		return &session.Error{Code: session.CodeInvalidSessionState, Detail: "workspace checkpoint contains a credential"}
 	}
 	if counter.bytes != size || (digest != "" && fmt.Sprintf("%x", hash.Sum(nil)) != digest) {
 		return errors.New("workspace checkpoint content identity changed")

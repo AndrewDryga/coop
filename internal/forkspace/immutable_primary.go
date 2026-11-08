@@ -15,6 +15,10 @@ import (
 const ImmutablePrimaryVersion = 1
 const ImmutablePrimaryMarker = "coop-primary-snapshot.json"
 
+// ErrImmutablePrimaryDirectoryChanged identifies a current private receipt whose
+// directory was copied or replaced. It permits preservation, never adoption.
+var ErrImmutablePrimaryDirectoryChanged = errors.New("immutable primary directory changed")
+
 type ImmutablePrimarySnapshot struct {
 	Version   int    `json:"version"`
 	Key       string `json:"key"`
@@ -131,8 +135,11 @@ func ReadImmutablePrimarySnapshot(workspace string) (ImmutablePrimarySnapshot, b
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	// Like fork generation and session ownership, the inode survives a volume
 	// remount whose device number can change; source scope and path remain bound.
-	if !ok || !info.IsDir() || stat.Ino != receipt.Directory.Inode {
+	if !ok || !info.IsDir() {
 		return receipt, true, errors.New("immutable primary directory changed")
+	}
+	if stat.Ino != receipt.Directory.Inode {
+		return receipt, true, ErrImmutablePrimaryDirectoryChanged
 	}
 	return receipt, true, nil
 }

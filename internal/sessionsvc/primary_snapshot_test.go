@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -602,5 +603,169 @@ func TestNativeRemovalPreservesUnreservedPrimary(t *testing.T) {
 	}
 	if _, err = os.Stat(workspace); err != nil {
 		t.Fatalf("unknown primary disappeared: %v", err)
+	}
+}
+
+// A copied read-only projection kept valid generation anchors but an old inode
+// receipt. Eight cleanup attempts then stopped at a hidden internal_error.
+func TestCopiedReadOnlyPrimaryQuarantinesAndRetainsCompletedHistory(t *testing.T) {
+	ctx := t.Context()
+	svc := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), storageTestRepo(t), nil)
+	t.Cleanup(func() { _ = svc.Stop() })
+	svc.Job.RepositoryReadOnly = true
+	bound, err := svc.CreateRemoteSession(ctx, "copied-primary", svc.request(t, "copied-primary"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := svc.Store().SubmitTurn(ctx, "completed-read", session.SubmitTurnRequest{SessionID: bound.ID, ExpectedRevision: bound.Revision, Prompt: "Read the frozen source."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := svc.Store().LeaseNextTurn(ctx, bound.ID); err != nil || !ok {
+		t.Fatalf("lease: %v %v", ok, err)
+	}
+	if _, err := svc.Store().MarkTurnSendIntent(ctx, bound.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store().MarkTurnSent(ctx, bound.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := svc.Store().CompleteTurn(ctx, session.CompleteTurnRequest{SessionID: bound.ID, TurnID: turn.ID, Message: "Saved completed answer."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound = mustSession(t, svc, bound.ID)
+	bound, err = svc.Close(ctx, "close-copied-primary", session.CloseSessionRequest{SessionID: bound.ID, ExpectedRevision: bound.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(bound.Workspace, ".git", primarySnapshotMarker)
+	receipt, present, err := forkspace.ReadImmutablePrimarySnapshot(bound.Workspace)
+	if err != nil || !present {
+		t.Fatalf("valid primary receipt: %v %v", present, err)
+	}
+	// The exact mismatch observed after copying a Docker volume; no generation
+	// marker or reservation is forged or adopted by the recovery.
+	receipt.Directory.Inode++
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(bound.Workspace, "payload.bin")
+	before, err := os.ReadFile(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := svc.CreateRemoteSession(ctx, "healthy-readonly", svc.request(t, "healthy-readonly"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.sessionQuarantined(bound.ID) {
+		t.Fatal("copied primary stayed outside quarantine and would strand cleanup")
+	}
+	if svc.sessionQuarantined(healthy.ID) {
+		t.Fatal("fresh read-only primary was quarantined")
+	}
+	if _, err := svc.GetChanges(ctx, healthy.ID); err != nil {
+		t.Fatalf("healthy primary unusable: %v", err)
+	}
+	checked, err := CheckPrimarySnapshots(svc.stateRoot)
+	if err != nil || checked.Current != 1 || checked.Held != 1 || len(checked.Damaged) != 0 {
+		t.Fatalf("known copied primary blocks upgrade: %+v %v", checked, err)
+	}
+	current := mustSession(t, svc, bound.ID)
+	if _, err := svc.PlanDiscard(ctx, "copied-primary-plan", PlanDiscardRequest{SessionID: bound.ID, ExpectedRevision: current.Revision}); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("quarantined files became discardable: %v", err)
+	}
+	req := DiscardRequest{RetireQuarantined: true, SessionID: bound.ID, ExpectedRevision: current.Revision}
+	stale := req
+	stale.ExpectedRevision++
+	if _, err := svc.Discard(ctx, "copied-primary-stale", stale); session.CodeOf(err) != session.CodeRevisionConflict {
+		t.Fatalf("stale retirement: %v", err)
+	}
+	for range 2 {
+		retired, err := svc.Discard(ctx, "copied-primary-retire", req)
+		if err != nil || retired.State != session.SessionDiscarded {
+			t.Fatalf("explicit record retirement: %+v %v", retired, err)
+		}
+		if got, err := os.ReadFile(marker); err != nil || !bytes.Equal(got, raw) {
+			t.Fatal("retirement rewrote receipt")
+		}
+		if got, err := os.ReadFile(payload); err != nil || !bytes.Equal(got, before) {
+			t.Fatal("retirement changed source content")
+		}
+		got, err := svc.Store().GetTurn(ctx, bound.ID, completed.ID)
+		if err != nil || got.State != completed.State || got.AssistantMessage != completed.AssistantMessage {
+			t.Fatalf("completed history lost: %+v %v", got, err)
+		}
+	}
+}
+
+func TestPrimaryQuarantineDoesNotInterpretUnsupportedOwnership(t *testing.T) {
+	for _, kind := range []string{"newer", "malformed", "nonprivate", "wrong-key"} {
+		t.Run(kind, func(t *testing.T) {
+			svc := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), storageTestRepo(t), nil)
+			t.Cleanup(func() { _ = svc.Stop() })
+			svc.Job.RepositoryReadOnly = true
+			bound, err := svc.CreateRemoteSession(t.Context(), "unsupported-primary", svc.request(t, "unsupported-primary"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, present, err := forkspace.ReadImmutablePrimarySnapshot(bound.Workspace)
+			if err != nil || !present {
+				t.Fatalf("initial receipt: %v %v", present, err)
+			}
+			if kind == "newer" {
+				receipt.Version++
+			}
+			if kind == "wrong-key" {
+				receipt.Key = "invalid"
+			}
+			raw, err := json.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "malformed" {
+				raw = []byte("{")
+			}
+			marker := filepath.Join(bound.Workspace, ".git", primarySnapshotMarker)
+			if err := os.WriteFile(marker, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "nonprivate" {
+				if err := os.Chmod(marker, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			check, err := CheckPrimarySnapshots(svc.stateRoot)
+			if err != nil || check.Held != 0 || check.Current != 0 {
+				t.Fatalf("unsupported ownership was accepted: %+v %v", check, err)
+			}
+			if kind == "newer" {
+				if check.Newer != 1 {
+					t.Fatalf("newer receipt: %+v", check)
+				}
+			} else if len(check.Damaged) != 1 {
+				t.Fatalf("damaged receipt: %+v", check)
+			}
+			if err := svc.Start(t.Context()); err == nil {
+				t.Fatal("unsupported primary silently started")
+			}
+			if svc.sessionQuarantined(bound.ID) {
+				t.Fatal("unsupported format interpreted as a known copied primary")
+			}
+			if got, err := os.ReadFile(marker); err != nil || !bytes.Equal(got, raw) {
+				t.Fatal("unsupported ownership was rewritten")
+			}
+			if _, err := os.Stat(filepath.Join(bound.Workspace, "payload.bin")); err != nil {
+				t.Fatal("unsupported data removed")
+			}
+		})
 	}
 }

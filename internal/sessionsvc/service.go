@@ -388,16 +388,19 @@ type Service struct {
 	workers        map[string]*sessionWorker
 	active         map[string]*activeSessionTurn
 	pendingCancels map[string]*pendingSessionCancel
+	quarantineMu   sync.Mutex
 	quarantined    map[string]struct{}
 	wg             sync.WaitGroup
 
-	operationMu              sync.Mutex
-	operationLocks           map[string]*sessionOperationLock
-	backgroundActive         map[string]bool
-	backgroundSlots          chan struct{}
-	testBeforeCreatePin      func() error
-	testBeforeCompanionPurge func(string)
-	testAfterTurnLease       func(session.Turn)
+	operationMu                  sync.Mutex
+	operationLocks               map[string]*sessionOperationLock
+	backgroundActive             map[string]bool
+	backgroundSlots              chan struct{}
+	testBeforeCreatePin          func() error
+	testBeforeCompanionPurge     func(string)
+	testAfterTurnLease           func(session.Turn)
+	testBeforeSubmitAdmission    func()
+	testBeforeRuntimeReservation func()
 	// testAdmitNetwork replaces create-time network admission. Real admission needs an owner
 	// key, an approval and a Docker qualification; a test that only cares what the create path
 	// does with the answer injects one. nil in production.
@@ -715,6 +718,13 @@ func (s *Service) Start(parent context.Context) error {
 			s.mu.Unlock()
 			return fmt.Errorf("bind remote session %s workspace authority: %w", sessions[index].ID, bindErr)
 		}
+		// Rebuild this preserving fence before startup can schedule or admit
+		// work. Its still-valid workspace must never make the old warm box reusable.
+		if s.sessionQuarantined(bound.ID) || s.quarantineUnusedWarmRuntime(parent, bound) {
+			quarantined[bound.ID] = struct{}{}
+			quarantinedIDs = append(quarantinedIDs, bound.ID)
+			skipRuntimeRecovery[bound.ID] = struct{}{}
+		}
 		sessions[index] = bound
 	}
 	s.historicalMu.Lock()
@@ -722,12 +732,12 @@ func (s *Service) Start(parent context.Context) error {
 		s.historicalPending[id] = struct{}{}
 	}
 	s.historicalMu.Unlock()
-	s.mu.Lock()
+	s.quarantineMu.Lock()
 	clear(s.quarantined)
 	for sessionID := range quarantined {
 		s.quarantined[sessionID] = struct{}{}
 	}
-	s.mu.Unlock()
+	s.quarantineMu.Unlock()
 	cleanupTurns, err := s.store.ListRuntimeCleanupTurns(parent)
 	if err != nil {
 		s.mu.Lock()
@@ -943,6 +953,12 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 	if err := forkspace.ValidateGenerationWorkspace(bound.Repository, identity); err != nil {
 		return session.Session{}, fmt.Errorf("%w: %v", errSessionForkUnproven, err)
 	}
+	// Generation anchors can survive a consistent volume copy while a shared
+	// primary's inode receipt cannot. Quarantine that exact known condition;
+	// do not renew its reservation or invent authority over the copied bytes.
+	if err := validateSessionPrimaryDirectory(bound); err != nil {
+		return session.Session{}, err
+	}
 	current, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
 	if err != nil {
 		return session.Session{}, err
@@ -973,8 +989,8 @@ func (s *Service) ensureSessionForkAuthority(ctx context.Context, bound session.
 }
 
 func (s *Service) sessionQuarantined(sessionID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.quarantineMu.Lock()
+	defer s.quarantineMu.Unlock()
 	_, quarantined := s.quarantined[sessionID]
 	return quarantined
 }
@@ -1003,6 +1019,9 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 	if err := requireSessionForkAuthority(bound); err != nil {
 		return err
 	}
+	if s.sessionQuarantined(bound.ID) {
+		return errors.New("session is quarantined; its retained workspace cannot be reused or discarded")
+	}
 	owned, err := s.store.OwnsSessionFork(ctx, bound.ID)
 	if err != nil {
 		return err
@@ -1029,6 +1048,9 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 		!(allowMissingWorkspace && errors.Is(err, os.ErrNotExist)) {
 		return err
 	}
+	if err := validateSessionPrimaryDirectory(bound); err != nil {
+		return err
+	}
 	reservation, reserved, err := forkspace.ReadWorkspaceReservation(bound.Repository, identity)
 	if err != nil {
 		return err
@@ -1037,6 +1059,18 @@ func (s *Service) validateSessionForkAuthorityState(ctx context.Context, bound s
 		return errors.New("session workspace reservation changed")
 	}
 	return nil
+}
+
+// Called under the fork lock before any reservation is renewed or used.
+func validateSessionPrimaryDirectory(bound session.Session) error {
+	if !bound.RepositoryReadOnly {
+		return nil
+	}
+	_, _, err := forkspace.ReadImmutablePrimarySnapshot(bound.Workspace)
+	if errors.Is(err, forkspace.ErrImmutablePrimaryDirectoryChanged) {
+		return fmt.Errorf("%w: %v", errSessionForkUnproven, err)
+	}
+	return err
 }
 
 // requireSessionWorkspace refuses a repository-specific operation on a session that has no
@@ -1191,6 +1225,11 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 			}
 			cleaned = ranCleanup && getErr == nil && !warmReady
 		}
+		if getErr != nil && unprovenOK && s.quarantineUnusedWarmRuntime(ctx, current) {
+			getErr = unprovenCleaner.CleanupUnprovenSessionRuntime(ctx, current)
+			cleaned = getErr == nil
+			candidate.unproven = true
+		}
 		if cleaned {
 			if s.testBeforeCleanupStamp != nil {
 				s.testBeforeCleanupStamp()
@@ -1212,6 +1251,58 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 	}
 	s.runtimeCleanupCursor = (start + scanned) % len(candidates)
 	return proven
+}
+
+// An unused read-only warm box may outlive its worker's PID namespace. Its
+// foreign supervisor cannot be proved dead here. Preserve that evidence and
+// fence the session, rather than letting it hold every unrelated runtime slot.
+// runtimeMu makes the zero-turn decision atomic with final turn admission.
+func (s *Service) quarantineUnusedWarmRuntime(ctx context.Context, bound session.Session) bool {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	current, err := s.store.GetSession(ctx, bound.ID)
+	if err != nil || current.Revision != bound.Revision || !current.RepositoryReadOnly ||
+		(current.State != session.SessionOpen && current.State != session.SessionClosed) ||
+		current.Activity != session.ActivityParked || current.ActiveTurnID != "" ||
+		current.QueuedTurnCount != 0 || current.TurnsUsed != 0 || s.restoring[current.ID] {
+		return false
+	}
+	turns, err := s.store.ListTurns(ctx, current.ID, 0, 1)
+	if err != nil || len(turns) != 0 || s.validateSessionForkAuthority(ctx, current) != nil {
+		return false
+	}
+	identity := forkspace.Identity{Name: current.ForkName, Generation: forkspace.Generation(current.ForkGeneration)}
+	observations, problems := forkspace.Executions(current.Repository)
+	if len(problems) != 0 {
+		return false
+	}
+	found := false
+	source := sessionWarmRunID(current.ID)
+	for _, observation := range observations {
+		record := observation.Record
+		sameFork := record.Fork != nil && *record.Fork == identity
+		if !sameFork && record.SourceID != source && record.Workspace != current.Workspace {
+			continue
+		}
+		if found || !sameFork || !observation.Foreign || record.Kind != forkspace.ExecutionRemoteSession ||
+			record.Role != forkspace.ExecutionRoleWarm || record.Workspace != current.Workspace ||
+			record.SourceID != source {
+			return false
+		}
+		found = true
+	}
+	if !found {
+		return false
+	}
+	s.quarantineMu.Lock()
+	s.quarantined[current.ID] = struct{}{}
+	s.quarantineMu.Unlock()
+	// A quarantine discovered after startup needs the same retry custody as
+	// the historical backlog, including when its first runtime proof fails.
+	s.historicalMu.Lock()
+	s.historicalPending[current.ID] = struct{}{}
+	s.historicalMu.Unlock()
+	return true
 }
 
 func runtimeCleanupStampFor(sess session.Session, turn *session.Turn) runtimeCleanupStamp {
@@ -2176,9 +2267,17 @@ func (s *Service) SubmitTurn(ctx context.Context, key string, req session.Submit
 	if err := s.validateTurnEscalation(ctx, req); err != nil {
 		return session.Turn{}, err
 	}
+	if s.testBeforeSubmitAdmission != nil {
+		s.testBeforeSubmitAdmission()
+	}
 	// Serialize the final check and durable admission with beginWorkspaceMutation.
 	// Taking the runtime lock instead would block queued turns behind a running model.
 	s.runtimeMu.Lock()
+	if s.sessionQuarantined(req.SessionID) {
+		s.runtimeMu.Unlock()
+		return session.Turn{}, &session.Error{Code: session.CodeInvalidSessionState,
+			Detail: "session is quarantined; recreate it after preserving its workspace"}
+	}
 	if s.restoring[req.SessionID] {
 		s.runtimeMu.Unlock()
 		// Refused before any receipt is journaled, so the same key succeeds once the restore is
@@ -2738,9 +2837,9 @@ func (s *Service) executeRetireQuarantined(ctx context.Context, op session.Opera
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	s.mu.Lock()
+	s.quarantineMu.Lock()
 	delete(s.quarantined, sess.ID)
-	s.mu.Unlock()
+	s.quarantineMu.Unlock()
 	return s.completeDiscardOperation(ctx, op.ID, sess)
 }
 
