@@ -90,3 +90,30 @@ func TestSharedAdmissionBindsControllerAndFreshMaps(t *testing.T) {
 		t.Fatal("accepted mixed old/shared receipt")
 	}
 }
+
+// A record 13.0.0 wrote attached the first 27 hooks. It must still read, or no launch could pass the
+// controller scan and recovery could never retire it with its own image. A generation no release
+// attached is still refused.
+func TestEarlierHookGenerationsStillRead(t *testing.T) {
+	trim := func(n int) ControllerReady {
+		r := controllerReceipt()
+		r.Birth.Programs = r.Birth.Programs[:3+n]
+		r.Links = r.Links[:n]
+		return r
+	}
+	if err := trim(27).Validate(); err != nil {
+		t.Fatalf("13.0.0 controller record: %v", err)
+	}
+	if trim(28).Validate() == nil {
+		t.Fatal("accepted a hook set no release attached")
+	}
+	parent, ready := receiptFixtures()
+	ready.Links, ready.Programs = ready.Links[:27], 27
+	if err := ready.Validate(parent); err != nil {
+		t.Fatalf("13.0.0 admission receipt: %v", err)
+	}
+	ready.Links, ready.Programs = ready.Links[:26], 26
+	if ready.Validate(parent) == nil {
+		t.Fatal("accepted an admission receipt no release wrote")
+	}
+}

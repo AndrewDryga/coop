@@ -49,7 +49,7 @@ func TestGuardsPassBlindOnlyWhereNothingIsRevealed(t *testing.T) {
 			t.Errorf("the %s guard refuses a new file named like a secret:%s", name, hooks[name])
 		}
 	}
-	for _, name := range []string{"inode_follow_link", "inode_readlink", "inode_link", "mmap_file", "file_mprotect", "inode_getxattr", "inode_listxattr", "inode_get_acl", "inode_file_getattr"} {
+	for _, name := range []string{"inode_follow_link", "inode_readlink", "inode_link", "mmap_file", "file_mprotect", "inode_getxattr", "inode_listxattr", "inode_get_acl", "inode_file_getattr", "unix_stream_connect", "unix_may_send"} {
 		if strings.Contains(hooks[name], "BLIND") {
 			t.Errorf("the %s guard can reveal a file named like a secret:%s", name, hooks[name])
 		}

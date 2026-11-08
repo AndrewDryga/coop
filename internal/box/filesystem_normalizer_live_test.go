@@ -349,14 +349,15 @@ func filesystemNormalizerIdentities(t *testing.T, ids []filesystemKernelIdentity
 			baseLinks++
 		}
 	}
-	wantReplacements, wantBase := 27, 27
+	hooks := len(fsfilter.HookNames())
+	wantReplacements, wantBase := hooks, hooks
 	if fault == "partial" {
 		wantReplacements, wantBase = 13, 0
 	}
 	if fault == "load-exit" {
 		wantReplacements, wantBase = 0, 0
 	}
-	if len(guards) != 27 || replacements != wantReplacements || baseLinks != wantBase {
+	if len(guards) != hooks || replacements != wantReplacements || baseLinks != wantBase {
 		t.Fatalf("unexpected attachment shape: guards=%d replacements=%d base=%d", len(guards), replacements, baseLinks)
 	}
 }

@@ -21,6 +21,9 @@ struct dentry { struct inode *d_inode; struct dentry *d_parent; struct qstr d_na
 struct path { struct dentry *dentry; } CORE;
 struct file { struct path f_path; unsigned int f_flags; } CORE;
 struct vm_area_struct { struct file *vm_file; unsigned long vm_flags; } CORE;
+struct sock {} CORE;
+struct socket { struct sock *sk; } CORE;
+struct unix_sock { struct path path; } CORE;
 struct task_struct { unsigned int flags; int exit_state; struct task_struct *group_leader; } CORE;
 
 static void *(*lookup)(void *, const void *) = (void *)BPF_FUNC_map_lookup_elem;
@@ -32,6 +35,7 @@ static long (*read_str)(void *, u32, const void *) = (void *)BPF_FUNC_probe_read
 static void *(*kptr_xchg)(void *, void *) = (void *)BPF_FUNC_kptr_xchg;
 static u64 (*ancestor_cgroup)(int) = (void *)BPF_FUNC_get_current_ancestor_cgroup_id;
 static long (*under_cgroup)(void *, u32) = (void *)BPF_FUNC_current_task_under_cgroup;
+static struct unix_sock *(*unix_sock_of)(void *) = (void *)BPF_FUNC_skc_to_unix_sock;
 extern struct task_struct *bpf_task_acquire(struct task_struct *) __attribute__((section(".ksyms")));
 extern void bpf_task_release(struct task_struct *) __attribute__((section(".ksyms")));
 #endif
@@ -497,5 +501,14 @@ HOOK(inode_set_acl, 4) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_remove_acl, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_file_setattr, 2) { return access((void *)ctx[0], WRITE|BLIND, policy); }
 HOOK(inode_file_getattr, 2) { return access((void *)ctx[0], 0, policy); }
+/* connect(2) and sendto(2) find a Unix socket by its path without opening it, so no file hook runs.
+ * The peer's bound path gets the file rules; the kernel itself asks for write permission to
+ * connect. Abstract and unbound sockets have no path and stay allowed. */
+INLINE int peer_access(struct sock *other, struct policy *policy) {
+    struct unix_sock *peer = other ? unix_sock_of(other) : 0;
+    return !peer || access(peer->path.dentry, WRITE, policy);
+}
+HOOK(unix_stream_connect, 3) { return peer_access((void *)ctx[1], policy); }
+HOOK(unix_may_send, 2) { struct socket *other = (void *)ctx[1]; return !other || peer_access(other->sk, policy); }
 #endif
 char LICENSE[] SEC("license") = "GPL";

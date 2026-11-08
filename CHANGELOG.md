@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Kernel protection covers Unix sockets in hidden folders.** A box could connect to a socket under
+  a hidden folder, such as one another container served from the project, because connecting finds
+  a socket by its path without opening it. With eBPF protection, connecting or sending to such a
+  socket now returns `Operation not permitted`. Sockets in ordinary folders work as before.
 - **`coop setup apparmor` confines the Linux filesystem protection helper.** On Ubuntu and other
   AppArmor hosts with Docker's `systemd` cgroup driver, the helper runs without AppArmor, because
   Docker's default profile blocks the system bus it needs. This one-time command installs and loads

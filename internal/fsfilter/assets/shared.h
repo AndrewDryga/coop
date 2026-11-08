@@ -195,8 +195,9 @@ static int known_ref(char kind,const char *name) {
     }
     return 0;
 }
+#define GUARDS ((int)(sizeof(hooks)/sizeof(hooks[0])))
 static int parse_shared(int argc,char **argv) {
-    if((argc!=5+13+30&&argc!=5+13+30+27)||!owned_name(argv[0],"coop-fs-controller-")||kernel_filesystems()){errno=EINVAL;return -1;}
+    if((argc!=5+13+3+GUARDS&&argc!=5+13+3+2*GUARDS)||!owned_name(argv[0],"coop-fs-controller-")||kernel_filesystems()){errno=EINVAL;return -1;}
     strcpy(shared.root,argv[0]);
     if(decimal(argv[1],&shared.inode)||decimal(argv[2],&shared.device)||decimal(argv[3],&shared.pin_inode)||decimal(argv[4],&shared.pin_device)||!shared.inode||!shared.device||!shared.pin_inode||!shared.pin_device)return -1;
     if(path_at(pin_directory,"/host-bpf",shared.root))return -1;
@@ -208,7 +209,7 @@ static int parse_shared(int argc,char **argv) {
     }
     int maps=0,programs=0,links=0;
     for(int i=0;i<shared.count;i++){maps+=shared.refs[i].kind=='m';programs+=shared.refs[i].kind=='p';links+=shared.refs[i].kind=='l';}
-    if(maps!=13||programs!=30||(links&&links!=27)){errno=EINVAL;return -1;}
+    if(maps!=13||programs!=3+GUARDS||(links&&links!=GUARDS)){errno=EINVAL;return -1;}
     return 0;
 }
 static int verified_directory(const char *path,uint64_t inode,uint64_t device) {

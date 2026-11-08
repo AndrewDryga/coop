@@ -157,8 +157,9 @@ bus for the cgroups that hold its boxes. Other filesystems, rootless Docker, old
 RHEL 10&#39;s 6.12) and incompatible container options use mount protection; <code>coop doctor</code> names the
 reason.</p>
 <p>With eBPF protection, the box can&#39;t read or change a secret, including through another letter
-case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
-writable, ordinary public hardlinks work, and <code>.coopignore</code> stays readable and read-only.</p>
+case, an equivalent Unicode spelling, a symlink or an existing hardlink. It also can&#39;t connect to a
+Unix socket in a hidden folder, such as one another container serves from the project. Public files
+stay writable, ordinary public hardlinks work, and <code>.coopignore</code> stays readable and read-only.</p>
 <p>Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file
 over it. A tool that opens one, such as Terraform with <code>terraform.tfvars</code>, reads it as empty and
 keeps working, and the secret stays out of reach. The box can&#39;t delete or rename a folder that

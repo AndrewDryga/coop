@@ -3,7 +3,7 @@ name: filesystem-enforcement
 description: APFS (Mac) and ext4/xfs (Linux) Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody; systemd slices under Docker's systemd cgroup driver
 subsystem: box
 sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go, internal/box/filesystem_cgroups.go, internal/box/filesystem_profile_linux.go, internal/systemdbus/systemdbus.go, cmd/coop-fs/slices_linux.go, internal/runtime/selinux.go, internal/box/filesystem_apparmor.go, internal/fsfilter/apparmor.go, cmd/coop-fs/apparmor_linux.go, internal/cli/setup_cmd.go]
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 ## Selection and policy
@@ -141,7 +141,14 @@ requires new admission. See docs/box.md for the user contract.
 
 ## Enforcement and lifecycle
 
-The packaged loader validates 27 LSM hook signatures before loading. Global attachments apply
+The packaged loader validates 29 LSM hook signatures before loading. connect(2) and sendto(2) find an
+AF_UNIX peer by path without opening it, so `unix_stream_connect` and `unix_may_send` give the peer's
+bound path (`bpf_skc_to_unix_sock`, since a cast of the hook's `sock` is refused by the verifier) the
+write rule; abstract and unbound peers pass. The helper's argument check derives its program and link
+counts from the loader's hook table (`GUARDS`). A new hook goes at the END of `hookNames` and the
+loader table (plus the test copy in filesystem_controller_test.go and filter_test.go's BLIND lists), and
+its new length joins `hookGenerations`: records an earlier release wrote must still validate, or the
+controller scan fails every launch and recovery can't retire them with their own image. Global attachments apply
 only to the frozen cgroup parent and its descendants. Secret reads, xattr/ACL/`fileattr` metadata
 and endpoint mutations are denied; .coopignore is readable but cannot be changed, including through
 aliases. `inode_getattr` alone lets a hidden non-directory leaf through (operation `STAT`), because
@@ -300,8 +307,9 @@ is its proof; a missing stop line on an offline or open run points here first.
 
 ## Changelog
 
+- 2026-11-08 — Unix socket peers get the file rules (a security review reached a socket under a hidden folder from an offline box); `TestFilesystemHiddenSocketsRuntime` fails against the old filter and passes with the hooks.
 - 2026-11-08 — `coop setup apparmor`: helper profile, record-matched controller reuse; 21 live tests under the profile and a reboot check on Ubuntu 24.04.
-- 2026-11-08 — SELinux hosts (label=disable on Coop's containers), kernel hook precheck, doctor fixtures on the home disk; 21 live tests pass on Fedora CoreOS 44 (SELinux enforcing, xfs, kernel 7.2).
+- 2026-11-08 — SELinux hosts (label=disable on Coop's containers), kernel hook precheck, doctor fixtures on the home disk; live tests pass on Fedora CoreOS 44 (SELinux enforcing, xfs, kernel 7.2): non-service tests in one run, the five service tests in a rerun after the compose label fix.
 - 2026-11-07 — native Linux: ext4/xfs candidates, casefold probe, BPF LSM check, systemd-slice cgroups through D-Bus, kernel 7.0 verifier fixes, slice-aware descendant checks; live suite adapted to non-folding volumes and owner-death whole-disk denial; all 20 live tests and the late-secret acceptance pass on Ubuntu 24.04 (kernel 7.0, Docker 29, systemd driver).
 - 2026-11-07 — every `coop acp` close warned "could not remove this editor session's services ...
   filesystem controller custody retained at ...: Docker daemon observation failed". The cause was a

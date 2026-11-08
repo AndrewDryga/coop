@@ -171,7 +171,8 @@ var controllerHooks = []string{
 	"inode_setattr", "inode_unlink", "inode_rmdir", "inode_link", "inode_rename", "inode_create",
 	"inode_mkdir", "inode_symlink", "inode_mknod", "inode_follow_link", "inode_readlink", "inode_getattr",
 	"inode_getxattr", "inode_listxattr", "inode_setxattr", "inode_removexattr", "inode_get_acl",
-	"inode_set_acl", "inode_remove_acl", "inode_file_setattr", "inode_file_getattr",
+	"inode_set_acl", "inode_remove_acl", "inode_file_setattr", "inode_file_getattr", "unix_stream_connect",
+	"unix_may_send",
 }
 
 // readyControllerRecord is a ready controller's record, as its admissions embed it, with made-up

@@ -61,8 +61,10 @@ static const struct hook_shape hooks[] = {
     {"inode_setxattr", 6, 1, "dentry"}, {"inode_removexattr", 3, 1, "dentry"},
     {"inode_get_acl", 3, 1, "dentry"}, {"inode_set_acl", 4, 1, "dentry"},
     {"inode_remove_acl", 3, 1, "dentry"}, {"inode_file_setattr", 2, 0, "dentry"},
-    {"inode_file_getattr", 2, 0, "dentry"},
+    {"inode_file_getattr", 2, 0, "dentry"}, {"unix_stream_connect", 3, 1, "sock"},
+    {"unix_may_send", 2, 1, "socket"},
 };
+_Static_assert(sizeof(hooks)/sizeof(hooks[0]) <= 32, "attached, link_paths and normalizer_links hold 32 guards");
 static const struct btf_type *base_type(struct btf *btf, uint32_t id) {
     const struct btf_type *type;
     for (int i = 0; i < 32; i++) {

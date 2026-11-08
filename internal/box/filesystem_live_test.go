@@ -389,6 +389,76 @@ print('late secrets denied')`}})
 	}
 }
 
+// connect(2) and sendto(2) find a Unix socket by its path without opening it. A socket under a
+// hidden folder, served by a container outside the box, must refuse both, while a socket in an
+// ordinary folder still answers.
+func TestFilesystemHiddenSocketsRuntime(t *testing.T) {
+	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
+	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires an explicit installed client image and local Docker")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(repo, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "private"), 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".coopignore"), []byte("private/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	server := "coop-fs-socket-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--name", server, "--network", "none", "-u", "0", "-v", repo+":/workspace", "-w", "/workspace", "--entrypoint", "python3", image, "-c", `import os,socket,threading
+def serve(s):
+    if s.type == socket.SOCK_DGRAM:
+        while True: s.recv(64)
+    s.listen()
+    while True:
+        c, _ = s.accept(); c.sendall(b'reached'); c.close()
+for path, kind in [('private/control.sock', socket.SOCK_STREAM), ('private/dgram.sock', socket.SOCK_DGRAM), ('open.sock', socket.SOCK_STREAM)]:
+    s = socket.socket(socket.AF_UNIX, kind); s.bind(path); os.chmod(path, 0o777)
+    threading.Thread(target=serve, args=(s,), daemon=True).start()
+open('served', 'w').close()
+threading.Event().wait()`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("socket server: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", server).Run() })
+	for {
+		if _, err := os.Stat(filepath.Join(repo, "served")); err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("socket server never became ready")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var output bytes.Buffer
+	var report FilesystemReport
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: image, Egress: "none", NoNewPrivileges: true, Memory: "256m", Pids: "64", CPUs: "1"}
+	code, err := Run(cfg, runtime.Runtime{Name: "docker"}, RunSpec{Ctx: ctx, Repo: repo, Image: image, Workdir: "/workspace", Batch: true, Quiet: true, Stdout: &output, Stderr: &output, OnFilesystemReport: func(r FilesystemReport) { report = r }, Cmd: []string{"python3", "-c", `import errno,socket
+for path, kind, reach in [('private/control.sock', socket.SOCK_STREAM, 'connect'), ('private/dgram.sock', socket.SOCK_DGRAM, 'connect'), ('private/dgram.sock', socket.SOCK_DGRAM, 'sendto')]:
+    s = socket.socket(socket.AF_UNIX, kind)
+    try:
+        s.connect(path) if reach == 'connect' else s.sendto(b'x', path)
+    except OSError as e: assert e.errno == errno.EPERM, (path, reach, e)
+    else: raise AssertionError(path + ' reachable by ' + reach)
+s = socket.socket(socket.AF_UNIX); s.connect('open.sock')
+assert s.recv(16) == b'reached'
+print('hidden sockets denied')`}})
+	if report.Backend != "bpf" {
+		t.Fatalf("launch used %q protection: %s (code %d: %v)\n%s", report.Backend, report.Reason, code, err, output.String())
+	}
+	if code != 0 || err != nil || !bytes.Contains(output.Bytes(), []byte("hidden sockets denied")) {
+		t.Fatalf("run code %d: %v\n%s", code, err, output.String())
+	}
+}
+
 // Coop removes the box of an open or offline run on kernel filesystem protection itself, so such a
 // run ends as a filtered one does: the cleanup it begins at once, then the stop line once the
 // removal is confirmed. It ended at "Starting sh" before, with nothing to say the box had stopped.

@@ -31,8 +31,9 @@ RHEL 10's 6.12) and incompatible container options use mount protection; `coop d
 reason.
 
 With eBPF protection, the box can't read or change a secret, including through another letter
-case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
-writable, ordinary public hardlinks work, and `.coopignore` stays readable and read-only.
+case, an equivalent Unicode spelling, a symlink or an existing hardlink. It also can't connect to a
+Unix socket in a hidden folder, such as one another container serves from the project. Public files
+stay writable, ordinary public hardlinks work, and `.coopignore` stays readable and read-only.
 
 Each hidden file already in the project, up to 1,000 per launch, also gets an empty read-only file
 over it. A tool that opens one, such as Terraform with `terraform.tfvars`, reads it as empty and

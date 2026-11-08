@@ -77,8 +77,8 @@ func (b ControllerBirth) Validate() error {
 	}
 	maps := []string{"scope", "dispatch", "owners", "runes", "work", "objects", "paths", "devices", "config", "objects_template", "paths_template", "devices_template", "config_template"}
 	programs := []string{"admit_owner", "release_owner", "hierarchy_root"}
-	for _, name := range hookNames {
-		programs = append(programs, "guard_"+name)
+	for name := range guardGeneration(len(b.Programs) - len(programs)) {
+		programs = append(programs, name)
 	}
 	if !exactKernelObjects(b.Maps, maps) || !exactKernelObjects(b.Programs, programs) {
 		return errors.New("invalid filesystem controller objects")
@@ -116,14 +116,12 @@ func (r ControllerReady) Validate() error {
 	for _, p := range r.Birth.Programs {
 		programs[p.Name] = p.ID
 	}
-	if len(r.Links) != len(hookNames) {
+	// Birth.Validate proved the programs are one generation's guards plus the three owner programs.
+	if len(r.Links) != len(r.Birth.Programs)-3 {
 		return errors.New("incomplete shared filesystem attachments")
 	}
 	ids := map[uint32]bool{}
-	names := map[string]bool{}
-	for _, name := range hookNames {
-		names["guard_"+name] = true
-	}
+	names := guardGeneration(len(r.Links))
 	for _, link := range r.Links {
 		if !names[link.Name] || link.ID == 0 || ids[link.ID] || link.Program != programs[link.Name] {
 			return errors.New("invalid shared filesystem attachment")
