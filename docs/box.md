@@ -363,7 +363,7 @@ co:op sets the working directory itself, so no `WORKDIR` is required. Here is a 
 FROM <your-language-base>
 RUN <install your toolchain> \
  && npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+      @agentclientprotocol/claude-agent-acp@0.90.0 @agentclientprotocol/codex-acp@2.0.1 \
  && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz" \
       | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'
@@ -433,7 +433,7 @@ top:
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
 RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.84.0 @agentclientprotocol/codex-acp@2.0.1 \
+      @agentclientprotocol/claude-agent-acp@0.90.0 @agentclientprotocol/codex-acp@2.0.1 \
  && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz" \
       | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'

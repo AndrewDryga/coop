@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Box clients carry patched libraries.** Claude's editor adapter (`claude-agent-acp`) moves from
+  0.84.0 to 0.90.0, which brings a fixed `zod`, and the clients installed in every box now use
+  `body-parser` 2.4.0, `qs` 6.17.1, `fast-uri` 3.1.9 and `ip-address` 10.7.6. These fix published
+  security advisories. Claude Code, Codex and Gemini stay on their current versions. The next launch
+  rebuilds the box image; a filtered launch redoes its network setup by itself, and a filtered editor
+  session asks you to run `coop net setup` once.
 - **Each project's tools and downloads are its own.** Every box used to share one tools volume
   (`~/.asdf`) and one download cache (`~/.cache`), so one project's box could change the tools or
   modules the next project's box ran. A repo with a `.tool-versions` and no `.agent/Dockerfile` now

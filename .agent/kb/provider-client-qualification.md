@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -245,6 +245,11 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-08 — claude-agent-acp bumped 0.84.0 → 0.90.0 (SDK claude 2.1.296, ACP SDK 1.8.0) to drop
+  zod <4.6.6 (GHSA-mrhx-c7xc-m3w5). Re-captured offline: the Messages line, `HEAD /api/hello` and the
+  MCP POST/GET with header secrets are byte-identical to 2.1.284; the v1 mcpServers schemas are unchanged
+  except stdio args/env becoming plain optional arrays; ACP initialize + session/new with both server
+  shapes succeed. The lock refresh also moved transitive body-parser, qs, fast-uri and ip-address.
 - 2026-11-07 — Gemini bumped to 0.67.0: thinking bases, ThinkingLevel, models, system-settings keys and
   ownership rule, the request line and the MCP transport re-read unchanged in the bundle; real filtered
   prompt (git diff, commit with the box identity) and ACP session/new on the Mac. Dropped the stale quota

@@ -539,7 +539,7 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	return []LockedClient{
 		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.285", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.285"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.84.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.284"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.90.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.296"}}},
 	}
 }
 
