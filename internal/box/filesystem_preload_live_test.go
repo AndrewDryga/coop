@@ -353,7 +353,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 			if err := a.persist(); err != nil {
 				t.Fatal(err)
 			}
-			options := append(a.helperOptions(false), "--mount", networkMount("bind", repo, "/sources/1", true), "-e", "COOP_TEST_FS_FAULT="+fault)
+			options := append(a.helperOptions(false, a.record.Controller.systemd()), "--mount", networkMount("bind", repo, "/sources/1", true), "-e", "COOP_TEST_FS_FAULT="+fault)
 			if _, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", parent, "/state/controller.json"}}); err != nil {
 				t.Fatal(err)
 			}
@@ -470,7 +470,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 				t.Fatal("public control failed before owner death", err)
 			}
 			if fault == "delayed" {
-				if _, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", "import errno\ntry: open('/workspace/.ENV')\nexcept OSError as e: assert e.errno==errno.EPERM\nelse: raise AssertionError('secret exposed')"); err != nil {
+				if _, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", "import errno,os\ntry: open('/workspace/.ENV')\nexcept OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not os.path.lexists('/workspace/.ENV')\nelse: raise AssertionError('secret exposed')"); err != nil {
 					t.Fatal(err)
 				}
 				return
@@ -484,7 +484,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 				t.Fatal("Go supervisor did not survive C owner death", err)
 			}
 			script := "import errno\nfor p in ['public', '.env']:\n try: open('/workspace/'+p)\n except PermissionError as e: assert e.errno == errno.EPERM\n else: raise AssertionError(p+' remained readable')"
-			if _, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", script); err != nil {
+			if err := deniedAfterOwnerDeath(ctx, a.docker, ref, script); err != nil {
 				t.Fatal("C owner death did not deny the admitted device", err)
 			}
 		})

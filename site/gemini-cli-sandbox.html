@@ -202,13 +202,12 @@ Protecting secrets
 <pre class="code"><samp>Checking the Coop box on the Docker runtime
 
 Protecting secrets
-  Filesystem protection: mounts
-        This launch uses mount-based filesystem protection
+  Filesystem protection: kernel BPF
   ✓ .env is hidden
   ✓ .envrc is hidden
   …
 
-✓ All 37 checks passed</samp></pre>
+✓ All 40 checks passed</samp></pre>
 </div>
 </div>
 </div>
@@ -234,7 +233,7 @@ wc: .env.coop-demo: Operation not permitted
 <div id="secret-output-linux" data-output-platform="Linux">
 <p class="terminal-platform">Linux</p>
 <pre class="code"><samp>21 README.md
- 0 .env.coop-demo
+wc: .env.coop-demo: Operation not permitted
 21 total</samp></pre>
 </div>
 </div>

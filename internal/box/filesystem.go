@@ -16,6 +16,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/fsimage"
 	"github.com/AndrewDryga/coop/internal/randid"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/systemdbus"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -131,9 +132,13 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		}
 	}
 	info := docker.Info()
-	if info.CgroupVersion != "2" || info.CgroupDriver != "cgroupfs" {
+	if _, err := filesystemCgroups(info); err != nil {
 		docker.Close()
-		return nil, errFilesystemUnsupported
+		return nil, errors.Join(errFilesystemUnsupported, err)
+	}
+	if err := filesystemKernelReady(); err != nil {
+		docker.Close()
+		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
 	state, err := serviceStateRoot("filesystem")
 	if err != nil {
@@ -207,7 +212,7 @@ func prepareBoundFilesystemAdmission(ctx context.Context, roots []string, grants
 		if err := a.persist(); err != nil {
 			return err
 		}
-		options := a.helperOptions(false)
+		options := a.helperOptions(false, controller.record.systemd())
 		for i, root := range roots {
 			options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 		}
@@ -264,12 +269,22 @@ func (a *filesystemAdmission) cleanupUntransferred(result *error, transferred *b
 	}
 }
 
-func (a *filesystemAdmission) helperOptions(readonlyState bool) []string {
+// helperOptions are the release-owned helper's privileges. DAC_OVERRIDE lets root reach a
+// project's private folders and make a cgroup under the hierarchy root, which systemd hosts
+// keep read-only (0555); Docker Desktop's VM shares neither restriction. On systemd slices the
+// helper also gets the system bus, which it uses only to start and stop Coop's own slices.
+// Docker's default AppArmor profile refuses every system bus message, so that helper runs
+// without it; it already holds SYS_ADMIN without seccomp, and runs only release-owned code.
+func (a *filesystemAdmission) helperOptions(readonlyState, systemd bool) []string {
 	// Every admitted object stays open; leave room for maps, programs and roots.
 	descriptors := fsfilter.MaxPaths + 128
-	return []string{"--network", "none", "--user", "0", "--read-only", "--no-healthcheck", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined", "--cgroupns", "host", "--tmpfs", "/tmp:exec", "--pids-limit", "32", "--memory", "512m",
+	options := []string{"--network", "none", "--user", "0", "--read-only", "--no-healthcheck", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "DAC_OVERRIDE", "--security-opt", "seccomp=unconfined", "--cgroupns", "host", "--tmpfs", "/tmp:exec", "--pids-limit", "32", "--memory", "512m",
 		"--ulimit", fmt.Sprintf("nofile=%d:%d", descriptors, descriptors),
 		"--mount", networkMount("bind", "/sys/fs/cgroup", "/host-cgroup", false), "--mount", networkMount("bind", "/sys/fs/bpf", "/host-bpf", false), "--mount", networkMount("bind", a.dir, "/state", readonlyState)}
+	if systemd {
+		options = append(options, "--security-opt", "apparmor=unconfined", "-e", fsfilter.SystemdCgroups, "--mount", networkMount("bind", systemdbus.Socket, systemdbus.Socket, false))
+	}
+	return options
 }
 
 func (a *filesystemAdmission) waitReady(ctx context.Context) error {

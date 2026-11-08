@@ -192,7 +192,12 @@ func checkCgroupParents(data []byte, ids []string, parent string) error {
 		}
 		delete(wanted, row.ID)
 		observed, target := strings.TrimPrefix(*row.Parent, "/"), strings.TrimPrefix(parent, "/")
-		if observed == target || strings.HasPrefix(observed, target+"/") {
+		// A systemd slice nests by name: A-B.slice is inside A.slice.
+		descendant := target + "/"
+		if stem, ok := strings.CutSuffix(target, ".slice"); ok {
+			descendant = stem + "-"
+		}
+		if observed == target || strings.HasPrefix(observed, descendant) {
 			return errors.New("filesystem protection retained for a restartable Docker container")
 		}
 	}
@@ -205,6 +210,22 @@ func checkCgroupParents(data []byte, ids []string, parent string) error {
 // A controller root or its single admission child. Descendant consumers are
 // checked by bounded path prefix, including stopped/restartable containers.
 func validFilesystemCgroupParent(parent string) bool {
+	// Under Docker's systemd driver these are slices: coop_fs_controller_<hex>.slice and
+	// coop_fs_controller_<hex>-coop_fs_<hex>.slice (fsfilter.ControllerSlice, AdmissionSlice).
+	if stem, ok := strings.CutSuffix(parent, ".slice"); ok {
+		if strings.Contains(stem, "/") {
+			return false
+		}
+		controller, admission, nested := strings.Cut(stem, "-")
+		path := "/" + strings.ReplaceAll(controller, "_", "-")
+		if nested {
+			path += "/" + strings.ReplaceAll(admission, "_", "-")
+		}
+		// Slices exist only under a shared controller, never as a lone admission, and only in the
+		// one spelling Coop makes: another nests differently for systemd.
+		canonical := strings.ReplaceAll(strings.ReplaceAll(strings.TrimPrefix(path, "/"), "-", "_"), "/", "-") + ".slice"
+		return parent == canonical && strings.HasPrefix(path, "/coop-fs-controller-") && validFilesystemCgroupParent(path)
+	}
 	if !strings.HasPrefix(parent, "/") {
 		return false
 	}

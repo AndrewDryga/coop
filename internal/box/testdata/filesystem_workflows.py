@@ -9,6 +9,16 @@ libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
 libc.renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
 
 
+# APFS folds case and normalizes Unicode, so .ENV and CAFE\u0301 name the hidden .env and Café; ext4
+# and xfs do not, and those spellings are other, absent files. A hidden file stats, so this tells.
+FOLDS = os.path.lexists(".ENV")
+ALIASES = {".ENV", "PRIVATE", "PRIVATE/KEY", "CAFE\u0301"}
+
+
+def spellings(names):
+    return [name for name in names if FOLDS or name not in ALIASES]
+
+
 def denied(call, *args, code=errno.EPERM):
     try:
         call(*args)
@@ -18,7 +28,7 @@ def denied(call, *args, code=errno.EPERM):
         raise AssertionError((call, args, "was allowed"))
 
 
-for name in [".env", ".ENV", "a-secret-alias", "private/key", "PRIVATE/KEY", "Café", "CAFE\u0301", "hidden-link.pem"]:
+for name in spellings([".env", ".ENV", "a-secret-alias", "private/key", "PRIVATE/KEY", "Café", "CAFE\u0301", "hidden-link.pem"]):
     denied(open, name)
     # A hidden file that is not a directory reads as having no xattrs, so ls -l stays quiet. The
     # lookups below must never return a value; anything under a hidden directory still gets EPERM.
@@ -34,13 +44,13 @@ denied(os.readlink, "hidden-link.pem")
 
 # Stat of a hidden file succeeds, as tools that stat every listed name need. Bytes stay denied above,
 # following a hidden link stays denied, and a hidden directory keeps itself and its contents.
-for name, size in [(".env", 13), (".ENV", 13), ("a-secret-alias", 13), ("Café", 21), ("CAFE\u0301", 21)]:
+for name, size in [(n, z) for n, z in [(".env", 13), (".ENV", 13), ("a-secret-alias", 13), ("Café", 21), ("CAFE\u0301", 21)] if n in spellings([n])]:
     assert os.stat(name).st_size == size, name
 assert os.lstat("hidden-link.pem").st_size == len("public")
 # ls -l asks for xattrs and ACLs of each name; it must stay quiet and exit 0 beside hidden files.
 listed = subprocess.run(["ls", "-l", ".env", "a-secret-alias", "Café", "public"], capture_output=True, text=True)
 assert listed.returncode == 0 and listed.stderr == "", (listed.returncode, listed.stderr)
-for name in ["hidden-link.pem", "private", "PRIVATE", "private/key", "PRIVATE/KEY"]:
+for name in spellings(["hidden-link.pem", "private", "PRIVATE", "private/key", "PRIVATE/KEY"]):
     denied(os.stat, name)
 for name in ["private", "private/key"]:
     denied(os.lstat, name)

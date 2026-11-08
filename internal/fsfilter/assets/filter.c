@@ -162,16 +162,20 @@ SEC("syscall") int admit_owner(u64 *id) {
 /* Consumer absence and owner removal precede this trusted call. Revoke before
  * deleting the row: recycled HASH slots can otherwise retain dead task refs. */
 SEC("syscall") int release_owner(u64 *id) {
-    if (!id[0]) return 1;
-    struct owner *owner = lookup(&owners, &id[0]);
+    /* Newer verifiers refuse a context pointer as a map key; copy it to the stack. */
+    u64 key = id[0];
+    if (!key) return 1;
+    struct owner *owner = lookup(&owners, &key);
     if (!owner) return 0;
-    if (owner->token != id[1] || owner_alive(id[0])) return 1;
+    if (owner->token != id[1] || owner_alive(key)) return 1;
     __sync_lock_test_and_set(&owner->published, 0);
     struct task_struct *old = kptr_xchg(&owner->task, 0);
     if (old) bpf_task_release(old);
     return 0;
 }
 SEC("syscall") int hierarchy_root(u64 *id) {
+    /* Newer verifiers refuse a moved context pointer: unroll so each store has a fixed offset. */
+#pragma clang loop unroll(full)
     for (int i = 0; i < 64; i++) id[i] = ancestor_cgroup(i);
     return id[0] ? 0 : 1;
 }

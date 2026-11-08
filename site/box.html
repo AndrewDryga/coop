@@ -148,10 +148,13 @@ shell <code>while read</code> loop, give each <code>coop run</code> its own inpu
 <code>*.pem</code>, <code>*.key</code>, <code>id_rsa*</code>, <code>secrets/</code>, <code>.ssh</code>, dotfiles ending in <code>secrets</code> such as <code>.shell-secrets</code>, and config
 files such as <code>secrets.env</code>. Source and docs like <code>secrets.go</code> and <code>secrets.md</code> stay readable, and
 templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible.</p>
-<p>co:op protects these files in one of two ways. On supported Mac Docker runtimes, APFS projects
-automatically get eBPF protection, enforced in the Linux VM, when the Docker VM supports its BPF
-hooks and uses cgroup v2 with the <code>cgroupfs</code> driver. Other filesystems, unsupported VM kernels and
-incompatible container options use mount protection.</p>
+<p>co:op protects these files in one of two ways. Projects get eBPF protection automatically on
+supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, and ext4 or xfs
+projects on Linux. Docker must use cgroup v2 with the <code>cgroupfs</code> or <code>systemd</code> cgroup driver, and
+the kernel must run the BPF security module, as Ubuntu 24.04 does by default. With the <code>systemd</code>
+driver, co:op asks systemd over the system bus for the cgroups that hold its boxes. Other
+filesystems, rootless Docker, kernels without the BPF module and incompatible container options use
+mount protection; <code>coop doctor</code> names the reason.</p>
 <p>With eBPF protection, the box can&#39;t read or change a secret, including through another letter
 case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
 writable, ordinary public hardlinks work, and <code>.coopignore</code> stays readable and read-only.</p>
@@ -237,7 +240,8 @@ and your later in-place edits on the host. The approval never allows writes. If 
 replaced, start the service through co:op again so that it can read the new file.</li>
 </ul>
 <p>A separate helper runs the kernel enforcement, and the agent gets no BPF privileges. If the helper
-exits, access to the protected share is denied until co:op removes that agent or service. Stopped
+exits, access to the protected share is denied until co:op removes that agent or service. On Linux
+that covers the project&#39;s whole disk, so the box usually can&#39;t run its own programs either. Stopped
 service containers keep their protection for a later restart. After a VM reboot, co:op&#39;s guard runs
 before an image&#39;s start command and its healthchecks, and refuses to run image code under the old
 protection. Start the service through co:op to get fresh protection.</p>

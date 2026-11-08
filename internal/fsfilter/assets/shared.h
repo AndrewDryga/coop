@@ -33,6 +33,31 @@ static int path_at(char *path, const char *base, const char *name) {
     if (snprintf(path, PATH_MAX, "%s/%s", base, name) >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
     return 0;
 }
+/* Under Docker's systemd cgroup driver the controller and each admission are
+ * slices systemd created (fsfilter.ControllerSlice and AdmissionSlice); the
+ * helper never makes or names cgroups behind systemd's back. Otherwise they are
+ * plain directories this helper makes. */
+static int systemd_slices(void) {
+    const char *value = getenv("COOP_FS_CGROUPS");
+    return value && !strcmp(value, "systemd");
+}
+/* Callers pass only names owned_name accepted, so a stem fits a 96-byte buffer. */
+static void slice_stem(char *out, const char *name) {
+    for (; *name; name++) *out++ = *name == '-' ? '_' : *name;
+    *out = 0;
+}
+static int controller_path(char *path, const char *root) {
+    if (!systemd_slices()) return path_at(path, "/host-cgroup", root);
+    char stem[96]; slice_stem(stem, root);
+    if (snprintf(path, PATH_MAX, "/host-cgroup/%s.slice", stem) >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
+    return 0;
+}
+static int admission_name(char *name, const char *root, const char *parent) {
+    char a[96], b[96]; slice_stem(a, root); slice_stem(b, parent);
+    int n = systemd_slices() ? snprintf(name, 256, "%s-%s.slice", a, b) : snprintf(name, 256, "%s", parent);
+    if (n >= 256) { errno = ENAMETOOLONG; return -1; }
+    return 0;
+}
 static int empty_group(int fd) {
     int copy = openat(fd, ".", O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if (copy < 0) return -1;
@@ -106,7 +131,7 @@ static int invoke(int fd, uint64_t id, uint64_t token) {
 }
 static int install_controller(const char *root,const char *boot) {
     if(!owned_name(root,"coop-fs-controller-") || strlen(boot)!=36 || kernel_filesystems())return -1;
-    char path[PATH_MAX];if(path_at(path,"/host-cgroup",root)||mkdir(path,0700))return -1;
+    char path[PATH_MAX];if(controller_path(path,root)||(!systemd_slices()&&mkdir(path,0700)))return -1;
     group=open(path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(group<0||empty_group(group))return -1;
     struct bpf_object_open_opts options={.sz=sizeof(options),.kernel_log_buf=verifier_log,.kernel_log_size=sizeof(verifier_log)};
     object=bpf_object__open_file("/usr/local/libexec/coop-fs/filter.o",&options);
@@ -239,11 +264,11 @@ static int own_admission(const char *sources,const char *parent,const char *boot
     custody_phase="open controller";
     if(!owned_name(parent,"coop-fs-")||strlen(boot)!=36||!token||open_shared(0))return -1;
     custody_phase="create admission cgroup";
-    char root[PATH_MAX],path[PATH_MAX];if(path_at(root,"/host-cgroup",shared.root))return -1;
+    char root[PATH_MAX],path[PATH_MAX],name[256];if(controller_path(root,shared.root)||admission_name(name,shared.root,parent))return -1;
     int parent_fd=verified_directory(root,shared.inode,shared.device);if(parent_fd<0)return -1;
-    if(mkdirat(parent_fd,parent,0700)){close(parent_fd);return -1;}
-    group=openat(parent_fd,parent,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);close(parent_fd);
-    if(group<0||empty_group(group)||path_at(path,root,parent))return -1;
+    if(!systemd_slices()&&mkdirat(parent_fd,name,0700)){close(parent_fd);return -1;}
+    group=openat(parent_fd,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);close(parent_fd);
+    if(group<0||empty_group(group)||path_at(path,root,name))return -1;
     custody_phase="create policy maps";
     for(int i=0;i<4;i++) {
         char template[64];snprintf(template,sizeof(template),"%s_template",policy_names[i]);
@@ -280,11 +305,14 @@ static int own_admission(const char *sources,const char *parent,const char *boot
 /* Retirement acquires all surviving owned references before its first mutation.
  * The host additionally excludes every stopped/restartable Docker consumer. */
 static int release_admission(const char *parent,uint64_t inode,uint64_t device,uint64_t token,uint32_t *ids) {
-    char root[PATH_MAX],path[PATH_MAX];if(!owned_name(parent,"coop-fs-")||path_at(root,"/host-cgroup",shared.root)||path_at(path,root,parent))return -1;
+    char root[PATH_MAX],path[PATH_MAX],name[256];if(!owned_name(parent,"coop-fs-")||controller_path(root,shared.root)||admission_name(name,shared.root,parent)||path_at(path,root,name))return -1;
     int rootfd=verified_directory(root,shared.inode,shared.device);
     if(rootfd<0)return -1;
     close(rootfd);
     group=verified_directory(path,inode,device);
+    /* A slice whose stop failed after its cgroup was removed can get a fresh, empty cgroup from
+     * systemd. It is not this admission's; retirement treats it as gone and the stop removes it. */
+    if(group<0&&errno==ESTALE&&systemd_slices()){int fd=open(path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);int fresh=fd>=0&&!empty_group(fd);if(fd>=0)close(fd);if(fresh)errno=ENOENT;else errno=ESTALE;}
     if(group<0&&errno!=ENOENT)return -1;
     if((group>=0&&empty_group(group))||open_shared(0))return -1;
     int owner_map=shared_fd('m',"owners");struct owner_value owner={0};
@@ -326,7 +354,7 @@ static int known_pin(const char *name) {
     return 0;
 }
 static int release_controller(void) {
-    char root[PATH_MAX];if(path_at(root,"/host-cgroup",shared.root))return -1;
+    char root[PATH_MAX];if(controller_path(root,shared.root))return -1;
     group=verified_directory(root,shared.inode,shared.device);
     if(group<0){struct stat st;if(errno==ENOENT&&lstat(pin_directory,&st)&&errno==ENOENT)return 0;return -1;}
     if(empty_group(group))return -1;
@@ -353,8 +381,8 @@ static int release_controller(void) {
 }
 static int abandon(const char *controller,const char *parent) {
     if(!owned_name(controller,"coop-fs-controller-")||(parent&&!owned_name(parent,"coop-fs-"))||kernel_filesystems())return -1;
-    char root[PATH_MAX],path[PATH_MAX];if(path_at(root,"/host-cgroup",controller))return -1;
-    if(parent){if(path_at(path,root,parent))return -1;}else strcpy(path,root);
+    char root[PATH_MAX],path[PATH_MAX],name[256];if(controller_path(root,controller))return -1;
+    if(parent){if(admission_name(name,controller,parent)||path_at(path,root,name))return -1;}else strcpy(path,root);
     int fd=open(path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(fd>=0){int result=empty_group(fd);close(fd);if(result)return -1;}else if(errno!=ENOENT)return -1;
     if(!parent){char pin[PATH_MAX];if(path_at(pin,"/host-bpf",controller))return -1;if(rmdir(pin)&&errno!=ENOENT)return -1;}

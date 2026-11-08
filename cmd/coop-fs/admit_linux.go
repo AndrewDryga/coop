@@ -29,6 +29,12 @@ func admit(sources, policyPath, parent, controllerPath string) error {
 	if controller.Birth.BootID != id {
 		return errors.New("filesystem controller belongs to another kernel")
 	}
+	if systemdSlices() {
+		slice := fsfilter.AdmissionSlice(controller.Birth.Root, parent)
+		if err := startSlice(slice, fsfilter.AdmissionSlicePath(controller.Birth.Root, parent)); err != nil {
+			return err
+		}
+	}
 	token, err := admissionToken()
 	if err != nil {
 		return err

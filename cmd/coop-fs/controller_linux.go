@@ -43,9 +43,10 @@ func controllerArguments(b fsfilter.ControllerBirth, links []fsfilter.Link) []st
 	return args
 }
 
+const kernelLoader = "/usr/local/libexec/coop-fs-kernel"
+
 func execKernel(args ...string) error {
-	const loader = "/usr/local/libexec/coop-fs-kernel"
-	return syscall.Exec(loader, append([]string{loader}, args...), os.Environ())
+	return syscall.Exec(kernelLoader, append([]string{kernelLoader}, args...), os.Environ())
 }
 
 func retireRun(b fsfilter.RunBirth, controller fsfilter.ControllerReady) error {
@@ -73,7 +74,7 @@ func retireRun(b fsfilter.RunBirth, controller fsfilter.ControllerReady) error {
 			}
 		}
 	}
-	return execKernel(append(args, controllerArguments(controller.Birth, controller.Links)...)...)
+	return retireKernel(fsfilter.AdmissionSlice(b.Controller, b.Parent), append(args, controllerArguments(controller.Birth, controller.Links)...)...)
 }
 
 func sharedCommand(args []string) (bool, error) {
@@ -82,13 +83,22 @@ func sharedCommand(args []string) (bool, error) {
 		if err != nil {
 			return true, err
 		}
+		if systemdSlices() {
+			if err := startSlice(fsfilter.ControllerSlice(args[1]), fsfilter.ControllerSlice(args[1])); err != nil {
+				return true, err
+			}
+		}
 		return true, execKernel("controller", args[1], boot)
 	}
 	if (len(args) == 2 || len(args) == 3) && args[0] == "abandon" && fsfilter.ValidController(args[1]) {
 		if len(args) == 3 && !fsfilter.ValidParent(args[2]) {
 			return true, errors.New("invalid admission name")
 		}
-		return true, execKernel(args...)
+		slice := fsfilter.ControllerSlice(args[1])
+		if len(args) == 3 {
+			slice = fsfilter.AdmissionSlice(args[1], args[2])
+		}
+		return true, retireKernel(slice, args...)
 	}
 	if len(args) == 3 && (args[0] == "release-run" || args[0] == "retire-run") {
 		var birth fsfilter.RunBirth
@@ -140,7 +150,7 @@ func sharedCommand(args []string) (bool, error) {
 		if current != birth.BootID {
 			return true, nil
 		}
-		return true, execKernel(append([]string{"release-controller"}, controllerArguments(birth, links)...)...)
+		return true, retireKernel(fsfilter.ControllerSlice(birth.Root), append([]string{"release-controller"}, controllerArguments(birth, links)...)...)
 	}
 	return false, nil
 }

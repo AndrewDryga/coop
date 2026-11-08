@@ -144,6 +144,13 @@ func filesystemVolumeProfile(root, private string) (fsfilter.Profile, error) {
 			return fsfilter.Profile{}, err
 		}
 	}
+	fold, err := filesystemMayFold(private)
+	if err != nil {
+		return fsfilter.Profile{}, err
+	}
+	if fold {
+		profile.Fold, profile.Normalize = true, true
+	}
 	return profile, nil
 }
 

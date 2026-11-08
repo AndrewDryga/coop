@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Linux boxes now hide secrets you create after they start.** On Linux, Coop used mount protection,
+  which covers secret files only when a box starts, so a `late.pem` or `.env.local` saved on the host
+  afterwards was readable in a running box. ext4 and xfs projects now get the same kernel (eBPF)
+  protection as Mac projects when Docker uses cgroup v2 and the kernel runs the BPF security module, as
+  Ubuntu 24.04 does by default. With Docker's usual `systemd` cgroup driver, Coop asks systemd over the
+  system bus for the cgroups that hold its boxes. `coop doctor` names the reason when a host keeps mount
+  protection. The kernel filter also loads on newer kernels (7.0), whose checker refused two of its
+  programs.
+
 - **Loop workers run their task's checks, not the whole gate for every task.** The worker prompt said
   "run the gate, then commit", so each small task ran the full repository gate. Workers now run what
   the project requires for their task; a broad gate the project defers to the end runs once, when the

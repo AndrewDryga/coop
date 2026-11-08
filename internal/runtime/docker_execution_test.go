@@ -253,3 +253,42 @@ func TestFilesystemCgroupParentIncludesNestedConsumers(t *testing.T) {
 		t.Fatal("matched sibling prefix", err)
 	}
 }
+
+// Docker's systemd driver takes only a slice as the parent, and a slice nests by name:
+// A-B.slice and A-B-x.slice are inside A.slice.
+func TestFilesystemCgroupParentIncludesNestedSlices(t *testing.T) {
+	root := "coop_fs_controller_" + strings.Repeat("a", 32) + ".slice"
+	run := strings.TrimSuffix(root, ".slice") + "-coop_fs_" + strings.Repeat("b", 32) + ".slice"
+	for _, parent := range []string{root, run} {
+		if !validFilesystemCgroupParent(parent) {
+			t.Fatalf("rejected owned slice %q", parent)
+		}
+	}
+	for _, parent := range []string{
+		strings.TrimSuffix(run, ".slice") + "-extra.slice",                                    // deeper than an admission
+		"coop-fs-controller-" + strings.Repeat("a", 32) + ".slice",                            // dashes would nest
+		"coop_fs_" + strings.Repeat("b", 32) + ".slice",                                       // an admission outside a controller
+		strings.TrimSuffix(root, ".slice") + "-coop-fs-" + strings.Repeat("b", 32) + ".slice", // nests four deep
+		"/" + root, root + "/x", "system.slice", "coop_fs_controller_short.slice",
+	} {
+		if validFilesystemCgroupParent(parent) {
+			t.Fatalf("accepted invalid slice %q", parent)
+		}
+	}
+	id := strings.Repeat("d", 64)
+	for _, observed := range []string{run, strings.TrimSuffix(run, ".slice") + "-nested.slice"} {
+		data := []byte(fmt.Sprintf(`{"ID":%q,"Parent":%q}`, id, observed))
+		if checkCgroupParents(data, []string{id}, root) == nil {
+			t.Fatalf("released controller slice containing %s", observed)
+		}
+		if checkCgroupParents(data, []string{id}, run) == nil {
+			t.Fatalf("released admission slice containing %s", observed)
+		}
+	}
+	for _, sibling := range []string{strings.TrimSuffix(run, ".slice") + "0.slice", strings.TrimSuffix(root, ".slice") + "0.slice", "system.slice"} {
+		data := []byte(fmt.Sprintf(`{"ID":%q,"Parent":%q}`, id, sibling))
+		if err := checkCgroupParents(data, []string{id}, run); err != nil {
+			t.Fatalf("matched sibling %s: %v", sibling, err)
+		}
+	}
+}

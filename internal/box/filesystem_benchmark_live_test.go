@@ -239,7 +239,7 @@ for n in range(256):
 write=time.monotonic()-start
 for p in ['nested/a/b/c/d/e/f/g/secret-0000.pem','NESTED/A/B/C/D/E/F/G/SECRET-0000.PEM']:
  try: open(p).read()
- except OSError as e: assert e.errno==errno.EPERM,(p,e)
+ except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not os.path.lexists(p),(p,e)
  else: raise AssertionError('secret exposed')
 print(json.dumps(dict(read_seconds=read,write_seconds=write,reads=len(list(root.iterdir()))*10,writes=256,denials=2)))
 `

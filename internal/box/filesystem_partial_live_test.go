@@ -42,7 +42,7 @@ func partialFilesystemImage(t *testing.T, docker *runtime.Docker) string {
             if(getenv("COOP_TEST_SUBSTITUTED_PIN")){
                 if(unlink(link_paths[0])||bpf_obj_pin(map_fd("scope"),link_paths[0]))return -1;
             }
-            int marker=open("/state/partial-ready",O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC,0600);
+            int marker=open("/state/partial-ready",O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC,0644);
             if(marker<0||close(marker))return -1;
             for(;;)pause();
         }`

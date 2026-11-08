@@ -1,15 +1,38 @@
 ---
 name: filesystem-enforcement
-description: APFS Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody
+description: APFS (Mac) and ext4/xfs (Linux) Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody; systemd slices under Docker's systemd cgroup driver
 subsystem: box
-sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go]
+sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go, internal/box/filesystem_cgroups.go, internal/box/filesystem_profile_linux.go, internal/systemdbus/systemdbus.go, cmd/coop-fs/slices_linux.go]
 updated: 2026-11-07
 ---
 
 ## Selection and policy
 
-Agent and final service launch share the filesystem admission. Automatic selection initially
-requires host APFS, Docker cgroup v2 with cgroupfs and the expected BTF hook signatures. Since
+Agent and final service launch share the filesystem admission. Automatic selection requires host
+APFS (Mac) or ext4/xfs (native Linux; `filesystemProfileCandidate`), Docker cgroup v2 with the
+cgroupfs or systemd driver and no rootless/userns (`filesystemCgroups`), the BPF LSM in the host's
+`/sys/kernel/security/lsm` on Linux (`filesystemKernelReady`), and the expected BTF hook signatures.
+A Linux volume that supports ext4 casefolding (probed by setting FS_CASEFOLD_FL on a scratch
+folder) is profiled as folding and normalizing, since an agent could casefold a folder it makes.
+
+**systemd slices (2026-11-07, owner decision: create the slices through systemd).** Docker's
+systemd driver accepts only a slice as `--cgroup-parent`, and systemd owns every slice. The
+controller record then carries `CgroupDriver: "systemd"`; the controller is the top-level slice
+`coop_fs_controller_<hex>.slice` and each admission `coop_fs_controller_<hex>-coop_fs_<hex>.slice`
+inside it (dashes nest, so names use underscores; `fsfilter.ControllerSlice`/`AdmissionSlice`). The
+helper (`COOP_FS_CGROUPS=systemd`, the system bus socket mounted, `apparmor=unconfined` because
+Docker's default AppArmor profile refuses every system-bus message) starts each transient slice
+with `StartTransientUnit` before the loader attaches, and waits for its cgroup. Retirement runs the
+loader as a child: its `rmdir` proves the cgroup empty (EBUSY otherwise), and only then
+`StopUnit` removes the unit, because stopping a slice stops every unit inside it. Descendant
+checks treat `A-B-x.slice` as inside `A-B.slice`. systemd hosts keep the hierarchy root 0555, and
+projects can hold private folders, so the helper also has DAC_OVERRIDE. Kernel 7.0's verifier
+refuses a context pointer used as a map key or moved before a store; `release_owner` copies its
+key to the stack and `hierarchy_root` is fully unrolled. On native Linux the image layers share
+the project's disk, so a dead owner denies the box's own programs too (fail closed). ext4 and xfs
+reuse inode numbers (APFS does not), which the (ino, dev) object keys could confuse; the owner keeps
+every labelled object open (`pins` in loader.c), so no labelled number is freed while the policy
+lives, and a dead owner denies everything. Since
 2026-11-03 (owner decision) launches no longer prove the actual share: a per-launch probe folder
 in the project showed up in editors and cost a container start. `coop doctor` runs the
 kernel-only checks instead (below). Unsupported runtimes keep spelling mounts and existing case-exposure
@@ -256,6 +279,8 @@ that branch (`rt.Name != "docker"` skips admission), so `TestFilesystemBoxRunNam
 is its proof; a missing stop line on an offline or open run points here first.
 
 ## Changelog
+
+- 2026-11-07 — native Linux: ext4/xfs candidates, casefold probe, BPF LSM check, systemd-slice cgroups through D-Bus, kernel 7.0 verifier fixes, slice-aware descendant checks; live suite adapted to non-folding volumes and owner-death whole-disk denial; all 20 live tests and the late-secret acceptance pass on Ubuntu 24.04 (kernel 7.0, Docker 29, systemd driver).
 - 2026-11-07 — every `coop acp` close warned "could not remove this editor session's services ...
   filesystem controller custody retained at ...: Docker daemon observation failed". The cause was a
   controller record bound to a QA proxy socket that no longer existed. `RecoverFilesystemAdmissions`

@@ -118,7 +118,7 @@ func filesystemNormalizerAdmission(t *testing.T, docker *runtime.Docker, c *file
 	if err = filesystemJSON(filepath.Join(dir, "policy.json"), fsfilter.Admission{Roots: policies}); err != nil {
 		t.Fatal(err)
 	}
-	options := a.helperOptions(false)
+	options := a.helperOptions(false, a.record.Controller.systemd())
 	for i, root := range roots {
 		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 	}
@@ -224,7 +224,9 @@ func TestFilesystemNormalizerLifetimeRuntime(t *testing.T) {
 							}
 							time.Sleep(10 * time.Millisecond)
 						}
-						filesystemNormalizerExec(t, a, ref, "for p in ['/root1/alpha','/root1/beta']:\n for op in [open,os.stat]: deny(p,op)")
+						if err := deniedAfterOwnerDeath(t.Context(), docker, ref, filesystemNormalizerPrelude+"for p in ['/root1/alpha','/root1/beta']:\n for op in [open,os.stat]: deny(p,op)"); err != nil {
+							t.Fatal(err)
+						}
 						var transient []filesystemKernelIdentity
 						for _, id := range ids {
 							if id.Name == "replacement" || id.Name == "normalize_name" {
@@ -302,10 +304,11 @@ func filesystemNormalizerPolicy(secret string) fsfilter.Policy {
 	return fsfilter.Policy{Profile: fsfilter.Profile{Fold: true, Normalize: true}, Entries: []fsfilter.Entry{{Path: secret, Flags: fsfilter.Secret}}}
 }
 
+const filesystemNormalizerPrelude = "import errno,os\ndef deny(p,op):\n try: op(p)\n except OSError as e: assert e.errno==errno.EPERM,(p,e)\n else: raise AssertionError('allowed '+p)\n"
+
 func filesystemNormalizerExec(t *testing.T, a *filesystemAdmission, ref runtime.DockerRef, script string) {
 	t.Helper()
-	prelude := "import errno,os\ndef deny(p,op):\n try: op(p)\n except OSError as e: assert e.errno==errno.EPERM,(p,e)\n else: raise AssertionError('allowed '+p)\n"
-	if _, err := a.docker.ExecRead(t.Context(), ref, 4096, "python3", "-c", prelude+script); err != nil {
+	if _, err := a.docker.ExecRead(t.Context(), ref, 4096, "python3", "-c", filesystemNormalizerPrelude+script); err != nil {
 		t.Fatal(err)
 	}
 }

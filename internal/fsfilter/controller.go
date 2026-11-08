@@ -3,6 +3,7 @@ package fsfilter
 import (
 	"errors"
 	"regexp"
+	"strings"
 )
 
 type KernelObject struct {
@@ -46,6 +47,29 @@ type RunBirth struct {
 var controllerName = regexp.MustCompile(`^coop-fs-controller-[0-9a-f]{32}$`)
 
 func ValidController(name string) bool { return controllerName.MatchString(name) }
+
+// SystemdCgroups is the helper environment value that selects systemd slices.
+// Docker's systemd cgroup driver accepts only a slice as a container's parent,
+// so there the controller and each admission are slices systemd creates, named
+// so the admission's slice sits directly inside the controller's.
+const SystemdCgroups = "COOP_FS_CGROUPS=systemd"
+
+// ControllerSlice is the controller's top-level slice. A dash in a slice name
+// means nesting, so the name's dashes become underscores.
+func ControllerSlice(controller string) string { return sliceStem(controller) + ".slice" }
+
+// AdmissionSlice is an admission's slice inside its controller's slice; it is
+// also the --cgroup-parent of the admission's boxes.
+func AdmissionSlice(controller, parent string) string {
+	return sliceStem(controller) + "-" + sliceStem(parent) + ".slice"
+}
+
+// AdmissionSlicePath is the admission slice's cgroup path below the hierarchy root.
+func AdmissionSlicePath(controller, parent string) string {
+	return ControllerSlice(controller) + "/" + AdmissionSlice(controller, parent)
+}
+
+func sliceStem(name string) string { return strings.ReplaceAll(name, "-", "_") }
 
 func (b ControllerBirth) Validate() error {
 	if b.Version != 1 || !ValidController(b.Root) || !ValidBootID(b.BootID) || b.CgroupInode == 0 || b.CgroupDevice == 0 || b.PinDirectoryInode == 0 || b.PinDirectoryDevice == 0 {

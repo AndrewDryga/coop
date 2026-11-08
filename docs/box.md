@@ -21,10 +21,13 @@ co:op hides files and directories whose names look like secrets, including `.env
 files such as `secrets.env`. Source and docs like `secrets.go` and `secrets.md` stay readable, and
 templates (`*.example`, `*.sample`, `*.template`) stay visible.
 
-co:op protects these files in one of two ways. On supported Mac Docker runtimes, APFS projects
-automatically get eBPF protection, enforced in the Linux VM, when the Docker VM supports its BPF
-hooks and uses cgroup v2 with the `cgroupfs` driver. Other filesystems, unsupported VM kernels and
-incompatible container options use mount protection.
+co:op protects these files in one of two ways. Projects get eBPF protection automatically on
+supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, and ext4 or xfs
+projects on Linux. Docker must use cgroup v2 with the `cgroupfs` or `systemd` cgroup driver, and
+the kernel must run the BPF security module, as Ubuntu 24.04 does by default. With the `systemd`
+driver, co:op asks systemd over the system bus for the cgroups that hold its boxes. Other
+filesystems, rootless Docker, kernels without the BPF module and incompatible container options use
+mount protection; `coop doctor` names the reason.
 
 With eBPF protection, the box can't read or change a secret, including through another letter
 case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
@@ -123,7 +126,8 @@ every file name the box opens against the built-in list. In practice:
   replaced, start the service through co:op again so that it can read the new file.
 
 A separate helper runs the kernel enforcement, and the agent gets no BPF privileges. If the helper
-exits, access to the protected share is denied until co:op removes that agent or service. Stopped
+exits, access to the protected share is denied until co:op removes that agent or service. On Linux
+that covers the project's whole disk, so the box usually can't run its own programs either. Stopped
 service containers keep their protection for a later restart. After a VM reboot, co:op's guard runs
 before an image's start command and its healthchecks, and refuses to run image code under the old
 protection. Start the service through co:op to get fresh protection.

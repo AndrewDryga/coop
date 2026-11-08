@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fsfilter"
 	"github.com/AndrewDryga/coop/internal/runtime"
+	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -96,7 +98,7 @@ func TestFilesystemServiceRuntime(t *testing.T) {
 assert open('public').read()=='public fixture'
 for p in ['.env','.ENV','LONG-SECRET-FIXTURE.PEM']:
  try: open(p).read()
- except OSError as e: assert e.errno==errno.EPERM,(p,e)
+ except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not __import__('os').path.lexists(p),(p,e)
  else: raise AssertionError(p+' readable')
 open('service-proof','w').write('guarded service works')
 time.sleep(120)`
@@ -166,7 +168,7 @@ time.sleep(120)`
 	if _, err := docker.ExecRead(ctx, service, 1024, "python3", "-c", `import errno
 assert open('/workspace/public').read()=='public fixture'
 try: open('/workspace/.ENV').read()
-except OSError as e: assert e.errno==errno.EPERM
+except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not __import__('os').path.lexists('/workspace/.ENV')
 else: raise AssertionError('restart exposed secret')`); err != nil {
 		t.Fatal("restart proof", err)
 	}
@@ -174,7 +176,7 @@ else: raise AssertionError('restart exposed secret')`); err != nil {
 	if err := docker.StopContainer(ctx, record.Helper, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := docker.ExecRead(ctx, service, 1024, "python3", "-c", `import errno
+	if err := deniedAfterOwnerDeath(ctx, docker, service, `import errno
 for p in ['/workspace/public','/workspace/.env']:
  try: open(p).read()
  except OSError as e: assert e.errno==errno.EPERM,(p,e)
@@ -264,9 +266,10 @@ func TestFilesystemServiceGrantsRuntime(t *testing.T) {
 		script := `import errno,sys
 for p in ['/workspace/.env','/workspace/.ENV']:
  try: open(p).read()
- except OSError as e: assert e.errno==errno.EPERM,(p,e)
+ except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not __import__('os').path.lexists(p),(p,e)
  else: raise AssertionError(p+' exposed')
 for p in ['/workspace/tls.key','/workspace/TLS.KEY']:
+ if not __import__('os').path.lexists(p): continue
  assert open(p).read()=='inert granted fixture'
  assert __import__('os').stat(p).st_size==len('inert granted fixture')
 if sys.argv[1]=='granted':
@@ -304,12 +307,14 @@ func TestFilesystemBoxRunRuntime(t *testing.T) {
 	defer cancel()
 	var output bytes.Buffer
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: image, Egress: "none", NoNewPrivileges: true, Memory: "256m", Pids: "64", CPUs: "1"}
+	// A hidden file Git does not track reads as an empty cover; another spelling is denied, or
+	// absent on a volume that does not fold case. Either way its content never shows.
 	code, err := Run(cfg, runtime.Runtime{Name: "docker"}, RunSpec{Ctx: ctx, Repo: repo, Image: image, Workdir: "/workspace", Batch: true, Quiet: true, Stdout: &output, Stderr: &output, Cmd: []string{"python3", "-c", `import errno,os
 assert open('public').read()=='public fixture'
 for p in ['.env','.ENV']:
- try: open(p).read()
- except OSError as e: assert e.errno==errno.EPERM,(p,e)
- else: raise AssertionError(p+' readable')
+ try: data=open(p).read()
+ except OSError as e: assert e.errno in (errno.EPERM,errno.ENOENT),(p,e)
+ else: assert data!='inert fixture',p+' readable'
 open('edited','w').write('works')
 os.link('public','public-link')
 assert open('public-link').read()=='public fixture'
@@ -321,6 +326,67 @@ print('guarded box works')`}})
 		t.Fatalf("no workload proof: %s", output.String())
 	}
 	t.Log(output.String())
+}
+
+// A secret made on the host after the box started is denied by name at open time, which mount
+// covers laid once at start cannot do; a protected folder cannot be renamed away either. Linux QA
+// found such files readable on native Linux, where only mount protection was used.
+func TestFilesystemLateSecretsRuntime(t *testing.T) {
+	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
+	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires an explicit installed client image and local Docker")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(repo, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "keys"), 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "keys", "server.pem"), []byte("inert key"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	late := []string{"late.pem", ".env.late", "id_rsa_late", "newdir/x.pem"}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(filepath.Join(repo, "ready")); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		for _, name := range append(late, "public-late") {
+			path := filepath.Join(repo, name)
+			_ = os.MkdirAll(filepath.Dir(path), 0777)
+			_ = os.WriteFile(path, []byte("inert late secret"), 0644)
+		}
+		_ = os.WriteFile(filepath.Join(repo, "go"), nil, 0644)
+	}()
+	var output bytes.Buffer
+	var report FilesystemReport
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", BaseImage: image, Egress: "none", NoNewPrivileges: true, Memory: "256m", Pids: "64", CPUs: "1"}
+	code, err := Run(cfg, runtime.Runtime{Name: "docker"}, RunSpec{Ctx: ctx, Repo: repo, Image: image, Workdir: "/workspace", Batch: true, Quiet: true, Stdout: &output, Stderr: &output, OnFilesystemReport: func(r FilesystemReport) { report = r }, Cmd: []string{"python3", "-c", `import errno,os,time
+open('ready','w').close()
+while not os.path.exists('go'): time.sleep(.02)
+for p in ['` + strings.Join(late, "','") + `']:
+ try: open(p).read()
+ except OSError as e: assert e.errno==errno.EPERM,(p,e)
+ else: raise AssertionError(p+' readable')
+assert open('public-late').read()=='inert late secret'
+try: os.rename('keys','moved')
+except OSError as e: assert e.errno==errno.EPERM,('rename',e)
+else: raise AssertionError('protected folder renamed')
+print('late secrets denied')`}})
+	if report.Backend != "bpf" {
+		t.Fatalf("launch used %q protection: %s", report.Backend, report.Reason)
+	}
+	if code != 0 || err != nil || !bytes.Contains(output.Bytes(), []byte("late secrets denied")) {
+		t.Fatalf("run code %d: %v\n%s", code, err, output.String())
+	}
 }
 
 // Coop removes the box of an open or offline run on kernel filesystem protection itself, so such a
@@ -564,7 +630,7 @@ func TestFilesystemMixedServicesRuntime(t *testing.T) {
 		if _, err := docker.ExecRead(t.Context(), consumer(r), 1024, "python3", "-c", `import errno
 assert open('/workspace/public').read()=='public fixture'
 try: open('/workspace/.ENV').read()
-except OSError as e: assert e.errno==errno.EPERM
+except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not __import__('os').path.lexists('/workspace/.ENV')
 else: raise AssertionError('secret exposed')`); err != nil {
 			t.Fatal(err)
 		}
@@ -695,7 +761,7 @@ waitReady:
 	}
 	output, err := docker.ExecRead(t.Context(), consumer, 1024, "python3", "-c", `import errno
 try: open('/workspace/.ENV').read()
-except OSError as e: assert e.errno==errno.EPERM,e
+except OSError as e: assert e.errno==errno.EPERM or e.errno==errno.ENOENT and not __import__('os').path.lexists('/workspace/.ENV'),e
 else: raise AssertionError('secret readable after host crash')`)
 	if err != nil {
 		t.Fatalf("protection after host crash: %v %s", err, output)
@@ -719,7 +785,10 @@ func TestFilesystemPolicyOperationsRuntime(t *testing.T) {
 	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
 		t.Skip("requires explicit local Docker qualification")
 	}
-	repo, err := filepath.EvalSymlinks(t.TempDir())
+	// Every fixture is committed: Git-tracked hidden files get no empty cover, so the kernel
+	// policy alone answers each workflow below.
+	repo, git := gitrepo.New(t)
+	repo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,6 +808,8 @@ func TestFilesystemPolicyOperationsRuntime(t *testing.T) {
 	if err := os.Symlink("public", filepath.Join(repo, "hidden-link.pem")); err != nil {
 		t.Fatal(err)
 	}
+	git("add", "-A")
+	git("commit", "-qm", "fixtures")
 	script, err := os.ReadFile("testdata/filesystem_workflows.py")
 	if err != nil {
 		t.Fatal(err)
@@ -750,6 +821,17 @@ func TestFilesystemPolicyOperationsRuntime(t *testing.T) {
 		t.Fatalf("policy workflows: %d %v\n%s", code, err, output.String())
 	}
 	t.Log(output.String())
+}
+
+// deniedAfterOwnerDeath runs a denial probe in a box whose protection lost its owner. The probe
+// proves EPERM, or the box cannot start it at all: on native Linux the image's layers share the
+// protected disk, and a dead owner denies that whole disk, the image's own python3 included.
+func deniedAfterOwnerDeath(ctx context.Context, docker *runtime.Docker, ref runtime.DockerRef, script string) error {
+	out, err := exec.CommandContext(ctx, "docker", "--host", docker.Endpoint(), "exec", ref.ID, "python3", "-c", script).CombinedOutput()
+	if err == nil || goruntime.GOOS == "linux" && bytes.Contains(out, []byte(`exec: "python3": executable file not found`)) {
+		return nil
+	}
+	return fmt.Errorf("%v: %s", err, out)
 }
 
 func TestFilesystemBootGuardRuntime(t *testing.T) {
@@ -850,7 +932,12 @@ func TestFilesystemWarmedPublicAliasesRuntime(t *testing.T) {
 			targets[fmt.Sprintf("%s-%d", role, i)] = target
 		}
 		for _, role := range []string{"secret", "policy", "grant", "public"} {
-			if err := os.WriteFile(filepath.Join(repo, fmt.Sprintf("%s-%d", role, i)), []byte("public"), 0666); err != nil {
+			// Chmod past the umask: on native Linux the box's user 1000 is not the file's owner.
+			name := filepath.Join(repo, fmt.Sprintf("%s-%d", role, i))
+			if err := os.WriteFile(name, []byte("public"), 0666); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(name, 0666); err != nil {
 				t.Fatal(err)
 			}
 		}

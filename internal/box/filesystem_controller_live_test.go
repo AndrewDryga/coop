@@ -137,12 +137,21 @@ func TestFilesystemSharedControllerRuntime(t *testing.T) {
 	}
 	d, g := consumer(denied), consumer(granted)
 	check := func(a *filesystemAdmission, ref runtime.DockerRef, secret, public bool) {
-		script := fmt.Sprintf(`import errno
-for path,allowed in [('/workspace/.ENV',%s),('/workspace/public',%s)]:
+		// .ENV names the secret only where the volume folds case (APFS); elsewhere use .env.
+		script := fmt.Sprintf(`import errno,os
+secret='/workspace/.ENV' if os.path.lexists('/workspace/.ENV') else '/workspace/.env'
+for path,allowed in [(secret,%s),('/workspace/public',%s)]:
  try: open(path).read()
  except OSError as e: assert not allowed and e.errno==errno.EPERM,(path,e)
  else: assert allowed,path
 print('POLICY_OK')`, map[bool]string{true: "True", false: "False"}[secret], map[bool]string{true: "True", false: "False"}[public])
+		if !public {
+			// Nothing is readable once the admission lost its owner.
+			if err := deniedAfterOwnerDeath(ctx, a.docker, ref, script); err != nil {
+				t.Fatalf("policy check: %v", err)
+			}
+			return
+		}
 		out, err := a.docker.ExecRead(ctx, ref, 4096, "python3", "-c", script)
 		if err != nil || !bytes.Contains(out, []byte("POLICY_OK")) {
 			t.Fatalf("policy check: %v %s", err, out)
@@ -186,7 +195,7 @@ print('POLICY_OK')`, map[bool]string{true: "True", false: "False"}[secret], map[
 		t.Fatal(err)
 	}
 	unknown.ID, err = fresh.docker.CreateContainer(ctx, runtime.DockerCreate{Ref: unknown, Image: client,
-		Options: []string{"--network", "none", "--cgroup-parent", fresh.record.cgroupParent() + "/nested", "--entrypoint", "true"}})
+		Options: []string{"--network", "none", "--cgroup-parent", nestedCgroupParent(fresh.record), "--entrypoint", "true"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +255,11 @@ func fixtureFilesystemController(t *testing.T, docker *runtime.Docker, image str
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &filesystemController{dir: dir, record: filesystemControllerRecord{Version: 1, Name: name, Directory: filepath.Base(dir), Endpoint: docker.Endpoint(), DaemonID: docker.Info().ID, Image: image, Container: filesystemRef(name, "controller")}}
+	driver, err := filesystemCgroups(docker.Info())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &filesystemController{dir: dir, record: filesystemControllerRecord{Version: 1, Name: name, Directory: filepath.Base(dir), Endpoint: docker.Endpoint(), DaemonID: docker.Info().ID, Image: image, Container: filesystemRef(name, "controller"), CgroupDriver: driver}}
 	c.lease, err = filesystemControllerLock(t.Context(), filepath.Join(dir, "lease"), false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +268,7 @@ func fixtureFilesystemController(t *testing.T, docker *runtime.Docker, image str
 	if err = c.persist(); err != nil {
 		t.Fatal(err)
 	}
-	opts := (&filesystemAdmission{dir: dir}).helperOptions(false)
+	opts := (&filesystemAdmission{dir: dir}).helperOptions(false, c.record.systemd())
 	for _, e := range env {
 		opts = append(opts, "-e", e)
 	}
@@ -378,4 +391,12 @@ func TestFilesystemConcurrentEnrollmentRuntime(t *testing.T) {
 			t.Error("concurrent enrollment selected different live controllers")
 		}
 	}
+}
+
+// nestedCgroupParent names a cgroup inside an admission's, in the form its Docker driver takes.
+func nestedCgroupParent(r filesystemRecord) string {
+	if parent, ok := strings.CutSuffix(r.cgroupParent(), ".slice"); ok {
+		return parent + "-nested.slice"
+	}
+	return r.cgroupParent() + "/nested"
 }

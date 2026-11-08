@@ -117,8 +117,8 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 			docker.Close()
 		}
 	}()
-	if docker.Info().CgroupDriver != "cgroupfs" || docker.Info().CgroupVersion != "2" {
-		reason = "Kernel filesystem protection requires Docker cgroupfs with cgroup v2"
+	if _, err := filesystemCgroups(docker.Info()); err != nil {
+		reason = err.Error()
 		return nil, nil
 	}
 	image, _, err := docker.Image(ctx, spec.Image)

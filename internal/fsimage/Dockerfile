@@ -12,7 +12,7 @@ RUN rm -f /etc/apt/sources.list.d/* \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state \
+RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state /out/run/dbus \
  && chmod 1777 /out/tmp \
  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs \
  && /out/usr/local/bin/coop-fs unicode-table /out/usr/share/coop-fs/unicode.bin \

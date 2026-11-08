@@ -302,7 +302,7 @@ func prepareServiceFilesystemStart(ctx context.Context, rt runtime.Runtime, repo
 		return fallback()
 	}
 	defer docker.Close()
-	if docker.Info().CgroupVersion != "2" || docker.Info().CgroupDriver != "cgroupfs" {
+	if _, err := filesystemCgroups(docker.Info()); err != nil {
 		return fallback()
 	}
 	doc, err := resolvedFilesystemServices(ctx, rt, args, selected)
