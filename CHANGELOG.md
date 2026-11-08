@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 13.1.0
 
 - **Box clients carry patched libraries.** Claude's editor adapter (`claude-agent-acp`) moves from
