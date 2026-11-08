@@ -4,8 +4,6 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-## 13.1.0
-
 - **Each project's tools and downloads are its own.** Every box used to share one tools volume
   (`~/.asdf`) and one download cache (`~/.cache`), so one project's box could change the tools or
   modules the next project's box ran. A repo with a `.tool-versions` and no `.agent/Dockerfile` now
