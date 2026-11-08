@@ -26,8 +26,8 @@ supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, an
 projects on Linux. Docker must use cgroup v2 with the `cgroupfs` or `systemd` cgroup driver, and
 the kernel must run the BPF security module, as Ubuntu 24.04 does by default. With the `systemd`
 driver, co:op asks systemd over the system bus for the cgroups that hold its boxes. Other
-filesystems, rootless Docker, kernels without the BPF module and incompatible container options use
-mount protection; `coop doctor` names the reason.
+filesystems, rootless or SELinux-enabled Docker, kernels without the BPF module and incompatible
+container options use mount protection; `coop doctor` names the reason.
 
 With eBPF protection, the box can't read or change a secret, including through another letter
 case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
