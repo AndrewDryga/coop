@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Session workers recover safely after a Docker-volume copy or restart.** A copied repository
+  cache whose receipt names old inodes is now kept aside and rebuilt from its authorized source, and a
+  copied read-only primary workspace is quarantined at startup with its files and history intact.
+  An unused prepared session whose warm runtime can't be checked after a restart is quarantined too.
+  A checkpoint that finds a credential in newly exported content now refuses with an explanation.
+
 - **Linux boxes now hide secrets you create after they start.** On Linux, Coop used mount protection,
   which covers secret files only when a box starts, so a `late.pem` or `.env.local` saved on the host
   afterwards was readable in a running box. ext4 and xfs projects now get the same kernel (eBPF)
