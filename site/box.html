@@ -323,25 +323,26 @@ moving the file does. The exception applies only to this check. Fork merges, che
 session redaction still check every finding.</p>
 <p>Check your sandbox setup with <a href="https://coop.dryga.com/docs.html#doctor"><code>coop doctor</code></a>.</p>
 </section><section class="doc-section reference-section" id="toolchain-tool-versions"><h2>Toolchain: .tool-versions</h2>
-<p>On an open-network run, the base box installs the versions listed in your <code>.tool-versions</code> file
-using asdf and caches them in a shared volume. It looks for the file from the working directory
-upwards, then falls back to <code>~/.tool-versions</code>. A repo with <code>.tool-versions</code> needs no
-<code>.agent/Dockerfile</code> or other setup for this:</p>
+<p>A repo with a <code>.tool-versions</code> file at its root and no <code>.agent/Dockerfile</code> gets its tools built
+into an image of their own: co:op&#39;s box plus the versions the file lists, installed with asdf.
+Every box of the project uses that image, and no box can change it. An open-network run builds it
+when it is missing, so a repo with <code>.tool-versions</code> needs no other setup:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Toolchain: .tool-versions code example" tabindex="0"><code class="language-bash">cd ~/code/phoenix-app       # has a .tool-versions
-coop claude --egress open   # provisions elixir/erlang/node/… from it, then runs the agent
+coop claude --egress open   # builds elixir/erlang/node/… into the project&#39;s image, then runs the agent
 </code></pre></div>
-<p>The first install of a new toolchain can be slow (Erlang compiles, for example). After that it&#39;s
-reused across runs and repos.</p>
-<p>Set <code>COOP_NO_ASDF=1</code> in <code>agents/env</code> to skip installing tools from <code>.tool-versions</code>. co:op still
-repairs an outdated cached Node shim when needed to keep the agent CLIs running.</p>
-<p>Installing tools at startup works only with open networking. A filtered run, the default, uses an
-image that includes asdf but puts no asdf shims on <code>PATH</code> and installs nothing when the box starts.
-Build your toolchain into an <code>.agent/Dockerfile</code> instead:</p>
+<p>co:op reads only the <code>.tool-versions</code> at the repository root. The first build of a new toolchain
+can be slow (Erlang compiles, for example). Later runs reuse the image, and projects that pin the
+same versions share it. Changing <code>.tool-versions</code> builds a new image on the next open run. A fork
+runs with its project&#39;s tools, so a pin a fork changes takes effect after it merges.</p>
+<p>Filtered and offline runs never build by themselves. With filtered networking, the default, the
+box uses co:op&#39;s locked image without your tools, so build your toolchain into an <code>.agent/Dockerfile</code>
+instead:</p>
 <ul>
 <li><code>coop init</code> writes one when it finds a <code>.tool-versions</code>.</li>
 <li><code>coop init --stack asdf</code> writes one later.</li>
 <li><code>coop build</code> builds it.</li>
 </ul>
+<p>An offline run uses the tools image once <code>coop build</code> has built it.</p>
 <p>The default box has no Go, Terraform, Elixir or Rust. When <code>coop init</code> finds one of these
 languages in a project that has no <code>.agent/Dockerfile</code>, for example Go from a <code>go.mod</code>, it prints
 the commands that pin it in <code>.tool-versions</code> and build the project&#39;s box. Until then the commit
@@ -540,9 +541,11 @@ from the host is never deleted.</p>
 you removed, and <code>coop down</code> also stops those services. Each workspace gets a Compose project name
 derived from its path, so repositories with the same folder name stay separate.</p>
 <p>Agents can change data in services they can reach, so use disposable development databases.</p>
-<p>The shared <code>coop-cache</code> volume at <code>~/.cache</code> keeps downloads between runs. Claude&#39;s MCP logs
-at <code>~/.cache/claude-cli-nodejs</code> are kept separately: each run starts with an empty log folder,
-so one project&#39;s logs cannot enter another project&#39;s box.</p>
+<p>Each project&#39;s <code>~/.cache</code> is a volume of its own that keeps downloads between runs, so one
+project&#39;s box cannot change the modules another project&#39;s box uses. Forks share their project&#39;s
+cache; isolated forks share one of their own. These volumes are named <code>coop-cache-&lt;project&gt;-&lt;id&gt;</code>;
+remove one with <code>docker volume rm</code> when you no longer need the project. Claude&#39;s MCP logs at
+<code>~/.cache/claude-cli-nodejs</code> are kept separately: each run starts with an empty log folder.</p>
 <h3 id="volumes-from-outside-the-project">Volumes from outside the project</h3>
 <p>An <code>external: true</code> or custom-named volume may contain another project&#39;s data. When you run
 <code>coop up</code> in a terminal, it shows the actual Docker volume name, which services will use it and

@@ -427,7 +427,7 @@ func TestParseRuntimeRejectsWorkdirTraversalAndUnsafeMountPolicy(t *testing.T) {
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/etc/fixture", "-w", "/workspace", "fixture-image", "future-provider"},
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/home/node/.future-provider/config", "-w", "/workspace", "fixture-image", "future-provider"},
 		{"run", "-v", repo + ":/workspace", "-v", state + ":/home/node/.future-provider/config:ro", "-w", "/workspace", "fixture-image", "future-provider"},
-		{"run", "-v", repo + ":/workspace", "-v", cacheVolume("coop-cache") + ":/home/node/.cache:ro", "-w", "/workspace", "fixture-image", "future-provider"},
+		{"run", "-v", repo + ":/workspace", "-v", cacheVolume("coop-cache-repo-12345678") + ":/home/node/.cache:ro", "-w", "/workspace", "fixture-image", "future-provider"},
 	}
 	for _, args := range cases {
 		if _, err := parseRuntime(root, "fixture-image", args); err == nil {

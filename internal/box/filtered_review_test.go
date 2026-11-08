@@ -354,15 +354,15 @@ func TestFilteredDuplicateHardeningCannotCauseFalseRefusal(t *testing.T) {
 
 func TestFilteredNamedVolumesAreAdmittedOnlyAfterExposureInspection(t *testing.T) {
 	cfg := &config.Config{BaseImage: "base", HomeInBox: "/home/node"}
-	spec := RunSpec{Image: "base", Repo: t.TempDir(), Homes: true, Cache: true}
+	spec := RunSpec{Image: "base", Repo: t.TempDir(), Homes: true, Cache: true, cacheVolume: "coop-cache-r-12345678"}
 	options := assembleOptions(cfg, false, spec, nil, "", "", spec.Repo, ttyNone, false, nil, nil, nil, nil, nil, "", "")
 	joined := strings.Join(options, " ")
-	if !strings.Contains(joined, boxAgentIdentity().volume("coop-cache")+":") || !strings.Contains(joined, boxAgentIdentity().volume("coop-asdf")+":") {
+	if !strings.Contains(joined, "coop-cache-r-12345678:") {
 		t.Fatal("ordinary named volumes disappeared from the workload plan", joined)
 	}
 	// A daemon-managed volume has no host path to expose, so it is admitted.
 	f, d := filteredFixture(t)
-	plan := []string{"-v", boxAgentIdentity().volume("coop-cache") + ":/home/node/.cache", "-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf"}
+	plan := []string{"-v", "coop-cache-r-12345678:/home/node/.cache"}
 	if err := f.validateMounts(plan, nil, nil); err != nil {
 		t.Fatal("managed named volume refused", err)
 	}

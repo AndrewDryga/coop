@@ -164,8 +164,9 @@ Git LFS. On a native worker, install <code>git-lfs</code> with your package mana
 <p>Jobs use the worker&#39;s base image (<code>COOP_BASE_IMAGE</code>) unless the controller grants a project
 runtime. That grant can select a project Dockerfile and an isolated Compose test stack. The worker
 builds the toolchain from its private frozen source and gives Work and review the same image.
-Filtered jobs use co:op&#39;s locked client image and refuse custom controller toolchains. A normal-mode
-job also installs the tools listed in the repository&#39;s <code>.tool-versions</code> when its box starts.</p>
+Filtered jobs use co:op&#39;s locked client image and refuse custom controller toolchains. An open-network
+job without a project runtime runs in an image with the tools the repository lists in
+<code>.tool-versions</code>, built once on the worker and reused.</p>
 <p>Before the worker accepts filtered jobs, run
 <a href="networking.html#fleet-workers-and-docker-in-docker"><code>coop net setup</code></a> as the worker&#39;s OS user, using
 the same Docker endpoint and network state directory. This prepares and checks the networking setup.

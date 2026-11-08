@@ -222,7 +222,7 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 		"COPY system/ /", "ENV DISABLE_UPDATES=1 GROK_DISABLE_AUTOUPDATER=1",
 		// The launchers lead PATH, so an asdf shim cannot shadow a qualified client.
 		`PATH="/opt/coop/bin:/home/node/.asdf/shims:${PATH}"`,
-		// ~/.cache pre-created node-owned so the coop-cache volume isn't root-owned.
+		// ~/.cache pre-created node-owned so each project's cache volume isn't root-owned.
 		"chown node:node /home/node/.asdf /home/node/.cache",
 		// agent search/inspect tools, with fd symlinked from Debian's fdfind; shellcheck is a
 		// gate tool (coop's own `make check` lints install.sh) a non-root agent can't apt-get.
@@ -239,21 +239,10 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 		// Login shells source /etc/profile (which resets PATH); a profile.d drop-in re-adds the
 		// launchers and asdf shims so go/ruby/… pinned in .tool-versions resolve there too.
 		`printf 'export PATH="/opt/coop/bin:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`,
-		// The entrypoint repairs a bare `node` when an orphaned asdf nodejs shim (from a
-		// prior repo, persisted in the ~/.asdf volume) shadows the image node in a repo that
-		// doesn't pin nodejs — so the Node agent CLIs always have a working interpreter.
-		"COOP_NO_ASDF skips provisioning, not this repair.",
-		"if ! node --version >/dev/null 2>&1; then",
-		`asdf set --home nodejs "$v"`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("BaseDockerfile missing %q", want)
 		}
-	}
-	skipProvisioning := strings.Index(df, `if [ -z "$coop_skip_asdf" ]; then`)
-	repairNode := strings.Index(df, "if ! node --version >/dev/null 2>&1; then")
-	if skipProvisioning < 0 || repairNode < 0 || repairNode < skipProvisioning {
-		t.Errorf("node repair should run after the COOP_NO_ASDF provisioning branch")
 	}
 }
 
@@ -599,83 +588,16 @@ func TestBuildWithRejectsInvalidProjectBeforeRuntime(t *testing.T) {
 	}
 }
 
-// A box serves one project, so its pins must hold outside the checkout too: emisar's trusted gate
-// failed in the base image when a test's subprocess in a temp dir got "No version is set for
-// command mix". The entry script makes the project's .tool-versions the home default, keeps a
-// home-level file an image already ships, and writes nothing without project pins.
-func TestProvisioningMakesTheProjectPinsTheBoxDefault(t *testing.T) {
-	bin := t.TempDir()
-	for name, body := range map[string]string{
-		"asdf": "#!/bin/sh\nexit 0\n",       // every provisioning step succeeds and does nothing
-		"node": "#!/bin/sh\necho v24.0.0\n", // a working node, so the nodejs repair stays out of it
-	} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
+// Boxes no longer install tools when they start: a project's tools live in its toolchain image,
+// which no box can change. The base keeps asdf and its shims on PATH for the images built on it.
+func TestBaseInstallsNoToolsAtStart(t *testing.T) {
+	df, err := BaseDockerfile("amd64")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range []struct{ name, project, home, want string }{
-		{"project pins become the default", "erlang 29.0.6\nelixir 1.20.4-otp-29\n", "", "erlang 29.0.6\nelixir 1.20.4-otp-29\n"},
-		{"an image's own home pins stay", "elixir 1.20.4-otp-29\n", "elixir 1.19.5-otp-28\n", "elixir 1.19.5-otp-28\n"},
-		{"no project pins writes nothing", "", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home, project := t.TempDir(), t.TempDir()
-			for path, content := range map[string]string{filepath.Join(project, ".tool-versions"): tc.project, filepath.Join(home, ".tool-versions"): tc.home} {
-				if content == "" {
-					continue
-				}
-				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			cmd := exec.Command("sh", "-c", baseProvisioningScript)
-			cmd.Dir = project
-			cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "HOME=" + home, "COOP_QUIET=1"}
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("provisioning script: %v\n%s", err, out)
-			}
-			got, err := os.ReadFile(filepath.Join(home, ".tool-versions"))
-			if tc.want == "" {
-				if !os.IsNotExist(err) {
-					t.Fatalf("home pins without project pins: %q, %v", got, err)
-				}
-				return
-			}
-			if err != nil || string(got) != tc.want {
-				t.Fatalf("home pins = %q, %v; want %q", got, err, tc.want)
-			}
-		})
-	}
-}
-
-// COOP_NO_ASDF takes Coop's on and off words: an off word provisions like unset, an on word skips.
-func TestProvisioningReadsCoopNoAsdfAsAnOnOffSetting(t *testing.T) {
-	bin := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "asdf-ran")
-	for name, body := range map[string]string{
-		"asdf": "#!/bin/sh\necho \"$@\" >> " + marker + "\n[ \"$1\" = current ] && echo 'nodejs ______ No version is set' && exit 1\nexit 0\n",
-		"node": "#!/bin/sh\necho v24.0.0\n",
-	} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for value, provisions := range map[string]bool{
-		"": true, "0": true, "false": true, "No": true, "OFF": true,
-		"1": false, "true": false, "YES": false, "on": false,
-	} {
-		_ = os.Remove(marker)
-		home, project := t.TempDir(), t.TempDir()
-		if err := os.WriteFile(filepath.Join(project, ".tool-versions"), []byte("nodejs 24.0.0\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		cmd := exec.Command("sh", "-c", baseProvisioningScript)
-		cmd.Dir = project
-		cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "HOME=" + home, "COOP_QUIET=1", "COOP_NO_ASDF=" + value}
-		_, _ = cmd.CombinedOutput()
-		_, err := os.Stat(marker)
-		if ran := err == nil; ran != provisions {
-			t.Errorf("COOP_NO_ASDF=%q: asdf ran = %v, want %v", value, ran, provisions)
+	for _, gone := range []string{"asdf install", "asdf plugin add", "COOP_NO_ASDF", "COOP_QUIET", "asdf set --home"} {
+		if strings.Contains(df, gone) {
+			t.Errorf("BaseDockerfile still has %q", gone)
 		}
 	}
 }

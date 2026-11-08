@@ -311,9 +311,9 @@ func TestLaunchesBuildThisCoopsBaseAfterAnUpgrade(t *testing.T) {
 		}, 1},
 		{"a filtered launch", func(a *app) (string, error) { _, img, err := a.resolveLaunchImage(); return img, err }, 0},
 		{"an ACP launch", func(a *app) (string, error) {
-			_, img, err := a.resolveLaunchImage()
+			repo, img, err := a.resolveLaunchImage()
 			if err == nil {
-				err = a.requireLaunchImage(img)
+				err = a.requireLaunchImage(repo, img)
 			}
 			return img, err
 		}, 1},
@@ -343,10 +343,10 @@ func TestEnsureManagedBaseLeavesAStoppedDaemonToTheLaunch(t *testing.T) {
 	stampImage(t, a.cfg, newerBase, "coop v9.0.0-375-gc0660cc\ndef newer\n")
 	var err error
 	got := captureStderr(t, func() {
-		_, img, resolveErr := a.resolveLaunchImage()
+		repo, img, resolveErr := a.resolveLaunchImage()
 		err = resolveErr
 		if err == nil {
-			err = a.requireLaunchImage(img)
+			err = a.requireLaunchImage(repo, img)
 		}
 	})
 	if err == nil || !strings.Contains(err.Error(), "Docker") || strings.Contains(got, "Checking the Coop box") || builds(t, recorder) != 0 {

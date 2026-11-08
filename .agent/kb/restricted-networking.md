@@ -222,8 +222,8 @@ npm shape; Grok 1.0.25 uses the direct checksummed GCS object. A floating instal
 checksum, mismatched platform URL, or two conflicting declarations is not a locked client.
 
 The ordinary base image installs this same closure: `lockedClientParts` renders the client layer
-for both `baseImageDefinition` and `lockedImageDefinition`, so only PATH and the base's asdf
-provisioning differ and every box runs the qualified set. The launchers live in
+for both `baseImageDefinition` and `lockedImageDefinition`, so only PATH (the base puts the asdf
+shims on it) differs and every box runs the qualified set. The launchers live in
 `agents.LauncherDir` (`/opt/coop/bin`), first on PATH in both images, so an asdf shim cannot shadow
 a client. Each adapter's `UpdateControls` ride in the closure too (environment in `ENV`, files under
 `/etc` via `COPY system/ /`), so the closure digest covers them: changing one re-qualifies every

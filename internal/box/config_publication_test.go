@@ -96,7 +96,7 @@ func TestConfigPublicationEntrypoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("/bin/sh", entry, "/bin/sh", "-c", `printf launched; test -z "$COOP_CONFIG_PUBLICATION"`)
-			cmd.Env = append(os.Environ(), "NODE_OPTIONS=", "COOP_NO_ASDF=1", "COOP_CONFIG_PUBLICATION="+string(witness), "COOP_SUPERVISE_DESCENDANTS=", "COOP_FORWARD=")
+			cmd.Env = append(os.Environ(), "NODE_OPTIONS=", "COOP_CONFIG_PUBLICATION="+string(witness), "COOP_SUPERVISE_DESCENDANTS=", "COOP_FORWARD=")
 			if scenario == "stale-first" {
 				preload := filepath.Join(dir, "stale.cjs")
 				if err := os.WriteFile(preload, []byte(stalePublicationPreload), 0o600); err != nil {

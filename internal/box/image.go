@@ -27,7 +27,7 @@ import (
 
 // baseImageDefinition is the shared base image's build context for one platform: Node, the
 // qualified clients — the closure the filtered image installs, from the same embedded lock — and
-// asdf, so the box honors a repo's .tool-versions at runtime with no per-project Dockerfile. It runs
+// asdf, which a project's toolchain image (toolchain_image.go) installs its .tool-versions with. It runs
 // as the non-root `node` user and builds from these embedded files alone, so the base never needs a
 // checkout. The launchers lead PATH, ahead of the asdf shims.
 func baseImageDefinition(platform agents.ClientPlatform) (map[string][]byte, error) {
@@ -36,7 +36,6 @@ func baseImageDefinition(platform agents.ClientPlatform) (map[string][]byte, err
 		return nil, err
 	}
 	parts := lockedClientParts(closure)
-	parts.provision = baseProvisioningScript
 	parts.loginPath = `printf 'export PATH="` + agents.LauncherDir + `:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
 	parts.pathEnv = agents.LauncherDir + `:/home/node/.asdf/shims:${PATH}`
 	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(platform.Architecture, parts))
@@ -53,14 +52,14 @@ func BaseDockerfile(arch string) (string, error) {
 	return string(files["Dockerfile"]), nil
 }
 
-type baseImageParts struct{ files, install, browserDeps, loginPath, provision, pathEnv, scripts string }
+type baseImageParts struct{ files, install, browserDeps, loginPath, pathEnv, scripts string }
 
 func renderBaseDockerfile(arch string, parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell+parts.provision, parts.pathEnv, parts.scripts)
+	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell, parts.pathEnv, parts.scripts)
 }
 
-// asdf comes from a release URL, and both images carry it: the base provisions .tool-versions with
-// it, and a project image built on the filtered client image installs its pins with it. So, like a
+// asdf comes from a release URL, and both images carry it: toolchain and project images built on
+// the base, or on the filtered client image, install their pins with it. So, like a
 // native client (lockedClientParts), its tarball must match the digest pinned for the build's
 // architecture before it is unpacked. A bump moves the version and both digests together: hash each
 // linux tarball of the release and match GitHub's recorded asset digest (the release itself
@@ -91,15 +90,15 @@ const (
 )
 
 // baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
-// qualified clients and process supervision. Its slots carry the client installation, each image's
-// PATH and the base's optional startup provisioning.
+// qualified clients and process supervision. Its slots carry the client installation and each
+// image's PATH.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
 FROM ${NODE_IMAGE}
 
 %s
 
 # Agent CLIs + ACP adapters, plus asdf and the build deps it needs to install or
-# compile toolchains a repo pins in .tool-versions at runtime. A Postgres client,
+# compile toolchains a repo pins in .tool-versions, in the image built on this one. A Postgres client,
 # procps, and inotify-tools come along so the runtime path matches a baked image.
 # ripgrep/fd/jq/tree are the search + inspect tools agents reach for constantly
 # (Debian ships fd as "fdfind", so it's symlinked to "fd"). ShellCheck rides along because a
@@ -112,8 +111,9 @@ FROM ${NODE_IMAGE}
 # running as non-root node, can't apt-get) so the bundled @playwright/mcp server — or any
 # Playwright script — gets a browser that launches; the browser binary itself downloads on
 # first use into the cached ~/.cache volume, and Chromium runs --no-sandbox (the box already
-# IS the sandbox). ~/.asdf and ~/.cache are pre-created node-owned so their named volumes
-# inherit that owner — a fresh volume on a path absent from the image would mount root-owned.
+# IS the sandbox). ~/.asdf and ~/.cache are pre-created node-owned: images built on this one install
+# into ~/.asdf as node, and each project's ~/.cache volume inherits that owner — a fresh volume on
+# a path absent from the image would mount root-owned.
 # A /etc/profile.d drop-in re-adds the asdf shims to PATH for login shells: they source
 # /etc/profile, which resets PATH to the Debian default and would otherwise hide go/ruby/…
 # pinned in .tool-versions (the ENV PATH below only reaches the agent process and non-login
@@ -137,7 +137,7 @@ RUN apt-get update \
  && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache \
  && %s
 
-# Entrypoint: optional toolchain provisioning, then shared process supervision.
+# Entrypoint: shared process supervision.
 COPY <<'ENTRY' /usr/local/bin/coop-entry
 #!/bin/sh
 %s# Sidecar forwarders: for each COOP_FORWARD entry "<hostport>:<service>:<containerport>", listen on
@@ -411,70 +411,19 @@ ENTRYPOINT ["/usr/local/bin/coop-entry"]
 WORKDIR /workspace
 `
 
-const baseProvisioningScript = `if command -v asdf >/dev/null 2>&1; then
-  # COOP_NO_ASDF takes Coop's on and off words in any letter case; unset or an off word provisions.
-  case "$(printf '%s' "${COOP_NO_ASDF:-}" | tr '[:upper:]' '[:lower:]')" in
-    ''|0|false|no|off) coop_skip_asdf= ;;
-    *) coop_skip_asdf=1 ;;
-  esac
-  if [ -z "$coop_skip_asdf" ]; then
-    f=; d=$PWD
-    while :; do [ -f "$d/.tool-versions" ] && { f=$d/.tool-versions; break; }; [ "$d" = / ] && break; d=$(dirname "$d"); done
-    [ -z "$f" ] && [ -f "$HOME/.tool-versions" ] && f=$HOME/.tool-versions
-    if [ -n "$f" ]; then
-      # Only provision (and say so) when a pinned tool is actually missing. Otherwise this
-      # ran on every launch and printed a "provisioning" line with nothing to do — just spam.
-      need=
-      while read -r t v _; do
-        case "$t" in ''|'#'*) continue ;; esac
-        [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/installs/$t/$v" ] || { need=1; break; }
-      done < "$f"
-      if [ -n "$need" ]; then
-        # COOP_QUIET (set by coop acp) provisions silently: ACP's consumer is an editor over
-        # stdio, not a human. Otherwise narrate with one dim line (human output carries no
-        # tool prefix — see internal/ui).
-        log=/dev/stderr
-        if [ -n "$COOP_QUIET" ]; then
-          log=/dev/null
-        else
-          if [ -t 2 ]; then d=$(printf '\033[2m'); r=$(printf '\033[0m'); else d=; r=; fi
-          echo "${d}Provisioning toolchain from $f (first run may compile; cached after)${r}" >&2
-        fi
-        for t in $(awk 'NF && $1 !~ /^#/ {print $1}' "$f"); do
-          asdf plugin list 2>/dev/null | grep -qx "$t" || asdf plugin add "$t" >"$log" 2>&1 || true
-        done
-        asdf install >"$log" 2>&1 || true
-      fi
-      asdf reshim >/dev/null 2>&1 || true
-      # A box serves this one project, so its pins are the box's default too: a process started
-      # outside the checkout (a test's temp dir) otherwise gets "No version is set for command".
-      # An image that ships its own home-level pins keeps them.
-      [ -e "$HOME/.tool-versions" ] || cp "$f" "$HOME/.tool-versions" 2>/dev/null || true
-    fi
-  fi
-  # A bare node must always resolve: MCP servers and the repo's own scripts run it (the
-  # clients' launchers use the image's). A prior repo's
-  # nodejs pin leaves a node shim in the persisted ~/.asdf volume; in a repo that does not
-  # pin nodejs (and with no global) that shim shadows the image node and errors with
-  # "No version is set for command node". COOP_NO_ASDF skips provisioning, not this repair.
-  # If node is broken but asdf has a nodejs installed, set the newest as the global fallback
-  # -- a repo's own .tool-versions still overrides it, so a pinned project node keeps winning.
-  if ! node --version >/dev/null 2>&1; then
-    v=$(asdf list nodejs 2>/dev/null | tr -cd '0-9.\n ' | tr ' ' '\n' | grep . | sort -V | tail -n1)
-    [ -n "$v" ] && asdf set --home nodejs "$v" >/dev/null 2>&1 && asdf reshim nodejs >/dev/null 2>&1
-  fi
-fi
-`
-
 // ImageForRepo decides which image a repo runs in: an explicit override wins; a
 // repo with its own box Dockerfile gets its own tag (so a project's toolchain
-// never clobbers the shared base); everything else uses the base image.
+// never clobbers the shared base); a repo with only a .tool-versions gets its
+// toolchain image (toolchain_image.go); everything else uses the base image.
 func ImageForRepo(repo, baseImage, override string) string {
 	if override != "" {
 		return override
 	}
 	if fileExists(filepath.Join(repo, project.DockerfilePath(repo))) {
 		return boxAgentIdentity().projectImage(ServicesProject(repo))
+	}
+	if img := toolchainImage(repo, baseImage); img != "" {
+		return img
 	}
 	return baseImage
 }
@@ -563,13 +512,23 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 	}
 	// The CLI announces a build in the approved words (cli.announceBuild), so this entry — used by
 	// an automatic rebuild inside a launch — says only the plain fact, once.
-	if plan.Project && cfg.Egress != "" && cfg.Egress != "open" {
+	if plan.Toolchain && cfg.Egress != "" && cfg.Egress != "open" {
+		mode := egress.Mode(cfg.Egress).Word()
+		return fmt.Errorf("%s networking does not automatically build this project's tools — run 'coop build --egress open' on the host to build them from .tool-versions", mode)
+	}
+	if plan.Project && !plan.Toolchain && cfg.Egress != "" && cfg.Egress != "open" {
 		mode := egress.Mode(cfg.Egress).Word()
 		return fmt.Errorf("%s networking does not automatically build project instructions — review %s and its copied build files, then run 'coop build --egress %s' on the host; project builds use ordinary networking, not the run's network restrictions", mode, plan.Dockerfile, mode)
 	}
-	if !plan.Project {
+	switch {
+	case !plan.Project:
 		ui.Note("building %s (shared base)", cfg.BaseImage)
-	} else {
+	case plan.Toolchain:
+		ui.Note("building %s from .tool-versions (this project's tools; the first build may compile)", plan.Image)
+		if plan.BaseFirst {
+			ui.Note("building %s (shared base) first — the tools are installed on it", cfg.BaseImage)
+		}
+	default:
 		if plan.Untracked {
 			ui.Note("note: %s is untracked in git — it defines this box, and an agent can author one; review it before building", plan.Dockerfile)
 		}
@@ -591,6 +550,7 @@ type BuildPlan struct {
 	Image      string // the tag the build produces
 	Untracked  bool   // the box Dockerfile is not tracked in git — an agent could have authored it
 	BaseFirst  bool   // the shared base must be built before this project's image
+	Toolchain  bool   // building the project's toolchain image from .tool-versions (no box Dockerfile)
 	usesBase   bool   // the Dockerfile inherits the shared base via COOP_BASE_IMAGE
 }
 
@@ -627,7 +587,16 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 	dfRel := proj.DockerfileRel() // box.dockerfile, else .agent/Dockerfile
 	content, readErr := readRepositoryRegularFileNoFollow(repo, dfRel, imageInputFileLimit)
 	if errors.Is(readErr, os.ErrNotExist) {
-		return BuildPlan{Image: cfg.BaseImage}, nil
+		if _, _, ok, err := toolchainDefinition(repo); err != nil || !ok {
+			return BuildPlan{Image: cfg.BaseImage}, err
+		}
+		return BuildPlan{
+			Project:   true,
+			Toolchain: true,
+			Image:     toolchainImage(repo, cfg.BaseImage),
+			BaseFirst: fresh || !ImageExists(rt, cfg.BaseImage),
+			usesBase:  true,
+		}, nil
 	}
 	if errors.Is(readErr, syscall.ELOOP) {
 		if err := refuseLinkedBuildFile(repo, dfRel); err != nil {
@@ -675,6 +644,9 @@ func BuildPlanned(rt runtime.Runtime, cfg *config.Config, repo string, plan Buil
 		if err := buildBaseImage(rt, cfg, fresh, version, stdout, os.Stderr); err != nil {
 			return err
 		}
+	}
+	if plan.Toolchain {
+		return buildToolchainImage(rt, cfg, repo, plan, fresh, stdin, stdout)
 	}
 	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
 	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored

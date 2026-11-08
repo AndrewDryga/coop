@@ -36,7 +36,7 @@ const (
 
 // reclaimFamilies are the image repositories Coop builds and may therefore remove. An operator's
 // own COOP_BASE_IMAGE is never one of them, whatever it is tagged.
-var reclaimFamilies = []string{ManagedBaseRepository, lockedClientRepository, gatewayimage.Repository}
+var reclaimFamilies = []string{ManagedBaseRepository, lockedClientRepository, gatewayimage.Repository, toolchainRepository}
 
 // derivedImageLabel marks an image Coop built from a project's own box Dockerfile, with the project
 // it was built for as the value. Those images are tagged per definition like the shared families

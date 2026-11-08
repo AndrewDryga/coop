@@ -1295,7 +1295,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	defer capture.Close()
 	if capture == nil {
-		if err := a.requireLaunchImage(img); err != nil {
+		if err := a.requireLaunchImage(repo, img); err != nil {
 			return 1, err
 		}
 	}

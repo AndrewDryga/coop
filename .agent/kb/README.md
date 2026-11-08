@@ -59,7 +59,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [quality-tool-reviews](quality-tool-reviews.md) — coverage scope, equivalent mutants and semantic ownership behind the Crapper/Dryer/Mutator findings
 - [local-development-checks](local-development-checks.md) — explicit Make owner scopes, reverse-consumer guard and broad fallback; no automatic selector or implicit live calls
 - [ci-free-checks](ci-free-checks.md) — Make-owned CI partitions, per-owner caches and a status-only required check
-- [coop-repo-box-go](coop-repo-box-go.md) — coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the host-wide gate slots share the coop-cache volume
+- [coop-repo-box-go](coop-repo-box-go.md) — coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
 - [website](website.md) — site/ is static and partly generated: tools/gendocs owns index.html, orchestrator.html and the docs' terminal regions, which copy real CLI output; night-board, code-block, cache-bust and social-card traps
 - [shell-completion-current-word](shell-completion-current-word.md) — current-word replacement and the Bash 3.2 COMP_WORDS/IFS trap in generated completion
 - [restricted-networking](restricted-networking.md) — the layers between an `--egress filtered` flag and `docker run`, where authority lives (never a repo, never a box), the precedence ladder, and what a filtered run refuses

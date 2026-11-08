@@ -369,9 +369,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	if len(peers) > 0 || a.preset != nil {
 		lead = tool // a preset's routing contract mounts via ConsultLead too
 	}
-	// ACP speaks to an editor over stdio, not a human, so run quiet: Quiet drops coop's
-	// own progress lines, and COOP_QUIET tells the box to provision the toolchain silently.
-	extra := []string{"-e", "COOP_QUIET=1"}
+	var extra []string
 	// Under a supervisor, give the box a deterministic identity: --cidfile lets the supervisor
 	// tear it down by id even before its labels are queryable (see cmdACPSupervise's stop()).
 	// A FILTERED child has no `docker run` to write one: its agent container is created by the
@@ -437,7 +435,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	}
 	defer capture.Close()
 	if capture == nil {
-		if err := a.requireLaunchImage(img); err != nil {
+		if err := a.requireLaunchImage(repo, img); err != nil {
 			return 1, err
 		}
 	}

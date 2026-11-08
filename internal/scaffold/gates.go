@@ -153,20 +153,25 @@ func toolVersions(repo string) (map[string]bool, error) {
 		return nil, fmt.Errorf("open scaffold root %s: %w", repo, err)
 	}
 	defer root.Close()
-	out := map[string]bool{}
 	data, err := readRegular(root, ".tool-versions", ".tool-versions")
 	if errors.Is(err, os.ErrNotExist) {
-		return out, nil
+		return map[string]bool{}, nil
 	} else if err != nil {
 		return nil, ToolVersionsUnreadable{err}
 	}
+	return parseToolVersions(data), nil
+}
+
+// parseToolVersions names the tools a .tool-versions file pins, lowercased.
+func parseToolVersions(data []byte) map[string]bool {
+	out := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		f := strings.Fields(line)
 		if len(f) > 0 && !strings.HasPrefix(f[0], "#") {
 			out[strings.ToLower(f[0])] = true
 		}
 	}
-	return out, nil
+	return out
 }
 
 // hasTerraformFiles reports whether the repo has a *.tf at its root or one level down (a

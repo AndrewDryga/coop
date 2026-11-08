@@ -1149,7 +1149,7 @@ func TestAssembleArgsFullLaunchGolden(t *testing.T) {
 	home := filepath.Join(dir, "claude", "native-homes", "default", "repo", "home")
 	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
 	t.Setenv("TZ", "America/Merida")
-	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile}
+	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile, cacheVolume: "coop-cache-repo-12345678"}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}, {Kind: Decoy, Target: "/workspace/.env"}}
 	got := assembleArgs(cfg, true, spec, mounts, "/d", "/dd", "/workspace", ttyInteractive, true,
 		[]extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}, []extraMount{{"/tmp/c", "/home/node/.claude/CLAUDE.md"}},
@@ -1189,8 +1189,7 @@ func TestAssembleArgsFullLaunchGolden(t *testing.T) {
 		"-e", "COOP_BOX=1",
 		"-e", "COOP_SUPERVISE_DESCENDANTS=1",
 		"--network", "coop-repo_default",
-		"-v", boxAgentIdentity().volume("coop-cache") + ":/home/node/.cache",
-		"-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf",
+		"-v", "coop-cache-repo-12345678:/home/node/.cache",
 		"-w", "/workspace", "coop-box", "claude",
 	}
 	if !slices.Equal(got, want) {
@@ -1309,7 +1308,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 		MCPInBox:  "/home/node/.mcp.json",
 		Egress:    "open", // production default; required for the services-net join below
 	}
-	spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true, Cache: true, claudeMCPFile: filepath.Join(dir, "claude-mcp.json")}
+	spec := RunSpec{Image: "i", Repo: "/r", Agent: "claude", Homes: true, Network: true, Cache: true, claudeMCPFile: filepath.Join(dir, "claude-mcp.json"), cacheVolume: "coop-cache-r-12345678"}
 	mcpMounts := []extraMount{{"/tmp/g", "/home/node/.gemini/settings.json"}}
 	gitMounts := []extraMount{{"/tmp/gc", "/home/node/.gitconfig"}}
 	instructionMounts := []extraMount{{filepath.Join(dir, "INSTRUCTIONS.md"), "/home/node/.claude/CLAUDE.md"}}
@@ -1337,7 +1336,7 @@ func TestAssembleArgsWiresHomesEnvInstructionsMCP(t *testing.T) {
 	mustContain("-v", "/tmp/g:/home/node/.gemini/settings.json:ro")
 	mustContain("-v", "/tmp/gc:/home/node/.gitconfig:ro")
 	mustContain("--network", "coop-r_default")
-	mustContain("-v", boxAgentIdentity().volume("coop-cache")+":/home/node/.cache")
+	mustContain("-v", "coop-cache-r-12345678:/home/node/.cache")
 }
 
 func TestRunProjectsSharedMCPForNestedClaudeCommandsOnly(t *testing.T) {
@@ -3425,9 +3424,9 @@ func TestAgentBaseInstructions(t *testing.T) {
 			t.Errorf("box note does not warn about shadowed decoys in git status (%q):\n%s", want, got)
 		}
 	}
-	// Toolchains: the open box's base image installs .tool-versions pins on start; a filtered box's
-	// image installs nothing, so its note must send the agent to the project's .agent/Dockerfile.
-	if !strings.Contains(got, "in .tool-versions, which is provisioned automatically on start.") {
+	// Toolchains: an open box's tools are built into its image from .tool-versions; a filtered box's
+	// image has none, so its note must send the agent to the project's .agent/Dockerfile.
+	if !strings.Contains(got, "they are built into this box's image before it starts") {
 		t.Errorf("an open box's note must keep the .tool-versions promise:\n%s", got)
 	}
 	filtered, err := agentBaseInstructions(cfg, "claude", "CLAUDE.md", "", true)
@@ -3439,7 +3438,7 @@ func TestAgentBaseInstructions(t *testing.T) {
 			t.Errorf("a filtered box's note must say where toolchains come from (%q):\n%s", want, filtered)
 		}
 	}
-	if strings.Contains(filtered, "provisioned automatically") {
+	if strings.Contains(filtered, "built into this box's image") {
 		t.Errorf("a filtered box's note promises .tool-versions provisioning it can't do:\n%s", filtered)
 	}
 	for _, note := range []string{got, filtered} {
@@ -3533,23 +3532,36 @@ func TestAssembleArgsForkLabel(t *testing.T) {
 	}
 }
 
-// TestAssembleArgsAsdfVolume: the base image mounts the persistent ~/.asdf volume
-// (for runtime .tool-versions installs); a per-project image does not.
-func TestAssembleArgsAsdfVolume(t *testing.T) {
-	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", ConfigDir: t.TempDir()}
-	mounts := []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}}
-	asdf := []string{"-v", boxAgentIdentity().volume("coop-asdf") + ":/home/node/.asdf"}
-
-	base := assembleArgs(cfg, true, RunSpec{Image: "coop-box", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
-	if !containsSeq(base, asdf) {
-		t.Errorf("base image should mount the asdf volume:\n%v", base)
+// Each project's boxes get the project's own ~/.cache: one project's box cannot change the modules
+// another project's box uses. Forks share their project's; isolated forks share one of their own.
+func TestEachProjectHasItsOwnCacheVolume(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	volumeOf := func(spec RunSpec) string {
+		t.Helper()
+		volume, err := projectCacheVolume(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return volume
 	}
-
-	custom := assembleArgs(cfg, true, RunSpec{Image: "coop-myrepo", Repo: "/r", Homes: true}, mounts,
-		"/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
-	if containsSeq(custom, asdf) {
-		t.Errorf("a per-project image should not mount the asdf volume:\n%v", custom)
+	first, second := volumeOf(RunSpec{Repo: a}), volumeOf(RunSpec{Repo: b})
+	if first == second || !strings.HasPrefix(first, "coop-cache-") {
+		t.Fatalf("two projects share a cache volume: %q, %q", first, second)
+	}
+	if got := volumeOf(RunSpec{Repo: b, PolicyRepo: a}); got != first {
+		t.Errorf("a job run for project a uses %q, want its project's %q", got, first)
+	}
+	if got := volumeOf(RunSpec{Repo: b, IsolatedParent: a}); got != first+"-isolated" {
+		t.Errorf("an isolated fork of a uses %q, want %q", got, first+"-isolated")
+	}
+	if _, err := projectCacheVolume(RunSpec{}); err == nil {
+		t.Error("a cache with no project got a volume")
+	}
+	cfg := &config.Config{HomeInBox: "/home/node", BaseImage: "coop-box", ConfigDir: t.TempDir()}
+	args := assembleArgs(cfg, true, RunSpec{Image: "coop-box", Repo: a, Homes: true, Cache: true, cacheVolume: first},
+		[]Mount{{Kind: Bind, Source: a, Target: "/workspace"}}, "/d", "/dd", "/workspace", ttyNone, false, nil, nil, nil, nil, nil, "", "")
+	if strings.Contains(strings.Join(args, " "), "/home/node/.asdf") {
+		t.Errorf("the base image still mounts a shared ~/.asdf:\n%v", args)
 	}
 }
 

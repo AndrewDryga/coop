@@ -1,9 +1,9 @@
 ---
 name: coop-repo-box-go
-description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the host-wide gate slots share the coop-cache volume
+description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
 subsystem: box
 sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-11-06
+updated: 2026-11-08
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -28,17 +28,20 @@ The build needs the network, so `.agent/project.yaml` asks for `proxy.golang.org
 and `vuln.go.dev` (TLS 443), approved by the owner with `coop approve`. `proxy.golang.org` hands
 large module zips (modernc.org/sqlite) to `storage.googleapis.com`, and since 21e0fb08 (2026-10-14)
 the project allows that host too, so a box downloads them itself. That rule grants the whole host:
-any public bucket on it, not only Go's. `GOMODCACHE` sits in `~/.cache`, the `coop-cache` volume
-every box shares; the host command in the Dockerfile's comment fills that cache when a module still
+any public bucket on it, not only Go's. `GOMODCACHE` sits in `~/.cache`, this project's own cache volume
+(`box.projectCacheVolume`, shared with its forks); the host command in the Dockerfile's comment fills that cache when a module still
 fails to download in a box. Editing the Dockerfile, even a comment, marks this repo's box image
 stale, so filtered launches here wait for `coop build --egress filtered`, which only the owner runs.
 
-Because `~/.cache` is one volume for every box, `make check` runs under `tools/gateslot`, which
-holds one of two flock slots in `~/.cache/coop-gate/slots` for the whole gate. Flock on a shared
+`make check` runs under `tools/gateslot`, which holds one of two flock slots in
+`~/.cache/coop-gate/slots` for the whole gate. Since 2026-11-08 each project has its own cache
+volume, so the slots hold for a project and its forks (isolated forks share their own set), not
+across projects: a shared slot volume nested in `~/.cache` was rejected in review, because an image
+without the folder made Docker create it root-owned. Flock on a shared
 Docker volume is seen across containers (checked on OrbStack 2026-11-05); a host gate has its own
 `~/.cache`, so host gates and box gates count separately. A per-VM runtime such as Apple container
 was not checked. Every box also mounts `coop-gate-slot` (internal/box/gateslot.go), a shell helper
-on the same `slot-0`/`slot-1` files, so another project's opted-in gate and the `coop fork merge`
+on the same `slot-0`/`slot-1` files, so the project's other opted-in gates and the `coop fork merge`
 gate share the limit; keep its slot count equal to `tools/gateslot`'s. Both set
 `COOP_GATE_SLOT_HELD` for the gate they run, and a gate that finds it set runs at once: the merge
 gate's `coop-gate-slot make check` takes one slot, not two. Without that, two merges at once held
@@ -84,6 +87,7 @@ doesn't use them, so they were removed after running it.
   allows that host since 21e0fb08.
 - 2026-10-15 — the locked client image does carry the asdf binary (only its shims are off `PATH`);
   the code reference names `boxEnvNote` instead of a line range.
+- 2026-11-08 — caches are per project, so gate slots now hold per project and its forks.
 - 2026-10-09 — documented the shared analyzer graph and V5 importer compatibility; Go1.27.2 keeps
   current security fixes without retaining an older compiler just for lint.
 - 2026-10-07 — created with the Dockerfile and the Go egress rules (task 2026-10-07-give-this-repo-s-filtered-boxes-go-and-the-gate).

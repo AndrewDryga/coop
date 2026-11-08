@@ -130,7 +130,7 @@ A login supplied only through the env file appears as the provider's default cre
 login for each one. When you run a stored named account, even your default, co:op leaves that
 provider's token variables out of the run so they can't override the selected login.
 
-co:op shares non-credential variables, such as `DATABASE_URL` and `COOP_NO_ASDF`, with every box.
+co:op shares non-credential variables, such as `DATABASE_URL`, with every box.
 
 ### What the box receives
 

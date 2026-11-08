@@ -99,7 +99,7 @@ func prepareControllerImage(cfg *config.Config, rt runtime.Runtime, grant *Contr
 		return "", errors.New("filtered controller jobs cannot use a project toolchain image")
 	}
 	if grant.Runtime.Dockerfile == "" {
-		return SharedImage(cfg.BaseImage, cfg.ImageOverride), nil
+		return controllerToolchainImage(cfg, rt, grant.Repository, output)
 	}
 	content, err := readRepositoryRegularFileNoFollow(grant.Repository, grant.Runtime.Dockerfile, imageInputFileLimit)
 	if err != nil {
@@ -204,4 +204,28 @@ func controllerServiceOverride(cfg *config.Config, services []string, workspace 
 		return "", nil, err
 	}
 	return path, cleanup, nil
+}
+
+// controllerToolchainImage is the image of a job with no project runtime: the shared image, plus
+// the tools the frozen source pins in .tool-versions on an open-network job, built once and reused
+// like a launch's toolchain image. Other jobs cannot download tools, so they run on the shared image.
+func controllerToolchainImage(cfg *config.Config, rt runtime.Runtime, repository string, output io.Writer) (string, error) {
+	base := SharedImage(cfg.BaseImage, cfg.ImageOverride)
+	image := toolchainImage(repository, base)
+	if image == "" || cfg.Egress != "open" {
+		return base, nil
+	}
+	if ImageExists(rt, image) {
+		return image, nil
+	}
+	if output == nil {
+		output = os.Stderr
+	}
+	buildCfg := cfg.Clone()
+	buildCfg.BaseImage = base
+	plan := BuildPlan{Project: true, Toolchain: true, Image: image, usesBase: true, BaseFirst: !ImageExists(rt, base)}
+	if err := BuildPlanned(rt, buildCfg, repository, plan, false, "", strings.NewReader(""), output); err != nil {
+		return "", toolchainBuildError(err)
+	}
+	return image, nil
 }

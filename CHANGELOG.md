@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Each project's tools and downloads are its own.** Every box used to share one tools volume
+  (`~/.asdf`) and one download cache (`~/.cache`), so one project's box could change the tools or
+  modules the next project's box ran. A repo with a `.tool-versions` and no `.agent/Dockerfile` now
+  gets its tools built into an image that no box can change; an open-network run builds it when it
+  is missing, and later runs reuse it. Each project also gets its own download cache, shared with
+  its forks; isolated forks get one of their own. Upgrading: offline runs need
+  `coop build` once to build the tools image, `COOP_NO_ASDF` is retired, and the old `coop-asdf` and
+  `coop-cache` volumes are no longer used (remove them with `docker volume rm coop-asdf coop-cache`;
+  on native Linux with IDs other than 1000, add your user and group IDs to the names). Full-gate
+  slots now hold per project and its forks rather than across the whole computer.
 - **Coop's Git no longer follows pointers into another repository.** An agent could write a pointer
   in `.git` that made Coop's own Git commands read another repository on your computer, and a reset
   or review could then bring its files into the box. Coop now refuses such pointers and still

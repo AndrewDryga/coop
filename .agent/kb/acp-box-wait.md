@@ -3,7 +3,7 @@ name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
 sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go]
-updated: 2026-11-06
+updated: 2026-11-08
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -190,7 +190,7 @@ life, `up --no-start` pulls missing images, and `up -d --wait` waits for health.
 6 s in a plain project, 18 to 46 s after a move in a project with services, 48 to 76 s connecting in emisar.
 Stopping one of those loses work the retry repeats, so they answer only to `replayStartupGrace`, which is
 now `ChildNotReady` and a retry rather than the end of the session. Past the boundary only the adapter is
-left: `coop-entry`'s toolchain provisioning is the base image's, and a filtered image has none. So a box waiting
+left: no box installs tools when it starts (they are built into the toolchain image). So a box waiting
 before that point can be silent for 5 minutes: the editor gets no earlier answer, on purpose.
 
 Trap: who holds the lock. flock cannot say, and a record proves nothing: `BeginExecution` publishes one before

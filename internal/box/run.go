@@ -291,6 +291,7 @@ type RunSpec struct {
 	// cachePrivate maps each cache subdirectory a scoped agent keeps per-project data in to this
 	// run's empty stand-in for it (cachePrivateDirs); Run creates them.
 	cachePrivate map[string]string
+	cacheVolume  string // the project's ~/.cache volume (projectCacheVolume); Run sets it
 
 	// Peers is the EXPLICIT peer set for this run — the targets named by repeatable
 	// --peer (a normal run, ACP, or a loop run), each provider[:model] (no
@@ -1151,6 +1152,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		tmpDirs = append(tmpDirs, snapshots...)
 	}
 	if spec.Cache {
+		if spec.cacheVolume, err = projectCacheVolume(spec); err != nil {
+			return -1, err
+		}
 		for _, dir := range cachePrivateDirs(cfg, spec) {
 			private, err := os.MkdirTemp(artifacts.parent, "coop-cache-"+dir+"-")
 			if err != nil {
@@ -2716,14 +2720,15 @@ func Workdir(cfg *config.Config, repo string) string {
 // what's installed (bare python/pip included), where it may write, and that
 // secrets are read-only decoys.
 //
-// Where other toolchains come from depends on the image. An open box runs the base image, whose
-// entrypoint installs a repo's .tool-versions pins with asdf on start. A filtered box runs the
+// Where other toolchains come from depends on the image. An open box of a repo that pins tools runs
+// its toolchain image, built from .tool-versions before the box starts. A filtered box runs the
 // locked client image or a project image built on it; both carry the asdf binary but install
 // nothing on start and keep its shims off PATH (lockedPath), so only the project's
 // .agent/Dockerfile can put a toolchain there.
 func boxEnvNote(filtered bool) string {
 	toolchains := "Other toolchains (go, ruby, erlang, …) exist only if the repo pins\n" +
-		"  them in .tool-versions, which is provisioned automatically on start."
+		"  them in .tool-versions; they are built into this box's image before it starts,\n" +
+		"  so a change to .tool-versions takes effect in the next box, not this one."
 	if filtered {
 		toolchains = "Other toolchains (go, ruby, erlang, …) exist only if the project's\n" +
 			"  .agent/Dockerfile installs them (\"coop init --stack asdf\" writes one from\n" +
@@ -3628,8 +3633,8 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	} else if networkName != "" {
 		args = append(args, "--network", networkName)
 	}
-	if spec.Cache {
-		args = append(args, "-v", boxAgentIdentity().volume("coop-cache")+":"+cfg.HomeInBox+"/.cache")
+	if spec.Cache && spec.cacheVolume != "" {
+		args = append(args, "-v", spec.cacheVolume+":"+cfg.HomeInBox+"/.cache")
 		for _, dir := range cachePrivateDirs(cfg, spec) {
 			if private := spec.cachePrivate[dir]; private != "" {
 				args = append(args, "-v", private+":"+cfg.HomeInBox+"/.cache/"+dir)
@@ -3642,18 +3647,43 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	if spec.taskVolume != "" {
 		args = append(args, "-v", taskChannelMount(spec.taskVolume))
 	}
-	// The base box provisions a repo's .tool-versions toolchain via asdf at run
-	// time; persist ~/.asdf in a volume so installs survive the disposable box and
-	// are reused across repos. Only the base image carries the asdf entrypoint.
-	if spec.Homes && spec.Image == cfg.BaseImage {
-		args = append(args, "-v", boxAgentIdentity().volume("coop-asdf")+":"+cfg.HomeInBox+"/.asdf")
-	}
 	return append(args, "-w", workdir)
 }
 
+// projectCacheVolume names the ~/.cache volume of spec's project. Each project has its own, so one
+// project's box cannot change the modules and downloads another project's box uses. A fork shares
+// its project's, since it already writes the project's .git; isolated forks of a project share one
+// of their own, so none of them can change what the project's ordinary boxes run.
+func projectCacheVolume(spec RunSpec) (string, error) {
+	root, suffix := projectPolicyRepo(spec), ""
+	switch {
+	case spec.IsolatedParent != "":
+		root, suffix = spec.IsolatedParent, "-isolated"
+	case spec.PolicyRepo == "" && spec.Repo != "":
+		parent, identity, err := forkspace.ResolveProjectBinding(spec.Repo)
+		if err != nil {
+			return "", err
+		}
+		if identity != nil {
+			isolated, err := forkspace.IsolatedGeneration(parent, *identity)
+			if err != nil {
+				return "", err
+			}
+			root = parent
+			if isolated {
+				suffix = "-isolated"
+			}
+		}
+	}
+	if root == "" {
+		return "", errors.New("a box with a cache needs a project")
+	}
+	return boxAgentIdentity().volume("coop-cache-" + strings.TrimPrefix(ComposeProject(root), "coop-") + suffix), nil
+}
+
 // cachePrivateDirs lists the ~/.cache subdirectories the run's scoped agents keep per-project data
-// in. The cache volume is shared by every box, across repositories and accounts, so each one is
-// covered by an empty directory of the run's own: Claude's MCP logs sat there for every project.
+// in. The cache volume is shared by every box of a project, across accounts, so each one is covered
+// by an empty directory of the run's own: Claude's MCP logs sat there.
 func cachePrivateDirs(cfg *config.Config, spec RunSpec) []string {
 	var dirs []string
 	for _, name := range credentialScope(cfg, spec) {

@@ -1868,7 +1868,7 @@ func TestRequireLaunchImageBlamesTheDaemonNotTheImage(t *testing.T) {
 			}
 			_, img, err := a.resolveLaunchImage()
 			if err == nil {
-				err = a.requireLaunchImage(img)
+				err = a.requireLaunchImage(repo, img)
 			}
 			if err == nil {
 				t.Fatal("launch image check succeeded with no image; want an error")

@@ -278,14 +278,20 @@ func (c *Control) gateImage(repo, img string) (string, error) {
 		// the ordinary tag here would strand a project prepared with `coop build --egress filtered`.
 		return img, nil
 	}
-	return img, c.ensureGateImage(img, nil)
+	return img, c.ensureGateImage(repo, img, nil)
 }
 
-func (c *Control) ensureGateImage(img string, output io.Writer) error {
+func (c *Control) ensureGateImage(repo, img string, output io.Writer) error {
 	if img == c.cfg.BaseImage {
 		if err := c.host.ensureBaseImage(output); err != nil {
 			return err
 		}
+	}
+	if output == nil {
+		output = os.Stderr
+	}
+	if err := box.EnsureToolchainImage(c.rt, c.cfg, repo, img, "", output); err != nil {
+		return err
 	}
 	if !box.ImageExists(c.rt, img) {
 		// Same rule as requireLaunchImage: `image inspect` cannot tell a missing image from a dead daemon,
@@ -331,7 +337,7 @@ func (c *Control) ReviewControllerJob(ctx context.Context, request sessionsvc.Re
 	}
 	image := box.SharedImage(c.cfg.BaseImage, c.cfg.ImageOverride)
 	if request.NetworkMode != "filtered" {
-		if err := c.ensureGateImage(image, request.Output); err != nil {
+		if err := c.ensureGateImage("", image, request.Output); err != nil {
 			return run, err
 		}
 	}

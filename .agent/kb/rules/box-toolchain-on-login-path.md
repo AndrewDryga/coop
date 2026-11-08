@@ -3,8 +3,8 @@ name: box-toolchain-on-login-path
 description: "a box toolchain goes on the login PATH too, not just the `ENV` PATH"
 scope: box
 sources: [internal/box/image.go, internal/scaffold/templates/dockerfile/asdf]
-check: "go test ./internal/box -run 'TestBaseDockerfileInstallsTheQualifiedClients|TestProvisioningMakesTheProjectPinsTheBoxDefault'"
-updated: 2026-09-28
+check: "go test ./internal/box -run 'TestBaseDockerfileInstallsTheQualifiedClients|TestToolchainImagePutsThePinsAndShimsOnEveryPath'"
+updated: 2026-11-08
 ---
 
 # A box toolchain must be on the login PATH, not just the ENV PATH
@@ -35,10 +35,11 @@ with its own drop-in (`TestAsdfDockerfileKeepsToolchainsOnLoginPath`).
 The same trap has a second axis: versions. asdf resolves a tool's version from the nearest
 `.tool-versions` above the current directory, then `$HOME`, so a process started outside the checkout
 (a test's temp dir) got "No version is set for command mix" in the base image while the project's own
-image, which copies its pins to `$HOME`, worked. The entry script now makes the project's pins the
-home default when none exists (`TestProvisioningMakesTheProjectPinsTheBoxDefault`).
+image, which copies its pins to `$HOME`, worked. Since 2026-11-08 every toolchain lives in an image
+built from the asdf template (`scaffold.ToolchainDockerfile`), which copies the pins to `$HOME`.
 
 ## Changelog
+- 2026-11-08 — start-time provisioning retired; toolchain images copy the pins to `$HOME`.
 - 2026-06-20 — created
 - 2026-08-06 — card metadata added (format v1); body unchanged
 - 2026-09-19 — the qualified client launchers lead both PATHs; check renamed with its test. Swept

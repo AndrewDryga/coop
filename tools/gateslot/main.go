@@ -3,8 +3,8 @@
 //
 // A main loop and a few fork loops each run `make check` in their own box. All of them at once
 // pushed a 12-core Mac to a load of 40, the scripted suites hit their timeouts, and audits reopened
-// good work. Every box mounts the same coop-cache volume as ~/.cache, so a flock on a file there is
-// seen by every box on the host; each slot is one file, held for the whole gate. The kernel drops a
+// good work. Every box of a project mounts the project's cache volume as ~/.cache, so a flock on a file
+// there is seen by the project's boxes and its forks; each slot is one file, held for the whole gate. The kernel drops a
 // flock when its holder dies, so a crashed or killed gate frees its slot with no cleanup.
 //
 // The command starts only after the slot is taken, so the time spent waiting never counts against

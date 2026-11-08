@@ -66,12 +66,16 @@ func (a *app) resolveLaunchImage() (repo, img string, err error) {
 	return repo, img, nil
 }
 
-// Offline runs need this check too: Docker's implicit pull uses host networking.
-func (a *app) requireLaunchImage(img string) error {
+// Offline runs need this check too: Docker's implicit pull uses host networking. An open-network
+// launch builds a missing toolchain image for repo first.
+func (a *app) requireLaunchImage(repo, img string) error {
 	if img == a.cfg.BaseImage {
 		if err := a.ensureManagedBase(); err != nil {
 			return err
 		}
+	}
+	if err := box.EnsureToolchainImage(a.rt, a.cfg, repo, img, resolveVersion(), os.Stderr); err != nil {
+		return err
 	}
 	if !box.ImageExists(a.rt, img) {
 		// `image inspect` fails the same way whether the image is missing or the daemon is gone, so

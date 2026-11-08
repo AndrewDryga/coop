@@ -230,29 +230,30 @@ Check your sandbox setup with [`coop doctor`](https://coop.dryga.com/docs.html#d
 
 ## Toolchain: .tool-versions
 
-On an open-network run, the base box installs the versions listed in your `.tool-versions` file
-using asdf and caches them in a shared volume. It looks for the file from the working directory
-upwards, then falls back to `~/.tool-versions`. A repo with `.tool-versions` needs no
-`.agent/Dockerfile` or other setup for this:
+A repo with a `.tool-versions` file at its root and no `.agent/Dockerfile` gets its tools built
+into an image of their own: co:op's box plus the versions the file lists, installed with asdf.
+Every box of the project uses that image, and no box can change it. An open-network run builds it
+when it is missing, so a repo with `.tool-versions` needs no other setup:
 
 ```bash
 cd ~/code/phoenix-app       # has a .tool-versions
-coop claude --egress open   # provisions elixir/erlang/node/… from it, then runs the agent
+coop claude --egress open   # builds elixir/erlang/node/… into the project's image, then runs the agent
 ```
 
-The first install of a new toolchain can be slow (Erlang compiles, for example). After that it's
-reused across runs and repos.
+co:op reads only the `.tool-versions` at the repository root. The first build of a new toolchain
+can be slow (Erlang compiles, for example). Later runs reuse the image, and projects that pin the
+same versions share it. Changing `.tool-versions` builds a new image on the next open run. A fork
+runs with its project's tools, so a pin a fork changes takes effect after it merges.
 
-Set `COOP_NO_ASDF=1` in `agents/env` to skip installing tools from `.tool-versions`. co:op still
-repairs an outdated cached Node shim when needed to keep the agent CLIs running.
-
-Installing tools at startup works only with open networking. A filtered run, the default, uses an
-image that includes asdf but puts no asdf shims on `PATH` and installs nothing when the box starts.
-Build your toolchain into an `.agent/Dockerfile` instead:
+Filtered and offline runs never build by themselves. With filtered networking, the default, the
+box uses co:op's locked image without your tools, so build your toolchain into an `.agent/Dockerfile`
+instead:
 
 - `coop init` writes one when it finds a `.tool-versions`.
 - `coop init --stack asdf` writes one later.
 - `coop build` builds it.
+
+An offline run uses the tools image once `coop build` has built it.
 
 The default box has no Go, Terraform, Elixir or Rust. When `coop init` finds one of these
 languages in a project that has no `.agent/Dockerfile`, for example Go from a `go.mod`, it prints
@@ -493,9 +494,11 @@ derived from its path, so repositories with the same folder name stay separate.
 
 Agents can change data in services they can reach, so use disposable development databases.
 
-The shared `coop-cache` volume at `~/.cache` keeps downloads between runs. Claude's MCP logs
-at `~/.cache/claude-cli-nodejs` are kept separately: each run starts with an empty log folder,
-so one project's logs cannot enter another project's box.
+Each project's `~/.cache` is a volume of its own that keeps downloads between runs, so one
+project's box cannot change the modules another project's box uses. Forks share their project's
+cache; isolated forks share one of their own. These volumes are named `coop-cache-<project>-<id>`;
+remove one with `docker volume rm` when you no longer need the project. Claude's MCP logs at
+`~/.cache/claude-cli-nodejs` are kept separately: each run starts with an empty log folder.
 
 ### Volumes from outside the project
 

@@ -212,11 +212,6 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <td>Chooses how the box can use the network. See the choices below and <a href="networking.html">networking</a>.</td>
 </tr>
 <tr>
-<td><code>COOP_<wbr/>NO_<wbr/>ASDF</code></td>
-<td>off</td>
-<td>Skips installing the tools pinned in <code>.tool-versions</code> when the box starts. Set it in <code>agents/env</code>, not your host shell.</td>
-</tr>
-<tr>
 <td><code>COOP_<wbr/>NETWORK</code></td>
 <td><code>1</code></td>
 <td>Joins the services network.</td>
@@ -438,7 +433,7 @@ co:op doesn&#39;t read, the error names the path and line. Setting the same vari
 doesn&#39;t let a broken file pass. Every command except <code>coop version</code> stops until you fix the file.</p>
 <p>co:op reads <code>COOP_HOME</code>, <code>COOP_CONF</code>, <code>NO_COLOR</code>, <code>COOP_ACP_WARM</code>, <code>COOP_ACP_TRACE</code> and
 <code>COOP_SPINNER</code> only from the process environment, so you can&#39;t set them inside <code>coop.conf</code>. The box
-reads <code>COOP_NO_ASDF</code> and <code>COOP_CONSULT_STREAM_LIMIT</code>, so they belong in <code>agents/env</code>.</p>
+reads <code>COOP_CONSULT_STREAM_LIMIT</code>, so it belongs in <code>agents/env</code>.</p>
 <h3 id="what-can-sync">What can sync</h3>
 <p><code>~/.config/coop</code> holds your settings and accounts, so you can sync it across machines with Dropbox
 or a similar service. If two machines refresh the same single-use sign-in, one of them can get

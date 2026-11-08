@@ -405,6 +405,10 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	c.capture = capture
 	var nudges []string
 	if capture == nil {
+		// Only now is the run's network mode final: an open run builds its missing toolchain image.
+		if err := box.EnsureToolchainImage(c.rt, c.cfg, repo, img, "", os.Stderr); err != nil {
+			return -1, err
+		}
 		if !box.ImageExists(c.rt, img) {
 			// Same rule as requireLaunchImage: a dead daemon looks exactly like a missing image, and an
 			// overnight drain that dies on "run 'coop build'" hides the real cause until morning.

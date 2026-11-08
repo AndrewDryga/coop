@@ -4,7 +4,7 @@ description: "a shell guard checks every command's status and fails CLOSED on am
 scope: agent-workflow
 sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, internal/tasks/sweep_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-11-07
+updated: 2026-11-08
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -70,7 +70,7 @@ loosening it) and [[static-bounded-supervision]].
   (`.agent/skills/sweep/queue-guard.sh` and its scaffold template — byte identical, both fail closed
   on discovery and count failures since `7fd8150`); `install.sh` runs `set -eu` with no `wc`
   pipeline or process substitution; `.claude/hooks/commit-gate.sh` is the documented fail-open
-  exception; the box entrypoint is best-effort provisioning (`|| true` on purpose), not a guard, so
+  exception; the box entrypoint's best-effort steps (`|| true` on purpose) are not guards, so
   the rule does not reach it. The rule is therefore PREVENTIVE — it holds the fix in place rather
   than describing a live mess. Two gaps found and reported for the queue: `make shellcheck` lints
   `install.sh` only (neither guard copy nor the commit hook), and nothing pins the two guard copies

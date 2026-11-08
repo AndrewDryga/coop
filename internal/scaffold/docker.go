@@ -58,6 +58,13 @@ var toolchainSeed = map[string]string{
 	"elixir": `{ command -v mix >/dev/null 2>&1 && mix local.hex --force && mix local.rebar --force || true; }`,
 }
 
+// ToolchainDockerfile renders the box Dockerfile for the tools toolVersions pins, the one
+// `coop init --stack asdf` writes. Coop builds it itself for a project that has a .tool-versions
+// and no box Dockerfile, so the tools live in an image no box can change.
+func ToolchainDockerfile(toolVersions []byte) (string, error) {
+	return asdfDockerfile(parseToolVersions(toolVersions))
+}
+
 // asdfDockerfile renders the asdf box image for the tools this repo pins. Unknown tools are fine
 // — they just add nothing, and the user edits the generated file.
 func asdfDockerfile(tools map[string]bool) (string, error) {

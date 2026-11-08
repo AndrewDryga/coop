@@ -55,10 +55,11 @@ func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMou
 			allow.trustedSharedVolumes = map[string]bool{}
 		}
 		if spec.Cache {
-			allow.trustedSharedVolumes[boxAgentIdentity().volume("coop-cache")] = true
-		}
-		if spec.Homes && spec.Image == cfg.BaseImage {
-			allow.trustedSharedVolumes[boxAgentIdentity().volume("coop-asdf")] = true
+			volume, err := projectCacheVolume(spec)
+			if err != nil {
+				return allow, err
+			}
+			allow.trustedSharedVolumes[volume] = true
 		}
 		for _, root := range ConfigExposureRoots(cfg) {
 			allow.privateRoots = appendUniqueAuthorityPath(allow.privateRoots, root)

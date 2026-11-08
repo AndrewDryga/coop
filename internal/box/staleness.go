@@ -3,6 +3,7 @@ package box
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -29,11 +30,20 @@ const imageInputFileLimit = 4 << 20
 // and is pure to test. Worst case if it drifts (image deleted, built elsewhere) is a
 // missed or spurious *warning* — never a blocked run.
 
-// inputsHash hashes the files that define a repo's per-project image. ok is false when the
-// repo has no box Dockerfile (it runs on the shared base, which has no per-repo inputs).
+// inputsHash hashes the files that define a repo's per-project image: its box Dockerfile, or,
+// without one, the .tool-versions its toolchain image is built from. ok is false when the repo has
+// neither (it runs on the shared base, which has no per-repo inputs).
 func inputsHash(repo string) (hash string, ok bool) {
 	dfRel := project.DockerfilePath(repo)
 	dockerfile, err := readRepositoryRegularFileNoFollow(repo, dfRel, imageInputFileLimit)
+	if errors.Is(err, os.ErrNotExist) {
+		toolVersions, err := readRepositoryRegularFileNoFollow(repo, ".tool-versions", imageInputFileLimit)
+		if err != nil {
+			return "", false
+		}
+		sum := sha256.Sum256(append([]byte(".tool-versions\x00"), toolVersions...))
+		return hex.EncodeToString(sum[:]), true
+	}
 	if err != nil {
 		return "", false
 	}

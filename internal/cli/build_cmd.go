@@ -96,7 +96,11 @@ func (a *app) cmdBuild(args []string) (int, error) {
 
 func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([]box.ImageChange, error) {
 	ui.Note("%s", title)
-	if plan.Project {
+	if plan.Toolchain {
+		ui.Note("  The filtered box does not build the tools in .tool-versions. To have them there, write an")
+		ui.Note("  .agent/Dockerfile ('coop init --stack asdf' writes one from it) and build again.")
+	}
+	if plan.Project && !plan.Toolchain {
 		ui.Note("  Dockerfile: %s", plan.Dockerfile)
 		ui.Note("  Project builds use ordinary networking, not the run's network restrictions.")
 		ui.Note("  Review the Dockerfile and copied build files before building.")
@@ -113,7 +117,7 @@ func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([
 // one command that approves new build files is `coop build`.
 func (a *app) updateFilteredBox(repo string, plan box.BuildPlan) ([]box.ImageChange, error) {
 	ui.Note("Updating the filtered box image")
-	if plan.Project {
+	if plan.Project && !plan.Toolchain {
 		ui.Note("  Dockerfile: %s", plan.Dockerfile)
 		ui.Note("  Project builds use ordinary networking, so only files you approved with coop build rebuild here.")
 	}
@@ -181,7 +185,11 @@ func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 		return
 	}
 	ui.Note("%s", projectTitle)
-	ui.Note("  Dockerfile: %s", plan.Dockerfile)
+	if plan.Toolchain {
+		ui.Note("  Tools:      .tool-versions")
+	} else {
+		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+	}
 	ui.Note("  Image:      %s", plan.Image)
 	ui.Note("")
 	if plan.BaseFirst {

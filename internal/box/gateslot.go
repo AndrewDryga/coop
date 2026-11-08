@@ -63,8 +63,10 @@ func memoryBytes(memory string) (int64, bool) {
 // included. A filtered box may ask for no other tmpfs.
 func IsGateTmpfs(value, memory string) bool { return value == gateTmpfs(memory) }
 
-// GateSlotScript is the coop-gate-slot helper. Every box mounts the same coop-cache volume as
-// ~/.cache, so a flock on a file there is seen by every box on the host. Each of the two slots is
+// GateSlotScript is the coop-gate-slot helper. Every box of a project mounts the project's cache
+// volume as ~/.cache, so a flock on a file there is seen by all of them: the project's own boxes and
+// its forks share the slots (isolated forks share their own set). Different projects no longer
+// share a cache, so each has its own two slots. Each of the two slots is
 // one file, held for the whole gate; coop's own make check takes the same files through
 // tools/gateslot, which must keep the same count. The kernel drops a flock when its holder dies, so
 // a killed gate frees its slot. A runtime that gives each box its own VM, such as Apple container,
@@ -94,7 +96,7 @@ const gateSlotScript = `#!/bin/sh
 #
 #   coop-gate-slot make check
 #
-# Every coop box shares ~/.cache, so the slots there are host-wide. A third gate waits for one of
+# Every box of a project shares ~/.cache, so the slots there hold for the project and its forks. A third gate waits for one of
 # the first two to finish, and its command starts only then. A gate inside a gate runs at once, in
 # the outer gate's slot. A gate with no TMPDIR keeps its temp files in a folder of its own in
 # /tmp/coop-gate, which is memory where the runtime allows it: a box's /tmp is on a disk where every

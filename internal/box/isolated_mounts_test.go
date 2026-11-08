@@ -293,13 +293,19 @@ func TestIsolatedSelectedSharedCacheTrustIsNotPrivateOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{boxAgentIdentity().volume("coop-cache"), boxAgentIdentity().volume("coop-asdf")} {
+	cache, err := projectCacheVolume(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(cache, "-isolated") {
+		t.Fatalf("an isolated fork's cache volume = %q, want one of its own", cache)
+	}
+	for _, name := range []string{cache} {
 		if err := validateAuthorityMounts(t.Context(), spec, []string{"-v", name + ":/cache"}, "", reader, allow); err != nil {
 			t.Fatalf("ordinary selected shared cache refused: %s: %v", name, err)
 		}
 	}
-	name := boxAgentIdentity().volume("coop-cache")
-	options := []string{"-v", name + ":/cache"}
+	options := []string{"-v", cache + ":/cache"}
 	for _, disabled := range []RunSpec{{Repo: ws}, {Repo: ws, Homes: true, Image: "custom"}} {
 		allow, err := protectRunPrivateState(cfg, disabled, authorityMountAllowlist{})
 		if err != nil {
@@ -314,9 +320,9 @@ func TestIsolatedSelectedSharedCacheTrustIsNotPrivateOwnership(t *testing.T) {
 	}
 	for _, exposure := range []runtime.VolumeExposure{
 		{Sources: []string{missing}},
-		{Sources: []string{missing}, BindSources: []string{missing}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{name: {Mountpoint: missing, ExposureRoot: missing}}},
-		{Sources: []string{missing}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{name: {Mountpoint: missing, ExposureRoot: repo}}},
-		{Sources: []string{repo}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{name: {Mountpoint: missing, ExposureRoot: repo}}},
+		{Sources: []string{missing}, BindSources: []string{missing}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{cache: {Mountpoint: missing, ExposureRoot: missing}}},
+		{Sources: []string{missing}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{cache: {Mountpoint: missing, ExposureRoot: repo}}},
+		{Sources: []string{repo}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{cache: {Mountpoint: missing, ExposureRoot: repo}}},
 	} {
 		bad := func(context.Context, []string) (runtime.VolumeExposure, error) { return exposure, nil }
 		if err := validateAuthorityMounts(t.Context(), spec, options, "", bad, allow); err == nil {
@@ -334,7 +340,7 @@ func TestIsolatedSelectedSharedCacheTrustIsNotPrivateOwnership(t *testing.T) {
 	}
 	knownFile := func(context.Context, []string) (runtime.VolumeExposure, error) {
 		return runtime.VolumeExposure{Sources: []string{regular}, PlainLocalVolumes: map[string]runtime.PlainLocalVolume{
-			name: {Mountpoint: regular, ExposureRoot: regular},
+			cache: {Mountpoint: regular, ExposureRoot: regular},
 		}}, nil
 	}
 	if err := validateAuthorityMounts(t.Context(), spec, options, "", knownFile, allow); err == nil {

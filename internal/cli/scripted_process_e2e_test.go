@@ -403,7 +403,7 @@ func assertProcessMountsAtTarget(t *testing.T, layout procharness.Layout, repo, 
 				}
 				continue
 			}
-			if mount.Source != processCacheVolume("coop-cache") && mount.Source != processCacheVolume("coop-asdf") {
+			if mount.Source != processCacheVolume("coop-cache-<project>") {
 				t.Errorf("unknown named mount %#v", mount)
 			}
 			if mount.ReadOnly {
