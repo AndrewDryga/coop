@@ -156,6 +156,14 @@ func (s *launchSections) secrets(hidden int) {
 	ui.Pass("%s hidden from the box", ui.Count(hidden, "secret path"))
 }
 
+// mountProtection says that this launch hides only the secrets that exist now. Kernel protection also
+// hides one saved later, so a person who has it never needs the line.
+func (s *launchSections) mountProtection() {
+	if s.on {
+		ui.Note("  Secrets saved after the box starts stay readable to it. `coop doctor` explains why this launch uses mount protection.")
+	}
+}
+
 func (s *launchSections) prepareSecrets() {
 	if s.on && !s.secretsOpened {
 		s.section("Protecting secrets")

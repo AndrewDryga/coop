@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A launch says when it uses mount protection.** Mount protection hides only the secrets that exist
+  when the box starts, and only `coop doctor` said a launch had fallen back to it. A launch using it
+  now says, under "Protecting secrets", that secrets saved later stay readable, and points to
+  `coop doctor` for the reason.
 - **Filtered services can no longer reach your computer.** A filtered run puts approved Compose
   services on an internal network, but Docker still gave your computer an address there, so a service
   could connect to anything listening on it: on Linux your own computer, on Docker Desktop and OrbStack

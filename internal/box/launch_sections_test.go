@@ -647,7 +647,7 @@ func TestLoginStartingNoticeRunOrdering(t *testing.T) {
 	if code != 0 || err != nil {
 		t.Fatalf("Run = %d, %v", code, err)
 	}
-	want := "Protecting secrets\n  ✓ No secret paths to hide\n\nConfiguring network access\n  ⚠ Unrestricted: nothing is blocked\n\nStarting Grok\nFollow Grok's sign-in instructions below\nPROVIDER OUTPUT\n\nThe Coop box has stopped: main process exited with status 0.\n"
+	want := "Protecting secrets\n  ✓ No secret paths to hide\n" + mountProtectionLine + "\nConfiguring network access\n  ⚠ Unrestricted: nothing is blocked\n\nStarting Grok\nFollow Grok's sign-in instructions below\nPROVIDER OUTPUT\n\nThe Coop box has stopped: main process exited with status 0.\n"
 	if got != want {
 		t.Fatalf("login launch = %q, want %q", got, want)
 	}
@@ -973,7 +973,8 @@ func TestRunNarratesAnInteractiveOpenLaunchAndItsStop(t *testing.T) {
 	if err != nil || code != 3 {
 		t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
 	}
-	want := "Protecting secrets\n  ✓ No secret paths to hide\n" +
+	// This fake Docker cannot run kernel protection, so the launch says what mount protection leaves out.
+	want := "Protecting secrets\n  ✓ No secret paths to hide\n" + mountProtectionLine +
 		"\nConfiguring network access\n  ⚠ Unrestricted: nothing is blocked\n" +
 		"\nStarting sh\n" +
 		"\nThe Coop box has stopped: main process exited with status 3.\n"
@@ -1028,7 +1029,7 @@ func TestRunNarratesAnInteractiveOfflineLaunchAndItsStop(t *testing.T) {
 			if err != nil || code != 3 {
 				t.Fatalf("Run = %d, %v; want the box's own exit 3", code, err)
 			}
-			want := "Protecting secrets\n  ✓ No secret paths to hide\n" +
+			want := "Protecting secrets\n  ✓ No secret paths to hide\n" + mountProtectionLine +
 				"\nConfiguring network access\n  " + test.network + "\n" +
 				"\nStarting sh\n" +
 				"\nThe Coop box has stopped: main process exited with status 3.\n"
@@ -1094,5 +1095,18 @@ func TestFilteredLaunchNamesTheServicesItStarts(t *testing.T) {
 	})
 	if got != "" {
 		t.Fatalf("a loop launch named its services ahead of their start: %q", got)
+	}
+}
+
+const mountProtectionLine = "  Secrets saved after the box starts stay readable to it. `coop doctor` explains why this launch uses mount protection.\n"
+
+// A launch on kernel protection hides a secret saved later too, so only a mount-protected one says
+// what it leaves out.
+func TestOnlyMountProtectionSaysWhatItLeavesOut(t *testing.T) {
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).mountProtection() }); got != mountProtectionLine {
+		t.Fatalf("mount protection said %q", got)
+	}
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}, Quiet: true}).mountProtection() }); got != "" {
+		t.Fatalf("a quiet launch said %q", got)
 	}
 }

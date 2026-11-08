@@ -215,7 +215,7 @@ service runs. Newly exposed paths need another approval, and running boxes stay 
 for a single run. eBPF protects these paths without either kind of approval.</p>
 <h3 id="filesystem-protection-contract">Filesystem protection contract</h3>
 <p>This contract describes eBPF protection. Mount protection hides only what exists at start, as
-described above.</p>
+described above, and a launch that uses it says so under &#34;Protecting secrets&#34;.</p>
 <p>co:op trusts the host and its editors. Each time it starts an agent or service with eBPF protection,
 it captures the current hiding rules and the protected files and folders, and it keeps checking
 every file name the box opens against the built-in list. In practice:</p>

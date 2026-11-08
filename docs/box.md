@@ -100,7 +100,7 @@ for a single run. eBPF protects these paths without either kind of approval.
 ### Filesystem protection contract
 
 This contract describes eBPF protection. Mount protection hides only what exists at start, as
-described above.
+described above, and a launch that uses it says so under "Protecting secrets".
 
 co:op trusts the host and its editors. Each time it starts an agent or service with eBPF protection,
 it captures the current hiding rules and the protected files and folders, and it keeps checking

@@ -1080,7 +1080,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return -1, err
 	}
-	secretCount := 0
+	secretCount, mountProtected := 0, false
 	if spec.filesystem != nil {
 		for _, snapshot := range spec.filesystem.snapshots {
 			secretCount += snapshot.secretCount()
@@ -1116,9 +1116,13 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		mounts = append(mounts, companionMounts...)
 		secretCount = ShadowCount(mounts)
+		mountProtected = true
 	}
 	if sections.on {
 		sections.secrets(secretCount)
+		if mountProtected {
+			sections.mountProtection()
+		}
 	} else if secretCount > 0 && !spec.Quiet {
 		ui.Note("Hidden secret paths: %d", secretCount)
 	}
