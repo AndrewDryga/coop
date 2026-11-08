@@ -614,7 +614,8 @@ func TestFilesystemMixedServicesRuntime(t *testing.T) {
 	if err := docker.StopContainer(t.Context(), beta, 1); err != nil {
 		t.Fatal(err)
 	}
-	if removed, err := RecoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || removed != 0 {
+	// Count admissions only: the full pass also retires controllers earlier tests left dead.
+	if removed, err := recoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || removed != 0 {
 		t.Fatalf("stopped service admission lost: %d %v", removed, err)
 	}
 	services["alpha"].(map[string]any)["environment"] = map[string]string{"FIXTURE_REVISION": "2"}
@@ -740,8 +741,13 @@ waitReady:
 		t.Fatal(err)
 	}
 	rt := runtime.Runtime{Name: "docker"}
-	if n, err := RecoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || n != 0 {
+	// Count admissions only: the full pass also retires controllers earlier tests left dead, such
+	// as the one TestFilesystemSharedControllerRuntime removes, and that is not this admission.
+	if n, err := recoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || n != 0 {
 		t.Fatalf("live supervisor was reaped: %d %v", n, err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("live supervisor's admission state is gone: %v", err)
 	}
 	if err := child.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -766,7 +772,7 @@ else: raise AssertionError('secret readable after host crash')`)
 	if err != nil {
 		t.Fatalf("protection after host crash: %v %s", err, output)
 	}
-	if n, err := RecoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || n != 1 {
+	if n, err := recoverFilesystemAdmissions(t.Context(), rt, repo); err != nil || n != 1 {
 		t.Fatalf("crashed admission recovery: %d %v", n, err)
 	}
 	for _, ref := range append(record.Consumers, record.Helper) {
