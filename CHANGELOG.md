@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
 ## 13.0.0
 
 - **Session workers recover safely after a Docker-volume copy or restart.** A copied repository
