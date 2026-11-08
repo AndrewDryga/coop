@@ -241,6 +241,9 @@ type RunOpts struct {
 	Restarter *Restarter
 	// NoEditorHostAccess closes the way out of a box through the editor: see host_access.go.
 	NoEditorHostAccess bool
+	// RestrictedNetwork is a session whose box may not send what the editor would fetch or open:
+	// images in the thread and links the box chose. Filtered and offline sessions set it.
+	RestrictedNetwork bool
 	// ChildFailed, when set, is called when a child that runs turns could not serve: it ended by itself
 	// without answering initialize or within ChildStartWindow of starting, or it never answered and the
 	// proxy stopped it (watchFirstAnswer). The caller's next child should hold prompts, so a box that keeps
@@ -274,6 +277,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		out:            clientOut,
 		hooks:          hooks,
 		noHostAccess:   opts.NoEditorHostAccess,
+		noLinks:        opts.RestrictedNetwork,
 		watchAnswers:   opts.ChildFailed != nil,
 		bindings:       opts.Bindings,
 		stopping:       opts.Stopping,
@@ -293,7 +297,7 @@ func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, facto
 		forceFailed:    map[string]string{},
 		restartHeld:    map[string]clientLine{},
 	}
-	if opts.NoEditorHostAccess {
+	if opts.RestrictedNetwork {
 		p.out = newImageGuard(clientOut)
 	}
 	p.out = newThreadTail(p.out)
@@ -647,6 +651,7 @@ type proxy struct {
 	hooks *Hooks // coop's control layer (nil → pure pass-through)
 
 	noHostAccess bool // this session's boxes may not reach the host through the editor
+	noLinks      bool // nor have the editor open a link they chose (RunOpts.RestrictedNetwork)
 	watchAnswers bool // a child that does not answer can be replaced by one that holds prompts (watchFirstAnswer)
 	// announcedInitialized keeps Hooks.Initialized a once-per-process signal: it means "the editor
 	// has been answered", not "a child initialized", so a restart or a provider switch must not
@@ -746,7 +751,7 @@ func (p *proxy) restore(snap Snapshot) error {
 	defer p.mu.Unlock()
 	p.initialize = clone(snap.Initialize)
 	if p.noHostAccess {
-		p.initialize = withoutEditorHostAccess(p.initialize)
+		p.initialize = withoutEditorHostAccess(p.initialize, p.noLinks)
 	}
 	if p.authentication == nil {
 		p.authentication = map[authenticationScope]authenticationState{}
@@ -952,7 +957,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	if p.noHostAccess && original.Method == "initialize" {
 		// Kept this way for every child's replay too.
-		line = withoutEditorHostAccess(line)
+		line = withoutEditorHostAccess(line, p.noLinks)
 	}
 	if p.reloading.Load() && original.isRequest() {
 		p.writeControllerResponse(errorResponse(string(original.ID)))
@@ -1366,7 +1371,7 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 			return nil
 		}
 		traceLine("box→editor", line)
-		if p.noHostAccess && refuseEditorHostAccess(child, line) {
+		if p.noHostAccess && refuseEditorHostAccess(child, line, p.noLinks) {
 			return nil
 		}
 		// Translate the box's session id back to the one the editor knows, so coop's hooks and the

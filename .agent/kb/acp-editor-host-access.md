@@ -1,26 +1,32 @@
 ---
 name: acp-editor-host-access
-description: a filtered session's box cannot reach the host through the editor; what it may still ask, and why lines are read strictly
+description: no session's box can reach the host through the editor; filtered and offline also close images and links; what a box may still ask, and why lines are read strictly
 subsystem: acp
 sources: [internal/acpproxy/host_access.go, internal/acpproxy/image_guard.go, internal/acpproxy/markdown_images.go, internal/acpproxy/proxy.go, internal/cli/acp_cmd.go, internal/cli/fork_acp.go, internal/box/editor_box_wait_live_test.go]
-updated: 2026-11-06
+updated: 2026-11-08
 ---
 ACP's `fs/*` and `terminal/*` run on the editor's computer, outside the box, and a login button can run
 a command there. Any program in a box can write these straight onto the adapter's stdout: from inside a
 real filtered box, forged requests reached the editor. The owner decided on 2026-11-03 that a filtered
-session may not do this. Nobody decided for open or offline sessions, which keep the channel.
+session may not do this; on 2026-11-08, after a security review, the owner asked for every real issue to be
+fixed, and host access was closed in every mode: network mode is the wrong switch for host execution.
 
-With `RunOpts.NoEditorHostAccess` (set where `a.acpCapture != nil`, this repo's "filtered" test):
-- the editor's `fs`, `terminal` and `elicitation.url` capabilities are removed from `initialize`, also on
-  replay and resume;
-- a box may send only `session/update`, `session/request_permission`, a form-mode `elicitation/create`, and
-  lines with no method (responses). Anything else is refused with an error, or dropped if it has no id, so a
-  method ACP adds later is closed by default;
+Every supervisor sets `RunOpts.NoEditorHostAccess: true` (pinned by
+`TestEverySupervisorClosesTheEditorChannel`):
+- the editor's `fs` and `terminal` capabilities are removed from `initialize`, also on replay and resume;
+- a box may send only `session/update`, `session/request_permission`, a form or an http(s) link
+  `elicitation/create` (`webLink`; other schemes reach handlers on the host), and lines with no method (responses). Anything else is refused with an error, or dropped if it has no id, so a method ACP
+  adds later is closed by default;
 - login buttons are hidden at the last write, because a fork's hooks do not hide them.
+
+`RunOpts.RestrictedNetwork` (`a.acpRestrictedNetwork()`: filtered capture, or offline) adds what follows the
+network mode: `elicitation.url` is removed and only form-mode `elicitation/create` passes, and the image
+guard escapes images in box text. An open box can reach the internet itself, so links and images stay.
 
 Keep form questions open: Claude's `AskUserQuestion` depends on them (Zed advertises `elicitation.form`, and the
 adapter keeps the tool enabled because of it), and a form can only ask the person. URL mode opens a link the box
-chose, so it stays closed; Claude's MCP sign-in by link needs it and does not work in a filtered session.
+chose, so it stays closed under a restricted network; Claude's MCP sign-in by link needs it and does not
+work in a filtered or offline session.
 
 Traps:
 - **Box lines reach the editor whole in two places:** `pumpChild` and `answerInitialize`, and a new write of a
@@ -88,6 +94,8 @@ Proof: `host_access_test.go`, `image_guard_test.go`, `markdown_images_test.go`, 
 cannot be driven from an agent session, so it is read from source at v1.26.2.
 
 ## Changelog
+- 2026-11-08 — host access closed in open and offline sessions too (security review: a box in an open session could
+  have the editor run `terminal/create` on the host); images and links split out as `RestrictedNetwork`.
 - 2026-11-06 — an image block no longer reaches the editor with an address (QA: `uri` on a block with empty data came
   through unchanged, against the docs). Checked with `TestAnImageBlockKeepsNoAddress`, and by turning each half of the rule
   off to see that test fail.

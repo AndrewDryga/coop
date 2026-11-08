@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **No editor session lets the box reach your computer through the editor.** Any program in a box
+  could ask the editor to run a terminal command or read and write a file on your computer, outside
+  the box, in an open or offline `coop acp` session. Only filtered sessions blocked it. Now every
+  session does: the agent isn't told the editor offers files or terminals, and Coop refuses such
+  requests from the box. Offline sessions now also turn images into links and refuse to open a link
+  the box chose, as filtered ones do. Agents keep working on the project inside the box.
 - **Kernel protection covers Unix sockets in hidden folders.** A box could connect to a socket under
   a hidden folder, such as one another container served from the project, because connecting finds
   a socket by its path without opening it. With eBPF protection, connecting or sending to such a

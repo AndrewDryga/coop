@@ -483,7 +483,7 @@ func TestARawValueStaysInItsFence(t *testing.T) {
 }
 
 func TestFilteredSessionHoldsBackOnlyWhatCouldBeAnImage(t *testing.T) {
-	h := newProxyHarnessWith(t, 2, nil, RunOpts{NoEditorHostAccess: true})
+	h := newProxyHarnessWith(t, 2, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 	h.initialize(0)
 	h.newSession(0, "s")
 	said := func(line []byte) string {
@@ -568,7 +568,7 @@ func TestAFailedSettingCannotCarryAnImage(t *testing.T) {
 	modelID := InjectPrefix + "model"
 	h := newProxyHarnessWith(t, 1, &Hooks{SessionReady: func(sid string) [][]byte {
 		return [][]byte{[]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"session/set_config_option","params":{"sessionId":%q,"configId":"model","value":"bad"}}`+"\n", modelID, sid))}
-	}}, RunOpts{NoEditorHostAccess: true})
+	}}, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 	c := h.children[0]
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
 	readLine(t, h.childIn[0])

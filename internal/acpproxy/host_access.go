@@ -3,25 +3,27 @@ package acpproxy
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"strings"
 )
 
 // An editor can offer an agent its own computer: fs/read_text_file, fs/write_text_file and terminal/*
-// run on the host, outside the box, and a login button can run a command there. A filtered session
-// promises that nothing leaves the box except by its rules, and any program in the box can write
-// straight onto the adapter's stdout. So with RunOpts.NoEditorHostAccess the adapter is not told the
+// run on the host, outside the box, and a login button can run a command there. Any program in the
+// box can write straight onto the adapter's stdout, so this would let it out of the box whatever the
+// network mode. With RunOpts.NoEditorHostAccess, which every session sets, the adapter is not told the
 // editor can do this, the login buttons stay hidden, and a box may ask the editor only for what is
-// listed here or is a question in a form. Any other method is refused, including one ACP adds later.
+// listed here, a question in a form, or, unless the network is restricted, a web link to open. Any other
+// method is refused, including one ACP adds later.
 var boxMayAskEditor = map[string]bool{"session/update": true, "session/request_permission": true}
 
 // jsonRPCKeys are the top-level keys an editor acts on.
 var jsonRPCKeys = []string{"jsonrpc", "id", "method", "params", "result", "error"}
 
 // withoutEditorHostAccess removes what the editor offers beyond the thread from its initialize: files,
-// terminals and opening a link the box chose. A form stays, because it only asks the person something;
-// Claude's question tool needs it. A line that does not parse goes on as it is: no adapter could read
-// a capability from it either.
-func withoutEditorHostAccess(line []byte) []byte {
+// terminals and, with noLinks, opening a link the box chose. A form stays, because it only asks the
+// person something; Claude's question tool needs it. A line that does not parse goes on as it is: no
+// adapter could read a capability from it either.
+func withoutEditorHostAccess(line []byte, noLinks bool) []byte {
 	var message, params, capabilities, elicitation map[string]json.RawMessage
 	if json.Unmarshal(line, &message) != nil || json.Unmarshal(message["params"], &params) != nil ||
 		json.Unmarshal(params["clientCapabilities"], &capabilities) != nil {
@@ -30,7 +32,7 @@ func withoutEditorHostAccess(line []byte) []byte {
 	delete(capabilities, "fs")
 	delete(capabilities, "terminal")
 	var err error
-	if json.Unmarshal(capabilities["elicitation"], &elicitation) == nil && elicitation != nil {
+	if noLinks && json.Unmarshal(capabilities["elicitation"], &elicitation) == nil && elicitation != nil {
 		delete(elicitation, "url")
 		if capabilities["elicitation"], err = json.Marshal(elicitation); err != nil {
 			return line
@@ -51,19 +53,19 @@ func withoutEditorHostAccess(line []byte) []byte {
 
 // refuseEditorHostAccess reports whether a line from a box must not reach the editor, and answers a
 // request so the adapter does not wait on it.
-func refuseEditorHostAccess(child *Child, line []byte) bool {
+func refuseEditorHostAccess(child *Child, line []byte, noLinks bool) bool {
 	method, members, plain := readBoxLine(line)
 	if !plain {
 		Trace("refused a line from the box that a parser could read another way")
 		return true
 	}
-	if method == "" || boxMayAskEditor[method] || method == "elicitation/create" && formQuestion(members["params"]) {
+	if method == "" || boxMayAskEditor[method] || method == "elicitation/create" && (formQuestion(members["params"]) || !noLinks && webLink(members["params"])) {
 		return false
 	}
-	Trace("refused %q from the box: a filtered session does not reach the host through the editor", method)
+	Trace("refused %q from the box: a box does not reach the host through the editor", method)
 	if id := members["id"]; id != nil {
 		reply := `{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":-32601,"message":` +
-			`"A filtered box cannot ask the editor for this. Use the files and commands inside the box."}}` + "\n"
+			`"A Coop box cannot ask the editor for this. Use the files and commands inside the box."}}` + "\n"
 		_, _ = child.In.Write([]byte(reply))
 	}
 	return true
@@ -75,6 +77,18 @@ func formQuestion(params json.RawMessage) bool {
 	members, plain := plainObject(params, "mode")
 	var mode string
 	return plain && json.Unmarshal(members["mode"], &mode) == nil && mode == "form"
+}
+
+// webLink reports a request to open an http or https address. Any other scheme reaches a handler on the
+// person's computer (file:, an editor's or an app's own), which is what host access closes.
+func webLink(params json.RawMessage) bool {
+	members, plain := plainObject(params, "mode", "url")
+	var mode, address string
+	if !plain || json.Unmarshal(members["mode"], &mode) != nil || mode != "url" || json.Unmarshal(members["url"], &address) != nil {
+		return false
+	}
+	link, err := url.Parse(address)
+	return err == nil && (link.Scheme == "http" || link.Scheme == "https") && link.Host != ""
 }
 
 // readBoxLine reads what decides where a line from a box may go. plain is false for a line that readers

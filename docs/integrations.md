@@ -255,23 +255,23 @@ ACP lets an agent ask the editor to work on your computer directly, outside the 
 as `fs/read_text_file`, `fs/write_text_file` and `terminal/*` run through the editor, and a login
 button can run a command there.
 
-A filtered session blocks these requests. co:op doesn't tell the agent the editor can handle them,
-refuses any such request from the box, hides the login buttons and refuses to open a link the box
-chose. The agent can still ask you a question in the editor. It works on the project inside the
-box as usual, so it sees what's saved on disk, not your unsaved edits.
+Every session blocks these requests, whatever its network mode. co:op doesn't tell the agent the
+editor can handle them, refuses any such request from the box and hides the login buttons. An open
+session may still offer you a web link; a filtered or offline session refuses any link the box
+chose. The agent can still ask you a question in the editor. It works on the project inside the box as usual, so it sees what's saved on disk, not
+your unsaved edits.
 
 Zed loads an image in an agent's message by itself. A remote image would send data to an address
 outside the network rules, and a project path can be a symlink the box made, which Zed follows on
-your computer. A filtered session blocks both: co:op turns any image in what the box writes into a
-plain link, which you have to click. Only an image carried in the message as image data still
+your computer. A filtered or offline session blocks both: co:op turns any image in what the box
+writes into a plain link, which you have to click. Only an image carried in the message as image data still
 shows. In a code block, a Markdown image and a line that starts like a Markdown link definition,
 such as `[key: string]: number;`, show a backslash.
 
-An open or offline session forwards these requests to Zed without filtering them, so your editor's
-file and terminal restrictions are part of the security boundary. A prompt-injected agent could
-ask the editor to read or write an absolute path outside the repo on your computer. In a test,
-Gemini's adapter wrote project files this way when the editor offered it, while Claude's and
-Codex's adapters did their work inside the box.
+Open and offline sessions used to forward these requests, so a prompt-injected agent could have the
+editor run a command or write a file anywhere on your computer. In a test, Gemini's adapter wrote
+project files this way when the editor offered it. With the channel closed, Claude, Codex, Gemini
+and Grok all do their work inside the box.
 
 `coop claude` and `coop loop` don't have this editor channel.
 

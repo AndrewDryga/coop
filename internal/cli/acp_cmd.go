@@ -810,7 +810,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 	stopping := func() { go reapPool(); go closeRefresh(); go a.acpBoxWait.close() }
 	hooks := ctrl.Hooks()
 	hooks.HeldCommand = a.acpBoxWait.heldCommand
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{NoEditorHostAccess: a.acpCapture != nil, Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter, ChildFailed: a.acpBoxWait.childFailedHook()})
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{NoEditorHostAccess: true, RestrictedNetwork: a.acpRestrictedNetwork(), Resume: resume, Reload: reload, Bindings: bindings, Stopping: stopping, Restarter: restarter, ChildFailed: a.acpBoxWait.childFailedHook()})
 	// Run stopped the active box. Wait here for the parked boxes and a waiting replacement too: no
 	// inner child of this generation may run when its project services go, and a reload's execve
 	// would skip the deferred calls.
@@ -1001,6 +1001,12 @@ func acpChildCapture(capture *box.CapturedEgress, superID string) (string, error
 // errACPAccountCooling refuses a parked box — warm or a network refresh's replacement — on an account
 // waiting out a rate limit: it would only sleep until the reset, and its slot can wait instead.
 var errACPAccountCooling = errors.New("waiting out a rate limit")
+
+// acpRestrictedNetwork reports a session whose box may not reach the internet: filtered (its capture)
+// or offline. Its editor then fetches no image and opens no link the box chose.
+func (a *app) acpRestrictedNetwork() bool {
+	return a.acpCapture != nil || egress.Mode(a.cfg.Egress) == egress.None
+}
 
 // currentACPCapture is the capture a child started now proves: the one a refresh adopted after
 // `coop approve`, else the one admitted at startup. A box keeps the capture it started with.

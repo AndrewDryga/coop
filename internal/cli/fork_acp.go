@@ -73,7 +73,7 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 	defer stop()
 	a.acpBoxWait.start()
 	hooks.HeldCommand = a.acpBoxWait.heldCommand
-	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{NoEditorHostAccess: a.acpCapture != nil, Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }, ChildFailed: a.acpBoxWait.childFailedHook()})
+	err = acpproxy.RunWith(ctx, os.Stdin, os.Stdout, factory, hooks, acpproxy.RunOpts{NoEditorHostAccess: true, RestrictedNetwork: a.acpRestrictedNetwork(), Restarter: restarter, Stopping: func() { go a.acpBoxWait.close() }, ChildFailed: a.acpBoxWait.childFailedHook()})
 	a.acpBoxWait.close()
 	cleanupErr := a.reapACPBoxes(superID)
 	if cleanupErr == nil {

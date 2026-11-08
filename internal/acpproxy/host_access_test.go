@@ -53,7 +53,7 @@ func noHostAccessOffered(t *testing.T, line []byte) {
 
 func TestFilteredBoxIsNotToldTheEditorCanReachTheHost(t *testing.T) {
 	t.Run("the first box and its replacement", func(t *testing.T) {
-		h := newProxyHarnessWith(t, 2, nil, RunOpts{NoEditorHostAccess: true})
+		h := newProxyHarnessWith(t, 2, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 		writeLine(t, h.clientIn, editorOffersItsComputer)
 		noHostAccessOffered(t, readLine(t, h.childIn[0]))
 		writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}`)
@@ -63,7 +63,7 @@ func TestFilteredBoxIsNotToldTheEditorCanReachTheHost(t *testing.T) {
 		_ = h.shutdown()
 	})
 	t.Run("a session resumed from before this rule", func(t *testing.T) {
-		h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true, Resume: &Snapshot{Initialize: []byte(editorOffersItsComputer)}})
+		h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true, Resume: &Snapshot{Initialize: []byte(editorOffersItsComputer)}})
 		replay := readLine(t, h.childIn[0])
 		noHostAccessOffered(t, replay)
 		writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":`+string(parse(replay).ID)+`,"result":{"protocolVersion":1}}`)
@@ -73,7 +73,7 @@ func TestFilteredBoxIsNotToldTheEditorCanReachTheHost(t *testing.T) {
 
 // Anything in a box can write onto the adapter's stdout, so these are what a hostile program sends.
 func TestFilteredBoxCannotAskTheEditorForTheHost(t *testing.T) {
-	h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true})
+	h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 	h.initialize(0)
 	for _, forged := range []struct{ line, id string }{
 		{`{"jsonrpc":"2.0","id":7,"method":"terminal/create","params":{"sessionId":"s","command":"touch","args":["/tmp/forged"]}}`, `7`},
@@ -137,7 +137,7 @@ func TestFilteredBoxCannotAskTheEditorForTheHost(t *testing.T) {
 }
 
 func TestFilteredBoxStillSaysAllAnAgentNeeds(t *testing.T) {
-	h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true})
+	h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 	h.initialize(0)
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
 	readLine(t, h.childIn[0])
@@ -186,7 +186,7 @@ func TestFilteredBoxOffersTheEditorNoLoginButton(t *testing.T) {
 		"with no protocol version":    `{` + loginButton + `}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true})
+			h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true, RestrictedNetwork: true})
 			writeLine(t, h.clientIn, editorOffersItsComputer)
 			readLine(t, h.childIn[0])
 			writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":1,"result":`+result+`}`)
@@ -199,7 +199,7 @@ func TestFilteredBoxOffersTheEditorNoLoginButton(t *testing.T) {
 		second := realChild()
 		h := newProxyHarnessChildren(t, []*fakeChild{holdingChild(), second},
 			&Hooks{PromptHeld: func(string) []byte { return []byte(heldStatus) }},
-			RunOpts{Restarter: restarter, NoEditorHostAccess: true})
+			RunOpts{Restarter: restarter, NoEditorHostAccess: true, RestrictedNetwork: true})
 		writeLine(t, h.clientIn, editorOffersItsComputer)
 		readLine(t, h.childIn[0]) // it hangs
 		if !restarter.ForceOffHolding() {
@@ -212,31 +212,64 @@ func TestFilteredBoxOffersTheEditorNoLoginButton(t *testing.T) {
 	})
 }
 
-// Nobody decided to close this for an open session, whose box can reach the network anyway.
-func TestOpenSessionKeepsItsEditorChannel(t *testing.T) {
-	h := newProxyHarnessWith(t, 1, nil, RunOpts{})
+// An open session's box is still a box: the editor's computer stays closed to it, and only what the
+// network mode decides changes. It may show an image and offer a link, as it could reach the internet
+// itself anyway.
+func TestOpenSessionBoxCannotReachTheHostEither(t *testing.T) {
+	h := newProxyHarnessWith(t, 1, nil, RunOpts{NoEditorHostAccess: true})
 	writeLine(t, h.clientIn, editorOffersItsComputer)
-	if got := readLine(t, h.childIn[0]); strings.TrimSpace(string(got)) != editorOffersItsComputer {
-		t.Fatalf("the box got %s, want the editor's own question", got)
+	initialize := readLine(t, h.childIn[0])
+	var message struct {
+		Params struct {
+			Capabilities map[string]json.RawMessage `json:"clientCapabilities"`
+		} `json:"params"`
 	}
-	answer := `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,` + loginButton + `}}`
-	writeLine(t, h.children[0].outW, answer)
-	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != answer {
-		t.Fatalf("the editor got %s, want the box's own answer", got)
+	if err := json.Unmarshal(initialize, &message); err != nil {
+		t.Fatal(err)
 	}
-	request := `{"jsonrpc":"2.0","id":7,"method":"terminal/create","params":{"sessionId":"s","command":"ls"}}`
-	writeLine(t, h.children[0].outW, request)
-	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != request {
-		t.Fatalf("the editor got %s, want %s", got, request)
+	for _, capability := range []string{"fs", "terminal"} {
+		if _, offered := message.Params.Capabilities[capability]; offered {
+			t.Errorf("an open box was told the editor offers %s: %s", capability, initialize)
+		}
+	}
+	if string(message.Params.Capabilities["elicitation"]) != `{"form":{},"url":{}}` {
+		t.Errorf("an open box lost the editor's forms or links: %s", initialize)
+	}
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,`+loginButton+`}}`)
+	if got := readLine(t, h.clientOut); bytes.Contains(got, []byte("terminal-auth")) {
+		t.Fatalf("the editor got the box's login command: %s", got)
+	}
+	for _, forged := range []struct{ line, id string }{
+		{`{"jsonrpc":"2.0","id":7,"method":"terminal/create","params":{"sessionId":"s","command":"touch","args":["/tmp/forged"]}}`, `7`},
+		{`{"jsonrpc":"2.0","id":8,"method":"fs/write_text_file","params":{"sessionId":"s","path":"/tmp/forged","content":"x"}}`, `8`},
+	} {
+		writeLine(t, h.children[0].outW, forged.line)
+		reply := parse(readLine(t, h.childIn[0]))
+		if string(reply.ID) != forged.id || !strings.Contains(string(reply.Error), "cannot ask the editor") {
+			t.Fatalf("%s was answered with %+v", forged.line, reply)
+		}
+	}
+	for _, forged := range []struct{ line, id string }{
+		{`{"jsonrpc":"2.0","id":10,"method":"elicitation/create","params":{"mode":"url","url":"file:///etc/passwd"}}`, `10`},
+		{`{"jsonrpc":"2.0","id":11,"method":"elicitation/create","params":{"mode":"url","url":"zed://open?path=/tmp"}}`, `11`},
+		{`{"jsonrpc":"2.0","id":12,"method":"elicitation/create","params":{"mode":"url","URL":"https://example.org/","url":"zed://x"}}`, `12`},
+		{`{"jsonrpc":"2.0","id":13,"method":"elicitation/create","params":{"mode":"script","url":"https://example.org/"}}`, `13`},
+	} {
+		writeLine(t, h.children[0].outW, forged.line)
+		reply := parse(readLine(t, h.childIn[0]))
+		if string(reply.ID) != forged.id || !strings.Contains(string(reply.Error), "cannot ask the editor") {
+			t.Fatalf("%s was answered with %+v", forged.line, reply)
+		}
+	}
+	link := `{"jsonrpc":"2.0","id":9,"method":"elicitation/create","params":{"mode":"url","url":"https://example.org/","elicitationId":"e"}}`
+	writeLine(t, h.children[0].outW, link)
+	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != link {
+		t.Fatalf("the editor got %s, want the link request", got)
 	}
 	image := messageLine(t, "Done! "+evilImage+"!")
 	writeLine(t, h.children[0].outW, image)
 	if got := readLine(t, h.clientOut); strings.TrimSpace(string(got)) != image {
 		t.Fatalf("the editor got %s, want %s", got, image)
-	}
-	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":7,"result":{"terminalId":"t"}}`)
-	if reply := parse(readLine(t, h.childIn[0])); string(reply.ID) != `7` || reply.Error != nil {
-		t.Fatalf("the box got %+v, want the editor's answer", reply)
 	}
 	_ = h.shutdown()
 }
