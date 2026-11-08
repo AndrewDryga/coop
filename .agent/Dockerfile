@@ -33,7 +33,7 @@ ENV GOMODCACHE=/home/node/.cache/go-mod
 COPY --chown=node:node tools/staticcheck.mod /tmp/staticcheck/go.mod
 COPY --chown=node:node tools/staticcheck.sum /tmp/staticcheck/go.sum
 RUN GOBIN=/tmp/gate-tools go -C /tmp/staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck \
- && GOBIN=/tmp/gate-tools go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+ && GOBIN=/tmp/gate-tools go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
 # Login shells reset PATH, so restore the same order after /etc/profile runs (this drop-in sorts
 # after Coop's own, which leaves the shims out in a filtered box).

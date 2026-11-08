@@ -18,8 +18,8 @@ only source of the Go analyzers in coop's box: since 2026-10-16 Coop's own box i
 an analyzer bump moves no user's box tag or network setup, only this project's image.
 
 Staticcheck's alternate module (`tools/staticcheck.mod` and `.sum`) pins its importer as
-well as the analyzer: Go1.27.2 emits V5 export data that the published Staticcheck0.8.1 dependency
-cannot read. `make install-staticcheck` uses that graph, and this project's Dockerfile installs the
+well as the analyzer: Go1.27.2 emits V5 export data that Staticcheck0.8.1's published dependency
+could not read (0.8.2 requires the fixed `golang.org/x/tools` itself, but the pin stays). `make install-staticcheck` uses that graph, and this project's Dockerfile installs the
 same files as `go.mod`/`go.sum`. Never install with `@version` here: that would bypass the importer
 pin. The gate checks both versions, and `TestOwnDockerfileInstallsTheGatePins` holds the
 Dockerfile's module path and govulncheck version to the Makefile's.

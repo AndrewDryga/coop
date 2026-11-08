@@ -60,6 +60,8 @@
   kernels have. On an older kernel, such as the 6.12 kernel of RHEL 10 and its rebuilds, the
   protection helper refused the kernel and the launch failed. Coop now checks the kernel first and
   keeps mount protection there, with `coop doctor` naming the missing hook.
+- **Updated dependencies.** SQLite 1.62.0 (`modernc.org/sqlite`, with `modernc.org/libc` 1.80.1),
+  goldmark 1.8.7 and `go.yaml.in/yaml/v3` 3.0.6.
 
 ## 13.0.0
 

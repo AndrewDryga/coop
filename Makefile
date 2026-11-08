@@ -14,7 +14,7 @@ STATICCHECK_MODFILE := tools/staticcheck.mod
 VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
-GOVULNCHECK_VERSION := v1.8.0
+GOVULNCHECK_VERSION := v1.9.0
 
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
