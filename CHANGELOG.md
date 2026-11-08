@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Linux boxes start on kernels older than kernel protection supports.** 13.0.0 turned on kernel
+  filesystem protection for Linux, but its filter needs two file security hooks that only recent
+  kernels have. On an older kernel, such as the 6.12 kernel of RHEL 10 and its rebuilds, the
+  protection helper refused the kernel and the launch failed. Coop now checks the kernel first and
+  keeps mount protection there, with `coop doctor` naming the missing hook.
+
 ## 13.0.0
 
 - **Session workers recover safely after a Docker-volume copy or restart.** A copied repository

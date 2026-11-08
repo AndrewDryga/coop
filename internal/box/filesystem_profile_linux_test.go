@@ -1,11 +1,13 @@
 package box
 
 import (
+	"bytes"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/fsfilter"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,8 +45,13 @@ func TestFilesystemKernelReadyFollowsTheSecurityModules(t *testing.T) {
 		}
 		return
 	}
-	on := slices.Contains(strings.Split(strings.TrimSpace(string(data)), ","), "bpf")
-	if err := filesystemKernelReady(); (err == nil) != on {
-		t.Fatalf("modules %q: %v", data, err)
+	ready := slices.Contains(strings.Split(strings.TrimSpace(string(data)), ","), "bpf")
+	btf, btfErr := os.ReadFile("/sys/kernel/btf/vmlinux")
+	ready = ready && btfErr == nil
+	for _, hook := range fsfilter.HookNames() {
+		ready = ready && bytes.Contains(btf, []byte("\x00bpf_lsm_"+hook+"\x00"))
+	}
+	if err := filesystemKernelReady(); (err == nil) != ready {
+		t.Fatalf("modules %q, all hooks %v: %v", data, ready, err)
 	}
 }

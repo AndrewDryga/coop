@@ -3,6 +3,7 @@ package fsfilter
 import (
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -50,6 +51,11 @@ var hookNames = []string{
 	"inode_getxattr", "inode_listxattr", "inode_setxattr", "inode_removexattr", "inode_get_acl",
 	"inode_set_acl", "inode_remove_acl", "inode_file_setattr", "inode_file_getattr",
 }
+
+// HookNames are the kernel's BPF LSM hooks the filter attaches to, without their bpf_lsm_ prefix.
+// A kernel must have every one; the newest, inode_file_setattr and inode_file_getattr, arrived in
+// recent kernels, so an older one keeps mount-based protection.
+func HookNames() []string { return slices.Clone(hookNames) }
 
 func (r Ready) Validate(parent string) error {
 	if r.Controller != "" {
