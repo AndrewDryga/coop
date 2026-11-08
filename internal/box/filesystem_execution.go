@@ -122,6 +122,12 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 		return nil, nil
 	}
 	image, _, err := docker.Image(ctx, spec.Image)
+	if errors.Is(err, runtime.ErrDockerImageMissing) {
+		// Kernel protection inspects the image before Docker would pull it. This launch lets Docker
+		// pull it under mount protection; the next one finds it and uses the kernel.
+		reason = "The box image is not on this Docker yet, so this launch uses mount-based filesystem protection"
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

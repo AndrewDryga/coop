@@ -1046,3 +1046,26 @@ print('all warmed aliases enforced')`
 	}
 	t.Log(output.String())
 }
+
+// Kernel protection inspects the image before Docker pulls it, so an image Docker has not pulled yet,
+// such as the alpine stand-in coop doctor uses on a fresh host, falls back to mount protection
+// with a stated reason instead of failing the launch. CI's Linux doctor job found this.
+func TestFilesystemMissingImageFallsBackRuntime(t *testing.T) {
+	if os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
+		t.Skip("requires explicit local Docker qualification")
+	}
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report FilesystemReport
+	spec := RunSpec{Repo: repo, Image: "coop-missing-image-test:never", Workdir: "/workspace", OnFilesystemReport: func(r FilesystemReport) { report = r }}
+	cfg := &config.Config{ConfigDir: t.TempDir(), NoNewPrivileges: true}
+	a, err := selectFilesystemAdmission(t.Context(), runtime.Runtime{Name: "docker"}, cfg, spec, []Mount{{Kind: Bind, Source: repo, Target: "/workspace"}}, nil, nil)
+	if err != nil || a != nil {
+		t.Fatalf("admission %v, err %v", a, err)
+	}
+	if report.Backend != "mounts" || !strings.Contains(report.Reason, "not on this Docker yet") {
+		t.Fatalf("report = %+v", report)
+	}
+}

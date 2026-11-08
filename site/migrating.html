@@ -104,14 +104,14 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
-<li><a href="#unreleased-old-host-state-is-refused-or-read-as-unknown">Unreleased: old host state is refused or read as unknown</a></li>
-<li><a href="#unreleased-old-session-store-data-is-refused-by-name">Unreleased: old session store data is refused by name</a></li>
-<li><a href="#unreleased-old-network-records-are-refused-by-name">Unreleased: old network records are refused by name</a></li>
-<li><a href="#unreleased-logins-and-history-from-before-v11-are-not-converted">Unreleased: logins and history from before v11 are not converted</a></li>
-<li><a href="#unreleased-old-fork-and-task-records-are-refused-not-converted">Unreleased: old fork and task records are refused, not converted</a></li>
-<li><a href="#unreleased-coop-codex--p-runs-one-prompt">Unreleased: coop codex -p runs one prompt</a></li>
-<li><a href="#unreleased-boxes-use-filtered-networking-by-default">Unreleased: boxes use filtered networking by default</a></li>
-<li><a href="#unreleased-the-no-network-mode-is-called-offline">Unreleased: the no-network mode is called offline</a></li>
+<li><a href="#v1300-old-host-state-is-refused-or-read-as-unknown">v13.0.0: old host state is refused or read as unknown</a></li>
+<li><a href="#v1300-old-session-store-data-is-refused-by-name">v13.0.0: old session store data is refused by name</a></li>
+<li><a href="#v1300-old-network-records-are-refused-by-name">v13.0.0: old network records are refused by name</a></li>
+<li><a href="#v1300-logins-and-history-from-before-v11-are-not-converted">v13.0.0: logins and history from before v11 are not converted</a></li>
+<li><a href="#v1300-old-fork-and-task-records-are-refused-not-converted">v13.0.0: old fork and task records are refused, not converted</a></li>
+<li><a href="#v1300-coop-codex--p-runs-one-prompt">v13.0.0: coop codex -p runs one prompt</a></li>
+<li><a href="#v1300-boxes-use-filtered-networking-by-default">v13.0.0: boxes use filtered networking by default</a></li>
+<li><a href="#v1300-the-no-network-mode-is-called-offline">v13.0.0: the no-network mode is called offline</a></li>
 <li><a href="#v1200-network-records-are-renamed">v12.0.0: network records are renamed</a></li>
 <li><a href="#v1200-fork-records-move-into-coops-private-folder">v12.0.0: fork records move into Coop&#39;s private folder</a></li>
 <li><a href="#v1110-project-image-preparation">v11.1.0: project image preparation</a></li>
@@ -129,7 +129,7 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
-</section><section class="doc-section reference-section" id="unreleased-old-host-state-is-refused-or-read-as-unknown"><h2>Unreleased: old host state is refused or read as unknown</h2>
+</section><section class="doc-section reference-section" id="v1300-old-host-state-is-refused-or-read-as-unknown"><h2>v13.0.0: old host state is refused or read as unknown</h2>
 <p>Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.</p>
 <ul>
 <li><strong>A box left behind with a version 1 <code>coop.host</code> label.</strong> <code>coop doctor</code> lists it as a box coop
@@ -149,7 +149,7 @@ by Coop v11.3.0 or earlier). The message says it was kept without an arrival tim
 account once with Coop v12.1.0 to finish it, or run <code>coop login &lt;agent&gt;@&lt;account&gt;</code>.</li>
 <li><strong>Version 4 service approvals</strong> grant nothing and are not read. <code>coop up</code> shows the review again.</li>
 </ul>
-</section><section class="doc-section reference-section" id="unreleased-old-session-store-data-is-refused-by-name"><h2>Unreleased: old session store data is refused by name</h2>
+</section><section class="doc-section reference-section" id="v1300-old-session-store-data-is-refused-by-name"><h2>v13.0.0: old session store data is refused by name</h2>
 <p>Coop no longer converts session data below schema 26 and no longer reads a few old session shapes.
 Nothing is deleted: the data is refused or quarantined until you act. A turn that was running when
 the worker stopped is still marked interrupted, as before.</p>
@@ -166,7 +166,7 @@ close and discard it with a build at or before commit 29133b0e before you upgrad
 <li>A read-only fork that the error says has no primary snapshot receipt: discard its session with a
 build at or before commit 29133b0e, then upgrade.</li>
 </ol>
-</section><section class="doc-section reference-section" id="unreleased-old-network-records-are-refused-by-name"><h2>Unreleased: old network records are refused by name</h2>
+</section><section class="doc-section reference-section" id="v1300-old-network-records-are-refused-by-name"><h2>v13.0.0: old network records are refused by name</h2>
 <p>Coop no longer reads network approvals, withdrawals and run records written by Coop v11.3.0 and
 earlier. If your network folder (<code>~/.local/state/coop/network</code>) still holds any, a project they
 could belong to stops with a message that names each file. A withdrawal still keeps its project
@@ -185,7 +185,7 @@ long gone.</li>
 starts as usual.</li>
 <li>Policy copies an old <code>coop net setup</code> check saved without a marker stay on disk, unused.</li>
 </ul>
-</section><section class="doc-section reference-section" id="unreleased-logins-and-history-from-before-v11-are-not-converted"><h2>Unreleased: logins and history from before v11 are not converted</h2>
+</section><section class="doc-section reference-section" id="v1300-logins-and-history-from-before-v11-are-not-converted"><h2>v13.0.0: logins and history from before v11 are not converted</h2>
 <p>Coop no longer moves a login out of <code>profiles/&lt;account&gt;</code> or <code>host-credentials/&lt;account&gt;</code>, and no
 longer imports history or editor thread bindings from the folders Coop before v11 used.</p>
 <ul>
@@ -199,7 +199,7 @@ same: open that project once with Coop v12.1.0 or earlier, then upgrade.</li>
 <li>History and editor threads never imported stay in the old folders. They are not read, and a thread
 from before v11 reopens by its editor id only.</li>
 </ul>
-</section><section class="doc-section reference-section" id="unreleased-old-fork-and-task-records-are-refused-not-converted"><h2>Unreleased: old fork and task records are refused, not converted</h2>
+</section><section class="doc-section reference-section" id="v1300-old-fork-and-task-records-are-refused-not-converted"><h2>v13.0.0: old fork and task records are refused, not converted</h2>
 <p>co:op no longer converts the fork and task records that builds up to v12.1.0 could. It refuses
 them by name and leaves them as they are. Coop v12.1.0 is the last release that converts them. If
 <code>coop fork ls</code> or <code>coop tasks</code> names one of these records, open the project once with v12.1.0, then
@@ -229,10 +229,10 @@ the project once with v12.1.0 (any fork command), which moves them to
 <code>~/.local/state/coop/forks/&lt;key&gt;/</code>.</li>
 </ul>
 <p>Nothing the new version refuses is changed, so v12.1.0 reads it as it always did.</p>
-</section><section class="doc-section reference-section" id="unreleased-coop-codex--p-runs-one-prompt"><h2>Unreleased: <code>coop codex -p</code> runs one prompt</h2>
+</section><section class="doc-section reference-section" id="v1300-coop-codex--p-runs-one-prompt"><h2>v13.0.0: <code>coop codex -p</code> runs one prompt</h2>
 <p><code>coop codex -p &lt;name&gt;</code> used to pick a Codex profile. It now runs <code>&lt;name&gt;</code> as a prompt, as <code>-p</code> does
 on every other agent. To pick a profile, use <code>coop codex --profile &lt;name&gt;</code>.</p>
-</section><section class="doc-section reference-section" id="unreleased-boxes-use-filtered-networking-by-default"><h2>Unreleased: boxes use filtered networking by default</h2>
+</section><section class="doc-section reference-section" id="v1300-boxes-use-filtered-networking-by-default"><h2>v13.0.0: boxes use filtered networking by default</h2>
 <p>Boxes now use filtered networking unless you choose another mode. An agent can reach its provider
 and the destinations you approved. A plain <code>coop run</code> or <code>coop shell</code> can reach only the destinations
 you approved.</p>
@@ -252,7 +252,7 @@ once. <code>coop update</code> no longer builds new or changed files.</li>
 <li>The first filtered run on a host prepares the network images and checks the host, as
 <code>coop net setup</code> does.</li>
 </ul>
-</section><section class="doc-section reference-section" id="unreleased-the-no-network-mode-is-called-offline"><h2>Unreleased: the no-network mode is called offline</h2>
+</section><section class="doc-section reference-section" id="v1300-the-no-network-mode-is-called-offline"><h2>v13.0.0: the no-network mode is called offline</h2>
 <p>The command line and <code>COOP_EGRESS</code> now say <code>offline</code>, as <code>.agent/project.yaml</code> already did. co:op
 refuses <code>none</code> with a message that names <code>offline</code>.</p>
 <ul>

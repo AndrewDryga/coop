@@ -23,6 +23,9 @@ func TestSweepQueueGuardReadsClaimsFromTheListing(t *testing.T) {
 	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateInProgress, "claim", "claimed", claimOptions{actor: other}); code != 0 || err != nil {
 		t.Fatalf("claim = %d, %v", code, err)
 	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash unavailable") // the unit tests' minimal PATH has none; the guard is a bash script
+	}
 	bin, project := t.TempDir(), t.TempDir()
 	listing := filepath.Join(bin, "listing.txt")
 	fake := "#!/bin/bash\ncase \"$1 $2\" in\n\"tasks queues\") printf '%s\\n' \"$GUARD_QUEUE\" ;;\n\"tasks ls\") cat \"$GUARD_LISTING\" ;;\n*) exit 1 ;;\nesac\n"
