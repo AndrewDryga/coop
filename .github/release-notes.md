@@ -10,12 +10,13 @@ Coop 13.1.0 closes several ways a box could reach outside itself, gives each pro
 - Coop's Git commands refuse pointers an agent planted in `.git` to reach another repository on your computer, while worktrees, submodules and shared clones keep working.
 - Editor sessions never let a box run commands or touch files on your computer through the editor, filtered Compose services can no longer reach your computer, and kernel protection now covers Unix sockets in hidden folders.
 - Coop runs on SELinux hosts such as Fedora and RHEL, starts on kernels too old for kernel protection by falling back to mount protection, and `coop setup apparmor` confines its Linux protection helper on AppArmor hosts.
-- A launch now says when it uses mount protection, and dependencies are up to date.
+- The agent clients in every box carry patched libraries (Claude's editor adapter moves to 0.90.0), Coop's own dependencies are current, and a launch says when it uses mount protection.
 
 Upgrading:
 
 - Offline runs of a project with a `.tool-versions` need `coop build` once. The old `coop-asdf` and `coop-cache` volumes are no longer used; `docker volume rm coop-asdf coop-cache` removes them. `COOP_NO_ASDF` is retired.
 - A checkout made with `git init --separate-git-dir` is refused until its Git folder moves back into `.git`; the message gives the commands.
 - Filtered runs with Compose services need Docker Engine 28 or later.
+- The next launch rebuilds the box image for the updated clients; a filtered editor session asks you to run `coop net setup` once.
 
 [Full changelog](https://github.com/AndrewDryga/coop/compare/v13.0.0...v13.1.0)
