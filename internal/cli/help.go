@@ -193,6 +193,7 @@ func renderMenu(p ui.Palette, cfg *config.Config, ref bool) string {
 	row("coop init", "set up Coop in this project")
 	row("coop build", "rebuild the box")
 	row("coop update", "update Coop and the box")
+	row("coop setup", "set up optional protection on this machine")
 	row("coop version", "show the installed Coop version")
 
 	group("INTEGRATIONS", "use Coop with other tools and your shell")
@@ -263,7 +264,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"up", "down",
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
-	"init", "build", "update", "version",
+	"init", "build", "update", "setup", "setup apparmor", "version",
 	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect",
 	"prompt", "completion")
 
@@ -2046,6 +2047,37 @@ OPTIONS
 Restore approval:
   coop approve`,
 
+	"setup": `coop setup: set up optional protection on this machine
+
+Usage: coop setup apparmor
+
+  apparmor   confine the filesystem protection helper with AppArmor
+
+  coop doctor says when this machine would gain from one of them.
+
+See: coop help setup apparmor`,
+
+	"setup apparmor": `coop setup apparmor: confine the filesystem protection helper
+
+Usage: coop setup apparmor
+
+  On Linux with AppArmor and Docker's systemd cgroup driver, the helper
+  behind kernel filesystem protection asks systemd for its cgroups over
+  the system bus. Docker's default AppArmor profile blocks the bus, so the
+  helper runs without AppArmor until Coop's own profile is loaded. That
+  profile keeps Docker's default limits, such as denied mounts, and
+  allows only the two systemd calls the helper makes. AppArmor cannot
+  check their arguments, so it does not limit what the helper could do
+  through systemd.
+
+  This writes the profile to /etc/apparmor.d and loads it now, through
+  Docker, without sudo. It loads again on every boot. Run it again when
+  coop doctor asks, such as after an update changes the profile.
+  Requires Docker to be running.
+
+Example:
+  coop setup apparmor`,
+
 	"net setup": `coop net setup: prepare this host for filtered networking
 
 Usage: coop net setup
@@ -2215,6 +2247,7 @@ var selfContainedHelp = map[string]bool{
 	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,
 	"completion": true, "sessions": true,
 	"up": true, "down": true, "doctor": true, "check-secrets": true, "build": true, "update": true,
+	"setup": true,
 }
 
 // selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its

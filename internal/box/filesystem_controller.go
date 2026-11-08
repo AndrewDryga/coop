@@ -34,9 +34,21 @@ type filesystemControllerRecord struct {
 	// CgroupDriver is "systemd" when the controller and its admissions are systemd slices,
 	// empty for plain cgroups (every record before slices were supported).
 	CgroupDriver string `json:",omitempty"`
+	// AppArmor is the helper profile the controller started under on systemd slices (see
+	// filesystemControllerRecord.appArmorOption), empty when unconfined; a controller is reused only
+	// under the same one.
+	AppArmor string `json:",omitempty"`
 }
 
 func (r filesystemControllerRecord) systemd() bool { return r.CgroupDriver == "systemd" }
+
+// appArmorOption is the --security-opt value its helpers run under on systemd slices.
+func (r filesystemControllerRecord) appArmorOption() string {
+	if r.AppArmor != "" {
+		return "apparmor=" + r.AppArmor
+	}
+	return "apparmor=unconfined"
+}
 
 // cgroupParent is the controller's own cgroup as Docker names a container's parent.
 func (r filesystemControllerRecord) cgroupParent() string {
@@ -111,6 +123,9 @@ func (r filesystemControllerRecord) validate() error {
 	}
 	if r.CgroupDriver != "" && r.CgroupDriver != "systemd" {
 		return errors.New("invalid filesystem controller cgroup driver")
+	}
+	if r.AppArmor != "" && (r.CgroupDriver != "systemd" || !strings.HasPrefix(r.AppArmor, fsfilter.AppArmorProfilePrefix)) {
+		return errors.New("invalid filesystem controller AppArmor profile")
 	}
 	if r.Pending != "" && r.Pending != r.Container.Name && r.Pending != r.Name+"-recovery" {
 		return errors.New("invalid controller creation intent")
@@ -187,6 +202,10 @@ func acquireFilesystemController(ctx context.Context, docker *runtime.Docker, im
 	if err != nil {
 		return nil, errors.Join(errFilesystemUnsupported, err)
 	}
+	profile := ""
+	if driver == "systemd" && daemonAppArmor(docker.Info()) && appArmorProfileLoaded() {
+		profile = fsfilter.AppArmorProfile
+	}
 	state, err := filesystemControllerState()
 	if err != nil {
 		return nil, err
@@ -212,7 +231,7 @@ func acquireFilesystemController(ctx context.Context, docker *runtime.Docker, im
 		if err != nil {
 			return nil, err
 		}
-		if r.Image != image || r.Endpoint != docker.Endpoint() || r.DaemonID != docker.Info().ID || r.CgroupDriver != driver {
+		if r.Image != image || r.Endpoint != docker.Endpoint() || r.DaemonID != docker.Info().ID || r.CgroupDriver != driver || r.AppArmor != profile {
 			continue
 		}
 		live, err := controllerLive(ctx, docker, r)
@@ -233,7 +252,7 @@ func acquireFilesystemController(ctx context.Context, docker *runtime.Docker, im
 	if err != nil {
 		return nil, err
 	}
-	c := &filesystemController{dir: dir, record: filesystemControllerRecord{Version: 1, Name: name, Directory: filepath.Base(dir), Endpoint: docker.Endpoint(), DaemonID: docker.Info().ID, Image: image, Container: filesystemRef(name, "controller"), CgroupDriver: driver}}
+	c := &filesystemController{dir: dir, record: filesystemControllerRecord{Version: 1, Name: name, Directory: filepath.Base(dir), Endpoint: docker.Endpoint(), DaemonID: docker.Info().ID, Image: image, Container: filesystemRef(name, "controller"), CgroupDriver: driver, AppArmor: profile}}
 	c.lease, err = filesystemControllerLock(ctx, filepath.Join(dir, "lease"), false, false)
 	if err != nil {
 		return nil, err
@@ -268,7 +287,7 @@ func (c *filesystemController) create(ctx context.Context, docker *runtime.Docke
 }
 
 func (c *filesystemController) start(ctx context.Context, docker *runtime.Docker) error {
-	options := (&filesystemAdmission{dir: c.dir}).helperOptions(false, c.record.systemd())
+	options := (&filesystemAdmission{dir: c.dir}).helperOptions(false, c.record)
 	_, err := c.create(ctx, docker, runtime.DockerCreate{Ref: c.record.Container, Image: c.record.Image, Options: options, Command: []string{"controller", c.record.Name}})
 	if err != nil {
 		return err
@@ -425,7 +444,7 @@ func (a *filesystemAdmission) retireSharedPolicy(ctx context.Context) error {
 	if err := a.remove(ctx, ref); err != nil {
 		return err
 	}
-	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: a.helperOptions(true, a.record.Controller.systemd()), Command: command})
+	id, err := a.create(ctx, runtime.DockerCreate{Ref: ref, Image: a.record.Image, Options: a.helperOptions(true, *a.record.Controller), Command: command})
 	ref.ID = id
 	if err != nil {
 		return err
@@ -622,7 +641,7 @@ func recoverFilesystemController(ctx context.Context, rt runtime.Runtime, dir st
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	options := (&filesystemAdmission{dir: dir}).helperOptions(true, r.systemd())
+	options := (&filesystemAdmission{dir: dir}).helperOptions(true, r)
 	id, err := c.create(ctx, docker, runtime.DockerCreate{Ref: ref, Image: r.Image, Options: options, Command: command})
 	ref.ID = id
 	if err != nil {

@@ -88,7 +88,12 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 		}
 		report := FilesystemReport{Backend: "mounts", Reason: filesystemReason(reason), kernelCandidate: kernelCandidate}
 		if admission != nil {
-			report = FilesystemReport{Backend: "bpf"}
+			// Kernel protection's Reason is a note, such as how to confine its helper with AppArmor.
+			var note string
+			if admission.controller != nil {
+				note = filesystemAppArmorNote(admission.controller.record)
+			}
+			report = FilesystemReport{Backend: "bpf", Reason: note}
 		}
 		if spec.OnFilesystemReport != nil {
 			spec.OnFilesystemReport(report)

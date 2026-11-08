@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop setup apparmor` confines the Linux filesystem protection helper.** On Ubuntu and other
+  AppArmor hosts with Docker's `systemd` cgroup driver, the helper runs without AppArmor, because
+  Docker's default profile blocks the system bus it needs. This one-time command installs and loads
+  Coop's own profile: Docker's default limits, such as denied mounts, plus only the two systemd calls
+  that start and stop Coop's cgroups. AppArmor cannot check those calls' arguments, so it does not
+  limit what the helper could do through systemd. It runs through Docker, needs no sudo and lasts
+  across reboots; `coop doctor` suggests it. Without it, the helper keeps running as before.
+
 - **Coop works on Linux hosts with SELinux, such as Fedora and RHEL.** A box could not even read
   your project there: Docker labels containers so they may not read files in your home folder. Coop
   now starts its containers with SELinux labels turned off (`label=disable`), as toolbox and dev

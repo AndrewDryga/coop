@@ -2,7 +2,7 @@
 name: filesystem-enforcement
 description: APFS (Mac) and ext4/xfs (Linux) Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody; systemd slices under Docker's systemd cgroup driver
 subsystem: box
-sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go, internal/box/filesystem_cgroups.go, internal/box/filesystem_profile_linux.go, internal/systemdbus/systemdbus.go, cmd/coop-fs/slices_linux.go, internal/runtime/selinux.go]
+sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go, internal/box/filesystem_cgroups.go, internal/box/filesystem_profile_linux.go, internal/systemdbus/systemdbus.go, cmd/coop-fs/slices_linux.go, internal/runtime/selinux.go, internal/box/filesystem_apparmor.go, internal/fsfilter/apparmor.go, cmd/coop-fs/apparmor_linux.go, internal/cli/setup_cmd.go]
 updated: 2026-11-07
 ---
 
@@ -28,7 +28,21 @@ loader as a child: its `rmdir` proves the cgroup empty (EBUSY otherwise), and on
 checks treat `A-B-x.slice` as inside `A-B.slice`. systemd hosts keep the hierarchy root 0555, and
 projects can hold private folders, so the helper also has DAC_OVERRIDE. Kernel 7.0's verifier
 refuses a context pointer used as a map key or moved before a store; `release_owner` copies its
-key to the stack and `hierarchy_root` is fully unrolled. On SELinux hosts (2026-11-08) every container Coop creates runs with `label=disable`
+key to the stack and `hierarchy_root` is fully unrolled. AppArmor (2026-11-08, owner: opt-in, suggested by doctor, keep unconfined without it):
+`coop setup apparmor` writes `fsfilter.AppArmorPolicy()` (Docker's default template plus D-Bus Hello,
+StartTransientUnit and StopUnit; one member per rule, the parser refuses lists) to
+`/etc/apparmor.d/coop-filesystem-helper-v<N>` and loads it with the host's apparmor_parser, from a
+one-shot helper (MAC_ADMIN, SYS_CHROOT, host root read-only, chroot). The versioned name is how a
+host tells the current policy is loaded (the kernel lists `<name>.<n>` folders any user may read);
+Docker refuses a container whose profile is not loaded, so the helper uses it only when listed.
+Controller records keep `AppArmor`, and a warm controller is reused only under the same profile.
+D-Bus rules cannot filter arguments: StartTransientUnit can start any root service, so the profile
+does not limit what the helper can do through systemd; it adds Docker's default denials (mounts,
+/proc and /sys writes) and blocks other bus calls. Every helper takes the profile from its
+controller's record (Docker refuses if it was unloaded, rather than run unconfined). Retiring an
+older profile version with `.remove` leaves helpers running under it unconfined until they end.
+The profile is used only when the daemon reports name=apparmor (the check reads this kernel).
+On SELinux hosts (2026-11-08) every container Coop creates runs with `label=disable`
 (`runtime.withSELinuxLabel` at the run/create choke points, and kernel-guarded Compose services via
 `security_opt`), detected from the host's `/sys/fs/selinux` so no extra Docker call is made; without
 it a box could not read the project at all. The host also checks the kernel BTF for every filter hook
@@ -286,6 +300,7 @@ is its proof; a missing stop line on an offline or open run points here first.
 
 ## Changelog
 
+- 2026-11-08 — `coop setup apparmor`: helper profile, record-matched controller reuse; 21 live tests under the profile and a reboot check on Ubuntu 24.04.
 - 2026-11-08 — SELinux hosts (label=disable on Coop's containers), kernel hook precheck, doctor fixtures on the home disk; 21 live tests pass on Fedora CoreOS 44 (SELinux enforcing, xfs, kernel 7.2).
 - 2026-11-07 — native Linux: ext4/xfs candidates, casefold probe, BPF LSM check, systemd-slice cgroups through D-Bus, kernel 7.0 verifier fixes, slice-aware descendant checks; live suite adapted to non-folding volumes and owner-death whole-disk denial; all 20 live tests and the late-secret acceptance pass on Ubuntu 24.04 (kernel 7.0, Docker 29, systemd driver).
 - 2026-11-07 — every `coop acp` close warned "could not remove this editor session's services ...

@@ -77,6 +77,9 @@ func run(args []string) error {
 		}
 		return os.WriteFile(args[1], data, 0444)
 	}
+	if len(args) == 1 && args[0] == "apparmor-install" {
+		return installAppArmor()
+	}
 	if handled, err := sharedCommand(args); handled {
 		return err
 	}

@@ -70,6 +70,7 @@ SETUP & MAINTENANCE: set up projects and manage Coop on this machine
   coop init                         set up Coop in this project
   coop build                        rebuild the box
   coop update                       update Coop and the box
+  coop setup                        set up optional protection on this machine
   coop version                      show the installed Coop version
 
 INTEGRATIONS: use Coop with other tools and your shell
@@ -1948,6 +1949,41 @@ HOW IT WORKS
 
   Coop checks for new releases once a day during terminal use.
   Set COOP_NO_UPDATE_CHECK=1 to turn off those notices.
+
+==============================================================================
+
+coop setup: set up optional protection on this machine
+
+Usage: coop setup apparmor
+
+  apparmor   confine the filesystem protection helper with AppArmor
+
+  coop doctor says when this machine would gain from one of them.
+
+See: coop help setup apparmor
+
+==============================================================================
+
+coop setup apparmor: confine the filesystem protection helper
+
+Usage: coop setup apparmor
+
+  On Linux with AppArmor and Docker's systemd cgroup driver, the helper
+  behind kernel filesystem protection asks systemd for its cgroups over
+  the system bus. Docker's default AppArmor profile blocks the bus, so the
+  helper runs without AppArmor until Coop's own profile is loaded. That
+  profile keeps Docker's default limits, such as denied mounts, and
+  allows only the two systemd calls the helper makes. AppArmor cannot
+  check their arguments, so it does not limit what the helper could do
+  through systemd.
+
+  This writes the profile to /etc/apparmor.d and loads it now, through
+  Docker, without sudo. It loads again on every boot. Run it again when
+  coop doctor asks, such as after an update changes the profile.
+  Requires Docker to be running.
+
+Example:
+  coop setup apparmor
 
 ==============================================================================
 

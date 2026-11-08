@@ -128,7 +128,16 @@ every file name the box opens against the built-in list. In practice:
 
 A separate helper runs the kernel enforcement, and the agent gets no BPF privileges. If the helper
 exits, access to the protected share is denied until co:op removes that agent or service. On Linux
-that covers the project's whole disk, so the box usually can't run its own programs either. Stopped
+that covers the project's whole disk, so the box usually can't run its own programs either.
+
+With the `systemd` driver the helper talks to systemd over the system bus, which Docker's default
+AppArmor profile blocks, so on an AppArmor host such as Ubuntu it runs without AppArmor. Run
+`coop setup apparmor` once to run it under co:op's own profile instead: Docker's default rules,
+which deny mounts and writes to kernel settings, plus the two systemd calls that start and stop
+co:op's slices. Other system bus calls stay blocked. AppArmor can't check those two calls'
+arguments, so the profile doesn't limit what the helper could do through systemd. The command
+installs the profile in `/etc/apparmor.d` through Docker, without sudo, and it loads on every boot.
+`coop doctor` suggests it when it would help. Stopped
 service containers keep their protection for a later restart. After a VM reboot, co:op's guard runs
 before an image's start command and its healthchecks, and refuses to run image code under the old
 protection. Start the service through co:op to get fresh protection.

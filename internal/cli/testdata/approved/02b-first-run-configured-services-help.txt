@@ -67,6 +67,7 @@ SETUP & MAINTENANCE: set up projects and manage Coop on this machine
   coop init                         set up Coop in this project
   coop build                        rebuild the box
   coop update                       update Coop and the box
+  coop setup                        set up optional protection on this machine
   coop version                      show the installed Coop version
 
 INTEGRATIONS: use Coop with other tools and your shell

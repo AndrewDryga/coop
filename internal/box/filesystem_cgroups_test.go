@@ -44,7 +44,7 @@ func TestFilesystemCgroupsNamesWhyAHostKeepsMounts(t *testing.T) {
 // admission's boxes take its slice as their parent; plain cgroups keep the old shape.
 func TestFilesystemSystemdSlicesShapeTheHelperAndParent(t *testing.T) {
 	a := &filesystemAdmission{dir: "/state"}
-	plain, sliced := a.helperOptions(false, false), a.helperOptions(false, true)
+	plain, sliced := a.helperOptions(false, filesystemControllerRecord{}), a.helperOptions(false, filesystemControllerRecord{CgroupDriver: "systemd"})
 	if slices.Contains(plain, fsfilter.SystemdCgroups) || slices.Contains(plain, "apparmor=unconfined") || strings.Contains(strings.Join(plain, " "), systemdbus.Socket) {
 		t.Fatalf("plain cgroups got systemd options: %v", plain)
 	}
@@ -80,5 +80,34 @@ func TestFilesystemControllerRecordCgroupDriver(t *testing.T) {
 		if err := r.validate(); (err == nil) != valid {
 			t.Errorf("driver %q: %v", driver, err)
 		}
+	}
+	// An AppArmor profile goes only with systemd slices, and only Coop's own.
+	for _, tc := range []struct {
+		driver, profile string
+		valid           bool
+	}{{"systemd", fsfilter.AppArmorProfile, true}, {"systemd", "", true}, {"", fsfilter.AppArmorProfile, false}, {"systemd", "docker-default", false}} {
+		r.CgroupDriver, r.AppArmor = tc.driver, tc.profile
+		if err := r.validate(); (err == nil) != tc.valid {
+			t.Errorf("driver %q profile %q: %v", tc.driver, tc.profile, err)
+		}
+	}
+}
+
+// Every helper of a controller runs under the AppArmor profile the controller started under.
+func TestFilesystemHelpersTakeTheirControllersAppArmorProfile(t *testing.T) {
+	a := &filesystemAdmission{dir: "/state"}
+	confined := a.helperOptions(true, filesystemControllerRecord{CgroupDriver: "systemd", AppArmor: fsfilter.AppArmorProfile})
+	unconfined := a.helperOptions(true, filesystemControllerRecord{CgroupDriver: "systemd"})
+	if !slices.Contains(confined, "apparmor="+fsfilter.AppArmorProfile) || slices.Contains(confined, "apparmor=unconfined") {
+		t.Fatalf("confined helper options = %v", confined)
+	}
+	if !slices.Contains(unconfined, "apparmor=unconfined") {
+		t.Fatalf("unconfined helper options = %v", unconfined)
+	}
+	if note := filesystemAppArmorNote(filesystemControllerRecord{CgroupDriver: "systemd", AppArmor: fsfilter.AppArmorProfile}); note != "" {
+		t.Fatalf("a confined helper got a note: %q", note)
+	}
+	if note := filesystemAppArmorNote(filesystemControllerRecord{}); note != "" {
+		t.Fatalf("plain cgroups got a note: %q", note)
 	}
 }

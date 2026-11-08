@@ -217,6 +217,11 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) == 1 {
 			return []string{"--case-exposure"}
 		}
+	case "setup":
+		if len(prev) == 1 {
+			return setupCommands
+		}
+		return nil
 	case "net":
 		if len(prev) == 1 {
 			return netCommands

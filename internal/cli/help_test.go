@@ -508,7 +508,7 @@ var wantManualOrder = []string{
 	"up", "down",
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
-	"init", "build", "update", "version",
+	"init", "build", "update", "setup", "setup apparmor", "version",
 	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect",
 	"prompt", "completion",
 }

@@ -268,7 +268,7 @@ func fixtureFilesystemController(t *testing.T, docker *runtime.Docker, image str
 	if err = c.persist(); err != nil {
 		t.Fatal(err)
 	}
-	opts := (&filesystemAdmission{dir: dir}).helperOptions(false, c.record.systemd())
+	opts := (&filesystemAdmission{dir: dir}).helperOptions(false, c.record)
 	for _, e := range env {
 		opts = append(opts, "-e", e)
 	}

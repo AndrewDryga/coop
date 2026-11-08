@@ -118,7 +118,7 @@ func filesystemNormalizerAdmission(t *testing.T, docker *runtime.Docker, c *file
 	if err = filesystemJSON(filepath.Join(dir, "policy.json"), fsfilter.Admission{Roots: policies}); err != nil {
 		t.Fatal(err)
 	}
-	options := a.helperOptions(false, a.record.Controller.systemd())
+	options := a.helperOptions(false, *a.record.Controller)
 	for i, root := range roots {
 		options = append(options, "--mount", networkMount("bind", root, fmt.Sprintf("/sources/%d", i+1), true))
 	}

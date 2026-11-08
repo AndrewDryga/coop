@@ -353,7 +353,7 @@ func TestFilesystemPreloadRuntime(t *testing.T) {
 			if err := a.persist(); err != nil {
 				t.Fatal(err)
 			}
-			options := append(a.helperOptions(false, a.record.Controller.systemd()), "--mount", networkMount("bind", repo, "/sources/1", true), "-e", "COOP_TEST_FS_FAULT="+fault)
+			options := append(a.helperOptions(false, *a.record.Controller), "--mount", networkMount("bind", repo, "/sources/1", true), "-e", "COOP_TEST_FS_FAULT="+fault)
 			if _, err := a.create(ctx, runtime.DockerCreate{Ref: a.record.Helper, Image: image, Options: options, Command: []string{"admit", "/sources", "/state/policy.json", parent, "/state/controller.json"}}); err != nil {
 				t.Fatal(err)
 			}
