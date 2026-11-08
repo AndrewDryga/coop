@@ -113,7 +113,7 @@ func TestFilteredScratchServiceBoundarySurvivesPreparationAndStart(t *testing.T)
 	approval := &networkstate.Approval{Services: digests}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	rt := serviceReviewRuntime(t, recorder)
-	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(ws) + "_filtered", Internal: true,
+	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(ws) + "_filtered", Internal: true, IsolatedGateway: true,
 		Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}}}
 	spec := RunSpec{Repo: ws, IsolatedParent: repo}
 	t.Setenv("COOP_TEST_VOLUME_MOUNTPOINT", repo)

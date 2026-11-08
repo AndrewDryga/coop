@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Filtered services can no longer reach your computer.** A filtered run puts approved Compose
+  services on an internal network, but Docker still gave your computer an address there, so a service
+  could connect to anything listening on it: on Linux your own computer, on Docker Desktop and OrbStack
+  their VM. Coop now creates that network with Docker's isolated gateway mode, which gives your
+  computer no address on it. This needs Docker Engine 28 or later; with an older Docker, filtered runs
+  refuse to start services and say so. A services network an earlier version made is replaced on the
+  next start.
 - **No editor session lets the box reach your computer through the editor.** Any program in a box
   could ask the editor to run a terminal command or read and write a file on your computer, outside
   the box, in an open or offline `coop acp` session. Only filtered sessions blocked it. Now every

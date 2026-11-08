@@ -111,7 +111,8 @@ didn't finish.
 Install a Docker CLI and a matching Buildx plugin that work together through `docker build`.
 Buildx alone isn't enough: Debian bookworm's Docker CLI 20.10 doesn't pass that command to the
 plugin. Docker CLI 27.5.1 with Buildx 0.20.1 is a supported pairing for a Docker-in-Docker (DinD)
-sidecar running Docker 27.5.1.
+sidecar running Docker 27.5.1, except for project services: filtered runs start them only on Docker
+Engine 28 or later.
 
 Filtered runs need a Linux Docker daemon running as root on amd64 or arm64, accessed through a
 local Unix socket. Rootless Docker and daemons with user-namespace remapping aren't supported.
@@ -313,8 +314,10 @@ The following servers still run with their secrets inside the box. co:op names e
 
 A `service:` rule requests access to one project service and needs your approval. Before a filtered
 run starts, co:op recreates that service and its dependencies on an internal network owned by the
-project. They can talk to each other, but have no direct internet connection. With Docker Engine 26
-or later, Docker's DNS server on this network resolves only service names. The filtered box sends
+project. They can talk to each other, but have no direct internet connection, and Docker gives your
+computer no address on that network, so a service can't reach anything listening on it. That needs
+Docker Engine 28 or later; with an older Docker, filtered runs refuse to start services. Docker's DNS
+server on this network resolves only service names. The filtered box sends
 its own DNS requests only to the gateway.
 
 The services reach the gateway through the standard HTTPS proxy variables. The gateway forwards

@@ -247,7 +247,7 @@ func TestFilteredStartupScopesComposeToGrantedServices(t *testing.T) {
 	docker := &filteredDaemonFixture{
 		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
 		composeServices: map[string]string{"db": id},
-		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true, IsolatedGateway: true,
 			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 	}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
@@ -350,6 +350,7 @@ func TestFilteredServiceOverrideIsInternalAndKeepsPeerTrafficDirect(t *testing.T
 	for _, want := range []string{
 		"networks: !override",
 		"internal: true",
+		"com.docker.network.bridge.gateway_mode_ipv4: isolated",
 		"HTTPS_PROXY: \"http://coop-gateway:15444\"",
 		"https_proxy: \"http://coop-gateway:15444\"",
 		"NO_PROXY: \"localhost,127.0.0.1,app,db\"",
@@ -453,7 +454,7 @@ func TestFilteredServiceStartUsesPrivateOwnershipBesideAnotherBox(t *testing.T) 
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	owner := "run-two"
 	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{
-		Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true,
+		Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true, IsolatedGateway: true,
 		Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")},
 	}}}
 	_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo, RunID: owner}, compose,
@@ -488,7 +489,7 @@ func TestSessionBoxJoinsTheServicesItsSessionRuns(t *testing.T) {
 	fixture := func() *filteredDaemonFixture {
 		return &filteredDaemonFixture{serviceDefinition: running,
 			composeServices: map[string]string{"db": strings.Repeat("a", 64), "cache": strings.Repeat("b", 64)},
-			extraNetworks: []runtime.DockerNetwork{{Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true,
+			extraNetworks: []runtime.DockerNetwork{{Name: ComposeProjectFor(repo, owner) + "_filtered", Internal: true, IsolatedGateway: true,
 				Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}}}
 	}
 	resolve := func(t *testing.T, ctx context.Context, docker filteredDocker, spec RunSpec) (*preparedFilteredServices, string, error) {
@@ -611,7 +612,7 @@ func TestFilteredRunServicesCarryTheRunLabels(t *testing.T) {
 		t.Skip("this host has no stable process identity, so no service can be labeled")
 	}
 	docker := &filteredDaemonFixture{extraNetworks: []runtime.DockerNetwork{{
-		Name: ComposeProjectFor(repo, spec.RunID) + "_filtered", Internal: true,
+		Name: ComposeProjectFor(repo, spec.RunID) + "_filtered", Internal: true, IsolatedGateway: true,
 		Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")},
 	}}}
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
@@ -668,7 +669,7 @@ func TestFilteredLaunchSeedsOntoTheExistingSubnet(t *testing.T) {
 			fixture := &filteredDaemonFixture{
 				networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
 				composeServices: map[string]string{"db": id},
-				extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+				extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true, IsolatedGateway: true,
 					Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 			}
 			var docker filteredDocker = fixture
@@ -759,7 +760,7 @@ func TestFilteredServicesStartNamesComposesReason(t *testing.T) {
 	docker := &filteredDaemonFixture{
 		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
 		composeServices: map[string]string{"db": id},
-		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true, IsolatedGateway: true,
 			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 	}
 	shim := filepath.Join(t.TempDir(), "rt")
@@ -1051,5 +1052,45 @@ func TestFilteredBoxWithServiceRulesHonorsAutoUpOff(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "COOP_AUTO_UP=0") || !strings.Contains(err.Error(), "unset COOP_AUTO_UP") ||
 		!strings.Contains(err.Error(), "run coop approve") {
 		t.Fatalf("COOP_AUTO_UP=0 = %v", err)
+	}
+}
+
+// Isolated gateway mode is Docker 28's. An older bridge driver keeps the option without honoring it, so
+// its services would still reach the host: refuse it, and refuse a version Coop cannot read.
+func TestFilteredServicesNeedADockerThatIsolatesTheHost(t *testing.T) {
+	for version, ok := range map[string]bool{"28.0.0": true, "29.8.2": true, "100.1": true, "27.5.1": false, "26.1.4": false, "dev": false, "": false} {
+		if err := filteredServicesDocker(version); (err == nil) != ok {
+			t.Errorf("Docker %q: %v, want allowed %v", version, err, ok)
+		}
+	}
+}
+
+// A services network whose bridge gives the host an address is refused before any service starts on
+// it: Compose kept the option off, or the daemon did not apply it.
+func TestFilteredServicesRefuseANetworkThatReachesTheHost(t *testing.T) {
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(compose, []byte("services:\n  db:\n    image: postgres\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digests, err := composeServiceDigests(compose, repo, false, []string{"db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("a", 64)
+	docker := &filteredDaemonFixture{
+		networkMembers:  map[string]netip.Addr{id: netip.MustParseAddr("172.31.0.2")},
+		composeServices: map[string]string{"db": id},
+		extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true,
+			Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
+	}
+	recorder := filepath.Join(t.TempDir(), "runtime.log")
+	_, _, _, _, err = resolveServiceBindings(t.Context(), docker, recorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+		&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+	if !errors.Is(err, errFilteredServicesReachHost) {
+		t.Fatalf("services network open to the host: %v", err)
+	}
+	if calls, _ := os.ReadFile(recorder); strings.Contains(string(calls), " up -d") || strings.Contains(string(calls), " start") {
+		t.Fatalf("a service started on a network that reaches the host:\n%s", calls)
 	}
 }

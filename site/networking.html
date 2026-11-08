@@ -227,7 +227,8 @@ didn&#39;t finish.</p>
 <p>Install a Docker CLI and a matching Buildx plugin that work together through <code>docker build</code>.
 Buildx alone isn&#39;t enough: Debian bookworm&#39;s Docker CLI 20.10 doesn&#39;t pass that command to the
 plugin. Docker CLI 27.5.1 with Buildx 0.20.1 is a supported pairing for a Docker-in-Docker (DinD)
-sidecar running Docker 27.5.1.</p>
+sidecar running Docker 27.5.1, except for project services: filtered runs start them only on Docker
+Engine 28 or later.</p>
 <p>Filtered runs need a Linux Docker daemon running as root on amd64 or arm64, accessed through a
 local Unix socket. Rootless Docker and daemons with user-namespace remapping aren&#39;t supported.
 With DinD, mount the worker&#39;s state and temporary directories at the same absolute paths in the
@@ -478,8 +479,10 @@ text followed by one variable reference</li>
 </section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
 <p>A <code>service:</code> rule requests access to one project service and needs your approval. Before a filtered
 run starts, co:op recreates that service and its dependencies on an internal network owned by the
-project. They can talk to each other, but have no direct internet connection. With Docker Engine 26
-or later, Docker&#39;s DNS server on this network resolves only service names. The filtered box sends
+project. They can talk to each other, but have no direct internet connection, and Docker gives your
+computer no address on that network, so a service can&#39;t reach anything listening on it. That needs
+Docker Engine 28 or later; with an older Docker, filtered runs refuse to start services. Docker&#39;s DNS
+server on this network resolves only service names. The filtered box sends
 its own DNS requests only to the gateway.</p>
 <p>The services reach the gateway through the standard HTTPS proxy variables. The gateway forwards
 requests only for approved TLS names, after checking the name in the actual ClientHello. Removing

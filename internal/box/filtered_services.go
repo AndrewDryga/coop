@@ -481,6 +481,13 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		if endpoint != live.Endpoint() || daemon != live.Info().ID {
 			return "", nil, nil, nil, errors.New("filtered service Docker daemon differs from the gateway daemon")
 		}
+		if err := filteredServicesDocker(live.Info().ServerVersion); err != nil {
+			if sections != nil && sections.loop {
+				sections.servicesRefused(err.Error())
+				return "", nil, nil, nil, ui.Reported(err)
+			}
+			return "", nil, nil, nil, err
+		}
 	}
 	rt = bound
 	selected := grantedServices(grants)
@@ -542,6 +549,13 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
+	// A network an earlier Coop made gives the host an address. Compose would recreate it to isolate
+	// it, which fails for a service `coop up` moved off it. Docker refuses the removal while a running
+	// container is attached, so it never cuts a running service off; the seed's --force-recreate
+	// replaces stopped ones, and the readback below refuses a network that stayed open.
+	if existing.Name != "" && !existing.IsolatedGateway && rt.RemoveNetwork(ctx, network) == nil {
+		existing = runtime.DockerNetwork{}
+	}
 	seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
 	labels := runServiceLabels(spec, owner)
 	if labels != nil {
@@ -568,6 +582,9 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 		return "", nil, nil, nil, err
 	}
 	subnet, addresses, err := filteredServiceAddresses(seeded, closure)
+	if err == nil && !seeded.IsolatedGateway {
+		err = errFilteredServicesReachHost
+	}
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -701,7 +718,7 @@ func sessionServicesRunning(ctx context.Context, docker filteredDocker, rt runti
 			continue
 		}
 		// The launch's own check proves each service sits at the address worked out here.
-		if _, addresses, err := filteredServiceAddresses(candidate, closure); err == nil {
+		if _, addresses, err := filteredServiceAddresses(candidate, closure); err == nil && candidate.IsolatedGateway {
 			return &joinedServices{network: name, closure: closure, addresses: addresses}
 		}
 	}
@@ -715,6 +732,21 @@ func composeFailure(what string, err error, stderr string) error {
 		return fmt.Errorf("%s: %w: %s", what, err, detail)
 	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+// errFilteredServicesReachHost refuses a services network where the host holds the gateway address:
+// on an ordinary internal network a service reaches every listener on it, the host's own on Linux.
+var errFilteredServicesReachHost = errors.New("filtered service network would let services reach this computer; stop this project's services with `coop down`, then start again")
+
+// filteredServicesDocker refuses a Docker that cannot keep services off the host. The isolated gateway
+// mode arrived in Docker 28.0: before 27.1 the bridge driver keeps the option without honoring it, and
+// 27.x after that knows other modes only.
+func filteredServicesDocker(version string) error {
+	major, _, _ := strings.Cut(version, ".")
+	if n, err := strconv.Atoi(major); err == nil && n >= 28 {
+		return nil
+	}
+	return fmt.Errorf("filtered services need Docker 28 or later, which keeps them off this computer's network; this Docker is %s. Update Docker, or start services with --egress open", version)
 }
 
 func filteredServiceAddresses(network runtime.DockerNetwork, services []string) (netip.Prefix, map[string]netip.Addr, error) {
@@ -775,7 +807,9 @@ func filteredServiceOverride(network string, services []string, subnet netip.Pre
 			out.WriteString(serviceLabelsYAML(labels))
 		}
 	}
-	fmt.Fprintf(&out, "networks:\n  %s:\n    name: %s\n    internal: true\n", filteredServiceNetworkKey, strconv.Quote(network))
+	// Isolated: the host gets no address on the bridge, so a service cannot reach its listeners.
+	fmt.Fprintf(&out, "networks:\n  %s:\n    name: %s\n    internal: true\n    driver_opts:\n      %s: isolated\n",
+		filteredServiceNetworkKey, strconv.Quote(network), runtime.IsolatedGatewayOption)
 	if subnet.IsValid() {
 		fmt.Fprintf(&out, "    ipam:\n      config:\n        - subnet: %s\n", subnet)
 	}

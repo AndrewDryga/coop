@@ -11,8 +11,10 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -286,6 +288,39 @@ exit $failed
 		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, compose: compose})
 	})
 
+	// A service's network gave the host its gateway address, so a service reached any listener on it:
+	// on Linux the host itself, on Docker Desktop and OrbStack the VM. The listener runs in the host's
+	// namespace. Control first: from an ordinary internal network it answers, so the case is not
+	// vacuous. Then the approved service probes its own network's gateway address and reports back.
+	t.Run("compose-service-cannot-reach-host", func(t *testing.T) {
+		listener := "coop-net-e2e-host-listener"
+		_ = exec.Command("docker", "rm", "-f", listener).Run()
+		if out, err := exec.Command("docker", "run", "-d", "--rm", "--name", listener, "--network", "host", "--entrypoint", "python3", candidate.ClientImage, "-c",
+			"import socket\ns=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',47611));s.listen()\nwhile True:\n c,_=s.accept();c.sendall(b'host-reached');c.close()").CombinedOutput(); err != nil {
+			t.Fatalf("host listener: %v\n%s", err, out)
+		}
+		defer func() { _ = exec.Command("docker", "rm", "-f", listener).Run() }()
+		const probe = "import socket\nme=socket.gethostbyname(socket.gethostname())\ngw=me.rsplit('.',1)[0]+'.1'\ns=socket.socket();s.settimeout(3)\ntry:\n s.connect((gw,47611));print('REACHED',gw)\nexcept OSError as e:\n print('blocked',gw,e)"
+		control := "coop-net-e2e-plain-internal"
+		_ = exec.Command("docker", "network", "rm", control).Run()
+		if out, err := exec.Command("docker", "network", "create", "--internal", control).CombinedOutput(); err != nil {
+			t.Fatalf("control network: %v\n%s", err, out)
+		}
+		defer func() { _ = exec.Command("docker", "network", "rm", control).Run() }()
+		out, err := exec.Command("docker", "run", "--rm", "--network", control, "--entrypoint", "python3", candidate.ClientImage, "-c", probe).CombinedOutput()
+		if err != nil || !bytes.HasPrefix(out, []byte("REACHED")) {
+			t.Fatalf("an ordinary internal network did not reach the host listener, so this case proves nothing: %v\n%s", err, out)
+		}
+		server := "import http.server\nimport subprocess,sys\nclass H(http.server.BaseHTTPRequestHandler):\n def do_GET(self):\n  body=subprocess.run([sys.executable,'-c'," + strconv.Quote(probe) + "],capture_output=True).stdout\n  self.send_response(200);self.end_headers();self.wfile.write(body)\nhttp.server.HTTPServer(('0.0.0.0',80),H).serve_forever()"
+		compose := fmt.Sprintf("services:\n  web:\n    image: %s\n    entrypoint: [\"python3\", \"-c\", %s]\n", candidate.ClientImage, strconv.Quote(server))
+		rules := []egress.Rule{{To: egress.Destination{Service: "web"}, Protocol: "tcp", Ports: []int{80}}}
+		script := `body=$(curl -q --proxy '' --noproxy '*' -sS --max-time 15 http://web/)
+echo "service probe: $body"
+case "$body" in blocked*) exit 0 ;; *) exit 1 ;; esac
+`
+		runTransportCase(t, store, candidate, clients, transportCase{rules: rules, script: script, compose: compose})
+	})
+
 	// A services run attaches the gateway's namespace, which the box shares, to a user-defined
 	// network, so Docker answers names at 127.0.0.11 in it: on 53, which the guard captures first,
 	// and on high ports, from where Docker forwards a name it cannot answer to the engine's
@@ -469,7 +504,7 @@ func runTransportCase(t *testing.T, store *networkstate.Store, candidate network
 			t.Fatal(err)
 		}
 	}
-	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered", Memory: "256m", Pids: "128", CPUs: "1", NoNewPrivileges: true}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "filtered", Memory: "256m", Pids: "128", CPUs: "1", NoNewPrivileges: true, AutoUp: true}
 	mode := egress.Filtered
 	policy, err := store.Admit(repo, networkstate.Admission{InvocationMode: &mode,
 		Operator: []egress.Input{{Origin: egress.Origin{Kind: "operator"}, Rules: c.rules}}})

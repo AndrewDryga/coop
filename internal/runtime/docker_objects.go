@@ -329,9 +329,15 @@ const maxDockerNetworks = 256
 type DockerNetwork struct {
 	Name     string
 	Internal bool
-	Subnets  []netip.Prefix
-	Gateways []netip.Addr
+	// IsolatedGateway is a bridge that gives the host no IPv4 address on it (Docker 28's
+	// gateway_mode_ipv4=isolated), so nothing on the network can reach the host's listeners.
+	IsolatedGateway bool
+	Subnets         []netip.Prefix
+	Gateways        []netip.Addr
 }
+
+// IsolatedGatewayOption is the bridge driver option that keeps the host off an internal network.
+const IsolatedGatewayOption = "com.docker.network.bridge.gateway_mode_ipv4"
 
 // Networks inventories every network this daemon has. A filtered run protects
 // them: a granted CIDR that happens to cover a bridge subnet would otherwise
@@ -381,6 +387,7 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 	type observation struct {
 		ID, Name, Scope string
 		Internal        bool
+		Options         map[string]string
 		IPAM            *struct {
 			Config []struct{ Subnet, Gateway string }
 		}
@@ -419,7 +426,7 @@ func (d *Docker) Networks(ctx context.Context) ([]DockerNetwork, error) {
 			}
 			value = inspected
 		}
-		network := DockerNetwork{Name: value.Name, Internal: value.Internal}
+		network := DockerNetwork{Name: value.Name, Internal: value.Internal, IsolatedGateway: value.Options[IsolatedGatewayOption] == "isolated"}
 		for _, config := range value.IPAM.Config {
 			if prefix, err := netip.ParsePrefix(config.Subnet); err == nil && prefix.Addr().Is4() {
 				network.Subnets = append(network.Subnets, prefix.Masked())
