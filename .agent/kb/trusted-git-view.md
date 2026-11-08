@@ -2,8 +2,8 @@
 name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
-sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-06
+sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitview_redirect_test.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
+updated: 2026-11-08
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -86,19 +86,34 @@ worktree folder by identity (`os.SameFile`), so case-insensitive disks and `/var
 backlink following links as git does, approve refuses links. It suggests `git worktree repair`
 only when the backlink is missing, empty or names a worktree that is gone. When the named worktree
 still exists the pointer is a hijack, and repair run from the pointing folder would hand it the
-other worktree's git dir. Not covered, because git keeps no backlink there: a `.git` file naming
-another repository's own git dir (the separate-git-dir and submodule layout), and a `commondir`
-planted in a real `.git` folder, which views follow as git does.
+other worktree's git dir. A planted `commondir` in a real `.git` folder is refused.
 
-**Redirects into another repository are accepted.** The owner chose on 2026-10-17 to keep views
-following every pointer a box can write that leads git to another repository: `commondir`, a
-`.git` file naming another repository's git dir, symlinked `objects` or `refs`, and
-`objects/info/alternates`. The real git behind `GitRefCommand` follows them too. A box can
-therefore make host git read another repository the user can open, and a `reset --hard` or a
-review diff carries that content into the box; docs/box.md says so to users. Isolated forks refuse
-these (`ValidateIndependentGit`). `TestForkGenerationMigrationRefusesPoisonedCommonGitDirectory`
-relies on views following `commondir`. Refusing them was rejected because git worktrees,
-submodules and shared clones use the same pointers.
+**Redirects into another repository are refused** (owner, 2026-11-08, reversing the 2026-10-17
+acceptance). `gitDirsOf` admits only pointers git can prove from both ends: a linked worktree's
+backlink (above), and a submodule git dir under the `modules/` folder of the repository right above
+it (its git dir or common dir, since a superproject that is a linked worktree keeps modules per
+worktree) whose `core.worktree` names the folder back (`checkSubmodule`; a box working in one
+submodule cannot point at a sibling's). `checkStoreLinks` then refuses any link where git keeps the
+store: `objects`, `objects/info`, `objects/pack`, the 256 loose-object folders, `packed-refs`,
+`shallow`, `index`, a linked worktree's `index`, `logs` and `refs/`, anything inside
+`objects/pack/`, `refs/`, `logs/` or `reftable/`, and a `HEAD` link not into `refs/`. A linked pack
+folder needs no object names and linked refs or logs give them away, so no single top-level check
+is enough. Still followed, since each yields an object only by its name: `objects/info/alternates`
+(refusing them broke shared-clone companion sources,
+`TestSessionServicePinsPersistsAndDiscardsCompanionRepositories`) and single loose-object files (too many to walk per command). Bare
+repositories skip the checks: only Coop's own private snapshot and status stores are bare, and
+their alternates are Coop's. `config.worktree` wins over
+`config` for the backlink, since `git sparse-checkout init` moves `core.worktree` there. The
+superproject a submodule check resolves skips the store check (`resolveGitDirs(…, false)`): no git
+runs there, and repeating it per nesting level per command was the cost. Advice to move a git dir
+back appears only for a folder nothing else can own (not a `.git`, not under `worktrees/` or
+`modules/`): in the hijack case that folder is the victim's. This breaks `--separate-git-dir`,
+Google `repo` checkouts and submodules of a home-folder dotfiles repository (the superproject climb
+is refused); their messages say what to do.
+Residual, in docs/box.md: the check runs before git opens anything, so a box still running can swap
+a pointer in between; isolated forks fence writers and use `ValidateIndependentGit` instead.
+Checked and out of scope: worker job sources init fresh repositories before any box exists.
+`RepositoryRoot` uses `nearestGitDir`, not these checks.
 
 Tests that deliberately invalidate repository configuration must restore the owned fixture's
 original bytes without repository discovery. Git 2.55 rejects a format-0 repository containing
@@ -332,6 +347,9 @@ cannot exist, so it never searches a box's repository from coop's working folder
   checks all three paths and exact whitespace-bearing filenames against a working raw-Git control.
   Swept remaining raw production runners: metadata-only queries, fresh isolated eval setup and
   trusted fixtures do not expose another repository-content driver path.
+- 2026-11-08 — redirects into another repository refused: submodule backlink, store-link and
+  alternates checks in `gitDirsOf`; the stale `TestForkGenerationMigrationRefusesPoisonedCommonGitDirectory`
+  reference dropped (no such test exists).
 - 2026-09-13 — documented the trusted view as the source of session pinned clones.
 - 2026-10-17 — companions and session submodules copy the pinned history in the new repository;
   `pack-objects` run in the source would write its temporary pack into the source.

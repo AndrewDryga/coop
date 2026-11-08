@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop's Git no longer follows pointers into another repository.** An agent could write a pointer
+  in `.git` that made Coop's own Git commands read another repository on your computer, and a reset
+  or review could then bring its files into the box. Coop now refuses such pointers and still
+  follows the ones Git makes for linked worktrees and submodules, and shared clones still work.
+  Upgrading: a checkout made with `git init --separate-git-dir` is refused until its Git folder is
+  moved back into `.git`; the message gives the commands.
 - **A launch says when it uses mount protection.** Mount protection hides only the secrets that exist
   when the box starts, and only `coop doctor` said a launch had fallen back to it. A launch using it
   now says, under "Protecting secrets", that secrets saved later stay readable, and points to

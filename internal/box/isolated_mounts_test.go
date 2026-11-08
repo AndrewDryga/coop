@@ -495,20 +495,17 @@ func TestIsolatedMountDeniesParentAliasesAndVolumes(t *testing.T) {
 	}
 }
 
+// A parent made with `git init --separate-git-dir` cannot fork at all: host git refuses its .git
+// pointer (forkspace TestHostGitRefusesPointersIntoAnotherRepository).
 func TestIsolatedMountDeniesExternalParentGitMetadata(t *testing.T) {
-	for _, topology := range []string{"linked-worktree", "separate-gitdir"} {
+	for _, topology := range []string{"linked-worktree"} {
 		t.Run(topology, func(t *testing.T) {
 			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "global"))
 			t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "system"))
-			repo, git := gitrepo.New(t)
+			_, git := gitrepo.New(t)
 			git("commit", "--allow-empty", "-qm", "base")
-			if topology == "linked-worktree" {
-				linked := filepath.Join(t.TempDir(), "linked")
-				git("worktree", "add", "--detach", linked, "HEAD")
-				repo = linked
-			} else {
-				git("init", "--separate-git-dir="+filepath.Join(t.TempDir(), "metadata"))
-			}
+			repo := filepath.Join(t.TempDir(), "linked")
+			git("worktree", "add", "--detach", repo, "HEAD")
 			ws, _ := isolatedMountFixture(t, repo)
 			roots, err := forkspace.GitMetadataDirectories(repo)
 			if err != nil {

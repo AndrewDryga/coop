@@ -293,12 +293,16 @@ visible unless a hiding rule covers it, so add it to <code>.coopignore</code>.</
 files that later run code when you use tools on the host, including files in a new child
 repository. co:op adds safeguards to its own host Git commands, but cannot protect other commands
 you run yourself.</p>
-<p>co:op&#39;s Git commands still follow Git&#39;s links to other repository storage: <code>commondir</code>, a <code>.git</code>
-file pointing to another Git folder, linked <code>objects</code> or <code>refs</code> folders, and
-<code>objects/info/alternates</code>. An agent can use pointers in <code>.git</code> to make these commands read another
-repository your user can access. A reset or review can then bring that repository&#39;s files into
-the box. Use <a href="forks.html#isolated-write-forks"><code>coop fork &lt;name&gt; &lt;target&gt; --isolated</code></a> to get
-independent Git storage and checks before committed changes enter your checkout.</p>
+<p>co:op&#39;s Git commands don&#39;t follow pointers in <code>.git</code> that lead to another repository, since the
+agent can write them. They still follow the ones Git creates for linked worktrees and submodules,
+which Git can check from both ends. A repository that keeps its Git folder elsewhere
+(<code>git init --separate-git-dir</code>) or links its <code>objects</code>, <code>refs</code> or <code>packed-refs</code> to another place is
+refused, and the message says how to fix it.</p>
+<p>Shared clones (<code>git clone --shared</code> or <code>--reference</code>) keep working. The <code>objects/info/alternates</code>
+file they use lets Git read another repository&#39;s objects, but only ones whose hash is already
+known. These checks run before each co:op Git command, so an agent that is still running can swap
+a pointer in between. For independent Git storage that is checked before committed changes enter your
+checkout, use <a href="forks.html#isolated-write-forks"><code>coop fork &lt;name&gt; &lt;target&gt; --isolated</code></a>.</p>
 <h3 id="secrets-inside-files-coop-check-secrets">Secrets inside files: coop check-secrets</h3>
 <p>Use <code>coop check-secrets</code> to look for credentials inside files. It reports each finding as
 <code>file:line</code> and exits 1 when it finds one.</p>

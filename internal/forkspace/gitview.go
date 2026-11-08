@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -354,6 +356,13 @@ func nearestGitDir(dir string) (root, gitDir string, err error) {
 // one repository has one view. A linked worktree's git dir must name this worktree back, and a
 // repository the walk climbs to may not be the home folder or a folder above it.
 func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
+	return resolveGitDirs(workTree, true)
+}
+
+// resolveGitDirs is gitDirsOf. checkStores is false only for the superproject a submodule's check
+// resolves: Coop runs no git there, and checking its store again at every nesting level, on every
+// command, would cost far more than the submodule's own checks.
+func resolveGitDirs(workTree string, checkStores bool) (gitDir, commonDir string, err error) {
 	abs, err := filepath.Abs(workTree)
 	if err != nil {
 		return "", "", err
@@ -392,10 +401,25 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 	commonDir = gitDir
 	data, err := readGitFile(filepath.Join(gitDir, "commondir"))
 	if errors.Is(err, os.ErrNotExist) {
+		// No commondir: the folder's own .git, or a submodule's git dir in its superproject.
+		if gitDir != filepath.Join(root, ".git") {
+			if err := checkSubmodule(root, gitDir); err != nil {
+				return "", "", err
+			}
+		}
+		if checkStores {
+			if err := checkStoreLinks(gitDir, commonDir); err != nil {
+				return "", "", err
+			}
+		}
 		return gitDir, commonDir, nil
 	}
 	if err != nil {
 		return "", "", err
+	}
+	if gitDir == filepath.Join(root, ".git") {
+		return "", "", redirectError(filepath.Join(gitDir, "commondir"), strings.TrimSpace(string(data)),
+			"Git writes commondir only for linked worktrees; if this repository is not one, delete it.")
 	}
 	target := strings.TrimSpace(string(data))
 	if !filepath.IsAbs(target) {
@@ -405,15 +429,177 @@ func gitDirsOf(workTree string) (gitDir, commonDir string, err error) {
 		target = real
 	}
 	commonDir = filepath.Clean(target)
-	// A git dir with its own common dir is a linked worktree's. Unless it is this folder's own
-	// .git, the worktree reached it through a `gitdir:` file or a link, which a box can aim at
-	// any repository's worktree.
-	if commonDir != gitDir && gitDir != filepath.Join(root, ".git") {
+	// A git dir with its own common dir is a linked worktree's, reached through a `gitdir:` file or
+	// a link, which a box can aim at any repository's worktree.
+	if commonDir != gitDir {
 		if err := checkLinkedWorktree(root, gitDir, commonDir, readGitFile); err != nil {
 			return "", "", err
 		}
 	}
+	if checkStores {
+		if err := checkStoreLinks(gitDir, commonDir); err != nil {
+			return "", "", err
+		}
+	}
 	return gitDir, commonDir, nil
+}
+
+// redirectError refuses a pointer that would take host git out of the repository: a box can write
+// every file in .git, and a reset or review through such a pointer would carry another
+// repository's files into the box.
+func redirectError(file, target, fix string) error {
+	return fmt.Errorf("%s points Git at %s, outside this repository. Coop's Git does not follow pointers a box "+
+		"could have written there. %s", file, target, fix)
+}
+
+// checkSubmodule proves that gitDir, named by root's .git file or link and holding no commondir,
+// is root's submodule git dir. Git keeps one under the modules folder of the repository above
+// root, with core.worktree naming root back; a box can point at a sibling submodule, but cannot
+// make the sibling's backlink name its own folder. `git init --separate-git-dir` leaves the same
+// pointer with nothing proving whose it is.
+func checkSubmodule(root, gitDir string) error {
+	dotGit := filepath.Join(root, ".git")
+	fix := "Restore this folder's own .git."
+	if filepath.Base(gitDir) != ".git" && !slices.Contains([]string{"worktrees", "modules"}, filepath.Base(filepath.Dir(gitDir))) {
+		// Nothing else can own a folder git keeps nowhere else, so it is most likely this
+		// repository's own, moved away by `git init --separate-git-dir`.
+		fix = "If it is this repository's own Git folder, move it back: rm " + dotGit + " && mv " + gitDir + " " +
+			dotGit + " && git config --unset core.worktree"
+	}
+	parent := filepath.Dir(root)
+	if parent == root {
+		return redirectError(dotGit, gitDir, fix)
+	}
+	superGitDir, superCommonDir, err := resolveGitDirs(parent, false)
+	if errors.Is(err, errNoRepository) {
+		return redirectError(dotGit, gitDir, fix)
+	}
+	if err != nil {
+		return fmt.Errorf("%s names %s, which only a submodule could use, and its superproject cannot be used: %w", dotGit, gitDir, err)
+	}
+	if !within(gitDir, filepath.Join(superGitDir, "modules")) && !within(gitDir, filepath.Join(superCommonDir, "modules")) {
+		return redirectError(dotGit, gitDir, fix)
+	}
+	backlink, err := configuredWorktree(gitDir)
+	if err != nil {
+		return err
+	}
+	if backlink == "" {
+		return redirectError(dotGit, gitDir, "Restore this folder's own .git, or run git submodule update --init in the superproject.")
+	}
+	if !filepath.IsAbs(backlink) {
+		backlink = filepath.Join(gitDir, backlink)
+	}
+	if !sameFile(backlink, root) {
+		return redirectError(dotGit, gitDir, "That Git folder belongs to the submodule at "+backlink+"; restore this folder's own .git.")
+	}
+	return nil
+}
+
+// configuredWorktree reads core.worktree from gitDir's config, or from its config.worktree, which
+// wins as in git: `git sparse-checkout init` moves the setting there. Each file is parsed by git in
+// a scratch folder of its own (listGitConfig explains why).
+func configuredWorktree(gitDir string) (string, error) {
+	scratch, err := os.MkdirTemp("", "coop-submodule-config-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(scratch)
+	worktree := ""
+	for _, name := range []string{"config", "config.worktree"} {
+		data, _, err := readGitMetadata(filepath.Join(gitDir, name), gitConfigLimit)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		entries, err := listGitConfig(context.Background(), data, scratch)
+		if err != nil {
+			return "", err
+		}
+		for _, entry := range entries {
+			if entry[0] == "core.worktree" {
+				worktree = entry[1]
+			}
+		}
+	}
+	return worktree, nil
+}
+
+// checkStoreLinks refuses links where git keeps a repository's objects and refs, any of which hands
+// host git another repository's store: a linked pack or loose-object folder needs no object names,
+// and linked refs, packed-refs or logs give them away. Coop's own clones and worktrees use none of
+// them. gitDir is a linked worktree's own folder, or commonDir itself. Two pointers stay followed,
+// since each yields an object only to one who already knows its name: alternates, which shared
+// clones (`clone --shared/--reference`, companion sources among them) depend on, and single
+// loose-object files, too many to walk on every command.
+func checkStoreLinks(gitDir, commonDir string) error {
+	var paths []string
+	for _, name := range []string{"objects", "objects/info", "objects/pack", "packed-refs", "shallow", "index"} {
+		paths = append(paths, filepath.Join(commonDir, name))
+	}
+	for i := range 256 {
+		paths = append(paths, filepath.Join(commonDir, "objects", fmt.Sprintf("%02x", i)))
+	}
+	if gitDir != commonDir {
+		for _, name := range []string{"index", "logs"} {
+			paths = append(paths, filepath.Join(gitDir, name))
+		}
+	}
+	for _, path := range paths {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return storeLinkError(path)
+		}
+	}
+	// HEAD may be the link to refs/ that old git wrote (gitCanUse accepts it).
+	if target, err := os.Readlink(filepath.Join(gitDir, "HEAD")); err == nil && !strings.HasPrefix(target, "refs/") {
+		return storeLinkError(filepath.Join(gitDir, "HEAD"))
+	}
+	trees := []string{filepath.Join(commonDir, "objects", "pack")}
+	for _, tree := range []string{"refs", "logs", "reftable"} {
+		trees = append(trees, filepath.Join(commonDir, tree))
+	}
+	if gitDir != commonDir {
+		trees = append(trees, filepath.Join(gitDir, "refs"))
+	}
+	for _, root := range trees {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if entry.Type()&fs.ModeSymlink != 0 {
+				return storeLinkError(path)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func storeLinkError(path string) error {
+	target, _ := os.Readlink(path)
+	return redirectError(path, target, "Replace the link with the file or folder it names.")
+}
+
+// within reports whether path is dir or inside it. It compares identities, as sameFile does, so
+// a case-insensitive disk or a linked folder spelling dir another way still matches; a path that
+// does not exist yet is judged by the nearest folder above it that does.
+func within(path, dir string) bool {
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+		if sameFile(p, dir) {
+			return true
+		}
+		if filepath.Dir(p) == p {
+			return false
+		}
+	}
 }
 
 // checkLinkedWorktree refuses a linked worktree's git dir that is not root's; root is the

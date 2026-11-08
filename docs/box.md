@@ -194,12 +194,17 @@ files that later run code when you use tools on the host, including files in a n
 repository. co:op adds safeguards to its own host Git commands, but cannot protect other commands
 you run yourself.
 
-co:op's Git commands still follow Git's links to other repository storage: `commondir`, a `.git`
-file pointing to another Git folder, linked `objects` or `refs` folders, and
-`objects/info/alternates`. An agent can use pointers in `.git` to make these commands read another
-repository your user can access. A reset or review can then bring that repository's files into
-the box. Use [`coop fork <name> <target> --isolated`](forks.md#isolated-write-forks) to get
-independent Git storage and checks before committed changes enter your checkout.
+co:op's Git commands don't follow pointers in `.git` that lead to another repository, since the
+agent can write them. They still follow the ones Git creates for linked worktrees and submodules,
+which Git can check from both ends. A repository that keeps its Git folder elsewhere
+(`git init --separate-git-dir`) or links its `objects`, `refs` or `packed-refs` to another place is
+refused, and the message says how to fix it.
+
+Shared clones (`git clone --shared` or `--reference`) keep working. The `objects/info/alternates`
+file they use lets Git read another repository's objects, but only ones whose hash is already
+known. These checks run before each co:op Git command, so an agent that is still running can swap
+a pointer in between. For independent Git storage that is checked before committed changes enter your
+checkout, use [`coop fork <name> <target> --isolated`](forks.md#isolated-write-forks).
 
 ### Secrets inside files: coop check-secrets
 
