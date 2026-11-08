@@ -448,7 +448,7 @@ func TestReleaseLocalGateRunsEveryCIOwner(t *testing.T) {
 // timed out. Every go test line of the scoped recipe runs through GATE_SLOT, the slots make check
 // takes.
 func TestReleaseLocalChecksTakeAGateSlot(t *testing.T) {
-	if slot := makeVariable(t, "GATE_SLOT"); slot != `go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots"` {
+	if slot := makeVariable(t, "GATE_SLOT"); slot != `go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots" env PATH="$$PATH"` {
 		t.Errorf("GATE_SLOT = %q; want tools/gateslot on the slots in ~/.cache/coop-gate/slots", slot)
 	}
 	makefile, err := os.ReadFile("Makefile")

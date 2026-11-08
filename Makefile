@@ -212,12 +212,14 @@ GATE_TEST_OWNERS := check-race-sessionsvc-1 check-race-sessionsvc-2 check-proces
 GATE_GOCACHE ?= $(HOME)/.cache/coop-gate/go-build
 
 # A main loop and its forks each run this gate in a box at the same moment, and together they loaded
-# a 12-core Mac past 40 until suites timed out. So the gate first takes one of a few slots shared by
-# every box on the host (tools/gateslot): the coop-cache volume is every box's ~/.cache, so a flock
-# there is host-wide. A gate that waits says so, and its timeouts start only once it runs. Inside
-# another gate, such as the fork merge gate's coop-gate-slot, it runs at once in that gate's slot.
-# check-local's tests take a slot the same way.
-GATE_SLOT := go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots"
+# a 12-core Mac past 40 until suites timed out. So the gate first takes one of a few slots shared
+# by the project's boxes (tools/gateslot): the project's cache volume is each of its boxes' ~/.cache,
+# so a flock there is seen by the project and its forks. A gate that waits says so, and its timeouts
+# start only once it runs. Inside another gate, such as the fork merge gate's coop-gate-slot, it runs
+# at once in that gate's slot. check-local's tests take a slot the same way. go run puts Go's own bin
+# folder first on PATH, where a stale staticcheck or govulncheck would shadow the caller's pinned
+# ones, so the gate gets the caller's PATH back.
+GATE_SLOT := go run ./tools/gateslot "$(HOME)/.cache/coop-gate/slots" env PATH="$$PATH"
 check: export GOCACHE := $(GATE_GOCACHE)
 check: export GOFLAGS := $(strip $(shell go env GOFLAGS) -trimpath)
 check: ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
