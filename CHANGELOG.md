@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 13.1.0
 
 - **Each project's tools and downloads are its own.** Every box used to share one tools volume
   (`~/.asdf`) and one download cache (`~/.cache`), so one project's box could change the tools or
@@ -48,13 +46,11 @@
   that start and stop Coop's cgroups. AppArmor cannot check those calls' arguments, so it does not
   limit what the helper could do through systemd. It runs through Docker, needs no sudo and lasts
   across reboots; `coop doctor` suggests it. Without it, the helper keeps running as before.
-
 - **Coop works on Linux hosts with SELinux, such as Fedora and RHEL.** A box could not even read
   your project there: Docker labels containers so they may not read files in your home folder. Coop
   now starts its containers with SELinux labels turned off (`label=disable`), as toolbox and dev
   containers do, so nothing relabels your files. Kernel filesystem protection works there too, and
   `coop doctor` checks it on your home disk instead of a temporary folder that may be in memory.
-
 - **Linux boxes start on kernels older than kernel protection supports.** 13.0.0 turned on kernel
   filesystem protection for Linux, but its filter needs two file security hooks that only recent
   kernels have. On an older kernel, such as the 6.12 kernel of RHEL 10 and its rebuilds, the
