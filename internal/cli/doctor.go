@@ -962,10 +962,27 @@ func buildKernelFixture() (string, error) {
 	})
 }
 
+// doctorFixtureBase is where doctor makes its throwaway projects: beside Coop's state folder (never
+// inside it, which no box may mount), on the home disk where projects usually live. The system temp
+// folder can be a tmpfs (Fedora, Arch), which never gets kernel filesystem protection, so doctor
+// would report the weaker backend a real project does not use. An empty result falls back to the
+// temp folder.
+func doctorFixtureBase() string {
+	state, err := config.StateHome()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(state, "coop-doctor")
+	if os.MkdirAll(dir, 0o700) != nil {
+		return ""
+	}
+	return dir
+}
+
 // seedFixture writes files into a new world-readable temporary git repo, lets link add what a map
 // cannot express, and commits.
 func seedFixture(files map[string]string, link func(dir string) error) (string, error) {
-	dir, err := os.MkdirTemp("", "coop-doctor-")
+	dir, err := os.MkdirTemp(doctorFixtureBase(), "coop-doctor-")
 	if err != nil {
 		return "", fmt.Errorf("could not create a temporary project: %s", osCause(err))
 	}

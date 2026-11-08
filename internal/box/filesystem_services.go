@@ -429,6 +429,11 @@ func prepareServiceFilesystemStart(ctx context.Context, rt runtime.Runtime, repo
 		svc["entrypoint"] = []string{fsfilter.ControlPath + "/guard"}
 		svc["command"] = []string{"guard", fsfilter.ControlPath + "/manifest.json"}
 		svc["security_opt"] = []string{"no-new-privileges:true"}
+		if runtime.HostSELinux() {
+			// As every container Coop creates itself: an SELinux label would refuse the guard and
+			// the project to the service (see runtime.selinuxLabel).
+			svc["security_opt"] = []string{"no-new-privileges:true", runtime.SELinuxComposeOption}
+		}
 		svc["volumes"] = append(volumes, map[string]any{"type": "bind", "source": strings.ReplaceAll(control, "$", "$$"), "target": fsfilter.ControlPath, "read_only": true, "bind": map[string]any{"create_host_path": false}})
 		labels, _ := svc["labels"].(map[string]any)
 		if labels == nil {

@@ -541,7 +541,7 @@ func (d *Docker) runWorkload(ctx context.Context, interruptible bool, stdin io.R
 	if err := d.VerifyLaunch(ctx); err != nil {
 		return -1, err
 	}
-	argv := append([]string{"--config", d.clientConfig, "--host", d.endpoint}, args...)
+	argv := append([]string{"--config", d.clientConfig, "--host", d.endpoint}, withSELinuxLabel(selinuxDaemon(d.info.SecurityOptions), args)...)
 	cmd := exec.Command(d.binary, argv...)
 	cmd.Env = slices.Clone(d.env)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr

@@ -150,11 +150,12 @@ files such as <code>secrets.env</code>. Source and docs like <code>secrets.go</c
 templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible.</p>
 <p>co:op protects these files in one of two ways. Projects get eBPF protection automatically on
 supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, and ext4 or xfs
-projects on Linux. Docker must use cgroup v2 with the <code>cgroupfs</code> or <code>systemd</code> cgroup driver, and
-the kernel must run the BPF security module, as Ubuntu 24.04 does by default. With the <code>systemd</code>
-driver, co:op asks systemd over the system bus for the cgroups that hold its boxes. Other
-filesystems, rootless or SELinux-enabled Docker, kernels without the BPF module and incompatible
-container options use mount protection; <code>coop doctor</code> names the reason.</p>
+projects on Linux. Docker must use cgroup v2 with the <code>cgroupfs</code> or <code>systemd</code> cgroup driver. The
+kernel must run the BPF security module and have every file hook the filter attaches to, which
+recent kernels such as Fedora 44&#39;s do. With the <code>systemd</code> driver, co:op asks systemd over the system
+bus for the cgroups that hold its boxes. Other filesystems, rootless Docker, older kernels (such as
+RHEL 10&#39;s 6.12) and incompatible container options use mount protection; <code>coop doctor</code> names the
+reason.</p>
 <p>With eBPF protection, the box can&#39;t read or change a secret, including through another letter
 case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay
 writable, ordinary public hardlinks work, and <code>.coopignore</code> stays readable and read-only.</p>

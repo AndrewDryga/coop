@@ -260,6 +260,7 @@ func TestApprovedDoctorRefusals(t *testing.T) {
 		}
 		t.Setenv("PATH", bin)
 		t.Setenv("TMPDIR", tmp)
+		t.Setenv("XDG_STATE_HOME", tmp) // the fixture's first home; the temp folder is its fallback
 		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: boxruntime.Runtime{Name: "docker"}}
 		var code int
 		var err error

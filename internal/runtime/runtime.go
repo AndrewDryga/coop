@@ -274,6 +274,7 @@ func (r Runtime) BuildPlatform() (platform string, flags []string, err error) {
 // completion); err is non-nil only when the process could not be started.
 // A nil stream is treated as /dev/null by os/exec.
 func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	args = withSELinuxLabel(r.selinuxFor(args), args)
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	return exitCode(r.Name, cmd.Run())
@@ -353,6 +354,7 @@ func commandOutputError(err error, output []byte) error {
 // `--rm` removes it (a bare SIGKILL would orphan it, see box.assembleArgs) — a short grace, then
 // SIGKILL. The signal targets the whole group (-pid) so no runtime helper is left behind.
 func (r Runtime) RunInterruptible(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	args = withSELinuxLabel(r.selinuxFor(args), args)
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	return runInterruptibleCommand(ctx, cmd)
@@ -373,6 +375,7 @@ type Helper struct {
 // StartHelper launches the runtime with args, stderr going to stderr, and returns the running
 // helper with its stdio pipes attached. The caller closes stdout after its reader finishes.
 func (r Runtime) StartHelper(stderr io.Writer, args ...string) (*Helper, error) {
+	args = withSELinuxLabel(r.selinuxFor(args), args)
 	cmd := exec.Command(r.Name, args...)
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

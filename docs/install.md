@@ -29,6 +29,12 @@ Online providers need Docker, which supports the helper that keeps provider cred
 box. Apple [container](https://github.com/apple/container) on macOS 26+ can run commands with open
 networking and no credentials. If both are installed, co:op chooses Docker.
 
+On a Linux host with SELinux, such as Fedora or RHEL, co:op starts its containers with SELinux
+labels turned off (`label=disable`), so a box can read your project without relabeling your files.
+Capabilities, seccomp, the box's user, mounts and filesystem protection still confine it, but SELinux
+no longer separates boxes from the host or from each other. A Compose
+service you start yourself keeps your compose file's own settings.
+
 ## Build from source
 
 ```bash copy

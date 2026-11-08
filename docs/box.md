@@ -23,11 +23,12 @@ templates (`*.example`, `*.sample`, `*.template`) stay visible.
 
 co:op protects these files in one of two ways. Projects get eBPF protection automatically on
 supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, and ext4 or xfs
-projects on Linux. Docker must use cgroup v2 with the `cgroupfs` or `systemd` cgroup driver, and
-the kernel must run the BPF security module, as Ubuntu 24.04 does by default. With the `systemd`
-driver, co:op asks systemd over the system bus for the cgroups that hold its boxes. Other
-filesystems, rootless or SELinux-enabled Docker, kernels without the BPF module and incompatible
-container options use mount protection; `coop doctor` names the reason.
+projects on Linux. Docker must use cgroup v2 with the `cgroupfs` or `systemd` cgroup driver. The
+kernel must run the BPF security module and have every file hook the filter attaches to, which
+recent kernels such as Fedora 44's do. With the `systemd` driver, co:op asks systemd over the system
+bus for the cgroups that hold its boxes. Other filesystems, rootless Docker, older kernels (such as
+RHEL 10's 6.12) and incompatible container options use mount protection; `coop doctor` names the
+reason.
 
 With eBPF protection, the box can't read or change a secret, including through another letter
 case, an equivalent Unicode spelling, a symlink or an existing hardlink. Public files stay

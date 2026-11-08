@@ -4,6 +4,12 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop works on Linux hosts with SELinux, such as Fedora and RHEL.** A box could not even read
+  your project there: Docker labels containers so they may not read files in your home folder. Coop
+  now starts its containers with SELinux labels turned off (`label=disable`), as toolbox and dev
+  containers do, so nothing relabels your files. Kernel filesystem protection works there too, and
+  `coop doctor` checks it on your home disk instead of a temporary folder that may be in memory.
+
 - **Linux boxes start on kernels older than kernel protection supports.** 13.0.0 turned on kernel
   filesystem protection for Linux, but its filter needs two file security hooks that only recent
   kernels have. On an older kernel, such as the 6.12 kernel of RHEL 10 and its rebuilds, the

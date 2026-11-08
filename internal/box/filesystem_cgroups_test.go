@@ -18,7 +18,6 @@ func TestFilesystemCgroupsNamesWhyAHostKeepsMounts(t *testing.T) {
 	}{
 		{runtime.DockerInfo{CgroupVersion: "2", CgroupDriver: "cgroupfs", SecurityOptions: []string{"name=rootless"}}, "rootless"},
 		{runtime.DockerInfo{CgroupVersion: "2", CgroupDriver: "cgroupfs", SecurityOptions: []string{"name=userns"}}, "rootless or user-namespace"},
-		{runtime.DockerInfo{CgroupVersion: "2", CgroupDriver: "systemd", SecurityOptions: []string{"name=selinux"}}, "SELinux"},
 		{runtime.DockerInfo{CgroupVersion: "1", CgroupDriver: "cgroupfs"}, "cgroup v2"},
 		{runtime.DockerInfo{CgroupVersion: "2", CgroupDriver: "none"}, "cgroupfs or systemd"},
 		{runtime.DockerInfo{}, "cgroup v2"},

@@ -149,6 +149,11 @@ run those yourself:</p>
 <p>Online providers need Docker, which supports the helper that keeps provider credentials outside the
 box. Apple <a href="https://github.com/apple/container" target="_blank" rel="nofollow noopener">container</a> on macOS 26+ can run commands with open
 networking and no credentials. If both are installed, co:op chooses Docker.</p>
+<p>On a Linux host with SELinux, such as Fedora or RHEL, co:op starts its containers with SELinux
+labels turned off (<code>label=disable</code>), so a box can read your project without relabeling your files.
+Capabilities, seccomp, the box&#39;s user, mounts and filesystem protection still confine it, but SELinux
+no longer separates boxes from the host or from each other. A Compose
+service you start yourself keeps your compose file&#39;s own settings.</p>
 </section><section class="doc-section reference-section" id="build-from-source"><h2>Build from source</h2>
 <div class="reference-code-frame code-file" data-copy-kind="command"><p class="code-file-name">Shell</p><pre class="code" role="region" aria-label="Build from source code example" tabindex="0" data-copy-source=""><code class="language-copy">git clone https://github.com/AndrewDryga/coop &amp;&amp; cd coop &amp;&amp; make install
 </code></pre></div>

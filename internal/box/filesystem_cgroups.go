@@ -14,8 +14,6 @@ var (
 	//lint:ignore ST1005 it is a sentence for a person
 	errFilesystemRootless = errors.New("Kernel filesystem protection does not work with rootless or user-namespace-remapped Docker")
 	//lint:ignore ST1005 it is a sentence for a person
-	errFilesystemSELinux = errors.New("Kernel filesystem protection is not yet supported with SELinux-enabled Docker")
-	//lint:ignore ST1005 it is a sentence for a person
 	errFilesystemCgroupV1 = errors.New("Kernel filesystem protection requires cgroup v2")
 	//lint:ignore ST1005 it is a sentence for a person
 	errFilesystemNoBus = errors.New("Kernel filesystem protection with Docker's systemd cgroup driver needs the system D-Bus socket at " + systemdbus.Socket)
@@ -32,10 +30,6 @@ func filesystemCgroups(info runtime.DockerInfo) (driver string, err error) {
 	for _, option := range info.SecurityOptions {
 		if strings.Contains(option, "rootless") || strings.Contains(option, "userns") {
 			return "", errFilesystemRootless
-		}
-		// Not yet qualified: SELinux labels may refuse the helper's bus and BPF access.
-		if strings.Contains(option, "selinux") {
-			return "", errFilesystemSELinux
 		}
 	}
 	if info.CgroupVersion != "2" {

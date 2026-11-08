@@ -127,7 +127,7 @@ func (d *Docker) CreateContainer(ctx context.Context, spec DockerCreate) (string
 	if err != nil || present {
 		return "", errors.Join(ErrDockerCreateNotAttempted, errors.New("Docker container creation requires a fresh intention"), err)
 	}
-	args := append([]string{"container", "create", "--pull", "never", "--restart", "no", "--name", spec.Ref.Name}, spec.Options...)
+	args := withSELinuxLabel(selinuxDaemon(d.info.SecurityOptions), append([]string{"container", "create", "--pull", "never", "--restart", "no", "--name", spec.Ref.Name}, spec.Options...))
 	args = append(args, dockerLabelArgs(spec.Ref.Labels)...)
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
