@@ -3551,8 +3551,10 @@ func TestEachProjectHasItsOwnCacheVolume(t *testing.T) {
 	if got := volumeOf(RunSpec{Repo: b, PolicyRepo: a}); got != first {
 		t.Errorf("a job run for project a uses %q, want its project's %q", got, first)
 	}
-	if got := volumeOf(RunSpec{Repo: b, IsolatedParent: a}); got != first+"-isolated" {
-		t.Errorf("an isolated fork of a uses %q, want %q", got, first+"-isolated")
+	// On native Linux the volume names end in the box user's IDs, after the isolated mark.
+	isolated := boxAgentIdentity().volume("coop-cache-" + strings.TrimPrefix(ComposeProject(a), "coop-") + "-isolated")
+	if got := volumeOf(RunSpec{Repo: b, IsolatedParent: a}); got != isolated || got == first {
+		t.Errorf("an isolated fork of a uses %q, want %q", got, isolated)
 	}
 	if _, err := projectCacheVolume(RunSpec{}); err == nil {
 		t.Error("a cache with no project got a volume")

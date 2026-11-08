@@ -297,7 +297,7 @@ func TestIsolatedSelectedSharedCacheTrustIsNotPrivateOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(cache, "-isolated") {
+	if !strings.Contains(cache, "-isolated") {
 		t.Fatalf("an isolated fork's cache volume = %q, want one of its own", cache)
 	}
 	for _, name := range []string{cache} {
