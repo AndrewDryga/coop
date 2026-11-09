@@ -75,7 +75,7 @@ func (s *codexSession) serve(in io.Reader, out io.Writer) {
 		s.mu.Unlock()
 		switch m.Method {
 		case "initialize":
-			answer(m.ID, `{"protocolVersion":1,"agentInfo":{"name":"@agentclientprotocol/codex-acp","version":"2.0.1"},"agentCapabilities":{},"authMethods":[]}`)
+			answer(m.ID, `{"protocolVersion":1,"agentInfo":{"name":"@agentclientprotocol/codex-acp","version":"2.6.0"},"agentCapabilities":{},"authMethods":[]}`)
 		case "session/new":
 			answer(m.ID, fmt.Sprintf(`{"sessionId":"S","configOptions":%s}`, s.options()))
 		case "session/set_config_option":

@@ -253,7 +253,7 @@ func TestNetworkBundleAndLockedClientSupportAgree(t *testing.T) {
 
 func TestQualifiedClientsAreTheSameOnEveryPlatform(t *testing.T) {
 	want := QualifiedClients()
-	if len(want) != 6 || !slices.Contains(want, "@anthropic-ai/claude-code 2.1.285") || !slices.Contains(want, "grok 1.0.44") {
+	if len(want) != 6 || !slices.Contains(want, "@anthropic-ai/claude-code 2.1.319") || !slices.Contains(want, "grok 1.0.77") {
 		t.Fatalf("qualified clients = %v", want)
 	}
 	for _, arch := range []string{"amd64", "arm64"} {

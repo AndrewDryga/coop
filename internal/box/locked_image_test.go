@@ -89,7 +89,7 @@ func TestLockedImageBuildContextIsPinnedDeterministicAndEmbeddedOnly(t *testing.
 		t.Fatal("context omitted or added inputs")
 	}
 	df := string(files["Dockerfile"])
-	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.44-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs",
+	for _, want := range []string{"npm ci --prefix /opt/coop/clients --ignore-scripts --include=optional --omit=dev", "--userconfig=/dev/null --globalconfig=/opt/coop/clients/global.npmrc", "/node_modules/playwright/cli.js install-deps chromium", "curl --fail --silent --show-error --proto '=https'", "sha256sum -c -", "grok-1.0.77-linux-aarch64.gz", "chmod -R a-w /opt/coop/clients", "USER node", "COOP_SUPERVISE_DESCENDANTS", "terminate_jobs",
 		"COPY launchers/ /opt/coop/bin/", "COPY system/ /", "ENV DISABLE_UPDATES=1 GROK_DISABLE_AUTOUPDATER=1",
 		`PATH="/opt/coop/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"`} {
 		if !strings.Contains(df, want) {

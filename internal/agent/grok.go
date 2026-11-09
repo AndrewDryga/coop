@@ -87,9 +87,12 @@ func grokBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	add("POST", "/v1/responses", "")
 	// The pinned client lists its provider's hosted MCP tools at start (GET /v1/mcp/tools/list, seen
 	// refused on every run before 2026-11-07); it reads, like the lines beside it.
-	for _, path := range []string{"/v1/user", "/v1/models", "/v1/settings", "/v1/bundle/archive", "/v1/subagents/bundle", "/v1/feedback/config", "/v1/mcp/tools/list"} {
+	for _, path := range []string{"/v1/models", "/v1/settings", "/v1/bundle/archive", "/v1/subagents/bundle", "/v1/feedback/config", "/v1/mcp/tools/list"} {
 		add("GET", path, "")
 	}
+	// Since 1.0.77 the client asks for its account with this one fixed query (captured offline
+	// through a TLS-terminating proxy); the bare line it sent before is no longer seen.
+	add("GET", "/v1/user", "include=coding_data_team")
 	add("GET", "/v1/billing", "format=credits")
 	out = append(out, NativeBrokerRoute{Host: "cli-chat-proxy.grok.com", Method: "GET", Path: "/v1/sessions/search", Header: "Authorization", HeaderPrefix: "Bearer ",
 		Queries: []NativeBrokerQuery{{Name: "limit", Values: []string{"100"}}, {Name: "query", Optional: true, MaxBytes: 4096}}})
@@ -324,7 +327,7 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	var raw grokQuotaResponse
 	err = readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
 		"Authorization": {"Bearer " + state.AccessToken}, "X-Xai-Token-Auth": {"xai-grok-cli"},
-		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.44"}, "X-Grok-Client-Mode": {"headless"},
+		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.77"}, "X-Grok-Client-Mode": {"headless"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -384,7 +387,7 @@ func (raw grokQuotaResponse) quota() UsageQuota {
 	return out
 }
 
-// Scaffold: the pinned 1.0.44 client reads a project's AGENTS.md itself (InstructionFile) and its
+// Scaffold: the pinned 1.0.77 client reads a project's AGENTS.md itself (InstructionFile) and its
 // skills from <repo>/.grok/skills, so a selected Grok gets that link to the shared source, as Codex
 // does. Both are project scope, which this client loads only in a trusted folder (BoxEnv).
 func (grokAgent) Scaffold() ScaffoldSpec {
@@ -399,7 +402,7 @@ func init() { register(grokAgent{}) }
 
 func (grokAgent) Name() string { return "grok" }
 
-// SkillsCapable: the pinned 1.0.44 client discovers skills natively from ~/.grok/skills/<name>/
+// SkillsCapable: the pinned 1.0.77 client discovers skills natively from ~/.grok/skills/<name>/
 // SKILL.md — the directory Coop's shared projection already targets (~/.<agent>/skills) — and lists
 // them in `grok inspect`. Project-scope .grok/skills outranks user scope in its own precedence, so a
 // repository's own skills still win over the projected copy; that scope needs the folder trust
@@ -565,7 +568,7 @@ func (grokAgent) Login(*config.Config) []string {
 	return []string{"grok", "login", "--device-auth"}
 }
 
-// UpdateControls: the pinned 1.0.44 checks for a CLI update on launch unless
+// UpdateControls: the pinned 1.0.77 checks for a CLI update on launch unless
 // GROK_DISABLE_AUTOUPDATER is set (its own documentation, embedded in the binary).
 func (grokAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"GROK_DISABLE_AUTOUPDATER=1"}}
@@ -824,7 +827,7 @@ func (grokAgent) ACPRateLimitSignals() []ACPSignal {
 func (grokAgent) ACPSessionSettings(Target) []ACPSessionSetting { return nil }
 
 // BoxEnv: grok reads its config + auth from ~/.grok, where coop mounts its profile. The telemetry
-// switch is off: left on, the pinned 1.0.44 client looks up api.mixpanel.com and grok.com dozens
+// switch is off: left on, the pinned 1.0.77 client looks up api.mixpanel.com and grok.com dozens
 // of times per prompt, and api.x.ai too — 128 blocked lookups in one filtered run, a burst alert
 // every time, and detail the record had to drop — and with it off it looks up none of them and
 // answers the same.
@@ -911,15 +914,15 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	arch, digest := "aarch64", "3c6b81c173f42cb6e889b3f812fe533db6612e5e2c0fe72eaca8bf26ce85c4d1"
+	arch, digest := "aarch64", "ad0bdf44d84197f4a746d7f3fb949724c63023b89baefc54a4132303da7bff87"
 	if platform.Architecture == "amd64" {
-		arch, digest = "x86_64", "bcf854ae0efcb59c6e8cb344651df32f845c9bda284639a153cd5732c972ae05"
+		arch, digest = "x86_64", "243a669421d0af2c3a56b4283601d8c22815312224feb38a0059396659926250"
 	}
 	destination := lockedClientRoot + "/native/grok"
-	client := LockedClient{Version: "1.0.44", Binary: "grok", Exec: []string{destination},
-		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.44"}},
+	client := LockedClient{Version: "1.0.77", Binary: "grok", Exec: []string{destination},
+		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.77"}},
 		NativeArtifact: &LockedNativeArtifact{
-			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-" + arch + ".gz",
+			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-" + arch + ".gz",
 			SHA256: digest, Destination: destination,
 		}}
 	cli, acp := client, client
@@ -930,7 +933,7 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "access-file", input,
 		[]string{"auth.x.ai", "cli-chat-proxy.grok.com", "code.grok.com"},
-		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-aarch64.gz"})
+		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-aarch64.gz"})
 }
 
 // NetworkAuthSelection asks for a long-lived access token only where nothing can renew one. A box

@@ -5,7 +5,7 @@ import "testing"
 func TestCodexImageRoutesKeepSelectedAccountAndExactEndpoints(t *testing.T) {
 	// A production cat request reached the image tool, but our missing route
 	// returned broker403 and Ryker delivered ASCII art instead of an image.
-	// Codex rust-v0.159.2: codex-api/src/endpoint/images.rs uses both suffixes
+	// Codex rust-v0.166.0: codex-api/src/endpoint/images.rs uses both suffixes
 	// through the selected provider, including its API-key family.
 	for _, family := range []struct{ selection, host, base, account string }{
 		{"chatgpt", "chatgpt.com", "/backend-api/codex", "Chatgpt-Account-Id"},

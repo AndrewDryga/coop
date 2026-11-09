@@ -140,15 +140,17 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	add("GET", "/backend-api/codex/responses", "")
 	add("POST", "/backend-api/codex/images/generations", "")
 	add("POST", "/backend-api/codex/images/edits", "")
-	add("GET", "/backend-api/codex/models", "client_version=0.159.2")
+	add("GET", "/backend-api/codex/models", "client_version=0.166.0")
 	add("GET", "/backend-api/wham/accounts/check", "")
 	out[len(out)-1].AccountResponse = &NativeBrokerAccountResponse{
 		Header: "Chatgpt-Account-Id", CollectionKey: "accounts", IDKey: "id",
 		LegacyObjectKey: "account", LegacyIDKey: "account_id", OrderingKey: "account_ordering", DefaultIDKey: "default_account_id",
 	}
 	// The reset-credit list is read-only (backend-client list_rate_limit_reset_credits); spending one
-	// is a POST and stays refused.
-	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits", "/backend-api/wham/settings/user", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
+	// is a POST and stays refused. 0.166.0's interactive screen reads its security reminder in the
+	// background at start (tui/src/security_setup.rs); switching workspace mints a token and stays
+	// refused.
+	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits", "/backend-api/wham/settings/user", "/backend-api/wham/security-setup", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
 		add("GET", path, "")
 	}
 	add("POST", "/backend-api/codex/analytics-events/events", "")
@@ -491,7 +493,7 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	var raw codexQuotaResponse
 	headers := http.Header{
 		"Authorization":      {"Bearer " + state.AccessToken},
-		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.159.2"},
+		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.166.0"},
 	}
 	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", headers, nil, &raw)
 	if err != nil {
@@ -641,8 +643,8 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.159.2", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.0.1", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.159.2-linux-" + cpu}}},
+		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.166.0", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.166.0-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.6.0", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.166.0-linux-" + cpu}}},
 	}
 }
 
@@ -650,7 +652,7 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "chatgpt-file", input,
 		[]string{"chatgpt.com", "auth.openai.com"},
-		[]string{"https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/manager.rs"})
+		[]string{"https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/login/src/auth/manager.rs"})
 }
 
 // Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
@@ -828,11 +830,11 @@ func (codexAgent) Login(*config.Config) []string {
 	return []string{"codex", "login", "--device-auth"}
 }
 
-// codexManagedConfig is the pinned 0.159.2's managed layer, which it loads after -c, the project
+// codexManagedConfig is the pinned 0.166.0's managed layer, which it loads after -c, the project
 // and the user's own config (verified: its model beats the user's; /etc/codex/config.toml is only a
 // default the user's overrides) — so what it sets holds whatever a home or project sets.
 //
-// codexNoDaemon opens the layer's one [features] table. Otherwise 0.159.2's interactive screen,
+// codexNoDaemon opens the layer's one [features] table. Otherwise 0.166.0's interactive screen,
 // launched without -c or --profile, starts a shared background server: the first time in a home it
 // copies the whole client package (382 MB) into $CODEX_HOME/packages, a home Coop keeps per
 // project, and its updater, five minutes in, downloads and runs Codex's installer and restarts the

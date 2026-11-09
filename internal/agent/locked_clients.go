@@ -190,7 +190,7 @@ func validateClientClosure(platform ClientPlatform, files map[string][]byte, cli
 	if len(files["package-lock.json"]) > 1<<20 || json.Unmarshal(files["package.json"], &manifest) != nil || !manifest.Private || json.Unmarshal(files["package-lock.json"], &lock) != nil || lock.LockfileVersion != 3 || len(lock.Packages) > 4096 || !maps.Equal(manifest.Dependencies, lock.Packages[""].Dependencies) {
 		return invalid
 	}
-	expected := map[string]string{"playwright": "1.63.0"}
+	expected := map[string]string{"playwright": "1.65.0"}
 	binaries := make(map[string]LockedClient)
 	packages := make(map[string]LockedClient)
 	variants := make(map[string]bool)

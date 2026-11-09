@@ -1509,7 +1509,7 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	if env := gemini.BoxEnv("/home/node"); !slices.Equal(env, []string{"GEMINI_TELEMETRY_ENABLED=false"}) {
 		t.Errorf("gemini BoxEnv = %v, want the telemetry switch only", env)
 	}
-	// GROK_FOLDER_TRUST=0 is the 1.0.44 client's own documented switch: without it the project's
+	// GROK_FOLDER_TRUST=0 is the 1.0.77 client's own documented switch: without it the project's
 	// AGENTS.md and .grok/skills never load in the box.
 	grok, _ := Get("grok")
 	if env := grok.BoxEnv("/home/node"); !slices.Equal(env, []string{"GROK_TELEMETRY_ENABLED=false", "GROK_FOLDER_TRUST=0", "GROK_DISABLE_AUTOUPDATER=1"}) {

@@ -4,6 +4,16 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Every agent client is on its latest release.** Claude Code 2.1.319, Codex 0.166.0, Grok 1.0.77,
+  Claude's editor adapter 0.101.0, Codex's editor adapter 2.6.0 and Playwright 1.65.0 (Gemini 0.67.0
+  was already current). Codex stays one release behind its newest (0.167.0) because its editor adapter
+  needs 0.166, and both run the same Codex. Filtered sign-ins keep working with the requests the new
+  clients send: Grok's account lookup and Codex's start-up security reminder are allowed, and a
+  rejected Claude key is still reported as a sign-in problem. In editor sessions, Claude now accepts
+  only the models its adapter lists: the short names (`opus`, `sonnet`, `haiku`, `fable`) and the
+  current full IDs work, and an older ID such as `claude-haiku-4-5` is refused (use `haiku`). The next
+  launch rebuilds the box image, and filtered runs redo their network setup once.
+
 ## 13.1.0
 
 - **Box clients carry patched libraries.** Claude's editor adapter (`claude-agent-acp`) moves from

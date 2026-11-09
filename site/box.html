@@ -439,9 +439,9 @@ its user to match. Managed images on Docker Desktop for macOS keep UID/GID 1000.
 <p>co:op sets the working directory itself, so no <code>WORKDIR</code> is required. Here is a skeleton:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="The box contract code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">FROM &lt;your-language-base&gt;
 RUN &lt;install your toolchain&gt; \
- &amp;&amp; npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.90.0 @agentclientprotocol/codex-acp@2.0.1 \
- &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz&#34; \
+ &amp;&amp; npm install -g @anthropic-ai/claude-code@2.1.319 @openai/codex@0.166.0 @google/gemini-cli@0.67.0 \
+      @agentclientprotocol/claude-agent-acp@0.101.0 @agentclientprotocol/codex-acp@2.6.0 \
+ &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-$(uname -m).gz&#34; \
       | gunzip &gt; /usr/local/bin/grok &amp;&amp; chmod 755 /usr/local/bin/grok \
  &amp;&amp; git config --system --add safe.directory &#39;*&#39;
 ARG COOP_BOX_UID=1000
@@ -493,9 +493,9 @@ created yourself, regardless of their tags.</p>
 <p>If a repo already has a <code>.devcontainer/</code>, reuse its image as your base and add the agent layer on
 top:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">Dockerfile</p><pre class="code" role="region" aria-label="Reusing a devcontainer code example" tabindex="0" data-copy-source=""><code class="language-dockerfile">FROM your-devcontainer-image          # the team&#39;s source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code@2.1.285 @openai/codex@0.159.2 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.90.0 @agentclientprotocol/codex-acp@2.0.1 \
- &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.44-linux-$(uname -m).gz&#34; \
+RUN npm install -g @anthropic-ai/claude-code@2.1.319 @openai/codex@0.166.0 @google/gemini-cli@0.67.0 \
+      @agentclientprotocol/claude-agent-acp@0.101.0 @agentclientprotocol/codex-acp@2.6.0 \
+ &amp;&amp; curl -fsSL &#34;https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-$(uname -m).gz&#34; \
       | gunzip &gt; /usr/local/bin/grok &amp;&amp; chmod 755 /usr/local/bin/grok \
  &amp;&amp; git config --system --add safe.directory &#39;*&#39;
 USER &lt;the devcontainer&#39;s non-root user&gt;

@@ -358,7 +358,7 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var raw claudeQuotaResponse
 	headers := http.Header{
 		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
-		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.285 (external, cli)"},
+		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.319 (external, cli)"},
 	}
 	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", headers, nil, &raw)
 	if err != nil {
@@ -538,8 +538,8 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 		cpu = "x64"
 	}
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.285", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.285"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.90.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.296"}}},
+		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.319", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.319"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.101.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.318"}}},
 	}
 }
 
@@ -712,7 +712,7 @@ func (claudeAgent) Login(*config.Config) []string { return []string{"claude", "a
 
 func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPConfig{}, nil }
 
-// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.285 updater checks, and a
+// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.319 updater checks, and a
 // manual `claude update` refuses under it too — read out of the binary and its ACP adapter's SDK.
 func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
@@ -802,9 +802,11 @@ func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 		// be refreshed"). Without them an expired account reads as an ordinary process failure and
 		// burns the loop's whole retry budget on a rung no retry can fix. With no usable login the
 		// pinned CLI's whole failed result is "Not logged in · Please run /login", which no shorter
-		// signal anchors.
+		// signal anchors. Since 2.1.319 a rejected key's whole result is "Invalid API key · Fix
+		// external API key" (it was "Failed to authenticate. API Error: 401 …").
 		AuthSignals: []string{"not logged in", "invalid auth", "authentication_error", "please run /login",
-			"failed to authenticate", "oauth session expired", "not logged in · please run /login"},
+			"failed to authenticate", "oauth session expired", "not logged in · please run /login",
+			"invalid api key · fix external api key"},
 	}
 }
 
@@ -1226,7 +1228,7 @@ func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 // release-notes fetch, feedback and availability checks (and with them feature-flag fetching);
 // the update controls also refuse a manual `claude update`, because Coop qualifies the exact
 // installed client and a self-update would run one nobody qualified. Read out of the locked
-// 2.1.285 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
+// 2.1.319 binary and code.claude.com/docs/en/env-vars: inference, the OAuth refresh and the
 // claude.ai connectors — whose eligibility never consults the traffic mode — keep working.
 func (a claudeAgent) BoxEnv(homeInBox string) []string {
 	return append([]string{

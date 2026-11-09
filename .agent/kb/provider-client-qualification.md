@@ -204,7 +204,7 @@ logs `method url` and answers 403, and the client's base URL pointed at it — C
 `GEMINI_CLI_TRUST_WORKSPACE=true`, Codex its managed config's `base_url`. Also re-verify that the
 pinned codex still loads `/etc/codex/managed_config.toml` over `-c`, project and user config: the
 broker's Codex provider rides that file, and so does `[features] daemon_auto_start = false`. Check
-that key still exists (`codex-rs/features/src/lib.rs`): on 0.159.2 it defaults on, and the first
+that key still exists (`codex-rs/features/src/lib.rs`): on 0.159.2 and 0.166.0 it defaults on, and the first
 interactive start in a home without `-c` or `--profile` copies the whole client package (382 MB)
 into it under `packages/app-server-daemon` and runs a self-updater beside it; later starts reuse
 the copy. Any `-c` (Coop's effort flag, the API-key setup) or `--profile` already skips the server,
@@ -245,6 +245,20 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-08 — every client moved to its latest release: Claude Code 2.1.319, claude-agent-acp 0.101.0
+  (SDK claude 2.1.318, ACP SDK 2.4.0), Codex 0.166.0 (not 0.167.0: codex-acp 2.6.0 requires ^0.166.0
+  and both must run one native binary), codex-acp 2.6.0, Grok 1.0.77, Playwright 1.65.0; Gemini 0.67.0
+  was current. Method that found the changes: run old and new image side by side through one
+  TLS-terminating capture proxy with the broker seeds and diff the request classes (tool kit in the
+  2026-11-08 client-bump task artifacts). Found: Codex's models query carries its version; Grok's
+  `GET /v1/user` now always sends `include=coding_data_team` (route moved to that exact query); Codex
+  0.166's interactive screen reads `wham/security-setup` (admitted; `accounts/switch-workspace-token`
+  mints a token and stays refused); Claude 2.1.319's rejected-key result became "Invalid API key · Fix
+  external API key" (new AuthSignal; login fixtures re-taken). claude-agent-acp 0.101.0 starts in
+  mode `auto` and validates model values against its list (aliases and current full IDs pass,
+  `claude-haiku-4-5` is refused); Coop's `bypassPermissions` and effort settings still apply. API-key
+  request lines, MCP lines and header secrets, Grok's streaming-json tool events and the three offline
+  R suites are unchanged/green. No live model call.
 - 2026-11-08 — claude-agent-acp bumped 0.84.0 → 0.90.0 (SDK claude 2.1.296, ACP SDK 1.8.0) to drop
   zod <4.6.6 (GHSA-mrhx-c7xc-m3w5). Re-captured offline: the Messages line, `HEAD /api/hello` and the
   MCP POST/GET with header secrets are byte-identical to 2.1.284; the v1 mcpServers schemas are unchanged

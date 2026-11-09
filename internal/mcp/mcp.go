@@ -277,7 +277,7 @@ func separateTOMLBlock(b *strings.Builder) {
 // ACPServers renders the shared servers as the list an ACP session/new (and the identical
 // session/load) carries in its "mcpServers" parameter. The adapter is the only consumer, and it
 // wants name/value PAIR LISTS where mcp.json has objects, so this is a translation, not a
-// passthrough (verified against @agentclientprotocol/claude-agent-acp 0.90.0 / SDK 1.8.0):
+// passthrough (verified against @agentclientprotocol/claude-agent-acp 0.101.0 / SDK 2.4.0's v1 schema):
 //
 //	http/sse: {"type":"http"|"sse","name":…,"url":…,"headers":[{"name":…,"value":…}]}
 //	stdio:    {"name":…,"command":…,"args":[…],"env":[{"name":…,"value":…}]}
