@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 13.2.0
 
 - **Every agent client is on its latest release.** Claude Code 2.1.319, Codex 0.166.0, Grok 1.0.77,
