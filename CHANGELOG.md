@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 13.2.0
 
 - **Every agent client is on its latest release.** Claude Code 2.1.319, Codex 0.166.0, Grok 1.0.77,
   Claude's editor adapter 0.101.0, Codex's editor adapter 2.6.0 and Playwright 1.65.0 (Gemini 0.67.0

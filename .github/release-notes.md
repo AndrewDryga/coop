@@ -2,21 +2,16 @@
      release skill rewrites this file in each finalize commit, and the release workflow publishes
      its section as is (tools/releasenotes). CHANGELOG.md keeps every change. -->
 
-## 13.1.0
+## 13.2.0
 
-Coop 13.1.0 closes several ways a box could reach outside itself, gives each project its own tools and download cache, and adds support for SELinux hosts and older Linux kernels.
+Coop 13.2.0 moves every agent in the box to its latest release.
 
-- Each project with a `.tool-versions` gets its tools built into its own image, and each project has its own download cache, so one project's box can no longer change the tools or modules another project runs.
-- Coop's Git commands refuse pointers an agent planted in `.git` to reach another repository on your computer, while worktrees, submodules and shared clones keep working.
-- Editor sessions never let a box run commands or touch files on your computer through the editor, filtered Compose services can no longer reach your computer, and kernel protection now covers Unix sockets in hidden folders.
-- Coop runs on SELinux hosts such as Fedora and RHEL, starts on kernels too old for kernel protection by falling back to mount protection, and `coop setup apparmor` confines its Linux protection helper on AppArmor hosts.
-- The agent clients in every box carry patched libraries (Claude's editor adapter moves to 0.90.0), Coop's own dependencies are current, and a launch says when it uses mount protection.
+- Claude Code 2.1.319, Codex 0.166.0, Grok 1.0.77, Claude's editor adapter 0.101.0, Codex's editor adapter 2.6.0 and Playwright 1.65.0. Gemini 0.67.0 was already current.
+- Filtered sign-ins keep working with the requests the new clients send, and a rejected Claude key is still reported as a sign-in problem.
 
 Upgrading:
 
-- Offline runs of a project with a `.tool-versions` need `coop build` once. The old `coop-asdf` and `coop-cache` volumes are no longer used; `docker volume rm coop-asdf coop-cache` removes them. `COOP_NO_ASDF` is retired.
-- A checkout made with `git init --separate-git-dir` is refused until its Git folder moves back into `.git`; the message gives the commands.
-- Filtered runs with Compose services need Docker Engine 28 or later.
-- The next launch rebuilds the box image for the updated clients; a filtered editor session asks you to run `coop net setup` once.
+- The next launch rebuilds the box image, and filtered runs redo their network setup once.
+- In editor sessions, Claude accepts only the models its adapter lists: the short names (`opus`, `sonnet`, `haiku`, `fable`) and the current full IDs. Use `haiku` instead of an older ID such as `claude-haiku-4-5`.
 
-[Full changelog](https://github.com/AndrewDryga/coop/compare/v13.0.0...v13.1.0)
+[Full changelog](https://github.com/AndrewDryga/coop/compare/v13.1.0...v13.2.0)
