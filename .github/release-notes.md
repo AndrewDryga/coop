@@ -8,6 +8,7 @@ Coop 13.2.1 patches box tooling and keeps large diagnostic attachments from over
 
 - Box images use patched system packages and npm. asdf is rebuilt with the patched Go runtime, preserving its existing version and toolchain behavior.
 - Large text attachments remain available as files; models receive a short reference and can read the full contents when needed.
+- Daemon cleanup keeps completed task results, avoiding unnecessary retries when daemon children are already exiting.
 
 The next launch rebuilds the shared box image. Rebuild project-specific images with `coop build`; filtered editor sessions may ask you to run `coop net setup` once.
 

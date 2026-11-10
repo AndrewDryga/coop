@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
 ## 13.2.1
 
 - **Box images carry patched system packages and tools.** Updated the Node 24/Bookworm base and
@@ -20,6 +16,8 @@
   image findings fail the checks; findings without published fixes remain visible in reports.
 - **Image build records stay out of project source.** Build records use configured local
   state directories, and missing state roots no longer create or read records in the source tree.
+- **Daemon cleanup preserves successful task results.** Exiting daemon children no longer count
+  as unfinished background work, avoiding unnecessary retries of completed tasks.
 
 ## 13.2.0
 
