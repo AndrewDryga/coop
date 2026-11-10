@@ -1,6 +1,7 @@
 package box
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -246,11 +248,8 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	}
 }
 
-// Coop's own gate analyzers, and the jv validator built beside them, stay out of every user's box. A
-// Go build stage once compiled Staticcheck, govulncheck and jv into both images: a golang pull and
-// three compiles per build, 41 MB per image, and a Go image pin of the box's own in every host's
-// network setup. A project that needs them installs them in its own .agent/Dockerfile, as this
-// repository's does for its gate.
+// Gate analyzers belong in the project's development image. The shared pinned Go
+// stage builds only the stdlib supervisor; the runtime receives no Go toolchain.
 func TestBoxImagesCarryNoGateAnalyzers(t *testing.T) {
 	platform := agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"}
 	base, err := baseImageDefinition(platform)
@@ -272,10 +271,10 @@ func TestBoxImagesCarryNoGateAnalyzers(t *testing.T) {
 				stages++
 			}
 		}
-		if stages != 1 {
-			t.Errorf("the %s image builds in %d stages, want one", name, stages)
+		if stages != 2 {
+			t.Errorf("the %s image builds in %d stages, want the helper builder and runtime", name, stages)
 		}
-		for _, tool := range []string{"golang", "go install", "staticcheck", "govulncheck", "/bin/jv"} {
+		for _, tool := range []string{"go install", "staticcheck", "govulncheck", "/bin/jv"} {
 			if strings.Contains(strings.ToLower(df), tool) {
 				t.Errorf("the %s image still mentions %q", name, tool)
 			}
@@ -515,20 +514,24 @@ func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {
 	}
 }
 
-func TestBaseDockerfileSupervisesDetachedDescendantsPortably(t *testing.T) {
-	df := baseDockerfile(t)
-	for _, want := range []string{
-		"echo \"${20}\"",
-		"current=${20}",
-		"quiescence_rescan=",
-		"Rescan once before treating a clean provider exit as",
-	} {
-		if !strings.Contains(df, want) {
-			t.Errorf("base Dockerfile missing descendant-supervision bit %q", want)
+func TestBaseDockerfileUsesEmbeddedSupervisor(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		files, err := baseImageDefinition(agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"})
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if strings.Contains(df, "echo \"$20\"") || strings.Contains(df, "current=$20") {
-		t.Errorf("base Dockerfile must brace positional field 20:\n%s", df)
+		if !bytes.Equal(files["supervisor/main.go"], supervisorSource) || len(supervisorSource) == 0 {
+			t.Fatal("missing embedded supervisor")
+		}
+		df := string(files["Dockerfile"])
+		for _, want := range []string{"FROM " + gatewayimage.GoBase() + " AS supervisor", "CGO_ENABLED=0 go build", "COPY --from=supervisor /coop-supervise /usr/local/libexec/coop-supervise", `exec /usr/local/libexec/coop-supervise "$forward_sessions" "$@"`} {
+			if !strings.Contains(df, want) {
+				t.Errorf("missing helper packaging %q", want)
+			}
+		}
+		if strings.Contains(df, "live_jobs()") {
+			t.Fatal("obsolete shell supervisor remains")
+		}
 	}
 }
 

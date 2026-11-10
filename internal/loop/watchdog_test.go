@@ -2,6 +2,7 @@ package loop
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -9,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/consult"
 )
@@ -483,15 +483,17 @@ func TestShippedProviderDeadlinesAreArmed(t *testing.T) {
 	// the same instant. Were the drain able to reach the deadline, a box held open by a leaked
 	// descendant would die as a wedged provider — losing the handoff AND the drain's own exit codes
 	// — so the two budgets are checked against each other rather than kept in step by a comment.
-	df, err := box.BaseDockerfile("arm64")
+	// The image now embeds and compiles this helper instead of defining the
+	// timeout in shell. Read its actual fallback, not a second test-owned value.
+	source, err := os.ReadFile("../box/supervisor/main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	dm := regexp.MustCompile(`COOP_DESCENDANT_TIMEOUT:-(\d+)`).FindStringSubmatch(df)
-	if dm == nil {
-		t.Fatal("could not find the descendant drain default in the generated box definition")
+	defaults := regexp.MustCompile(`(?m)^\t\tseconds = (\d+)$`).FindAllStringSubmatch(string(source), -1)
+	if len(defaults) != 1 {
+		t.Fatal("could not identify the descendant drain fallback in the embedded supervisor")
 	}
-	seconds, err := strconv.Atoi(dm[1])
+	seconds, err := strconv.Atoi(defaults[0][1])
 	if err != nil {
 		t.Fatal(err)
 	}

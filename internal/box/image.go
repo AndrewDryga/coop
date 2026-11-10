@@ -19,6 +19,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -55,7 +56,7 @@ func BaseDockerfile(arch string) (string, error) {
 type baseImageParts struct{ files, install, browserDeps, loginPath, pathEnv, scripts string }
 
 func renderBaseDockerfile(arch string, parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell, parts.pathEnv, parts.scripts)
+	return fmt.Sprintf(baseDockerfileTemplate, gatewayimage.GoBase(), parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell, parts.pathEnv, parts.scripts)
 }
 
 // asdf comes from a release URL, and both images carry it: toolchain and project images built on
@@ -93,7 +94,12 @@ const (
 // qualified clients and process supervision. Its slots carry the client installation and each
 // image's PATH.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
+FROM %s AS supervisor
+COPY supervisor/main.go /src/main.go
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /coop-supervise /src/main.go
+
 FROM ${NODE_IMAGE}
+COPY --from=supervisor /coop-supervise /usr/local/libexec/coop-supervise
 
 %s
 
@@ -177,216 +183,8 @@ export COOP_BOX_PATH
 
 [ "$COOP_SUPERVISE_DESCENDANTS" = 1 ] || exec "$@"
 
-# Reserved results are returned only by this supervisor. A provider that exits with either code
-# is deliberately mapped to a normal failure so it cannot forge a host handoff.
-coop_drained_exit=190
-coop_timeout_exit=191
-
-# A live process is agent-owned unless it is PID 1, this entrypoint, or belongs to a forwarder
-# session whose leader still has its recorded start token. This scans /proc directly: PPID and
-# provider-session walks lose double-setsid orphans, while names are provider-controlled.
-live_jobs() {
-  for p in /proc/[0-9]*; do
-    pid=${p##*/}
-    # /proc/<pid>/stat's comm field is parenthesized and may itself contain spaces. Strip it
-    # before splitting: the remaining fields start at state (3), so session is $4 and start $20.
-    IFS= read -r stat < "$p/stat" || continue
-    fields=${stat##*) }
-    [ "$fields" != "$stat" ] || continue
-    set -- $fields
-    [ "$#" -ge 20 ] || continue
-    state=$1; parent=$2; session=$4
-    [ "$state" = Z ] && continue
-    # PID 1 is the container init; this entrypoint and its transient direct children are not
-    # provider work. Everything else remains visible even when it reparented or called setsid.
-    [ "$pid" = 1 ] || [ "$pid" = "$$" ] || [ "$parent" = "$$" ] && continue
-    exempt=
-    for record in $forward_sessions; do
-      leader=${record%%%%:*}; token=${record#*:}
-      current=
-      if IFS= read -r leader_stat < "/proc/$leader/stat"; then
-        leader_fields=${leader_stat##*) }
-        [ "$leader_fields" = "$leader_stat" ] || { set -- $leader_fields; [ "$#" -ge 20 ] && current=${20}; }
-      fi
-      [ "$session" = "$leader" ] && [ "$current" = "$token" ] && exempt=1
-    done
-    [ -n "$exempt" ] || echo "$pid"
-  done
-} 2>/dev/null
-
-# Distinct command names behind a PID list, so a drain notice says "chromium-headle" rather than a
-# row of numbers the operator would have to exec into the box to resolve.
-job_names() {
-  names=
-  for pid in $1; do
-    IFS= read -r comm < "/proc/$pid/comm" || continue
-    case " $names " in *" $comm "*) ;; *) names="$names $comm" ;; esac
-  done
-  # echo, not printf: a literal format verb here would look like an unresolved Dockerfile
-  # template placeholder. Command substitution strips the trailing newline, so the notice stays
-  # on one line.
-  if [ -n "$names" ]; then echo "${names# }"; else echo unknown; fi
-} 2>/dev/null
-
-terminate_jobs() {
-  jobs=$1
-  [ -n "$jobs" ] || return
-  for pid in $jobs; do kill -TERM "$pid" 2>/dev/null || true; done
-  sleep 2
-  for pid in $(live_jobs); do kill -KILL "$pid" 2>/dev/null || true; done
-}
-
-# coop's OWN detached consult, marked with COOP_CONSULT_OWNED=1 by internal/consult/wrapper.go
-# before it detaches (children inherit the environment).
-owned_jobs() {
-  for pid in $1; do
-    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -q "^COOP_CONSULT_OWNED=1$" && echo "$pid"
-  done
-} 2>/dev/null
-
-# Background work that never exits by itself: a daemon the provider left behind, such as the epmd an
-# Erlang test starts. Either it left the provider's session and pointed stdin, stdout and stderr at
-# /dev/null, as a daemon does when it detaches, or it is a server known to run until stopped. Waiting
-# the drain window for epmd left a fork idle 15 minutes and then handed off a finished task
-# (2026-11-05). Work the agent started keeps its window: it stays in the provider's session, or it
-# still writes somewhere. Names are the provider's to choose, so a name only ever stops a job sooner.
-known_daemons="epmd ssh-agent gpg-agent dbus-daemon"
-daemon_jobs() {
-  for pid in $1; do
-    IFS= read -r comm < "/proc/$pid/comm" || continue
-    case " $known_daemons " in *" $comm "*) echo "$pid"; continue ;; esac
-    IFS= read -r stat < "/proc/$pid/stat" || continue
-    fields=${stat##*) }
-    [ "$fields" != "$stat" ] || continue
-    set -- $fields
-    [ "$#" -ge 4 ] && [ "$4" != "$provider" ] || continue
-    quiet=1
-    for fd in 0 1 2; do
-      [ "$(readlink "/proc/$pid/fd/$fd")" = /dev/null ] || quiet=
-    done
-    [ -z "$quiet" ] || echo "$pid"
-  done
-} 2>/dev/null
-
-# Reap ONLY the listed pids. terminate_jobs deliberately KILLs everything still live after its
-# grace period, which is right at shutdown but wrong here — genuine agent background work must
-# keep its full drain window.
-reap_jobs() {
-  [ -n "$1" ] || return
-  for pid in $1; do kill -TERM "$pid" 2>/dev/null || true; done
-  sleep 1
-  for pid in $1; do kill -KILL "$pid" 2>/dev/null || true; done
-}
-
-# Drop the second list from the first. A pid that was just reaped can linger for a moment while it
-# dies, and its /proc entry no longer carries the ownership marker — so without this it would be
-# miscounted as agent background work and earn a handoff exit.
-without_pids() {
-  keep=
-  for pid in $1; do
-    skip=
-    for gone in $2; do
-      [ "$pid" = "$gone" ] && { skip=1; break; }
-    done
-    [ -n "$skip" ] || keep="$keep $pid"
-  done
-  echo "${keep# }"
-}
-
-provider_exit=0
-setsid "$@" & provider=$!
-trap 'kill -TERM -- -$provider 2>/dev/null || true; wait "$provider" 2>/dev/null; terminate_jobs "$(live_jobs)"; exit 143' INT TERM HUP
-wait "$provider" || provider_exit=$?
-if [ "$provider_exit" -ne 0 ]; then
-  [ "$provider_exit" -eq "$coop_drained_exit" ] && provider_exit=1
-  [ "$provider_exit" -eq "$coop_timeout_exit" ] && provider_exit=1
-  terminate_jobs "$(live_jobs)"
-  exit "$provider_exit"
-fi
-
-# A stranded consult is coop's own work, not the agent's, and it is worthless the moment the
-# provider that asked the question exits — nothing can read the reply any more. Reap it here, so
-# it costs neither the drain window nor a background handoff (which un-completes a finished task
-# and re-runs it). This replaces the old timing contract "consult timeout < drain < watchdog idle":
-# the consult timeout is now unlimited by default, while the watchdog remains bounded. Ownership
-# is a fact; timing alone cannot identify whose work remains.
-# The reap itself runs inside the scan loop below, not once here: a double-setsid child can be
-# invisible on the first scan (the same race quiescence_rescan exists for), so a one-shot sweep
-# misses exactly the consult it is meant to catch.
-#
-# The remaining wait is for GENUINE agent background work. It must stay well under the host
-# watchdog's provider idle deadline (providerIdleDeadline in internal/loop/watchdog.go;
-# 30 minutes by default). The drain emits no stream events, so both clocks would run from the
-# provider's last activity: at equal values the watchdog wins the race,
-# the box is reported as a wedged provider instead of a descendant handoff, and the drain's own
-# exit codes become unreachable. Tests and operators may shorten it at the container boundary;
-# invalid values fail closed to the same bounded default.
-handoff_wait=${COOP_DESCENDANT_TIMEOUT:-900}
-case "$handoff_wait" in ''|*[!0-9]*) handoff_wait=900;; esac
-IFS=. read -r now _ < /proc/uptime
-deadline=$(( now + handoff_wait ))
-# A daemon gets a few seconds to exit by itself before it is stopped, and earns no handoff: it is
-# not work the task waits for, so the provider's result stands.
-daemon_grace=10
-daemon_deadline=
-saw_live_job=
-quiescence_rescan=
-reaped_consult=
-reaped_pids=
-while :; do
-  jobs=$(live_jobs)
-  # coop's own stranded consult is reaped on sight and never counts as background work: its reply
-  # died with the provider that asked for it, so waiting the window and then reporting a handoff
-  # would un-complete a finished task for nothing.
-  owned=$(owned_jobs "$jobs")
-  if [ -n "$owned" ]; then
-    [ -n "$reaped_consult" ] || echo "Consult(s) outlived the provider that asked — their reply can no longer be read; reaping: $(job_names "$owned")" >&2
-    reaped_consult=1
-    reap_jobs "$owned"
-    reaped_pids="$reaped_pids $owned"
-  fi
-  jobs=$(without_pids "$jobs" "$reaped_pids")
-  daemons=$(daemon_jobs "$jobs")
-  jobs=$(without_pids "$jobs" "$daemons")
-  # A daemon stays while other work runs, since that work may use it, as a test run uses its epmd.
-  # Once only daemons are left, they get a few seconds to exit and are then stopped.
-  if [ -z "$jobs" ] && [ -n "$daemons" ]; then
-    IFS=. read -r now _ < /proc/uptime
-    [ -n "$daemon_deadline" ] || daemon_deadline=$(( now + daemon_grace ))
-    if [ "$now" -lt "$daemon_deadline" ]; then
-      sleep 1
-      continue
-    fi
-    echo "The provider left a daemon running, which never exits by itself — stopping: $(job_names "$daemons")" >&2
-    reap_jobs "$daemons"
-    reaped_pids="$reaped_pids $daemons"
-    continue
-  fi
-  if [ -n "$jobs" ]; then
-    # Announce the wait ONCE. Without this the box is silent for the whole window, which reads as a
-    # hung loop rather than a drain, and the operator cannot tell what is holding it open.
-    [ -n "$saw_live_job" ] || echo "The provider exited with background work still live — waiting up to ${handoff_wait}s for: $(job_names "$jobs")" >&2
-    saw_live_job=1
-    IFS=. read -r now _ < /proc/uptime
-    [ "$now" -lt "$deadline" ] || break
-    sleep 1
-    continue
-  fi
-  [ -n "$saw_live_job" ] && break
-  # A double-setsid child can be between its short-lived launch process and its reparented
-  # session leader during the first scan. Rescan once before treating a clean provider exit as
-  # quiescent, while keeping the ordinary success path bounded.
-  [ -n "$quiescence_rescan" ] && break
-  quiescence_rescan=1
-  IFS=. read -r now _ < /proc/uptime
-  [ "$now" -lt "$deadline" ] || break
-  sleep 0.1
-done
-[ -n "$saw_live_job" ] || exit 0
-[ -z "$jobs" ] && exit "$coop_drained_exit"
-echo "Background work did not exit within ${handoff_wait}s — terminating: $(job_names "$jobs")" >&2
-terminate_jobs "$jobs"
-exit "$coop_timeout_exit"
+# Pass only the identities captured above, never an inherited exemption variable.
+exec /usr/local/libexec/coop-supervise "$forward_sessions" "$@"
 ENTRY
 RUN chmod +x /usr/local/bin/coop-entry
 

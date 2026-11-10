@@ -44,6 +44,7 @@ var allowedEdges = map[string][]string{
 	"acpproxy":              {"config", "safetext"},
 	"agent":                 {"config", "egress", "mcp", "safefile"},
 	"box":                   {"agent", "config", "consult", "egress", "forkspace", "fsfilter", "fsidentity", "fsimage", "gatewayimage", "mcp", "networkgateway", "networkreport", "networkstate", "networkview", "preset", "processidentity", "project", "randid", "runtime", "safefile", "scaffold", "secretscan", "shadowpath", "systemdbus", "taskchannel", "ui", "workerproto"},
+	"box/supervisor":        nil,
 	"cli":                   {"acpctl", "acpproxy", "agent", "box", "config", "contextc", "egress", "eval", "forkctl", "forkspace", "gitdiff", "hostsurface", "ladder", "loop", "loopcfg", "networkreport", "networkstate", "networkview", "preset", "project", "randid", "runtime", "scaffold", "secretscan", "session", "sessionsvc", "taskmcp", "tasks", "ui", "workerconnector", "workerproto"},
 	"config":                nil,
 	"contextc":              {"project"},

@@ -153,12 +153,47 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 		awaitRuntimeInitMarker(t, filepath.Join(repo, "failed-killed"), "killed\n")
 	})
 
-	t.Run("provider cannot spoof a handoff", func(t *testing.T) {
-		code, err := run("exit 190", "-e", "COOP_DESCENDANT_TIMEOUT=1")
-		if err != nil || code != 1 {
-			t.Fatalf("spoofed reserved exit = exit %d, err %v; want exit 1, nil", code, err)
-		}
-	})
+	for _, reserved := range []int{190, 191} {
+		t.Run(fmt.Sprintf("provider cannot spoof handoff %d", reserved), func(t *testing.T) {
+			code, err := run(fmt.Sprintf("exit %d", reserved), "-e", "COOP_DESCENDANT_TIMEOUT=1")
+			if err != nil || code != 1 {
+				t.Fatalf("spoofed reserved exit = %d, %v; want 1", code, err)
+			}
+		})
+	}
+	for _, drain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("termination during drain %t", drain), func(t *testing.T) {
+			work := runtimeInitTestRepo(t)
+			name := fmt.Sprintf("coop-supervisor-signal-%d", time.Now().UnixNano())
+			t.Cleanup(func() { _, _ = rt.Run(nil, nil, nil, "rm", "-f", name) })
+			command := `trap 'echo terminated > /workspace/terminated; exit 0' TERM; echo ready > /workspace/ready; while :; do sleep 1; done`
+			if drain {
+				command = "setsid setsid sh -c " + "'" + strings.ReplaceAll(command, "'", "'\\''") + "' &"
+			}
+			var output strings.Builder
+			code, err := rt.Run(nil, &output, &output, "run", "-d", "--init", "--name", name, "-e", "COOP_SUPERVISE_DESCENDANTS=1", "-e", "COOP_DESCENDANT_TIMEOUT=120", "-v", work+":/workspace", image, "sh", "-c", command)
+			if code != 0 || err != nil {
+				t.Fatalf("start signal fixture: %d, %v: %s", code, err, output.String())
+			}
+			awaitRuntimeInitMarker(t, filepath.Join(work, "ready"), "ready\n")
+			if drain {
+				wait.For(t, "supervisor draining", func() bool {
+					var logs strings.Builder
+					_, _ = rt.Run(nil, &logs, &logs, "logs", name)
+					return strings.Contains(logs.String(), "background work still live")
+				})
+			}
+			if code, err := rt.Run(nil, nil, nil, "kill", "--signal", "TERM", name); code != 0 || err != nil {
+				t.Fatalf("signal: %d, %v", code, err)
+			}
+			awaitRuntimeInitMarker(t, filepath.Join(work, "terminated"), "terminated\n")
+			var result strings.Builder
+			if code, err := rt.Run(nil, &result, &result, "wait", name); code != 0 || err != nil || strings.TrimSpace(result.String()) != "143" {
+				t.Fatalf("wait: %d, %v: %s", code, err, result.String())
+			}
+		})
+	}
+
 }
 
 func TestRuntimeInitReapsKilledOrphan(t *testing.T) {
@@ -373,7 +408,12 @@ func buildRuntimeEntrypointImage(t *testing.T, rt runtime.Runtime) string {
 	if err := os.WriteFile(filepath.Join(dir, "coop-entry"), []byte(entrypointScript(t)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dockerfile := "FROM alpine:3.24.2\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"
+	helper := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "coop-supervise"), "./supervisor")
+	helper.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtimeInitTestImageArchitecture(t, rt))
+	if output, err := helper.CombinedOutput(); err != nil {
+		t.Fatalf("build supervisor: %v\n%s", err, output)
+	}
+	dockerfile := "FROM alpine:3.24.2\nRUN apk add --no-cache util-linux socat\nCOPY coop-entry /usr/local/bin/coop-entry\nCOPY coop-supervise /usr/local/libexec/coop-supervise\nENTRYPOINT [\"/usr/local/bin/coop-entry\"]\n"
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-11-07
+updated: 2026-11-09
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -46,6 +46,7 @@ this one has it.
   fixture programs import internal packages to act as independent oracles ([[agents-are-one-file]]).
 
 ## Changelog
+- 2026-11-09 — added stdlib-only `box/supervisor`, the container descendant supervisor compiled from embedded source. No new internal import edge.
 - 2026-11-07 — +1 leaf package and +1 edge: `systemdbus` (no internal imports) is the few D-Bus calls that start and stop Coop's systemd slices, used by the release-owned `cmd/coop-fs` helper; `box -> systemdbus` reads only its socket path to mount it and check it exists, for kernel filesystem protection under Docker's systemd cgroup driver.
 - 2026-11-06 — +1 leaf package and +1 edge: `secretname` (no internal imports) holds the built-in secret name list, and `shadowpath -> secretname` reads it, so the host-side hiding rules and the kernel filter's compiled name table come from one list (commit d7e272e5, live protection of secret-named files created after a box starts).
 - 2026-11-04 — +1 edge: `preset -> yamltext`, so a preset's unknown key is refused in the same plain words as `project.yaml` and `loop.yaml`.

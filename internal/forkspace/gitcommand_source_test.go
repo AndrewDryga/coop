@@ -18,6 +18,7 @@ import (
 // reviewed. TrustedGitCommand additionally needs caller-owned metadata; ordinary
 // new call sites use GitCommand, which constructs the trusted view itself.
 var reviewedGitConstructors = map[string]string{
+	"internal/box/supervisor/main.go:run:exec.Command(args[1], args[2:]...)":                                                   "Container-only supervisor launches the explicit provider command; never a host Git inspection path.",
 	"internal/sessionsvc/acp.go:startChildWithRunID:exec.Command(executable, \"fork\", bound.ForkName, \"acp\", bound.Target)": "Direct Coop child launch; optional test injection has no production constructor alias.",
 
 	"tools/releasenotes/main.go:remoteTags:forkspace.TrustedGitCommand(ctx, dir, env, \"init\", \"--bare\", \"--quiet\", \"--template=\")":               "Initializes empty private metadata with isolated configuration.",

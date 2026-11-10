@@ -1,8 +1,6 @@
 package box
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -87,18 +85,8 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	parts.loginPath = `printf 'export PATH="` + lockedPath + `"\n' > /etc/profile.d/coop-path.sh`
 	parts.pathEnv = lockedPath
 	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(platform.Architecture, parts))
-	var contextBytes bytes.Buffer
-	w := tar.NewWriter(&contextBytes)
-	for _, name := range closure.FileNames() {
-		data := closure.Files[name]
-		if err := w.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(data))}); err != nil {
-			return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
-		}
-		if _, err := w.Write(data); err != nil {
-			return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
-		}
-	}
-	if err := w.Close(); err != nil {
+	contextBytes, err := imageContext(closure.Files)
+	if err != nil {
 		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
 	}
 	id := boxAgentIdentity()
@@ -109,7 +97,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 		Platform string
 		Args     map[string]string
 		Context  []byte
-	}{spec.Platform, spec.Args, contextBytes.Bytes()})
+	}{spec.Platform, spec.Args, contextBytes})
 	if err != nil {
 		return runtime.DockerBuild{}, nil, agents.ClientClosure{}, err
 	}
@@ -117,7 +105,7 @@ func lockedImageDefinition(platform agents.ClientPlatform) (runtime.DockerBuild,
 	definition := hex.EncodeToString(digest[:])
 	spec.Tag = lockedClientRepository + ":" + definition[:32]
 	spec.Labels = map[string]string{"coop.clients.definition": definition, "coop.clients.closure": closure.Digest, "coop.clients.libc": platform.Libc}
-	return spec, contextBytes.Bytes(), closure, nil
+	return spec, contextBytes, closure, nil
 }
 
 // lockedClientParts renders the client installation both Coop images share from one closure: npm
@@ -169,6 +157,7 @@ func lockedClientParts(closure agents.ClientClosure) baseImageParts {
 		checks.WriteString("ENV " + strings.Join(closure.Env, " ") + "\n")
 	}
 	closure.Files["global.npmrc"] = []byte{}
+	closure.Files["supervisor/main.go"] = supervisorSource
 	return baseImageParts{
 		files:       "COPY package.json package-lock.json global.npmrc /opt/coop/clients/",
 		install:     install,

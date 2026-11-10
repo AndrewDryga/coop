@@ -2,13 +2,14 @@
 name: box-entrypoint-descendant-handoff
 description: Supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 subsystem: box
-sources: [internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
-updated: 2026-11-06
+sources: [internal/box/supervisor/main.go, internal/box/supervisor.go, internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
+updated: 2026-11-09
 ---
 
 `RunSpec.SuperviseDescendants` is set only for loop and review iterations. In that mode
-`coop-entry` launches the provider and each sidecar forwarder in separate sessions, then scans
-`/proc` after a successful provider exit. It treats all non-zombie processes as agent-owned except
+the shell bootstrap launches sidecar forwarders in separate sessions and passes their identities
+to the embedded Go `coop-supervise` helper. The helper launches the provider in its own session
+and scans `/proc` after a successful provider exit. It treats all non-zombie processes as agent-owned except
 PID 1, the entrypoint's transient direct children, and a forwarder session whose leader still has
 the recorded PID plus Linux start token. PPID or session walks alone are insufficient because a
 provider can double-`setsid` and reparent its work.
@@ -19,7 +20,7 @@ before the deadline returns exit 190; a job still live at the deadline is sent T
 returns 191. A failed provider terminates any remaining agent-owned jobs before preserving its real
 exit. The entrypoint remaps raw provider use of either reserved code to ordinary failure.
 
-A daemon is not work that finishes (`daemon_jobs`): a job that left the provider's session with
+A daemon is not work that finishes (`procFS.daemon`): a job that left the provider's session with
 stdin, stdout and stderr all on `/dev/null`, as a double-forked daemon such as `epmd -daemon`
 leaves itself, or one named on a short list (`epmd`, `ssh-agent`, `gpg-agent`, `dbus-daemon`;
 names only ever stop a job sooner). It never earns a handoff and never counts toward the drain. It
@@ -36,6 +37,12 @@ stops with exit 1, never the reserved code. Interactive boxes retain the normal 
 path.
 
 ## Changelog
+- 2026-11-09 — moved the full supervisor into a stdlib-only Go helper. The small shell bootstrap
+  retains config publication, forwarder setup, PATH and ordinary exec; the helper is statically
+  compiled in the shared pinned Go build image and copied into both client images. Embedded source
+  participates in image identity; neither a host compiler nor project source is used. Go preserves
+  signal exit codes and treats ENOENT/ESRCH during process exit as normal disappearance. Fixture tests
+  and real Docker lifecycle tests cover cleanup and signals during provider execution and drain.
 
 - 2026-11-06 — daemons left behind are stopped after a 10s grace instead of drained for 900s, with no
   handoff (an emisar fork idled 15 minutes on a test's `epmd -daemon`, 2026-11-05).
