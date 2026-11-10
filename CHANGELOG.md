@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased
+## 13.2.1
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **Box images carry patched system packages and tools.** Updated the Node 24/Bookworm base and
+  the Ubuntu gateway's apt and OpenSSL packages, replaced npm with 11.21.2, and rebuilt the same
+  asdf 0.20.2 source with Go 1.27.3. These resolve published security advisories while preserving
+  the existing agent-client pins and toolchain behavior. The next launch rebuilds the shared box
+  image. Rebuild project-specific images with `coop build`; filtered editor sessions may ask for
+  `coop net setup` once.
+- **Large text attachments no longer overwhelm a model's prompt.** Sessions retain the exact
+  attachment bytes as files and send a short file reference instead of inserting the entire log
+  into the prompt. Agents can read the full attachment when needed.
+- **Bundled-client and image security checks are automated.** The client lockfile is audited
+  without installation scripts, and final container images are scanned. Fixable HIGH/CRITICAL
+  image findings fail the checks; findings without published fixes remain visible in reports.
+- **Image build records stay out of project source.** Build records use configured local
+  state directories, and missing state roots no longer create or read records in the source tree.
 
 ## 13.2.0
 
