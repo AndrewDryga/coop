@@ -73,6 +73,7 @@ func TestOwnDockerfileInstallsTheGatePins(t *testing.T) {
 	}
 	modfile := makeVariable(t, "STATICCHECK_MODFILE")
 	for _, want := range []string{
+		"npm install --global --ignore-scripts --no-audit --no-fund npm@" + makeVariable(t, "NPM_VERSION") + "\n",
 		"COPY --chown=node:node " + modfile + " /tmp/staticcheck/go.mod\n",
 		"COPY --chown=node:node " + strings.TrimSuffix(modfile, ".mod") + ".sum /tmp/staticcheck/go.sum\n",
 		"go -C /tmp/staticcheck install -mod=readonly honnef.co/go/tools/cmd/staticcheck",

@@ -3,7 +3,7 @@ name: ci-free-checks
 description: Make-owned CI partitions, per-owner caches and a status-only required check
 subsystem: development
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, release_test.go]
-updated: 2026-10-17
+updated: 2026-11-09
 ---
 
 CI runs each Make owner in the Makefile's `CI_OWNERS` on its own runner: static, unit (with only
@@ -30,6 +30,9 @@ CI artifacts. Local tests prove workflow shape and refusal behavior, not hosted 
 publication. Related: [[local-development-checks]], [[release-qualification]].
 
 ## Changelog
+- 2026-11-09 — added lockfile-only npm auditing to the static owner and a separate required
+  image-vuln job. Make owns versions/commands; the job builds and scans all four final images and
+  retains evidence on failure. The status aggregate now requires image scanning as well.
 - 2026-10-17 — `check-unit` runs the unit tests with only the required host programs on PATH and
   CGO_ENABLED=0, the release's build (`make test-minimal-path`); the race owners keep the full
   PATH, so optional-program tests still run there. The owner kept CI's plain pass for testing the

@@ -68,8 +68,8 @@ when one finishes; its timeouts start only then.
 `make check` leaves out `check-unit`, because the race owners run the same packages and tests under
 the race detector. CI runs every owner in the Makefile's `CI_OWNERS` on its own runner, including
 `check-unit`, on every push to main, pull request and release tag. The required `check` status waits
-for every owner, doctor and review-writes, and a failed, cancelled, skipped or missing job can't
-pass it. The doctor and review-writes jobs stay out of `make check` because they need Docker.
+for every owner, doctor, review-writes and image-vuln, and a failed, cancelled, skipped or missing job can't
+pass it. The doctor, review-writes and image-vuln jobs stay out of `make check` because they need Docker.
 
 Read-only CI jobs cache downloaded modules and compiled Go objects, and only pushes to main save to
 that cache. Behavioral tests always rerun. The release publisher starts fresh, without that cache or
@@ -91,7 +91,7 @@ CI's `check-unit` runs the tests with only the required programs on PATH, so a t
 another program and doesn't skip fails there. The race owners can't repeat that locally, so run
 `make test-minimal-path` by hand when a test starts using a program.
 
-The gate needs `staticcheck`, `govulncheck`, `shellcheck` and `git-lfs`. The Makefile pins
+The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `git-lfs` and npm at the Makefile's `NPM_VERSION` (`make install-npm`). The Makefile pins
 `govulncheck` and installs Staticcheck with `make install-staticcheck` from
 `tools/staticcheck.mod`. CI and this repository's own box (`.agent/Dockerfile`) install the same
 pins. co:op's box images ship neither `staticcheck` nor `govulncheck`. A missing or wrong-version
@@ -104,12 +104,40 @@ repository's required `go` and `gofmt` version automatically. CI reads the versi
 one commit, and the commit message ends with a `Coop-Task: <id>` trailer, where the id is the
 task's folder name.
 
+### Bundled-client and image vulnerabilities
+
+`make npm-audit` audits the committed client lockfile, including optional platform packages,
+without installing dependencies, running lifecycle scripts or changing the lock. It is part of
+`make check`. HIGH/CRITICAL findings, registry errors and a missing/wrong npm version fail it.
+Existing filtered development boxes need the requested `registry.npmjs.org:443` egress approved
+through the normal host approval flow before this check can reach the advisory service.
+
+`make install-trivy` installs the pinned scanner into `~/.local/bin` after checking its reviewed
+release SHA-256. Put that directory on PATH, then run `make image-vuln` with Docker available.
+The target builds and scans the current ordinary base, locked-client, network and filesystem
+images by immutable image ID; it does not change network approval or qualification. Builds use
+only release-owned embedded sources. Reports and build logs go into a fresh folder under
+`.agent/image-vuln/` (override with `OUT=<directory>`); CI retains these as artifacts even on failure.
+
+The image check fails on HIGH/CRITICAL findings with a published fixed version. Findings without
+a published fix remain in the full JSON reports and visible per-image counts; they do not fail
+this policy. Passing the policy does not mean an image is vulnerability-free.
+It also fails on build, scanner or database errors and missing expected package inventories.
+No vulnerability ignore file or ambient Trivy configuration is applied. The filesystem image
+carries its runtime C library inventory; the check also requires Go binary inventories and the
+installed direct npm packages at their pinned versions. The separate lock audit includes packages
+for other platforms; each image scan covers the Docker daemon's native architecture.
+
+A clean scan covers the packages Trivy can identify. It does not prove the absence of flaws in
+bundled native binaries, establish exploitability of advisory matches, or replace provider-client
+qualification. Updating pins still follows the provider-client qualification procedure.
+
 ## Test layers
 
 | Layer | Targets | What they prove |
 |---|---|---|
 | Local iteration | `make check-local SCOPE=<owner>` | the docs or rules checks, or an owner's checks and its reverse consumers |
-| Blocking | `make check` | formatting, vet and Staticcheck (both with and without the test build tags), ShellCheck, `go build ./...`, govulncheck, unit tests under `-race` (CI also runs them plain, with only the required host programs on PATH), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment. Needs no runtime or credentials |
+| Blocking | `make check` | formatting, vet and Staticcheck (both with and without the test build tags), ShellCheck, `go build ./...`, govulncheck, the npm lockfile audit, unit tests under `-race` (CI also runs them plain, with only the required host programs on PATH), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment. Needs no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI, loop and fork policy, ACP switching and recovery, and live-harness contracts, all with fixtures |
 | Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` · `make network-runtime-e2e` · `make task-channel-e2e` | real box isolation, process reaping and signal forwarding, report-only review mounts, filtered networking, and the in-box task channel (in the image `coop build` makes, and CI runs it daily). Requires Docker (or Apple `container` for doctor) |
 | Pinned clients, offline | `make native-roles-e2e` · `make skills-e2e` · `make mcp-e2e` | each pinned client's own role, skill and MCP handling, with no network, in the locked image `coop net setup` builds. No credentials or model calls |

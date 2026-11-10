@@ -554,8 +554,8 @@ func readReleaseWorkflow(t *testing.T, path string) releaseWorkflow {
 func TestReleaseWorkflowQualification(t *testing.T) {
 	ci := readReleaseWorkflow(t, ".github/workflows/ci.yml")
 	release := readReleaseWorkflow(t, ".github/workflows/release.yml")
-	if len(ci.Jobs) != 4 {
-		t.Fatal("CI must contain exactly its free checks, aggregate and two runtime boundaries")
+	if len(ci.Jobs) != 5 {
+		t.Fatal("CI must contain exactly its free checks, aggregate, two runtime boundaries and image scanning")
 	}
 	if len(release.Jobs) != 2 {
 		t.Error("release must have only qualification and its dependent publisher")
@@ -591,6 +591,9 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 				if name == "ci" && id == "checks" && step.Name == ciCacheSave {
 					stepIf = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
 				}
+				if name == "ci" && id == "image-vuln" && step.Name == "Retain image scan evidence" {
+					stepIf = "always()"
+				}
 				if step.If != stepIf {
 					t.Errorf("%s.%s unexpectedly skips a step: %s", name, id, step.If)
 				}
@@ -616,13 +619,13 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 			}
 		}
 	}
-	for _, job := range []string{"checks", "check", "doctor", "review-writes"} {
+	for _, job := range []string{"checks", "check", "doctor", "review-writes", "image-vuln"} {
 		if _, ok := ci.Jobs[job]; !ok {
 			t.Errorf("release qualification lost CI job %s", job)
 		}
 	}
 	aggregate := ci.Jobs["check"]
-	if !reflect.DeepEqual(aggregate.Needs, []any{"checks", "doctor", "review-writes"}) || len(aggregate.Steps) != 1 {
+	if !reflect.DeepEqual(aggregate.Needs, []any{"checks", "doctor", "review-writes", "image-vuln"}) || len(aggregate.Steps) != 1 {
 		t.Fatal("required status must account for every free and runtime job")
 	}
 	if !reflect.DeepEqual(aggregate.Steps[0].Env, map[string]string{"RESULTS": "${{ join(needs.*.result, ' ') }}"}) {
@@ -636,7 +639,7 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		t.Error("free CI matrix must run exactly the Makefile's CI_OWNERS, each on an isolated runner of its own")
 	}
 	checkCIOwnerCaches(t, checks.Steps)
-	for _, id := range []string{"checks", "doctor", "review-writes"} {
+	for _, id := range []string{"checks", "doctor", "review-writes", "image-vuln"} {
 		setups := 0
 		for _, step := range ci.Jobs[id].Steps {
 			if strings.HasPrefix(step.Uses, "actions/setup-go@") {

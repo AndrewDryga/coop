@@ -34,6 +34,10 @@ box:
     - to: {domain: "vuln.go.dev"}
       protocol: tls
       ports: [443]
+    # The static gate audits the bundled client lockfile against npm advisories.
+    - to: {domain: "registry.npmjs.org"}
+      protocol: tls
+      ports: [443]
     # proxy.golang.org redirects module zips here.
     - to: {domain: "storage.googleapis.com"}
       protocol: tls

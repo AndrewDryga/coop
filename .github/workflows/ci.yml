@@ -48,6 +48,7 @@ jobs:
         if: matrix.target == 'check-static'
         run: |
           make install-staticcheck
+          make install-npm
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
       - name: Make-owned free checks
         run: make "${{ matrix.target }}"
@@ -68,7 +69,7 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [checks, doctor, review-writes]
+    needs: [checks, doctor, review-writes, image-vuln]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -76,7 +77,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          if [ "$RESULTS" != 'success success success' ]; then
+          if [ "$RESULTS" != 'success success success success' ]; then
             echo "Every needed job must succeed; their results: $RESULTS"
             exit 1
           fi
@@ -137,3 +138,35 @@ jobs:
             tools/staticcheck.sum
       - name: prove report-only review mounts at the Docker boundary
         run: make review-writes-e2e
+
+  image-vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            go.sum
+            tools/staticcheck.mod
+            tools/staticcheck.sum
+      - name: Install pinned image scanner
+        run: |
+          make install-trivy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Scan exact release-owned images
+        run: make image-vuln
+      - name: Retain image scan evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-vulnerability-reports
+          path: .agent/image-vuln/
+          if-no-files-found: error
+          retention-days: 14

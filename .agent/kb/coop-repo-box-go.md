@@ -1,9 +1,9 @@
 ---
 name: coop-repo-box-go
-description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and four approved domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
+description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and the requested Go/npm domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
 subsystem: box
 sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-11-08
+updated: 2026-11-10
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -12,7 +12,7 @@ project's `.agent/Dockerfile` can put a toolchain there (`boxEnvNote` in `intern
 blocked with `go: not found` before it could run `make check`.
 
 `.agent/Dockerfile` (from `coop init --stack asdf`) installs `.tool-versions` (Go) at build time and
-adds the gate's tools at the Makefile's pins (staticcheck, govulncheck), plus shellcheck, git-lfs and
+adds the gate's tools at the Makefile's pins (staticcheck, govulncheck, npm), plus shellcheck, git-lfs and
 make. Changing it, or anything it copies, makes launches refuse until `coop build` runs. It is the
 only source of the Go analyzers in coop's box: since 2026-10-16 Coop's own box images carry none, so
 an analyzer bump moves no user's box tag or network setup, only this project's image.
@@ -22,12 +22,13 @@ well as the analyzer: Go1.27.2 emits V5 export data that Staticcheck0.8.1's publ
 could not read (0.8.2 requires the fixed `golang.org/x/tools` itself, but the pin stays). `make install-staticcheck` uses that graph, and this project's Dockerfile installs the
 same files as `go.mod`/`go.sum`. Never install with `@version` here: that would bypass the importer
 pin. The gate checks both versions, and `TestOwnDockerfileInstallsTheGatePins` holds the
-Dockerfile's module path and govulncheck version to the Makefile's.
+Dockerfile's module path and analyzer/npm versions to the Makefile's.
 
 The build needs the network, so `.agent/project.yaml` asks for `proxy.golang.org`, `sum.golang.org`
 and `vuln.go.dev` (TLS 443), approved by the owner with `coop approve`. `proxy.golang.org` hands
 large module zips (modernc.org/sqlite) to `storage.googleapis.com`, and since 21e0fb08 (2026-10-14)
-the project allows that host too, so a box downloads them itself. That rule grants the whole host:
+the project allows that host too, so a box downloads them itself. The npm lockfile audit also
+requests `registry.npmjs.org:443`; existing host approvals must explicitly admit the new domain. That rule grants the whole host:
 any public bucket on it, not only Go's. `GOMODCACHE` sits in `~/.cache`, this project's own cache volume
 (`box.projectCacheVolume`, shared with its forks); the host command in the Dockerfile's comment fills that cache when a module still
 fails to download in a box. Editing the Dockerfile, even a comment, marks this repo's box image
@@ -64,6 +65,8 @@ exactly that tmpfs: `validateMountsContext` recomputes it from the `--memory` in
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-10 — added the pinned npm audit tool and its requested registry domain; verified the
+  Dockerfile, Make target and project egress request, without changing host approval.
 - 2026-11-06 — each gate gets its own `run.*` folder in the memory folder, removed on exit and swept
   when hours old; a TMPDIR the gate has is kept; a filtered launch takes only the planned tmpfs, once
   (follow-up to task 2026-11-05-find-why-go-race-tests-run-several-times-slower).

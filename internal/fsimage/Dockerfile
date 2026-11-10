@@ -12,6 +12,7 @@ RUN rm -f /etc/apt/sources.list.d/* \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
+# Retain runtime-library package inventory for scans of the final scratch image.
 RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/coop-fs /out/tmp /out/host-cgroup /out/host-bpf /out/state /out/run/dbus \
  && chmod 1777 /out/tmp \
  && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/usr/local/bin/coop-fs ./cmd/coop-fs \
@@ -26,6 +27,9 @@ RUN mkdir -p /out/usr/local/libexec/coop-fs /out/usr/local/bin /out/usr/share/co
  && ! grep -q 'not found' /tmp/coop-fs-libraries \
  && awk '/=> \// { print $3 } $1 ~ /^\// { print $1 }' /tmp/coop-fs-libraries \
     | while read -r library; do cp -L --parents "$library" /out/ || exit 1; done \
+ && mkdir -p /out/etc /out/var/lib/dpkg \
+ && cp -L /etc/os-release /etc/debian_version /out/etc/ \
+ && dpkg-query -s libbpf1 libelf1 zlib1g libc6 > /out/var/lib/dpkg/status \
  && cp LICENSE /out/usr/share/coop-fs/LICENSE \
  && cp -L --parents /usr/share/doc/libbpf1/copyright /usr/share/doc/libelf1/copyright \
     /usr/share/doc/zlib1g/copyright /usr/share/doc/libc6/copyright /out/ \

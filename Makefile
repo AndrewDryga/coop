@@ -15,6 +15,8 @@ VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,provider
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.9.0
+NPM_VERSION := 11.17.0
+TRIVY_VERSION := 0.72.0
 
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
@@ -110,6 +112,25 @@ shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue gua
 # every starter's verifier, is ours and is checked.
 	@git ls-files -z '*.sh' | grep -zv '^internal/eval/starters/[^/]*/files/' | xargs -0 shellcheck
 
+install-npm: ## Install the pinned npm for the lockfile audit
+	@npm install --global --ignore-scripts --no-audit --no-fund npm@$(NPM_VERSION)
+
+npm-audit: ## Audit the bundled client lockfile; HIGH/CRITICAL findings and registry errors fail
+	@command -v npm >/dev/null 2>&1 || { echo 'npm is missing; install Node, then make install-npm'; exit 1; }
+	@version="$$(npm --version)" && [ "$$version" = "$(NPM_VERSION)" ] || { echo 'npm must be $(NPM_VERSION); run make install-npm'; exit 1; }
+	@config="$$(mktemp)" && trap 'rm -- "$$config"' EXIT && \
+	 npm audit --prefix internal/agent/locked-clients --package-lock-only --ignore-scripts --offline=false \
+	 --include=prod --include=dev --include=optional --include=peer \
+	 --audit-level=high --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig="$$config"
+
+install-trivy: ## Install the pinned scanner after verifying its reviewed release checksum
+	@go run ./tools/installtrivy --version $(TRIVY_VERSION) --dest "$(HOME)/.local/bin/trivy"
+
+# Builds and scans exact final images, so this check needs Docker and runs as its own required
+# CI job. Keep it out of check-static and the runtime-independent local make check.
+image-vuln: ## Block fixable HIGH/CRITICAL findings in four images; retain all reports under OUT
+	@go run ./tools/imagevuln --trivy-version $(TRIVY_VERSION) --out "$(or $(OUT),.agent/image-vuln)"
+
 require-git-lfs:
 	@command -v git-lfs >/dev/null 2>&1 || { echo "git-lfs is not installed — run: brew install git-lfs (macOS) or apt-get install -y git-lfs (Debian)"; exit 1; }
 
@@ -197,9 +218,9 @@ check-race-sessionsvc-2: require-git-lfs ## Race-detector tests of internal/sess
 # the race owners cannot do: on Linux -race needs cgo, and they keep the
 # full PATH so the tests of optional programs still run somewhere. Run 'make test-minimal-path' by
 # hand after a test starts using a program.
-# CI-only by necessity: the doctor runtime matrix and the review-writes job need a real container
-# runtime, so they stay separate CI jobs and this target stays runtime-independent. Run them by
-# hand with 'make doctor', 'make box-runtime-e2e', and 'make review-writes-e2e'.
+# CI-only by necessity: doctor, review-writes and image-vuln need a real container runtime,
+# so they stay separate CI jobs and this target stays runtime-independent. Run them by hand with
+# make doctor, make box-runtime-e2e, make review-writes-e2e and make image-vuln.
 CI_OWNERS := check-static check-unit check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 # The local test owners, longest first. Four run at once and the last starts when one ends, so at
 # most check-race-rest's four packages and three single-package owners share the host (see
@@ -255,7 +276,7 @@ trim-gate-cache:
 	  [ "$$left" = 0 ] || { echo "Could not remove $$left old entries from $(GATE_GOCACHE): check its permissions"; exit 1; }; \
 	fi
 
-check-static: mod-check gateway-sources-check filesystem-sources-check lint shellcheck build-all vuln align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
+check-static: mod-check gateway-sources-check filesystem-sources-check lint shellcheck build-all vuln npm-audit align docs-check rules-check ## Free source, analyzer, build, docs and tool checks
 check-unit: test-minimal-path ## Free ordinary unit tests, with only the host programs CONTRIBUTING.md requires
 check-process: check-process-loop check-process-rest ## Free scripted-provider and process-control tests
 check-process-loop: provider-scripted-loop-e2e ## The scripted provider suite's loop tests
@@ -265,10 +286,10 @@ check-race: race ## Free race-detector tests
 # Explicit reviewed owners, not an automatic changed-file router. The import-closure test
 # includes tagged/test/root/tool consumers; shared foundations/build inputs still need check.
 # LOCAL_* package lists are guarded by TestLocalCheckScopesCoverReverseConsumers.
-LOCAL_agent := . ./cmd/coop-net ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/networkgateway ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
-LOCAL_runtime := . ./internal ./internal/box/supervisor ./internal/fsfilter ./internal/fsimage ./tools/genfsimage ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/lifecyclebench
-LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/session ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./tools/lifecyclebench
-LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench
+LOCAL_agent := . ./cmd/coop-net ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/agent ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/consult ./internal/forkctl ./internal/ladder ./internal/loop ./internal/loopcfg ./internal/networkgateway ./internal/preset ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench ./tools/imagevuln
+LOCAL_runtime := . ./internal ./internal/box/supervisor ./internal/fsfilter ./internal/fsimage ./tools/genfsimage ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/gatewayimage ./internal/loop ./internal/runtime ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/testutil/nativedocker ./tools/gendocs ./tools/gennetimage ./tools/lifecyclebench ./tools/imagevuln
+LOCAL_sessions := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/session ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./internal/workerconnector ./internal/workerproto ./tools/gendocs ./tools/lifecyclebench ./tools/imagevuln
+LOCAL_tasks := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/box ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/loop ./internal/scaffold ./internal/sessionsvc ./internal/taskmcp ./internal/tasks ./internal/testutil/liveprovider ./tools/gendocs ./tools/lifecyclebench ./tools/imagevuln
 LOCAL_connector := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./internal/forkctl ./internal/sessionsvc ./internal/workerconnector ./tools/gendocs ./internal/box/testdata/mcpprobe
 LOCAL_cli := . ./internal ./internal/acpctl ./internal/acpproxy ./internal/acpproxy/testdata/acpfixture ./internal/cli ./internal/cli/testdata/providerfixture ./tools/gendocs ./internal/box/testdata/mcpprobe
 
@@ -419,7 +440,7 @@ help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
 .PHONY: thread-messages-check
-.PHONY: build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
+.PHONY: install-npm npm-audit install-trivy image-vuln build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench require-services-workspace
 .PHONY: full-gate trim-gate-cache check-static check-unit check-process check-race
