@@ -69,6 +69,18 @@ To check a download yourself, follow [Verifying a download](https://coop.dryga.c
 We ship updates frequently. `coop update` updates the binary, then uses the installed version to prepare the image for this
 project's network mode.
 
+## Agent skill
+
+Teach your agent to set up Coop, run sandboxed commands, delegate work to forks,
+and manage task queues:
+
+```bash
+npx skills add AndrewDryga/coop --skill coop
+```
+
+This installs only the [Coop product skill](skills/coop/SKILL.md). The Coop CLI
+and Docker are installed separately.
+
 ## Quickstart
 
 ```bash
