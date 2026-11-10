@@ -2,8 +2,8 @@
 name: supply-chain-checks
 description: Lockfile auditing and final-image vulnerability coverage
 subsystem: development
-sources: [Makefile, .github/workflows/ci.yml, tools/imagevuln/main.go, tools/installtrivy/main.go, tools/installtrivy/checksums.txt, internal/box/base_candidate.go, internal/fsimage/Dockerfile, .agent/project.yaml]
-updated: 2026-11-09
+sources: [internal/box/image.go, internal/gatewayimage/Dockerfile, Makefile, .github/workflows/ci.yml, tools/imagevuln/main.go, tools/installtrivy/main.go, tools/installtrivy/checksums.txt, internal/box/base_candidate.go, internal/fsimage/Dockerfile, .agent/project.yaml]
+updated: 2026-11-10
 ---
 
 `npm-audit` uses the embedded-client source lock without installation or lifecycle scripts. Its
@@ -30,6 +30,12 @@ is insufficient. Never copy the whole build-stage package database, which names 
 Scans identify known package advisories, not exploitability or coverage of opaque native client
 internals. They do not replace locked-client request-shape and runtime qualification.
 
+Image OS fixes retain their existing distro families. Both ordinary and fresh Node bases stay on
+Node24/Bookworm; the gateway retains its Envoy digest and installs exact patched Jammy packages
+from a dated snapshot. Updating one base image cannot patch the other image's OS packages.
+
 ## Changelog
+- 2026-11-10 — patched Debian apt/PCRE2 through the same-family Node image and Jammy apt/OpenSSL
+  through explicit snapshot package versions; checked vendor fixed versions and both architectures.
 - 2026-11-09 — added Make-owned npm and image checks; verified npm's config-path restriction and
   Trivy's Debian/node package detection against real scans and v0.72.0 analyzer sources.

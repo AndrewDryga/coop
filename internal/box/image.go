@@ -86,14 +86,14 @@ func asdfInstall(arch string) string {
 // fetches the newest. Bump pinnedNodeImage when you intentionally move the stable
 // base (e.g. after a `coop update` proves a newer node works).
 const (
-	pinnedNodeImage   = "node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6" // node 24 (slim)
-	floatingNodeImage = "node:24-slim"
+	pinnedNodeImage   = "node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9" // node 24 (slim)
+	floatingNodeImage = "node:24-bookworm-slim"
 )
 
 // baseDockerfileTemplate is shared by the base and the filtered client image: OS tools, the
 // qualified clients and process supervision. Its slots carry the client installation and each
 // image's PATH.
-const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-slim
+const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-bookworm-slim
 FROM %s AS supervisor
 COPY supervisor/main.go /src/main.go
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /coop-supervise /src/main.go

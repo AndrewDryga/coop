@@ -216,7 +216,7 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 	}
 	// The FROM image is driven by a build arg so an update can float it.
 	for _, want := range []string{
-		"ARG NODE_IMAGE=node:24-slim", "FROM ${NODE_IMAGE}",
+		"ARG NODE_IMAGE=node:24-bookworm-slim", "FROM ${NODE_IMAGE}",
 		"COPY package.json package-lock.json global.npmrc /opt/coop/clients/",
 		"/usr/local/bin/npm ci --prefix /opt/coop/clients --ignore-scripts",
 		"| sha256sum -c -", "COPY launchers/ /opt/coop/bin/", "RUN chmod -R a-w /opt/coop/clients",
