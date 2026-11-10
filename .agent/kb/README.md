@@ -55,6 +55,7 @@ changelog section, no line-number citation (`run.go:1392`, `line 19`), and Index
 card is still TRUE; only reading it against its `sources` does that.
 
 ## Index
+- [unix-socket-test-readiness](unix-socket-test-readiness.md) — observation fixture startup waits for a connection, then asserts protocol custody once
 - [filesystem-enforcement](filesystem-enforcement.md) — APFS Docker BPF policy, identity persistence, guarded execution and crash-safe service custody
 - [quality-tool-reviews](quality-tool-reviews.md) — coverage scope, equivalent mutants and semantic ownership behind the Crapper/Dryer/Mutator findings
 - [local-development-checks](local-development-checks.md) — explicit Make owner scopes, reverse-consumer guard and broad fallback; no automatic selector or implicit live calls

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -119,7 +118,15 @@ func TestObservationPeerEquivalenceDoesNotRebindHostCustody(t *testing.T) {
 	peer := g.Identity
 	peer.Clock.TimeNamespace = "67890"
 	// observeAt uses private peer validation, while the host retains exact identity.
-	wait.For(t, "equivalent observer listener", func() bool { _, err := os.Lstat(path); return err == nil })
+	// The socket path appears at bind, before the listener can accept clients.
+	wait.For(t, "equivalent observer listener", func() bool {
+		conn, err := net.DialTimeout("unix", path, ControlTimeout)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
 	value, err := observeAt(ctx, path, peer)
 	if err != nil || value.Identity != g.Identity {
 		t.Fatalf("equivalent observer lost guard provenance: %v", err)
