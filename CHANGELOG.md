@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 13.2.1
 
 - **Box images carry patched system packages and tools.** Updated the Node 24/Bookworm base and
