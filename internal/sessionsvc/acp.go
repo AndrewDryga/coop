@@ -3054,7 +3054,7 @@ func (r *sessionTurnRunner) runACP(
 			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "prompt send intent checkpoint failed")
 		}
 	}
-	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable)
+	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable, process.outputRoot)
 	if err != nil {
 		return "", nil, session.Usage{}, err
 	}

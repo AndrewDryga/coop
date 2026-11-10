@@ -273,6 +273,9 @@ Idempotency-Key: <globally unique caller-owned key>
 - Turn-submission bodies are limited to 12 MiB, so they can carry input artifacts.
 - A turn takes at most 5 input `artifacts`, 8 MiB in total. More artifacts, or more bytes, return
   `invalid_request` ("turn has too many artifacts" or "turn artifact content exceeds its bound").
+- Text input artifacts are preserved as complete files in the session mount. The model receives
+  bounded manifests with their names, digests, byte counts and local paths, and can read or search
+  them in portions across turns. Their contents are never appended wholesale to the model prompt.
 - co:op decodes every body as exactly one JSON value and rejects unknown fields.
 - Prompts are limited to 256 KiB of valid UTF-8 without NUL.
 
