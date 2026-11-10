@@ -96,7 +96,10 @@ func TestRuntimeEntrypointDescendantSupervision(t *testing.T) {
 	// itself: it is stopped a few seconds after the provider exits instead of held for the whole drain
 	// window, the log names it, and nothing is handed off, so the provider's result stands. A fork
 	// idled 15 minutes on epmd and then re-ran a finished task (2026-11-05).
-	daemon := "setsid setsid sh -c 'exec </dev/null >/dev/null 2>&1; while :; do sleep 1; done' & "
+	// Join the launcher and observe setup before the provider exits: a setsid wrapper
+	// still detaching with inherited output is real work, not yet a daemon.
+	daemon := "rm -f /workspace/daemon-ready; setsid setsid sh -c 'exec </dev/null >/dev/null 2>&1; exec 3>/workspace/daemon-ready; exec 3>&-; while :; do sleep 1; done' & " +
+		fmt.Sprintf("launcher=$!; wait \"$launcher\" || exit 97; i=0; while [ ! -e /workspace/daemon-ready ]; do i=$((i+1)); [ \"$i\" -lt %d ] || exit 97; sleep %g; done; ", int(wait.Deadline/wait.Poll), wait.Poll.Seconds())
 	const stopped = "The provider left a daemon running, which never exits by itself — stopping: "
 	supervised := func(t *testing.T, command string) (int, string, time.Duration) {
 		t.Helper()

@@ -29,6 +29,7 @@ type process struct {
 	identity
 	parent, session int
 	state, name     string
+	exiting         bool
 }
 
 type procFS struct {
@@ -138,10 +139,14 @@ func parseStat(data string) (process, error) {
 	pid, e1 := strconv.Atoi(strings.TrimSpace(data[:open]))
 	parent, e2 := strconv.Atoi(fields[1])
 	session, e3 := strconv.Atoi(fields[3])
-	if e1 != nil || e2 != nil || e3 != nil {
+	flags, e4 := strconv.ParseUint(fields[6], 10, 64)
+	threads, e5 := strconv.ParseUint(fields[17], 10, 64)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil {
 		return process{}, errors.New("invalid process identity")
 	}
-	return process{identity{pid, fields[19]}, parent, session, fields[0], data[open+1 : close]}, nil
+	// PF_EXITING precedes descriptor teardown and zombie state. An exiting leader
+	// with other threads still represents live work.
+	return process{identity{pid, fields[19]}, parent, session, fields[0], data[open+1 : close], flags&4 != 0 && threads == 1}, nil
 }
 
 func (fs procFS) path(pid int, name string) string {
@@ -183,7 +188,7 @@ func (fs procFS) jobs() ([]process, error) {
 		if err != nil {
 			return nil, err
 		}
-		if p.state != "Z" && pid != 1 && pid != fs.self && p.parent != fs.self && !exempt[p.session] {
+		if p.state != "Z" && !p.exiting && pid != 1 && pid != fs.self && p.parent != fs.self && !exempt[p.session] {
 			jobs = append(jobs, p)
 		}
 	}
@@ -278,6 +283,39 @@ func pause(ctx context.Context, duration time.Duration) bool {
 	}
 }
 
+func (fs procFS) classify(all []process, provider int, reaped map[identity]bool) (owned, jobs, daemons []process, err error) {
+	for _, p := range all {
+		if reaped[p.identity] {
+			continue
+		}
+		isOwned, isDaemon := fs.owned(p), fs.daemon(p, provider)
+		// A daemon child can exit between inventory and its descriptor reads.
+		// Only a still-live identity can earn the sticky background-work handoff.
+		current, err := fs.read(p.pid)
+		if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if current.identity != p.identity {
+			return nil, nil, nil, fmt.Errorf("process %d changed identity during classification", p.pid)
+		}
+		if current.state == "Z" || current.exiting {
+			continue
+		}
+		switch {
+		case isOwned:
+			owned = append(owned, p)
+		case isDaemon:
+			daemons = append(daemons, p)
+		default:
+			jobs = append(jobs, p)
+		}
+	}
+	return owned, jobs, daemons, nil
+}
+
 func (fs procFS) drain(ctx context.Context, provider int, timeout time.Duration, stderr io.Writer) (int, error) {
 	deadline := time.Now().Add(timeout)
 	var daemonDeadline time.Time
@@ -288,19 +326,9 @@ func (fs procFS) drain(ctx context.Context, provider int, timeout time.Duration,
 		if err != nil {
 			return 1, err
 		}
-		var owned, jobs, daemons []process
-		for _, p := range all {
-			if reaped[p.identity] {
-				continue
-			}
-			switch {
-			case fs.owned(p):
-				owned = append(owned, p)
-			case fs.daemon(p, provider):
-				daemons = append(daemons, p)
-			default:
-				jobs = append(jobs, p)
-			}
+		owned, jobs, daemons, err := fs.classify(all, provider, reaped)
+		if err != nil {
+			return 1, err
 		}
 		if len(owned) > 0 {
 			if !reapedConsult {

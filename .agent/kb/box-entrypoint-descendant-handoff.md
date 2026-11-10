@@ -3,7 +3,7 @@ name: box-entrypoint-descendant-handoff
 description: Supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 subsystem: box
 sources: [internal/box/supervisor/main.go, internal/box/supervisor.go, internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 `RunSpec.SuperviseDescendants` is set only for loop and review iterations. In that mode
@@ -13,6 +13,12 @@ and scans `/proc` after a successful provider exit. It treats all non-zombie pro
 PID 1, the entrypoint's transient direct children, and a forwarder session whose leader still has
 the recorded PID plus Linux start token. PPID or session walks alone are insufficient because a
 provider can double-`setsid` and reparent its work.
+
+Classification revalidates identity and liveness after reading environment and descriptors.
+Linux closes descriptors before zombie state: `/proc` can still report a running task with
+`PF_EXITING` (stat field 9, bit 4). Ignore that exit transition only when stat reports one thread;
+an exiting leader with other threads remains work. Missing descriptors on a live process do not
+make it a daemon. Unexpected inventory errors or an identity replacement fail closed.
 
 The supervisor performs one short quiescence rescan before accepting a clean exit, because a
 detached leader can replace its short-lived launcher between `/proc` reads. A seen job that exits
@@ -37,6 +43,13 @@ stops with exit 1, never the reserved code. Interactive boxes retain the normal 
 path.
 
 ## Changelog
+- 2026-11-10 — revalidated classification snapshots and excluded single-thread kernel exit
+  transitions after hosted daemon-only failures. Synthetic stale/exit/thread controls and the
+  real lifecycle cases cover this boundary. The daemon fixture joins its launcher and publishes
+  readiness through an extra descriptor before provider exit, preserving child turnover and all
+  cleanup/handoff assertions. Kernel contract: [exit ordering](https://github.com/torvalds/linux/blob/master/kernel/exit.c),
+  [PF_EXITING](https://github.com/torvalds/linux/blob/master/include/linux/sched.h), and
+  [proc stat fields](https://github.com/torvalds/linux/blob/master/fs/proc/array.c).
 - 2026-11-09 — moved the full supervisor into a stdlib-only Go helper. The small shell bootstrap
   retains config publication, forwarder setup, PATH and ordinary exec; the helper is statically
   compiled in the shared pinned Go build image and copied into both client images. Embedded source
