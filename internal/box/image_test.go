@@ -499,6 +499,63 @@ func TestAsdfInstallRefusesATamperedDownload(t *testing.T) {
 	}
 }
 
+func TestImagesReplaceNPMAfterVerifyingTheCompleteDistribution(t *testing.T) {
+	step := npmInstall()
+	verify := strings.Index(step, "sha256sum -c -")
+	remove := strings.Index(step, "rm -rf /usr/local/lib/node_modules/npm")
+	unpack := strings.Index(step, "tar -C /usr/local/lib/node_modules/npm --strip-components=1")
+	if verify < 0 || remove < verify || unpack < remove || !strings.Contains(step, imageNPMSHA256) {
+		t.Fatal("npm distribution must be verified, old tree removed, then unpacked")
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		platform := agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"}
+		base, err := baseImageDefinition(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, locked, err := lockedImageDefinition(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, files := range map[string]map[string][]byte{"base": base, "locked": locked.Files} {
+			if !strings.Contains(string(files["Dockerfile"]), "RUN "+step) {
+				t.Fatalf("%s/%s omits the reviewed npm distribution", name, arch)
+			}
+		}
+	}
+}
+
+func TestNPMInstallRefusesTamperedBytesBeforeRemovingTheOldTree(t *testing.T) {
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		t.Skip("sha256sum not available")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, script := range map[string]string{
+		"curl": "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --output ] && { printf tampered > \"$2\"; exit 0; }; shift; done\nexit 2\n",
+		"rm":   "#!/bin/sh\n: > \"$MUTATED\"\n",
+		"tar":  "#!/bin/sh\n: > \"$MUTATED\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker := filepath.Join(dir, "mutated")
+	step := strings.ReplaceAll(npmInstall(), "/tmp/coop-npm.tgz", filepath.Join(dir, "npm.tgz"))
+	step = strings.ReplaceAll(step, "/usr/local/lib/node_modules/npm", filepath.Join(dir, "installed-npm"))
+	cmd := exec.Command("sh", "-c", step)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "MUTATED="+marker)
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "FAILED") {
+		t.Fatalf("tampered npm was not rejected: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("tampered archive reached a destructive/extraction step")
+	}
+}
+
 // The base image bakes socat and the coop-entry sidecar forwarder (raw-TCP loopback) so a box can
 // reach an expose'd sidecar at the same localhost:<hostport> URL the host uses (OIDC issuer match).
 func TestBaseDockerfileHasSidecarForwarder(t *testing.T) {

@@ -56,7 +56,7 @@ func BaseDockerfile(arch string) (string, error) {
 type baseImageParts struct{ files, install, browserDeps, loginPath, pathEnv, scripts string }
 
 func renderBaseDockerfile(arch string, parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, gatewayimage.GoBase(), parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, configPublicationShell, parts.pathEnv, parts.scripts)
+	return fmt.Sprintf(baseDockerfileTemplate, gatewayimage.GoBase(), parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, npmInstall(), configPublicationShell, parts.pathEnv, parts.scripts)
 }
 
 // asdf comes from a release URL, and both images carry it: toolchain and project images built on
@@ -79,6 +79,20 @@ func asdfInstall(arch string) string {
 		" && printf '%%s  %%s\\n' '%s' /tmp/coop-asdf.tar.gz | sha256sum -c - \\\n"+
 		" && tar -C /usr/local/bin -xzf /tmp/coop-asdf.tar.gz asdf \\\n"+
 		" && rm -f /tmp/coop-asdf.tar.gz", url, asdfSHA256[arch])
+}
+
+// npm's complete distribution includes its runtime dependency tree. Replace the
+// inherited directory after verification so obsolete bundled packages cannot survive.
+const imageNPMVersion = "11.21.2"
+const imageNPMSHA256 = "8ad8563b81e71b90ef405b140bccf3ba9b5e7884ab210bd49ee4e2f4bc6f61f5"
+
+func npmInstall() string {
+	return fmt.Sprintf(`curl --fail --silent --show-error --location --proto '=https' --output /tmp/coop-npm.tgz 'https://registry.npmjs.org/npm/-/npm-%s.tgz' \
+ && printf '%%s  %%s\n' '%s' /tmp/coop-npm.tgz | sha256sum -c - \
+ && rm -rf /usr/local/lib/node_modules/npm \
+ && mkdir -p /usr/local/lib/node_modules/npm \
+ && tar -C /usr/local/lib/node_modules/npm --strip-components=1 -xzf /tmp/coop-npm.tgz \
+ && rm -f /tmp/coop-npm.tgz`, imageNPMVersion, imageNPMSHA256)
 }
 
 // Base-image references for the shared box. coop build pins the FROM image to a
@@ -142,6 +156,8 @@ RUN apt-get update \
  && git lfs install --system --skip-repo \
  && mkdir -p /home/node/.asdf /home/node/.cache && chown node:node /home/node/.asdf /home/node/.cache \
  && %s
+
+RUN %s
 
 # Entrypoint: shared process supervision.
 COPY <<'ENTRY' /usr/local/bin/coop-entry

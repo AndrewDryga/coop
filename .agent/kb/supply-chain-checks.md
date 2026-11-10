@@ -30,11 +30,19 @@ is insufficient. Never copy the whole build-stage package database, which names 
 Scans identify known package advisories, not exploitability or coverage of opaque native client
 internals. They do not replace locked-client request-shape and runtime qualification.
 
+The Node base's npm is replaced by a complete, hash-checked npm distribution after client
+installation. Remove its old directory before extraction so obsolete bundled dependencies cannot
+survive; existing npm/npx links point into the replacement tree. The source client lock is
+unchanged. A root guard keeps image npm, the Make audit pin and this repo's development image
+on the same reviewed release.
+
 Image OS fixes retain their existing distro families. Both ordinary and fresh Node bases stay on
 Node24/Bookworm; the gateway retains its Envoy digest and installs exact patched Jammy packages
 from a dated snapshot. Updating one base image cannot patch the other image's OS packages.
 
 ## Changelog
+- 2026-11-10 — replaced vulnerable inherited npm with verified11.21.2, without lifecycle scripts
+  or overlay leftovers; pinned gate/development tools to the same version.
 - 2026-11-10 — patched Debian apt/PCRE2 through the same-family Node image and Jammy apt/OpenSSL
   through explicit snapshot package versions; checked vendor fixed versions and both architectures.
 - 2026-11-09 — added Make-owned npm and image checks; verified npm's config-path restriction and

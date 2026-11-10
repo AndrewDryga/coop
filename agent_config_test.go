@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -82,6 +83,16 @@ func TestOwnDockerfileInstallsTheGatePins(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf(".agent/Dockerfile must install the gate's pinned analyzers: missing %q", want)
 		}
+	}
+}
+
+func TestImageNPMPinMatchesTheGate(t *testing.T) {
+	df, err := box.BaseDockerfile("arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(df, "https://registry.npmjs.org/npm/-/npm-"+makeVariable(t, "NPM_VERSION")+".tgz") {
+		t.Fatal("bundled npm and the gate must use the same reviewed npm release")
 	}
 }
 
