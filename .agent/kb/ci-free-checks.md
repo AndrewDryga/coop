@@ -3,7 +3,7 @@ name: ci-free-checks
 description: Make-owned CI partitions, per-owner caches and a status-only required check
 subsystem: development
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, release_test.go]
-updated: 2026-11-09
+updated: 2026-11-10
 ---
 
 CI runs each Make owner in the Makefile's `CI_OWNERS` on its own runner: static, unit (with only
@@ -14,6 +14,11 @@ A shard pair's `-run` and `-skip` share one pattern, so no test falls outside bo
 test keeps each side non-empty. Ordinary unit and race package batches stay capped at four.
 Local `make check` runs every owner but `check-unit` ([[local-development-checks]]).
 Docker doctor and review-writes remain unconditional runtime jobs. No live provider calls.
+
+The static runner installs Make's npm pin under `$RUNNER_TEMP/npm` and adds its `bin` to
+`GITHUB_PATH` for later steps. Hosted runners can own their global npm modules directory while
+`/usr/local/share/man` remains root-owned; a default global install can fail writing npm's manual
+pages before any check runs. The temporary prefix avoids privileged writes and keeps the audit pin.
 
 Each main push, pull request and release call runs every job; none is path-filtered or routed.
 The literal required `check` is a status-only `always()` job whose shell compares
@@ -30,6 +35,8 @@ CI artifacts. Local tests prove workflow shape and refusal behavior, not hosted 
 publication. Related: [[local-development-checks]], [[release-qualification]].
 
 ## Changelog
+- 2026-11-10 — isolate the hosted npm installation in a runner-owned prefix after a real EACCES
+  failure writing global manual pages; verified isolated installation, exact version and audit.
 - 2026-11-09 — added lockfile-only npm auditing to the static owner and a separate required
   image-vuln job. Make owns versions/commands; the job builds and scans all four final images and
   retains evidence on failure. The status aggregate now requires image scanning as well.

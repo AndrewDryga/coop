@@ -48,7 +48,8 @@ jobs:
         if: matrix.target == 'check-static'
         run: |
           make install-staticcheck
-          make install-npm
+          NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm" make install-npm
+          echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
       - name: Make-owned free checks
         run: make "${{ matrix.target }}"
