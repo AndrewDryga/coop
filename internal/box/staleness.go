@@ -58,8 +58,15 @@ func inputsHash(repo string) (hash string, ok bool) {
 }
 
 func inputsHashPath(cfg *config.Config, img string) string {
-	safe := strings.NewReplacer("/", "_", ":", "_").Replace(img)
-	return filepath.Join(cfg.LocalHome(), "image-inputs", safe)
+	return imageRecordPath(cfg, "image-inputs", img)
+}
+
+func imageRecordPath(cfg *config.Config, kind, img string) string {
+	// An incomplete config must not turn host state into a relative cwd path.
+	if cfg.LocalHome() == "" {
+		return ""
+	}
+	return filepath.Join(cfg.LocalHome(), kind, safeImageFileName(img))
 }
 
 // StampImageInputs records the inputs hash for a freshly built per-project image, so a
@@ -70,6 +77,9 @@ func StampImageInputs(cfg *config.Config, repo, img string) {
 		return
 	}
 	p := inputsHashPath(cfg, img)
+	if p == "" {
+		return
+	}
 	if os.MkdirAll(filepath.Dir(p), 0o755) == nil {
 		_ = os.WriteFile(p, []byte(hash), 0o644)
 	}
@@ -123,7 +133,7 @@ var baseDefHash = sync.OnceValue(func() string {
 })
 
 func imageMetaPath(cfg *config.Config, img string) string {
-	return filepath.Join(cfg.LocalHome(), "image-meta", safeImageFileName(img))
+	return imageRecordPath(cfg, "image-meta", img)
 }
 
 // safeImageFileName is one image reference as a file name, for the records Coop keeps per image.
@@ -135,6 +145,9 @@ func safeImageFileName(img string) string {
 // the definition it built from. Called on a successful base build; best-effort.
 func StampImageMeta(cfg *config.Config, img, version string) {
 	p := imageMetaPath(cfg, img)
+	if p == "" {
+		return
+	}
 	if os.MkdirAll(filepath.Dir(p), 0o755) == nil {
 		_ = os.WriteFile(p, []byte("coop "+version+"\ndef "+baseDefHash()+"\n"), 0o644)
 	}
@@ -167,7 +180,11 @@ func readImageMeta(path string) (builtBy, def string, err error) {
 // Coop built the latest of them. A missing base for this definition on such a host is an upgrade
 // to repair, not a first build to leave to the operator.
 func EarlierManagedBase(cfg *config.Config) (builtBy string, ok bool) {
-	dir := filepath.Dir(imageMetaPath(cfg, ManagedBaseRepository))
+	path := imageMetaPath(cfg, ManagedBaseRepository)
+	if path == "" {
+		return "", false
+	}
+	dir := filepath.Dir(path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", false

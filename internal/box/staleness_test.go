@@ -20,6 +20,37 @@ func writeRepoFile(t *testing.T, path, content string) {
 	}
 }
 
+func TestImageStampsWithoutStateDoNotUseTheWorkingDirectory(t *testing.T) {
+	workdir := t.TempDir()
+	t.Chdir(workdir)
+	repo := t.TempDir()
+	writeRepoFile(t, filepath.Join(repo, ".tool-versions"), "golang 1.27.3\n")
+	cfg := &config.Config{}
+	const image = "test-image"
+	StampImageInputs(cfg, repo, image)
+	StampImageMeta(cfg, image, "test-version")
+	if entries, err := os.ReadDir(workdir); err != nil || len(entries) != 0 {
+		t.Errorf("stamps without a state root wrote into the working directory: %v (%v)", entries, err)
+	}
+	// Foreign files in cwd must not become this host's image history either.
+	writeRepoFile(t, filepath.Join(workdir, "image-inputs", image), "foreign-inputs")
+	writeRepoFile(t, filepath.Join(workdir, "image-meta", image), "coop foreign\ndef stale\n")
+	writeRepoFile(t, filepath.Join(workdir, "image-meta", ManagedBaseRepository), "coop foreign\ndef stale\n")
+	writeRepoFile(t, filepath.Join(workdir, ManagedBaseRepository), "coop foreign\ndef stale\n")
+	if StaleImageInputs(cfg, repo, image) {
+		t.Error("read input stamps from the working directory")
+	}
+	if _, skewed := BaseImageSkew(cfg, image); skewed {
+		t.Error("read image metadata from the working directory")
+	}
+	if _, ok := ImageBuildAge(cfg, image); ok {
+		t.Error("read image age from the working directory")
+	}
+	if _, ok := EarlierManagedBase(cfg); ok {
+		t.Error("read managed-base history from the working directory")
+	}
+}
+
 func TestInputsHash(t *testing.T) {
 	repo := t.TempDir()
 	if _, ok := inputsHash(repo); ok {
@@ -189,7 +220,7 @@ func TestImageBuildAgeAndNudges(t *testing.T) {
 // The default base names this binary's box definition, so two Coop versions on one host resolve
 // two different images and each keeps its own; an operator's base stands as written.
 func TestResolveBaseImageNamesTheDefinition(t *testing.T) {
-	cfg := &config.Config{BaseImage: ManagedBaseRepository}
+	cfg := &config.Config{LocalDir: t.TempDir(), BaseImage: ManagedBaseRepository}
 	ResolveBaseImage(cfg)
 	if want := ManagedBaseRepository + ":" + baseDefHash()[:32]; cfg.BaseImage != want || !IsManagedBase(cfg.BaseImage) {
 		t.Fatalf("default base = %q, want %q", cfg.BaseImage, want)

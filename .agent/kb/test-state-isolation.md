@@ -2,8 +2,8 @@
 name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
-sources: [internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
-updated: 2026-11-04
+sources: [internal/box/staleness.go, internal/box/toolchain_image_test.go, internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
+updated: 2026-11-10
 ---
 
 Coop's per-user state lives under the home folder: the execution registry with its
@@ -37,6 +37,12 @@ folder and every `t.TempDir` live; the one teststate started in counts too, for 
 TMPDIR. Anything else may be a developer's export, inside HOME or not. A package that forgets fails
 at the first touch instead of writing. A snapshot of the real folders cannot be the guard: the
 owner's real coop processes write runfiles, views and locks all day.
+
+Manually constructed `config.Config` values also need explicit temporary state roots: environment
+isolation does not populate their fields. Image input/meta stamps return no path when
+`Config.LocalHome()` is empty, so missing state cannot write or read relative to the package cwd.
+Toolchain build tests set `LocalDir: t.TempDir()`; generated image stamps are local state, never
+repository fixtures.
 
 **Children.** `COOP_TEST_STATE_ROOT` names the folder. A process the binary starts for itself with
 the inherited environment keeps every root (lease helpers rely on sharing one registry); one started
@@ -121,6 +127,9 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-11-10 — guarded missing-root image input/meta stamps and managed-base discovery, gave
+  toolchain test configs private state, and removed the accidentally tracked generated stamp.
+  Regression proves both writes and reads ignore cwd when no state root is configured.
 - 2026-11-04 — the temp sweep stopped looking for `coop-test-task-leases-*` and `coop-gitview-*`: no
   build makes either folder, so old ones wait for the OS's own temp cleanup.
 - 2026-10-18 — Isolate runs the tests' git without the macOS stub, which cost a session review

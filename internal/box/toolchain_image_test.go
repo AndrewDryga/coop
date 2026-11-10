@@ -82,7 +82,7 @@ func TestToolchainBuildSeesOnlyTheGeneratedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt, log := toolchainRuntime(t)
-	cfg := &config.Config{BaseImage: "coop-box:test", Egress: "open"}
+	cfg := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", Egress: "open"}
 	plan, err := PlanBuild(rt, cfg, repo, false)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestOnlyOpenLaunchesBuildTheToolchainThemselves(t *testing.T) {
 	img := ImageForRepo(repo, "coop-box:test", "")
 	for _, mode := range []string{"none", "filtered"} {
 		rt, log := toolchainRuntime(t)
-		cfg := &config.Config{BaseImage: "coop-box:test", Egress: mode}
+		cfg := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", Egress: mode}
 		if err := EnsureToolchainImage(rt, cfg, repo, img, "", io.Discard); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func TestOnlyOpenLaunchesBuildTheToolchainThemselves(t *testing.T) {
 	}
 	rt, log := toolchainRuntime(t)
 	var out bytes.Buffer
-	if err := EnsureToolchainImage(rt, &config.Config{BaseImage: "coop-box:test", Egress: "open"}, repo, img, "", &out); err != nil {
+	if err := EnsureToolchainImage(rt, &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", Egress: "open"}, repo, img, "", &out); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(log); err != nil {
@@ -141,11 +141,11 @@ func TestOpenJobsRunInTheirToolchainImage(t *testing.T) {
 	repo := t.TempDir()
 	writeToolVersions(t, repo, "golang 1.26.5\n")
 	rt, log := toolchainRuntime(t)
-	base := &config.Config{BaseImage: "coop-box:test", Egress: "none"}
+	base := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", Egress: "none"}
 	if img, err := controllerToolchainImage(base, rt, repo, io.Discard); err != nil || img != "coop-box:test" {
 		t.Fatalf("an offline job runs in %q, %v; want the shared image", img, err)
 	}
-	open := &config.Config{BaseImage: "coop-box:test", Egress: "open"}
+	open := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", Egress: "open"}
 	img, err := controllerToolchainImage(open, rt, repo, io.Discard)
 	if err != nil || img != ImageForRepo(repo, "coop-box:test", "") {
 		t.Fatalf("an open job runs in %q, %v; want its toolchain image", img, err)
