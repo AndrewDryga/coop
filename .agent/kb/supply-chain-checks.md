@@ -36,11 +36,19 @@ survive; existing npm/npx links point into the replacement tree. The source clie
 unchanged. A root guard keeps image npm, the Make audit pin and this repo's development image
 on the same reviewed release.
 
+asdf's unchanged release source is compiled in the existing pinned Go helper stage because
+upstream's latest binary release still embeds an affected Go runtime. Verify the immutable source
+archive before extraction, forbid implicit toolchain downloads and module-file updates, and copy
+only the static executable into both final images. The source checksum is architecture-neutral;
+the existing per-platform image build selects the native compiler target. No host Go is needed.
+
 Image OS fixes retain their existing distro families. Both ordinary and fresh Node bases stay on
 Node24/Bookworm; the gateway retains its Envoy digest and installs exact patched Jammy packages
 from a dated snapshot. Updating one base image cannot patch the other image's OS packages.
 
 ## Changelog
+- 2026-11-10 — rebuilt unchanged asdf0.20.2 from its verified source commit with the existing
+  pinnedGo1.27.3 stage; removed vulnerable prebuilt downloads and architecture-specific asset map.
 - 2026-11-10 — replaced vulnerable inherited npm with verified11.21.2, without lifecycle scripts
   or overlay leftovers; pinned gate/development tools to the same version.
 - 2026-11-10 — patched Debian apt/PCRE2 through the same-family Node image and Jammy apt/OpenSSL

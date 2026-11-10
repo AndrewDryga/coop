@@ -249,7 +249,7 @@ func TestBaseDockerfileInstallsTheQualifiedClients(t *testing.T) {
 }
 
 // Gate analyzers belong in the project's development image. The shared pinned Go
-// stage builds only the stdlib supervisor; the runtime receives no Go toolchain.
+// stage builds the supervisor and asdf; the runtime receives no Go toolchain.
 func TestBoxImagesCarryNoGateAnalyzers(t *testing.T) {
 	platform := agents.ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"}
 	base, err := baseImageDefinition(platform)
@@ -419,25 +419,19 @@ func TestBothImagesInstallTheSameClients(t *testing.T) {
 	}
 }
 
-// asdf comes from a release URL into both images, so each build checks the tarball against the
-// digest pinned for its own architecture before unpacking it. Pinning one architecture is not enough.
-func TestImagesVerifyAsdfBeforeUnpackingIt(t *testing.T) {
-	if asdfSHA256["amd64"] == asdfSHA256["arm64"] {
-		t.Fatal("both architectures pin the same asdf digest")
+// Both platforms compile the same verified upstream source with the shared pinned compiler.
+func TestImagesBuildAsdfFromVerifiedSource(t *testing.T) {
+	if raw, err := hex.DecodeString(asdfSourceSHA256); err != nil || len(raw) != sha256.Size {
+		t.Fatal("invalid asdf source SHA256")
 	}
-	for arch, other := range map[string]string{"amd64": "arm64", "arm64": "amd64"} {
-		digest := asdfSHA256[arch]
-		if raw, err := hex.DecodeString(digest); err != nil || len(raw) != sha256.Size {
-			t.Fatalf("%s asdf digest %q is not a SHA-256", arch, digest)
-		}
-		step := asdfInstall(arch)
-		url := "https://github.com/asdf-vm/asdf/releases/download/v" + asdfVersion + "/asdf-v" + asdfVersion + "-linux-" + arch + ".tar.gz"
-		download := strings.Index(step, "--output /tmp/coop-asdf.tar.gz '"+url+"'")
-		verify := strings.Index(step, "\n && printf '%s  %s\\n' '"+digest+"' /tmp/coop-asdf.tar.gz | sha256sum -c - \\\n")
-		unpack := strings.Index(step, "\n && tar -C /usr/local/bin -xzf /tmp/coop-asdf.tar.gz asdf")
-		if download < 0 || verify < download || unpack < verify {
-			t.Errorf("%s asdf must be downloaded, then checked, then unpacked:\n%s", arch, step)
-		}
+	step := asdfBuild()
+	verify := strings.Index(step, "sha256sum -c -")
+	unpack := strings.Index(step, "tar -C /src/asdf")
+	build := strings.Index(step, "CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -buildvcs=false")
+	if verify < 0 || unpack < verify || build < unpack || !strings.Contains(step, "https://codeload.github.com/asdf-vm/asdf/tar.gz/"+asdfSourceCommit) || !strings.Contains(step, asdfSourceSHA256) || !strings.Contains(step, "-X main.version=v"+asdfVersion) || !strings.HasSuffix(step, "-o /asdf ./cmd/asdf") {
+		t.Fatal("asdf source must be verified before extraction and pinned-compiler build")
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
 		platform := agents.ClientPlatform{OS: "linux", Architecture: arch, Libc: "glibc"}
 		base, err := baseImageDefinition(platform)
 		if err != nil {
@@ -449,52 +443,45 @@ func TestImagesVerifyAsdfBeforeUnpackingIt(t *testing.T) {
 		}
 		for name, files := range map[string]map[string][]byte{"base": base, "filtered": locked.Files} {
 			df := string(files["Dockerfile"])
-			if !strings.Contains(df, "\n && "+step+" \\\n") {
-				t.Errorf("%s %s image does not check asdf before unpacking it", arch, name)
+			if !strings.Contains(df, "FROM "+gatewayimage.GoBase()+" AS helpers") || !strings.Contains(df, "RUN "+step) || !strings.Contains(df, "COPY --from=helpers /asdf /usr/local/bin/asdf") {
+				t.Fatalf("%s/%s lacks the verified asdf build", name, arch)
 			}
-			if strings.Contains(df, asdfSHA256[other]) || strings.Contains(df, "-linux-"+other+".tar.gz") {
-				t.Errorf("%s %s image fetches or checks the %s asdf", arch, name, other)
-			}
-			if strings.Contains(df, "| tar") {
-				t.Errorf("%s %s image unpacks a download straight from the network", arch, name)
+			if strings.Contains(df, "asdf/releases/download/") {
+				t.Fatal("obsolete prebuilt asdf path remains")
 			}
 		}
 	}
 }
 
-// A download that does not match its pinned digest stops the build before tar runs.
-func TestAsdfInstallRefusesATamperedDownload(t *testing.T) {
+func TestAsdfBuildRefusesTamperedSource(t *testing.T) {
 	if _, err := exec.LookPath("sha256sum"); err != nil {
 		t.Skip("sha256sum not available")
 	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	if err := os.Mkdir(bin, 0o755); err != nil {
+	if err := os.Mkdir(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, script := range map[string]string{
-		// The network answers with bytes that are not the release.
 		"curl": "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --output ] && { printf tampered > \"$2\"; exit 0; }; shift; done\nexit 2\n",
-		"tar":  "#!/bin/sh\n: > \"$UNPACKED\"\n",
+		"tar":  "#!/bin/sh\n: > \"$EXTRACTED\"\n",
+		"go":   "#!/bin/sh\n: > \"$BUILT\"\n",
 	} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, arch := range []string{"amd64", "arm64"} {
-		step := asdfInstall(arch)
-		if !strings.Contains(step, "--output /tmp/coop-asdf.tar.gz ") {
-			t.Fatalf("%s asdf step moved its download; point this test at the new path:\n%s", arch, step)
-		}
-		unpacked := filepath.Join(dir, arch+".unpacked")
-		cmd := exec.Command("/bin/sh", "-c", strings.ReplaceAll(step, "/tmp/coop-asdf.tar.gz", filepath.Join(dir, arch+".tar.gz")))
-		cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "UNPACKED=" + unpacked}
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "FAILED") {
-			t.Errorf("%s: the checksum did not reject a tampered download (%v):\n%s", arch, err, out)
-		}
-		if _, err := os.Stat(unpacked); err == nil {
-			t.Errorf("%s: tar ran on a download that failed its checksum", arch)
+	step := strings.ReplaceAll(asdfBuild(), "/tmp/coop-asdf.tar.gz", filepath.Join(dir, "asdf.tar.gz"))
+	step = strings.ReplaceAll(step, "/src/asdf", filepath.Join(dir, "source"))
+	extracted, built := filepath.Join(dir, "extracted"), filepath.Join(dir, "built")
+	cmd := exec.Command("sh", "-c", step)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "EXTRACTED="+extracted, "BUILT="+built)
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "FAILED") {
+		t.Fatalf("tampered source accepted: %v\n%s", err, out)
+	}
+	for _, path := range []string{extracted, built} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("unverified source reached extraction/build: %s", path)
 		}
 	}
 }
@@ -581,7 +568,7 @@ func TestBaseDockerfileUsesEmbeddedSupervisor(t *testing.T) {
 			t.Fatal("missing embedded supervisor")
 		}
 		df := string(files["Dockerfile"])
-		for _, want := range []string{"FROM " + gatewayimage.GoBase() + " AS supervisor", "CGO_ENABLED=0 go build", "COPY --from=supervisor /coop-supervise /usr/local/libexec/coop-supervise", `exec /usr/local/libexec/coop-supervise "$forward_sessions" "$@"`} {
+		for _, want := range []string{"FROM " + gatewayimage.GoBase() + " AS helpers", "CGO_ENABLED=0 go build", "COPY --from=helpers /coop-supervise /usr/local/libexec/coop-supervise", `exec /usr/local/libexec/coop-supervise "$forward_sessions" "$@"`} {
 			if !strings.Contains(df, want) {
 				t.Errorf("missing helper packaging %q", want)
 			}

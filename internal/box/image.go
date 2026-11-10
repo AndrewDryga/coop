@@ -39,7 +39,7 @@ func baseImageDefinition(platform agents.ClientPlatform) (map[string][]byte, err
 	parts := lockedClientParts(closure)
 	parts.loginPath = `printf 'export PATH="` + agents.LauncherDir + `:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/asdf.sh`
 	parts.pathEnv = agents.LauncherDir + `:/home/node/.asdf/shims:${PATH}`
-	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(platform.Architecture, parts))
+	closure.Files["Dockerfile"] = []byte(renderBaseDockerfile(parts))
 	return closure.Files, nil
 }
 
@@ -55,30 +55,23 @@ func BaseDockerfile(arch string) (string, error) {
 
 type baseImageParts struct{ files, install, browserDeps, loginPath, pathEnv, scripts string }
 
-func renderBaseDockerfile(arch string, parts baseImageParts) string {
-	return fmt.Sprintf(baseDockerfileTemplate, gatewayimage.GoBase(), parts.files, parts.install, parts.browserDeps, asdfInstall(arch), parts.loginPath, npmInstall(), configPublicationShell, parts.pathEnv, parts.scripts)
+func renderBaseDockerfile(parts baseImageParts) string {
+	return fmt.Sprintf(baseDockerfileTemplate, gatewayimage.GoBase(), asdfBuild(), parts.files, parts.install, parts.browserDeps, parts.loginPath, npmInstall(), configPublicationShell, parts.pathEnv, parts.scripts)
 }
 
-// asdf comes from a release URL, and both images carry it: toolchain and project images built on
-// the base, or on the filtered client image, install their pins with it. So, like a
-// native client (lockedClientParts), its tarball must match the digest pinned for the build's
-// architecture before it is unpacked. A bump moves the version and both digests together: hash each
-// linux tarball of the release and match GitHub's recorded asset digest (the release itself
-// publishes only .md5 files).
+// The upstream binaries for this release embed an older Go runtime. Build the
+// exact source in the existing pinned helper stage rather than shipping that runtime.
 const asdfVersion = "0.20.2"
+const asdfSourceCommit = "cb72590e9f9691b6e651aecfe4b0c9334adff41b"
+const asdfSourceSHA256 = "f1247d8e3b119b80bfbea2bb29ee7748591f8c782d4969d4c988a8553f8a27a0"
 
-var asdfSHA256 = map[string]string{
-	"amd64": "6d45e6fab12f50a259b5643adf06a2e77af30a87300b4402440eda09af467a6d",
-	"arm64": "356e135a608bdfba34038c1f18c4b82434d7b6d546e30dbf372c61baaa2f442c",
-}
-
-// asdfInstall is the build step that downloads asdf for arch, checks it, and only then unpacks it.
-func asdfInstall(arch string) string {
-	url := "https://github.com/asdf-vm/asdf/releases/download/v" + asdfVersion + "/asdf-v" + asdfVersion + "-linux-" + arch + ".tar.gz"
-	return fmt.Sprintf("curl --fail --silent --show-error --location --proto '=https' --output /tmp/coop-asdf.tar.gz '%s' \\\n"+
-		" && printf '%%s  %%s\\n' '%s' /tmp/coop-asdf.tar.gz | sha256sum -c - \\\n"+
-		" && tar -C /usr/local/bin -xzf /tmp/coop-asdf.tar.gz asdf \\\n"+
-		" && rm -f /tmp/coop-asdf.tar.gz", url, asdfSHA256[arch])
+func asdfBuild() string {
+	return fmt.Sprintf(`curl --fail --silent --show-error --location --proto '=https' --output /tmp/coop-asdf.tar.gz 'https://codeload.github.com/asdf-vm/asdf/tar.gz/%s' \
+ && printf '%%s  %%s\n' '%s' /tmp/coop-asdf.tar.gz | sha256sum -c - \
+ && mkdir -p /src/asdf \
+ && tar -C /src/asdf --strip-components=1 -xzf /tmp/coop-asdf.tar.gz \
+ && cd /src/asdf \
+ && CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w -X main.version=v%s' -o /asdf ./cmd/asdf`, asdfSourceCommit, asdfSourceSHA256, asdfVersion)
 }
 
 // npm's complete distribution includes its runtime dependency tree. Replace the
@@ -108,12 +101,14 @@ const (
 // qualified clients and process supervision. Its slots carry the client installation and each
 // image's PATH.
 const baseDockerfileTemplate = `ARG NODE_IMAGE=node:24-bookworm-slim
-FROM %s AS supervisor
+FROM %s AS helpers
 COPY supervisor/main.go /src/main.go
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /coop-supervise /src/main.go
+RUN %s
 
 FROM ${NODE_IMAGE}
-COPY --from=supervisor /coop-supervise /usr/local/libexec/coop-supervise
+COPY --from=helpers /coop-supervise /usr/local/libexec/coop-supervise
+COPY --from=helpers /asdf /usr/local/bin/asdf
 
 %s
 
@@ -148,7 +143,6 @@ RUN apt-get update \
  && command -v flock >/dev/null \
  && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
  && ln -s "$(command -v pip3)" /usr/local/bin/pip \
- && %s \
  && %s \
  && %s \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
