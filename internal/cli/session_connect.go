@@ -237,6 +237,9 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 	if err != nil {
 		return 1, err
 	}
+	// Repository downloads run in the background, their Git children in process groups of their
+	// own: a stop ends them and waits, so none outlives the worker.
+	defer jobSources.Close()
 	owned, err := startLocalSessionService(ctx, cfg, state, socket, jobSources.RefreshDefault, transport.PublishReview)
 	if err != nil {
 		return 1, err

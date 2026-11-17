@@ -113,13 +113,56 @@ type privateJobSourceStager struct {
 	backgroundStaging bool
 	stagingsMu        sync.Mutex
 	stagings          map[string]*firstDownload
+	// lifetime bounds the background work, which Close cancels and waits for: its Git children
+	// run in process groups of their own, so a signal to the worker's group never reaches them.
+	// Nil, as tests build a stager, the work is bounded by its timeouts alone.
+	lifetime context.Context
+	stop     context.CancelFunc
+	running  sync.WaitGroup
 }
 
 func NewJobSourceStager(transport JobSourceTransport, stateRoot string) (*privateJobSourceStager, error) {
 	if transport == nil || !filepath.IsAbs(stateRoot) {
 		return nil, errors.New("job source stager needs a transport and absolute private state root")
 	}
-	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot, storageMeasure: forkspace.MeasureFilesystem, backgroundFirstDownload: true, backgroundStaging: true}, nil
+	lifetime, stop := context.WithCancel(context.Background())
+	return &privateJobSourceStager{transport: transport, stateRoot: stateRoot, storageMeasure: forkspace.MeasureFilesystem,
+		backgroundFirstDownload: true, backgroundStaging: true, lifetime: lifetime, stop: stop}, nil
+}
+
+// Close stops the downloads and stagings running in the background and waits for them to end.
+// The stager starts no more.
+func (s *privateJobSourceStager) Close() {
+	if s.stop == nil {
+		return
+	}
+	// Every start checks the lifetime and joins running under one of these locks, so none can
+	// join once the wait below begins.
+	s.downloadsMu.Lock()
+	s.stagingsMu.Lock()
+	s.stop()
+	s.stagingsMu.Unlock()
+	s.downloadsMu.Unlock()
+	s.running.Wait()
+}
+
+// startBackground runs work in the background under the stager's lifetime, with ctx's values and
+// a timeout. Its caller holds downloadsMu or stagingsMu.
+func (s *privateJobSourceStager) startBackground(ctx context.Context, work func(context.Context)) error {
+	if s.lifetime != nil && s.lifetime.Err() != nil {
+		return fmt.Errorf("job source staging has stopped: %w", s.lifetime.Err())
+	}
+	s.running.Add(1)
+	go func() {
+		defer s.running.Done()
+		background, cancel := context.WithTimeout(context.WithoutCancel(ctx), firstDownloadTimeout)
+		defer cancel()
+		if s.lifetime != nil {
+			defer context.AfterFunc(s.lifetime, cancel)()
+		}
+		work(background)
+	}()
+	return nil
 }
 
 func (e *Executor) stageCreateJobSources(ctx context.Context, body []byte) error {
@@ -284,11 +327,8 @@ func (s *privateJobSourceStager) stageInBackground(ctx context.Context, jobRef s
 		return errJobSourceDownloading
 	}
 	staging := &firstDownload{done: make(chan struct{})}
-	s.stagings[final] = staging
-	go func() {
+	if err := s.startBackground(ctx, func(background context.Context) {
 		defer close(staging.done)
-		background, cancel := context.WithTimeout(context.WithoutCancel(ctx), firstDownloadTimeout)
-		defer cancel()
 		grant, err := s.sourceGrant(background, jobRef, source.RepositoryIdentity())
 		if err != nil {
 			staging.err = err
@@ -296,7 +336,10 @@ func (s *privateJobSourceStager) stageInBackground(ctx context.Context, jobRef s
 		}
 		remote, protocol := s.remote(source.RepositoryIdentity())
 		staging.err = s.stageCopy(background, jobRef, source, parent, final, seed, remote, protocol, grant.Token)
-	}()
+	}); err != nil {
+		return err
+	}
+	s.stagings[final] = staging
 	return errJobSourceStagingStarted
 }
 
@@ -445,13 +488,15 @@ func (s *privateJobSourceStager) firstDownload(ctx context.Context, parent, remo
 		return repository, nil
 	}
 	download := &firstDownload{done: make(chan struct{})}
-	s.downloads[final] = download
-	go func() {
+	// The download outlives the try that starts it: only the stager's lifetime and its timeout
+	// end it.
+	if err := s.startBackground(context.Background(), func(background context.Context) {
 		defer close(download.done)
-		background, cancel := context.WithTimeout(context.Background(), firstDownloadTimeout)
-		defer cancel()
 		download.err = s.downloadHistory(background, parent, final, remote, protocol, token, source)
-	}()
+	}); err != nil {
+		return "", err
+	}
+	s.downloads[final] = download
 	return "", errJobSourceDownloading
 }
 

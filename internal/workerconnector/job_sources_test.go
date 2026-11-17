@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -364,6 +367,63 @@ func TestADamagedFirstDownloadIsDownloadedAgain(t *testing.T) {
 	}
 	if _, err := sourceGitValue(context.Background(), download, "", "file", "rev-parse", "refs/remotes/origin/job-default"); err != nil {
 		t.Fatalf("the damaged first download was not downloaded again: %v", err)
+	}
+}
+
+// Stopping the worker ends a repository's first download running in the background, its Git child
+// included, and waits for it: the child runs in a process group of its own, so a signal to the
+// worker's group never reaches it. A stopped stager starts no more downloads.
+func TestClosingTheStagerEndsItsBackgroundDownloads(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	bin := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "fetch.pid")
+	script := "#!/bin/sh\nfor argument in \"$@\"; do\n\tif [ \"$argument\" = fetch ]; then echo $$ > '" + pidFile +
+		"'; exec sleep 300; fi\ndone\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	remote, source := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stager, err := NewJobSourceStager(&jobSourceGrantFixture{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stager.remoteForTest, stager.storageMeasure = remote, nil
+	if err := stager.Stage(context.Background(), "job:stopped", source); !errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("a first staging = %v, want its download in the background", err)
+	}
+	var pid int
+	for deadline := time.Now().Add(20 * time.Second); pid == 0; time.Sleep(20 * time.Millisecond) {
+		if data, err := os.ReadFile(pidFile); err == nil && len(bytes.TrimSpace(data)) > 0 {
+			if pid, err = strconv.Atoi(string(bytes.TrimSpace(data))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if pid == 0 && time.Now().After(deadline) {
+			t.Fatal("the download never started its fetch")
+		}
+	}
+	closed := make(chan struct{})
+	go func() { stager.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(20 * time.Second):
+		t.Fatal("closing the stager did not end its background download")
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("the download's Git child outlived the stager: signal 0 = %v", err)
+	}
+	later := source
+	later.RepositoryRef, later.GitHubRepository, later.GitHubRepositoryID = "repo:two", "example/other", 18
+	if err := stager.Stage(context.Background(), "job:stopped", later); err == nil || errors.Is(err, errJobSourceDownloading) {
+		t.Fatalf("a stopped stager = %v, want it to start nothing", err)
 	}
 }
 
