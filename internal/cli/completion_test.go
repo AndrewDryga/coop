@@ -556,13 +556,52 @@ func captureCompletionOutput(t *testing.T, fn func()) string {
 	return string(out)
 }
 
+// Completion offers every option a command's parser accepts, read from the same list the parser
+// names in its refusals, so a new option cannot be left out of completion.
+func TestCompletionOffersEveryCommandOption(t *testing.T) {
+	t.Setenv("COOP_PRESETS_DIR", t.TempDir())
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	for _, c := range []struct {
+		prev []string
+		want []string
+	}{
+		{[]string{"loop"}, loopOptions},
+		{[]string{"loop", "claude"}, loopOptions},
+		{[]string{"acp"}, acpOptions},
+		{[]string{"acp", "claude"}, acpOptions},
+		{[]string{"fork", "work", "acp"}, acpOptions},
+		{[]string{"fork", "work", "acp", "claude"}, acpOptions},
+		{[]string{"run"}, runOptions},
+		{[]string{"shell"}, runOptions},
+		{[]string{"update"}, updateOptions},
+		{[]string{"net", "check"}, netDiagnosticFlags},
+	} {
+		got := a.completionCandidates(c.prev)
+		for _, want := range c.want {
+			if !hasCand(got, want) {
+				t.Errorf("%q completion missing %s: %v", c.prev, want, got)
+			}
+		}
+	}
+	for _, prev := range [][]string{{"loop", "--egress"}, {"acp", "--egress"}, {"run", "--egress"}} {
+		if got := a.completionCandidates(prev); !hasCand(got, "filtered") {
+			t.Errorf("%q completion missing the egress modes: %v", prev, got)
+		}
+	}
+	if got := a.completionCandidates([]string{"run", "--", "make"}); len(got) != 0 {
+		t.Errorf("completion after run's -- offers coop options to the box command: %v", got)
+	}
+}
+
 // `coop tasks claim <TAB>` offers the queue's task ids (a local read).
 func TestCompletionTaskIDs(t *testing.T) {
 	repo := t.TempDir()
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "2026-01-01-wire-auth", "task.md"), "# x\n")
 	a := &app{cfg: &config.Config{RepoOverride: repo, TasksFiles: []string{tasksRoot}}}
-	if ids := a.completionCandidates([]string{"tasks", "claim"}); !hasCand(ids, "2026-01-01-wire-auth") {
-		t.Errorf("tasks claim completion should offer task ids, got %v", ids)
+	for _, verb := range []string{"claim", "lease", "park"} {
+		if ids := a.completionCandidates([]string{"tasks", verb}); !hasCand(ids, "2026-01-01-wire-auth") {
+			t.Errorf("tasks %s completion should offer task ids, got %v", verb, ids)
+		}
 	}
 	// a non-id verb does not offer ids.
 	if ids := a.completionCandidates([]string{"tasks", "lint"}); hasCand(ids, "2026-01-01-wire-auth") {

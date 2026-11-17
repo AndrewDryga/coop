@@ -154,13 +154,13 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"acp", "--loop", "--isolated"})
 		}
 		if len(prev) == 3 && prev[2] == "acp" { // coop fork <name> acp [<target>]
-			return appendCompletionCandidates(a.targetCandidates(cur, true, true), []string{"--peer"})
+			return appendCompletionCandidates(a.targetCandidates(cur, true, true), acpOptions)
 		}
 		if len(prev) > 3 && prev[2] == "acp" && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
 		}
 		if len(prev) >= 4 && prev[2] == "acp" {
-			return []string{"--peer"}
+			return appendCompletionCandidates(acpOptions)
 		}
 		if len(prev) >= 3 {
 			fa, err := parseForkCreate(prev[1:])
@@ -198,7 +198,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return appendCompletionCandidates(
 				a.targetCandidates(cur, true, true),
 				a.presetCandidates(),
-				[]string{"--tasks", "--peer", "--review-task", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"},
+				loopOptions,
 			) // `coop loop [<target|preset>]`
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--max-tasks" {
@@ -207,15 +207,35 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
 		}
+		if len(prev) > 1 && prev[len(prev)-1] == "--egress" {
+			return []string{"filtered", "open", "offline"}
+		}
 		if len(prev) > 1 {
-			return []string{"--tasks", "--peer", "--review-task", "--max-tasks", "--preflight", "--no-preflight", "--no-mcp", "--debug-on-fail"}
+			return appendCompletionCandidates(loopOptions)
 		}
 	case "acp":
 		if len(prev) == 1 {
-			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), []string{"--peer"})
+			return appendCompletionCandidates(a.targetCandidates(cur, true, true), a.presetCandidates(), acpOptions)
 		}
 		if len(prev) > 1 && prev[len(prev)-1] == "--peer" {
 			return a.targetCandidates(cur, true, false)
+		}
+		if len(prev) > 1 && prev[len(prev)-1] == "--egress" {
+			return []string{"filtered", "open", "offline"}
+		}
+		if len(prev) > 1 {
+			return appendCompletionCandidates(acpOptions)
+		}
+	case "run", "shell":
+		if prev[len(prev)-1] == "--egress" {
+			return []string{"filtered", "open", "offline"}
+		}
+		if !slices.Contains(prev, "--") {
+			return appendCompletionCandidates(runOptions)
+		}
+	case "update":
+		if len(prev) == 1 {
+			return appendCompletionCandidates(updateOptions)
 		}
 	case "approve":
 		if len(prev) == 1 {
@@ -244,7 +264,7 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 		case "export":
 			return []string{"--include-addresses"}
 		case "check":
-			return []string{"--run", "--json", "--protocol", "--port", "--icmp"}
+			return appendCompletionCandidates(netDiagnosticFlags)
 		case "blocked":
 			return []string{"--run", "--json"}
 		}
@@ -441,7 +461,7 @@ func forkVerbList2(v string) bool {
 // taskIDVerb reports whether a tasks subcommand takes a task id (so `coop tasks <verb> <TAB>` offers ids).
 func taskIDVerb(v string) bool {
 	switch v {
-	case "claim", "release", "block", "unblock", "done", "path", "rm":
+	case "claim", "lease", "release", "park", "block", "unblock", "done", "path", "rm":
 		return true
 	}
 	return false
