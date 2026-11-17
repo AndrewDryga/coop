@@ -868,15 +868,16 @@ func (s *Service) Start(parent context.Context) error {
 		if _, isQuarantined := quarantined[sess.ID]; isQuarantined {
 			continue // no worker for a session whose workspace authority is unproven
 		}
+		if sess.QueuedTurnCount == 0 || requireSessionForkAuthority(sess) != nil {
+			continue // nothing to run; resolving its job would only cost git calls under s.mu
+		}
 		if s.testStartupExecution != nil {
 			s.testStartupExecution(sess.ID)
 		}
 		if _, err := s.sessionExecution(ctx, sess); err != nil {
 			continue // Historical rows remain readable; only saved jobs may execute.
 		}
-		if sess.QueuedTurnCount > 0 && requireSessionForkAuthority(sess) == nil {
-			s.ensureWorkerLocked(sess.ID)
-		}
+		s.ensureWorkerLocked(sess.ID)
 	}
 	for _, worker := range s.workers {
 		s.triggerWorker(worker)
