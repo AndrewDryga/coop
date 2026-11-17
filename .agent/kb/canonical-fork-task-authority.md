@@ -3,7 +3,7 @@ name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
 sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
-updated: 2026-11-06
+updated: 2026-11-16
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -107,9 +107,16 @@ workers, sandbox executions, and remote-session reservations. Corrupt or unverif
 rendered as a problem and blocks mutation; copied queue folders are never state-ranked into truth.
 Execution records live beside fork state. The per-project fallback folder older builds could use
 (`~/.local/state/coop/executions/v1/<key>/`) is no longer read: anything in it is reported by path
-as a problem, and the service-launch locks beside it stay.
+as a problem, and the service-launch locks beside it stay. Two things a scan meets in the live
+registry are not corruption and are skipped: the `.<id>.role-<pid>-<nanos>` file a role update writes
+before renaming it over its record, and a record its box removed after the directory was read.
+`WorkspaceReservations` treats its own temp files and released reservations the same way.
 
 ## Changelog
+- 2026-11-16 — the execution scan (`executionsInRegistry`) reported a role update's temp file and a
+  record ended mid-scan as problems, so fork, service and ACP commands that overlapped a turn failed
+  with "sandbox activity registry is unreadable", and a role update killed before its rename kept
+  the registry unreadable. The scan now skips both (2026-11-10 audit, find FS-1).
 - 2026-11-06 — restoring a done projection (`prepareForkProjection`, which both the resume and the
   failed-pass restore use) first settles the projection's completion windows with
   `ReconcileCompletionWindowsWithActivity`, as a loop's own start does, after it has proved the

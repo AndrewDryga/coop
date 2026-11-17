@@ -11,6 +11,11 @@
 - **A session inside a fork leaves signing to the merge.** `coop claude`, `coop codex` and
   `coop run` started inside a fork's folder re-signed the fork's new commits on exit. They no
   longer do, because a fork's commits are signed when you merge it.
+- **Fork and service commands no longer fail while a session changes state.** A command that
+  listed running boxes at the moment an editor or worker session started or finished a turn, or
+  a box exited, could fail with "sandbox activity registry is unreadable". A process killed at
+  that moment could leave the registry unreadable until its leftover file was deleted by hand.
+  Both are now read correctly.
 
 ## 13.2.1
 

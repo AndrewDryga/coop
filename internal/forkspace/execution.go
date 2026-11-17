@@ -703,6 +703,17 @@ func Executions(repo string) ([]ExecutionObservation, []error) {
 	return observations, problems
 }
 
+// afterExecutionDirectoryRead lets a test change the registry between the directory read and the
+// record reads.
+var afterExecutionDirectoryRead = func() {}
+
+// executionRoleTemp reports whether name is the file replaceExecutionRole writes beside a record
+// before renaming it into place.
+func executionRoleTemp(name string) bool {
+	id, suffix, ok := strings.Cut(strings.TrimPrefix(name, "."), ".role-")
+	return ok && strings.HasPrefix(name, ".") && validExecutionID(id) && suffix != ""
+}
+
 func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 	root, err := os.OpenRoot(registry)
 	if errors.Is(err, os.ErrNotExist) {
@@ -727,14 +738,24 @@ func executionsInRegistry(registry string) ([]ExecutionObservation, []error) {
 	if len(entries) > executionRecordCount {
 		return nil, []error{fmt.Errorf("project execution registry exceeds %d entries", executionRecordCount)}
 	}
+	afterExecutionDirectoryRead()
 	var observations []ExecutionObservation
 	var problems []error
 	for _, entry := range entries {
+		// A role update's replacement has no authority until it is renamed over its record, and one
+		// a killed process left behind never gains any.
+		if executionRoleTemp(entry.Name()) {
+			continue
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			problems = append(problems, fmt.Errorf("%s: unsupported project execution registry entry", filepath.Join(registry, entry.Name())))
 			continue
 		}
 		record, err := readExecutionFile(root, entry.Name())
+		if errors.Is(err, os.ErrNotExist) {
+			// Its box ended after the directory was read. A read a moment later would not list it.
+			continue
+		}
 		if err != nil {
 			problems = append(problems, fmt.Errorf("%s: %w", entry.Name(), err))
 			continue

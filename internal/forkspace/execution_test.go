@@ -368,6 +368,63 @@ func TestExecutionRegistryReportsEveryStrayEntryByPath(t *testing.T) {
 	}
 }
 
+// A role update writes its replacement beside the record before renaming it, and a box ends by
+// removing its record. A scan that meets either one still reads the registry. Any other stray entry
+// is still a problem.
+func TestExecutionScanIgnoresARoleUpdateInFlightAndARecordEndedMidScan(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	begin := func() ExecutionRecord {
+		t.Helper()
+		record, err := BeginExecution(repo, ExecutionSpec{Kind: ExecutionInteractive, Workspace: workspace})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	kept, ended := begin(), begin()
+	t.Cleanup(func() { _ = EndExecution(repo, kept) })
+	inFlight := filepath.Join(executionDir(repo), "."+kept.ID+".role-4242-1")
+	if err := os.WriteFile(inFlight, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := afterExecutionDirectoryRead
+	t.Cleanup(func() { afterExecutionDirectoryRead = previous })
+	afterExecutionDirectoryRead = func() {
+		if err := EndExecution(repo, ended); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observations, problems := Executions(repo)
+	if len(problems) != 0 {
+		t.Fatalf("a role update in flight and a record ended during the scan were reported: %v", problems)
+	}
+	if len(observations) != 1 || observations[0].Record.ID != kept.ID {
+		t.Fatalf("observations = %+v, want only %s", observations, kept.ID)
+	}
+	afterExecutionDirectoryRead = previous
+	if err := UpdateExecutionRoleByPID(repo, os.Getpid(), ExecutionRoleWarm); err != nil {
+		t.Fatalf("a role update beside an interrupted one = %v", err)
+	}
+
+	for _, stray := range []string{".role-4242-1", "." + kept.ID + ".role-", ".not-an-id.role-4242-1"} {
+		path := filepath.Join(executionDir(repo), stray)
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, problems := Executions(repo); len(problems) != 1 || !strings.Contains(problems[0].Error(), path) {
+			t.Fatalf("problems for the stray entry %s = %v, want one naming it", stray, problems)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // A record an older Linux build wrote names its process in a token shape this Coop no longer reads:
 // it is refused by name, never read as malformed.
 func TestExecutionRecordWithAnOldLinuxTokenIsRefusedByName(t *testing.T) {
