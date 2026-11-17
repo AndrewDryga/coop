@@ -28,7 +28,7 @@ var reviewedGitConstructors = map[string]string{
 	"internal/cli/eval_loop.go:runLoopTrial:exec.Command(self, args...)":                                                                             "Reexecutes os.Executable for a Coop loop trial.",
 	"internal/forkctl/review.go:openInEditor:exec.Command(parts[0], parts[1:]...)":                                                                   "Explicit editor launch selected from host settings/global config, never repository config.",
 	"internal/forkctl/supervise.go:DetachForkLoop:exec.Command(self, reExec...)":                                                                     "Reexecutes os.Executable as the detached Coop fork worker.",
-	"internal/loop/keepawake.go:keepAwakeCommand:exec.Command(argv[0], argv[1:]...)":                                                                     "sleepInhibitorCmd supplies only the platform caffeinate executable.",
+	"internal/loop/keepawake.go:keepAwakeCommand:exec.Command(argv[0], argv[1:]...)":                                                                 "sleepInhibitorCmd supplies only the platform caffeinate executable.",
 	"internal/runtime/docker.go:runWorkload:exec.Command(d.binary, argv...)":                                                                         "Bound Docker client with validated run argv.",
 	"internal/runtime/docker_lifecycle.go:StartAttached:exec.Command(d.binary, append(args, ref.ID)...)":                                             "Bound Docker client with fixed container start argv.",
 	"internal/runtime/project_build.go:RunProjectBuild:exec.Command(docker.binary, argv...)":                                                         "Bound Docker client with validated build argv.",
