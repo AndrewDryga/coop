@@ -67,10 +67,11 @@ func TestDecideIteration(t *testing.T) {
 		t.Errorf("at failure cap: action = %d, want actStop", a)
 	}
 
-	// Consecutive rate-limit waits stop at the cap.
+	// Consecutive rate-limit waits stop at the cap, with their own action: the failure cap's stop
+	// opens a --debug-on-fail shell and reports a failure count, neither of which fits a limit.
 	fails, waits = 0, maxLimitWaits
-	if a, _, _ := decideIterationOutput("claude", 1, nil, "rate limit exceeded", now, &fails, &waits, &retries); a != actStop {
-		t.Errorf("at limit cap: action = %d, want actStop", a)
+	if a, _, _ := decideIterationOutput("claude", 1, nil, "rate limit exceeded", now, &fails, &waits, &retries); a != actLimitStop {
+		t.Errorf("at limit cap: action = %d, want actLimitStop", a)
 	}
 
 	// A SINGLE output limit resumes immediately (the fast path) and leaves fails/waits untouched.

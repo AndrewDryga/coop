@@ -307,6 +307,8 @@ func (c *Control) runReview(ctx context.Context, repo, img string, rev *ladder.R
 			return last, rotationAuthenticationError(rev, target)
 		case actOutputStop:
 			return last, fmt.Errorf("review stage reached the model output limit %d times — stopping", outputRetries)
+		case actLimitStop:
+			return last, fmt.Errorf("review stage was still rate limited after %d waits — stopping (a review that can't run is never an accept)", maxLimitWaits)
 		}
 	}
 }

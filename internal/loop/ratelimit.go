@@ -117,9 +117,10 @@ const (
 	actWait                         // rate/usage limited — pause, then retry this item
 	actRetry                        // other failure — short backoff, then retry this item
 	actRetryNow                     // output/token limit — immediately resume this item
-	actStop                         // a cap tripped — give up
+	actStop                         // the failure cap tripped — give up
 	actAuthStop                     // provider authentication failed — stop with login recovery
 	actOutputStop                   // repeated output exhaustion hit its independent cap
+	actLimitStop                    // consecutive rate/usage-limit waits hit their cap
 )
 
 const (
@@ -224,7 +225,7 @@ func decideIteration(classification iterationClassification, now time.Time, fail
 		}
 		*retries = 0 // a rate wait breaks any output-limit run
 		if *waits++; *waits > maxLimitWaits {
-			return actStop, 0, time.Time{}
+			return actLimitStop, 0, time.Time{}
 		}
 		return actWait, ladder.LimitWait(hint, *waits, now), hint.ResetAt
 	}

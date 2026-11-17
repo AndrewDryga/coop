@@ -1683,13 +1683,12 @@ reviewAgain:
 					wrappedLoopText(attemptCause(attemptSubject(agent, custom), code, runErr), 6)+"\n"+
 						fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
 				ladder.SleepOrWake(10*time.Second, wake)
+			case actLimitStop:
+				ui.Failure(fmt.Sprintf("Stopped after %d usage-limit waits", maxLimitWaits),
+					"Every configured agent was still rate limited.",
+					[2]string{"Continue:", continueCmd})
+				return 1, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
 			case actStop:
-				if waits > maxLimitWaits {
-					ui.Failure(fmt.Sprintf("Stopped after %d usage-limit waits", maxLimitWaits),
-						"Every configured agent was still rate limited.",
-						[2]string{"Continue:", continueCmd})
-					return 1, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
-				}
 				cause := attemptCause(attemptSubject(agent, custom), code, runErr)
 				noteTaskStop(assigned, fmt.Sprintf("loop stopped after %d failed attempts; last attempt: %s", fails, cause))
 				ui.Failure(fmt.Sprintf("Stopped after %d failed attempts", fails),
