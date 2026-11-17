@@ -178,6 +178,13 @@ func forkCandidateReviewPrompt(repo string, queues []string, review CandidateRev
 	}
 	b.WriteString("\nAct as the senior engineer giving final signoff for the complete fork snapshot. Read the project contract and each named task's problem, acceptance criteria, final state, artifacts, and implementation. Inspect the exact candidate diff and surrounding source. Check correctness, regressions, security boundaries, failure and retry behavior, operator UX, and maintainability. Do not run tests, gates, services, or other executable probes. Inspect the worker-reported verification handoff; reopen a task with the exact missing check when its report is missing, failed, or stale. Repeated Coop-Task trailers can be legitimate history across review rounds; judge the final reachable implementation rather than requiring one historical commit per task. Do not modify source, task folders, Git, or host state. Report findings only; Coop returns flagged tasks to rework in this fork, or blocks them for a decision, before reviewing the complete candidate again.\n\n")
 	if s := strings.TrimSpace(appendPrompt); s != "" {
+		// signoff.prompt may use the {loop.*} variables. The candidate is reviewed as one frozen
+		// snapshot, not a run's commit range, so they name the candidate instead of staying literal.
+		s = strings.NewReplacer(
+			"{loop.tasks}", strings.Join(review.TaskIDs, ", "),
+			"{loop.changes}", "the exact candidate diff at HEAD "+review.Head,
+			"{loop.affected}", "the areas the candidate diff touches",
+		).Replace(s)
 		b.WriteString("Also apply these project-specific final-signoff checks:\n" + s + "\n\n")
 	}
 	b.WriteString(auditEvidencePrompt(review.TaskIDs))

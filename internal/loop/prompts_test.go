@@ -615,3 +615,13 @@ func TestLoopPromptCarriesTheSavedAnswer(t *testing.T) {
 		})
 	}
 }
+
+// signoff.prompt may use {loop.*} variables; the fork candidate review fills them for the frozen
+// candidate instead of sending the reviewer the literal placeholders.
+func TestForkCandidateReviewPromptFillsLoopVariables(t *testing.T) {
+	review := CandidateReviewSpec{CandidateID: "c1", Head: "abc123", Tree: "def456", Round: 1, TaskIDs: []string{"task-a", "task-b"}}
+	got := forkCandidateReviewPrompt("/repo", []string{".agent/tasks"}, review, "Check {loop.tasks} in {loop.affected}; read {loop.changes}.")
+	if strings.Contains(got, "{loop.") || !strings.Contains(got, "Check task-a, task-b in the areas the candidate diff touches; read the exact candidate diff at HEAD abc123.") {
+		t.Errorf("candidate prompt kept or misfilled its variables:\n%s", got)
+	}
+}
