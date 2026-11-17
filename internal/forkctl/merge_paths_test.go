@@ -68,7 +68,7 @@ func TestPolicyAndDossierPreserveGitPaths(t *testing.T) {
 	}
 	c := &Control{cfg: &config.Config{}}
 	out := captureStdout(t, func() {
-		if err := c.forkBrief(repo, "exact-paths", "exact-paths", forkReviewGateUnchecked, false); err != nil {
+		if err := c.forkBriefAt(repo, repo, gitBranch(repo), "HEAD..exact-paths", "exact-paths", "exact-paths", forkReviewGate{outcome: forkReviewGateUnchecked, configured: false}); err != nil {
 			t.Fatal(err)
 		}
 	})

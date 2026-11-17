@@ -3,7 +3,7 @@ package forkctl
 // The review dossier's file classifier: parent-computed, deterministic risk ordering
 // for `coop fork review`. Everything is derived from exact Git change records and line counts so a fork can't steer its own review via its narrative;
 // the only agent-authored section of the brief (the task log) is labeled as the
-// agent's claim in forkBrief. Pure functions over decoded records — no git calls — so the
+// agent's claim in forkBriefAt. Pure functions over decoded records — no git calls — so the
 // classifier table-tests without a repo.
 
 import (

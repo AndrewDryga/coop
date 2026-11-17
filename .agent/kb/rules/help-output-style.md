@@ -4,7 +4,7 @@ description: "UPPERCASE help headings, aligned command rows, practical prose and
 scope: cli-output
 sources: [internal/cli/help.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/help_test.go, internal/cli/conformance_test.go, tools/gendocs/main.go]
 check: "none"
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 # Help output: consistent headings, useful commands, practical guidance
@@ -72,6 +72,7 @@ cover older parts. The editorial bullets (practical prose, grouping by job, disc
 still ride on review, so `check: none` stays.
 
 ## Changelog
+- 2026-11-17 — the dossier's one renderer is `forkBriefAt`; the `forkBrief` wrapper is gone (audit FC-19).
 - 2026-11-03 — the network flags read three ways ("load network rules", `--allow-domain <name>`,
   "add this file's network rules for the run") and `--peer` four. Added the shared-flag bullet:
   run, shell, the four agent pages, acp, fork, fork acp and loop now embed the same rows, and
@@ -154,7 +155,7 @@ These entries record earlier decisions; the current rule above supersedes confli
   and extended `TestHelpRowsAlign` from the top-level index to `forkHelpText`; both surfaces now
   enforce the 32-rune command-cell rule.
 - 2026-08-10 — path-only: `forkHelp`/`forkHelpText` stayed in cli as
-  `internal/cli/fork_cmd.go` while the `·`-bearing runtime paths (`forkBrief`, the merge prompt)
+  `internal/cli/fork_cmd.go` while the `·`-bearing runtime paths (`forkBriefAt`, the merge prompt)
   left for `internal/forkctl`. The guard is unchanged; its second half now points at two files.
 - 2026-06-17 — created
 - 2026-07-11 — revised

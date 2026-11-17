@@ -407,18 +407,16 @@ func (c *Control) runReviewCmd(repo, ws, name, ref string) (int, error) {
 	return 0, nil
 }
 
-// forkBrief prints the review dossier before the diff — what changed and where it is going, the
+// forkBriefAt prints the review dossier before the diff — what changed and where it is going, the
 // commits, the agent's own account of the work, the files, and what the project's checks have (or
 // have not) said about it. Everything except the task notes is computed by the parent from git
 // facts; the notes are the fork's own voice and are labeled as such, so a fork can't steer its
 // review through its narrative. It shares stdout with the diff that follows, so a redirected
 // review keeps the dossier attached to the patch it describes.
-func (c *Control) forkBrief(repo, name, ref string, gateOutcome forkReviewGateOutcome, gateConfigured bool) error {
-	return c.forkBriefAt(repo, repo, gitBranch(repo), "HEAD.."+ref, name, ref, forkReviewGate{outcome: gateOutcome, configured: gateConfigured})
-}
-
-// forkBriefAt prints the dossier of ref as the diff HEAD...ref in repo, into the branch it is going
-// to, with the commits range listed as the fork's own commits (a range of repo's history).
+//
+// It prints the dossier of ref as the diff HEAD...ref in repo, into the branch it is going to, with
+// the commits range listed as the fork's own commits (a range of repo's history); authority is the
+// project whose fork records hold the task notes.
 func (c *Control) forkBriefAt(repo, authority, into, commits, name, ref string, gate forkReviewGate) error {
 	p := ui.For(os.Stdout)
 	say := func(format string, a ...any) { fmt.Printf(format+"\n", a...) }
