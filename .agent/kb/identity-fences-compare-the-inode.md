@@ -2,7 +2,7 @@
 name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
-sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_probe.go]
+sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go]
 updated: 2026-11-17
 ---
 
@@ -69,12 +69,20 @@ refused. A network review reuses an intact binding
 without interrupting boxes; creating, replacing, or moving one re-reads policy while holding the
 exclusive cross-box launch lock. Commit reuses only the reviewed exact binding.
 
-Device numbers remain diagnostic and are not compared across reboots.
+Device numbers remain diagnostic and are not compared across reboots. The one persisted record
+that keys by device, the hidden-file record (`hidden_files.go`: what launches hid, by device and
+inode, so a secret a box moved stays hidden), also stores the repository root's device when it is
+written; a load re-anchors the files recorded on that device to the root's live one, so a reboot
+cannot show a moved secret. A file recorded on another filesystem mounted inside keeps its own device:
+matching by inode alone could hide an unrelated file there.
 `TestIdentityFencesNeverCompareTheDevice` guards that rule. This design does not claim protection
 from a malicious process already running as the host user: that actor can alter Coop's owner-private
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-11-17 — the hidden-file record stores the root's device and re-anchors entries recorded on it
+  at load (task 2026-11-17-keep-a-moved-hidden-file-hidden-after-the-host-r); its one comparison is in
+  the fence test's table. Verified against internal/box/hidden_files.go.
 - 2026-11-17 — old network approvals are refused on read, not loaded for the UI (audit NS-9).
   Verified against internal/networkstate/authority.go.
 - 2026-11-04 — the v1/v2 generation record migration is retired; they are refused by name (task

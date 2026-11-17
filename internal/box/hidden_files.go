@@ -42,8 +42,22 @@ type hiddenFile struct {
 }
 
 type hiddenFilesRecord struct {
-	Version int          `json:"version"`
+	Version int `json:"version"`
+	// RootDev is the repository root's device when the record was written. A reboot can renumber
+	// it, so a load re-anchors the files recorded on it to the root's live device; Dev itself is
+	// never trusted across a reboot. A file on another filesystem mounted inside keeps its own Dev.
+	RootDev uint64       `json:"root_dev,omitempty"`
 	Files   []hiddenFile `json:"files"`
+}
+
+// rootDevice is the live device of the repository root, or false when it cannot be read.
+func rootDevice(repo string) (uint64, bool) {
+	info, err := os.Stat(repo)
+	if err != nil {
+		return 0, false
+	}
+	id, ok := identityOf(info)
+	return id.dev, ok
 }
 
 type fileIdentity struct{ dev, ino uint64 }
@@ -91,8 +105,12 @@ func loadHiddenFiles(repo string) rememberedHidden {
 	if json.Unmarshal(data, &record) != nil || record.Version != hiddenFilesVersion {
 		return nil
 	}
+	live, ok := rootDevice(repo)
 	remembered := rememberedHidden{}
 	for _, f := range record.Files {
+		if ok && record.RootDev != 0 && f.Dev == record.RootDev {
+			f.Dev = live
+		}
 		remembered[fileIdentity{dev: f.Dev, ino: f.Ino}] = f.Path
 	}
 	return remembered
@@ -334,6 +352,7 @@ func writeHiddenFiles(repo string, record hiddenFilesRecord) error {
 	if err != nil {
 		return err
 	}
+	record.RootDev, _ = rootDevice(repo)
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err

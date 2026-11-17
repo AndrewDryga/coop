@@ -2,11 +2,15 @@ package box
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/fsfilter"
 )
 
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -103,6 +107,114 @@ func TestAHiddenFileStaysHiddenAfterABoxMovesIt(t *testing.T) {
 			t.Fatalf("Coop's host tools read a file in the moved folder as visible: %v, %v", hidden, err)
 		}
 	})
+}
+
+// renumberHiddenRecord rewrites repo's hidden-file record as if it was written before a reboot gave
+// the repository's filesystem another device number: every file recorded on the root's device, and
+// the root's device itself, move to old. It returns the live root device.
+func renumberHiddenRecord(t *testing.T, repo string, old uint64) uint64 {
+	t.Helper()
+	path, err := hiddenFilesPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record hiddenFilesRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rootDevice(repo)
+	if !ok || record.RootDev != live || len(record.Files) == 0 {
+		t.Fatalf("record = %+v, want the root's live device %d and its files", record, live)
+	}
+	for i := range record.Files {
+		if record.Files[i].Dev == live {
+			record.Files[i].Dev = old
+		}
+	}
+	record.RootDev = old
+	if data, err = json.Marshal(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return live
+}
+
+// A reboot can renumber the repository's device, which no remembered identity then matches. A file
+// a box moved must stay hidden all the same, under both the mount backend and the kernel one.
+func TestAMovedHiddenFileStaysHiddenAfterTheDeviceIsRenumbered(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{".coopignore": "config/*.yml\n", "config/prod.yml": "secret: 1\n"})
+	launch(t, repo)
+	if err := os.Rename(filepath.Join(repo, "config"), filepath.Join(repo, "cfg")); err != nil {
+		t.Fatal(err)
+	}
+	live := renumberHiddenRecord(t, repo, 1<<40+7)
+	if hidden, err := NewShadowDecider(repo)("cfg/prod.yml"); err != nil || !hidden {
+		t.Fatalf("Coop's host tools read the moved file as visible after a renumbering: %v, %v", hidden, err)
+	}
+	inventory, err := filesystemObjects(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags, err := filesystemNamedFlags(repo, inventory, loadHiddenFiles(repo))
+	if err != nil || flags["cfg/prod.yml"]&fsfilter.Secret == 0 {
+		t.Fatalf("the kernel backend showed the moved file after a renumbering: %v, %v", flags["cfg/prod.yml"], err)
+	}
+	if m := find(launch(t, repo), "/workspace/cfg/prod.yml"); m == nil || m.Kind != Decoy {
+		t.Fatalf("the moved file was shown to the next launch after a renumbering: %+v", m)
+	}
+	// That launch rewrote the record on the live device, still remembering the file.
+	if remembered := loadHiddenFiles(repo); len(remembered) != 1 || remembered[fileIdentity{dev: live, ino: inodeOf(t, filepath.Join(repo, "cfg/prod.yml"))}] != "config/prod.yml" {
+		t.Fatalf("the rewritten record = %v, want the moved file at its first path", remembered)
+	}
+}
+
+// Only files recorded on the root's own device are re-anchored: one recorded on another filesystem
+// mounted inside the repository keeps its device, so it never names an unrelated file on the root.
+func TestAHiddenFileOnAnotherFilesystemKeepsItsDevice(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	live, ok := rootDevice(repo)
+	if !ok {
+		t.Fatal("no root device")
+	}
+	record := hiddenFilesRecord{Version: hiddenFilesVersion, Files: []hiddenFile{{Dev: 11, Ino: 1, Path: "root.env"}, {Dev: 12, Ino: 2, Path: "mnt/nested.env"}}}
+	path, err := hiddenFilesPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record.RootDev = 11
+	data, _ := json.Marshal(record)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := rememberedHidden{{dev: live, ino: 1}: "root.env", {dev: 12, ino: 2}: "mnt/nested.env"}
+	if got := loadHiddenFiles(repo); !maps.Equal(got, want) {
+		t.Fatalf("loaded %v, want %v", got, want)
+	}
+}
+
+func inodeOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, ok := identityOf(info)
+	if !ok {
+		t.Fatal("no identity")
+	}
+	return id.ino
 }
 
 // A hidden folder Coop cannot read (a database folder a container user owns, listed in .coopignore)

@@ -25,6 +25,9 @@ var deviceComparisons = map[string]string{
 		"both device numbers are captured during the same live walk, not persisted identity authority",
 	"fingerprint.Device != task.Generation.Device": "two fields of one host-written pending-review record, " +
 		"always captured together: a corruption tripwire, not a comparison with the live filesystem",
+	"f.Dev == record.RootDev": "two fields of one host-written hidden-file record, written together: it finds the files " +
+		"recorded on the repository root's old device to re-anchor them to the live one after a reboot, so a renumbered " +
+		"device keeps a moved secret hidden instead of dropping it",
 	"m.device == h.device": "two lines of one /proc/self/mountinfo read (shadowpath's mountedPaths), compared to find " +
 		"the other mounts of home's filesystem: never stored, so no reboot comes between them",
 	"x.Dev == y.Dev": "forkspace's sameDisk asks whether two live folders share a filesystem before a hard link joins " +
