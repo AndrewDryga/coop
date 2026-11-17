@@ -445,7 +445,7 @@ func TestForkGenerationPublicationNeverReplacesExistingAuthority(t *testing.T) {
 	if err := os.WriteFile(path, want, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeGenerationAtomic(repo, "race", []byte("replacement\n")); err == nil {
+	if _, err := writeGenerationAtomic(repo, "race", []byte("replacement\n")); err == nil {
 		t.Fatal("generation publication replaced an existing authority path")
 	}
 	got, err := os.ReadFile(path)
@@ -454,9 +454,45 @@ func TestForkGenerationPublicationNeverReplacesExistingAuthority(t *testing.T) {
 	}
 }
 
+// Once the record is linked it is published, even if removing its temporary name then fails. Fork
+// creation must keep the anchor that visible record names, or a retry or rm meets a published
+// generation whose anchor is gone.
+func TestForkGenerationKeepsTheAnchorWhenOnlyTheTemporaryNameRemovalFails(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "project")
+	makeGenerationWorkspace(t, repo, "linked")
+	before := removePublishedTemp
+	removePublishedTemp = func(*os.Root, string) error { return errors.New("unlink failed") }
+	unlock, err := LockState(repo, "linked")
+	if err != nil {
+		removePublishedTemp = before
+		t.Fatal(err)
+	}
+	_, ensureErr := EnsureGenerationLocked(repo, "linked")
+	removePublishedTemp = before
+	unlock()
+	if ensureErr == nil {
+		t.Fatal("a failed temporary-name removal was not reported")
+	}
+	record, err := readGenerationRecord(repo, "linked")
+	if err != nil {
+		t.Fatalf("the linked record is not visible: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(StateDir(repo), record.WorkspaceAnchor)); err != nil {
+		t.Fatalf("the anchor the published record names was retired: %v", err)
+	}
+	// The kept anchor lets the next call adopt the published generation instead of recovering.
+	identity := ensureTestGeneration(t, repo, "linked")
+	if identity.Generation != record.Generation {
+		t.Fatalf("retry minted %s, want the published %s", identity.Generation, record.Generation)
+	}
+	if err := ValidateGenerationWorkspace(repo, identity); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestForkGenerationPublicationLeavesOneLinkAndNoTemporaryAuthority(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "project")
-	if err := writeGenerationAtomic(repo, "clean", []byte("authority\n")); err != nil {
+	if _, err := writeGenerationAtomic(repo, "clean", []byte("authority\n")); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(GenerationPath(repo, "clean"))

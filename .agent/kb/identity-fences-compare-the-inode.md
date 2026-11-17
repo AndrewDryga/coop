@@ -52,12 +52,14 @@ can still remove them: network access then needs a fresh `coop approve`; a damag
 non-authoritative and may need deliberate removal. Coop's own checkpoint restore preserves the fork
 marker.
 
-Publication ordering is part of the identity contract. `fsidentity.Create` syncs the private name's
-directory before linking and syncing the public marker, so a durable marker can never outlive its
-only recovery name. A fork generation whose record rename became visible before a directory-sync
-error keeps its anchor and workspace for retry. Retirement removes the anchor before unlinking its
-record; session rollback and discard likewise retire exact generation authority before deleting the
-workspace, and accept only exact prefix-completed retries.
+Publication ordering is part of the identity contract. `fsidentity.Create` writes and syncs the
+private anchor file before linking the public marker to it. No directory is synced: the owner
+decided that directory fsyncs guard only power loss, outside coop's threat model (462c87be; see
+fork-lifecycle-state-file). A fork generation record publishes with one no-replace link of a synced
+temporary file. Once that link succeeds the record is visible, so a later failure (removing the
+temporary name) still keeps the anchor and workspace for retry. Retirement removes the anchor
+before unlinking its record; session rollback and discard likewise retire exact generation
+authority before deleting the workspace, and accept only exact prefix-completed retries.
 
 Migration is explicit. Allocator-based network approvals are refused by version on every read
 (`networkstate` `approval`); they never grant. A v1/v2 fork generation record (inode, and inode plus birth time) is
@@ -83,6 +85,10 @@ records directly. The relevant attacker is repository/model code confined to the
 - 2026-11-17 — the hidden-file record stores the root's device and re-anchors entries recorded on it
   at load (task 2026-11-17-keep-a-moved-hidden-file-hidden-after-the-host-r); its one comparison is in
   the fence test's table. Verified against internal/box/hidden_files.go.
+- 2026-11-17 — publication paragraph: no directory is synced, and a generation record linked
+  before its temporary name's removal failed keeps its anchor (task
+  2026-11-17-keep-a-fork-generation-s-anchor-when-its-record). Verified against
+  internal/fsidentity/anchor.go and internal/forkspace/generation.go.
 - 2026-11-17 — old network approvals are refused on read, not loaded for the UI (audit NS-9).
   Verified against internal/networkstate/authority.go.
 - 2026-11-04 — the v1/v2 generation record migration is retired; they are refused by name (task

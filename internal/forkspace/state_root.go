@@ -132,11 +132,21 @@ func MkdirTempIn(root *os.Root, prefix string) (string, error) {
 // PublishNoReplace gives the file tmp in root the name name, failing with os.ErrExist when name is
 // taken: a hard link, which never replaces, then tmp's own name removed.
 func PublishNoReplace(root *os.Root, tmp, name string) error {
-	if err := root.Link(tmp, name); err != nil {
-		return err
-	}
-	return root.Remove(tmp)
+	_, err := publishNoReplace(root, tmp, name)
+	return err
 }
+
+// publishNoReplace is PublishNoReplace that also reports whether name was linked: once it is, the
+// file is published, even when removing tmp then fails.
+func publishNoReplace(root *os.Root, tmp, name string) (linked bool, err error) {
+	if err := root.Link(tmp, name); err != nil {
+		return false, err
+	}
+	return true, removePublishedTemp(root, tmp)
+}
+
+// removePublishedTemp removes a temporary name after its file was linked; tests replace it.
+var removePublishedTemp = func(root *os.Root, tmp string) error { return root.Remove(tmp) }
 
 // tempName is prefix plus 8 random hex digits, no longer than os.CreateTemp's suffix, so a name
 // that fit with CreateTemp still fits.

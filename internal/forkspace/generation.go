@@ -506,9 +506,12 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
 		return Identity{}, err
 	}
-	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
-		// The record was never published, so nothing references the anchor.
-		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
+	if published, err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
+		// Retire the anchor only when no record names it. A record linked before the temporary
+		// name's removal failed is already visible, and a retry or rm needs its anchor.
+		if !published {
+			_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
+		}
 		return Identity{}, err
 	}
 	return Identity{Name: name, Generation: generation}, nil
@@ -547,23 +550,24 @@ func recoverUnrecordedGeneration(repo, name string, state *os.Root) (Identity, b
 	if err != nil {
 		return Identity{}, false, err
 	}
-	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
+	if _, err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
 		return Identity{}, false, err
 	}
 	return Identity{Name: name, Generation: generation}, true, nil
 }
 
-// writeGenerationAtomic publishes one fully synced record by a single no-replace rename; an error
-// means the record was not published.
-func writeGenerationAtomic(repo, name string, data []byte) error {
+// writeGenerationAtomic publishes one fully synced record with a single no-replace link and
+// reports whether it did. An error after publication (the temporary name could not be removed)
+// comes with published true: the caller must not retire authority the visible record names.
+func writeGenerationAtomic(repo, name string, data []byte) (published bool, err error) {
 	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer state.Close()
 	f, tmp, err := CreateTempIn(state, "."+name+".generation-")
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() {
 		if tmp != "" {
@@ -572,25 +576,26 @@ func writeGenerationAtomic(repo, name string, data []byte) error {
 	}()
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return false, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return false, err
 	}
-	// Creation refuses an existing authority path: one fully-synced inode, published with a single rename.
-	if err := PublishNoReplace(state, tmp, filepath.Base(GenerationPath(repo, name))); err != nil {
-		return err
+	// Creation refuses an existing authority path: one fully-synced inode, published with a single
+	// no-replace link.
+	published, err = publishNoReplace(state, tmp, filepath.Base(GenerationPath(repo, name)))
+	if err == nil {
+		tmp = ""
 	}
-	tmp = ""
-	return nil
+	return published, err
 }
 
 // RemoveGenerationIfMatchesLocked fences fresh/rm cleanup. A stale command may never erase the
