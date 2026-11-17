@@ -1645,6 +1645,23 @@ func TestChangedLifecycleScriptReadsScriptsAsNpmDoes(t *testing.T) {
 	}
 }
 
+// A fork made before its name became a fork verb is merged by name, as review, stop and rm take it.
+func TestForkMergeTakesAForkNamedAfterALaterVerb(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "acp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolatedTestCommit(t, ws, "acp.txt", "work\n")
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	if code, err := c.ForkMerge([]string{"acp", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("fork merge acp = (%d, %v)", code, err)
+	}
+	if body, err := os.ReadFile(filepath.Join(repo, "acp.txt")); err != nil || string(body) != "work\n" {
+		t.Fatalf("the fork did not land: %q, %v", body, err)
+	}
+}
+
 // A batch fork whose commits landed but whose bookkeeping failed is reported as merged, not as a
 // fork that could not merge while it is also listed under "Merged:".
 func TestForkMergeAllReportsALandedForkWithUnfinishedRecordsAsMerged(t *testing.T) {

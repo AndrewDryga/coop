@@ -1078,7 +1078,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	if all && name != "" {
 		return 2, ui.ConflictingOptions("<name>", "--all", "coop fork merge")
 	}
-	if !all && !forkspace.ValidName(name) {
+	if !all && !forkspace.ValidExistingName(name) {
 		return 2, InvalidForkName(name, "coop fork merge")
 	}
 	repo, err := box.ResolveRepo(c.cfg.RepoOverride)
