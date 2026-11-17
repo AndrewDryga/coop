@@ -1049,7 +1049,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 				return 1, err
 			}
 		}
-		if _, err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
+		if err := stopOwnLeaseHolder(root, t, opts.actor); err != nil {
 			return -1, err
 		}
 		if opts.forceClose {
@@ -1217,7 +1217,7 @@ var errTaskChangedBeforeRelease = errors.New("task changed before it could be re
 // release gives up YOUR claim; it never overrides someone else's, never stops a box, and never
 // clears a fork assignment.
 func ReleaseTrustedTask(root string, t Item, actor ClaimActor) error {
-	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
+	if err := stopOwnLeaseHolder(root, t, actor); err != nil {
 		return err
 	}
 	return releaseUnderAuthority(root, t, func(record TaskOwnerRecord) error {
@@ -2308,7 +2308,7 @@ func BlockTrustedTask(root string, t Item, actor ClaimActor) error {
 // blockTrustedTask is BlockTrustedTask with refuse, when set, judging an existing owner record under
 // the owner lock; a box's tools refuse a task someone else holds (BlockBoxTask).
 func blockTrustedTask(root string, t Item, actor ClaimActor, refuse func(TaskOwnerRecord) error) error {
-	if _, err := stopOwnLeaseHolder(root, t, actor); err != nil {
+	if err := stopOwnLeaseHolder(root, t, actor); err != nil {
 		return err
 	}
 	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)

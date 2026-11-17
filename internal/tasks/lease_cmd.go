@@ -36,13 +36,13 @@ const (
 // identity, so telling it to stand down is the agent stopping its own worker, not stealing a lock.
 // A loop iteration's lease, a holder bound to another identity, or a holder whose process cannot
 // be proved are all left alone — the caller then gets the usual "leased by another controller".
-func stopOwnLeaseHolder(root string, item Item, actor ClaimActor) (bool, error) {
+func stopOwnLeaseHolder(root string, item Item, actor ClaimActor) error {
 	holder, err := stopLeaseHolderBoundTo(root, item, actor.PID, actor.StartToken)
 	if holder == 0 || err != nil {
-		return false, err
+		return err
 	}
 	ui.Note("stopped your lease holder (pid %d) so %s could move", holder, item.ID)
-	return true, nil
+	return nil
 }
 
 // stopLeaseHolderBoundTo stops the `coop tasks lease` holder of item that is bound to the process

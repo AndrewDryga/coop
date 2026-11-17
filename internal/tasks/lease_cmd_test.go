@@ -521,8 +521,11 @@ func TestStopOwnLeaseHolderOutwaitsACommandThatIgnoresTerm(t *testing.T) {
 		meta, ok := readLeaseAuthorityMetadata(root, item.ID)
 		return ok && meta.ControllerPID == cmd.Process.Pid && pathExists(marker)
 	})
-	if stopped, err := stopOwnLeaseHolder(root, item, me); !stopped || err != nil {
-		t.Fatalf("stopOwnLeaseHolder = %v, %v; want the holder stopped once its command was killed", stopped, err)
+	if err := stopOwnLeaseHolder(root, item, me); err != nil {
+		t.Fatalf("stopOwnLeaseHolder = %v; want the holder stopped once its command was killed", err)
+	}
+	if observed := observeTaskLease(item, time.Now()); observed.State != leaseUnleased {
+		t.Fatalf("lease after stopping its holder = %+v, want released", observed)
 	}
 }
 
@@ -691,8 +694,11 @@ func TestLeaseNeverActsOnAnotherSystemsProcess(t *testing.T) {
 	}
 	defer lease.Release()
 	// A signal would be followed by a five-second wait for a release that never comes, and an error.
-	if stopped, err := stopOwnLeaseHolder(root, held, me); stopped || err != nil {
-		t.Fatalf("stopOwnLeaseHolder over another system's holder = %v, %v; want it left alone", stopped, err)
+	if err := stopOwnLeaseHolder(root, held, me); err != nil {
+		t.Fatalf("stopOwnLeaseHolder over another system's holder = %v; want it left alone", err)
+	}
+	if observed := observeTaskLease(held, time.Now()); observed.State != leaseBusy {
+		t.Fatalf("another system's holder lost its lease: %+v", observed)
 	}
 	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateDone, "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
 		t.Fatalf("done beside another system's holder = %d, %v; want a refusal", code, err)
