@@ -1,20 +1,21 @@
 ---
 name: doctor-report-accounting
-description: how `coop doctor` counts — the 37 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
+description: how `coop doctor` counts — the 37 or 40 checks, the outcomes a row can have, and why a failed probe adds one failure plus the checks it was carrying
 subsystem: doctor
 sources: [internal/cli/doctor.go, internal/cli/doctor_report.go, internal/cli/doctor_checks.go, internal/cli/doctor_test.go, Makefile]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 `coop doctor` is the one command whose point IS the ledger: the person asked coop to perform
 checks, so every check it performed is printed. (A passive inspection elsewhere shows facts, not a
 list of successful lookups.)
 
-The inventory is a table, not prose: `doctorSecretChecks`, `doctorHostChecks`,
+The inventory is a table, not prose: `doctorSecretChecks`, `doctorKernelChecks`, `doctorHostChecks`,
 `doctorCredentialChecks` and `doctorCloneChecks` in doctor_checks.go carry each check's stable id
 and its two labels (held / did not hold). The probes emit `RESULT PASS|FAIL <id>`; the wording
 lives only in the table, so a reworded label cannot change what was measured. 37 ordinary checks
-on a real image, a Docker runtime and a readable process cap.
+on a real image, a Docker runtime and a readable process cap with mount protection; 40 when the
+sandbox reports kernel protection, which adds the three `doctorKernelChecks` (approved 18q).
 
 Row outcomes (doctor_report.go), because the easy version lies:
 - `doctorPass` / `doctorFail` — it ran.
@@ -22,7 +23,7 @@ Row outcomes (doctor_report.go), because the easy version lies:
 - `doctorNotApplied` / `doctorDisabled` — this runtime does not apply the limit / somebody
   switched it off. Different statements, different verdict clauses.
 - `doctorProbeFail` — the probe died: ONE failure plus `covers` checks counted as uncompleted, so
-  the totals still add to 37 instead of shrinking into something that reads clean.
+  the totals still add to 37 (or 40) instead of shrinking into something that reads clean.
 - `doctorUnrun` — checks a failure elsewhere prevented; neither performed nor skipped.
 - `doctorNote` — the abandoned-box survey and the leftover run folder count
   (`box.LeftoverRunFolders`), outside the tally entirely.
@@ -58,6 +59,8 @@ traverse a foreign-owned private bind. A real image keeps its configured USER so
 detects incompatible image ownership. Docker Desktop has a different host UID mapping.
 
 ## Changelog
+- 2026-11-17 — named the fifth table (`doctorKernelChecks`) and the 40-check total under kernel
+  protection; the card said 37 always (audit find C1-13).
 - 2026-11-03 — added the leftover run folder note (approved 18p), host hygiene outside the tally.
 - 2026-11-02 — added the doctor probe's required `ls` reader to the minimal test PATH;
   reproduced the existing visibility regression before fixing the host-tool inventory.
