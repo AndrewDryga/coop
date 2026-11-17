@@ -497,3 +497,42 @@ func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
 		}
 	}
 }
+
+// The wide scan prunes dependency and build folders by name, but a file Git would commit under one
+// of them is in the default scan, so --include-ignored reports it too. It once dropped it.
+func TestIncludeIgnoredKeepsCommitCandidatesInPrunedFolders(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	pinGitConfig(t)
+	repo, run := gitrepo.New(t)
+	token := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	for rel, content := range map[string]string{
+		"vendor/lib/config.txt":     "token: " + token + "\n",
+		"node_modules/pkg/index.js": "x=" + token,
+		".gitignore":                "node_modules/\n",
+	} {
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", ".gitignore", "vendor")
+	run("commit", "-qm", "vendored")
+	for _, wide := range []bool{false, true} {
+		scan, err := scanVisibleTree(repo, wide)
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := joinScan(scan)
+		if !strings.Contains(joined, "vendor/lib/config.txt") {
+			t.Errorf("include-ignored=%v missed the committed file under vendor/:\n%s", wide, joined)
+		}
+		if strings.Contains(joined, "node_modules") {
+			t.Errorf("include-ignored=%v scanned an ignored dependency folder:\n%s", wide, joined)
+		}
+	}
+}

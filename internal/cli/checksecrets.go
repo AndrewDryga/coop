@@ -384,18 +384,27 @@ func commitCandidateSet(repo string) map[string]bool {
 // full walk when repo isn't a git work tree; usedGit reports which list the caller got, so
 // the result can say what it actually covered.
 func candidateFiles(repo string, includeIgnored bool) (rels []string, usedGit bool, err error) {
-	if !includeIgnored {
-		// Build the args through gitArgs so the hardening (-c core.fsmonitor=, core.hooksPath=/dev/null,
-		// …) applies: ls-files refreshes the index, which would otherwise EXECUTE a poisoned repo's
-		// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
-		// it. Keep the raw .Output() (not forkspace.GitOut) so "git failed" (→ filesystem fallback) stays
-		// distinct from "git succeeded, empty list"; forkspace.GitOut deliberately collapses both to "".
-		if out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z"); err == nil {
-			for _, p := range strings.Split(string(out), "\x00") {
-				if p != "" {
-					rels = append(rels, p)
-				}
+	// Build the args through gitArgs so the hardening (-c core.fsmonitor=, core.hooksPath=/dev/null,
+	// …) applies: ls-files refreshes the index, which would otherwise EXECUTE a poisoned repo's
+	// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
+	// it. Keep the raw .Output() (not forkspace.GitOut) so "git failed" (→ filesystem fallback) stays
+	// distinct from "git succeeded, empty list"; forkspace.GitOut deliberately collapses both to "".
+	commitCandidates := func() ([]string, bool) {
+		out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+		if err != nil {
+			return nil, false
+		}
+		var listed []string
+		for _, p := range strings.Split(string(out), "\x00") {
+			if p != "" {
+				listed = append(listed, p)
 			}
+		}
+		return listed, true
+	}
+	if !includeIgnored {
+		if listed, ok := commitCandidates(); ok {
+			rels = listed
 			// Also scan coop's own gitignored .agent/ working state — the box reads it (the task
 			// queue + backlog + agent notes), so a secret pasted into a task's .agent/.../log.md or
 			// state.md is a real exposure the commit-candidate set (gitignored excluded) misses.
@@ -405,7 +414,23 @@ func candidateFiles(repo string, includeIgnored bool) (rels []string, usedGit bo
 		// git unavailable / not a work tree → fall through to the full walk (covers .agent too).
 	}
 	rels, err = walkVisibleTree(repo)
-	return rels, false, err
+	if err != nil || !includeIgnored {
+		return rels, false, err
+	}
+	// The walk prunes dependency and build folders by name. A file Git would commit under one of
+	// them (vendor/key.pem) is in the default scan, so the wider scan keeps it too.
+	if listed, ok := commitCandidates(); ok {
+		walked := make(map[string]bool, len(rels))
+		for _, rel := range rels {
+			walked[rel] = true
+		}
+		for _, rel := range listed {
+			if !walked[rel] {
+				rels = append(rels, rel)
+			}
+		}
+	}
+	return rels, false, nil
 }
 
 // ignoredAgentFiles lists the gitignored files under .agent/ — coop's own working state (the task
