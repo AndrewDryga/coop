@@ -203,7 +203,7 @@ func reportFindings(findings []scanFinding) {
 	failBlock(ui.Count(len(findings), "possible secret")+" found", "")
 	for _, f := range findings {
 		ui.Note("")
-		ui.Note("  %s:%d", f.Path, f.Line)
+		ui.Note("  %s:%d", ui.SafeInline(f.Path), f.Line)
 		ui.Note("    %s", f.Label())
 		if f.shadowed {
 			ui.Note("    Hidden from the box, but Git would commit this file.")
@@ -219,7 +219,7 @@ func reportFindings(findings []scanFinding) {
 	ui.Note("and replace <reason> with an explanation:")
 	for _, f := range findings {
 		ui.Note("")
-		ui.Note("  # %s — %s", f.Path, f.Label())
+		ui.Note("  # %s — %s", ui.SafeInline(f.Path), f.Label())
 		ui.Note("  %s # <reason>", f.Fingerprint)
 	}
 }
@@ -353,7 +353,7 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 		content, status := readScannable(repoRoot, filepath.FromSlash(rel))
 		switch status.kind {
 		case scanUnreadable:
-			scan.unreadable = append(scan.unreadable, fmt.Sprintf("%s could not be read: %s.", rel, status.cause))
+			scan.unreadable = append(scan.unreadable, fmt.Sprintf("%s could not be read: %s.", ui.SafeInline(rel), status.cause))
 			continue
 		case scanSkipped:
 			continue // binary or oversized: a deliberate exclusion, and a quiet one

@@ -562,3 +562,36 @@ func TestCheckSecretsNamesIgnoredFilesWhenNothingIsCommittable(t *testing.T) {
 		t.Fatalf("the ignored file the box can read was not named:\n%s", out)
 	}
 }
+
+// A file name is box-controlled: an escape sequence in a finding's or an unreadable file's name is
+// shown escaped, so it cannot redraw or forge lines of the report the person trusts.
+func TestCheckSecretsEscapesFileNames(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	pinGitConfig(t)
+	repo, _ := gitrepo.New(t)
+	found := "a\x1b[2Jb.txt"
+	if err := os.WriteFile(filepath.Join(repo, found), []byte("token: ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	locked := "c\x1b]0;x\x07d.txt"
+	if err := os.WriteFile(filepath.Join(repo, locked), []byte("x\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runCheckSecrets(t, repo, nil)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1:\n%s", code, out)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("report printed a raw control character: %q", out)
+	}
+	for _, name := range []string{found, locked} {
+		if !strings.Contains(out, ui.SafeInline(name)) {
+			t.Errorf("report does not name %q escaped:\n%q", name, out)
+		}
+	}
+}

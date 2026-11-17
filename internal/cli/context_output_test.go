@@ -51,6 +51,19 @@ func TestContextReport(t *testing.T) {
 	}
 }
 
+// A changed file's name is box-controlled: a terminal escape in it is shown escaped, so it cannot
+// redraw the report.
+func TestContextReportEscapesPaths(t *testing.T) {
+	bad := "web/\x1b[2Jlogin.ts"
+	sel := []contextc.Selected{{File: ".agent/kb/\x1b]0;x\x07web.md", Reason: "route web/** → " + bad}}
+	for _, scope := range [][]string{nil, {bad}, {bad, "web/session.ts"}} {
+		got := captureStdout(t, func() { contextReport(scope, sel) })
+		if strings.ContainsAny(got, "\x1b\x07") {
+			t.Errorf("report for %d paths printed a raw control character: %q", len(scope), got)
+		}
+	}
+}
+
 // The human wording is DERIVED from the machine reason; the reason itself is the --json contract
 // and must keep its exact spelling.
 func TestContextReasonsStayMachineReadable(t *testing.T) {

@@ -287,26 +287,26 @@ func contextReport(scope []string, sel []contextc.Selected) {
 		fmt.Println("Shared agent instructions")
 		fmt.Println()
 		for _, s := range sel {
-			fmt.Printf("  %s\n", s.File)
+			fmt.Printf("  %s\n", ui.SafeInline(s.File))
 		}
 		fmt.Println()
 		fmt.Println("  Select work: coop context <path>")
 		return
 	case len(scope) == 1:
-		fmt.Printf("Instructions for %s\n", scope[0])
+		fmt.Printf("Instructions for %s\n", ui.SafeInline(scope[0]))
 	default:
 		// Two lists, each under its own heading, so the paths never read as instruction files.
 		fmt.Println("Selected work")
 		for _, path := range scope {
-			fmt.Printf("  %s\n", path)
+			fmt.Printf("  %s\n", ui.SafeInline(path))
 		}
 		fmt.Println()
 		fmt.Println("Instructions")
 	}
 	for _, s := range sel {
 		fmt.Println()
-		fmt.Printf("  %s\n", s.File)
-		fmt.Printf("    %s\n", p.Faint(selectionReason(s.Reason, len(scope) > 1)))
+		fmt.Printf("  %s\n", ui.SafeInline(s.File))
+		fmt.Printf("    %s\n", p.Faint(ui.SafeInline(selectionReason(s.Reason, len(scope) > 1))))
 	}
 	fmt.Println()
 	fmt.Printf("  %s selected\n", ui.Count(len(sel), "file"))
