@@ -2,7 +2,7 @@
 name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go, internal/box/account_renewal.go, internal/box/native_account.go]
+sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/config/private.go, internal/box/account_authority.go]
 updated: 2026-11-17
 ---
 
@@ -96,6 +96,7 @@ does not recursively chmod provider transcripts or state; the private ancestors 
 descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-17 - removed `StoredCredentialStatus` and `MarkerCredentialSelector`, which no code had
   called since the pre-v11 profile readers went (audit AG-5); readiness is the canonical record's
   inspection; verified against internal/box/profiles.go and native_account.go

@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go]
-updated: 2026-11-06
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go]
+updated: 2026-11-17
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -273,6 +273,7 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-06 — stop settles the fork's filtered runs after its label reap (`settleForkRuns` →
   `box.RecoverWorkspaceRuns`), once the worker is proved gone: a killed worker's guard, controller,
   volumes and filesystem helper carry the run's labels, not the fork's. A run it cannot settle warns

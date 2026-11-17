@@ -2,8 +2,8 @@
 name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and the requested Go/npm domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
 subsystem: box
-sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go]
-updated: 2026-11-10
+sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go, internal/box/filtered_mounts.go]
+updated: 2026-11-17
 ---
 
 A filtered box runs the locked client image, which carries the asdf binary but installs nothing on
@@ -65,6 +65,7 @@ exactly that tmpfs: `validateMountsContext` recomputes it from the `--memory` in
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-10 — added the pinned npm audit tool and its requested registry domain; verified the
   Dockerfile, Make target and project egress request, without changing host approval.
 - 2026-11-06 — each gate gets its own `run.*` folder in the memory folder, removed on exit and swept

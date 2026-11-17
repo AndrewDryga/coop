@@ -2,8 +2,8 @@
 name: host-signing-starts-at-first-unsigned
 description: every host signing pass (loop cycle, end-of-run sweep, run-box exit, coop sign) rewrites only from the first unsigned commit and refuses to rewrite a commit the branch's upstream already has; -f stays, and "signed" means a signature header
 subsystem: loop
-sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/loop/review_packet.go, internal/forkspace/git.go, internal/cli/commands.go, internal/tasks/pending_review.go]
-updated: 2026-11-06
+sources: [internal/cli/sign.go, internal/loop/loop.go, internal/loop/host.go, internal/loop/review_packet.go, internal/forkspace/git.go, internal/cli/commands.go, internal/tasks/pending_review.go, internal/cli/loop_cmd.go]
+updated: 2026-11-17
 ---
 
 Box commits are unsigned (no key enters a box), so the host signs them through `signUnpushed` in
@@ -64,6 +64,7 @@ Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushed
 `TestCommitSigned`, all in `internal/cli`.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-06 — the review packet maps re-signed commits old → new when their trees match, read
   from the swap's reflog message (task 2026-11-05-keep-gate-evidence-valid-when-coop-re-signs-a-ta).
 - 2026-10-17 — a final-review round now records the reviewed commit content; noted that re-signing
