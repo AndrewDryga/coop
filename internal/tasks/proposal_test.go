@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func proposalAssignment(t *testing.T, name string) (string, string, ForkAssignment) {
@@ -173,6 +174,29 @@ func TestImportForkProposalRefusesAQueueFolderSwappedForALink(t *testing.T) {
 				t.Fatalf("import wrote where the link points: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+// An imported task's ID carries the local date, as coop tasks add's IDs do, so it sorts beside
+// the tasks made the same day. The zone is picked so that its date differs from UTC's right now.
+func TestForkProposalIDUsesTheLocalDate(t *testing.T) {
+	offset := -13
+	if time.Now().UTC().Hour() >= 12 {
+		offset = 13
+	}
+	saved := time.Local
+	time.Local = time.FixedZone("away", offset*3600)
+	t.Cleanup(func() { time.Local = saved })
+
+	repo, _, assignment := proposalAssignment(t, "proposal-date")
+	proposal := testForkProposal(strings.Repeat("f", 32), "Date the import")
+	data := writeForkProposal(t, assignment.Owner, proposal)
+	record, err := newForkProposalRecord(assignmentIndex(t, repo, assignment), proposal, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Now().Format("2006-01-02") + "-"; !strings.HasPrefix(record.Task.Ref.ID, want) {
+		t.Fatalf("imported task ID = %q, want the local date %q", record.Task.Ref.ID, want)
 	}
 }
 

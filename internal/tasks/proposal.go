@@ -632,8 +632,10 @@ func newForkProposalRecord(index ForkAssignmentIndex, proposal ForkTaskProposal,
 		return ForkProposalRecord{}, errors.New("fork proposal assignment queue identity changed")
 	}
 	taskIdentity := newDurableIdentity()
-	now := time.Now().UTC()
-	readableID := now.Format("2006-01-02") + "-" + slugify(proposal.Title) + "-" + proposal.ID[:8]
+	local := time.Now()
+	now := local.UTC()
+	// The ID's date is local, as createTaskFolderIn's is; the record's times stay UTC.
+	readableID := local.Format("2006-01-02") + "-" + slugify(proposal.Title) + "-" + proposal.ID[:8]
 	copyProposal := proposal
 	record := ForkProposalRecord{
 		Version: forkProposalRecordVersion, Fork: index.Fork, AssignmentID: index.AssignmentID,
