@@ -3,7 +3,7 @@ name: test-state-isolation
 description: every test binary that can reach Coop's per-user state calls teststate.Isolate in TestMain; Coop refuses the real roots in a test binary, children inherit the folder, and live suites opt back into the real config and network state; the cli unit tests run with failing stubs for the host provider CLIs and runtimes
 subsystem: development
 sources: [internal/box/staleness.go, internal/box/toolchain_image_test.go, internal/testutil/teststate/teststate.go, internal/forkspace/execution.go, internal/forkspace/service_lock_sweep.go, internal/cli/tempreap.go, internal/forkspace/gitview.go, internal/tasks/lease.go, internal/config/config.go, internal/config/runfiles.go, internal/box/network_admission.go, internal/box/serviceapproval.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/acpproxy/trace.go, internal/cli/provider_live_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/box/reap.go, internal/cli/main_test.go, internal/cli/hostclis_test.go, internal/sessionsvc/main_test.go, internal/sessionsvc/acp.go, internal/box/isolated_mounts_test.go, internal/box/mounts_test.go]
-updated: 2026-11-10
+updated: 2026-11-17
 ---
 
 Coop's per-user state lives under the home folder: the execution registry with its
@@ -19,13 +19,13 @@ real settings read by `config.Load()`, and a run record a cli test sealed in the
 `internal/testutil/teststate.Isolate(m.Run)` makes one `coop-test-state-*` temp folder and points
 `COOP_TEST_EXECUTION_REGISTRY_ROOT`, `COOP_GITVIEW_ROOT`, `COOP_TEST_LEASE_AUTHORITY_ROOT`,
 `COOP_SERVICE_STATE_ROOT`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` inside it, then removes it when the
-tests return. The 24 test binaries that link forkspace, config or tasks have the one-line
+tests return. The test binaries that link forkspace, config or tasks have the one-line
 `TestMain` (cli and acpproxy wrap their fixture-binary setup in it; `teststate.Dir()` holds cli's
 binary cache). The helper repeats the variable names because forkspace's and tasks' own tests call
 it, and it stays a leaf even in its own tests: the local check scopes count test imports, so one
 Coop import there made every caller a reverse consumer of tasks, agent and runtime.
 
-**The guard is the refusal.** In a binary whose name ends in `.test`, `fallbackExecutionDir`
+**The guard is the refusal.** In a binary whose name ends in `.test`, `executionRegistryRoot`
 (registry and service locks), `gitViewRoot` (no more per-process temp root) and
 `leaseAuthorityRoot` fail when their variable is unset, naming it and the helper.
 `config.CheckTestFolder` guards the roots that follow a variable a developer's shell may set too:
@@ -127,6 +127,7 @@ the two real roots, then read the denials with `/usr/bin/log show --predicate 's
 Nothing reaches the real folders, and every attempted write is named with its process.
 
 ## Changelog
+- 2026-11-17 — the test-binary refusal is executionRegistryRoot (fallbackExecutionDir is gone); dropped the binary count (audit K6-3; checked internal/forkspace/execution.go).
 - 2026-11-10 — guarded missing-root image input/meta stamps and managed-base discovery, gave
   toolchain test configs private state, and removed the accidentally tracked generated stamp.
   Regression proves both writes and reads ignore cwd when no state root is configured.
