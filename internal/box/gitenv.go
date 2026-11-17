@@ -36,9 +36,11 @@ trailer=$(git config coop.trailer 2>/dev/null || true)
 if [ -n "$trailer" ]; then
 	# Drop machine co-author lines — the agent CLIs' and any prior coop one (so --amend stays
 	# idempotent) — keyed off the vendor name or noreply domain on the Co-authored-by line; a human
-	# co-author matches none of these and survives.
+	# co-author matches none of these and survives. grep exits 1 when it keeps no line (the message
+	# was only machine lines): that is still a result; only an error (2) leaves the message as it was.
 	tmp="$f.coop.$$"
-	cp -p "$f" "$tmp" && grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp" && mv "$tmp" "$f"
+	cp -p "$f" "$tmp" && { grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp"; [ $? -le 1 ]; } && mv "$tmp" "$f"
+	rm -f "$tmp"
 	git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
 fi
 task=$(git config coop.task 2>/dev/null || true)

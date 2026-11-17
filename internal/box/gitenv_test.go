@@ -128,6 +128,22 @@ func TestPrepareCommitMsgHook(t *testing.T) {
 	if data, _ := os.ReadFile(mf); !strings.Contains(string(data), "noreply@anthropic.com") || strings.Contains(string(data), "coop (") {
 		t.Errorf("merge message must be left untouched:\n%s", data)
 	}
+	// (5) A message of only machine lines loses them, and the hook leaves no temp file behind.
+	only := filepath.Join(t.TempDir(), "COMMIT_EDITMSG")
+	if err := os.WriteFile(only, []byte("Co-Authored-By: Claude <noreply@anthropic.com>\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hook = exec.Command("sh", filepath.Join(dir, "prepare-commit-msg"), only)
+	hook.Dir, hook.Env = repo, env
+	if out, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("hook on a machine-only message errored: %v\n%s", err, out)
+	}
+	if data, _ := os.ReadFile(only); strings.Contains(string(data), "noreply@anthropic.com") {
+		t.Errorf("a machine-only message kept its machine line:\n%s", data)
+	}
+	if left, _ := filepath.Glob(only + ".coop.*"); len(left) != 0 {
+		t.Errorf("the hook left its temp file: %v", left)
+	}
 }
 
 func TestBuildGitConfig(t *testing.T) {
