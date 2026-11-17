@@ -2,8 +2,8 @@
 name: secret-finding-identity
 description: how a secret finding is named across runs (fp-v1 fingerprints), what .coopsecretsignore may and may not excuse, and why exceptions stop at check-secrets
 subsystem: secretscan
-sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go, internal/forkctl/isolated_candidate.go, internal/gitdiff/gitdiff.go]
-updated: 2026-11-06
+sources: [internal/secretscan/secretscan.go, internal/secretscan/exceptions.go, internal/cli/checksecrets.go, internal/box/secretscan.go, internal/forkctl/merge.go, internal/forkctl/isolated_candidate.go, internal/gitdiff/gitdiff.go, internal/secretscan/stream.go]
+updated: 2026-11-17
 ---
 
 A reviewed false positive is excused by NAMING the exact finding, so the detectors never learn to
@@ -30,9 +30,10 @@ saved exception for it silently stops applying. Labels above them are presentati
 reworded. A fingerprint is a checksum, not encryption — it identifies a finding, it does not make
 the credential it was computed from safe to publish.
 
-`ScanSecrets(content)` stays the pure detector every other consumer shares (fork merge's PolicyScan,
-checkpoint upload, session redaction) and returns findings with an EMPTY fingerprint — identity
-needs a path those callers do not supply. `ScanFile(path, content)` is the check-secrets form.
+`ScanSecrets(content)` stays the pure detector every other consumer shares (fork merge's PolicyScan
+and isolated candidates, session review scans, error, evidence and activity redaction) and returns
+findings with an EMPTY fingerprint — identity needs a path those callers do not supply. Checkpoint
+upload does not use it: its export barrier is `ContainsCredential` (`internal/secretscan/stream.go`). `ScanFile(path, content)` is the check-secrets form.
 Exceptions are applied in `cmdCheckSecrets` after pure detection and NOWHERE else: an in-repository
 note is not permission to move a credential out of the repository.
 
@@ -70,6 +71,7 @@ Traps:
 - The exception file is scanned like any other project file; its comments are not a hiding place.
 
 ## Changelog
+- 2026-11-17 — corrected the ScanSecrets consumer list; checkpoint upload uses ContainsCredential (audit K5-2; checked every ScanSecrets caller and internal/sessionsvc/checkpoint_repository.go).
 - 2026-11-06: fork merge and isolated publication report only findings on lines the fork adds; the
   assignment heuristic reads a literal's `\n`, `\r` and `\t` as whitespace (task
   2026-11-05-flag-only-secrets-a-fork-adds-not-lines-already).
