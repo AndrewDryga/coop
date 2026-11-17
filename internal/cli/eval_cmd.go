@@ -590,6 +590,7 @@ func (a *app) evalInit(args []string) (int, error) {
 // --timeout.
 func parseEvalRunArgs(args []string) (suite string, positionals []string, opts eval.Options, err error) {
 	const cmd = "coop eval run"
+	args = splitEqualsOptions(args, "--jobs", "--repeat", "--timeout", "--loop-config")
 	opts = eval.Options{Jobs: 1, Repeat: 1}
 	seen := map[string]bool{}
 	takeValue := func(flag string, i *int) (string, error) {

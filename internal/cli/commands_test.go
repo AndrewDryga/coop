@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -2525,5 +2526,32 @@ func TestLoopReviewTaskNamesTheWholeID(t *testing.T) {
 	_, err := (&app{cfg: cfg}).cmdLoop([]string{"claude", "--review-task", "shipped"})
 	if err == nil || !strings.Contains(err.Error(), "--review-task 2026-11-01-shipped") {
 		t.Errorf("a part of an ID = %v, want its whole ID named", err)
+	}
+}
+
+// The loop's and eval run's value options take --name=value like every other value option of the
+// same commands. They were once refused as unknown, with the rejected command as the suggestion.
+func TestLoopAndEvalRunTakeTheEqualsForm(t *testing.T) {
+	_, _, _, _, _, _, spaced, err := parseLoopArgs([]string{"claude", "--max-tasks", "5"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, _, _, equals, err := parseLoopArgs([]string{"claude", "--max-tasks=5"}, false)
+	if err != nil || equals != spaced || equals != 5 {
+		t.Fatalf("--max-tasks=5 = %d, %v; want %d", equals, err, spaced)
+	}
+	if _, _, _, _, _, _, _, err := parseLoopArgs([]string{"claude", "--max-tasks="}, false); err == nil {
+		t.Fatal("an empty --max-tasks= was accepted")
+	}
+	suite, targets, spacedOpts, err := parseEvalRunArgs([]string{"core", "codex", "--timeout", "35m", "--jobs", "2", "--repeat", "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	suite2, targets2, equalsOpts, err := parseEvalRunArgs([]string{"core", "codex", "--timeout=35m", "--jobs=2", "--repeat=3"})
+	if err != nil || suite2 != suite || !slices.Equal(targets2, targets) || !reflect.DeepEqual(equalsOpts, spacedOpts) {
+		t.Fatalf("equals form = %q %v %+v, %v; want %q %v %+v", suite2, targets2, equalsOpts, err, suite, targets, spacedOpts)
+	}
+	if _, _, _, err := parseEvalRunArgs([]string{"core", "codex", "--jobs="}); err == nil {
+		t.Fatal("an empty --jobs= was accepted")
 	}
 }

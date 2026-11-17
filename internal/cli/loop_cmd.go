@@ -40,6 +40,7 @@ func parseLoopArgs(args []string, def bool) (t agents.Target, hasTarget bool, pr
 	if err != nil {
 		return agents.Target{}, false, "", false, preflight, false, 0, err
 	}
+	rest = splitEqualsOptions(rest, "--max-tasks")
 	preflightOption := "" // the first of --preflight and --no-preflight given; the other contradicts it
 	for i := 0; i < len(rest); i++ {
 		x := rest[i]

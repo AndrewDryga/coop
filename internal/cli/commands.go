@@ -691,6 +691,22 @@ func flagValue(args []string, i int, flag string) (val string, consumed int, ok 
 	return "", 0, false, nil
 }
 
+// splitEqualsOptions rewrites --name=value into the two-argument form for the named options, so a
+// parser that matches bare names takes both spellings. An empty value is passed on as empty, for
+// the parser to refuse as it refuses any bad value.
+func splitEqualsOptions(args []string, names ...string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		name, value, found := strings.Cut(arg, "=")
+		if !found || !slices.Contains(names, name) {
+			out = append(out, arg)
+			continue
+		}
+		out = append(out, name, value)
+	}
+	return out
+}
+
 // validProfileName keeps a target's @account name to a single safe path segment, so it cannot
 // traverse or collide outside the agent's profiles/ vault (no '/', '\', '..',
 // '.', empty, or leading '-'). Login is the path that CREATES the dir from the name, so it's the
