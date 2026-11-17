@@ -77,7 +77,8 @@ func TestCodexRolloutSkipsALongLine(t *testing.T) {
 
 // Only the selected complete home is searched, independent of the active account.
 func TestCodexFindsASessionsRolloutInItsNativeHome(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "codex", "acp-homes", "repository-key", "home")
+	// A pattern character in the state path must not hide the rollout.
+	root := filepath.Join(t.TempDir(), "state[1]", "codex", "acp-homes", "repository-key", "home")
 	native := "01a0e6b5-bd79-73d0-a1a5-2ccb9618e573"
 	dir := filepath.Join(root, "sessions", "2026", "09", "28")
 	if err := os.MkdirAll(dir, 0o700); err != nil {

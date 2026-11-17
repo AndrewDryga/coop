@@ -143,20 +143,40 @@ func codexRollout(home, nativeID string) string {
 	if home == "" || !filepath.IsAbs(home) || !codexPathComponent(nativeID) {
 		return ""
 	}
-	matches, err := filepath.Glob(filepath.Join(home, "sessions", "*", "*", "*", "rollout-*-"+nativeID+".jsonl"))
-	if err != nil {
-		return ""
+	// Listed, not globbed: a "[", "*" or "?" in the home path must not read as a pattern.
+	suffix := "-" + nativeID + ".jsonl"
+	var matches []string
+	add := func(dir string) {
+		for _, name := range codexDirNames(dir) {
+			if len(name) >= len("rollout-")+len(suffix) && strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, suffix) {
+				matches = append(matches, filepath.Join(dir, name))
+			}
+		}
 	}
-	archived, err := filepath.Glob(filepath.Join(home, "archived_sessions", "rollout-*-"+nativeID+".jsonl"))
-	if err != nil {
-		return ""
+	sessions := filepath.Join(home, "sessions")
+	for _, year := range codexDirNames(sessions) {
+		for _, month := range codexDirNames(filepath.Join(sessions, year)) {
+			for _, day := range codexDirNames(filepath.Join(sessions, year, month)) {
+				add(filepath.Join(sessions, year, month, day))
+			}
+		}
 	}
-	matches = append(matches, archived...)
+	add(filepath.Join(home, "archived_sessions"))
 	if len(matches) == 0 {
 		return ""
 	}
 	sort.Strings(matches)
 	return matches[len(matches)-1]
+}
+
+// codexDirNames lists a folder's entry names; a missing or unreadable folder has none.
+func codexDirNames(dir string) []string {
+	entries, _ := os.ReadDir(dir)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 func codexPathComponent(value string) bool {
