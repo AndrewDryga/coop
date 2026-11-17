@@ -2,7 +2,7 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
+sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go, internal/box/network_recover.go]
 updated: 2026-11-17
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
@@ -84,7 +84,8 @@ supervisor and Compose labels, so a survey that finds nothing still costs exactl
 the scripted process E2Es pin that count. A broker is removed by `{coop=broker, coop.host=<dead>}`
 but not counted in the launch's "Removed N boxes" line, and a broker with a Compose label is never
 removed. The open broker's private directory (`coop-broker-*`, holding the run's real credentials)
-is a `tempPrefixes` entry, so `ReapOrphanTempEntries` clears one a kill left behind.
+lives in the run's folder under the private runfiles root and goes with it (`runFolderUnused`); its
+`tempPrefixes` entry only clears the TMPDIR folders earlier versions left.
 `SurveyOrphanBoxes` returns the dead supervisors' brokers beside the boxes; `coop doctor` reports
 the boxes only. The same listing yields `OtherHost`: this workspace's boxes, brokers and per-run
 services that another host supervises, which no sweep will ever remove, with `OtherHostProjects`
@@ -92,7 +93,10 @@ for their volumes. Doctor (`reportOrphanSurvey`, which the approved transcripts 
 through) lists them with the exact `rm -f` and `volume rm` commands, and `HostError` under "Box
 cleanup". It runs from `app.sweepOrphanBoxes` (memoized once per repo per process) at the entry
 points that already reap: loop start, fork start, and `coop build`/`update`'s recycle (which runs
-only when the build replaced an image, so an unchanged build sweeps nothing). Failure there
+only when the build replaced an image, so an unchanged build sweeps nothing). `sweepBeforeFirstBox`
+also runs `reapRepoOrphans`, with no per-repo memo, before the first box of `coop acp`,
+`coop fork <name> acp`, a direct `coop <agent>` or `coop run`, and `coop fork <name> <agent>`: boxes
+and services only, no networks, task channels or temp sweep. Failure there
 is deliberately silent — the
 command's own box work reports a broken runtime loudly, and Apple's `container` CLI has no label
 inspection at all, so it would otherwise print on every start. `coop doctor` is the reporting
@@ -230,10 +234,11 @@ already-built image called out explicitly. Do not reintroduce best-effort count/
 Traps:
 - "Inside a container" means any Linux PID namespace but the initial one (`pid:[4026531836]`).
   OrbStack's Docker engine itself runs in a child namespace, so even a `--pid=host` container there
-  reads another; Coop on OrbStack machines, WSL2 or LXC counts as containerized and judges no v1
-  label, which only leaves more for doctor to list.
-- The sweep adds TWO runtime `ps` listings to loop/fork/build (every coop container for boxes and
-  brokers, then project services). The
+  reads another; Coop on OrbStack machines, WSL2 or LXC counts as containerized, so
+  `legacyLabelsAreLocal` lets it judge no host-less network-recovery record
+  (`supervisorRecordedHere`). No box label is host-less any more.
+- The sweep adds TWO runtime `ps` listings to loop/fork/build and to every launch that runs
+  `sweepBeforeFirstBox` (every coop container for boxes and brokers, then project services). The
   scripted process E2Es pin exact runtime call counts, so those suites pass `sweepsOrphanBoxes` (see
   `assertDirectRunContract`); a command that grows any OTHER runtime call still fails the count.
   The daily temp sweep would add more when due; `procharness.NewLayout` stamps `temp-reap` fresh so
@@ -266,6 +271,10 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-17 — named `sweepBeforeFirstBox` and its launches in the body and the listings trap; the
+  broker folder lives in the run folder; the namespace trap now covers network recovery only
+  (audit K1-2, K1-3, K1-4; checked internal/cli/boxsweep.go, internal/box/open_broker.go, reap.go,
+  sweep.go, network_recover.go).
 - 2026-11-17 — corrected the TMPDIR sweep's scope: it takes the names in `tempPrefixes`, not every
   coop-prefixed entry; build contexts and fork clones a killed coop leaves are not swept (audit B3-11).
 - 2026-11-04 — retired the v1 label reader (task 2026-11-04-drop-the-old-host-state-readers): a v1 label is unattributed, reported
