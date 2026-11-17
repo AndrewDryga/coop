@@ -47,7 +47,7 @@ func TestParseLeaseArgs(t *testing.T) {
 func inProgressTask(t *testing.T, root, id string) Item {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# "+id+"\n")
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("claim %s = %d, %v", id, code, err)
 	}
 	item, ok := mustCurrentTask(t, root, id)
@@ -427,7 +427,7 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	if err := RewriteSubtasks(mine.Dir, []Subtask{{Text: "required check still pending"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", "done", claimOptions{actor: me}); !errors.Is(err, ErrIncompleteChecklist) {
+	if _, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", claimOptions{actor: me}); !errors.Is(err, ErrIncompleteChecklist) {
 		t.Fatalf("unfinished own task = %v", err)
 	}
 	if observed := observeTaskLease(mine, time.Now()); observed.State != leaseBusy {
@@ -436,7 +436,7 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	if err := RewriteSubtasks(mine.Dir, []Subtask{{Text: "required checks passed", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", "done", claimOptions{actor: me}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateDone, "done", claimOptions{actor: me}); code != 0 || err != nil {
 		t.Fatalf("done beside my own holder = %d, %v; want the holder stopped and the task completed", code, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, StateDone, "mine")); err != nil {
@@ -453,7 +453,7 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	}
 	startHolder("theirs", other)
 	waitLease(t, theirs, leaseBusy)
-	if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateDone, "done", "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
+	if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateDone, "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
 		t.Fatalf("done beside someone else's holder = %d, %v; want a refusal", code, err)
 	}
 	if observed := observeTaskLease(theirs, time.Now()); observed.State == leaseUnleased {
@@ -469,7 +469,7 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 		t.Fatalf("loop lease: %v", err)
 	}
 	defer lease.Release()
-	if code, err := tasksFolderMoveWith(root, []string{"loop"}, StateDone, "done", "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
+	if code, err := tasksFolderMoveWith(root, []string{"loop"}, StateDone, "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
 		t.Fatalf("done beside a loop iteration's lease = %d, %v; want a refusal (and this process alive)", code, err)
 	}
 }
@@ -566,7 +566,7 @@ func TestAPersonsLeaseNamesThePerson(t *testing.T) {
 func TestListShowsAHeldLeaseBesideTheClaim(t *testing.T) {
 	root := t.TempDir()
 	item := inProgressTask(t, root, "both")
-	if code, err := tasksFolderMoveWith(root, []string{"both"}, StateInProgress, "claim", "claimed", claimOptions{actor: selfActor(t, "codex")}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"both"}, StateInProgress, "claim", claimOptions{actor: selfActor(t, "codex")}); code != 0 || err != nil {
 		t.Fatalf("bound claim = %d, %v", code, err)
 	}
 	lease, _, err := TryTaskLease(root, item, TaskLeaseOwner{RunID: "lease:codex", PID: os.Getpid(), Provider: "codex", Target: "codex"})
@@ -642,7 +642,7 @@ func TestLeaseNeverActsOnAnotherSystemsProcess(t *testing.T) {
 	if stopped, err := stopOwnLeaseHolder(root, held, me); stopped || err != nil {
 		t.Fatalf("stopOwnLeaseHolder over another system's holder = %v, %v; want it left alone", stopped, err)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateDone, "done", "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
+	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateDone, "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
 		t.Fatalf("done beside another system's holder = %d, %v; want a refusal", code, err)
 	}
 

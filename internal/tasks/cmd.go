@@ -155,7 +155,7 @@ func CmdTasksFolder(repo, root string, rest []string) (int, error) {
 		if fromFork && !interactive {
 			return 2, errFromForkNeedsTerminal
 		}
-		return tasksFolderMoveWith(root, id, StateDone, "done", "done", claimOptions{
+		return tasksFolderMoveWith(root, id, StateDone, "done", claimOptions{
 			actor:      captureClaimActor(realClaimActorProbe, os.Getppid(), interactive, ClaimActor{}),
 			forceClose: forceClose,
 			fromFork:   fromFork,
@@ -957,12 +957,12 @@ func tasksFolderClaim(project, root string, args []string) (int, error) {
 	if requested != 0 && opts.actor.PID == 0 {
 		return 1, noLiveActorProcess(requested)
 	}
-	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", opts)
+	return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", opts)
 }
 
-// tasksFolderMoveWith is tasksFolderMove with the claim's actor and takeover choice; done and every
-// non-CLI claim pass an empty claimOptions, which binds the claim to nothing.
-func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb string, opts claimOptions) (int, error) {
+// tasksFolderMoveWith moves a task to newState, which is StateInProgress (claim) or StateDone (done).
+// opts carries the claim's actor and takeover choice, or the done's --force, --from-fork and project.
+func tasksFolderMoveWith(root string, args []string, newState, verb string, opts claimOptions) (int, error) {
 	if len(args) < 1 {
 		return 2, ui.MissingArgument("task ID", "coop tasks "+verb, "coop tasks "+verb+" <task-id>")
 	}
@@ -1032,8 +1032,6 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 				return 1, fmt.Errorf("the claim is yours, but the lease of %s did not end: %w", claimHolder(*takeover.from, true), stopErr)
 			}
 			noteBoundTask(opts.project, t.ID)
-		default:
-			ui.Note("%s is already %s.", t.Title, StateLabel(newState))
 		}
 		return 0, nil
 	}
@@ -1100,8 +1098,6 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		noteForcedClose(forced)
 		noteLandedFork(landed)
 		WarnTaskBulk(root, dir)
-	default:
-		ui.OK("%s %s", pastVerb, ui.SafeInline(t.ID))
 	}
 	return 0, nil
 }

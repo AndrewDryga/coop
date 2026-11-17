@@ -2782,7 +2782,7 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 	t.Run("claim blocks loop adoption", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
 		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed-task", "task.md"), "# Claimed\n")
-		if code, err := tasksFolderMove(root, []string{"claimed-task"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{"claimed-task"}, StateInProgress, "claim"); code != 0 || err != nil {
 			t.Fatalf("claim = code %d err %v", code, err)
 		}
 		if _, owned := taskOwned(t, root, "claimed-task"); !owned {
@@ -2808,7 +2808,7 @@ func TestOwnerRecordGatesLoopAdoption(t *testing.T) {
 	t.Run("release lets the loop adopt", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), ".agent", "tasks")
 		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed-task", "task.md"), "# Claimed\n")
-		if code, err := tasksFolderMove(root, []string{"claimed-task"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{"claimed-task"}, StateInProgress, "claim"); code != 0 || err != nil {
 			t.Fatalf("claim = code %d err %v", code, err)
 		}
 		if code, err := tasksFolderRelease(root, []string{"claimed-task"}); code != 0 || err != nil {
@@ -2958,7 +2958,7 @@ func TestOwnerRecordFailurePaths(t *testing.T) {
 		writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# Raced\n")
 		writeTaskFile(t, filepath.Join(root, StateInProgress, id, "task.md"), "# Raced (winner)\n")
 
-		code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed")
+		code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim")
 		if code == 0 || err == nil {
 			t.Fatalf("claim into an occupied destination = code %d err %v, want a move error", code, err)
 		}
@@ -2977,7 +2977,7 @@ func TestClaimWritesOwnerRecordLoopAdoptionDoesNot(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "human-claim", "task.md"), "# Human\n")
 	writeTaskFile(t, filepath.Join(root, StateTodo, "loop-claim", "task.md"), "# Loop\n")
 
-	if code, err := tasksFolderMove(root, []string{"human-claim"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{"human-claim"}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("interactive claim = code %d err %v", code, err)
 	}
 	if _, owned := taskOwned(t, root, "human-claim"); !owned {

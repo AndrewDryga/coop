@@ -1293,9 +1293,6 @@ func ReconcileCompletionWindowsWithActivity(hosts []string) ([]string, error) {
 		for _, id := range slices.Sorted(maps.Keys(protectedMutations)) {
 			mutations = append(mutations, locked[id].task)
 		}
-		slices.SortFunc(mutations, func(a, b QueuedTask) int {
-			return strings.Compare(a.Item.ID, b.Item.ID)
-		})
 		errs = append(errs, baselineCompletionMutationError(mutations))
 		errs = append(errs, releaseLockedCompletionCandidates(locked))
 		errs = append(errs, releaseRecoveries(recoveries, deleteWindows))

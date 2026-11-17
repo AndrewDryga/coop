@@ -42,7 +42,7 @@ func TestASessionClaimNamesTheSessionsTarget(t *testing.T) {
 		}
 	}
 	taskForLease(t, root, StateTodo, "by-person")
-	if code, err := tasksFolderMoveWith(root, []string{"by-person"}, StateInProgress, "claim", "claimed", claimOptions{}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"by-person"}, StateInProgress, "claim", claimOptions{}); code != 0 || err != nil {
 		t.Fatalf("claim at a terminal = %d, %v", code, err)
 	}
 	for id, want := range map[string]string{"by-session": "claude:opus/high@work", "garbled": "", "by-person": ""} {
@@ -89,7 +89,7 @@ func TestSessionClaimRefusesWhatTheSessionDoesNotOwn(t *testing.T) {
 	other, stop := sleeperActor(t, "codex")
 	for id, actor := range map[string]ClaimActor{"theirs": other, "person": {}} {
 		taskForLease(t, root, StateTodo, id)
-		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", claimOptions{actor: actor}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", claimOptions{actor: actor}); code != 0 || err != nil {
 			t.Fatalf("fixture claim %s = %d, %v", id, code, err)
 		}
 	}
@@ -211,7 +211,7 @@ func TestSessionReleaseGivesBackOnlyTheSessionsOwnClaim(t *testing.T) {
 	other, _ := sleeperActor(t, "codex")
 	for id, actor := range map[string]ClaimActor{"mine": me, "theirs": other, "person": {}} {
 		taskForLease(t, root, StateTodo, id)
-		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", claimOptions{actor: actor}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", claimOptions{actor: actor}); code != 0 || err != nil {
 			t.Fatalf("fixture claim %s = %d, %v", id, code, err)
 		}
 	}
@@ -262,7 +262,7 @@ func TestBoxWriteRefusalKeepsBoxesOffTasksSomeoneHolds(t *testing.T) {
 	gone, stopGone := sleeperActor(t, "gemini")
 	for id, actor := range map[string]ClaimActor{"theirs": other, "person": {}, "mine": me, "stopped": gone} {
 		taskForLease(t, root, StateTodo, id)
-		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", claimOptions{actor: actor}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", claimOptions{actor: actor}); code != 0 || err != nil {
 			t.Fatalf("fixture claim %s = %d, %v", id, code, err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestBoxCompleteAndBlockRefuseATaskSomeoneElseHolds(t *testing.T) {
 	for _, id := range []string{"theirs", "mine"} {
 		taskWithCompletedChecklist(t, root, StateTodo, id)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateInProgress, "claim", "claimed", claimOptions{actor: other}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateInProgress, "claim", claimOptions{actor: other}); code != 0 || err != nil {
 		t.Fatalf("fixture claim = %d, %v", code, err)
 	}
 	if _, err := ClaimSessionTask(root, mustTask(t, root, "mine"), me); err != nil {

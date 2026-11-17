@@ -57,7 +57,7 @@ func TestBacklogPromote(t *testing.T) {
 		t.Fatalf("after promote: %+v, want the same id in todo", items)
 	}
 	// The promoted task is now a normal task — claimable.
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("claim after promote: code=%d err=%v", code, err)
 	}
 
@@ -82,7 +82,7 @@ func TestBacklogIsolatedFromActiveCommands(t *testing.T) {
 	if _, err := FindTask(root, id); err == nil {
 		t.Error("findTask must NOT resolve a backlog id (the active tree excludes xx_backlog)")
 	}
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code == 0 && err == nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code == 0 && err == nil {
 		t.Error("claim must refuse a backlog id — it isn't live work until promoted")
 	}
 	if _, err := findBacklogTask(root, id); err != nil {

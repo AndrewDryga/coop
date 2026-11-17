@@ -206,7 +206,7 @@ func TestTheSnapshotReadsTheNoteOfTheLoopThatHeldTheTask(t *testing.T) {
 	if err := held.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"claimed"}, StateInProgress, "claim", "claimed", claimOptions{actor: selfActor(t, "codex")}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"claimed"}, StateInProgress, "claim", claimOptions{actor: selfActor(t, "codex")}); code != 0 || err != nil {
 		t.Fatalf("claim = %d, %v", code, err)
 	}
 	if got := loop("claimed"); got != nil {

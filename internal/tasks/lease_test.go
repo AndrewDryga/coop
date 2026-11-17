@@ -214,7 +214,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 				if got := leaseAuthorityBytes(t, root, task.ID); !slices.Equal(got, receiptBytes) {
 					t.Fatalf("unsupported lease changed completion receipt: %q, want %q", got, receiptBytes)
 				}
-				if code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed"); code != -1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
+				if code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done"); code != -1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported audit reopen record version %d", version)) {
 					t.Fatalf("unsupported completion = code %d err=%v", code, err)
 				}
 				if current, ok := mustCurrentTask(t, root, task.ID); !ok || current.State != StateInProgress {
@@ -301,7 +301,7 @@ func TestAuditReopenRecordVersionsFailClosed(t *testing.T) {
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) {
 			t.Fatalf("pending completion error = %v", err)
 		}
-		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done", "completed")
+		code, err := tasksFolderMove(root, []string{task.ID}, StateDone, "done")
 		if code != -1 || err == nil ||
 			!strings.Contains(err.Error(), "coop tasks unblock "+task.ID) ||
 			strings.Contains(err.Error(), "retry: coop tasks done") {

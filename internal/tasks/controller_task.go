@@ -14,7 +14,10 @@ import (
 	"unicode/utf8"
 )
 
-const controllerTaskRecordFile = ".coop-controller-task.json"
+const (
+	controllerTaskRecordFile = ".coop-controller-task.json"
+	controllerTaskDraftFile  = ".coop-controller-draft.json"
+)
 
 var controllerTaskReferenceRE = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 
@@ -76,7 +79,7 @@ func ReadControllerTaskBinding(workspace, id string) (ControllerTaskBinding, err
 	if err := decodeControllerTaskJSON(recordBody, &record); err != nil || record.Version != 1 {
 		return ControllerTaskBinding{}, errors.New("restored controller task identity is invalid")
 	}
-	draftBody, err := ReadTaskMetadataFile(root, ".coop-controller-draft.json")
+	draftBody, err := ReadTaskMetadataFile(root, controllerTaskDraftFile)
 	if err != nil {
 		return ControllerTaskBinding{}, fmt.Errorf("read restored controller task draft: %w", err)
 	}
@@ -159,7 +162,7 @@ func EnsureControllerTask(workspace string, draft ControllerTaskDraft) (TaskInst
 			return TaskInstance{}, fmt.Errorf("write controller task %s: %w", name, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".coop-controller-draft.json"), append(encoded, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, controllerTaskDraftFile), append(encoded, '\n'), 0o644); err != nil {
 		return TaskInstance{}, fmt.Errorf("write controller task draft: %w", err)
 	}
 	destination := filepath.Join(todo, id)
@@ -303,9 +306,7 @@ func requireControllerTaskRecord(dir, offerRef, digest string) error {
 		return fmt.Errorf("read controller task identity: %w", err)
 	}
 	var record controllerTaskRecord
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&record); err != nil || record.Version != 1 ||
+	if err := decodeControllerTaskJSON(body, &record); err != nil || record.Version != 1 ||
 		record.OfferRef != offerRef || record.DraftSHA256 != digest {
 		return errors.New("controller task identity conflicts with the approved draft")
 	}

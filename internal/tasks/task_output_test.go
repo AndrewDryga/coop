@@ -63,7 +63,7 @@ func TestClaimBlockAndUnblockJournalInTheLog(t *testing.T) {
 		want string
 	}{
 		{func() (int, error) {
-			return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", claimOptions{actor: ClaimActor{Label: "codex"}})
+			return tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", claimOptions{actor: ClaimActor{Label: "codex"}})
 		}, "- Claimed by codex\n"},
 		{func() (int, error) {
 			return tasksFolderBlock(root, []string{id, "--question", "Which store?", "--why", "W", "--option", "A — disk", "--recommendation", "A"})

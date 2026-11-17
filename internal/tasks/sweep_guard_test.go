@@ -20,7 +20,7 @@ func TestSweepQueueGuardReadsClaimsFromTheListing(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "held", "task.md"), "# Held\n\n- [ ] one step\n")
 	other, stop := sleeperActor(t, "claude")
 	defer stop()
-	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateInProgress, "claim", "claimed", claimOptions{actor: other}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"held"}, StateInProgress, "claim", claimOptions{actor: other}); code != 0 || err != nil {
 		t.Fatalf("claim = %d, %v", code, err)
 	}
 	if _, err := exec.LookPath("bash"); err != nil {

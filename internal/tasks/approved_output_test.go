@@ -38,7 +38,7 @@ func TestApprovedTaskOutput(t *testing.T) {
 	t.Run("38-release-result", func(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "2026-09-11-fix-login-retries", "task.md"), "# Fix login retries\n")
-		if code, err := tasksFolderMove(root, []string{"fix-login-retries"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{"fix-login-retries"}, StateInProgress, "claim"); code != 0 || err != nil {
 			t.Fatalf("claim: %d, %v", code, err)
 		}
 		out := captureStderr(t, func() {

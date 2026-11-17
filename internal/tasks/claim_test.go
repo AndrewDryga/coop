@@ -139,7 +139,7 @@ func TestClaimBindsToAProcessAndRefusesACompetingLiveClaim(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "shared", "task.md"), "# Shared\n")
 	me := selfActor(t, "codex")
 	claim := func(actor ClaimActor, force bool) (int, error) {
-		return tasksFolderMoveWith(root, []string{"shared"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+		return tasksFolderMoveWith(root, []string{"shared"}, StateInProgress, "claim", claimOptions{actor: actor, force: force})
 	}
 	if code, err := claim(me, false); code != 0 || err != nil {
 		t.Fatalf("first claim = %d, %v", code, err)
@@ -189,7 +189,7 @@ func TestAForcedClaimEndsTheDisplacedLeaseAndNamesItsHolder(t *testing.T) {
 	qa, _ := sleeperActor(t, "qa")
 	me := selfActor(t, "claude")
 	claim := func(actor ClaimActor, force bool) (int, error) {
-		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", claimOptions{actor: actor, force: force})
 	}
 	if code, err := claim(qa, false); code != 0 || err != nil {
 		t.Fatalf("qa's claim = %d, %v", code, err)
@@ -237,7 +237,7 @@ func TestAnAgentsClaimOverAPersonsClaimNamesThePerson(t *testing.T) {
 			claim := func(actor ClaimActor, force bool) string {
 				t.Helper()
 				return captureStderr(t, func() {
-					if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
+					if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
 						t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
 					}
 				})
@@ -264,7 +264,7 @@ func TestAnAgentsClaimOverAPersonsClaimNamesThePerson(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "mine", "task.md"), "# Mine\n")
 	for range 2 {
 		out := captureStderr(t, func() {
-			if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateInProgress, "claim", "claimed", claimOptions{}); code != 0 || err != nil {
+			if code, err := tasksFolderMoveWith(root, []string{"mine"}, StateInProgress, "claim", claimOptions{}); code != 0 || err != nil {
 				t.Fatalf("a person's claim = %d, %v", code, err)
 			}
 		})
@@ -285,10 +285,10 @@ func TestAProcessAForcedClaimDisplacedCannotCompleteTheTask(t *testing.T) {
 			root := t.TempDir()
 			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
 			claim := func(actor ClaimActor, force bool) (int, error) {
-				return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+				return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force})
 			}
 			done := func(actor ClaimActor) (int, error) {
-				return tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", "done", claimOptions{actor: actor})
+				return tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", claimOptions{actor: actor})
 			}
 			if code, err := claim(qa, false); code != 0 || err != nil {
 				t.Fatalf("qa's claim = %d, %v", code, err)
@@ -341,7 +341,7 @@ func TestADisplacedProcessTakesTheTaskBackOnlyWithForce(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
 	qa, _ := sleeperActor(t, "qa")
 	claim := func(actor ClaimActor, force bool) (int, error) {
-		return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+		return tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force})
 	}
 	for _, step := range []struct {
 		actor ClaimActor
@@ -358,7 +358,7 @@ func TestADisplacedProcessTakesTheTaskBackOnlyWithForce(t *testing.T) {
 	if err := RewriteSubtasks(item.Dir, []Subtask{{Text: "the work", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", "done", claimOptions{actor: qa}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"x"}, StateDone, "done", claimOptions{actor: qa}); code != 0 || err != nil {
 		t.Fatalf("done by qa after taking it back = %d, %v", code, err)
 	}
 }
@@ -375,7 +375,7 @@ func TestAProcessAForcedClaimDisplacedCannotBlockOrReleaseTheTask(t *testing.T) 
 			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
 			claim := func(actor ClaimActor, force bool) {
 				t.Helper()
-				if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
+				if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
 					t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
 				}
 			}
@@ -425,7 +425,7 @@ func TestADisplacedProcessMayReleaseOnceTheForcedClaimStopped(t *testing.T) {
 		actor ClaimActor
 		force bool
 	}{{qa, false}, {forcer, true}} {
-		if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", "claimed", claimOptions{actor: step.actor, force: step.force}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: step.actor, force: step.force}); code != 0 || err != nil {
 			t.Fatalf("claim by %+v = %d, %v", step.actor, code, err)
 		}
 	}
@@ -447,7 +447,7 @@ func TestLiveClaimRefusalsNameTheHolderAndOfferOnlyTheTakeover(t *testing.T) {
 	qa, _ := sleeperActor(t, "qa")
 	me := selfActor(t, "claude")
 	claim := func(actor ClaimActor, force bool) (int, error) {
-		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", "claimed", claimOptions{actor: actor, force: force})
+		return tasksFolderMoveWith(root, []string{"second"}, StateInProgress, "claim", claimOptions{actor: actor, force: force})
 	}
 	if code, err := claim(qa, false); code != 0 || err != nil {
 		t.Fatalf("qa's claim = %d, %v", code, err)
@@ -491,7 +491,7 @@ func TestReleaseGoneOwnersReleasesOnlyDeadProcessBoundClaims(t *testing.T) {
 	}
 	dead, stop := sleeperActor(t, "codex")
 	for id, actor := range map[string]ClaimActor{"dead": dead, "alive": selfActor(t, "claude"), "person": {}} {
-		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", "claimed", claimOptions{actor: actor}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{id}, StateInProgress, "claim", claimOptions{actor: actor}); code != 0 || err != nil {
 			t.Fatalf("claim %s = %d, %v", id, code, err)
 		}
 	}
@@ -524,7 +524,7 @@ func TestAClaimFromAnotherSystemIsKept(t *testing.T) {
 	root := t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "far", "task.md"), "# Far\n")
 	far := ClaimActor{Label: "codex", PID: 2147483646, StartToken: starttoken.Foreign()}
-	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", "claimed", claimOptions{actor: far}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", claimOptions{actor: far}); code != 0 || err != nil {
 		t.Fatalf("claim = %d, %v", code, err)
 	}
 	if ids, err := ReleaseGoneOwners([]string{root}); err != nil || len(ids) != 0 {
@@ -534,7 +534,7 @@ func TestAClaimFromAnotherSystemIsKept(t *testing.T) {
 	if out := captureStdout(t, func() { _, _ = tasksFolderList(root, false) }); !strings.Contains(out, want) || strings.Contains(out, "has stopped") {
 		t.Fatalf("listing of another system's claim, want %q:\n%s", want, out)
 	}
-	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", "claimed", claimOptions{actor: selfActor(t, "claude")}); code != 1 || !errors.Is(err, errTaskClaimedByOther) {
+	if code, err := tasksFolderMoveWith(root, []string{"far"}, StateInProgress, "claim", claimOptions{actor: selfActor(t, "claude")}); code != 1 || !errors.Is(err, errTaskClaimedByOther) {
 		t.Fatalf("claim over another system's claim = %d, %v; want a refusal", code, err)
 	}
 	if rec, ok := taskOwned(t, root, "far"); !ok || rec.ActorPID != far.PID || rec.ActorStart != far.StartToken {

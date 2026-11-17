@@ -153,7 +153,7 @@ func TestDoneWarnsAboutRebuildableBulk(t *testing.T) {
 			kept := taskTreeEntries(t, dir)
 			var code int
 			var err error
-			stderr := captureStderr(t, func() { code, err = tasksFolderMove(root, []string{id}, StateDone, "done", "done") })
+			stderr := captureStderr(t, func() { code, err = tasksFolderMove(root, []string{id}, StateDone, "done") })
 			if code != 0 || err != nil {
 				t.Fatalf("done = (%d, %v), want a completed task despite the warning\n%s", code, err, stderr)
 			}
@@ -188,7 +188,7 @@ func TestDoneWarnsAboutRebuildableBulk(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateDone, id, "task.md"), "# Already done\n- [x] required checks passed\n")
 	writeTaskBytes(t, filepath.Join(root, StateDone, id, "artifacts", "coop"), elf, 0o755)
 	stderr := captureStderr(t, func() {
-		if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 			t.Fatalf("done on a done task = (%d, %v)", code, err)
 		}
 	})

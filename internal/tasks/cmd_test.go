@@ -118,7 +118,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// claim via a substring of the id
-	if code, err := tasksFolderMove(root, []string{"egress"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{"egress"}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("claim: code=%d err=%v", code, err)
 	}
 	if got := mustReadTaskTree(t, root)[0].State; got != StateInProgress {
@@ -135,7 +135,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	writeTaskFile(t, artifact, "keep me\n")
 	// An interrupted iteration resumes by claiming the already-in-progress task; non-done moves
 	// must retain both its disposable scratch and durable evidence.
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("resume claim: code=%d err=%v", code, err)
 	}
 	if !fileExists(tmpFile) {
@@ -183,7 +183,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Errorf("unblock of a non-blocked task should error, got (%d, %v)", code, err)
 	}
 
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("reclaim: code=%d err=%v", code, err)
 	}
 	if !fileExists(filepath.Join(root, StateInProgress, id, "tmp", "scratch.patch")) {
@@ -198,7 +198,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeWorkedState(t, filepath.Join(root, StateInProgress, id))
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	if mustReadTaskTree(t, root)[0].State != StateDone {
@@ -226,7 +226,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	// scratch created for the next attempt survives it, then the next successful completion removes it.
 	reopenedTmp := filepath.Join(root, StateDone, id, "tmp", "review-notes.txt")
 	writeTaskFile(t, reopenedTmp, "resume review fix\n")
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 1 || err == nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 1 || err == nil {
 		t.Fatalf("claim of a done task: code=%d err=%v, want a refusal", code, err)
 	}
 	archived, ok := mustCurrentTask(t, root, id)
@@ -239,7 +239,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if !fileExists(filepath.Join(root, StateInProgress, id, "tmp", "review-notes.txt")) {
 		t.Error("review reopen must retain tmp")
 	}
-	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("claim the reopened task: code=%d err=%v", code, err)
 	}
 	if _, owned := taskOwned(t, root, id); !owned {
@@ -267,7 +267,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	if taskCompletionRecorded(root, doneItem) {
 		t.Error("same-inode completion after reopen matched the cleared stale receipt")
 	}
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("done after review reopen: code=%d err=%v", code, err)
 	}
 	if pathExists(filepath.Join(root, StateDone, id, "tmp")) {
@@ -281,7 +281,7 @@ func TestTasksFolderLifecycle(t *testing.T) {
 	}
 
 	// no-op move when already in the target state
-	if code, _ := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 {
+	if code, _ := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 {
 		t.Errorf("re-done should be a no-op (code 0), got %d", code)
 	}
 
@@ -355,7 +355,7 @@ func TestTasksFolderRelease(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed", "task.md"), "# Claimed\n")
 		writeTaskFile(t, filepath.Join(root, StateTodo, "claimed", "log.md"), "# Log\nprogress\n")
-		if code, err := tasksFolderMove(root, []string{"claimed"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{"claimed"}, StateInProgress, "claim"); code != 0 || err != nil {
 			t.Fatalf("claim: code=%d err=%v", code, err)
 		}
 		if err := os.MkdirAll(filepath.Join(root, StateInProgress, "claimed", "tmp"), 0o755); err != nil {
@@ -387,7 +387,7 @@ func TestTasksFolderRelease(t *testing.T) {
 	t.Run("an identical retry completes interrupted cleanup", func(t *testing.T) {
 		root := t.TempDir()
 		writeTaskFile(t, filepath.Join(root, StateTodo, "torn", "task.md"), "# Torn\n")
-		if code, err := tasksFolderMove(root, []string{"torn"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+		if code, err := tasksFolderMove(root, []string{"torn"}, StateInProgress, "claim"); code != 0 || err != nil {
 			t.Fatalf("claim: code=%d err=%v", code, err)
 		}
 		item, ok := mustCurrentTask(t, root, "torn")
@@ -417,7 +417,7 @@ func TestTasksFolderRelease(t *testing.T) {
 		writeTaskFile(t, filepath.Join(root, StateTodo, "theirs", "task.md"), "# Theirs\n")
 		other, stop := sleeperActor(t, "claude")
 		defer stop()
-		if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateInProgress, "claim", "claimed", claimOptions{actor: other}); code != 0 || err != nil {
+		if code, err := tasksFolderMoveWith(root, []string{"theirs"}, StateInProgress, "claim", claimOptions{actor: other}); code != 0 || err != nil {
 			t.Fatalf("claim: code=%d err=%v", code, err)
 		}
 		code, err := tasksFolderRelease(root, []string{"theirs"})
@@ -659,7 +659,7 @@ func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
 	oldCleaner := taskTmpCleaner
 	taskTmpCleaner = func(string) error { return errors.New("injected cleanup failure") }
 	t.Cleanup(func() { taskTmpCleaner = oldCleaner })
-	code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done")
+	code, err := tasksFolderMove(root, []string{id}, StateDone, "done")
 	if code == 0 || err == nil || !strings.Contains(err.Error(), "injected cleanup failure") ||
 		!strings.Contains(err.Error(), "retry: coop tasks done "+id) {
 		t.Fatalf("done cleanup failure = (%d, %v), want loud retryable failure", code, err)
@@ -673,7 +673,7 @@ func TestTasksDoneSurfacesTmpCleanupFailure(t *testing.T) {
 
 	// `done` on an already-done task retries cleanup, so the surfaced failure is recoverable.
 	taskTmpCleaner = oldCleaner
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("retry done cleanup: code=%d err=%v", code, err)
 	}
 	if pathExists(filepath.Join(root, StateDone, id, "tmp")) {
@@ -780,7 +780,7 @@ func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done")
+	code, err := tasksFolderMove(root, []string{id}, StateDone, "done")
 	if code == 0 || err == nil || !strings.Contains(err.Error(), "state finalization failed") ||
 		!strings.Contains(err.Error(), "retry: coop tasks done "+id) {
 		t.Fatalf("done state failure = (%d, %v), want loud retryable failure", code, err)
@@ -792,7 +792,7 @@ func TestTasksDoneRetriesStateFinalizationFailure(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(doneDir, "state.md")); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("retry done after clearing state obstruction: code=%d err=%v", code, err)
 	}
 	if pathExists(filepath.Join(doneDir, "tmp")) {
@@ -1571,7 +1571,7 @@ func TestTasksFolderListShowsOwner(t *testing.T) {
 		t.Errorf("an unclaimed task must not show a claimed-by tag:\n%s", unowned)
 	}
 
-	if code, err := tasksFolderMove(root, []string{"2026-01-01-unowned"}, StateInProgress, "claim", "claimed"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{"2026-01-01-unowned"}, StateInProgress, "claim"); code != 0 || err != nil {
 		t.Fatalf("claim: code=%d err=%v", code, err)
 	}
 	owned := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
@@ -2080,7 +2080,7 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeWorkedState(t, filepath.Join(root, StateTodo, id))
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	// Same title → same id, but it now lives in 99_done/ — the re-add must fail.
@@ -2228,7 +2228,7 @@ func TestMoveTaskDirRefusesDuplicateDest(t *testing.T) {
 	writeTaskFile(t, filepath.Join(root, StateDone, "2026-01-01-x", "task.md"), "# x\n")
 	// `done` resolves the in_progress copy (read-side dedup keeps earliest); moving it onto the
 	// existing 99_done copy must surface a clean "already exists", not crash or strand.
-	code, err := tasksFolderMove(root, []string{"2026-01-01-x"}, StateDone, "done", "done")
+	code, err := tasksFolderMove(root, []string{"2026-01-01-x"}, StateDone, "done")
 	if code == 0 || err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
 		t.Fatalf("move onto a duplicate dest = (%d, %v), want an ambiguous-authority error", code, err)
 	}

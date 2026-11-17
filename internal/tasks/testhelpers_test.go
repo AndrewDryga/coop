@@ -220,11 +220,10 @@ func writeWorkedState(t testing.TB, dir string) {
 	}
 }
 
-// tasksFolderMove relocates a task's folder to newState (claim/done). verb is the imperative used
-// in the usage line ("claim"); pastVerb is the past tense for the success note ("claimed"). Moving
-// to the state it's already in is a no-op note, not an error.
-func tasksFolderMove(root string, args []string, newState, verb, pastVerb string) (int, error) {
-	return tasksFolderMoveWith(root, args, newState, verb, pastVerb, claimOptions{})
+// tasksFolderMove relocates a task's folder to newState (claim/done) with an empty claimOptions,
+// which binds a claim to nothing. verb is the imperative used in the usage line ("claim").
+func tasksFolderMove(root string, args []string, newState, verb string) (int, error) {
+	return tasksFolderMoveWith(root, args, newState, verb, claimOptions{})
 }
 
 // completionReplayCandidates separates lifecycle arrivals from mutations of folders that were

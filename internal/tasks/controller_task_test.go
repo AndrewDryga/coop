@@ -63,6 +63,19 @@ func TestConfirmedControllerTaskHasOneDurableChecklistIdentity(t *testing.T) {
 	if string(after) != string(body) {
 		t.Fatal("conflicting replay mutated the original task")
 	}
+
+	// The replay reads the identity record as strictly as a restore does: one JSON value only.
+	record := filepath.Join(item.Dir, controllerTaskRecordFile)
+	recordBody, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, append(recordBody, "{}\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureControllerTask(workspace, draft); err == nil {
+		t.Fatal("a replay accepted an identity record with a second JSON value")
+	}
 }
 
 func TestConfirmedControllerTaskRejectsTaskQueueSymlink(t *testing.T) {

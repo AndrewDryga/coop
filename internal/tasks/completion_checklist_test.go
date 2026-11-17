@@ -69,7 +69,7 @@ func TestDoneRefusalShowsOpenItemsAndWhereToTickThem(t *testing.T) {
 			root := t.TempDir()
 			dir := filepath.Join(root, StateInProgress, "fix-login-retries")
 			writeTaskFile(t, filepath.Join(dir, "task.md"), "# Fix login retries\n\n## Subtasks\n"+tc.checklist)
-			code, err := tasksFolderMoveWith(root, []string{"fix-login-retries"}, StateDone, "done", "done", claimOptions{})
+			code, err := tasksFolderMoveWith(root, []string{"fix-login-retries"}, StateDone, "done", claimOptions{})
 			var usage *ui.UsageError
 			if code == 0 || !errors.As(err, &usage) || !errors.Is(err, ErrIncompleteChecklist) {
 				t.Fatalf("done = %d, %v; want the drawn checklist refusal", code, err)
@@ -108,7 +108,7 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	if err != nil || len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 2 {
 		t.Fatalf("startup report = %+v, %v; want only %s with 2 commits", extra, err, id)
 	}
-	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", "done", claimOptions{project: repo})
+	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo})
 	var usage *ui.UsageError
 	if code == 0 || !errors.As(err, &usage) {
 		t.Fatalf("done = %d, %v; want the drawn refusal", code, err)
@@ -132,7 +132,7 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	git("reset", "-q", "--soft", "HEAD~2")
 	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap")
 	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
-	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", "done", claimOptions{project: repo}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
 		t.Fatalf("done after the follow-up was unbound = %d, %v", code, err)
 	}
 }

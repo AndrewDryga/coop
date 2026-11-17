@@ -28,7 +28,7 @@ func TestDoneRefusesAStateRecordStillHoldingTheTemplate(t *testing.T) {
 	if err := RewriteSubtasks(dir, []Subtask{{Text: "s", Done: true}}); err != nil {
 		t.Fatal(err)
 	}
-	code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done")
+	code, err := tasksFolderMove(root, []string{id}, StateDone, "done")
 	var usage *ui.UsageError
 	if code != 1 || !errors.As(err, &usage) {
 		t.Fatalf("done with template Traps = (%d, %v), want a drawn refusal", code, err)
@@ -52,7 +52,7 @@ func TestDoneRefusesAStateRecordStillHoldingTheTemplate(t *testing.T) {
 	if err := WriteTaskState(dir, "Fix login retries", fields); err != nil {
 		t.Fatal(err)
 	}
-	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done", "done"); code != 0 || err != nil {
+	if code, err := tasksFolderMove(root, []string{id}, StateDone, "done"); code != 0 || err != nil {
 		t.Fatalf("done after writing Traps = (%d, %v)", code, err)
 	}
 }
