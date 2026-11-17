@@ -1533,3 +1533,20 @@ func TestDockerCaseCoverMountsSurviveCreateAndInspect(t *testing.T) {
 		}
 	}
 }
+
+// Docker's name filter matches any volume whose name holds the text, so an absent `cache` lists an
+// unrelated `MyApp.cache`. A name the daemon allows must read as some other volume, not a bad answer.
+func TestDockerVolumeAbsenceAcceptsAnyValidListedName(t *testing.T) {
+	rt, _ := fixtureDocker(t, dockerFixture{Volume: &DockerVolume{Name: "MyApp.cache"}})
+	d, err := BindDocker(context.Background(), rt, fixtureSock(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if absent, err := d.volumeAbsent(context.Background(), "cache"); err != nil || !absent {
+		t.Fatalf("absent = %v, %v; want true for a listing that holds only MyApp.cache", absent, err)
+	}
+	if absent, err := d.volumeAbsent(context.Background(), "MyApp.cache"); err != nil || absent {
+		t.Fatalf("absent = %v, %v; want false for the listed name itself", absent, err)
+	}
+}

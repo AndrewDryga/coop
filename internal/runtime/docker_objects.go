@@ -151,7 +151,7 @@ func (d *Docker) volumeAbsent(ctx context.Context, name string) (bool, error) {
 		var item string
 		if err := decoder.Decode(&item); errors.Is(err, io.EOF) {
 			return true, nil
-		} else if err != nil || !dockerName(item) {
+		} else if err != nil || !volumeName(item) {
 			return false, errors.New("invalid Docker volume absence observation")
 		}
 		if item == name {
