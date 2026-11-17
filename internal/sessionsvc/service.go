@@ -1195,8 +1195,13 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 		if !candidate.unproven && s.runtimeCleanupMatches(candidate.session.ID, stamp) {
 			continue
 		}
+		// A held runtime is not idle: a review gate or a turn may own it for many minutes, and this
+		// is the one maintenance goroutine. A historical candidate stays pending for the next pass.
+		unlock, ok := s.tryLockSessionRuntime(candidate.session.ID)
+		if !ok {
+			continue
+		}
 		attempts++
-		unlock := s.lockSessionRuntime(candidate.session.ID)
 		current, getErr := s.store.GetSession(ctx, candidate.session.ID)
 		currentTurn := session.Turn{}
 		cleaned, warmReady := false, false

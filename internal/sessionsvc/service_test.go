@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -4193,6 +4194,51 @@ func (r *periodicCleanupRunner) PrepareSession(_ context.Context, _ session.Sess
 	}
 	r.warm.Store(true)
 	return nil
+}
+
+// A runtime someone holds is not idle. The janitor must pass over it, not park the one
+// maintenance goroutine behind a review gate or a turn.
+func TestRuntimeJanitorSkipsAHeldRuntime(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &periodicCleanupRunner{}
+	service, err := openSessionFixture(t, Config{StateRoot: filepath.Join(t.TempDir(), "state"), Runner: runner}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	held, err := service.CreateRemoteSession(ctx, "held-runtime", service.request(t, "held-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := service.CreateRemoteSession(ctx, "idle-runtime", service.request(t, "idle-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock := service.lockSessionRuntime(held.ID)
+	done := make(chan int, 1)
+	go func() { done <- service.cleanupIdleSessionRuntimes(ctx) }()
+	select {
+	case proven := <-done:
+		unlock()
+		runner.mu.Lock()
+		cleaned := slices.Clone(runner.cleaned)
+		runner.mu.Unlock()
+		if proven != 1 || !slices.Equal(cleaned, []string{idle.ID}) {
+			t.Fatalf("janitor proved %d, cleaned %v; want only %s", proven, cleaned, idle.ID)
+		}
+	case <-time.After(5 * time.Second):
+		unlock()
+		<-done
+		t.Fatal("janitor waited on a held runtime")
+	}
+	service.cleanupIdleSessionRuntimes(ctx)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if !slices.Contains(runner.cleaned, held.ID) {
+		t.Fatalf("released runtime was not checked on the next pass: %v", runner.cleaned)
+	}
 }
 
 func TestPreparingWarmRuntimeInvalidatesEarlierCleanupProof(t *testing.T) {
