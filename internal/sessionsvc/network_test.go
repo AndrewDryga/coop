@@ -3,11 +3,13 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -192,6 +194,54 @@ func TestSessionNetworkRunsMustMatchTheSessionFingerprint(t *testing.T) {
 	run, err := verifySessionNetworkRuns(bound, []networkstate.Execution{matching, other})
 	if err == nil || run != "run-2" || !strings.Contains(err.Error(), "run-2") || !strings.Contains(err.Error(), bound.ID) {
 		t.Fatalf("mismatch = %q, %v", run, err)
+	}
+}
+
+// countingExecutionSource is a store of retained runs that counts how often it is listed and read.
+type countingExecutionSource struct {
+	page            networkstate.ExecutionPage
+	listings, reads int
+	gone            string
+}
+
+func (s *countingExecutionSource) ExecutionInventory() (networkstate.ExecutionPage, error) {
+	s.listings++
+	return s.page, nil
+}
+
+func (s *countingExecutionSource) Execution(id string) (networkstate.Execution, error) {
+	s.reads++
+	if id == s.gone {
+		return networkstate.Execution{}, networkstate.ErrEvidenceUnavailable
+	}
+	return networkstate.Execution{ID: id, SessionID: "remote_mine", StartedAt: time.Unix(int64(len(id)), 0)}, nil
+}
+
+// A session's runs come from one listing of the store, however many other runs it retains, and
+// only the session's own records are read again.
+func TestSessionExecutionsListsTheStoreOnce(t *testing.T) {
+	source := &countingExecutionSource{}
+	for i := range 500 {
+		summary := networkstate.ExecutionSummary{ID: fmt.Sprintf("%032x", i), SessionID: "remote_other"}
+		if i == 7 || i == 420 {
+			summary.SessionID = "remote_mine"
+		}
+		source.page.Executions = append(source.page.Executions, summary)
+	}
+	records, complete, err := sessionExecutions(source, "remote_mine")
+	if err != nil || !complete || len(records) != 2 || records[0].ID != fmt.Sprintf("%032x", 7) || records[1].ID != fmt.Sprintf("%032x", 420) {
+		t.Fatalf("session runs = %+v, complete=%v, %v", records, complete, err)
+	}
+	if source.listings != 1 || source.reads != 2 {
+		t.Fatalf("listed the store %d times and read %d records, want 1 and 2", source.listings, source.reads)
+	}
+
+	// An unreadable record anywhere in the store still makes the answer incomplete, and a run
+	// retention removed since the listing is simply gone.
+	source.page.Incomplete, source.gone = true, fmt.Sprintf("%032x", 420)
+	records, complete, err = sessionExecutions(source, "remote_mine")
+	if err != nil || complete || len(records) != 1 {
+		t.Fatalf("incomplete store = %+v, complete=%v, %v", records, complete, err)
 	}
 }
 

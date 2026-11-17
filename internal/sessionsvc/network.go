@@ -142,39 +142,38 @@ func sessionEvidence(bound session.Session) (*networkstate.Evidence, error) {
 	return networkstate.OpenEvidence(root, exposed)
 }
 
+// sessionExecutionSource is the part of the evidence reader sessionExecutions needs.
+type sessionExecutionSource interface {
+	ExecutionInventory() (networkstate.ExecutionPage, error)
+	Execution(id string) (networkstate.Execution, error)
+}
+
 // sessionExecutions lists every network run this session owns, newest launch last. The page's own
 // incompleteness travels with it: a truncated inventory can never prove that no other run exists.
-func sessionExecutions(evidence *networkstate.Evidence, sessionID string) ([]networkstate.Execution, bool, error) {
+// One inventory lists the store's folder once; paging it listed the folder again for every 100
+// records, after every filtered turn and on every session network read.
+func sessionExecutions(evidence sessionExecutionSource, sessionID string) ([]networkstate.Execution, bool, error) {
+	page, err := evidence.ExecutionInventory()
+	if err != nil {
+		return nil, false, err
+	}
+	complete := !page.Incomplete
 	var records []networkstate.Execution
-	complete, cursor := true, ""
-	for {
-		page, err := evidence.Executions(cursor)
+	for _, summary := range page.Executions {
+		if summary.SessionID != sessionID {
+			continue
+		}
+		record, err := evidence.Execution(summary.ID)
+		if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
+			// Retention removed this finished run since the inventory was read. A record
+			// that no longer exists hides nothing, so it is not an unreadable one.
+			continue
+		}
 		if err != nil {
-			return nil, false, err
-		}
-		if page.Incomplete {
 			complete = false
+			continue
 		}
-		for _, summary := range page.Executions {
-			if summary.SessionID != sessionID {
-				continue
-			}
-			record, err := evidence.Execution(summary.ID)
-			if errors.Is(err, networkstate.ErrEvidenceUnavailable) {
-				// Retention removed this finished run since the page was read. A record
-				// that no longer exists hides nothing, so it is not an unreadable one.
-				continue
-			}
-			if err != nil {
-				complete = false
-				continue
-			}
-			records = append(records, record)
-		}
-		if page.Next == "" {
-			break
-		}
-		cursor = page.Next
+		records = append(records, record)
 	}
 	slices.SortFunc(records, func(a, b networkstate.Execution) int {
 		if order := a.StartedAt.Compare(b.StartedAt); order != 0 {
