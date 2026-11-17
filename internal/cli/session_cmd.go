@@ -205,7 +205,7 @@ func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
 	} else if snapshot.Idle {
 		ui.Note("No queued or running work remains in the session store.")
 	} else {
-		ui.Note("Work remains: %d turns, %d operations, %d active sessions.", snapshot.ActiveTurns, snapshot.ActiveOperations, snapshot.ActiveSessions)
+		ui.Note("Work remains: %s, %s, %s.", ui.Count(snapshot.ActiveTurns, "turn"), ui.Count(snapshot.ActiveOperations, "operation"), ui.Count(snapshot.ActiveSessions, "active session"))
 	}
 	if !snapshot.Idle {
 		return 3, nil

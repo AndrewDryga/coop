@@ -637,7 +637,7 @@ func renderUsage(w io.Writer, pal ui.Palette, width int, now time.Time, names []
 					fact("Credential", "unknown · excluded from credential totals")
 				}
 				if row.unpricedTurns > 0 {
-					fact("Coop records", fmt.Sprintf("%d retained turns · unpriced aggregates, not added", row.unpricedTurns))
+					fact("Coop records", ui.Count(row.unpricedTurns, "retained turn")+" · unpriced aggregates, not added")
 				}
 				continue
 			}
@@ -965,7 +965,7 @@ func usageValueLabel(row usageCredential, details bool) string {
 				value += " · approximate token tariff"
 			}
 			if row.value.Unpriced > 0 {
-				value += fmt.Sprintf(" · %d unpriced events", row.value.Unpriced)
+				value += " · " + ui.Count(row.value.Unpriced, "unpriced event")
 			}
 		}
 	}
@@ -1004,7 +1004,7 @@ func usageFooter(details bool, retained session.UsageSnapshot, unattributed int,
 	}
 	var footer []string
 	if unattributed > 0 {
-		footer = append(footer, fmt.Sprintf("%d saved turns across this installation cannot be matched to a credential.", unattributed))
+		footer = append(footer, ui.Count(unattributed, "saved turn")+" across this installation cannot be matched to a credential.")
 	}
 	if retained.Truncated {
 		footer = append(footer, "Only part of the saved Coop turn history was read (read limit reached).")

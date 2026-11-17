@@ -507,4 +507,7 @@ func TestUsageFooterSaysOnlyWhatTheViewCouldNotShow(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("footer = %q, want %q", got, want)
 	}
+	if got := usageFooter(true, saved, 1, nil); !slices.Equal(got, []string{"1 saved turn across this installation cannot be matched to a credential."}) {
+		t.Errorf("footer for one turn = %q", got)
+	}
 }
