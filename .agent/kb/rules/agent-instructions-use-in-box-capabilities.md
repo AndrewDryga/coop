@@ -4,7 +4,7 @@ description: "agent-facing instructions name in-box capabilities, never host-sid
 scope: agent-workflow
 sources: [AGENTS.md, internal/scaffold/templates/AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: "none"
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -39,6 +39,9 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   falls back to the self-contained task-folder operation available in the box.
 
 ## Changelog
+- 2026-11-17 — follow-up sweep: the 2026-11-03 pass missed the filing lines. AGENTS.md and its
+  scaffold copy now name `tasks_propose` (kind task or backlog) beside every `coop tasks add` and
+  `coop backlog add`.
 - 2026-11-03 — interactive boxes gained the task tools. Swept AGENTS.md, its scaffold copy and both
   copies of the sweep skill: each now names the box's `coop-tasks` tools before the `PATH` check and
   the folder fallback. The work and review-board skills already route discovered work through "the
