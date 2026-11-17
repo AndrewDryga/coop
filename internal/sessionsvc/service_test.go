@@ -4246,6 +4246,55 @@ func TestSessionServiceCloseUsesKnownRuntimeCleanupWithoutStartupScan(t *testing
 	}
 }
 
+// A close the store will refuse for a queued turn must not first tear down the runtime that turn
+// is about to use. The refusal keeps the receipt a same-key retry replays.
+func TestSessionServiceCloseWithAQueuedTurnKeepsTheRuntime(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	runner := &closedCleaningRunner{}
+	service, err := openSessionFixture(t, Config{StateRoot: filepath.Join(t.TempDir(), "state"), Runner: runner}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	ctx := context.Background()
+	sess, err := service.CreateRemoteSession(ctx, "create-close-queued", service.request(t, "close-queued"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.Store().SubmitTurn(ctx, "turn-close-queued", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: queued.Revision}
+	if _, err := service.Close(ctx, "close-queued", req); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("close with a queued turn = %v", err)
+	}
+	if got := runner.closedCalls.Load(); got != 0 {
+		t.Fatalf("refused close ran closed cleanup %d times", got)
+	}
+	if op, err := service.Store().GetOperation(ctx, "close-queued"); err != nil || op.State != session.OperationFailed ||
+		op.ErrorCode != session.CodeInvalidSessionState {
+		t.Fatalf("refused close receipt = %+v, %v", op, err)
+	}
+	cancelled, err := service.CancelTurn(ctx, "cancel-close-queued", session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: queued.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked, err := service.GetSession(ctx, cancelled.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := service.Close(ctx, "close-drained", session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: parked.Revision})
+	if err != nil || closed.State != session.SessionClosed || runner.closedCalls.Load() != 1 {
+		t.Fatalf("close after the queue drained = %+v, %v, cleanups=%d", closed, err, runner.closedCalls.Load())
+	}
+}
+
 type periodicCleanupRunner struct {
 	calls      atomic.Int32
 	mu         sync.Mutex

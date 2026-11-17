@@ -2525,6 +2525,11 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 	if current.Revision != req.ExpectedRevision {
 		return session.Session{}, session.ErrRevisionConflict
 	}
+	if current.ActiveTurnID != "" || current.QueuedTurnCount != 0 {
+		// The store refuses this close; refuse it before tearing down the runtime the turn needs,
+		// with the same durable receipt the store would write.
+		return s.refuseCloseWithTurns(ctx, key, req)
+	}
 	if cleaner, ok := s.runner.(sessionRunnerClosedCleaner); ok {
 		if err := cleaner.CleanupClosedSession(ctx, current); err != nil {
 			s.runtimeCleanupFailed(current.ID)
@@ -2540,6 +2545,19 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 	}
 	closed, closeErr := s.store.CloseSession(ctx, key, req)
 	return closed, s.correlateOperationError(ctx, key, closeErr)
+}
+
+func (s *Service) refuseCloseWithTurns(ctx context.Context, key string, req session.CloseSessionRequest) (session.Session, error) {
+	op, replay, err := s.store.ReserveOperation(ctx, "CloseSession", key, req)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if replay {
+		return replaySessionOperation(op)
+	}
+	return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
+		Code: session.CodeInvalidSessionState, Detail: "session must have no active or queued turns",
+	})
 }
 
 // Closing quarantine proves only the private runtime stopped. It must not adopt,
