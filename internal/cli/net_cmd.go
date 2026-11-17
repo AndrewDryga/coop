@@ -1168,7 +1168,7 @@ func netCleanupBlocker(skipped string) string {
 
 func netRunErr(id string, err error) error {
 	if errors.Is(err, networkstate.ErrEvidenceUnavailable) || errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("no run %q was recorded here — 'coop net runs' shows the recorded ones", id)
+		return netUnknownRunErr(id) // a full ID from another project is listed only with --all-projects
 	}
 	return fmt.Errorf("network run %q: %w", id, err)
 }

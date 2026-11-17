@@ -1,2 +1,2 @@
 ✗ New runs need your approval
-  Review the requested changes: coop approve
+  Review changes: coop approve

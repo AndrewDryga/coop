@@ -1719,7 +1719,7 @@ func TestNetProjectIgnoresAPlantedWorktree(t *testing.T) {
 
 func TestNetRunErrPointsAtTheListing(t *testing.T) {
 	err := netRunErr("abc", networkstate.ErrEvidenceUnavailable)
-	if !strings.Contains(err.Error(), "coop net runs") || !strings.Contains(err.Error(), `"abc"`) {
+	if !strings.Contains(err.Error(), "coop net runs --all-projects") || !strings.Contains(err.Error(), `"abc"`) {
 		t.Errorf("netRunErr = %v", err)
 	}
 	if err := netRunErr("abc", errors.New("boom")); !strings.Contains(err.Error(), "boom") {

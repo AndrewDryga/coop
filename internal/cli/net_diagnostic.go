@@ -386,7 +386,7 @@ func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles ma
 			return netCheckAnswer{Pending: true, Verdict: netRefusedHeadline, Cause: access.Pending.Sentence() + " " + netRefusedFix}
 		}
 		return netCheckAnswer{Pending: true, Verdict: netPendingHeadline,
-			Cause: "Review the requested changes: coop approve"}
+			Cause: netPendingReview}
 	}
 	switch access.Mode {
 	case egress.Open:

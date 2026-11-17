@@ -102,7 +102,7 @@ func TestCurrentCheckAnswersForANewRun(t *testing.T) {
 		{"open", box.NetworkAccess{Mode: egress.Open}, "anything.example", 443, "✓ anything.example:443 is allowed — internet access is unrestricted.\n"},
 		{"offline", box.NetworkAccess{Mode: egress.None}, "api.anthropic.com", 443, "✗ api.anthropic.com:443 is blocked — internet access is disabled.\n"},
 		{"pending", box.NetworkAccess{Mode: egress.Filtered, Add: []egress.Rule{rule("new.example", 443)}, Pending: &networkstate.PendingApproval{Reason: "this project asks for network access that has not been approved"}}, "api.anthropic.com", 443,
-			"✗ New runs need your approval\n  Review the requested changes: coop approve\n"},
+			"✗ New runs need your approval\n  " + netPendingReview + "\n"},
 	}
 	for _, tc := range cases {
 		got := render(netCurrentCheck(tc.access, tc.host, tc.port, bundles))
