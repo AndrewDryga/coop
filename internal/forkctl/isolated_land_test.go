@@ -1394,6 +1394,26 @@ func TestLandStateNeverWritesThroughACoopLink(t *testing.T) {
 	}
 }
 
+// merge --all keeps a fork with nothing to land, also when an isolated fork sends the batch down
+// the mixed path, which used to merge (and so delete) an empty ordinary fork.
+func TestForkMergeAllMixedKeepsAnEmptyOrdinaryFork(t *testing.T) {
+	repo, isolatedWS, _, c := isolatedTestFork(t)
+	isolatedTestCommit(t, isolatedWS, "isolated.txt", "isolated work\n")
+	empty, err := forkspace.Setup(repo, "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := c.ForkMerge([]string{"--all", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("mixed merge = (%d, %v)", code, err)
+	}
+	if !pathExists(empty) {
+		t.Fatal("the batch deleted an ordinary fork with no new commits")
+	}
+	if body, err := os.ReadFile(filepath.Join(repo, "isolated.txt")); err != nil || string(body) != "isolated work\n" {
+		t.Fatalf("the isolated fork did not land: %q %v", body, err)
+	}
+}
+
 func TestForkMergeAllDispatchesMixedForksAndStopsAtRefusal(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		name := "success"

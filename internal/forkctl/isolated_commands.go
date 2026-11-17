@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -107,6 +108,14 @@ func (c *Control) forkMergeIsolatedBatch(repo string, names []string, force, yes
 				return code, err
 			}
 		} else {
+			// The single merge gives an empty fork a no-op landing and deletes it; a batch keeps it,
+			// as forkMergeAll does and the docs promise.
+			if empty, err := ordinaryForkHasNothingToLand(repo, name); err != nil {
+				return 1, err
+			} else if empty {
+				ui.Note("Skipped %s — no new commits or pending landing.", name)
+				continue
+			}
 			args := []string{name, "--yes"}
 			if force {
 				args = append(args, "--force")
@@ -117,6 +126,26 @@ func (c *Control) forkMergeIsolatedBatch(repo string, names []string, force, yes
 		}
 	}
 	return 0, nil
+}
+
+// ordinaryForkHasNothingToLand is mergeOneMode's skipEmpty test for an ordinary fork: no commit
+// the parent lacks, no interrupted land, and no task records left to finish.
+func ordinaryForkHasNothingToLand(repo, name string) (bool, error) {
+	if ForkUnmerged(repo, forkspace.Workspace(repo, name)) {
+		return false, nil
+	}
+	identity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
+	if err != nil || !hasGeneration {
+		return err == nil, err
+	}
+	if pending, err := ForkHasPendingLand(repo, identity); err != nil || pending {
+		return false, err
+	}
+	summary, err := tasks.ReadForkTaskStateSummary(repo, identity)
+	if err != nil {
+		return false, err
+	}
+	return !summary.Active(), nil
 }
 
 func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.Identity, stat, tool, open, gate bool) (int, error) {
