@@ -260,7 +260,7 @@ func TestUnscannedIgnoredFiles(t *testing.T) {
 	run("add", ".gitignore", "tracked.go")
 	run("commit", "-qm", "add")
 
-	if files, err := unscannedIgnoredFiles(listProject(repo)); len(files) != 1 || files[0] != "secret.txt" || err != nil {
+	if files, _, err := unscannedIgnoredFiles(listProject(repo)); len(files) != 1 || files[0] != "secret.txt" || err != nil {
 		t.Errorf("unscannedIgnoredFiles = %q, %v; want only secret.txt (.env shadowed, .agent/* now scanned by default, tracked.go committed)", files, err)
 	}
 }
@@ -484,7 +484,7 @@ func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
 		}
 	}
 	write("coop-network-approval-v3\n" + strings.Repeat("a", 64) + "\n" + strings.Repeat("b", 32) + "\n")
-	if got, err := unscannedIgnoredFiles(listProject(repo)); err != nil || len(got) != 0 {
+	if got, _, err := unscannedIgnoredFiles(listProject(repo)); err != nil || len(got) != 0 {
 		t.Fatalf("unchecked with a real marker = %v, %v", got, err)
 	}
 	for name, body := range map[string]string{
@@ -492,7 +492,7 @@ func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
 		"other file": "AWS_SECRET=x\n",
 	} {
 		write(body)
-		if got, err := unscannedIgnoredFiles(listProject(repo)); err != nil || !slices.Contains(got, networkstate.ProjectApprovalMarker) {
+		if got, _, err := unscannedIgnoredFiles(listProject(repo)); err != nil || !slices.Contains(got, networkstate.ProjectApprovalMarker) {
 			t.Errorf("%s: unchecked = %v, %v; want the marker listed", name, got, err)
 		}
 	}
@@ -593,5 +593,48 @@ func TestCheckSecretsEscapesFileNames(t *testing.T) {
 		if !strings.Contains(out, ui.SafeInline(name)) {
 			t.Errorf("report does not name %q escaped:\n%q", name, out)
 		}
+	}
+}
+
+// A folder the default scan cannot open is skipped and named, so a clean result never claims a
+// full scan; the scan still passes. --include-ignored, which promises the whole tree, still fails.
+func TestCheckSecretsNamesAFolderItCouldNotOpen(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root lists a mode-000 folder")
+	}
+	pinGitConfig(t)
+	repo, _ := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(repo, "locked")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "key.txt"), []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	out, code := runCheckSecrets(t, repo, nil)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0:\n%s", code, out)
+	}
+	for _, want := range []string{"1 folder could not be opened", "Files Git does not track in it were not checked:\n        locked\n",
+		"Fix the folder permissions, then run coop check-secrets again."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+
+	out, code = runCheckSecrets(t, repo, []string{"--include-ignored"})
+	if code != 1 || !strings.Contains(out, "Could not check project files") || !strings.Contains(out, "locked") {
+		t.Fatalf("--include-ignored = %d, want 1 naming locked:\n%s", code, out)
 	}
 }

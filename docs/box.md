@@ -231,7 +231,8 @@ Use `coop check-secrets` to look for credentials inside files. It reports each f
   them. Hiding a file from the box does not prevent committing or pushing it.
 - `--include-ignored` expands the scan to the whole visible tree.
 - If the scan can't read a file, it fails and names that file, so a permission error can't produce
-  a clean result.
+  a clean result. If it can't open a folder, the default scan still passes but names the folder
+  in a warning, since files Git does not track there were not checked; `--include-ignored` fails.
 - It also lists changed files that can affect what runs on your machine, such as commit hooks,
   editor or agent settings, Compose files and the Makefile. Review them before running anything.
   This separate report never changes the exit code.

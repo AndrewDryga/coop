@@ -54,9 +54,9 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	scan, err := scanVisibleTree(listing, includeIgnored)
 	// The default scan's blind spot is found before anything is printed: a .coopignore coop cannot
 	// read leaves it unknown, and stops the command as it stops the scan.
-	var unscanned []string
+	var unscanned, unlisted []string
 	if err == nil && !includeIgnored {
-		unscanned, err = unscannedIgnoredFiles(listing)
+		unscanned, unlisted, err = unscannedIgnoredFiles(listing)
 	}
 	if err != nil {
 		if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
@@ -69,18 +69,32 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Name the
 	// files --include-ignored would add, so the default's blind spot is visible.
 	warnUnscanned := func(said *bool) {
-		n := len(unscanned)
-		if n == 0 {
-			return
+		if n := len(unscanned); n > 0 {
+			verb, object := "were", "them"
+			if n == 1 {
+				verb, object = "was", "it"
+			}
+			blankBefore(said)
+			warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
+				fmt.Sprintf("The box can read %s:\n%s", object, fileList(unscanned)),
+				fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
 		}
-		verb, object := "were", "them"
-		if n == 1 {
-			verb, object = "was", "it"
+		// A folder coop could not open was skipped, not checked: every one is named, since a
+		// shortened list would again claim more than the scan saw.
+		if n := len(unlisted); n > 0 {
+			pronoun := "them"
+			if n == 1 {
+				pronoun = "it"
+			}
+			lines := make([]string, n)
+			for i, rel := range unlisted {
+				lines[i] = "  " + ui.SafeInline(rel)
+			}
+			blankBefore(said)
+			warnBlock(fmt.Sprintf("%s could not be opened", ui.Count(n, "folder")),
+				fmt.Sprintf("Files Git does not track in %s were not checked:\n%s", pronoun, strings.Join(lines, "\n")),
+				"Fix the folder permissions, then run "+retry+" again.")
 		}
-		blankBefore(said)
-		warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
-			fmt.Sprintf("The box can read %s:\n%s", object, fileList(unscanned)),
-			fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
 	}
 	if scan.checked == 0 && len(scan.unreadable) == 0 {
 		// Zero findings is not the same answer as zero files: a scan that had nothing to read
@@ -247,31 +261,41 @@ type treeScan struct {
 // files (in the full visible tree but not the commit-candidate set) that aren't shadowed. It tells
 // the user what --include-ignored would add, so a clean default scan isn't false assurance.
 // Returns none when git is unavailable (both sets fall back to the same full walk), and the
-// refusal of a .coopignore that coop cannot read, which leaves the list unknown.
-func unscannedIgnoredFiles(l *projectListing) ([]string, error) {
-	all, _, err1 := l.candidates(true)
-	scanned, _, err2 := l.candidates(false)
-	if err1 != nil || err2 != nil {
-		return nil, nil
+// refusal of a .coopignore that coop cannot read, which leaves the list unknown. unlisted names the
+// folders the walk could not open: whatever they hold was not checked, so the warning says so
+// rather than the scan claiming it looked everywhere.
+func unscannedIgnoredFiles(l *projectListing) (files, unlisted []string, err error) {
+	if !l.gitOK {
+		return nil, nil, nil
+	}
+	all, holes, err := l.visibleTree(true)
+	if err != nil {
+		return nil, nil, nil // the root itself; the scan above already read it, so nothing to add
+	}
+	for _, hole := range holes {
+		unlisted = append(unlisted, hole.rel)
+	}
+	scanned, _, err := l.candidates(false)
+	if err != nil {
+		return nil, nil, err
 	}
 	inScan := make(map[string]bool, len(scanned))
 	for _, r := range scanned {
 		inScan[r] = true
 	}
-	var out []string
 	for _, r := range all {
 		if inScan[r] {
 			continue // already scanned by default (incl. coop's .agent/ state)
 		}
 		hidden, err := l.shadowed(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !hidden && !isApprovalMarker(l.repo, r) {
-			out = append(out, r) // box-visible, user-gitignored, unprotected → a real blind spot
+			files = append(files, r) // box-visible, user-gitignored, unprotected → a real blind spot
 		}
 	}
-	return out, nil
+	return files, unlisted, nil
 }
 
 // isApprovalMarker reports whether rel is the network approval marker Coop keeps at the project
@@ -407,17 +431,28 @@ func listProject(repo string) *projectListing {
 // since a `coop run`/`shell`/`loop` bind-mounts the whole tree and a gitignored file is still
 // visible to the agent. Both fall back to the full walk when repo isn't a git work tree; usedGit
 // reports which list the caller got, so the result can say what it actually covered.
-func (l *projectListing) candidates(includeIgnored bool) (rels []string, usedGit bool, err error) {
+func (l *projectListing) candidates(includeIgnored bool) ([]string, bool, error) {
 	if !includeIgnored && l.gitOK {
 		// Also scan coop's own gitignored .agent/ working state — the box reads it (the task queue +
 		// backlog + agent notes), so a secret pasted into a task's .agent/.../log.md or state.md is a
 		// real exposure the commit-candidate set (gitignored excluded) misses.
 		return slices.Concat(l.commit, l.agent), true, nil
 	}
-	// git unavailable / not a work tree → the full walk (covers .agent too).
-	rels, err = walkVisibleTree(l.repo)
-	if err != nil || !includeIgnored {
-		return rels, false, err
+	// git unavailable / not a work tree → the full walk (covers .agent too). A scan over a folder it
+	// could not list would report a clean result over a hole, so here that fails the command.
+	rels, unlisted, err := l.visibleTree(includeIgnored)
+	if err == nil && len(unlisted) > 0 {
+		err = unlisted[0].err
+	}
+	return rels, false, err
+}
+
+// visibleTree is the full walk, widened by withCommit to every file Git would commit, plus the
+// folders the walk could not list.
+func (l *projectListing) visibleTree(withCommit bool) (rels []string, unlisted []unlistedDir, err error) {
+	rels, unlisted, err = walkVisibleTree(l.repo)
+	if err != nil || !withCommit {
+		return rels, unlisted, err
 	}
 	// The walk prunes dependency and build folders by name. A file Git would commit under one of
 	// them (vendor/key.pem) is in the default scan, so the wider scan keeps it too.
@@ -430,7 +465,7 @@ func (l *projectListing) candidates(includeIgnored bool) (rels []string, usedGit
 			rels = append(rels, rel)
 		}
 	}
-	return rels, false, nil
+	return rels, unlisted, nil
 }
 
 // ignoredAgentFiles lists the gitignored files under .agent/ — coop's own working state (the task
@@ -464,12 +499,24 @@ var skipScanDir = map[string]bool{
 
 // walkVisibleTree lists every repo-relative file, pruning .git and the obvious
 // dependency/build directories (see skipScanDir) — so a full-tree scan reaches gitignored
-// secrets without walking thousands of vendored files.
-func walkVisibleTree(repo string) ([]string, error) {
-	var rels []string
-	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
+// secrets without walking thousands of vendored files. A folder below the root that cannot be
+// listed is skipped and returned in unlisted, so the caller decides whether that hole fails the
+// command or is named in a warning; only an unreadable root is an error.
+func walkVisibleTree(repo string) (rels []string, unlisted []unlistedDir, err error) {
+	err = filepath.WalkDir(repo, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			if d == nil || p == repo {
+				return walkErr
+			}
+			rel, relErr := filepath.Rel(repo, p)
+			if relErr != nil {
+				return walkErr
+			}
+			unlisted = append(unlisted, unlistedDir{rel: filepath.ToSlash(rel), err: walkErr})
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			if skipScanDir[d.Name()] {
@@ -484,7 +531,13 @@ func walkVisibleTree(repo string) ([]string, error) {
 		rels = append(rels, filepath.ToSlash(rel))
 		return nil
 	})
-	return rels, err
+	return rels, unlisted, err
+}
+
+// unlistedDir is a folder the walk could not list, and why.
+type unlistedDir struct {
+	rel string
+	err error
 }
 
 // scanStatus separates the two reasons a file yields no content: coop chose not to read it, or
