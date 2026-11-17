@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1727,11 +1728,16 @@ func TestNetRunErrPointsAtTheListing(t *testing.T) {
 }
 
 func TestNetEventBoundRefusesAnOversizedView(t *testing.T) {
-	if err := netEventBound(netEventMaxBytes + 1); err == nil {
+	if err := netEventBound(netEventMaxBytes+1, false); err == nil {
 		t.Error("an oversized view was accepted")
 	}
-	if err := netEventBound(10); err != nil {
-		t.Errorf("netEventBound(10) = %v", err)
+	if err := netEventBound(10, false); err != nil {
+		t.Errorf("netEventBound(10, false) = %v", err)
+	}
+	// A JSON reader (--json, coop net export) is never told to use --json.
+	err := netWriteJSON(io.Discard, strings.Repeat("x", netEventMaxBytes))
+	if err == nil || strings.Contains(err.Error(), "--json") {
+		t.Errorf("oversized JSON view = %v, want the size without --json advice", err)
 	}
 }
 

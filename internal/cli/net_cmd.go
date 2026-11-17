@@ -1304,7 +1304,7 @@ func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current net
 			return err
 		}
 		data = append(data, '\n')
-		if err := netEventBound(len(data)); err != nil {
+		if err := netEventBound(len(data), true); err != nil {
 			return err
 		}
 		return netWriteAll(d.out, data)
@@ -1324,7 +1324,7 @@ func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current net
 	default:
 		netWatchAppend(&b, d.palette, current.ReadAt, netWatchDelta(*previous, current, networkreport.ShortID(d.id)))
 	}
-	if err := netEventBound(b.Len()); err != nil {
+	if err := netEventBound(b.Len(), false); err != nil {
 		return err
 	}
 	return netWriteAll(d.out, b.Bytes())
@@ -1499,7 +1499,7 @@ func netApprovalProject(override string) (string, error) {
 func netRender(w io.Writer, render func(*bytes.Buffer)) error {
 	var b bytes.Buffer
 	render(&b)
-	if err := netEventBound(b.Len()); err != nil {
+	if err := netEventBound(b.Len(), false); err != nil {
 		return err
 	}
 	return netWriteAll(w, b.Bytes())
@@ -1511,7 +1511,7 @@ func netWriteJSON(w io.Writer, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := netEventBound(len(data)); err != nil {
+	if err := netEventBound(len(data), true); err != nil {
 		return err
 	}
 	return netWriteAll(w, data)
@@ -1528,11 +1528,16 @@ func netWriteAll(w io.Writer, data []byte) error {
 	return nil
 }
 
-func netEventBound(size int) error {
-	if size > netEventMaxBytes {
-		return fmt.Errorf("this view is %d bytes, over the %d-byte limit — read it with --json instead", size, netEventMaxBytes)
+// netEventBound refuses a view over the size limit. The text view points at --json; the JSON view
+// already is that, so it only states the size.
+func netEventBound(size int, isJSON bool) error {
+	if size <= netEventMaxBytes {
+		return nil
 	}
-	return nil
+	if isJSON {
+		return fmt.Errorf("this view is %d bytes, over the %d-byte limit", size, netEventMaxBytes)
+	}
+	return fmt.Errorf("this view is %d bytes, over the %d-byte limit — read it with --json instead", size, netEventMaxBytes)
 }
 
 func netPortList(ports []int) string {
