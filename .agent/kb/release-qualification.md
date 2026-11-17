@@ -3,16 +3,17 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, .github/release-notes.md, release_test.go, internal/cli/help.go, internal/cli/selfupdate.go]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 Release `ci` locally calls ci.yml from the event commit; its Make-owned broad checks, Docker
-doctor and Docker review-write jobs must succeed before the privileged publisher starts.
+doctor, Docker review-write and `image-vuln` jobs must succeed before the privileged publisher
+starts (see [[supply-chain-checks]] for the image scan).
 Every checkout explicitly uses github.sha. CI remains contents-read only. It makes no live model
 calls and needs no live-provider run or version-specific waiver.
 
 The status-only `check` job runs even after a dependency fails and passes only when every free
-owner and both runtime jobs succeeded. Read-only jobs may cache modules and compiled objects;
+owner, both runtime jobs and the image scan succeeded. Read-only jobs may cache modules and compiled objects;
 tests rerun. The publisher remains fresh, uncached and without imported CI artifacts. See
 [[ci-free-checks]].
 
@@ -53,6 +54,7 @@ install, and a binary cannot repair its own release source. This exits non-zero 
 A repository's first release has no `releases/latest` until it is published; check it again then.
 
 ## Changelog
+- 2026-11-17 — the release also waits on the image-vuln job (audit K4-3; checked the check job's needs in ci.yml and release.yml).
 - 2026-11-03 — added the pre-tag address check after `coop update --check` met a 404 from a moved
   release source; all 5 addresses on main answered 200, and a missing repository fails it.
 - 2026-10-17 — isolated release Git queries and moved remote authority into workflow context;
