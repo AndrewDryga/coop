@@ -495,7 +495,7 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -745,7 +745,7 @@ state, prompts and credentials.
 | `POST` | `/v1/sessions` | `task`, `job`, `expected_job_digest`, and optional `controller_tools` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
-| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`. The job must turn on warm execution. |
+| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`. The job must turn on warm execution. Returns the session; prepare records no operation. |
 | `POST` | `/v1/sessions/{session_id}/workspace` | `expected_revision`, `task`. The session must be open, writable and unused. |
 
 A session stored in `readonly` or `bare` mode is quarantined at startup and never runs; a new turn
@@ -844,7 +844,7 @@ curl --unix-socket "$SOCKET" \
 
 | Method | Path | Body/query |
 | --- | --- | --- |
-| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`. Optional: `artifacts`, `min_target_index`, `rewind_target`, `output_contract` |
+| `POST` | `/v1/sessions/{session_id}/turns` | `expected_revision`, `prompt`. Optional: `artifacts`, `min_target_index`, `rewind_target`, `output_contract`, `controller_tools` |
 | `GET` | `/v1/sessions/{session_id}/turns?after=0&limit=100` | Continue after the numbered turn given by the cursor |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}` | none |
 | `GET` | `/v1/sessions/{session_id}/turns/{turn_id}/artifacts/{artifact_id}` | raw generated image |
@@ -859,6 +859,10 @@ confirm cleanup, the API returns `503 session_cleanup_error`. The candidate rema
 That failed operation is finished: retrying its idempotency key returns the same failure. After
 the background cleaner or an operator fixes cleanup, fetch the current candidate and submit your
 decision with a new idempotency key.
+
+A turn's `controller_tools` replaces the session's tool endpoint for that turn only; without it
+the turn uses the session's. Sessions and turns report the binding they used as
+`controller_tools_digest`, never its token.
 
 The public turn response excludes the prompt, idempotency data, `min_target_index` and
 `rewind_target`. You can see the effect of those last two settings in the session's `target`

@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -146,6 +148,16 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 	messages, ok := document["review_commit_message_versions"].([]any)
 	if !ok || len(messages) != 1 || messages[0] != float64(1) {
 		t.Fatalf("review commit message versions = %#v", document["review_commit_message_versions"])
+	}
+	// The documented example is what a controller author copies; it must be the whole answer.
+	reference, err := os.ReadFile(filepath.Join("..", "..", "docs", "session-api.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := regexp.MustCompile("(?m)^\\| `GET` \\| `/v1/capabilities` \\| `([^`]+)`").FindSubmatch(reference)
+	var documented map[string]any
+	if example == nil || json.Unmarshal(example[1], &documented) != nil || !reflect.DeepEqual(documented, document) {
+		t.Fatalf("docs/session-api.md capabilities example = %s, daemon answers %s", example, response.Body.String())
 	}
 }
 
