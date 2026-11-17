@@ -394,6 +394,9 @@ func helpLayoutProblems(page string) []string {
 				problems = append(problems, fmt.Sprintf("heading %q needs its content directly beneath it", line))
 			}
 			headings = append(headings, name)
+		case strings.EqualFold(line, "Example:") || strings.EqualFold(line, "Examples:"):
+			// Title case reads to helpLabel as a closing pointer, so the heading rule never saw it.
+			problems = append(problems, "the heading is EXAMPLES, even over one example")
 		case helpPointer.MatchString(line) || helpLabel(lines, i):
 			if !closing && lines[i-1] != "" {
 				problems = append(problems, fmt.Sprintf("a blank line separates the closing pointers from the last section:\n%s\n%s", lines[i-1], line))

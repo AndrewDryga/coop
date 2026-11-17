@@ -2081,7 +2081,7 @@ Usage: coop setup apparmor
   coop doctor asks, such as after an update changes the profile.
   Requires Docker to be running.
 
-Example:
+EXAMPLES
   coop setup apparmor`,
 
 	"net setup": `coop net setup: prepare this host for filtered networking
