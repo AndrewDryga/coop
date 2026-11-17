@@ -142,9 +142,7 @@ main:focus { outline: none; }
 
 /* Sections */
 .section { margin-top: var(--section); padding-top: var(--section); border-top: 1px solid var(--divider); }
-.section-head { max-width: 42rem; }
-.section-head p { margin-top: 24px; font-size: 1.25rem; line-height: 1.6; }
-.hero-lead, .section-head p { text-wrap: balance; }
+.hero-lead { text-wrap: balance; }
 
 /* The picture: the home folder as the agent sees it, in one card titled with the agent. The project
    sits last, inside the sandbox's wall, so the sandbox's floor is the card's floor; below the card,
@@ -406,7 +404,7 @@ main:focus { outline: none; }
   .agents:has([data-agent="gemini"][aria-checked="true"]) { --i: 2; }
   .agents:has([data-agent="grok"][aria-checked="true"]) { --i: 3; }
 }
-.section-head .more, .more { margin-top: 32px; font-size: 1.125rem; font-weight: 600; }
+.more { margin-top: 32px; font-size: 1.125rem; font-weight: 600; }
 .more a { text-decoration: none; }
 
 /* Related products follow installation, with quieter links than the primary action. */
@@ -984,7 +982,6 @@ html:has(.docs-search[open]) { overflow: hidden; }
   .providers li { gap: 8px; }
   .actions { margin-top: 24px; }
   .actions .button { flex: 1 1 auto; padding-inline: 16px; }
-  .section-head p { font-size: 1.125rem; }
   .window { border-radius: 14px; }
   .window pre { padding: 20px 16px; }
   /* a phone's terminals: about 40 columns, long lines wrap under their indent */
