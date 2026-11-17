@@ -261,8 +261,8 @@ func (b *openBroker) labels(owner []string) []string {
 // and waits for it to report the address it listens on. It runs with an open stdin pipe, like the
 // task channel: EOF — this Coop exiting, however it ends — stops it, and `--rm` removes it. Once
 // start is called, the caller stops the helper on every path, whatever start returned.
-func (b *openBroker) start(ctx context.Context, rt runtime.Runtime, repo, artifactParent, network string, owner []string, building func(), exposed ...string) error {
-	image, err := ensureOpenBrokerImage(ctx, rt, building)
+func (b *openBroker) start(ctx context.Context, cfg *config.Config, rt runtime.Runtime, repo, artifactParent, network string, owner []string, building func(), exposed ...string) error {
+	image, err := ensureOpenBrokerImage(ctx, cfg, rt, building)
 	if err != nil {
 		return err
 	}
@@ -385,14 +385,17 @@ func (b *openBroker) stop(rt runtime.Runtime) error {
 	return err
 }
 
-// ensureOpenBrokerImage is the gateway image the helper runs, built on first use as network setup
-// builds it: from the release's embedded recipe and sources, never from the workspace.
-func ensureOpenBrokerImage(ctx context.Context, rt runtime.Runtime, building func()) (string, error) {
+// ensureOpenBrokerImage is the gateway image an open run's helpers run (the MCP credential broker and
+// the sign-in broker), built on first use as network setup builds it: from the release's embedded
+// recipe and sources, never from the workspace. The helpers run it by tag, so each use is recorded
+// the way a filtered run records the pair it was set up with, and reclaim keeps it.
+func ensureOpenBrokerImage(ctx context.Context, cfg *config.Config, rt runtime.Runtime, building func()) (string, error) {
 	tag := gatewayimage.Tag()
 	var label bytes.Buffer
 	format := `{{index .Config.Labels "` + gatewayimage.BuildLabel + `"}}`
 	if code, err := rt.RunInterruptible(ctx, nil, &label, io.Discard, "image", "inspect", "--format", format, tag); err == nil && code == 0 &&
 		strings.TrimSpace(label.String()) == gatewayimage.Fingerprint() {
+		markImageUsed(cfg, tag)
 		return tag, nil
 	}
 	if building != nil {
@@ -410,8 +413,9 @@ func ensureOpenBrokerImage(ctx context.Context, rt runtime.Runtime, building fun
 	var stderr bytes.Buffer
 	code, err := rt.RunInterruptible(ctx, bytes.NewReader(source), io.Discard, &stderr, append(args, "-")...)
 	if err != nil || code != 0 {
-		return "", fmt.Errorf("build the MCP credential broker image: %s", boundedCause(lastLines(stderr.String(), 4), exitError(code, err)))
+		return "", fmt.Errorf("build the image for Coop's credential broker: %s", boundedCause(lastLines(stderr.String(), 4), exitError(code, err)))
 	}
+	markImageUsed(cfg, tag)
 	return tag, nil
 }
 

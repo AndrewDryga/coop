@@ -328,11 +328,11 @@ func (s *launchSections) legacyMCP(servers []string) {
 		ui.Count(len(servers), "MCP server"), strings.Join(servers, ", "))
 }
 
-// brokerImage says why an open run's first start is slow: the helper that keeps its MCP secrets is
-// built from Coop's own gateway sources on first use.
+// brokerImage says why an open run's first start is slow: the helpers that keep its MCP secrets and
+// its sign-in are built from Coop's own gateway sources on first use.
 func (s *launchSections) brokerImage() {
 	if s.on {
-		ui.Note("  Building the image for Coop's MCP credential broker; the first build takes a few minutes")
+		ui.Note("  Building the image for Coop's credential broker; the first build takes a few minutes")
 	}
 }
 

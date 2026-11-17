@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -348,6 +349,43 @@ func TestOpenBrokerRebuildsStaleImageBeforeLaunching(t *testing.T) {
 			}
 			if err != nil || code != 0 || helperAt <= buildAt || boxAt <= helperAt || !strings.Contains(log, gatewayimage.Tag()+" broker") {
 				t.Fatalf("launch order: code=%d err=%v log=%s", code, err, log)
+			}
+		})
+	}
+}
+
+// Both helpers beside an open run, the MCP broker and the sign-in broker, run the gateway image by
+// tag, so getting it records a use whichever helper asked: an open run with a signed-in agent and
+// no MCP file keeps it from reclaim too. A build that fails records nothing and names the image
+// for what it is, not for the MCP helper alone.
+func TestOpenBrokerImageRecordsItsUse(t *testing.T) {
+	for _, current := range []bool{true, false} {
+		t.Run(map[bool]string{true: "current image", false: "failed build"}[current], func(t *testing.T) {
+			cfg := &config.Config{BoxHome: t.TempDir()}
+			label := "stale-definition"
+			if current {
+				label = gatewayimage.Fingerprint()
+			}
+			shim := filepath.Join(t.TempDir(), "docker")
+			writeRepoFile(t, shim, "#!/bin/sh\n"+
+				"case \"$1 $2\" in \"image inspect\") printf '%s\\n' "+strconv.Quote(label)+"; exit 0 ;; esac\n"+
+				"case \"$1\" in info) printf 'linux/amd64\\n'; exit 0 ;; build) cat > /dev/null; echo 'no space left' >&2; exit 1 ;; esac\nexit 0\n")
+			if err := os.Chmod(shim, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := ensureOpenBrokerImage(context.Background(), cfg, runtime.Runtime{Name: shim}, nil)
+			_, statErr := os.Stat(imageUsePath(cfg, gatewayimage.Tag()))
+			if current {
+				if err != nil || statErr != nil {
+					t.Fatalf("current gateway image: err=%v, use record: %v", err, statErr)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "Coop's credential broker") || strings.Contains(err.Error(), "MCP") {
+				t.Fatalf("failed build error = %v", err)
+			}
+			if statErr == nil {
+				t.Fatal("a failed build recorded a use of the gateway image")
 			}
 		})
 	}

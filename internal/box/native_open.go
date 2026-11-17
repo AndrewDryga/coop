@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
@@ -25,7 +26,7 @@ type nativeOpenOwner struct {
 	done   chan error
 }
 
-func startNativeOpen(ctx context.Context, rt runtime.Runtime, run *nativeRun, network string, options, owner []string, building func()) (*nativeOpenOwner, error) {
+func startNativeOpen(ctx context.Context, cfg *config.Config, rt runtime.Runtime, run *nativeRun, network string, options, owner []string, building func()) (*nativeOpenOwner, error) {
 	if run == nil || run.dir == "" {
 		return nil, errors.New("native broker private state is unavailable")
 	}
@@ -35,7 +36,7 @@ func startNativeOpen(ctx context.Context, rt runtime.Runtime, run *nativeRun, ne
 	if network == "host" || network == "none" || strings.HasPrefix(network, "container:") {
 		return nil, errors.New("native credentials require a private run namespace; use an ordinary bridge or services network")
 	}
-	tag, err := ensureOpenBrokerImage(ctx, rt, building)
+	tag, err := ensureOpenBrokerImage(ctx, cfg, rt, building)
 	if err != nil {
 		return nil, err
 	}

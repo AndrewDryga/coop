@@ -23,7 +23,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/consult"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
-	"github.com/AndrewDryga/coop/internal/gatewayimage"
 	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/networkgateway"
 	"github.com/AndrewDryga/coop/internal/preset"
@@ -1208,9 +1207,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if open, openKept, err = planOpenBroker(cfg, rt, spec, mcpSnapshot); err != nil {
 			return -1, err
 		}
-		// The helper beside the box runs the gateway image by tag, so this run keeps it alive the
-		// same way a filtered run keeps the pair it was set up with.
-		markImageUsed(cfg, gatewayimage.Tag())
 	}
 	accounts := launchAccounts(cfg, spec, brokerPlan)
 	sections.accounts(accounts)
@@ -1862,7 +1858,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			brokerCtx = context.Background()
 		}
 		network := openBrokerNetwork(networkName, cfg.ExtraRunArgs, spec.ExtraArgs)
-		if err := open.start(brokerCtx, rt, spec.Repo, artifacts.parent, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
+		if err := open.start(brokerCtx, cfg, rt, spec.Repo, artifacts.parent, network, ownerLabels(spec), sections.brokerImage, privateRoots...); err != nil {
 			return finish(-1, err)
 		}
 		spec.ExtraArgs = append(spec.ExtraArgs, open.hostArgs()...)
@@ -1935,7 +1931,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				ownerOptions = append(ownerOptions, "-p", fmt.Sprintf("127.0.0.1:%d:%d", port.bound(), port.Port))
 			}
 		}
-		owner, startErr := startNativeOpen(nativeCtx, rt, spec.native, ownerNetwork, ownerOptions, ownerLabels(spec), sections.brokerImage)
+		owner, startErr := startNativeOpen(nativeCtx, cfg, rt, spec.native, ownerNetwork, ownerOptions, ownerLabels(spec), sections.brokerImage)
 		if owner != nil {
 			defer func() {
 				if err := owner.close(); err != nil {
