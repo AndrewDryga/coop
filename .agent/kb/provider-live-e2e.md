@@ -3,7 +3,7 @@ name: provider-live-e2e
 description: Probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 subsystem: testing
 sources: [Makefile, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/image.go, internal/box/run.go, internal/testutil/liveprovider/credentials.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/copytree.go, internal/testutil/liveprovider/orchestration.go, internal/testutil/liveprovider/cleanup.go, internal/cli/provider_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/loop/live_stream_probe.go, internal/loop/provider_accounts_live_e2e_test.go, internal/loop/provider_accounts_live_credentials_test.go, internal/cli/provider_loop_task_channel_live_test.go, internal/cli/provider_loop_task_observation_live_test.go, internal/acpproxy/e2e_test.go, internal/acpproxy/rpcclient_test.go, live_selection_test.go]
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 
 `make provider-live-e2e COOP_LIVE_TARGETS='...'` is the permissive prerequisite probe;
@@ -172,7 +172,8 @@ the selected host-vault or env-backed API-key mode. The no-quota version probe s
 skips.
 
 Triage a `skipped` result as a prerequisite: `missing_runtime`, `missing_image`, `missing_cli`, or
-`missing_credential` needs local setup; `credential_refresh_required` needs re-authentication;
+`missing_credential` needs local setup; `credential_refresh_required` needs trusted-source renewal,
+not necessarily re-login (see [[sign-in-again-is-actionable]]);
 `credential_not_portable` needs an env-backed key; `ring_prerequisite` means the consult ring admitted
 zero paid calls. A `failed` result after `attempted=true` is upstream compatibility or provider
 behavior. `repository_changed`, `source_changed`, `cleanup_failed`, and `harness_failed` are local
@@ -180,6 +181,7 @@ isolation failures and take precedence over a provider result. Stable summaries 
 raw output; reproduce behavior in the deterministic fixture.
 
 ## Changelog
+- 2026-11-17 — credential_refresh_required now reads as trusted-source renewal, matching provider-consult-e2e (audit K4-1).
 - 2026-11-04 — dropped the sentence on the removed `cooplivetest` machinery from the live ACP
   teardown paragraph; the 2026-10-15 entry below records the removal. Teardown order, the label
   sweep and `make live-process-control` are unchanged.
