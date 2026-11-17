@@ -159,4 +159,29 @@ func TestNativeOrdinaryFilteredProxyRefusesBeforeResolving(t *testing.T) {
 	if exchanges.Load() != 0 {
 		t.Fatalf("denied proxy resolved upstream %d times", exchanges.Load())
 	}
+	// The client never resolves a name itself, so these refusals are the only evidence a person
+	// has of what to approve.
+	type refusal struct {
+		name   string
+		port   int
+		reason string
+	}
+	want := []refusal{
+		{"", 0, "tls_proxy_request_invalid"},
+		{"forbidden.example.com", 443, "unapproved_name"},
+		{"", 0, "tls_proxy_request_invalid"}, // no port: the target does not parse
+		{"api.example.com", 443, "tls_proxy_request_invalid"},
+		{"one.services.example.com", 443, "tls_name_mismatch"},
+	}
+	events, _ := fixture.guard.events.Drain(MaxGuardEvents)
+	var got []refusal
+	for _, event := range events {
+		if event.Kind != "tls_denied" {
+			t.Fatalf("unexpected proxy event %+v", event)
+		}
+		got = append(got, refusal{event.Name, event.Port, event.Reason})
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("proxy refusals recorded %v, want %v", got, want)
+	}
 }

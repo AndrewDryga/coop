@@ -191,12 +191,18 @@ type nativeRunRuntime struct {
 func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 	var handler http.Handler = r.fallback
 	if len(r.config.Downloads) != 0 {
+		// A download refusal is the run's evidence like any other. An open run keeps no gateway
+		// record, so there its brokers write to a sink nobody reads.
+		events := r.events
+		if events == nil {
+			events = NewGuardEvents(nil)
+		}
 		var downloads []*credentialBroker
 		for _, route := range r.config.Downloads {
 			if !route.valid() || route.Kind != CredentialBrokerDownload || r.dial[route.Upstream] == nil {
 				return Failure("native_broker_configuration_invalid")
 			}
-			broker := &credentialBroker{route: route, address: NativeProxyAddress, events: NewGuardEvents(nil), slots: make(chan struct{}, maxCredentialBrokerFlows), lifecycle: ctx}
+			broker := &credentialBroker{route: route, address: NativeProxyAddress, events: events, slots: make(chan struct{}, maxCredentialBrokerFlows), lifecycle: ctx}
 			broker.setTransport(r.dial[route.Upstream])
 			defer broker.transport.CloseIdleConnections()
 			downloads = append(downloads, broker)
@@ -213,6 +219,7 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 					return
 				}
 			}
+			events.emit(GuardEvent{Kind: "admission_failed", Reason: "credential_broker_request_refused"})
 			http.Error(w, "native download refused", http.StatusForbidden)
 		})
 	}
@@ -322,7 +329,14 @@ func (p *nativeOrdinaryProxy) ServeHTTP(w http.ResponseWriter, request *http.Req
 		return
 	}
 	if request.Method != http.MethodConnect {
-		if p.guard != nil || request.URL == nil || request.URL.Scheme != "http" || request.URL.Host == "" ||
+		if p.guard != nil {
+			// Every HTTPS client in a filtered box comes through here, so its refusals are recorded
+			// as the guard's service proxy records them: nothing else sees these names.
+			p.guard.events.emit(GuardEvent{Kind: "tls_denied", Reason: "tls_proxy_request_invalid"})
+			http.Error(w, "proxy request refused", http.StatusForbidden)
+			return
+		}
+		if request.URL == nil || request.URL.Scheme != "http" || request.URL.Host == "" ||
 			request.URL.User != nil || request.Header.Get("Proxy-Authorization") != "" {
 			http.Error(w, "proxy request refused", http.StatusForbidden)
 			return
@@ -341,10 +355,17 @@ func (p *nativeOrdinaryProxy) ServeHTTP(w http.ResponseWriter, request *http.Req
 	if p.guard != nil {
 		name, nameErr = egress.NormalizeDomain(host, false)
 	}
-	if err != nil || portErr != nil || nameErr != nil || host == "" || strings.ContainsAny(host, "/\\\x00\r\n \t") || port < 1 || port > 65535 || request.URL == nil ||
+	invalid := err != nil || portErr != nil || nameErr != nil || host == "" || strings.ContainsAny(host, "/\\\x00\r\n \t") || port < 1 || port > 65535 || request.URL == nil ||
 		request.URL.Host != request.Host || request.URL.Path != "" || request.ContentLength > 0 ||
-		len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" ||
-		p.guard != nil && !p.guard.policy.Domain(name, port).Allowed {
+		len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != ""
+	if invalid || p.guard != nil && !p.guard.policy.Domain(name, port).Allowed {
+		if p.guard != nil {
+			reason := "unapproved_name"
+			if invalid {
+				reason = "tls_proxy_request_invalid"
+			}
+			p.guard.events.emit(GuardEvent{Kind: "tls_denied", Name: name, Port: port, Reason: reason})
+		}
 		http.Error(w, "proxy request refused", http.StatusForbidden)
 		return
 	}
@@ -368,6 +389,11 @@ func (p *nativeOrdinaryProxy) ServeHTTP(w http.ResponseWriter, request *http.Req
 		}
 		hello, err := Inspect(admission, stream, p.guard.policy, port)
 		if err != nil || hello.Name != name {
+			reason := safeReason(err)
+			if err == nil {
+				reason = "tls_name_mismatch"
+			}
+			p.guard.events.emit(GuardEvent{Kind: "tls_denied", Name: hello.Name, Port: port, Reason: reason})
 			return
 		}
 		p.guard.forwardTLS(p.ctx, admission, stream, EnvoyDataSocket, port, hello, "")

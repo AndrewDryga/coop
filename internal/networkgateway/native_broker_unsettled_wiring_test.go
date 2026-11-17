@@ -171,3 +171,102 @@ func TestNativeRuntimeRecordsBrokerRefusalsAsRunEvidence(t *testing.T) {
 	}
 	t.Fatalf("the runtime's broker refusal never reached the run's events: %+v", refusals)
 }
+
+// A native download route is the box's only path to a host its policy does not grant, so what it
+// refuses must reach the run's denials, not a queue nobody drains.
+func TestNativeRuntimeRecordsDownloadRefusalsAsRunEvidence(t *testing.T) {
+	events := NewGuardEvents(nil)
+	runtime := &nativeRunRuntime{events: events,
+		config: NativeRunConfig{Downloads: []CredentialBrokerRoute{{Name: "download", Kind: CredentialBrokerDownload,
+			Upstream: "downloads.example.com", Port: 443, Allow: []BrokerRequestLine{{Method: http.MethodGet, Path: "/public"}}}}},
+		dial: map[string]func(context.Context, string, string) (net.Conn, error){
+			"downloads.example.com": func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("no upstream in this test")
+			},
+		},
+		fallback: http.NotFoundHandler(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ready, done := make(chan struct{}), make(chan error, 1)
+	go func() { done <- runtime.serve(ctx, func() { close(ready) }) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("native runtime did not start: %v", err)
+	case <-time.After(wait.Deadline):
+		t.Fatal("native runtime did not start")
+	}
+	client := &http.Client{Timeout: wait.Deadline}
+	for _, test := range []struct{ path, authorization string }{
+		{"/public", "Bearer smuggled"},
+		{"/private", ""},
+	} {
+		request, err := http.NewRequest(http.MethodGet, "http://"+NativeProxyAddress+test.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.authorization != "" {
+			request.Header.Set("Authorization", test.authorization)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s: status %d, want a refusal", test.path, response.StatusCode)
+		}
+	}
+	refusals, _ := events.Drain(MaxGuardEvents)
+	var reasons []string
+	for _, event := range refusals {
+		if event.Kind == "admission_failed" {
+			reasons = append(reasons, event.Reason)
+		}
+	}
+	if len(reasons) != 2 || reasons[0] != "credential_broker_credential_refused" || reasons[1] != "credential_broker_request_refused" {
+		t.Fatalf("download refusals recorded %v (%+v)", reasons, refusals)
+	}
+}
+
+// An open run keeps no gateway record; its download refusals must still not panic.
+func TestNativeOpenRuntimeRefusesDownloadsWithoutARecord(t *testing.T) {
+	runtime := &nativeRunRuntime{
+		config: NativeRunConfig{Downloads: []CredentialBrokerRoute{{Name: "download", Kind: CredentialBrokerDownload,
+			Upstream: "downloads.example.com", Port: 443, Allow: []BrokerRequestLine{{Method: http.MethodGet, Path: "/public"}}}}},
+		dial: map[string]func(context.Context, string, string) (net.Conn, error){
+			"downloads.example.com": func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("no upstream in this test")
+			},
+		},
+		fallback: http.NotFoundHandler(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ready, done := make(chan struct{}), make(chan error, 1)
+	go func() { done <- runtime.serve(ctx, func() { close(ready) }) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("native runtime did not start: %v", err)
+	case <-time.After(wait.Deadline):
+		t.Fatal("native runtime did not start")
+	}
+	client := &http.Client{Timeout: wait.Deadline}
+	for _, path := range []string{"/private", "/public"} {
+		request, err := http.NewRequest(http.MethodGet, "http://"+NativeProxyAddress+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer smuggled")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s: status %d, want a refusal", path, response.StatusCode)
+		}
+	}
+}
