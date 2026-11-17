@@ -3,7 +3,7 @@ name: repository-path-keys
 description: what Coop keys by the repository's path, which keys resolve links first and which take the spelling as given, what a spelling change moves (forks, images, serve ports, agent history), and why paths recorded in fork state match by folder
 subsystem: box
 sources: [internal/box/repo.go, internal/cli/build_cmd.go, internal/cli/cli.go, internal/cli/loop_cmd.go, internal/forkspace/forkspace.go, internal/box/image.go, internal/box/derived_image.go, internal/box/run.go, internal/box/history.go, internal/project/project.go, internal/tasks/lease.go, internal/tasks/identity.go, internal/tasks/queue.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/dir.go, internal/tasks/snapshot.go, internal/loop/lock.go, internal/networkstate/authority.go, internal/cli/commands.go, internal/cli/context.go, internal/cli/doctor.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 `box.ResolveRepo` names the project for nearly every command: the folder `FindRepo` walks to from
@@ -18,7 +18,8 @@ project: login's box works in an empty folder of its sign-in stage and mounts no
 (`doctorProject`) falls back to the shared image and skips the box survey, saying why.
 `coop build --egress open` or `offline` needs none either: from there `cmdBuild` plans the shared
 image with an empty repo, which reads no folder; a filtered build and a plain `coop build`, whose
-mode is the project's, still refuse. That string feeds two kinds of key.
+mode is the project's, still refuse. `coop update`'s box step from the home folder rebuilds the
+shared image the same way (`cmdUpdate`). That string feeds two kinds of key.
 
 **Resolved before use**, so a different spelling of the same folder keeps them: Compose project and
 network names and sidecar port scopes, filtered project image tags (`ComposeProject`, `canonicalWorkspace` in repo.go), native
@@ -60,6 +61,7 @@ repository through `COOP_REPO` must resolve it first on macOS, where `/var` link
 `/private/var`, or each expectation built from it spells the project differently from Coop.
 
 ## Changelog
+- 2026-11-17 — named the update command's box step among the home-folder exceptions (audit K4-6; checked cmdUpdate in internal/cli/build_cmd.go).
 - 2026-11-06 — `LatestForkTaskLog` became `ForkTaskNotes`, which reads every reviewed task's log the
   same way (task 2026-11-06-say-why-a-loop-review-receipt-was-refused-and-sh).
 - 2026-11-06 — a box launch refuses a `COOP_REPO` at the home folder or above before any Docker work;
