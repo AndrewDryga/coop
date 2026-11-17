@@ -304,8 +304,9 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 		// A record from an earlier enforcement contract or record version is not this host's
 		// setup: its canonical frame and id no longer verify under the current rules.
 		// Skip it instead of failing the whole listing, so one retired record cannot
-		// take every net verb down; the current-contract check in RequireLaunch still
-		// refuses to launch on it, and a launch then sets the host up again.
+		// take every net verb down. A skipped record is never launched on: no listing
+		// returns it, Store.Qualification refuses it by id (canonicalQualification),
+		// and a launch then sets the host up again.
 		if !s.qualificationIsCurrent(name) {
 			continue
 		}
