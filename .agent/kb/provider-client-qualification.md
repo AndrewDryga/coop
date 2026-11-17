@@ -2,8 +2,8 @@
 name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
-sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go]
-updated: 2026-11-08
+sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go, internal/acpctl/network.go, internal/acpctl/control.go, internal/acpctl/visible_selects.go, internal/box/mcp_broker_test.go, internal/ladder/limit_test.go, internal/cli/scripted_skills_process_e2e_test.go, internal/cli/scripted_mcp_process_e2e_test.go, internal/box/testdata/mcpprobe/main.go]
+updated: 2026-11-17
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -245,6 +245,7 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K4-7; checked with grep).
 - 2026-11-08 — every client moved to its latest release: Claude Code 2.1.319, claude-agent-acp 0.101.0
   (SDK claude 2.1.318, ACP SDK 2.4.0), Codex 0.166.0 (not 0.167.0: codex-acp 2.6.0 requires ^0.166.0
   and both must run one native binary), codex-acp 2.6.0, Grok 1.0.77, Playwright 1.65.0; Gemini 0.67.0

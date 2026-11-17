@@ -2,8 +2,8 @@
 name: provider-session-history
 description: Native session layouts, lookup bounds, and the large-history regression contract; the pre-v11 import is gone
 subsystem: testing
-sources: [internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/session_history_large_test.go, internal/agent/history_json.go, internal/box/native_home.go, internal/box/history.go, internal/cli/resume_note.go]
-updated: 2026-11-06
+sources: [internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/session_history_large_test.go, internal/agent/history_json.go, internal/box/native_home.go, internal/box/history.go, internal/cli/resume_note.go, internal/agent/agent.go, internal/box/usage.go]
+updated: 2026-11-17
 ---
 
 Resume is exact by provider, account, cwd, and canonical UUID. Claude checks one
@@ -36,6 +36,7 @@ time and allocations diagnostically; it has no machine-sensitive threshold. Do n
 index or cache unless this evidence first demonstrates a real bound the adapters cannot meet.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K4-7; checked with grep).
 - 2026-11-06 — added the post-run resume line for `coop claude` (task
   2026-11-06-hide-claude-s-own-resume-hint-behind-a-coop-term), read against the installed Claude
   2.1.312: its exit hint code (`printResumeHint`, gated on a TTY and the transcript file) and its
