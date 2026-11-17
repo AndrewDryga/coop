@@ -108,7 +108,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [provider-live-e2e](provider-live-e2e.md) — probe installed upstream CLIs with isolated read-only, native-resume, and task-completion workflows
 - [provider-client-qualification](provider-client-qualification.md) — locked clients, conformance rows, on-demand live suites and the client bump procedure
 - [provider-session-history](provider-session-history.md) — native session layouts, lookup bounds, and the large-history regression contract; the pre-v11 import is gone
-- [usage-recorded-token-value](usage-recorded-token-value.md) — independent native quota and recorded token value, historical account ambiguity, and original-home Gemini refresh coordination
+- [usage-recorded-token-value](usage-recorded-token-value.md) — usage reports native quota and recorded token value independently; historical account ambiguity and missing tariffs stay explicit
 - [usage-history-cache](usage-history-cache.md) — per-transcript token cache for coop usage: keys, invalidation, and per-folder pruning after a complete full check
 - [provider-consult-e2e](provider-consult-e2e.md) — verify generated coop-consult behavior through all provider arms, fallback pairs, and a four-edge live ring
 - [model-tiers-and-role-vs-lead](model-tiers-and-role-vs-lead.md) — ModelFor is one model per provider (active>target>env); a preset role's model rides its wrapper target, never global state, or it shadows a rotated lead
