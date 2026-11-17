@@ -231,8 +231,8 @@ func mcpSecretHeader(name string) bool {
 	switch name {
 	case "host", "connection", "keep-alive", "upgrade", "te", "trailer", "transfer-encoding",
 		"cookie", "accept", "accept-encoding", "last-event-id",
-		// The proxy appends to these AFTER the director sets the credential, so a secret here
-		// would travel as "<credential>, <client>".
+		// Forwarding headers belong to the proxies on the path, which append to or rewrite them,
+		// so a secret here would not reach the server as written.
 		"x-forwarded-for", "forwarded":
 		return false
 	}
