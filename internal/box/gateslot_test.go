@@ -221,7 +221,7 @@ func TestGateSlotRunsTheGateWithoutASlotWhenFlockIsMissing(t *testing.T) {
 	}
 	usage := exec.Command(filepath.Join(bin, "coop-gate-slot"))
 	usage.Env = env
-	if out, err := usage.CombinedOutput(); !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "usage: coop-gate-slot [--] <command>") {
+	if out, err := usage.CombinedOutput(); !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "usage: coop-gate-slot [--] <command> [<args>...]") {
 		t.Fatalf("coop-gate-slot with no command = %v\n%s", err, out)
 	}
 }

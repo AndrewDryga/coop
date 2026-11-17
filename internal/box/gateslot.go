@@ -101,7 +101,7 @@ const gateSlotScript = `#!/bin/sh
 # /tmp/coop-gate, which is memory where the runtime allows it: a box's /tmp is on a disk where every
 # fsync is slow.
 [ "${1-}" != "--" ] || shift
-[ "$#" -gt 0 ] || { echo "usage: coop-gate-slot [--] <command> [args...]" >&2; exit 2; }
+[ "$#" -gt 0 ] || { echo "usage: coop-gate-slot [--] <command> [<args>...]" >&2; exit 2; }
 tmp=/tmp/coop-gate
 run=
 if [ -z "${TMPDIR-}" ] && [ -d "$tmp" ] && [ -w "$tmp" ]; then
