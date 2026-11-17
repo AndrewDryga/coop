@@ -524,6 +524,10 @@ func publishProposalTask(canonicalRoot, state, proposalID, id string, files map[
 	if err := staged.Close(); err != nil {
 		return err
 	}
+	// Staged private, published with the mode coop tasks add gives a task folder.
+	if err := staging.Chmod(name, 0o755); err != nil {
+		return err
+	}
 	destination, err := openRealSubroot(queue, state)
 	if err != nil {
 		return err

@@ -77,6 +77,10 @@ func TestImportForkProposalCreatesOneCanonicalTaskIdempotently(t *testing.T) {
 	if !ok || item.State != StateTodo {
 		t.Fatalf("imported canonical task = %+v, ok=%v", item, ok)
 	}
+	// An imported task folder has the mode coop tasks add gives one, not its private staging mode.
+	if info, err := os.Stat(item.Dir); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("imported task folder mode = %v, %v; want 0755", info.Mode().Perm(), err)
+	}
 	content, err := os.ReadFile(filepath.Join(item.Dir, "task.md"))
 	if err != nil {
 		t.Fatal(err)
