@@ -2,8 +2,8 @@
 name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
-sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/cli/eval_loop.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go]
-updated: 2026-11-06
+sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/cli/eval_loop.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go, internal/box/launch_sections.go, internal/box/credential_broker.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/runtime/runtime.go, internal/box/filtered.go]
+updated: 2026-11-17
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -11,7 +11,7 @@ and validates it once, then calls each credential-scoped adapter's `MCP` transfo
 any agent home. Generated native configs are immutable mounts; an outer ordinary CLI gets
 `MCPConfig.CommandArgs`; a peer or runnable preset role gets adapter-owned
 `NestedCommandEnv` consumed by its consult/delegate fragments; an ACP adapter receives servers
-through `ACPMCPServers` on `session/new` and `session/load` — codex-acp 1.7 needs them there as well as
+through `ACPMCPServers` on `session/new` and `session/load` — codex-acp (recorded on 1.7; the pin is now 2.6.0) needs them there as well as
 in `config.toml` and deduplicates the two routes itself (`internal/agent/codex.go`). These are projections of the same snapshot,
 not separate sources.
 
@@ -219,6 +219,7 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go); sources gain the files its named symbols live in (audit K3-7).
 - 2026-11-06 — security review follow-up: the scrub also reads the file `COOP_MCP_FILE` chose when
   MCP is turned off (`config.ChosenMCPFile`), an unreadable names-only file refuses the launch
   instead of naming nothing, the env parsers drop a leading byte-order mark, and eval loop trials

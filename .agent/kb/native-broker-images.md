@@ -3,10 +3,10 @@ name: native-broker-images
 description: Codex image generation and editing use separate exact provider routes from text inference
 subsystem: box
 sources: [internal/agent/codex.go, internal/agent/codex_image_test.go, internal/networkgateway/native_image_test.go, internal/networkgateway/main_test.go, Makefile]
-updated: 2026-10-29
+updated: 2026-11-17
 ---
 
-The pinned Codex 0.159.2 image tool posts JSON to `images/generations` or `images/edits`
+Codex's image tool (read at 0.159.2; the pin is now 0.166.0) posts JSON to `images/generations` or `images/edits`
 through its selected model provider. ChatGPT uses `/backend-api/codex` and API-key accounts
 use `/v1`. Each full path is an exact POST route with no query. Both families retain their
 existing Authorization mediation; only ChatGPT carries the selected account header.
@@ -26,5 +26,6 @@ Worker binaries must be rebuilt to publish updated declarations; an existing run
 does not read adapter source changes from a controller deployment.
 
 ## Changelog
+- 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-10-29 — reproduced the missing image routes before repair and added both operations
   for both credential families without widening matching or credential access.

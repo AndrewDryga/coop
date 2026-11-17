@@ -45,7 +45,7 @@ replays them through the real decoders. On 2026-09-19 three of four clients' ref
 (claude "Not logged in · Please run /login", codex "unexpected status 401 Unauthorized: …", gemini
 "[API Error: {… API key not valid …}]"). The role wrappers read the same signals (see
 [[provider-consult-e2e]]), so one list serves the loop and both wrappers.
-Codex 0.159.2 also refuses native workspace discovery with
+Codex (captured on 0.159.2) also refuses native workspace discovery with
 `workspace routing discovery unauthorized (401)`. Match that exact terminal phrase; quoted
 assistant narration still is not a refusal. Role wrappers regexp-escape literal signals,
 including parentheses, while preserving their error-line anchors and shell-quoting restrictions.
@@ -60,7 +60,7 @@ terminal limit, Grok's 402). Role wrappers grep `wrapperLimitMarkers` through
 `ShellRateLimitDetector`, whose `LC_ALL=C grep -E` is rendered from the same pattern strings
 `WrapperRateLimited` compiles (POSIX ERE that Go also accepts, quote-escaped for the shell); a
 hand-kept shell copy once dropped the `'`, so a role read `{'status': 429}` as an ordinary failure.
-The pinned Grok 1.0.25, captured by replaying each status at it: a 402
+Grok, captured on 1.0.25 by replaying each status at it (the pin is now 1.0.77): a 402
 ("run out of credits") is a structured `http_status: 402` on every surface, the one marker Grok
 declares; a 429 is ACP error -32003 whose message `Rate limited` the shared prose check reads, but
 headless it is only the server's own text — it rotates while that text says "too many requests", and
@@ -71,6 +71,7 @@ the loop decoder says `authentication required`, the ACP auth check reads a stru
 `grok_errors`.
 
 ## Changelog
+- 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-11-17 — readiness is the canonical record's `NativeCredentials().Inspect`; the removed
   `StoredCredentialStatus` classes no longer exist (audit AG-5).
 - 2026-11-03 — a provider-refused grant is recorded and leaves the rotation before launch; the

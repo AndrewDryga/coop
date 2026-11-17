@@ -110,7 +110,7 @@ Traps the code doesn't obviously carry:
   values, not whatever the shipped constants currently are.
 - **Every adapter's stream reports its tools by id** (`agents.StreamSpec`), which is what lets an
   open tool suspend idle and carry the tool cap. Grok's v0.2.101 streaming-json did not (only
-  thought/text/end); the pinned 1.0.25 client opens each tool with `tool_call` under a
+  thought/text/end); the 1.0.25 client (probed 2026-09-18; the pin is now 1.0.77) opens each tool with `tool_call` under a
   `toolCallId` and ends it at ACP's completed/failed/cancelled, on a `tool_call_update` or on the
   `tool_call` itself (a failing shell completes with a non-zero `rawOutput.exit_code`). A new
   adapter whose stream has no tool ids would have a long gate killed at the idle deadline, so probe
@@ -120,6 +120,7 @@ Traps the code doesn't obviously carry:
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-11-17 — the 900s drain default lives in the box supervisor (`descendantTimeout`), which the
   deadline test reads; the cancellation guard is in runIterationWithMode. Sources updated.
 - 2026-11-05 — a redirected loop's first SIGINT is now the same soft stop as Ctrl-C, so a supervisor
