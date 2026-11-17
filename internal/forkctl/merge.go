@@ -139,7 +139,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		if strings.IndexByte(content, 0) >= 0 { // skip binaries
 			continue
 		}
-		if filepath.Base(path) == "package.json" {
+		if filepath.Base(hostsurface.Key(filepath.ToSlash(path))) == "package.json" {
 			if k := addedLifecycleScript(repo, ref, path, content); k != "" {
 				warns = append(warns, label+" adds a "+k+" script — npm runs it automatically on `npm install`")
 			}
@@ -1382,16 +1382,16 @@ func remainingForks(names []string, skip map[string]bool, landed []string, faile
 }
 
 // forkTaskQueuePath names the task queue a repository-relative path lies in, or "" when it lies in
-// none or is the queue's README.
+// none or is the queue's README. It compares Keys: .AGENT/tasks/… is the real queue on a Mac.
 func forkTaskQueuePath(repo, path string) string {
-	rel := filepath.ToSlash(filepath.Clean(path))
+	rel := hostsurface.Key(filepath.ToSlash(filepath.Clean(path)))
 	roots := []string{tasks.TasksRoot}
 	if dirs, err := project.TaskDirs(repo); err == nil {
 		roots = append(roots, dirs...)
 	}
 	for _, root := range roots {
 		root = filepath.ToSlash(filepath.Clean(root))
-		if inside, ok := strings.CutPrefix(rel, root+"/"); ok && !strings.EqualFold(inside, "README.md") {
+		if inside, ok := strings.CutPrefix(rel, hostsurface.Key(root)+"/"); ok && inside != hostsurface.Key("README.md") {
 			return root
 		}
 	}

