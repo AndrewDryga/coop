@@ -1,7 +1,9 @@
 package loop
 
 import (
+	"os/exec"
 	"slices"
+	"syscall"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
@@ -37,4 +39,24 @@ func TestArmKeepAwakeDisabled(t *testing.T) {
 		t.Fatal("disabled caffeinate reported that it started")
 	}
 	stop() // must not panic
+}
+
+// The inhibitor runs outside coop's process group, so the terminal's Ctrl-C (sent to the whole
+// foreground group) does not end it while the loop finishes the attempt a soft stop lets run.
+func TestKeepAwakeCommandLeavesTheForegroundGroup(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep binary")
+	}
+	cmd := keepAwakeCommand([]string{"sleep", "30"})
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pgid == syscall.Getpgrp() {
+		t.Fatalf("inhibitor shares coop's process group %d", pgid)
+	}
 }

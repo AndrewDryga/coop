@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -20,8 +21,8 @@ func sleepInhibitorCmd(goos string, pid int, lookPath func(string) bool) []strin
 		// caffeinate ships with macOS, but honor lookPath in case it's been stripped. -i prevents
 		// idle sleep (on battery and AC), -m keeps the disk from idle-sleeping, -s prevents system
 		// sleep on AC power; -d is deliberately omitted so the display may still sleep. -w ties the
-		// assertion to coop's own process, so it self-releases even on a SIGKILL where the defer
-		// below never runs.
+		// assertion to coop's own process, so it self-releases even on a SIGKILL where the stop
+		// func Run defers never runs.
 		if lookPath("caffeinate") {
 			return []string{"caffeinate", "-i", "-m", "-s", "-w", strconv.Itoa(pid)}
 		}
@@ -45,7 +46,7 @@ func armKeepAwake(cfg *config.Config) (func(), bool) {
 	if argv == nil {
 		return func() {}, false
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := keepAwakeCommand(argv)
 	if err := cmd.Start(); err != nil {
 		return func() {}, false // best-effort — the loop doesn't depend on it
 	}
@@ -53,4 +54,13 @@ func armKeepAwake(cfg *config.Config) (func(), bool) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait() // reap; -w already releases the assertion if this never runs
 	}, true
+}
+
+// keepAwakeCommand builds the inhibitor in its own process group. The terminal sends Ctrl-C to its
+// whole foreground group, and the loop's first Ctrl-C only asks it to finish the current attempt
+// and its review: the inhibitor must outlive that soft stop, not die with it.
+func keepAwakeCommand(argv []string) *exec.Cmd {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
 }
