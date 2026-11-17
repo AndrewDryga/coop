@@ -628,6 +628,15 @@ func TestAProjectBuildRefusalNamesWhatChanged(t *testing.T) {
 			},
 			want: "; files that changed: old.txt, tools/new/a.sh",
 		},
+		// "src-old" sorts between "src" and "src/a.go", so the new folder "src" is not the name
+		// right before its own file.
+		"a new folder beside a sibling that sorts inside it": {
+			change: func(x *approvedRebuildFixture) {
+				x.write("src-old/x", "x\n")
+				x.write("src/a.go", "package src\n")
+			},
+			want: "; files that changed: src-old/x, src/a.go",
+		},
 		"only a build setting": {
 			change: func(x *approvedRebuildFixture) { x.t.Setenv("SOURCE_DATE_EPOCH", "1") },
 			want:   "; the files are the approved ones, so the Docker daemon, the Dockerfile in use or a build setting changed",

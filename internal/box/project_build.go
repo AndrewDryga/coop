@@ -259,14 +259,15 @@ func projectBuildChange(store *networkstate.Store, project string, files map[str
 		return "the files are the approved ones, so the Docker daemon, the Dockerfile in use or a build setting changed"
 	}
 	slices.Sort(changed)
-	// A folder that came or went is named by the files in it, which sort right after it.
-	var named []string
-	for i, rel := range changed {
-		if i+1 == len(changed) || !strings.HasPrefix(changed[i+1], rel+"/") {
-			named = append(named, rel)
+	// A folder that came or went is named by the changed files in it. They need not sort right
+	// after it: "src-old" sorts between "src" and "src/a.go".
+	parents := map[string]bool{}
+	for _, rel := range changed {
+		for dir := path.Dir(rel); dir != "." && !parents[dir]; dir = path.Dir(dir) {
+			parents[dir] = true
 		}
 	}
-	changed = named
+	changed = slices.DeleteFunc(changed, func(rel string) bool { return parents[rel] })
 	shown := changed[:min(len(changed), 5)]
 	names := make([]string, len(shown))
 	for i, rel := range shown {
