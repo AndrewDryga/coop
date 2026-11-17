@@ -2713,7 +2713,7 @@ func taskRemoveUsage(headline string) *ui.UsageError {
 	return &ui.UsageError{
 		Headline: headline,
 		Rows: [][2]string{
-			{"Usage:", "coop tasks rm <id> [--yes]"},
+			{"Usage:", "coop tasks rm <task-id> [--yes]"},
 			{ui.Continuation, "coop tasks rm --all-done [--yes]"},
 			{"Help:", ui.HelpCommand("coop tasks rm")},
 		},

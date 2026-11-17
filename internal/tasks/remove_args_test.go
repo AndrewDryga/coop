@@ -206,3 +206,17 @@ func TestTaskRemovalSyntaxPrecedesProjectAndQueueDiscovery(t *testing.T) {
 		})
 	}
 }
+
+// Every rm usage error names the id the same way, <task-id>, like the other task commands' errors.
+func TestTaskRemovalUsageNamesTheTaskID(t *testing.T) {
+	for _, args := range [][]string{{}, {"keep", "--all-done"}, {"keep", "done"}} {
+		_, err := parseTaskRemoveArgs(args)
+		var usage *ui.UsageError
+		if !errors.As(err, &usage) {
+			t.Fatalf("rm %q = %v, want a usage error", args, err)
+		}
+		if got := usage.Render(ui.Palette{}); !strings.Contains(got, "coop tasks rm <task-id>") || strings.Contains(got, "rm <id>") {
+			t.Errorf("rm %q usage spells the id another way:\n%s", args, got)
+		}
+	}
+}
