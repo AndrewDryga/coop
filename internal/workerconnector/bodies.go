@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -83,6 +84,21 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 		return nil, err
 	}
 	defer response.Body.Close()
+	var responseBody io.Reader = response.Body
+	if project := tunnelProjection(request); project != nil && response.StatusCode == http.StatusOK {
+		raw, err := io.ReadAll(io.LimitReader(response.Body, maxPrivateResponseBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(raw) > maxPrivateResponseBytes {
+			return nil, errors.New("private Coop response is too large to filter")
+		}
+		projected, err := project(raw)
+		if err != nil {
+			return nil, err
+		}
+		responseBody = bytes.NewReader(projected)
+	}
 	envelope := workerproto.APIResponse{Status: response.StatusCode, Headers: map[string]string{}}
 	for _, name := range []string{"Content-Type", "Content-Disposition", "ETag", "X-Coop-Workspace-Checkpoint"} {
 		if value := response.Header.Get(name); value != "" {
@@ -90,7 +106,7 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 		}
 	}
 	const inlineLimit = 256 << 10
-	prefix, err := io.ReadAll(io.LimitReader(response.Body, inlineLimit+1))
+	prefix, err := io.ReadAll(io.LimitReader(responseBody, inlineLimit+1))
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +127,7 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 	}
 	defer cleanup()
 	sum := sha256.New()
-	count, err := io.Copy(io.MultiWriter(file, sum), io.MultiReader(bytes.NewReader(prefix), response.Body))
+	count, err := io.Copy(io.MultiWriter(file, sum), io.MultiReader(bytes.NewReader(prefix), responseBody))
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +144,61 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 		return nil, err
 	}
 	return e.uploadSavedResponse(ctx, command.CommandID, envelope)
+}
+
+// tunnelProjection returns the filter a forwarded read must pass before it leaves the worker, or nil.
+// The tunnel is otherwise generic, but two reads would undo what the connector keeps local when it
+// narrates: a session's raw events carry the host checkout root and unscanned tool fields, and the
+// storage report carries the per-fork inventory, which names local paths. Both cross in the shape
+// the connector already narrates.
+func tunnelProjection(request workerproto.APIRequest) func([]byte) ([]byte, error) {
+	if request.Method != http.MethodGet {
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(request.Path)
+	if err != nil {
+		return nil
+	}
+	if parsed.Path == "/v1/storage" {
+		return publicStorageReport
+	}
+	parts := strings.Split(strings.TrimPrefix(parsed.Path, "/v1/sessions/"), "/")
+	if strings.HasPrefix(parsed.Path, "/v1/sessions/") && len(parts) == 2 && parts[0] != "" && parts[1] == "events" {
+		return publicEventPage
+	}
+	return nil
+}
+
+// publicEventPage gives each event the payload the connector would narrate: an activity event's
+// filtered payload, and none for a lifecycle event.
+func publicEventPage(raw []byte) ([]byte, error) {
+	var events []workerproto.SessionEvent
+	if err := json.Unmarshal(raw, &events); err != nil || events == nil {
+		return nil, errors.New("private Coop session events are malformed")
+	}
+	for i := range events {
+		payload, ok := json.RawMessage(nil), false
+		if operatorActivityEvent(events[i].Type) {
+			payload, ok = publicActivityPayload(events[i].Type, events[i].Payload)
+		}
+		if !ok {
+			payload = nil
+		}
+		events[i].Payload = payload
+	}
+	return json.Marshal(events)
+}
+
+// publicStorageReport keeps only the storage object the hello already carries.
+func publicStorageReport(raw []byte) ([]byte, error) {
+	var report storageReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return nil, errors.New("private Coop storage report is malformed")
+	}
+	if len(report.Storage) == 0 {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(report)
 }
 
 func (e *Executor) uploadSavedResponse(ctx context.Context, commandID string, response workerproto.APIResponse) (json.RawMessage, error) {

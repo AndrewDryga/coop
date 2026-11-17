@@ -389,9 +389,9 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/v1/storage":
 		// The worker's own storage accounting, on the owner-private socket the connector and
-		// `coop sessions doctor` already speak. The connector forwards the nested `storage` object
-		// to the control plane verbatim; the per-fork inventory beside it stays here, because it
-		// names local paths.
+		// `coop sessions doctor` already speak. The connector forwards only the nested `storage`
+		// object to the control plane, in the hello and through its api_request tunnel; the per-fork
+		// inventory beside it stays here, because it names local paths.
 		if !sessionHTTPMethod(w, r, http.MethodGet) {
 			return
 		}

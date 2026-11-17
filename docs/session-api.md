@@ -287,6 +287,13 @@ operation alone. Its `headers` names must be lowercase, at most 16 of `content-t
 `body` is JSON of at most 256 KiB. A larger body travels separately, named by `body_ref` with its
 `sha256` and `byte_size`.
 
+Two reads come back filtered, so host paths stay on the worker. `GET /v1/sessions/{id}/events`
+returns each event as the connector narrates it: activity events carry the filtered payload
+described under [Activity events](#activity-events), and lifecycle events other than `network`
+carry none.
+`GET /v1/storage` returns only its `storage` object, the one the hello carries; the per-fork
+inventory stays on the worker.
+
 ### Idempotency keys
 
 Choose one key for each action and keep using that key when you retry it. If the method, key and

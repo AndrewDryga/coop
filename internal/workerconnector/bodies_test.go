@@ -105,6 +105,50 @@ func TestGenericAPIForwardsAllMethodsAndJSONShapes(t *testing.T) {
 	}
 }
 
+// The tunnel returns a session's events and the storage report in the shape the connector
+// narrates, so the host checkout root and the per-fork inventory never reach the controller.
+func TestGenericAPIFiltersEventsAndStorageLikeTheNarration(t *testing.T) {
+	const root = "/Users/operator/private/checkout"
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/sessions/s/events":
+			_, _ = w.Write([]byte(`[
+				{"id":"e1","session_id":"s","sequence":1,"type":"turn.started","version":1,"occurred_at":"2026-11-17T00:00:00Z","payload":{"checkout_root":"` + root + `"}},
+				{"id":"e2","session_id":"s","sequence":2,"type":"tool.started","version":1,"occurred_at":"2026-11-17T00:00:00Z","payload":{"tool_call_id":"t1","title":"Read file","kind":"read","checkout_root":"` + root + `","input":{"path":"` + root + `/main.go"}}}
+			]`))
+		case "/v1/storage":
+			_, _ = w.Write([]byte(`{"storage":{"state":"ok"},"forks":[{"path":"` + root + `"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}), nil)
+	read := func(commandID, path string) workerproto.APIResponse {
+		t.Helper()
+		command := createCommand(time.Now().Add(time.Minute))
+		command.CommandID = commandID
+		command.Payload = apiPayload("GET", path, nil)
+		result, err := executor.Execute(context.Background(), command)
+		var response workerproto.APIResponse
+		if err != nil || result.State != "succeeded" || json.Unmarshal(result.Resource, &response) != nil || response.Status != 200 {
+			t.Fatalf("%s: %+v %v", path, result, err)
+		}
+		return response
+	}
+	events := read("018f04f4-1111-7000-8000-0000000000e1", "/v1/sessions/s/events?after=0&limit=10")
+	if strings.Contains(string(events.Body), "checkout_root") || strings.Contains(string(events.Body), root) {
+		t.Fatalf("tunnel exported the checkout root: %s", events.Body)
+	}
+	var page []workerproto.SessionEvent
+	if err := json.Unmarshal(events.Body, &page); err != nil || len(page) != 2 || page[0].Payload != nil ||
+		!strings.Contains(string(page[1].Payload), `"tool_call_id":"t1"`) {
+		t.Fatalf("filtered events = %s, %v", events.Body, err)
+	}
+	if storage := read("018f04f4-1111-7000-8000-0000000000e2", "/v1/storage"); string(storage.Body) != `{"storage":{"state":"ok"}}` {
+		t.Fatalf("tunnel exported the storage inventory: %s", storage.Body)
+	}
+}
+
 func TestGenericAPIReportsHTTPFailureWithoutReinterpretingIt(t *testing.T) {
 	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

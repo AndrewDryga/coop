@@ -11,6 +11,9 @@ shape is a poll loop, not a server: the connector opens a single outbound mutual
 controller and forwards protocol-v2 `api_request` envelopes to the owner-private Unix API.
 Method, relative path, allowed headers and JSON or streamed body carry every API endpoint without
 product-specific commands. The connector never listens on TCP or accepts a shell command (`internal/cli/session_connect.go`).
+Two reads are the exception to "generic": a session's events and `/v1/storage` pass through
+`tunnelProjection` (`bodies.go`) so the tunnel returns what the narration would, never the checkout
+root or the per-fork inventory.
 
 
 A version-2 job can additionally carry the optional version-1 project runtime selectors described in
@@ -192,6 +195,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).
 - 2026-11-17 — a held create's retry caps at 15 s, not 2 min, and the disk-space wait holds the same way (audit K6-8; checked internal/workerconnector/first_download_waits.go).
 - 2026-11-07 — a saved identity is bound to its controller in one spelling, and an expired one and a file open
   to other users end `coop sessions connect` in the shared block (task 2026-11-07-treat-a-controller-url-with-a-trailing-slash-as).
