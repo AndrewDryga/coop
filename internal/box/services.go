@@ -147,7 +147,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	}
 	filesystem, err := prepareServiceFilesystemStart(ctx, rt, workspace, file, data, args, selected, allowCases, true)
 	if err != nil {
-		return started, &ComposeRefused{Err: err}
+		return started, &ComposeRefused{Verb: "run", File: filepath.Base(file), Err: err}
 	}
 	defer func() { result = errors.Join(result, filesystem.abort()) }()
 	args = filesystem.args
