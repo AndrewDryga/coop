@@ -187,15 +187,15 @@ func propagateGitEnvContext(ctx context.Context, repo, ws string) error {
 	}
 	// Read core.excludesfile from your GLOBAL config, never the agent-writable repo: a poisoned
 	// repo could otherwise point it at a host secret (e.g. ~/.ssh/id_rsa) and we'd copy that file's
-	// content into the fork the agent reads. `--path` expands a leading ~ in the configured path.
-	if gi := GlobalGitConfig("--path", "core.excludesfile"); gi != "" {
+	// content into the fork the agent reads. Unset, Git's default global ignore file applies.
+	if gi := GlobalGitignorePath(); gi != "" {
 		if data, err := os.ReadFile(gi); err == nil && len(data) > 0 {
 			excl := filepath.Join(ws, ".git", "info", "exclude")
 			// Pinned clones disable templates, so Git has not created info/ yet.
 			if err := os.MkdirAll(filepath.Dir(excl), 0o755); err != nil {
 				return fmt.Errorf("create fork Git excludes directory: %w", err)
 			}
-			if err := appendFile(excl, append([]byte("\n# carried from your global core.excludesfile\n"), data...)); err != nil {
+			if err := appendFile(excl, append([]byte("\n# carried from your global Git ignore file\n"), data...)); err != nil {
 				return fmt.Errorf("carry global Git excludes into fork: %w", err)
 			}
 		}

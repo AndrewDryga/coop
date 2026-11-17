@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -193,6 +194,23 @@ func GlobalGitConfig(args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// GlobalGitignorePath is the user's global ignore file as Git finds it: core.excludesfile from the
+// GLOBAL config (~ expanded), else Git's default $XDG_CONFIG_HOME/git/ignore or ~/.config/git/ignore,
+// which needs no setting. "" when there is no place to look. Forks and boxes both carry it.
+func GlobalGitignorePath() string {
+	if path := GlobalGitConfig("--path", "core.excludesfile"); path != "" {
+		return path
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "git", "ignore")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "git", "ignore")
 }
 
 func nonRecursiveGitArgs(args []string) ([]string, error) {

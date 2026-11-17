@@ -68,6 +68,42 @@ func TestPinnedSetupCarriesGlobalExcludesWithoutGitTemplates(t *testing.T) {
 	}
 }
 
+// With core.excludesfile unset, Git reads its default global ignore file ($XDG_CONFIG_HOME/git/ignore,
+// else ~/.config/git/ignore), and a fork carries those patterns as it carries a configured file.
+func TestSetupCarriesGitsDefaultGlobalIgnoreFile(t *testing.T) {
+	repo := committedSetupRepo(t)
+	home, xdg := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	for dir, pattern := range map[string]string{filepath.Join(home, ".config"): "home-junk\n", xdg: "xdg-junk\n"} {
+		if err := os.MkdirAll(filepath.Join(dir, "git"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "git", "ignore"), []byte(pattern), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exclude := func(name string) string {
+		t.Helper()
+		ws, err := Setup(repo, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(ws, ".git", "info", "exclude"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if got := exclude("home"); !strings.Contains(got, "home-junk\n") || strings.Contains(got, "xdg-junk") {
+		t.Fatalf("fork exclusions with only ~/.config/git/ignore = %q", got)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if got := exclude("xdg"); !strings.Contains(got, "xdg-junk\n") || strings.Contains(got, "home-junk") {
+		t.Fatalf("fork exclusions with XDG_CONFIG_HOME set = %q; its file wins", got)
+	}
+}
+
 func TestSetupRefusesNameWhilePriorSessionWorkspaceIsStaged(t *testing.T) {
 	repo := committedSetupRepo(t)
 	ws, err := Setup(repo, "remote")
