@@ -299,7 +299,7 @@ func exampleQueue(rels []string) string {
 // gate nothing could answer (a pipe with no --yes) in the shared block. It runs BEFORE any
 // deletion, so it can truthfully say the idea was kept.
 func backlogCancelled(err error) error {
-	if err != nil && err.Error() == "cancelled" {
+	if errors.Is(err, ui.ErrCancelled) {
 		ui.Note("")
 		ui.Note("Cancelled. The idea was kept.")
 		return ui.Reported(err)

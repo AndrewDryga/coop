@@ -2790,7 +2790,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 // NOT happen and returns the already-reported sentinel. A gate nothing could answer (a pipe with no
 // --yes) is refused in the shared block, pointing at command's page.
 func cancelledDeletion(err error, command, nothing string) error {
-	if err != nil && err.Error() == "cancelled" {
+	if errors.Is(err, ui.ErrCancelled) {
 		ui.Note("Cancelled. %s", nothing)
 		return ui.ErrReported
 	}

@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,9 +104,14 @@ func TestBacklogRemovePreviewAndCancellation(t *testing.T) {
 	}
 
 	// A declined prompt says so, in words, before anything is removed.
-	said := captureBacklog(t, func() { _ = backlogCancelled(errors.New("cancelled")) })
+	said := captureBacklog(t, func() { _ = backlogCancelled(ui.ErrCancelled) })
 	if said != "\nCancelled. The idea was kept.\n" {
 		t.Errorf("decline = %q", said)
+	}
+	// A wrapped decline is still a decline.
+	wrapped := captureBacklog(t, func() { _ = backlogCancelled(fmt.Errorf("rm: %w", ui.ErrCancelled)) })
+	if wrapped != said {
+		t.Errorf("wrapped decline = %q", wrapped)
 	}
 	if got := backlogCancelled(errors.New("refusing to Delete this idea without confirmation")); got == nil {
 		t.Error("a non-TTY refusal must stay an error")

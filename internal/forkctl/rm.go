@@ -216,7 +216,7 @@ func rmGuardRefusal(name string, unmerged, dirty bool) error {
 // page. It is emitted only BEFORE any mutation, so it can truthfully say what was kept. The caller
 // exits ui.DeclineExit(err).
 func ForkCancelled(err error, command, kept string) error {
-	if err != nil && err.Error() == "cancelled" {
+	if errors.Is(err, ui.ErrCancelled) {
 		ui.Note("")
 		ui.Note("Cancelled. %s", kept)
 		return ui.Reported(err)
