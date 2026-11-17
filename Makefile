@@ -442,7 +442,7 @@ help: ## List targets
 .PHONY: thread-messages-check
 .PHONY: install-npm npm-audit install-trivy image-vuln build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
-.PHONY: check-local bench-tools-test services-bench require-services-workspace
+.PHONY: check-local bench-tools-test services-bench lifecycle-bench require-services-workspace
 .PHONY: full-gate trim-gate-cache check-static check-unit check-process check-race
 .PHONY: check-process-loop check-process-rest check-race-rest check-race-sessionsvc-1 check-race-sessionsvc-2
 .PHONY: provider-scripted-loop-e2e provider-scripted-other-e2e FORCE

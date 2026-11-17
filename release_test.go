@@ -371,6 +371,36 @@ func TestReleaseModuleHygiene(t *testing.T) {
 	}
 }
 
+// No Makefile target names a file it builds, so a same-named file in the checkout must never
+// make one look up to date and skip it.
+func TestMakefileTargetsArePhony(t *testing.T) {
+	data, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	phony := map[string]bool{}
+	var targets []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if names, ok := strings.CutPrefix(line, ".PHONY:"); ok {
+			for _, name := range strings.Fields(names) {
+				phony[name] = true
+			}
+			continue
+		}
+		if m := regexp.MustCompile(`^([a-z][a-z0-9-]*):([^=]|$)`).FindStringSubmatch(line); m != nil {
+			targets = append(targets, m[1])
+		}
+	}
+	if len(targets) == 0 {
+		t.Fatal("found no Makefile targets")
+	}
+	for _, target := range targets {
+		if !phony[target] {
+			t.Errorf("Makefile target %q is missing from .PHONY", target)
+		}
+	}
+}
+
 const (
 	ciCacheRestore = "restore this owner's Go modules and compiled objects"
 	ciCacheSave    = "save this owner's Go modules and compiled objects"
