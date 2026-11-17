@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -37,7 +38,9 @@ const serviceContainerFormat = `{"ID":{{json .Id}},"Labels":{{json .Config.Label
 
 // ObserveServiceContainer returns the one container carrying every exact ownership label. No
 // match is a normal false result; duplicate, malformed or unavailable observations fail closed.
-// Both runtime calls are time-bounded and retain at most the declared output cap.
+// Both runtime calls are time-bounded and retain at most the declared output cap. A runtime frozen by
+// FreezeCompose asks that daemon through its socket, never the current Docker context, and fails
+// unless the same daemon still answers there once both calls are done.
 func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]string) (ServiceContainerObservation, bool, error) {
 	if r.kind() == runtimeAppleContainer {
 		return ServiceContainerObservation{}, false, errors.New("compose service observation is unsupported by Apple container")
@@ -53,22 +56,36 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	output := func(limit int, args ...string) ([]byte, error) { return dockerOutput(ctx, r.Name, nil, limit, args...) }
+	verify := func() error { return nil }
+	if r.composeEndpoint != "" {
+		docker, err := bindDocker(ctx, r, r.composeEndpoint, r.composeDaemon, false)
+		if err != nil {
+			return ServiceContainerObservation{}, false, fmt.Errorf("bind the frozen Docker daemon: %w", err)
+		}
+		defer docker.Close()
+		output = func(limit int, args ...string) ([]byte, error) { return docker.output(ctx, limit, args...) }
+		verify = func() error { return docker.Verify(ctx) }
+	}
 	args := []string{"ps", "-q", "-a", "--no-trunc"}
 	for _, key := range keys {
 		args = append(args, "--filter", "label="+key+"="+labels[key])
 	}
-	out, err := dockerOutput(ctx, r.Name, nil, 64<<10, args...)
+	out, err := output(64<<10, args...)
 	if err != nil {
 		return ServiceContainerObservation{}, false, errors.New("runtime service listing failed; availability is unknown")
 	}
 	ids := strings.Fields(string(out))
 	if len(ids) == 0 {
+		if err := verify(); err != nil {
+			return ServiceContainerObservation{}, false, err
+		}
 		return ServiceContainerObservation{}, false, nil
 	}
 	if len(ids) != 1 || !dockerHexID(ids[0]) {
 		return ServiceContainerObservation{}, false, errors.New("runtime service ownership is ambiguous or malformed")
 	}
-	out, err = dockerOutput(ctx, r.Name, nil, 256<<10,
+	out, err = output(256<<10,
 		"inspect", "--format", serviceContainerFormat, ids[0])
 	if err != nil {
 		return ServiceContainerObservation{}, false, errors.New("runtime service inspection failed; availability is unknown")
@@ -112,6 +129,9 @@ func (r Runtime) ObserveServiceContainer(ctx context.Context, labels map[string]
 		Completed: *wire.Status == "exited" && wire.ExitCode != nil && *wire.ExitCode == 0,
 		Paused:    *wire.Paused, Healthcheck: *wire.Healthcheck, Health: *wire.Health,
 		Ports: *wire.Ports, Networks: networks,
+	}
+	if err := verify(); err != nil {
+		return ServiceContainerObservation{}, false, err
 	}
 	return observed, true, nil
 }
