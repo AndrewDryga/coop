@@ -266,6 +266,8 @@ const (
 	maxSourceCopyDepth   = 64
 )
 
+var errSourceCopyEntries = fmt.Errorf("repository copy exceeds %d entries", maxSourceCopyEntries)
+
 type sourceCopyBudget struct {
 	entries     int
 	bytes       int64
@@ -365,7 +367,7 @@ func copySourceDirectory(dst string, source *os.File, sourceRoot os.FileInfo, so
 			}
 			budget.entries++
 			if budget.entries > maxSourceCopyEntries {
-				return fmt.Errorf("repository copy exceeds %d entries", maxSourceCopyEntries)
+				return errSourceCopyEntries
 			}
 			repoRel := filepath.ToSlash(filepath.Join(sourceRel, childTreeRel))
 			if policy.Shadowed(repoRel) {

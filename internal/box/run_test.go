@@ -567,6 +567,69 @@ func TestReviewTaskQueueSnapshotPreservesSubjectEvidenceWithoutArchivedBulk(t *t
 	}
 }
 
+// The backlog and the archive grow without bound, so a queue past the copy budget in them still
+// gives a review its subjects' whole folders and every task's notes. A queue whose live tasks alone
+// exceed it is refused by name, not with a generic copy error.
+func TestReviewTaskQueueSnapshotFitsTheBudgetWithoutBacklogAndArchiveBulk(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	queue := filepath.Join(repo, ".agent", "tasks")
+	made := map[string]bool{}
+	write := func(rel string) {
+		path := filepath.Join(queue, rel)
+		if dir := filepath.Dir(path); !made[dir] {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			made[dir] = true
+		}
+		if err := os.WriteFile(path, []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range maxSourceCopyEntries / 2 {
+		write(fmt.Sprintf("xx_backlog/idea/artifacts/%d.txt", i))
+	}
+	for i := range maxSourceCopyEntries / 2 {
+		write(fmt.Sprintf("99_done/old/notes/%d.txt", i))
+	}
+	for _, rel := range []string{
+		"10_in_progress/current/task.md", "10_in_progress/current/state.md",
+		"99_done/old/task.md", "99_done/old/state.md", "99_done/old/log.md",
+		"99_done/review-subject/task.md", "99_done/review-subject/state.md",
+		"99_done/review-subject/notes/evidence.txt", "99_done/review-subject/artifacts/evidence.txt",
+	} {
+		write(rel)
+	}
+	mounts, snapshots, err := repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir(), []string{"review-subject"})
+	if err != nil || len(mounts) != 1 {
+		t.Fatalf("a review over a queue whose bulk is backlog and archive = %v, %v; want it copied", mounts, err)
+	}
+	defer os.RemoveAll(snapshots[0])
+	for _, rel := range []string{
+		"10_in_progress/current/task.md", "10_in_progress/current/state.md",
+		"99_done/old/task.md", "99_done/old/state.md", "99_done/old/log.md",
+		"99_done/review-subject/task.md", "99_done/review-subject/notes/evidence.txt", "99_done/review-subject/artifacts/evidence.txt",
+	} {
+		if _, err := os.Stat(filepath.Join(mounts[0].Source, rel)); err != nil {
+			t.Fatalf("review lost %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"xx_backlog", "99_done/old/notes"} {
+		if _, err := os.Lstat(filepath.Join(mounts[0].Source, rel)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("review copied bulk %s: %v", rel, err)
+		}
+	}
+
+	for i := range maxSourceCopyEntries {
+		write(fmt.Sprintf("10_in_progress/current/artifacts/%d.txt", i))
+	}
+	_, _, err = repoReadOnlyPathMounts(repo, "/workspace", []string{queue}, t.TempDir(), []string{"review-subject"})
+	if err == nil || !strings.Contains(err.Error(), "task queue "+queue) || !strings.Contains(err.Error(), fmt.Sprint(maxSourceCopyEntries)) {
+		t.Fatalf("a queue whose live tasks exceed the budget = %v; want a refusal naming the queue and the limit", err)
+	}
+}
+
 func TestRepoReadOnlyPathMountsRejectEscapeAndSymlink(t *testing.T) {
 	repo := t.TempDir()
 	queue := filepath.Join(repo, ".agent", "tasks")

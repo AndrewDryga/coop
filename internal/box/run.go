@@ -2520,6 +2520,10 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 			return skipReviewTaskBulk(rel, subjects)
 		})
 		copyErr = errors.Join(copyErr, source.Close())
+		if errors.Is(copyErr, errSourceCopyEntries) {
+			return fail(fmt.Errorf("task queue %s has more than %d files and folders for a review to copy, even without its backlog and the archive's artifacts; "+
+				"move bulky files out of its live tasks", path, maxSourceCopyEntries))
+		}
 		if copyErr != nil {
 			return fail(fmt.Errorf("snapshot read-only repository path %q: %w", path, copyErr))
 		}
@@ -2533,23 +2537,30 @@ func repoReadOnlyPathMounts(repo, workdir string, paths []string, artifactParent
 	return mounts, snapshots, nil
 }
 
-// A review needs its exact subjects' durable evidence, not disposable worktrees
-// or unrelated archive bulk that can exhaust the bounded copy budget.
+// A review needs its exact subjects' durable evidence and the live tasks' current evidence, not
+// disposable worktrees, the backlog drawer or the archive's bulk: those grow without bound and
+// would exhaust the copy budget before the reviewer ever starts. Every archived task keeps its notes.
 func skipReviewTaskBulk(rel string, subjects map[string]bool) bool {
 	parts := strings.Split(rel, "/")
+	if parts[0] == "xx_backlog" {
+		return true
+	}
 	if len(parts) != 3 {
 		return false
 	}
 	switch parts[0] {
-	case "00_todo", "10_in_progress", "50_blocked", "99_done", "xx_backlog":
+	case "00_todo", "10_in_progress", "50_blocked", "99_done":
 	default:
 		return false
 	}
 	if parts[2] == "tmp" {
 		return true
 	}
-	return parts[0] == "99_done" && !subjects[parts[1]] && (parts[2] == "artifacts" || parts[2] == "screenshots")
+	return parts[0] == "99_done" && !subjects[parts[1]] && !reviewTaskNotes[parts[2]]
 }
+
+// reviewTaskNotes are the small text files of a task folder (.agent/tasks/README.md).
+var reviewTaskNotes = map[string]bool{"task.md": true, "spec.md": true, "state.md": true, "log.md": true, "decision.md": true}
 
 func projectPolicyRepo(spec RunSpec) string {
 	if spec.PolicyRepo != "" {
