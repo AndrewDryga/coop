@@ -268,7 +268,9 @@ func (a *app) cmdACP(args []string) (int, error) {
 			}
 			a.acpPeers = slices.Clone(peers)
 		}
-		scope, err := a.acpNetworkScope(repo, initial, peers, a.preset)
+		// Each account read waits for another box's renewal (at most 30 s each); the outer process
+		// handles no signal yet, so an interrupt still ends that wait.
+		scope, err := a.acpNetworkScope(context.Background(), repo, initial, peers, a.preset)
 		if err != nil {
 			return 1, err
 		}
@@ -443,20 +445,21 @@ func (a *app) cmdACP(args []string) (int, error) {
 		if err := validateACPAccountBindings(a.cfg, spec, a.acpAccountBindings); err != nil {
 			return 1, err
 		}
+		// A filtered child owns a gateway, two volumes and a receipt. The
+		// supervisor stops it with a signal, so that signal has to arrive as a
+		// cancellation this run can clean up after — including while the scope
+		// below waits on an account another box is renewing.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer stop()
+		spec.Ctx = ctx
 		// Rebuild the concrete credential scope after the child applied its lead
 		// target and preset. This is the final boundary before any provider home is
 		// mounted, and catches role/default-account drift hidden by a portable sibling.
-		if _, err := box.NetworkProviderBundles(a.cfg, spec); err != nil {
+		if _, err := box.NetworkProviderBundles(ctx, a.cfg, spec); err != nil {
 			return 1, fmt.Errorf("selected ACP scope is no longer available under this session's network rules: %w", err)
 		}
 		spec.CapturedEgress = capture
 		acpReportLaunch(&spec)
-		// A filtered child owns a gateway, two volumes and a receipt. The
-		// supervisor stops it with a signal, so that signal has to arrive as a
-		// cancellation this run can clean up after.
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-		defer stop()
-		spec.Ctx = ctx
 	}
 	code, err := a.runBox(spec)
 	return stoppedQuietly(spec.Ctx, code, err)
@@ -751,7 +754,7 @@ func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) 
 			return child
 		}
 		child = fits(child)
-		if child == nil && acpctl.WarmSwitch(t, psName, ok, a.cfg.ModelFor(t.Provider), a.cfg.EffortFor(t.Provider)) && a.warmCheckoutProven(ctrl, t, psName) {
+		if child == nil && acpctl.WarmSwitch(t, psName, ok, a.cfg.ModelFor(t.Provider), a.cfg.EffortFor(t.Provider)) && a.warmCheckoutProven(ctx, ctrl, t, psName) {
 			child, kind = fits(pool.Checkout(t.Provider, t.Account(), currentImage(), acpPolicy(a.currentACPCapture()))), "warm"
 		}
 		if child == nil {
@@ -1193,18 +1196,18 @@ func cleanACPChildEnv(env []string) []string {
 
 // warmCheckoutProven reports whether a parked box may serve t: in a filtered session only after t passes
 // the same launch proof a cold box would.
-func (a *app) warmCheckoutProven(ctrl *acpctl.Control, t agents.Target, psName string) bool {
+func (a *app) warmCheckoutProven(ctx context.Context, ctrl *acpctl.Control, t agents.Target, psName string) bool {
 	if a.acpCapture == nil {
 		return true
 	}
-	_, err := a.acpFilteredLaunchProof(ctrl, t, psName)
+	_, err := a.acpFilteredLaunchProof(ctx, ctrl, t, psName)
 	return err == nil
 }
 
 // acpFilteredLaunchProof re-proves a filtered target immediately before a box serves it — a cold launch
 // after any reset wait, and a warm box at checkout, since the conditions it was parked under can change —
 // and returns the child's account bindings.
-func (a *app) acpFilteredLaunchProof(ctrl *acpctl.Control, t agents.Target, psName string) (map[string]acpAccountBinding, error) {
+func (a *app) acpFilteredLaunchProof(ctx context.Context, ctrl *acpctl.Control, t agents.Target, psName string) (map[string]acpAccountBinding, error) {
 	if ctrl != nil {
 		if err := ctrl.ValidateNetworkTarget(t, psName); err != nil {
 			return nil, err
@@ -1224,7 +1227,7 @@ func (a *app) acpFilteredLaunchProof(ctrl *acpctl.Control, t agents.Target, psNa
 				}
 			}
 			if err == nil {
-				_, err = box.NetworkTargetBundle(a.cfg, target, egress.ClientACP)
+				_, err = box.NetworkTargetBundle(ctx, a.cfg, target, egress.ClientACP)
 			}
 			if err != nil {
 				break
@@ -1322,7 +1325,7 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 	// authentication families after the wait and immediately before launching
 	// the child; open/offline ACP deliberately retains every native auth mode.
 	if a.acpCapture != nil {
-		bindings, err := a.acpFilteredLaunchProof(ctrl, t, psName)
+		bindings, err := a.acpFilteredLaunchProof(ctx, ctrl, t, psName)
 		if err != nil {
 			return nil, err
 		}

@@ -70,7 +70,7 @@ func TestLoopAdmissionBrokersAKeyBesideSignedInTeammates(t *testing.T) {
 	}
 	work := ladder.NewRotation([]agents.Target{target("claude", "default")})
 	spec := networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, work)
-	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+	if bundles, err := box.NetworkProviderBundles(t.Context(), cfg, spec); err != nil || len(bundles) != 0 {
 		t.Fatalf("API-key origins escaped the broker: %#v, %v", bundles, err)
 	}
 
@@ -78,19 +78,19 @@ func TestLoopAdmissionBrokersAKeyBesideSignedInTeammates(t *testing.T) {
 	// granted directly to the workload, regardless of authentication family.
 	seed("codex", "default")
 	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, []agents.Target{target("codex", "default")}, work)
-	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+	if bundles, err := box.NetworkProviderBundles(t.Context(), cfg, spec); err != nil || len(bundles) != 0 {
 		t.Fatalf("signed-in peer origins escaped the broker: %#v, %v", bundles, err)
 	}
 
 	seed("claude", "personal")
 	mixed := ladder.NewRotation([]agents.Target{target("claude", "default"), target("claude", "personal")})
 	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, mixed)
-	if bundles, err := box.NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+	if bundles, err := box.NetworkProviderBundles(t.Context(), cfg, spec); err != nil || len(bundles) != 0 {
 		t.Fatalf("mixed families did not retain one broker boundary: %#v, %v", bundles, err)
 	}
 	missing := ladder.NewRotation([]agents.Target{target("claude", "missing")})
 	spec = networkAdmissionSpec(cfg, "/repo", "img", "claude", nil, nil, missing)
-	if _, err := box.NetworkProviderBundles(cfg, spec); err == nil {
+	if _, err := box.NetworkProviderBundles(t.Context(), cfg, spec); err == nil {
 		t.Fatal("missing rotation account silently admitted")
 	}
 }

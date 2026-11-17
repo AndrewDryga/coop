@@ -91,7 +91,7 @@ func SelectionForTarget(cfg *config.Config, target agents.Target) (Selection, er
 // BrokersKey reports host brokering, including canonical subscription credentials. Live suites
 // use it to select their filtered gateway setup, not to infer an account's authentication family.
 func BrokersKey(cfg *config.Config, selection Selection) (bool, error) {
-	return box.AccountBrokersKey(cfg, selection.Provider, selection.Account)
+	return box.AccountBrokersKey(context.Background(), cfg, selection.Provider, selection.Account)
 }
 
 // AnyBrokersKey is BrokersKey over every selection a process will reach: one brokered key in a

@@ -544,7 +544,7 @@ func TestACPRefreshAdmitsTheFrozenStartupScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	same := func(x, y agents.Target) bool { return x.String() == y.String() }
-	if rederived, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: "claude"}, nil, nil); err != nil || slices.EqualFunc(rederived, specs[0].Peers, same) {
+	if rederived, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "claude"}, nil, nil); err != nil || slices.EqualFunc(rederived, specs[0].Peers, same) {
 		t.Fatalf("fixture: a re-derived scope (%v, %v) must differ from the admitted one %v", rederived, err, specs[0].Peers)
 	}
 	a.preset, a.network, a.acpNetworkTargets = &preset.Preset{}, networkFlags{}, nil

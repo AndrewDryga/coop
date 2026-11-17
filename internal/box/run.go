@@ -1183,7 +1183,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// Only the filtered gateway keeps a key outside the box, so an open or offline run holding
 		// one stops here: before the launch names an account it will not connect, the runtime
 		// starts, or a broken selected-provider file leaves a provider home half initialized.
-		plan, err := selectCredentialPlan(cfg, spec)
+		plan, err := selectCredentialPlan(nativeCtx, cfg, spec)
 		if err == nil {
 			err = plan.requireFiltered()
 		}

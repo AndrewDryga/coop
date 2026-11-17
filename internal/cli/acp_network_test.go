@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/acpproxy"
@@ -42,7 +44,7 @@ func TestACPNetworkScopeCarriesNativeClientClosureWithoutDirectGrants(t *testing
 			if lead == "" {
 				lead = "codex"
 			}
-			scope, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: lead}, tc.peers, tc.preset)
+			scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: lead}, tc.peers, tc.preset)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,7 +58,7 @@ func TestACPNetworkScopeCarriesNativeClientClosureWithoutDirectGrants(t *testing
 			if !slices.Equal(identities, []string{"claude@default", "codex@default", "gemini@default", "grok@default"}) {
 				t.Fatalf("native ACP scope = %v, want every available concrete default", identities)
 			}
-			bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{
+			bundles, err := box.NetworkProviderBundles(t.Context(), cfg, box.RunSpec{
 				Agent: lead, Homes: true, Peers: scope, Preset: tc.preset, NetworkClient: egress.ClientACP,
 			})
 			if err != nil || len(bundles) != 0 {
@@ -86,7 +88,7 @@ func TestACPNetworkScopeOffersGeminiAPIKeyAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &app{cfg: cfg}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,6 +100,36 @@ func TestACPNetworkScopeOffersGeminiAPIKeyAccounts(t *testing.T) {
 	}
 	if len(geminiAccounts) != 1 || geminiAccounts[0] != "portable" {
 		t.Fatalf("filtered ACP offered Gemini accounts %v, want only the API-key account", geminiAccounts)
+	}
+}
+
+// An editor session saves its scope for its whole life, so an account another box is renewing
+// while the session starts must be waited for, not dropped as unqualified: picking it later would
+// fail until the editor reconnects.
+func TestACPNetworkScopeWaitsForABusyAccount(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
+	signInCred(t, cfg, "claude", "default")
+	signInCred(t, cfg, "claude", "work")
+	lock, err := os.OpenFile(filepath.Join(cfg.ConfigDir, "claude", "credentials", "work", ".authority.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	// Longer than the old one-second reads of this account (three of them) put together.
+	held := time.AfterFunc(5*time.Second, func() { _ = lock.Close() })
+	defer held.Stop()
+	a := &app{cfg: cfg}
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(scope, func(target agents.Target) bool {
+		return target.Provider == "claude" && target.Account() == "work"
+	}) {
+		t.Fatalf("an account another process was renewing was left out of the session: %v", scope)
 	}
 }
 
@@ -113,7 +145,7 @@ func TestACPNetworkScopeOffersBothNativeCredentialFamilies(t *testing.T) {
 	signInCred(t, cfg, "claude", "work")
 	a := &app{cfg: cfg}
 	for _, initial := range []agents.Target{{Provider: "claude"}, {Provider: "claude", Accounts: []string{"work"}}} {
-		scope, err := a.acpNetworkScope(cfg.RepoOverride, initial, nil, nil)
+		scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, initial, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +157,7 @@ func TestACPNetworkScopeOffersBothNativeCredentialFamilies(t *testing.T) {
 			if !slices.Contains(accounts, target.Account()) {
 				accounts = append(accounts, target.Account())
 			}
-			bundle, err := box.NetworkTargetBundle(cfg, target, egress.ClientACP)
+			bundle, err := box.NetworkTargetBundle(t.Context(), cfg, target, egress.ClientACP)
 			if err != nil || bundle.Backend != "native-broker" || len(bundle.Core) != 0 {
 				t.Fatal("account lost guard-only native routing", err)
 			}
@@ -134,7 +166,7 @@ func TestACPNetworkScopeOffersBothNativeCredentialFamilies(t *testing.T) {
 		if !slices.Equal(accounts, []string{"default", "work"}) {
 			t.Fatal("ACP credential family switch omitted account", accounts)
 		}
-		bundles, err := box.NetworkProviderBundles(cfg, box.RunSpec{Agent: "claude", Homes: true, Peers: scope, NetworkClient: egress.ClientACP})
+		bundles, err := box.NetworkProviderBundles(t.Context(), cfg, box.RunSpec{Agent: "claude", Homes: true, Peers: scope, NetworkClient: egress.ClientACP})
 		if err != nil || len(bundles) != 0 {
 			t.Fatal("native accounts got direct workload grants", err)
 		}
@@ -159,7 +191,7 @@ func TestACPNetworkScopePreservesPresetRoleAccountIdentity(t *testing.T) {
 		Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}},
 	}}}
 	a := &app{cfg: cfg}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, p)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,13 +202,13 @@ func TestACPNetworkScopePreservesPresetRoleAccountIdentity(t *testing.T) {
 	if !sawDefault {
 		t.Fatalf("preset's concrete OAuth role account was collapsed into a sibling: %v", scope)
 	}
-	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
+	if _, err := box.NetworkProviderBundles(t.Context(), cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Peers: scope, Preset: p, NetworkClient: egress.ClientACP,
 	}); err == nil || !strings.Contains(err.Error(), "coop login gemini@default") {
 		t.Fatal("portable Gemini sibling qualified the preset's OAuth role account", err)
 	}
 	// The inner child revalidates this actual scope without the admission-only peers too.
-	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{
+	if _, err := box.NetworkProviderBundles(t.Context(), cfg, box.RunSpec{
 		Agent: "codex", Homes: true, Preset: p, NetworkClient: egress.ClientACP,
 	}); err == nil || !strings.Contains(err.Error(), "coop login gemini@default") {
 		t.Fatal("filtered inner launch accepted the preset's OAuth role account", err)
@@ -197,14 +229,14 @@ func TestACPNetworkScopeKeepsResumeForSupervisor(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
 	signInCred(t, cfg, "codex", "default")
 	a := &app{cfg: cfg}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
 	if err != nil || a.acpResume == nil || a.acpResume.Ctrl.Lead != "gemini" {
 		t.Fatalf("admission consumed the supervisor's resume state: %v, %v", a.acpResume, err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("resume handoff was not consumed exactly once: %v", err)
 	}
-	if _, err := box.NetworkProviderBundles(cfg, box.RunSpec{Agent: "codex", Homes: true, Peers: scope, NetworkClient: egress.ClientACP}); err == nil {
+	if _, err := box.NetworkProviderBundles(t.Context(), cfg, box.RunSpec{Agent: "codex", Homes: true, Peers: scope, NetworkClient: egress.ClientACP}); err == nil {
 		t.Fatal("open Gemini resume could be restored into an incompatible filtered session")
 	}
 }
@@ -225,7 +257,7 @@ func TestACPNetworkScopeIncludesOptionalPresetClosure(t *testing.T) {
 		}
 	}
 	a := &app{cfg: cfg}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, agents.Target{Provider: "codex"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

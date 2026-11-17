@@ -99,7 +99,7 @@ func TestACPFilteredSameProviderPeerBindsLeadAccount(t *testing.T) {
 				t.Fatalf("peer uses wrong account: %v", target)
 			}
 		}
-		scope, err := a.acpNetworkScope(cfg.RepoOverride, lead, a.acpPeers, nil)
+		scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, lead, a.acpPeers, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +117,7 @@ func TestACPNetworkScopeSkipsOptionalLeadMissingPeerAccount(t *testing.T) {
 	signInCred(t, cfg, "codex", "work")
 	a := &app{cfg: cfg}
 	lead := agents.Target{Provider: "claude", Accounts: []string{"personal"}}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, lead, []agents.Target{{Provider: "claude"}}, nil)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, lead, []agents.Target{{Provider: "claude"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestACPNetworkScopeSkipsOptionalLeadMissingPeerAccount(t *testing.T) {
 		}
 	}
 	signInCred(t, cfg, "claude", "default")
-	scope, err = a.acpNetworkScope(cfg.RepoOverride, lead, []agents.Target{{Provider: "claude"}}, nil)
+	scope, err = a.acpNetworkScope(t.Context(), cfg.RepoOverride, lead, []agents.Target{{Provider: "claude"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,12 +161,12 @@ func TestACPNetworkScopeSkipsOptionalLeadWithIneligiblePeerAccount(t *testing.T)
 	if !box.ProfileAuthed(cfg, "gemini", "default") {
 		t.Fatal("fixture lacks ordinary peer account")
 	}
-	if _, err := box.NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil {
+	if _, err := box.NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil {
 		t.Fatal("fixture peer must be authenticated but network-ineligible")
 	}
 	a := &app{cfg: cfg}
 	lead := agents.Target{Provider: "gemini", Accounts: []string{"portable"}}
-	scope, err := a.acpNetworkScope(cfg.RepoOverride, lead, []agents.Target{{Provider: "gemini"}}, nil)
+	scope, err := a.acpNetworkScope(t.Context(), cfg.RepoOverride, lead, []agents.Target{{Provider: "gemini"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

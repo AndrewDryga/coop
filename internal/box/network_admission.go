@@ -739,7 +739,7 @@ func currentQualification(ctx context.Context, docker *runtime.Docker, store *ne
 // cannot enforce must fail by name, not be remembered as authority and then silently dropped by
 // the gateway.
 func filteredNetworkSources(cfg *config.Config, spec RunSpec, input networkstate.Admission) (networkstate.Admission, error) {
-	bundles, err := NetworkProviderBundles(cfg, spec)
+	bundles, err := NetworkProviderBundles(networkAdmissionContext(spec), cfg, spec)
 	if err != nil {
 		return networkstate.Admission{}, err
 	}

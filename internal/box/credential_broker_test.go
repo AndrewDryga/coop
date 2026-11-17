@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -91,7 +92,7 @@ func firstBrokerRoute(cfg *config.Config, spec RunSpec) (*credentialRoute, error
 }
 
 func firstBrokerRouteWithMarkers(cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialRoute, error) {
-	plan, err := selectCredentialPlanWithMarkers(cfg, spec, markers)
+	plan, err := selectCredentialPlanWithMarkers(context.Background(), cfg, spec, markers)
 	if err != nil || plan == nil {
 		return nil, err
 	}
@@ -170,7 +171,7 @@ func TestFilteredClaudeAPIKeyUsesBrokerInsteadOfProviderPolicy(t *testing.T) {
 	}
 	assertNativePublicSeed(t, run.accounts[0].seed, "raw-provider-secret")
 	spec.native = run
-	bundles, err := NetworkProviderBundles(cfg, spec)
+	bundles, err := NetworkProviderBundles(t.Context(), cfg, spec)
 	if err != nil || len(bundles) != 0 {
 		t.Fatal("protected origin in workload policy", bundles, err)
 	}
@@ -342,7 +343,7 @@ func TestReusableAPIKeysRefuseBeforeRuntimeOutsideBrokerShape(t *testing.T) {
 			run, err := planNativeAccounts(t.Context(), cfg, recorderRuntime(t, recorder), spec, false)
 			if err == nil {
 				spec.native = run
-				_, err = selectCredentialPlan(cfg, spec)
+				_, err = selectCredentialPlan(t.Context(), cfg, spec)
 			}
 			if err == nil {
 				t.Fatal("unsupported origin/family admitted")
@@ -626,7 +627,7 @@ func TestCredentialBrokerServesEveryTeammateShape(t *testing.T) {
 func TestCredentialBrokerRefusesWhatItCannotServe(t *testing.T) {
 	cfg, _ := brokerFixture(t, "XAI_API_KEY=xai-secret\n")
 	peer := RunSpec{Agent: "claude", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "grok"}}}
-	if plan, err := selectCredentialPlan(cfg, peer); err == nil || plan != nil {
+	if plan, err := selectCredentialPlan(t.Context(), cfg, peer); err == nil || plan != nil {
 		t.Fatal("unsupported Grok API key peer admitted")
 	}
 }
@@ -650,7 +651,7 @@ func TestCredentialBrokerRoutesEveryProviderKeyAndLeavesSignedInTeammates(t *tes
 		assertNativePublicSeed(t, account.seed, "gemini-secret", "claude-secret", codexState.AccessToken, "REFRESH_CANARY-codex-default")
 	}
 	spec.native = run
-	if bundles, err := NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+	if bundles, err := NetworkProviderBundles(t.Context(), cfg, spec); err != nil || len(bundles) != 0 {
 		t.Fatal("native account got ordinary workload provider grants", err)
 	}
 	artifacts := defaultCompositionArtifactOps()

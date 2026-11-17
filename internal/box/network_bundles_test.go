@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,26 +27,26 @@ func TestNetworkProviderBundlesFollowTheMountedCredentialScope(t *testing.T) {
 	for _, client := range []egress.Client{egress.ClientCLI, egress.ClientACP} {
 		for _, peers := range [][]agents.Target{nil, {{Provider: "codex"}}} {
 			spec := RunSpec{Repo: t.TempDir(), Agent: "claude", Homes: true, Peers: peers, NetworkClient: client}
-			bundles, err := NetworkProviderBundles(cfg, spec)
+			bundles, err := NetworkProviderBundles(t.Context(), cfg, spec)
 			if err != nil || len(bundles) != 0 {
 				t.Fatal("protected origins entered workload policy", bundles, err)
 			}
-			protected, err := brokeredProviders(cfg, spec)
+			protected, err := brokeredProviders(t.Context(), cfg, spec)
 			if err != nil || len(protected) != 1+len(peers) || !protected["claude"] || len(peers) > 0 && !protected["codex"] {
 				t.Fatal("guard scope lost", protected, err)
 			}
-			bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "claude"}, client)
+			bundle, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "claude"}, client)
 			if err != nil || bundle.Client != client || bundle.Backend != "native-broker" || len(bundle.Core) != 0 {
 				t.Fatal("native descriptor incorrect", bundle, err)
 			}
 		}
 	}
 	for _, spec := range []RunSpec{{Repo: t.TempDir()}, {Agent: "claude"}} {
-		if bundles, err := NetworkProviderBundles(cfg, spec); err != nil || len(bundles) != 0 {
+		if bundles, err := NetworkProviderBundles(t.Context(), cfg, spec); err != nil || len(bundles) != 0 {
 			t.Fatal("raw/homes-off derived endpoints", bundles, err)
 		}
 	}
-	if _, err := NetworkProviderBundles(cfg, RunSpec{Agent: "claude", Homes: true, Peers: []agents.Target{{Provider: "gemini"}}}); err == nil {
+	if _, err := NetworkProviderBundles(t.Context(), cfg, RunSpec{Agent: "claude", Homes: true, Peers: []agents.Target{{Provider: "gemini"}}}); err == nil {
 		t.Fatal("missing peer account admitted")
 	}
 }
@@ -56,7 +57,7 @@ func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
 	p := &preset.Preset{LeadTargets: []agents.Target{{Provider: "codex"}}, Roles: []preset.Role{{
 		Name: "critic", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}},
 	}}}
-	if _, err := NetworkProviderBundles(cfg, RunSpec{
+	if _, err := NetworkProviderBundles(t.Context(), cfg, RunSpec{
 		Agent: "codex", Homes: true, Preset: p, NetworkClient: egress.ClientACP,
 	}); err == nil || !strings.Contains(err.Error(), "Gemini CLI needs you to sign in") {
 		t.Fatal("missing required role was silently removed from network validation", err)
@@ -65,7 +66,7 @@ func TestNetworkProviderBundlesRefusesMissingRequiredPresetRole(t *testing.T) {
 
 func TestNetworkProviderBundlesAllowLoginWithoutAnExistingCredential(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
-	bundles, err := NetworkProviderBundles(cfg, RunSpec{Agent: "grok", Homes: true, Login: true})
+	bundles, err := NetworkProviderBundles(t.Context(), cfg, RunSpec{Agent: "grok", Homes: true, Login: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,9 +78,39 @@ func TestNetworkProviderBundlesAllowLoginWithoutAnExistingCredential(t *testing.
 	if err := os.WriteFile(cfg.EnvFile(), []byte("ANTHROPIC_API_KEY=env-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bundles, err = NetworkProviderBundles(cfg, RunSpec{Agent: "claude", Homes: true, Login: true})
+	bundles, err = NetworkProviderBundles(t.Context(), cfg, RunSpec{Agent: "claude", Homes: true, Login: true})
 	if err != nil || len(bundles) != 1 || bundles[0].Provider != "claude" {
 		t.Fatalf("Claude login beside an env key = %+v, %v; want its sign-in endpoints granted", bundles, err)
+	}
+}
+
+// A renewal holds an account's lock across its provider exchange. A filtered launch that starts
+// meanwhile waits for it, as the launch itself does, instead of failing after a second; its own
+// cancellation still stops the wait.
+func TestNetworkTargetBundleWaitsForABusyAccount(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	seedCanonicalFixture(t, cfg, "claude", "default")
+	target := agents.Target{Provider: "claude", Accounts: []string{"default"}}
+	release := holdAccountLock(t, cfg, "claude", "default")
+	held := time.AfterFunc(2*time.Second, release)
+	defer held.Stop()
+	defer release()
+	started := time.Now()
+	bundle, err := NetworkTargetBundle(t.Context(), cfg, target, egress.ClientCLI)
+	if err != nil || bundle.Backend != "native-broker" {
+		t.Fatalf("a launch while another process renews = %+v, %v; want the bundle once the lock is free", bundle, err)
+	}
+	if time.Since(started) < 2*time.Second {
+		t.Fatal("the bundle was read without waiting for the account's lock")
+	}
+
+	release = holdAccountLock(t, cfg, "claude", "default")
+	defer release()
+	ctx, cancel := context.WithCancel(t.Context())
+	stop := time.AfterFunc(100*time.Millisecond, cancel)
+	defer stop.Stop()
+	if _, err := NetworkTargetBundle(ctx, cfg, target, egress.ClientCLI); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a canceled launch waiting on a busy account = %v, want the cancellation", err)
 	}
 }
 
@@ -92,11 +123,11 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 		t.Fatal(err)
 	}
 	key := agents.Target{Provider: "gemini", Accounts: []string{"key"}}
-	bundle, err := NetworkTargetBundle(cfg, key, egress.ClientCLI)
+	bundle, err := NetworkTargetBundle(t.Context(), cfg, key, egress.ClientCLI)
 	if err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "gemini-api-key" || len(bundle.Core) != 0 {
 		t.Fatalf("portable Gemini key was not qualified exactly: %+v, %v", bundle, err)
 	}
-	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
+	if acp, err := NetworkTargetBundle(t.Context(), cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
 		t.Fatalf("Gemini API key was not offered to ACP: %+v, %v", acp, err)
 	}
 	// The client's own key file beside Coop's host key is shadowed by the broker, as in a direct
@@ -107,11 +138,11 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.WriteFile(filepath.Join(cfg.AgentProfileDir("gemini", "key"), "gemini-credentials.json"), []byte(`{"encrypted":"native"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if acp, err := NetworkTargetBundle(cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
+	if acp, err := NetworkTargetBundle(t.Context(), cfg, key, egress.ClientACP); err != nil || acp.AuthMode != "gemini-api-key" {
 		t.Fatalf("Gemini host key beside a native key file was not offered to ACP: %+v, %v", acp, err)
 	}
 	importCanonicalFixture(t, cfg, "codex", "native", map[string][]byte{"auth.json": []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"inert-native-key"}`)})
-	if bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "codex", Accounts: []string{"native"}}, egress.ClientACP); err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "apikey" || len(bundle.Core) != 0 {
+	if bundle, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "codex", Accounts: []string{"native"}}, egress.ClientACP); err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "apikey" || len(bundle.Core) != 0 {
 		t.Fatal("canonical Codex key not offered to ACP", bundle, err)
 	}
 
@@ -125,7 +156,7 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.WriteFile(filepath.Join(oauthDir, "gemini-credentials.json"), []byte(`{"encrypted":"host-bound"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "coop login gemini@oauth") {
+	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"oauth"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "coop login gemini@oauth") {
 		t.Fatal("a pre-v11 Gemini OAuth login was admitted", err)
 	}
 
@@ -139,10 +170,10 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.WriteFile(filepath.Join(vertexDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"vertex-ai"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "vertex-ai") {
+	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "vertex-ai") {
 		t.Fatal("unqualified Vertex mode was admitted", err)
 	}
-	if _, err := NetworkTargetBundle(cfg, agents.Target{Provider: "gemini", Accounts: []string{"named"}}, egress.ClientACP); err == nil {
+	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"named"}}, egress.ClientACP); err == nil {
 		t.Fatal("named Gemini account borrowed the default env key")
 	}
 }
@@ -160,7 +191,7 @@ func TestNetworkProviderBundlesBrokerAPresetRolesKey(t *testing.T) {
 	p := &preset.Preset{Roles: []preset.Role{{Name: "reviewer", Mode: preset.ModeConsult, Targets: []agents.Target{{Provider: "gemini"}}}}}
 	for _, admission := range []bool{false, true} {
 		spec := RunSpec{Agent: "codex", AgentCommand: true, Homes: true, Preset: p, NetworkAdmission: admission}
-		bundles, err := NetworkProviderBundles(cfg, spec)
+		bundles, err := NetworkProviderBundles(t.Context(), cfg, spec)
 		if err != nil || len(bundles) != 0 {
 			t.Fatalf("admission=%v: bundles = %+v, %v; want protected origins excluded from workload policy", admission, bundles, err)
 		}
@@ -203,7 +234,7 @@ func TestNetworkTargetBundleRequiresUsableGrokAuthority(t *testing.T) {
 			if _, _, err := replaceAccountAuthority(t.Context(), cfg, nativeAccountSpec(ag), "personal", &accountAuthority{Selection: state.Selection, Principal: state.Principal, Artifacts: files}); err != nil {
 				t.Fatal(err)
 			}
-			bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "grok", Accounts: []string{"personal"}}, egress.ClientCLI)
+			bundle, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "grok", Accounts: []string{"personal"}}, egress.ClientCLI)
 			if tc.admit && (err != nil || bundle.Backend != "native-broker" || bundle.AuthMode != "oauth" || len(bundle.Core) != 0) {
 				t.Fatal("usable authority refused", bundle, err)
 			}
@@ -321,7 +352,7 @@ func TestNetworkTargetBundleNamesTheMissingSignIn(t *testing.T) {
 		{agents.Target{Provider: "claude"}, "coop login claude"},
 		{agents.Target{Provider: "claude", Accounts: []string{"work"}}, "coop login claude@work"},
 	} {
-		_, err := NetworkTargetBundle(cfg, tc.target, egress.ClientCLI)
+		_, err := NetworkTargetBundle(t.Context(), cfg, tc.target, egress.ClientCLI)
 		if err == nil || !strings.Contains(err.Error(), tc.login) || strings.Contains(err.Error(), "not ready") {
 			t.Errorf("%+v = %v, want the remedy %q", tc.target, err, tc.login)
 		}

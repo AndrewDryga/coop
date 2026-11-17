@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -118,11 +119,11 @@ type credentialBrokerRun struct {
 // selectCredentialPlan recognizes reusable credentials before a box is assembled. Every provider
 // account the run selects that holds a brokerable key gets a route of one filtered run's broker;
 // a shape the broker cannot serve refuses instead of falling back to putting a key in the container.
-func selectCredentialPlan(cfg *config.Config, spec RunSpec) (*credentialPlan, error) {
-	return selectCredentialPlanWithMarkers(cfg, spec, nil)
+func selectCredentialPlan(ctx context.Context, cfg *config.Config, spec RunSpec) (*credentialPlan, error) {
+	return selectCredentialPlanWithMarkers(ctx, cfg, spec, nil)
 }
 
-func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialPlan, error) {
+func selectCredentialPlanWithMarkers(ctx context.Context, cfg *config.Config, spec RunSpec, markers map[string]bool) (*credentialPlan, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -168,7 +169,7 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 			continue
 		}
 		ag, _ := agents.Get(name)
-		if _, native, err := nativeNetworkBundle(cfg, ag, cfg.ActiveProfile(name), spec.networkClient()); err != nil {
+		if _, native, err := nativeNetworkBundle(ctx, cfg, ag, cfg.ActiveProfile(name), spec.networkClient()); err != nil {
 			return nil, err
 		} else if native {
 			if err := validateNativeOverrides(cfg, spec, ag); err != nil {

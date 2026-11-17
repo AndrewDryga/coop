@@ -44,7 +44,7 @@ func TestNativeCanonicalSelectionIgnoresRetiredProfilesAndHonorsDefaultKey(t *te
 		if err != nil || !exists || selected.state.AccessToken != want {
 			t.Fatalf("selection %s: %v", account, err)
 		}
-		bundle, err := NetworkTargetBundle(cfg, agents.Target{Provider: "codex", Accounts: []string{account}}, egress.ClientACP)
+		bundle, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "codex", Accounts: []string{account}}, egress.ClientACP)
 		if err != nil || bundle.Backend != "native-broker" || len(bundle.Core) != 0 {
 			t.Fatal("canonical preflight fell back to legacy", err)
 		}

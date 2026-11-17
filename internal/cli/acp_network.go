@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -13,8 +14,8 @@ import (
 	"github.com/AndrewDryga/coop/internal/preset"
 )
 
-func acpNetworkQualified(cfg *config.Config, target agents.Target) bool {
-	_, err := box.NetworkTargetBundle(cfg, target, egress.ClientACP)
+func acpNetworkQualified(ctx context.Context, cfg *config.Config, target agents.Target) bool {
+	_, err := box.NetworkTargetBundle(ctx, cfg, target, egress.ClientACP)
 	return err == nil
 }
 
@@ -73,7 +74,7 @@ func (a *app) acpPresetNetworkTargets(p *preset.Preset) []agents.Target {
 // and explicit peers/roles. Open and offline admission ignores these bundles.
 // Required providers stay intact so filtered admission rejects an unsupported
 // request; optional choices contribute only whole, qualified provider closures.
-func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents.Target, selected *preset.Preset) ([]agents.Target, error) {
+func (a *app) acpNetworkScope(ctx context.Context, repo string, initial agents.Target, peers []agents.Target, selected *preset.Preset) ([]agents.Target, error) {
 	var scope []agents.Target
 	// One policy serves every box this session may start, and a provider's API-key and signed-in
 	// accounts need opposite grants (the broker withholds the API a sign-in is granted). So a
@@ -82,11 +83,11 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 	keyed := map[string]bool{}
 	anchor := func(target agents.Target) {
 		if _, set := keyed[target.Provider]; !set {
-			keyed[target.Provider], _ = box.AccountBrokersKey(a.cfg, target.Provider, target.Account())
+			keyed[target.Provider], _ = box.AccountBrokersKey(ctx, a.cfg, target.Provider, target.Account())
 		}
 	}
 	sameKind := func(target agents.Target) bool {
-		key, err := box.AccountBrokersKey(a.cfg, target.Provider, target.Account())
+		key, err := box.AccountBrokersKey(ctx, a.cfg, target.Provider, target.Account())
 		return err == nil && key == keyed[target.Provider]
 	}
 	if len(initial.Accounts) != 0 {
@@ -136,7 +137,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 				}
 				target := peer
 				target.Accounts = []string{account}
-				if !acpNetworkQualified(a.cfg, target) || !sameKind(target) {
+				if !acpNetworkQualified(ctx, a.cfg, target) || !sameKind(target) {
 					return false
 				}
 			}
@@ -147,7 +148,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 		for _, provider := range providers {
 			for _, account := range accountsFor(a.cfg, provider) {
 				target := agents.Target{Provider: provider, Accounts: []string{account}}
-				if !acpNetworkQualified(a.cfg, target) {
+				if !acpNetworkQualified(ctx, a.cfg, target) {
 					continue
 				}
 				if !peerClosureQualified([]agents.Target{target}) {
@@ -228,11 +229,15 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 			}
 		}
 		for _, target := range targets {
-			qualified = qualified && acpNetworkQualified(a.cfg, target) && sameKind(target)
+			qualified = qualified && acpNetworkQualified(ctx, a.cfg, target) && sameKind(target)
 		}
 		if qualified {
 			scope = append(scope, targets...)
 		}
+	}
+	// A canceled read only looks like an unqualified account; the session keeps this scope.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return scope, nil
 }

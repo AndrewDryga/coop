@@ -223,7 +223,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 		return nil, err
 	}
 	authMarkers := profileMarkerSnapshot(cfg)
-	brokerPlan, err := selectCredentialPlanWithMarkers(cfg, spec, authMarkers)
+	brokerPlan, err := selectCredentialPlanWithMarkers(ctx, cfg, spec, authMarkers)
 	if err != nil {
 		return nil, err
 	}

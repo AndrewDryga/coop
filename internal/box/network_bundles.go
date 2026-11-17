@@ -32,15 +32,15 @@ func (s RunSpec) networkClient() egress.Client {
 //
 // An unsupported provider fails admission here. Launching it under a policy
 // that cannot reach its API would only produce a confusing mid-session denial.
-func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, error) {
+func NetworkProviderBundles(ctx context.Context, cfg *config.Config, spec RunSpec) ([]egress.Bundle, error) {
 	if !spec.NetworkAdmission {
 		// A run's own plan refuses first what no policy can serve: a command that is not the
 		// agent.
-		if _, err := selectCredentialPlan(cfg, spec); err != nil {
+		if _, err := selectCredentialPlan(ctx, cfg, spec); err != nil {
 			return nil, err
 		}
 	}
-	brokered, err := brokeredProviders(cfg, spec)
+	brokered, err := brokeredProviders(ctx, cfg, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func NetworkProviderBundles(cfg *config.Config, spec RunSpec) ([]egress.Bundle, 
 				// Login creates the credential, so it cannot require that credential first.
 				bundle, err = ag.NetworkBundle(agents.NetworkBundleInput{Client: spec.networkClient()})
 			} else {
-				bundle, err = NetworkTargetBundle(cfg, target, spec.networkClient())
+				bundle, err = NetworkTargetBundle(ctx, cfg, target, spec.networkClient())
 			}
 			if err != nil {
 				return nil, err
@@ -124,7 +124,7 @@ const RestrictedCredentialHorizon = time.Hour
 // NetworkTargetBundle binds one exact account's selected authentication family
 // to its release-owned endpoint bundle without reading credential bytes. It is
 // shared by initial admission and ACP's pre-spawn revalidation.
-func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress.Client) (egress.Bundle, error) {
+func NetworkTargetBundle(ctx context.Context, cfg *config.Config, target agents.Target, client egress.Client) (egress.Bundle, error) {
 	ag, ok := agents.Get(target.Provider)
 	if !ok {
 		return egress.Bundle{}, errors.New("unknown provider in the restricted credential scope")
@@ -136,7 +136,7 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 	if account == "" {
 		account = cfg.ActiveProfile(target.Provider)
 	}
-	if bundle, exists, err := nativeNetworkBundle(cfg, ag, account, client); exists || err != nil {
+	if bundle, exists, err := nativeNetworkBundle(ctx, cfg, ag, account, client); exists || err != nil {
 		return bundle, err
 	}
 	if !ProfileCredentialReady(cfg, target.Provider, account, time.Now()) {
@@ -201,7 +201,7 @@ func NetworkTargetBundle(cfg *config.Config, target agents.Target, client egress
 // brokeredProviders classifies every account one policy covers — the same accounts its bundles
 // derive from: a loop's every rung, an ACP session's every offered account, else a provider's
 // active one — and names the providers whose accounts are API keys the broker serves.
-func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error) {
+func brokeredProviders(ctx context.Context, cfg *config.Config, spec RunSpec) (map[string]bool, error) {
 	result := map[string]bool{}
 	if spec.Login {
 		return result, nil // sign-in creates a login; its box receives none of the account's keys
@@ -210,7 +210,7 @@ func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error
 		brokered, plain := false, false
 		for _, target := range networkTargetsForProvider(cfg, spec, name) {
 			ag, _ := agents.Get(name)
-			_, native, err := nativeNetworkBundle(cfg, ag, target.Account(), spec.networkClient())
+			_, native, err := nativeNetworkBundle(ctx, cfg, ag, target.Account(), spec.networkClient())
 			if err != nil {
 				return nil, err
 			}
@@ -243,12 +243,12 @@ func brokeredProviders(cfg *config.Config, spec RunSpec) (map[string]bool, error
 
 // AccountBrokersKey reports whether an account uses host brokering. Despite the name, canonical
 // subscription credentials use the broker too; this is not an API-key family detector.
-func AccountBrokersKey(cfg *config.Config, provider, account string) (bool, error) {
+func AccountBrokersKey(ctx context.Context, cfg *config.Config, provider, account string) (bool, error) {
 	ag, ok := agents.Get(provider)
 	if !ok {
 		return false, errors.New("unknown credential provider")
 	}
-	if _, exists, err := nativeNetworkBundle(cfg, ag, account, egress.ClientCLI); exists || err != nil {
+	if _, exists, err := nativeNetworkBundle(ctx, cfg, ag, account, egress.ClientCLI); exists || err != nil {
 		return exists, err
 	}
 	route, err := credentialBrokerCandidateFor(cfg, RunSpec{Homes: true}, provider, account, nil)
@@ -257,13 +257,11 @@ func AccountBrokersKey(cfg *config.Config, provider, account string) (bool, erro
 
 // Preflight previews the same account authority as launch without migrating or
 // renewing it. Native protected origins belong only to the guard's policy.
-func nativeNetworkBundle(cfg *config.Config, ag agents.Agent, account string, client egress.Client) (egress.Bundle, bool, error) {
+func nativeNetworkBundle(ctx context.Context, cfg *config.Config, ag agents.Agent, account string, client egress.Client) (egress.Bundle, bool, error) {
 	if account == "" {
 		account = cfg.ActiveProfile(ag.Name())
 	}
 	cfg = cfg.NativeAuthorityConfig()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 	selection, exists, err := previewNativeAuthority(ctx, cfg, ag, account)
 	if err != nil || !exists {
 		return egress.Bundle{}, exists, err

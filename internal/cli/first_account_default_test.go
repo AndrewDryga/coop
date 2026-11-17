@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -94,7 +95,7 @@ func TestFirstNamedLoginBecomesTheDefault(t *testing.T) {
 			if err := box.MissingDefaultAccount(cfg, agent, cfg.ActiveProfile(agent)); err != nil {
 				t.Errorf("a run of the new default is refused: %v", err)
 			}
-			if _, err := box.NetworkTargetBundle(cfg, agents.Target{Provider: agent, Accounts: []string{cfg.ActiveProfile(agent)}}, egress.ClientCLI); err != nil {
+			if _, err := box.NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: agent, Accounts: []string{cfg.ActiveProfile(agent)}}, egress.ClientCLI); err != nil {
 				t.Errorf("a filtered run of the new default is refused: %v", err)
 			}
 
@@ -218,7 +219,7 @@ func TestRunWithoutAnyUsableAccountStillOffersASignIn(t *testing.T) {
 }
 
 func bundleErr(cfg *config.Config, agent string) error {
-	_, err := box.NetworkTargetBundle(cfg, agents.Target{Provider: agent, Accounts: []string{cfg.ActiveProfile(agent)}}, egress.ClientCLI)
+	_, err := box.NetworkTargetBundle(context.Background(), cfg, agents.Target{Provider: agent, Accounts: []string{cfg.ActiveProfile(agent)}}, egress.ClientCLI)
 	return err
 }
 

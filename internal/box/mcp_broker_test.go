@@ -39,7 +39,7 @@ func TestFilteredRunBrokersEveryBearerMCPServer(t *testing.T) {
 	if native.accounts[0].record.Selection != "claude-oauth" {
 		t.Fatal("MCP replaced subscription")
 	}
-	plan, err := selectCredentialPlan(cfg, spec)
+	plan, err := selectCredentialPlan(t.Context(), cfg, spec)
 	if err == nil {
 		plan, err = planMCPRoutes(cfg, spec, []byte(brokeredMCPSnapshot), plan)
 	}

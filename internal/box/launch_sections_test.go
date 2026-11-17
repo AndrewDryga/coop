@@ -243,7 +243,7 @@ func TestLaunchAccountsComeFromTheRunsOwnScope(t *testing.T) {
 
 	spec := RunSpec{Agent: "gemini", AgentCommand: true, Homes: true, Peers: []agents.Target{{Provider: "claude"}, {Provider: "codex"}}}
 	spec.native = nativeBrokerPlanFixture(t, cfg, spec)
-	plan, err := selectCredentialPlan(cfg, spec)
+	plan, err := selectCredentialPlan(t.Context(), cfg, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
