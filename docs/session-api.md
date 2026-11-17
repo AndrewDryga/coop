@@ -902,8 +902,9 @@ co:op rejects symlinks, special files, mismatched content, a sixth image, a file
 more than 8 MiB in total.
 
 co:op removes the temporary output directory before completing the turn, so generated charts don't
-become repository changes. In a read-only repository session, the container still sees the
-path `.coop-output/...`, but its files are stored in co:op's private session state on the host.
+become repository changes. The container sees the path `.coop-output/...`, but its files are
+stored in co:op's private session state on the host, never in the session's checkout. Text
+attachments are kept there under `.coop-output/.inputs/` so later turns can reread them.
 
 Cancellation first asks ACP to cancel the turn. co:op then stops the turn's process group and
 removes its box. This doesn't undo actions already taken in external systems.

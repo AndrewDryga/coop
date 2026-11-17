@@ -1205,8 +1205,11 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	var sessionOutputArgs []string
 	var sessionOutputRoot string
-	if repositoryReadOnly {
-		sessionOutputArgs, sessionOutputRoot, err = readOnlySessionOutputMountArgs(ws, workdir)
+	// A session's output root lives in the daemon's private state, so files staged there (input
+	// attachments, generated images) never become changes in the fork. A read-only session needs
+	// it to write at all; a writable one keeps its checkout clean for review and checkpoints.
+	if repositoryReadOnly || (sessionsvc.RunIDFromEnv() != "" && os.Getenv(sessionsvc.SessionOutputRootEnv) != "") {
+		sessionOutputArgs, sessionOutputRoot, err = sessionOutputMountArgs(ws, workdir)
 		if err != nil {
 			return -1, err
 		}
@@ -1359,28 +1362,28 @@ func (a *app) forkACPTarget(name string) (agents.Target, error) {
 	return agents.Target{Provider: agent}, err
 }
 
-func readOnlySessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {
+func sessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {
 	if !filepath.IsAbs(workspace) {
-		return nil, "", errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("session output root is unsafe")
 	}
 	workspaceRoot, err := filepath.EvalSymlinks(workspace)
 	if err != nil || !filepath.IsAbs(workspaceRoot) {
-		return nil, "", errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("session output root is unsafe")
 	}
 	destination := filepath.Join(workspace, ".coop-output")
 	destinationInfo, err := os.Lstat(destination)
 	if err != nil || !destinationInfo.IsDir() || destinationInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, "", errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("session output root is unsafe")
 	}
 	source := os.Getenv(sessionsvc.SessionOutputRootEnv)
 	sourceRoot, err := filepath.EvalSymlinks(source)
 	if source == "" || err != nil || !filepath.IsAbs(sourceRoot) {
-		return nil, "", errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("session output root is unsafe")
 	}
 	sourceInfo, err := os.Lstat(sourceRoot)
 	if err != nil || !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 ||
 		pathsOverlap(workspaceRoot, sourceRoot) {
-		return nil, "", errors.New("read-only session output root is unsafe")
+		return nil, "", errors.New("session output root is unsafe")
 	}
 	// Docker's default is writable; keep the canonical form that filtered
 	// admission and post-create mount verification both understand.

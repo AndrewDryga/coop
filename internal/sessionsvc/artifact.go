@@ -140,3 +140,62 @@ func stageSessionTextArtifact(outputRoot string, artifact session.InputArtifact)
 	}
 	return filepath.ToSlash(filepath.Join(sessionOutputRoot, ".inputs", name)), nil
 }
+
+// moveWorkspaceTextArtifacts moves text attachments that 13.2.1 staged in a writable fork's own
+// .coop-output/.inputs into the session's private output root. There they stop being untracked
+// changes in the fork, and the same in-box path still reads them. Only files whose name is the
+// digest of their bytes are coop's; anything else in that folder is left alone.
+func moveWorkspaceTextArtifacts(workspace, outputRoot string) error {
+	root, err := os.OpenRoot(filepath.Join(workspace, sessionOutputRoot))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	info, err := root.Lstat(".inputs")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() {
+		return errors.New("workspace attachment directory is unsafe")
+	}
+	inputs, err := root.OpenRoot(".inputs")
+	if err != nil {
+		return err
+	}
+	defer inputs.Close()
+	handle, err := inputs.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, readErr := handle.ReadDir(-1)
+	if err := errors.Join(readErr, handle.Close()); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		digest, ok := strings.CutSuffix(entry.Name(), ".txt")
+		if !ok || len(digest) != sha256.Size*2 || !entry.Type().IsRegular() {
+			continue
+		}
+		file, err := inputs.OpenFile(entry.Name(), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, session.MaxArtifactBytes+1))
+		if err := errors.Join(readErr, file.Close()); err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		if len(data) > session.MaxArtifactBytes || hex.EncodeToString(sum[:]) != digest {
+			continue
+		}
+		artifact := session.InputArtifact{MediaType: "text/plain", SHA256: digest, Data: data}
+		if _, err := stageSessionTextArtifact(outputRoot, artifact); err != nil {
+			return err
+		}
+		if err := inputs.Remove(entry.Name()); err != nil {
+			return err
+		}
+	}
+	_ = root.Remove(".inputs") // succeeds only when nothing else is left in it
+	return nil
+}

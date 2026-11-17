@@ -1043,6 +1043,34 @@ func TestForkACPTreatsAKeyAsTheAgentsOwnClient(t *testing.T) {
 // only constrained by prompt text. The trusted session bit must reach the
 // runtime mount: an answer from any provider is input, not an authority check.
 func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T) {
+	workspace, hostOutputRoot, args := launchSessionForkACP(t, true)
+	if !strings.Contains(args, workspace+":"+sessionsvc.StableWorkdir+":ro") ||
+		!strings.Contains(args, "-w "+sessionsvc.StableWorkdir) {
+		t.Fatalf("read-only session repository was writable:\n%s", args)
+	}
+	outputMount := hostOutputRoot + ":" + filepath.Join(sessionsvc.StableWorkdir, ".coop-output")
+	if !strings.Contains(args, "-v "+outputMount+" ") || strings.Contains(args, outputMount+":") {
+		t.Fatalf("read-only session output root was not writable:\n%s", args)
+	}
+}
+
+// A writable session's output root is private state too: text attachments staged there in the
+// fork itself were untracked changes that blocked review and leaked into checkpoints.
+func TestForkACPMountsAWritableSessionsPrivateOutputRoot(t *testing.T) {
+	workspace, hostOutputRoot, args := launchSessionForkACP(t, false)
+	if !strings.Contains(args, workspace+":"+sessionsvc.StableWorkdir+" ") {
+		t.Fatalf("writable session repository was not mounted writable:\n%s", args)
+	}
+	outputMount := hostOutputRoot + ":" + filepath.Join(sessionsvc.StableWorkdir, ".coop-output")
+	if !strings.Contains(args, "-v "+outputMount+" ") || strings.Contains(args, outputMount+":") {
+		t.Fatalf("writable session output root was not mounted from private state:\n%s", args)
+	}
+}
+
+// launchSessionForkACP runs a remote session's fork ACP child against a recording runtime and
+// returns the fork workspace, the private output root the daemon named, and the runtime's args.
+func launchSessionForkACP(t *testing.T, readOnly bool) (string, string, string) {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1069,7 +1097,11 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	if readOnly {
+		t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "1")
+	} else {
+		t.Setenv("COOP_SESSION_REPOSITORY_READ_ONLY", "")
+	}
 	t.Setenv("COOP_SESSION_RUN_ID", runID)
 	t.Setenv("COOP_SESSION_STORE_ID", testForkSessionStoreID)
 	t.Setenv(sessionsvc.SessionOutputRootEnv, hostOutputRoot)
@@ -1098,20 +1130,13 @@ func TestForkACPPhysicallyMountsAReadOnlySessionRepositoryReadOnly(t *testing.T)
 		rt: recordingRuntime(t, recorder), rtSet: true,
 	}
 	if code, runErr := a.forkACP("readonly", []string{"codex"}); runErr != nil || code != 0 {
-		t.Fatalf("forkACP = (%d, %v), want a read-only mounted session", code, runErr)
+		t.Fatalf("forkACP = (%d, %v), want a mounted session", code, runErr)
 	}
 	args, err := os.ReadFile(recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(args), workspace+":"+sessionsvc.StableWorkdir+":ro") ||
-		!strings.Contains(string(args), "-w "+sessionsvc.StableWorkdir) {
-		t.Fatalf("read-only session repository was writable:\n%s", args)
-	}
-	outputMount := hostOutputRoot + ":" + filepath.Join(sessionsvc.StableWorkdir, ".coop-output")
-	if !strings.Contains(string(args), "-v "+outputMount+" ") || strings.Contains(string(args), outputMount+":") {
-		t.Fatalf("read-only session output root was not writable:\n%s", args)
-	}
+	return workspace, hostOutputRoot, string(args)
 }
 
 func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {
@@ -1213,7 +1238,7 @@ func TestReadOnlySessionOutputMountUsesCanonicalWritableForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(sessionsvc.SessionOutputRootEnv, source)
-	args, root, err := readOnlySessionOutputMountArgs(workspace, sessionsvc.StableWorkdir)
+	args, root, err := sessionOutputMountArgs(workspace, sessionsvc.StableWorkdir)
 	want := source + ":" + filepath.Join(sessionsvc.StableWorkdir, ".coop-output")
 	if err != nil || root != source || len(args) != 2 || args[0] != "-v" || args[1] != want {
 		t.Fatalf("output mount = %q, %q, %v; want canonical writable -v %s", args, root, err, want)

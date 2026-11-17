@@ -2094,22 +2094,19 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session private state is unsafe"), err)
 	}
 	workdir := StableWorkdir
-	// A read-only session mounts a writable output root beside its read-only fork.
-	outputRoot := ""
-	if bound.RepositoryReadOnly {
-		if _, err := prepareSessionOutputRoot(bound.Workspace); err != nil {
-			return nil, errors.Join(
-				acpFailure(sessionACPProcessError, "read-only session output root is invalid"),
-				err,
-			)
-		}
-		var err error
-		outputRoot, err = preparePrivateSessionOutputRoot(r.stateRoot, bound.ID)
-		if err != nil {
-			return nil, errors.Join(
-				acpFailure(sessionACPProcessError, "read-only session output state is invalid"),
-				err,
-			)
+	// Every session's output root lives in private state, mounted over the fork's empty
+	// .coop-output: a read-only fork could not hold it, and in a writable one staged attachments
+	// would be untracked changes that block review and leak into checkpoints.
+	if _, err := prepareSessionOutputRoot(bound.Workspace); err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session output root is invalid"), err)
+	}
+	outputRoot, err := preparePrivateSessionOutputRoot(r.stateRoot, bound.ID)
+	if err != nil {
+		return nil, errors.Join(acpFailure(sessionACPProcessError, "session output state is invalid"), err)
+	}
+	if !bound.RepositoryReadOnly {
+		if err := moveWorkspaceTextArtifacts(bound.Workspace, outputRoot); err != nil {
+			return nil, errors.Join(acpFailure(sessionACPProcessError, "session workspace attachments could not move"), err)
 		}
 	}
 	// The capture is appended last, so a session's frozen posture wins over any COOP_EGRESS the
@@ -2139,9 +2136,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 	}
 	env = append(env, runtimeEnv...)
 	env = append(env, "COOP_SESSION_STORE_ID="+r.store.ID())
-	if outputRoot != "" {
-		env = append(env, SessionOutputRootEnv+"="+outputRoot)
-	}
+	env = append(env, SessionOutputRootEnv+"="+outputRoot)
 	activityRole := forkspace.ExecutionRoleActiveTurn
 	if runID == sessionWarmRunID(bound.ID) {
 		activityRole = forkspace.ExecutionRoleWarm
@@ -2205,10 +2200,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		process.nativeHome = nativeHome
 		process.mcpHandoff = mcpHandoff
 		process.cwd = workdir
-		process.outputRoot = filepath.Join(bound.Workspace, sessionOutputRoot)
-		if outputRoot != "" {
-			process.outputRoot = outputRoot
-		}
+		process.outputRoot = outputRoot
 		if bound.NetworkMode == string(egress.Filtered) {
 			process.stopGrace = sessionACPFilteredStopGrace
 		}

@@ -2,6 +2,8 @@ package sessionsvc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -97,6 +99,57 @@ func TestARepositoryReadOnlySessionLaunchesItsForkWithAPrivateOutputRoot(t *test
 	stored, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
 	if err != nil || stored.NativeSessionID == "" {
 		t.Fatalf("read-only session bound no native session: %+v, %v", stored, err)
+	}
+}
+
+// A writable session stages a text attachment in its private output root, as a read-only one does.
+// In 13.2.1 it landed in the fork's own .coop-output, where it was an untracked change that review
+// refused and checkpoints copied. A file 13.2.1 left there moves to the private root, so the path
+// the model was given still reads it; a file that is not coop's stays where it is.
+func TestAWritableSessionKeepsTextAttachmentsOutOfItsFork(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	workspaceOutput := filepath.Join(fixture.session.Workspace, sessionOutputRoot)
+	legacyData := []byte("staged by 13.2.1")
+	legacyDigest := sha256.Sum256(legacyData)
+	legacyName := hex.EncodeToString(legacyDigest[:]) + ".txt"
+	if err := os.MkdirAll(filepath.Join(workspaceOutput, ".inputs"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{legacyName: legacyData, "notes.txt": []byte("the agent's own")} {
+		if err := os.WriteFile(filepath.Join(workspaceOutput, ".inputs", name), data, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := []byte("panic: boom\n")
+	digest := sha256.Sum256(data)
+	name := hex.EncodeToString(digest[:]) + ".txt"
+	artifacts := []session.InputArtifact{{Name: "trace.txt", MediaType: "text/plain", SHA256: hex.EncodeToString(digest[:]), Data: data}}
+	for _, prompt := range []string{"read the trace", "read it again"} {
+		turn := fixture.submitArtifacts(t, prompt, artifacts)
+		if result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn); err != nil || result.State != session.TurnCompleted {
+			t.Fatalf("writable turn = %+v, %v", result, err)
+		}
+	}
+	if wire := readFile(t, fixture.childLog); strings.Count(wire, `path=\"`+sessionOutputRoot+"/.inputs/"+name+`\"`) != 2 {
+		t.Fatalf("both turns did not name the same in-box attachment path:\n%s", wire)
+	}
+	private := filepath.Join(filepath.Dir(filepath.Dir(fixture.private)), "output", fixture.session.ID, ".inputs")
+	for file, want := range map[string][]byte{name: data, legacyName: legacyData} {
+		if got, err := os.ReadFile(filepath.Join(private, file)); err != nil || string(got) != string(want) {
+			t.Fatalf("private attachment %s = %q, %v", file, got, err)
+		}
+	}
+	var left []string
+	if err := filepath.WalkDir(workspaceOutput, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			left = append(left, filepath.Base(path))
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(left, []string{"notes.txt"}) {
+		t.Fatalf("files left in the fork's output folder = %q, want only the agent's notes.txt", left)
 	}
 }
 
