@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,14 +31,14 @@ func TestGitSignOutput(t *testing.T) {
 	t.Setenv("GIT_TRACE", "")
 
 	var stderr bytes.Buffer
-	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
 		t.Fatalf("successful gitSignTo = %v", err)
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("successful gitSignTo leaked output: %q", stderr.String())
 	}
 	t.Setenv("GIT_TRACE", "0")
-	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
 		t.Fatalf("GIT_TRACE=0 gitSignTo = %v", err)
 	}
 	if stderr.Len() != 0 {
@@ -46,7 +47,7 @@ func TestGitSignOutput(t *testing.T) {
 
 	t.Setenv("FAKE_GIT_FAIL", "1")
 	stderr.Reset()
-	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err == nil {
+	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err == nil {
 		t.Fatal("failed gitSignTo returned nil")
 	}
 	for _, want := range []string{"git stdout", "git diagnostic"} {
@@ -58,7 +59,7 @@ func TestGitSignOutput(t *testing.T) {
 	t.Setenv("FAKE_GIT_FAIL", "")
 	t.Setenv("GIT_TRACE", "1")
 	stderr.Reset()
-	if err := gitSignTo(&stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
+	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
 		t.Fatalf("traced gitSignTo = %v", err)
 	}
 	if !strings.Contains(stderr.String(), "git diagnostic") {

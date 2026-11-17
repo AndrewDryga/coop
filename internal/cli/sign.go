@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -183,6 +185,10 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	}
 	oldTrees := rangeTrees(repo, base, oldHead)
 
+	// Ctrl-C at a passphrase prompt must still remove the scratch checkout and its worktree entry:
+	// the signals are held for this pass and stop git through ctx, so the deferred cleanup runs.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	tempRoot, err := os.MkdirTemp("", "coop-sign-")
 	if err != nil {
 		return 0, fmt.Errorf("create signing worktree: %w", err)
@@ -209,7 +215,7 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	// -f stays: base is the exact parent of the first commit to sign, and without it git reports the
 	// branch up to date and signs nothing.
 	args := append(append([]string{}, forkspace.TrustedSignArgs()...), "rebase", "-f", "--gpg-sign", base)
-	if err := gitSign(worktree, args...); err != nil {
+	if err := gitSign(ctx, worktree, args...); err != nil {
 		_ = forkspace.GitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
 		return 0, signingFailure{fmt.Errorf("could not re-sign %s..HEAD: %w", base, err)}
 	}

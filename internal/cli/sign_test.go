@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -864,5 +866,70 @@ func TestCmdSignEmptyFromDoesNotRewriteUnpushedCommit(t *testing.T) {
 	}
 	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head || !headUnsigned(repo) {
 		t.Errorf("unsigned commit changed: %s -> %s", head, got)
+	}
+}
+
+// Ctrl-C while git waits on the signing program (a passphrase prompt) must still remove the
+// scratch checkout and its worktree entry: the pass holds the signal and cancels git instead of
+// dying with its cleanup unrun.
+func TestSignUnpushedCleansUpWhenInterrupted(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	started, release := filepath.Join(dir, "started"), filepath.Join(dir, "release")
+	program := filepath.Join(dir, "slow-gpg")
+	script := "#!/bin/sh\n: > " + started + "\ni=0\nwhile [ ! -e " + release + " ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\nexit 1\n"
+	if err := os.WriteFile(program, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalCfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(globalCfg, []byte("[gpg]\n\tprogram = "+program+"\n[user]\n\tsigningkey = test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "nosystem"))
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "T"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "-q", "--allow-empty", "-m", "base"},
+		{"commit", "-q", "--allow-empty", "-m", "box work"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD~1")
+
+	go func() {
+		for i := 0; i < 400 && !pathExists(started); i++ {
+			time.Sleep(25 * time.Millisecond)
+		}
+		if pathExists(started) {
+			_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		}
+		time.Sleep(500 * time.Millisecond)
+		_ = os.WriteFile(release, nil, 0o644)
+	}()
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	captureStderr(t, func() {
+		if _, err := a.signUnpushed(repo, base); err == nil {
+			t.Error("an interrupted signing pass reported success")
+		}
+	})
+	if !pathExists(started) {
+		t.Fatal("git never ran the signing program")
+	}
+	if left, _ := filepath.Glob(filepath.Join(scratch, "coop-sign-*")); len(left) != 0 {
+		t.Errorf("interrupted signing left scratch behind: %v", left)
+	}
+	if list := forkspace.GitOut(repo, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
+		t.Errorf("interrupted signing left a worktree entry:\n%s", list)
 	}
 }

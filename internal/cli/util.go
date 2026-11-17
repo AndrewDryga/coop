@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -82,15 +83,16 @@ func gitOutputBytes(dir string, args ...string) ([]byte, error) {
 // gitSign runs a hardened git command (like a rebase with signing), wiring Stdin
 // so a TTY pinentry still works, but capturing CombinedOutput to silence benign chatter.
 // The captured output is replayed to Stderr only on failure, or if GIT_TRACE is set.
-func gitSign(dir string, args ...string) error {
-	return gitSignTo(os.Stderr, dir, args...)
+func gitSign(ctx context.Context, dir string, args ...string) error {
+	return gitSignTo(ctx, os.Stderr, dir, args...)
 }
 
-func gitSignTo(stderr io.Writer, dir string, args ...string) error {
-	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
+func gitSignTo(ctx context.Context, stderr io.Writer, dir string, args ...string) error {
+	cmd, err := forkspace.GitCommand(ctx, dir, args...)
 	if err != nil {
 		return err
 	}
+	cmd.WaitDelay = time.Second // a signing helper git left behind must not hold a cancelled pass open
 	cmd.Stdin = os.Stdin
 	out, err := cmd.CombinedOutput()
 	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))
