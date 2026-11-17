@@ -454,7 +454,7 @@ base, gateway and client images, but those builds don't run instructions from yo
 | --- | --- |
 | IPv6 address, CIDR, or `icmpv6` | `IPv6 destinations are not supported yet — a filtered box runs on IPv4 only` |
 | `tls` on port 53 | `TLS on port 53 is not allowed here — the gateway takes 53 for DNS; use 443 or another port` |
-| raw `tcp`/`udp` on port 443 or 53 | `raw tcp to <dest> on port 443 is not allowed — the gateway takes 443 for TLS and DNS; use another port` |
+| raw `tcp`/`udp` on port 443 or 53 | `raw tcp to <dest> on port 443 is not allowed — the gateway takes 443 for TLS; use another port` (on 53, `for DNS`) |
 | raw `tcp` on a port a `tls` rule also names | `raw tcp to <dest> on port 8443 clashes with a TLS rule on the same port — the gateway takes that port for TLS; use another port` |
 | a `serve` port on a port the gateway takes for TLS or DNS | `port 8443 is one the gateway uses for TLS and DNS — serve on another port in filtered mode` |
 | ICMP beyond echo-request | `ICMP N to <dest> is not supported yet — only echo-request is` |

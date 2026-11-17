@@ -586,12 +586,17 @@ func supportedPrefix(rule Rule) (netip.Prefix, error) {
 	return prefix, nil
 }
 
-// 443 and 53 belong to the gateway's own capture of agent TLS and DNS. A raw
-// grant on them would be silently redirected, so it is refused by name.
+// The gateway captures agent TCP 443 for TLS and port 53 for DNS, so a raw grant
+// there would be silently redirected; it is refused by name. UDP 443 is not
+// captured, but is refused with them so the port means one thing in every rule.
 func supportedPorts(rule Rule, destination string) error {
 	for _, port := range rule.Ports {
 		if port == 443 || port == 53 {
-			return fmt.Errorf("raw %s to %s on port %d is not allowed — the gateway takes %d for TLS and DNS; use another port", rule.Protocol, destination, port, port)
+			use := "TLS"
+			if port == 53 {
+				use = "DNS"
+			}
+			return fmt.Errorf("raw %s to %s on port %d is not allowed — the gateway takes %d for %s; use another port", rule.Protocol, destination, port, port, use)
 		}
 	}
 	return nil
