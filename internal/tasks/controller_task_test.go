@@ -51,6 +51,11 @@ func TestConfirmedControllerTaskHasOneDurableChecklistIdentity(t *testing.T) {
 		}
 	}
 
+	// The task has the shape every other task has, so lint and a loop's review packet read it.
+	if issues := taskShapeIssues(string(body)); len(issues) != 0 {
+		t.Fatalf("controller task.md is missing required sections: %v", issues)
+	}
+
 	changed := draft
 	changed.Prompt = "Different work under the same offer identity."
 	if _, err := EnsureControllerTask(workspace, changed); err == nil {

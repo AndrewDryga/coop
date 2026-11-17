@@ -317,7 +317,7 @@ func controllerTaskMarkdown(id string, draft ControllerTaskDraft) string {
 	var body strings.Builder
 	fmt.Fprintf(&body, "---\nid: %s\ntitle: %s\nlabels: [responder]\n---\n\n# %s\n\n", id, draft.Title, draft.Title)
 	fmt.Fprintf(&body, "**Context:** %s\n\n", draft.Prompt)
-	fmt.Fprintf(&body, "**Acceptance:** %s\n\n", strings.Join(draft.SuccessChecks, "; "))
+	fmt.Fprintf(&body, "**Acceptance criteria:** %s\n\n", strings.Join(draft.SuccessChecks, "; "))
 	body.WriteString("**Approach:** Work only inside the confirmed repository authority and keep this checklist current.\n\n")
 	if len(draft.AuthorityLimits) > 0 {
 		body.WriteString("## Authority limits\n")
