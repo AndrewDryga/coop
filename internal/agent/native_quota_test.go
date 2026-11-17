@@ -87,6 +87,8 @@ func TestNativeQuotaUsesCanonicalAuthority(t *testing.T) {
 			}
 			if _, err := ag.Usage().Quota(ctx, input); err == nil || requests != before {
 				t.Fatal("failed canonical authority fell back or reached quota endpoint")
+			} else if errors.Is(err, ErrUsageSignIn) {
+				t.Fatal("a failed renewal must not read as a broken sign-in")
 			}
 		})
 	}

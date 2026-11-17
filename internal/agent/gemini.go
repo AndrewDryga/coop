@@ -502,7 +502,12 @@ func geminiUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 			return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 		}
 		state, _, err := input.Current(ctx, deadline)
-		if err != nil || state.Selection != "oauth-personal" || state.AccessToken == "" {
+		if err != nil {
+			// Offline, a provider outage or a held account lock fail the renewal too, so only
+			// the caller's own sign-in check may call this a broken sign-in.
+			return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
+		}
+		if state.Selection != "oauth-personal" || state.AccessToken == "" {
 			return UsageQuota{}, ErrUsageSignIn
 		}
 		return geminiCanonicalQuota(ctx, state.AccessToken)
