@@ -66,9 +66,6 @@ func needsAccountErr(agent string) error {
 // "" for a bare `coop`).
 func noProviderErr(cmd string) error {
 	usage := "coop " + cmd
-	if cmd == "" {
-		usage = "coop"
-	}
 	return fmt.Errorf("name the target or preset — %s <target|preset>; sign in with 'coop login <agent>' or see 'coop credentials'",
 		strings.TrimSpace(usage))
 }

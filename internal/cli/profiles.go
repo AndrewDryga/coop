@@ -193,8 +193,7 @@ func (a *app) accountBlock(agent string) accountBlock {
 // envBackedAccount reports whether this account's authority is the env file rather than a stored
 // login: it is signed in, but has no marker file of its own.
 func (a *app) envBackedAccount(agent, profile string) bool {
-	return box.ProfileAuthed(a.cfg, agent, profile) && !box.ProfileMarkerPresent(a.cfg, agent, profile) &&
-		!box.ProfileHostCredentialPresent(a.cfg, agent, profile)
+	return box.ProfileAuthed(a.cfg, agent, profile) && !box.ProfileMarkerPresent(a.cfg, agent, profile)
 }
 
 // credentialAge renders how long ago agent's profile token material last changed ("19 days ago"),
@@ -299,12 +298,9 @@ func (a *app) showProfile(agent, profile string) (int, error) {
 }
 
 // setProfileDefault marks <account> as <agent>'s default, so a run with no @account uses it. It
-// rejects an unknown agent or an account that doesn't exist, and reports the choice alone — the
-// full overview after a one-account change is noise.
+// rejects an account that doesn't exist (profilePath, its caller, already resolved the agent), and
+// reports the choice alone — the full overview after a one-account change is noise.
 func (a *app) setProfileDefault(agent, name string) (int, error) {
-	if _, ok := agents.Get(agent); !ok {
-		return 2, unknownAgentErr(agent, "coop credentials")
-	}
 	if err := a.requireProfile(agent, name); err != nil {
 		return refusalExit(err), err
 	}

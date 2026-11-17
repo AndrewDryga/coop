@@ -899,8 +899,9 @@ func netRunOutcomes(summaries []networkstate.ExecutionSummary, outcomes bool) ([
 // a checkout does not delete its evidence.
 func netFilterProject(runs []networkstate.ExecutionSummary, project string) []networkstate.ExecutionSummary {
 	var out []networkstate.ExecutionSummary
+	resolved := netResolvedPath(project)
 	for _, run := range runs {
-		if run.Project == project || netResolvedPath(run.Project) == netResolvedPath(project) {
+		if run.Project == project || netResolvedPath(run.Project) == resolved {
 			out = append(out, run)
 		}
 	}
@@ -1552,5 +1553,5 @@ func netPortList(ports []int) string {
 	for _, port := range ports {
 		out = append(out, strconv.Itoa(port))
 	}
-	return strings.Join(out, ",")
+	return strings.Join(out, ", ")
 }

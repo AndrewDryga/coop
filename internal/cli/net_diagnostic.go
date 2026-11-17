@@ -907,7 +907,7 @@ func netRuleYAML(rule egress.Rule) string {
 		fmt.Fprintf(&b, "    protocol: %s\n", rule.Protocol)
 	}
 	if len(rule.Ports) != 0 {
-		fmt.Fprintf(&b, "    ports: [%s]\n", strings.ReplaceAll(netPortList(rule.Ports), ",", ", "))
+		fmt.Fprintf(&b, "    ports: [%s]\n", netPortList(rule.Ports))
 	}
 	if len(rule.Types) != 0 {
 		fmt.Fprintf(&b, "    types: [%s]\n", strings.Join(rule.Types, ", "))
