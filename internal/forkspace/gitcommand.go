@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // gitStallLimit bounds a git command whose caller set no deadline. Git opens the index, refs and
@@ -153,8 +155,9 @@ func boundedGitCommand(ctx context.Context, dir string, args ...string) *exec.Cm
 		cmd.Cancel = func() error {
 			stop()
 			// A person at the terminal decides how long a command they see takes, a pager or a
-			// signing prompt: it runs on, and its own exit status stands.
-			if cmd.Stdin == os.Stdin || cmd.Stdout == os.Stdout {
+			// signing prompt: it runs on, and its own exit status stands. Nobody is behind a pipe
+			// or /dev/null that coop inherited, so an unattended loop's signing rebase is stopped.
+			if inheritedTerminal(cmd.Stdin, os.Stdin) || inheritedTerminal(cmd.Stdout, os.Stdout) {
 				return os.ErrProcessDone
 			}
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -164,6 +167,16 @@ func boundedGitCommand(ctx context.Context, dir string, args ...string) *exec.Cm
 		}
 	}
 	return cmd
+}
+
+// inheritedTerminal reports whether a command's stream is coop's own handle with a person at it.
+func inheritedTerminal(stream any, own *os.File) bool {
+	file, ok := stream.(*os.File)
+	if !ok || file != own {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(own.Fd()), ioctlReadTermios)
+	return err == nil
 }
 
 // GlobalGitConfig reads the host user's GLOBAL git config (`git config --global <args>`), or ""

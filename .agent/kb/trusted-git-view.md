@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitview_redirect_test.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-08
+updated: 2026-11-16
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -256,10 +256,16 @@ constructor behind `TrustedGitCommand` and `GlobalGitConfig`, stops a command wh
 deadline at `gitStallLimit` (15 minutes); `GitStalled(cmd, err)` turns that into "git did not
 finish in <dir> within ..." and the central helpers (forkctl, cli, tasks and loop `git.go`) pass
 errors through it. A command a person sees (stdin or stdout the terminal: a pager, a signing
-prompt) is left to run. `GlobalGitConfig` reads `git config --global` from `/` with a git dir that
+prompt) is left to run. Inheriting coop's stdin is not enough: the signing helpers pass it on every
+rebase, and in an unattended loop it is a pipe or `/dev/null`, so that rebase is stopped too.
+`GlobalGitConfig` reads `git config --global` from `/` with a git dir that
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-11-16 — the stall limit's exemption tested whether a command inherited coop's stdin or
+  stdout, not whether a terminal was there, so an unattended loop's signing rebase had no limit.
+  `inheritedTerminal` now asks the handle (the same ioctl `internal/runtime` uses, because
+  forkspace may not import `internal/ui`). 2026-11-10 audit, find FS-6.
 - 2026-11-06 — views follow `XDG_STATE_HOME` (`GitViewRoot`, also used by the sweep and the box
   mount fence), so a run with its own state folder no longer writes a view into the real one; QA
   found a scratch repository's view in the owner's state (task

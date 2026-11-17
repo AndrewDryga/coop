@@ -557,6 +557,42 @@ func TestGitCommandsStopAtTheStallLimitAndSaySo(t *testing.T) {
 	}
 }
 
+// A command that inherits coop's stdin runs on only when a person is at it. An unattended loop's
+// signing rebase inherits a pipe or /dev/null, so it is stopped at the limit like any other command.
+func TestGitCommandsOnAnInheritedPipeStopAtTheStallLimit(t *testing.T) {
+	defer func(saved time.Duration) { gitStallLimit = saved }(gitStallLimit)
+	gitStallLimit = time.Second
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	defer write.Close()
+	defer func(saved *os.File) { os.Stdin = saved }(os.Stdin)
+	os.Stdin = read
+	repo, _ := gitrepo.NewCommitted(t)
+	if err := os.Remove(filepath.Join(repo, ".git", "packed-refs")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(repo, ".git", "packed-refs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := GitRefCommand(context.Background(), repo, "update-ref", "refs/heads/stalled", "HEAD")
+	cmd.Stdin = os.Stdin // as the signing helpers do
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		if err = GitStalled(cmd, err); err == nil || !strings.Contains(err.Error(), "git did not finish in "+repo) {
+			t.Fatalf("stalled git on an inherited pipe = %v, want the stall refusal naming %s", err, repo)
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatal("git on an inherited pipe waited on the FIFO past the stall limit")
+	}
+}
+
 // TestGitOutErr: the erroring read tells a FAILED git call apart from one that legitimately printed
 // nothing, and carries git's own stderr so a caller can hand a human the cause. GitOut, which every
 // display-only site still uses, keeps conflating the two.

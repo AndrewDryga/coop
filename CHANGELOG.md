@@ -16,6 +16,9 @@
   a box exited, could fail with "sandbox activity registry is unreadable". A process killed at
   that moment could leave the registry unreadable until its leftover file was deleted by hand.
   Both are now read correctly.
+- **An unattended loop no longer waits forever on a stalled signing step.** When `coop loop`
+  runs without a terminal, the Git command that signs its commits now stops after 15 minutes,
+  like every other Git command coop runs on your computer. It used to have no limit.
 
 ## 13.2.1
 
