@@ -286,11 +286,11 @@ func (d *codexStreamDecoder) itemCompleted(item codexStreamItem) {
 	case "file_change":
 		d.fileChange(item)
 	case "web_search":
-		d.showItem(item, "⌕", codexWebSearchLabel(item.Query))
+		d.showCompletedItem(item, "⌕", codexWebSearchLabel(item.Query))
 	case "collab_tool_call":
-		d.showItem(item, "⇢", codexCollabLabel(item.Tool))
+		d.showCompletedItem(item, "⇢", codexCollabLabel(item.Tool))
 	case "mcp_tool_call":
-		d.showItem(item, "⚙", codexMCPLabel(item.Tool))
+		d.showCompletedItem(item, "⚙", codexMCPLabel(item.Tool))
 	case "todo_list":
 	default:
 		d.emitUnknown(item.Type)
@@ -315,6 +315,16 @@ func (d *codexStreamDecoder) fileChange(item codexStreamItem) {
 
 func (d *codexStreamDecoder) showItem(item codexStreamItem, glyph, label string) {
 	if !d.shown.mark(item.Type + "\x00" + item.ID) {
+		return
+	}
+	d.emit(d.streamToolLine(glyph, label, false))
+}
+
+// showCompletedItem prints an item whose start was not shown, and releases the start's mark: an
+// unreleased mark is held for the whole attempt, and once the bounded set filled, a long honest
+// attempt showed every later item twice.
+func (d *codexStreamDecoder) showCompletedItem(item codexStreamItem, glyph, label string) {
+	if _, started := d.shown.takeKnown(item.Type + "\x00" + item.ID); started {
 		return
 	}
 	d.emit(d.streamToolLine(glyph, label, false))

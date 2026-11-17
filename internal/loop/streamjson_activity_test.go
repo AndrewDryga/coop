@@ -436,3 +436,28 @@ func TestCodexStreamNamesAnMCPToolOnce(t *testing.T) {
 		t.Errorf("output = %q", text)
 	}
 }
+
+// A long honest attempt makes far more MCP calls than the decoder tracks at once. Each completion
+// releases its start's mark, so every call still prints once. Before, the marks filled the bounded
+// set and every later call printed twice.
+func TestCodexStreamNamesEveryMCPToolOnceInALongAttempt(t *testing.T) {
+	var out, tail bytes.Buffer
+	d := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	const calls = maxStreamTrackedIDs + 44
+	for i := range calls {
+		_, _ = fmt.Fprintf(d, `{"type":"item.started","item":{"id":"m%d","type":"mcp_tool_call","tool":"tasks_get"}}`+"\n", i)
+		_, _ = fmt.Fprintf(d, `{"type":"item.completed","item":{"id":"m%d","type":"mcp_tool_call","tool":"tasks_get"}}`+"\n", i)
+	}
+	if got := strings.Count(out.String(), "tasks_get"); got != calls {
+		t.Errorf("%d calls printed %d lines", calls, got)
+	}
+	if len(d.shown.byID) != 0 {
+		t.Errorf("completed calls left %d marks behind", len(d.shown.byID))
+	}
+	// A completion whose start never arrived still shows the call.
+	out.Reset()
+	_, _ = d.Write([]byte(`{"type":"item.completed","item":{"id":"late","type":"web_search","query":"q"}}` + "\n"))
+	if !strings.Contains(out.String(), "q") {
+		t.Errorf("unstarted completion output = %q", out.String())
+	}
+}
