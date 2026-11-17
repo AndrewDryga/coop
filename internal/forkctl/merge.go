@@ -108,10 +108,8 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		}
 		// Tasks come from the host's queue, never from a fork: a task a box committed would land as
 		// ready work a later loop runs. The queue's README is ordinary project text.
-		if change.Status == "" || change.Status[0] != 'D' {
-			if queue := forkTaskQueuePath(repo, path); queue != "" {
-				warns = append(warns, label+" — the fork adds or changes a task in the "+queue+" queue; tasks come from the host, not a fork")
-			}
+		if queue := forkTaskQueuePath(repo, path); queue != "" {
+			warns = append(warns, label+" — the fork adds or changes a task in the "+queue+" queue; tasks come from the host, not a fork")
 		}
 		entry, err := forkspace.GitOutput(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path)
 		if err != nil {
@@ -1163,10 +1161,6 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	result, err := c.mergeOne(repo, img, name, force)
 	defer result.approval.close()
-	if result.skipped {
-		ui.Note("Skipped %s — no new commits or pending landing.", name)
-		return 0, nil
-	}
 	if result.landed {
 		// Say it BEFORE any error: the commits are in the parent branch either way.
 		ui.Note("")
