@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/AndrewDryga/coop/internal/config"
 )
@@ -71,7 +72,28 @@ func ComputeMounts(repo, workdir string) ([]Mount, error) {
 // computeMounts keeps one visibility decision for both protection backends.
 // Kernel admission consumes the decisions before generating spelling mounts.
 func computeMounts(repo, workdir string, expandSpellings bool) ([]Mount, error) {
+	return walkMounts(repo, workdir, expandSpellings, nil)
+}
+
+// onMountWalk is called as each walk of a repository for its mounts starts; a test counts them.
+var onMountWalk = func() {}
+
+// visibleEntry is a path a walk left visible, with its identity, at the place in the mount list its
+// cover would go.
+type visibleEntry struct {
+	at        int
+	id        fileIdentity
+	path, rel string
+	dir       bool
+}
+
+// walkMounts is computeMounts. With remember set it also persists what the walk hid before any
+// spelling refusal, and hides a visible path the resulting record names at another path: a hard
+// link to a file this very walk hid, which the next launch's decider would hide too.
+func walkMounts(repo, workdir string, expandSpellings bool, remember func([]Mount) (rememberedHidden, error)) ([]Mount, error) {
+	onMountWalk()
 	shadowed := NewShadowDecider(repo)
+	var visible []visibleEntry
 	mounts := []Mount{{Kind: Bind, Source: repo, Target: workdir}}
 	var budget spellingBudget
 	var uncovered []string
@@ -115,8 +137,20 @@ func computeMounts(repo, workdir string, expandSpellings bool) ([]Mount, error) 
 			mounts = append(mounts, spelled(Mount{Kind: Policy, Source: p, Target: target, RO: true}, p, relSlash))
 			return nil
 		}
-		if hidden, err := shadowed(relSlash); err != nil || !hidden {
+		hidden, err := shadowed(relSlash)
+		if err != nil {
 			return err
+		}
+		if !hidden {
+			if remember != nil {
+				// An entry gone or unreadable here is no alias, as the decider's own check reads it.
+				if info, err := d.Info(); err == nil {
+					if id, ok := identityOf(info); ok {
+						visible = append(visible, visibleEntry{at: len(mounts), id: id, path: p, rel: relSlash, dir: d.IsDir()})
+					}
+				}
+			}
+			return nil
 		}
 		if d.IsDir() {
 			mounts = append(mounts, Mount{Kind: DirDecoy, Target: target, RO: true})
@@ -128,17 +162,75 @@ func computeMounts(repo, workdir string, expandSpellings bool) ([]Mount, error) 
 	if err != nil {
 		return nil, err
 	}
+	if remember != nil {
+		record, err := remember(mounts)
+		if err != nil {
+			return nil, err
+		}
+		var aliases []visibleEntry
+		for _, v := range visible {
+			if at, ok := record[v.id]; ok && at != v.rel {
+				aliases = append(aliases, v)
+			}
+		}
+		mounts = withHiddenAliases(mounts, aliases, func(v visibleEntry) Mount {
+			if v.dir {
+				return Mount{Kind: DirDecoy, Target: workdir + "/" + v.rel, RO: true}
+			}
+			return spelled(Mount{Kind: Decoy, Target: workdir + "/" + v.rel, RO: true}, v.path, v.rel)
+		})
+	}
 	if len(uncovered) > 0 {
 		return mounts, &UncoveredSpellings{Paths: uncovered}
 	}
 	return mounts, nil
 }
 
+// withHiddenAliases puts a cover over each alias at the place the walk would have, in walk order.
+// A folder's cover hides all of it, so a mount or alias inside it goes, as the walk prunes it.
+func withHiddenAliases(mounts []Mount, aliases []visibleEntry, cover func(visibleEntry) Mount) []Mount {
+	if len(aliases) == 0 {
+		return mounts
+	}
+	merged := make([]Mount, 0, len(mounts)+len(aliases))
+	var hiddenDirs []string
+	add := func(m Mount) {
+		for _, dir := range hiddenDirs {
+			if strings.HasPrefix(m.Target, dir+"/") {
+				return
+			}
+		}
+		merged = append(merged, m)
+		if m.Kind == DirDecoy {
+			hiddenDirs = append(hiddenDirs, m.Target)
+		}
+	}
+	next := 0
+	for _, alias := range aliases {
+		for ; next < alias.at; next++ {
+			add(mounts[next])
+		}
+		add(cover(alias))
+	}
+	for ; next < len(mounts); next++ {
+		add(mounts[next])
+	}
+	return merged
+}
+
 // launchMounts is ComputeMounts for a launch. Hidden files a box could read under another letter
 // case refuse it, unless its owner approved the paths or accepted the one-run override; then
 // they come back to be named at launch.
+//
+// It walks the repository once and remembers what it hid (RememberHiddenFiles) before spelling
+// expansion can refuse the launch, so a refused attempt still keeps identities already hidden.
 func launchMounts(cfg *config.Config, repo, workdir string) ([]Mount, []string, error) {
-	mounts, err := ComputeMounts(repo, workdir)
+	mounts, err := walkMounts(repo, workdir, true, func(hidden []Mount) (rememberedHidden, error) {
+		if err := RememberHiddenFiles(repo, workdir, hidden); err != nil {
+			return nil, err
+		}
+		return loadHiddenFiles(repo), nil
+	})
 	var uncovered *UncoveredSpellings
 	if errors.As(err, &uncovered) {
 		pending := UnapprovedCaseExposures(repo, uncovered.Paths)

@@ -6,10 +6,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/fsfilter"
 )
 
@@ -107,6 +109,44 @@ func TestAHiddenFileStaysHiddenAfterABoxMovesIt(t *testing.T) {
 			t.Fatalf("Coop's host tools read a file in the moved folder as visible: %v, %v", hidden, err)
 		}
 	})
+}
+
+// A mount-protected launch walks the repository once, and still hides a hard link to a file that
+// same walk hid: the record it writes names the file at the hidden path, so the link is an alias.
+func TestALaunchWalksTheRepositoryOnceAndHidesHardLinks(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{".env": "KEY=1\n", "src/main.go": "package main\n"})
+	if err := os.Link(filepath.Join(repo, ".env"), filepath.Join(repo, "src", "copy")); err != nil {
+		t.Fatal(err)
+	}
+	walks := 0
+	original := onMountWalk
+	onMountWalk = func() { walks++ }
+	t.Cleanup(func() { onMountWalk = original })
+	mounts, _, err := launchMounts(&config.Config{}, repo, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if walks != 1 {
+		t.Fatalf("a launch walked the repository %d times, want once", walks)
+	}
+	for _, target := range []string{"/workspace/.env", "/workspace/src/copy"} {
+		if m := find(mounts, target); m == nil || m.Kind != Decoy {
+			t.Fatalf("%s was not hidden on the first launch: %+v", target, mounts)
+		}
+	}
+	if got := loadHiddenFiles(repo); len(got) != 1 || !slices.Contains(slices.Collect(maps.Values(got)), ".env") {
+		t.Fatalf("remembered %v, want .env alone", got)
+	}
+	// The next launch's own decider agrees, so both launches hide the same paths.
+	walks = 0
+	again, _, err := launchMounts(&config.Config{}, repo, "/workspace")
+	if err != nil || walks != 1 || !slices.EqualFunc(again, mounts, func(a, b Mount) bool {
+		return a.Kind == b.Kind && a.Target == b.Target && a.Source == b.Source && a.RO == b.RO && slices.Equal(a.Spellings, b.Spellings)
+	}) {
+		t.Fatalf("the next launch = %+v (%d walks), %v; want %+v", again, walks, err, mounts)
+	}
 }
 
 // renumberHiddenRecord rewrites repo's hidden-file record as if it was written before a reboot gave

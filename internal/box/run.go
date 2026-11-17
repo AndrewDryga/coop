@@ -1103,15 +1103,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		}
 		mounts = spec.filesystem.withHiddenFileCovers(slices.DeleteFunc(mounts, func(m Mount) bool { return m.Kind != Bind }))
 	} else if !spec.Login && !spec.GradeSnapshot && !spec.FormatCorrection {
-		// Remember before spelling expansion can refuse the launch. A failed
-		// attempt must still preserve identities already classified as secret.
-		mounts, err = computeMounts(spec.Repo, workdir, false)
-		if err != nil {
-			return -1, filesystemReport.fallbackError(err)
-		}
-		if err := RememberHiddenFiles(spec.Repo, workdir, mounts); err != nil {
-			return -1, filesystemReport.fallbackError(err)
-		}
+		// launchMounts remembers what it hid before spelling expansion can refuse the launch.
 		mounts, caseExposed, err = launchMounts(cfg, spec.Repo, workdir)
 		if err != nil {
 			return -1, filesystemReport.fallbackError(err)

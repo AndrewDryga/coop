@@ -16,7 +16,7 @@ scratch clone is still a secret.
 **What a launch hid stays hidden after a box moves it.** Rules decide by path, and a box can
 `mv config cfg` (out of a `config/*.yml` rule) or move a folder out of a nested `.coopignore`'s
 scope. It cannot read what it moves, so it cannot copy it, and a move keeps the inode: each launch
-(`RememberHiddenFiles`, after `ComputeMounts`) records the device and inode of every decoyed file
+(`RememberHiddenFiles`, inside the launch's one walk, `launchMounts`) records the device and inode of every decoyed file
 and folder, with the path the rules hid it at, in the host-private service state root
 (`hidden-files/<sha256 of the repo path>.json`). `box.NewShadowDecider` — the decider the walk, the
 secret scanner, merge, review and init share — hides a remembered identity found at any other path,
@@ -24,6 +24,10 @@ and its folders' contents with it. At its remembered path the rules decide again
 rule still shows the file, which is then forgotten. A launch fails if it cannot write the record.
 Removing a fork deletes its record and lock (`RetireForkApprovals`), so a later checkout at the
 same path does not inherit its identities; records of other deleted checkouts stay.
+A mount-protected launch walks the checkout once: the walk notes each visible entry's identity,
+records what it hid before spelling expansion can refuse the launch, then covers any visible entry
+the new record names at another path (a hard link to a file this walk hid), at its walk position.
+`TestALaunchWalksTheRepositoryOnceAndHidesHardLinks` counts the walks.
 
 **The root must be a real folder.** `filepath.WalkDir` lstats its root and never follows a link,
 so a repository path that is itself a link was walked as one entry and bound whole: no decoy, no
@@ -177,6 +181,8 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-17 — the mount fallback walks once (task 2026-11-17-the-mount-fallback-path-walks-the-repository-onc);
+  checked against internal/box/mounts.go and run.go.
 - 2026-11-02 — avoid repeated cleaning of inventory paths and linear literal-glob scans; checked
   walker and classification sources plus the differential glob corpus. Historical measurements
   and unrelated mount-backend sections were not reverified.
