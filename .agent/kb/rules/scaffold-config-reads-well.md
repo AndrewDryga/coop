@@ -4,7 +4,7 @@ description: "scaffolded config leads every field with its comment and works as-
 scope: scaffold
 sources: [internal/preset/template.go, .agent/presets/frontier/preset.yaml]
 check: "none"
-updated: 2026-10-17
+updated: 2026-11-17
 ---
 
 # Scaffolded, editable config reads top-down and works as-is
@@ -15,7 +15,7 @@ two rules:
 **1. Comments LEAD their field — never trail it.** Put the note on its own line(s)
 *above* the field, not after it:
 
-    # REQUIRED — one of: claude, codex, gemini.
+    # REQUIRED — one of: claude, codex, gemini, grok.
     agent: claude
 
 not `agent: claude   # REQUIRED — ...`. Trailing comments are harder to scan and
@@ -23,15 +23,14 @@ force width games. Separate items with newlines, not `·`/`|` inline separators 
 comment block has vertical room, so one item per line (e.g. `Run:` / `Inspect:` /
 `Format:` labels, each on its own line) beats cramming several onto one with dots.
 
-**1a. Document EVERY field inline — don't bury field docs in a section header.**
-Each field gets its own leading comment, on the lead AND on every role. A section
-header covers section-level facts only (what the map is, the name rule); it is not
-where per-field docs go — a reader shouldn't have to scroll up to learn what a field
-does. Repeating a short common-field note across sibling roles (`# agent — one of:
-claude, codex, gemini.` on each) is fine and expected; a bare field is not. Keep
-each comment to one concise line to hold down the cost, and fold a field's mode/kind
-note into that field's comment (e.g. the "native subagent" explanation sits on
-`mode:`) rather than a separate block, so nothing is said twice.
+**1a. Comment what a person has to decide, next to the field.** A field whose value
+is a choice the reader must make gets its own leading comment; a field whose meaning
+the role's comment or `coop help presets` already makes plain may stand bare (the
+template's role `agent:`, `when:` and `prompt:` lines do, since af5e1578). A section header covers
+section-level facts only (what the map is, the name rule); it is not where per-field
+docs go. Keep each comment to one concise line, and fold a field's mode/kind note
+into that field's comment (e.g. the "native subagent" explanation sits on `mode:`)
+rather than a separate block, so nothing is said twice.
 
 **2. Scaffolded content is a usable default, not a fill-in-the-blank.** What you
 generate must stand on its own for a generic project — real how-to-work guidance,
@@ -56,12 +55,16 @@ not something you MUST fill in (even though it's recommended)."
   template's generic defaults on purpose — no tooling should bind the two, since
   regenerating would silently overwrite that choice (evidence in the card's
   changelog). A drift test could still safely pin the shared STYLE the two must keep
-  (leading comments, every field documented, the ≤80-rune cap) — never the values.
+  (leading comments, decisions documented, the ≤80-rune cap) — never the values.
 
 See [[scaffold-fits-the-repo]] (a scaffold suits the target repo) and
 [[help-output-style]].
 
 ## Changelog
+- 2026-11-17 — rule 1a now matches the template: comment what a person must decide, not every
+  field (af5e1578 cut the bare role fields' comments on purpose); grok joins the agent example.
+  The frontier preset's longest line is 80 runes, inside the cap (audit R3-2; checked
+  internal/preset/template.go and a rune count of .agent/presets/frontier/preset.yaml).
 - 2026-10-17 — dropped the "e.g. line N" examples from the 2026-08-09 entry; the counts and maxima
   stand on their own.
 - 2026-08-25 — removed the retired Fleet manifest/template from the current scaffold inventory;
