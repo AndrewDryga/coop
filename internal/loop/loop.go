@@ -760,6 +760,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	signoffRound, maxReviewRounds := pendingSignoffStartRound(pendingReview), 0
 	reviewCapped := false
 	verificationFailed := false
+	reviewRan := false // a final review or verification returned a verdict this run
 	reuseWorkServices := make(map[string]bool)
 reviewAgain:
 	for ; ; signoffRound++ {
@@ -1846,6 +1847,7 @@ reviewAgain:
 			return 1, ui.Reported(serr)
 		}
 		health.noteReopen(reopenedIDs)
+		reviewRan = true
 		// The host moved exactly the tasks the receipt names (a missing or malformed receipt failed
 		// runReviewVerdict above), so a verdict cannot be lost between the review and the queue.
 		acceptedIDs := withoutReviewIDs(withoutReviewIDs(subjectIDs, reopenedIDs), soRun.blocked)
@@ -2024,6 +2026,7 @@ reviewAgain:
 			}
 			var requeued []string
 			if verr == nil {
+				reviewRan = true
 				expected, selectErr := pendingReviewRecordsForIDs(tasks.PendingReviewCohort{Subjects: verifyRecords}, withoutReviewIDs(withoutReviewIDs(verifyIDs, reopenedIDs), vRun.blocked))
 				if selectErr != nil {
 					return 1, selectErr
@@ -2184,7 +2187,7 @@ reviewAgain:
 			printFailedVerificationVerdict(cf)
 			return
 		}
-		printFinalVerdict(cf, actionable, blocked, continueCmd)
+		printFinalVerdict(cf, actionable, blocked, continueCmd, reviewRan)
 	})
 	return loopExitCodeAfterVerification(cf, verificationFailed), nil
 }

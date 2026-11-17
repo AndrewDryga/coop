@@ -17,7 +17,7 @@ import (
 func TestFinalVerdict(t *testing.T) {
 	reopened := []taskLine{{id: "fix-login", title: "Fix login retries", state: "in progress", reopened: true}}
 	got := captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 2, Doing: 3}, reopened, nil, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 2, Doing: 3}, reopened, nil, "coop loop claude", true)
 	})
 	for _, want := range []string{"⚠ Final review left 3 tasks to finish", "Fix login retries is back in progress.", "Continue: coop loop claude"} {
 		if !strings.Contains(got, want) {
@@ -31,7 +31,7 @@ func TestFinalVerdict(t *testing.T) {
 	// Reopened into todo: the sentence uses the state the task is ACTUALLY in.
 	todo := []taskLine{{id: "fix-login", title: "Fix login retries", state: "todo", reopened: true}}
 	got = captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, todo, nil, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, todo, nil, "coop loop claude", true)
 	})
 	if !strings.Contains(got, "Final review left 1 task to finish") || !strings.Contains(got, "is back in todo.") {
 		t.Errorf("todo reopen report = %q", got)
@@ -44,14 +44,14 @@ func TestFinalVerdict(t *testing.T) {
 		{id: "add-export", title: "Add export", state: "todo"},
 	}
 	got = captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 3}, mixed, nil, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 3}, mixed, nil, "coop loop claude", true)
 	})
 	if !strings.Contains(got, "Fix login retries is back in todo.") || !strings.Contains(got, "2 other tasks are still in the queue.") ||
 		strings.Contains(got, "Add search") {
 		t.Errorf("mixed report = %q", got)
 	}
 	got = captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, mixed[2:], nil, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, mixed[2:], nil, "coop loop claude", true)
 	})
 	if !strings.Contains(got, "1 task is still in the queue.") || strings.Contains(got, "is back") {
 		t.Errorf("untouched-queue report = %q", got)
@@ -60,7 +60,7 @@ func TestFinalVerdict(t *testing.T) {
 	// Nothing reopened, work parked on a decision: not a pass, and it names the task.
 	blocked := []taskLine{{id: "2026-09-11-choose-session-duration", title: "Choose how long sessions last"}}
 	got = captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 2, Blocked: 1}, nil, blocked, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 2, Blocked: 1}, nil, blocked, "coop loop claude", true)
 	})
 	for _, want := range []string{"Stopped for your decision · 2/3 tasks done", "Choose how long sessions last", "2026-09-11-choose-session-duration", "Answer it: coop tasks decisions -i"} {
 		if !strings.Contains(got, want) {
@@ -70,10 +70,24 @@ func TestFinalVerdict(t *testing.T) {
 
 	// A clean run is the ONLY case that may claim the review passed.
 	got = captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Done: 5}, nil, nil, "coop loop claude")
+		printFinalVerdict(tasks.TaskCounts{Done: 5}, nil, nil, "coop loop claude", true)
 	})
 	if !strings.Contains(got, "✓ All tasks passed final review · 5/5 done") {
 		t.Errorf("clean report = %q", got)
+	}
+
+	// No review ran (a custom work.command, or only no-change completions): never claim one passed.
+	got = captureStderr(t, func() {
+		printFinalVerdict(tasks.TaskCounts{Done: 5}, nil, nil, "coop loop claude", false)
+	})
+	if !strings.Contains(got, "✓ All tasks done · 5/5 · no final review ran") || strings.Contains(got, "final review ·") {
+		t.Errorf("unreviewed clean report = %q", got)
+	}
+	got = captureStderr(t, func() {
+		printFinalVerdict(tasks.TaskCounts{Done: 4, Todo: 1}, todo, nil, "coop loop claude", false)
+	})
+	if !strings.Contains(got, "⚠ 1 task left to finish") || strings.Contains(got, "Final review") {
+		t.Errorf("unreviewed unfinished report = %q", got)
 	}
 }
 
@@ -380,7 +394,7 @@ func TestReviewBannersAreCompactBoundedAndGrammatical(t *testing.T) {
 func TestLoopResultTextNeutralizesTaskControls(t *testing.T) {
 	bad := "Fix \x1b[31mlogin\x1b[0m\nINJECT"
 	got := captureStderr(t, func() {
-		printFinalVerdict(tasks.TaskCounts{Todo: 1}, []taskLine{{title: bad, state: "todo", reopened: true}}, nil, "coop loop")
+		printFinalVerdict(tasks.TaskCounts{Todo: 1}, []taskLine{{title: bad, state: "todo", reopened: true}}, nil, "coop loop", true)
 		printTaskLimitReached(loopTaskLimit{max: 1, settled: 1, lastTitle: bad, lastState: tasks.StateDone}, "coop loop")
 		h := newLoopHealth()
 		h.noteReopen([]string{"task"})

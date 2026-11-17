@@ -41,21 +41,29 @@ const maxReportedTasks = 5
 
 // printFinalVerdict is the loop's LAST word, and the only place that may say the queue passed.
 // Reopened work and work parked on a human decision are not "done": each gets its own report,
-// naming the tasks and the one command that moves them forward.
-func printFinalVerdict(cf tasks.TaskCounts, actionable, blocked []taskLine, continueCmd string) {
+// naming the tasks and the one command that moves them forward. reviewed says a final review or
+// verification returned a verdict this run; without one (a custom work.command, or only no-change
+// completions) the line must not claim a review passed.
+func printFinalVerdict(cf tasks.TaskCounts, actionable, blocked []taskLine, continueCmd string, reviewed bool) {
 	switch {
 	case cf.Todo+cf.Doing > 0:
-		ui.Alert(fmt.Sprintf("Final review left %s to finish", ui.Count(cf.Todo+cf.Doing, "task")),
-			actionableCause(actionable), [2]string{"Continue:", continueCmd})
+		headline := fmt.Sprintf("%s left to finish", ui.Count(cf.Todo+cf.Doing, "task"))
+		if reviewed {
+			headline = fmt.Sprintf("Final review left %s to finish", ui.Count(cf.Todo+cf.Doing, "task"))
+		}
+		ui.Alert(headline, actionableCause(actionable), [2]string{"Continue:", continueCmd})
 	case cf.Blocked > 0:
 		ui.Note("")
 		ui.Note("Stopped for your decision · %d/%d tasks done", cf.Done, cf.Total())
 		printTaskList(blocked)
 		ui.Note("")
 		ui.Note("  %s %s", decisionsLabel(len(blocked)), "coop tasks decisions -i")
-	default:
+	case reviewed:
 		ui.Note("")
 		ui.OK("All tasks passed final review · %d/%d done", cf.Done, cf.Total())
+	default:
+		ui.Note("")
+		ui.OK("All tasks done · %d/%d · no final review ran", cf.Done, cf.Total())
 	}
 }
 
