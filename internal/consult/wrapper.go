@@ -126,12 +126,12 @@ func renderConsult(as []consultInput) string {
 #
 # A preset CONSULT ROLE is addressed by its ROLE name. Its COOP_CONSULT_<ROLE>_TARGETS value is an ordered fallback ladder; each target
 # remains READ-ONLY. --fresh starts at rung one. --continue resumes the successful rung and, if
-# that provider is now rate limited, starts the next provider fresh. Each rung is attempted once.
+# that provider is now rate limited, starts the next provider fresh. A rung that fails for another
+# reason is retried once fresh before the next rung.
 # Nothing is bounded by default: a working model is left to work, because killing one costs the
-# whole answer AND the retry that follows. If you set a timeout, keep it under the box's descendant
-# drain (COOP_DESCENDANT_TIMEOUT, internal/box/image.go) — a consult is spawned detached, so one
-# that outlives its provider has to expire on its own before the drain notices it, or coop's own
-# wrapper holds the box open and the handoff un-completes a finished task.
+# whole answer AND the retry that follows. A consult that outlives the provider that asked is reaped
+# by the box's descendant drain (descendantTimeout in internal/box/supervisor/main.go) as soon as
+# the provider exits, so it never holds a finished box open.
 set -u
 umask 077
 # A peer is its own client, so it runs on the PATH the box started with (coop-entry), not the
@@ -456,7 +456,7 @@ run() {
 	# /proc/<pid>/environ (children inherit it) to tell a stranded consult apart from genuine agent
 	# background work: once the provider that asked the question is gone, the answer can never be
 	# read, so the drain reaps it instead of waiting the full window and reporting a handoff — a
-	# handoff that un-completes an already finished task. See internal/box/image.go.
+	# handoff that un-completes an already finished task. See internal/box/supervisor/main.go.
 	COOP_CONSULT_OWNED=1
 	export COOP_CONSULT_OWNED
 	# Unlimited (the default): exec the peer directly, with no timeout wrapper to cut it off.
