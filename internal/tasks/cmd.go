@@ -3111,8 +3111,10 @@ func bannerWidth() int {
 
 // banner renders a queue's section header for the monorepo roll-up. On a terminal it's a cyan
 // marker + bold path + a dim rule filling the width — a clean divider between queues; piped, it is
-// the queue's path alone, the same name its folder has.
+// the queue's path alone, the same name its folder has. The path comes from project.yaml, which a
+// box can write, so it is escaped before it reaches the terminal.
 func banner(p ui.Palette, path string) string {
+	path = ui.SafeInline(path)
 	if !p.Enabled() {
 		return path
 	}

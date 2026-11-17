@@ -2335,3 +2335,17 @@ func TestListingsEscapeATaskFolderName(t *testing.T) {
 		}
 	}
 }
+
+// A subproject path comes from project.yaml, which a box can write, so the queue banner escapes
+// it like a task id: no raw control byte reaches the terminal, colored or piped.
+func TestBannerEscapesTheQueuePath(t *testing.T) {
+	for _, p := range []ui.Palette{{}, ui.Colored()} {
+		got := banner(p, "svc\x1b[2Jb")
+		if strings.Contains(got, "\x1b[2J") {
+			t.Fatalf("banner(enabled=%v) passed a control sequence through: %q", p.Enabled(), got)
+		}
+		if !strings.Contains(got, `svc\u001B[2Jb`) {
+			t.Fatalf("banner(enabled=%v) = %q, want the escaped path", p.Enabled(), got)
+		}
+	}
+}
