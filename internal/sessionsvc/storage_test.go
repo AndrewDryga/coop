@@ -727,6 +727,26 @@ func TestStorageForkDirtyIncludesNestedWork(t *testing.T) {
 	}
 }
 
+// A hydrated LFS file differs from its pointer by stat, but it is the committed content, not work.
+func TestStorageForkDirtyIgnoresHydratedLFS(t *testing.T) {
+	repo := nestedSessionSource(t, []byte("hydrated\x00payload\n"))
+	workspace, err := forkspace.Setup(repo, "storage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.HydrateLFS(context.Background(), workspace, gitOut(repo, "rev-parse", "HEAD"), repo); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{}
+	if dirty, reason := service.forkIsDirty(repo, "storage"); dirty {
+		t.Fatalf("hydrated LFS read as dirty: %s", reason)
+	}
+	sessionWorkspaceWrite(t, filepath.Join(workspace, "code"), "real work\n")
+	if dirty, _ := service.forkIsDirty(repo, "storage"); !dirty {
+		t.Fatal("real work beside hydrated LFS read as clean")
+	}
+}
+
 // A discarded session whose source GC took away is not measured, so it is no problem in the report.
 // A closed one keeps its fork, so a folder missing there still shows.
 func TestStorageRepositoriesSkipCollectedDiscardedSources(t *testing.T) {

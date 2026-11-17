@@ -749,8 +749,9 @@ func (s *Service) classifyFork(
 // cannot inspect is one it cannot prove is empty.
 func (s *Service) forkIsDirty(repo, name string) (bool, string) {
 	workspace := forkspace.Workspace(repo, name)
-	status, truncated, err := runSessionWorkspaceGit(workspace, sessionWorkspaceGitOutputLimit,
-		"status", "--porcelain=v2", "--untracked-files=all", "--no-renames", "-z")
+	// The LFS-aware status drops hydrated payloads that differ from their pointers only by stat;
+	// submodules are inspected below through their own views.
+	status, truncated, err := sessionWorkspaceStatusContext(context.Background(), workspace)
 	if err != nil {
 		return true, "its workspace status cannot be read"
 	}
