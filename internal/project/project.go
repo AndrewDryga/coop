@@ -15,7 +15,8 @@
 // the built-in filtered default) lets egress tighten freely, while the file's "open" is only a
 // request a human grants with coop approve (networkstate's pendingApproval) — and
 // no_new_privileges is deliberately NOT a key here (its default is on;
-// a committed switch could only turn it off). box.env reaches only the container, rejects Coop's
+// a committed switch could only turn it off), and box.pids may only lower the
+// process cap (raising or removing it takes the user's own COOP_PIDS). box.env reaches only the container, rejects Coop's
 // reserved COOP_ namespace, and stays below the user's agents/env and runtime-generated values.
 package project
 
@@ -122,7 +123,7 @@ type Box struct {
 	Network     *bool         `yaml:"network"`      // join the sibling-services network (default true)
 	Memory      string        `yaml:"memory"`       // docker --memory syntax, passed through (e.g. 4g)
 	CPUs        string        `yaml:"cpus"`         // docker --cpus value
-	Pids        string        `yaml:"pids"`         // --pids-limit: a positive integer, or ""/0/unlimited for none
+	Pids        string        `yaml:"pids"`         // --pids-limit: a positive integer that only LOWERS the cap; 0/unlimited parse but never apply
 }
 
 // Review is the trusted, committed environment used only for a disposable review candidate.
@@ -349,7 +350,7 @@ func Parse(data []byte) (*Project, error) {
 	case "", "0", "unlimited":
 	default:
 		if n, err := strconv.Atoi(p.Box.Pids); err != nil || n < 1 {
-			return nil, fmt.Errorf("%s: box.pids %q — use a positive integer, or 0/unlimited for no cap", File, p.Box.Pids)
+			return nil, fmt.Errorf("%s: box.pids %q — use a positive integer", File, p.Box.Pids)
 		}
 	}
 	p.Box.Memory, p.Box.CPUs = strings.TrimSpace(p.Box.Memory), strings.TrimSpace(p.Box.CPUs)

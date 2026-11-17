@@ -4220,6 +4220,30 @@ func TestApplyProjectPolicy(t *testing.T) {
 	}
 }
 
+// The committed file can only LOWER the fork-bomb cap: a box can edit it, so raising or removing
+// the cap needs the person's own COOP_PIDS, which still wins either way.
+func TestProjectPolicyOnlyLowersThePidsCap(t *testing.T) {
+	cfg := &config.Config{Pids: "4096"}
+	for file, want := range map[string]string{"1024": "1024", "4096": "4096", "8192": "4096", "0": "4096", "unlimited": "4096"} {
+		if got := applyProjectPolicy(cfg, &project.Project{Box: project.Box{Pids: file}}, &RunSpec{}); got.Pids != want {
+			t.Errorf("box.pids %q gave a %q cap, want %q", file, got.Pids, want)
+		}
+	}
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	t.Setenv("COOP_PIDS", "unlimited")
+	expl, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := applyProjectPolicy(expl, &project.Project{Box: project.Box{Pids: "1024"}}, &RunSpec{}); got.Pids != "unlimited" {
+		t.Errorf("explicit COOP_PIDS=unlimited must beat box.pids, got %q", got.Pids)
+	}
+}
+
 func TestSynthSkillsMounts(t *testing.T) {
 	pinHome(t)
 	copies := copyParent(t)

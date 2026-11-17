@@ -172,7 +172,7 @@ Reporting keys belong in host environment variables, not `coop.conf`, project fi
 |---|---|
 | `subprojects:` | A monorepo's members. See [monorepos](loop.md#monorepos). |
 | `serve:` | The dev server ports co:op publishes. See [the dev server in your browser](box.md#dev-servers-in-your-browser). |
-| `box:` | The box policy: the [`dockerfile` and `compose` paths](box.md#your-own-image-agentdockerfile), [`env` defaults](box.md#box-only-environment-boxenv), egress and [`egress_rules:`](networking.md), resource caps (`memory`, `cpus`, `pids`), `auto_up` and `network`. |
+| `box:` | The box policy: the [`dockerfile` and `compose` paths](box.md#your-own-image-agentdockerfile), [`env` defaults](box.md#box-only-environment-boxenv), egress and [`egress_rules:`](networking.md), resource caps (`memory`, `cpus`, `pids`; `pids` can only lower the process limit, so raising or removing it takes your own `COOP_PIDS`), `auto_up` and `network`. |
 | `services:` | `require_real_files:`, the hidden files your services need to read. Listing a file grants no access. See [secret files in services](box.md#secret-files-in-services). |
 | `gate:` | The merge gate: the check command that `coop fork merge` runs in the box. |
 | `gate_sources:` | The exact paths of project-specific files that define the gate. The loop always reviews changes to them. |

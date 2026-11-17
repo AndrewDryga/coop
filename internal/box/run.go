@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -723,6 +724,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if err != nil {
 			return -1, err
 		}
+		noticeIgnoredProjectPids(cfg, p, spec)
 		cfg = applyProjectPolicy(cfg, p, &spec)
 	}
 	// MCP assembly may replace cfg with a generated snapshot later. Mount authority still protects
@@ -3248,10 +3250,36 @@ func applyProjectPolicy(cfg *config.Config, p *project.Project, spec *RunSpec) *
 	if b.CPUs != "" && !cfg.Explicit("COOP_CPUS") {
 		c.CPUs = b.CPUs
 	}
-	if b.Pids != "" && !cfg.Explicit("COOP_PIDS") {
+	if projectPidsApply(cfg, b.Pids) {
 		c.Pids = b.Pids
 	}
 	return &c
+}
+
+// projectPidsApply reports whether the file's box.pids takes effect: only when the person set no
+// COOP_PIDS and the file LOWERS the cap. The pids cap is the fork-bomb guard and the one resource
+// limit with a default, and a box can edit the committed file, so raising or removing it (0,
+// unlimited or a larger number) needs the person's own COOP_PIDS.
+func projectPidsApply(cfg *config.Config, file string) bool {
+	if file == "" || cfg.Explicit("COOP_PIDS") {
+		return false
+	}
+	asked, err := strconv.Atoi(file)
+	if err != nil || asked < 1 {
+		return false // 0 or unlimited: removes the cap
+	}
+	current, err := strconv.Atoi(cfg.Pids)
+	return err != nil || current < 1 || asked <= current // no cap in force yet, or a lower one
+}
+
+// noticeIgnoredProjectPids says why a project file's box.pids did not apply, so a repo that asks
+// for more processes is not silently capped.
+func noticeIgnoredProjectPids(cfg *config.Config, p *project.Project, spec RunSpec) {
+	if p.Box.Pids == "" || cfg.Explicit("COOP_PIDS") || projectPidsApply(cfg, p.Box.Pids) || spec.Quiet || spec.Batch {
+		return
+	}
+	ui.Note("%s asks for box.pids %s; it can only lower the %s-process cap. Set COOP_PIDS yourself to raise or remove it.",
+		project.File, p.Box.Pids, cfg.Pids)
 }
 
 func boxPolicyEmpty(b project.Box) bool {

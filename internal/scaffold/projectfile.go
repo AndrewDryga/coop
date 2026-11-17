@@ -897,7 +897,7 @@ box:
   # memory: 4g
   # cpus: "4"
 
-  # Maximum processes (default: 4096). 0 or unlimited removes the limit.
+  # Maximum processes (default: 4096). This file can only lower it; set COOP_PIDS to raise it.
   # pids: 2048
 
 # Add instructions when work touches matching paths.
