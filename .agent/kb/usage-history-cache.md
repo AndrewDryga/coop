@@ -3,15 +3,16 @@ name: usage-history-cache
 description: coop usage's per-transcript token cache; changed files invalidate entries, and a complete full check prunes each history folder's unused entries
 subsystem: usage
 sources: [internal/agent/usage.go, internal/agent/usage_cache.go, internal/cli/usage.go, internal/cli/target.go, internal/box/history.go, internal/box/profiles.go, internal/config/config.go]
-updated: 2026-10-16
+updated: 2026-11-17
 ---
 
-`ReadUsageHistory` caches normalized token records in private `BoxHome/usage-cache`: one folder
+`ReadUsageHistory` caches normalized token records in private `LocalHome()/usage-cache`
+(`~/.local/state/coop/usage-cache`; `BoxHome` only when no local folder is set): one folder
 per provider history root, named by the SHA-256 of the provider kind and absolute root path, and
 one entry per transcript, named by the SHA-256 of its root-relative path. An entry keeps tokens
 and coverage flags, versioned by decoder schema. Device/inode, size, mtime and ctime invalidate
 changed sources, including same-size rewrites with restored mtime. Only stable, uncancelled reads
-are saved atomically. Invalid or unwritable caches fall back to native parsing. Changed files are
+are saved by temp file and rename, without an fsync: a torn entry is just a miss. Invalid or unwritable caches fall back to native parsing. Changed files are
 fully reparsed; unchanged files are not reopened. Prices, account attribution and the rolling
 window are not cached. Grok's dependent parent filter runs before cache reuse.
 
@@ -50,6 +51,9 @@ Best-effort callers (completion, rotation, hints) ignore the error and say why; 
 account qualifier refuses a catalog it cannot read.
 
 ## Changelog
+- 2026-11-17 — the cache lives under `LocalHome()` since 3d4b11fc, not `BoxHome` (audit AG-16);
+  entries are written without an fsync (AG-10); verified against internal/cli/usage.go and
+  internal/config/config.go.
 - 2026-10-15 — created: cache facts moved from [[usage-recorded-token-value]]; added per-folder
   pruning (audit GC-10). Verified against usage.go, usage_cache.go and cli/usage.go; fixtures
   cover complete, interrupted, linked, unreadable-directory, filter-error, unusable-cache-folder,
