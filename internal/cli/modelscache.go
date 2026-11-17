@@ -129,9 +129,7 @@ func recordModelsFetchFailure(cfg *config.Config, agent, cause string) error {
 
 // storeModelsCache atomically replaces agent's cache file. Best-effort: a forced refresh surfaces
 // a returned error; the free opportunistic ACP path ignores it. A unique temp file plus rename
-// keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file. No fsync
-// (unlike config.WriteFileAtomic): this is a cache of a remote catalog, so a crash losing the last
-// write costs one refetch — paying for durability would be theater.
+// keeps a concurrent writer (the ACP box→editor goroutine) from corrupting the file.
 func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 	if err := os.MkdirAll(filepath.Join(cfg.ConfigDir, agent), 0o700); err != nil {
 		return err
