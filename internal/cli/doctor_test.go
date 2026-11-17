@@ -34,6 +34,12 @@ func TestDoctorProbesKeepOpenNetworkingUnlessChosen(t *testing.T) {
 	if got := doctorConfig(chosen); got.Egress != "none" {
 		t.Fatalf("doctor replaced the operator's COOP_EGRESS with %q", got.Egress)
 	}
+	// A chosen filtered mode would refuse every probe, exactly like the filtered default.
+	filtered := &config.Config{}
+	filtered.SetEgress("filtered")
+	if got := doctorConfig(filtered); got.Egress != "open" || filtered.Egress != "filtered" {
+		t.Fatalf("probe config = %q, operator config now %q", got.Egress, filtered.Egress)
+	}
 }
 
 func TestDoctorDefaultMatchesCredentialFixture(t *testing.T) {

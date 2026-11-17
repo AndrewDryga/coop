@@ -96,12 +96,12 @@ func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img
 	return "alpine", false
 }
 
-// doctorConfig is cfg for doctor's probe boxes: open networking unless COOP_EGRESS chose a mode.
-// The probes check the ordinary image, which a filtered run never uses (it runs the locked client
-// image, checked when it starts), and they skip launch admission, so the filtered default would
-// refuse every one of them.
+// doctorConfig is cfg for doctor's probe boxes: open networking unless COOP_EGRESS chose open or
+// none. The probes check the ordinary image, which a filtered run never uses (it runs the locked
+// client image, checked when it starts), and they skip launch admission, so a filtered mode,
+// default or chosen, would refuse every one of them.
 func doctorConfig(cfg *config.Config) *config.Config {
-	if cfg.Explicit("COOP_EGRESS") {
+	if cfg.Explicit("COOP_EGRESS") && cfg.Egress != "filtered" {
 		return cfg
 	}
 	probe := cfg.Clone()
