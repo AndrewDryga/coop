@@ -2,8 +2,8 @@
 name: gemini-effort-thinking-settings
 description: Gemini has no effort flag; coop's low/high become per-call system-settings files overriding the client's two thinking family bases — why bases not model names, why only low/high, and the traps
 subsystem: agent
-sources: [internal/agent/gemini.go, internal/agent/agent.go, internal/agent/target.go, internal/box/run.go, internal/acpctl/control.go, internal/cli/testdata/providerfixture/timeout.go]
-updated: 2026-11-07
+sources: [internal/agent/gemini.go, internal/agent/agent.go, internal/agent/target.go, internal/box/run.go, internal/acpctl/control.go, internal/cli/testdata/providerfixture/timeout.go, internal/agent/locked-clients/package.json]
+updated: 2026-11-17
 ---
 
 The pinned Gemini CLI (0.67.0; mapping captured on 0.62.0 and re-read unchanged in the 0.67.0 bundle on 2026-11-07) takes thinking from its settings. Coop maps an effort to it
@@ -28,7 +28,9 @@ provider/model-quality proofs or request-level coverage of every accepted alias.
   a nonroot user or writable by group/others; user-home runtime mounts no longer work.
   Both image builders carry these root-owned `0644` files with root-owned `0755` ancestors. The box's own Gemini
   gets the variable from `MCP` for `cfg.EffortFor`; consult/delegate arms re-choose by `$effort`
-  with an `env` prefix, so a lead and a role can think at different levels in one box.
+  with an `env` prefix, so a lead and a role can think at different levels in one box. A brokered
+  run reads its own copies instead: `/etc/gemini-cli/native-broker/<selection>/<level>.json`
+  (`geminiBrokerEnv`, `geminiBrokerSettings`), which also pin the auth selection and the update switch.
 - **System settings merge objects, replace arrays.** `customAliases` deep-merges over the user's and
   the project's settings, so theirs survive; a `customOverrides`/`overrides` array written at the
   system layer would REPLACE theirs. Hence aliases. The one precedence gap: a `thinkingConfig` a
@@ -40,7 +42,7 @@ provider/model-quality proofs or request-level coverage of every accepted alias.
 - **Test oracle.** The provider fixture reads a gemini call's effort from
   `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, and its `timeout` stub accepts exactly that `env` prefix.
 - **Pinned facts, pinned boxes.** Base names, the model list and the LOW/HIGH enum are readings
-  of 0.62.0, the version Coop's images run.
+  of 0.62.0, re-read unchanged in 0.67.0, the version Coop's images run.
   `TestGeminiThinkingIsQualifiedOnTheLockedClient` fails when the locked version moves; re-read the
   new bundle before moving its pin. The `gemini-3-flash` alias has no request-level proof: on an API
   key the client can remap that name to the current GA flash.
@@ -48,6 +50,7 @@ provider/model-quality proofs or request-level coverage of every accepted alias.
   probes in the `coop-clients` image (Node 24), where it answers.
 
 ## Changelog
+- 2026-11-17 — pinned facts now name 0.67.0, the locked version, and the brokered settings folder is described (audit K2-3; checked internal/agent/gemini.go and locked-clients/package.json).
 - 2026-09-30 — root/ancestor security check reproduced LOW silently becoming HIGH with old
   user-home settings. Moved fixed settings into the image, removed runtime mounts, then captured
   both levels and budgets from the actual nonroot client. Added the new 3.8-flash/3.5-flash-lite aliases.
