@@ -347,6 +347,10 @@ func TestBashCompletionModelWordBreaks(t *testing.T) {
 		{"joined empty", "codex:", ":", "qualified", []string{"coop", "loop", "codex:"}},
 		{"split empty", "codex:", ":", "qualified", []string{"coop", "loop", "codex", ":"}},
 		{"custom word breaks", "codex:q", "", "codex:qualified", []string{"coop", "loop", "codex:q"}},
+		{"joined account", "codex@q", "@", "@qualified", []string{"coop", "loop", "codex@q"}},
+		{"split account", "codex@q", "@", "@qualified", []string{"coop", "loop", "codex", "@", "q"}},
+		{"split empty account", "codex@", "@", "@qualified", []string{"coop", "loop", "codex", "@"}},
+		{"model then account", "codex:m@q", ":@", "@qualified", []string{"coop", "loop", "codex", ":", "m", "@", "q"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			script := bashCompletion + `
@@ -357,7 +361,10 @@ COMP_WORDS=("$@")
 COMP_CWORD=$((${#COMP_WORDS[@]}-1))
 coop() {
   [ "$#" -eq 3 ] && [ "$1" = __complete ] && [ "$2" = loop ] && [ "$3" = "$query" ] || return 97
-  printf '%s\n' 'codex:qualified'
+  case $query in
+    *@*) printf '%s\n' "${query%@*}@qualified" ;;
+    *) printf '%s\n' 'codex:qualified' ;;
+  esac
 }
 _coop
 printf '<%s>\n' "${COMPREPLY[@]}"

@@ -3,7 +3,7 @@ name: shell-completion-current-word
 description: Shell completion replaces the current word, and Bash 3.2 needs IFS kept away from the COMP_WORDS slice
 subsystem: cli
 sources: [internal/cli/completion.go, internal/cli/completion_test.go, internal/cli/profiles.go, internal/box/profiles.go, internal/cli/approved_runtime_output_test.go, internal/cli/testdata/approved/75-completion-bash.txt]
-updated: 2026-10-11
+updated: 2026-11-17
 ---
 
 `coop __complete` receives every word after `coop` through the word being edited, including an
@@ -54,3 +54,4 @@ assertion. Update the approved transcript in the same commit as a script-output 
   exact-command auto-advancement. The same script is also exercised on Linux Bash during audit.
   Actual typed model completion exposed both colon shapes on Bash 3.2 and 5.2; covered local
   rejoining and prefix trimming without global shell changes.
+- 2026-11-17 — Bash also breaks words at `@`: the script now rejoins and trims around `@` as it does around `:` (Bash 3.2 rewrote `claude@w` to `claudeclaude@work`, Bash 4+ offered nothing). Verified through a PTY in Bash 3.2.57 and 5.3.20.

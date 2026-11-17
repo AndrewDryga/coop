@@ -5,11 +5,11 @@
 _coop() {
   local candidate word prefix='' i last
   local -a words=()
-  # Bash 4+ splits a target's colon into its own word; Bash 3.2 keeps it joined.
+  # Bash 4+ splits a target's colon and @ into words of their own; Bash 3.2 keeps them joined.
   for ((i=1; i<=COMP_CWORD; i++)); do
     word=${COMP_WORDS[i]}
     last=$((${#words[@]}-1))
-    if ((last >= 0)) && [[ $word == : || ${COMP_WORDS[i-1]} == : ]]; then
+    if ((last >= 0)) && [[ $word == : || $word == @ || ${COMP_WORDS[i-1]} == : || ${COMP_WORDS[i-1]} == @ ]]; then
       words[last]+=$word
     else
       words+=("$word")
@@ -18,6 +18,10 @@ _coop() {
   word=${words[${#words[@]}-1]:-}
   if [[ ${COMP_WORDBREAKS:-} == *:* && $word == *:* ]]; then
     prefix=${word%:*}:
+  fi
+  # An account follows the last @, and Readline keeps the @ in the text it replaces.
+  if [[ ${COMP_WORDBREAKS:-} == *@* && $word == *@* ]]; then
+    prefix=${word%@*}
   fi
   COMPREPLY=()
   while IFS= read -r candidate; do
