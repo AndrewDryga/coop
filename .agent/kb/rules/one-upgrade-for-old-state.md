@@ -89,12 +89,12 @@ names it.
 | Execution fallback registry | `~/.local/state/coop/executions/v1/<key>/` | not written | not read | every entry is reported by path and blocks fork mutation; the folder stays fenced from boxes, and the service-launch locks beside it are unaffected | v12.1.0 |
 | Service approval | `~/.local/state/coop/service-approvals/` | 5 | 5 | 4 and below grant nothing and label nothing; the files they covered stay hidden until `coop up` shows the review | `coop up` re-approves |
 | Filesystem custody record | `~/.local/state/coop/filesystem/coop-fs-*/record.json` | 1 | 1 | a record with a helper image and no controller (builds of 2026-11-01 and 2026-11-02) is refused by name and left as it is, so its protection holds; the share-check `Probes` field is still read | v12.1.0 (retires it) |
-| Account renewal journal | `~/.config/coop/credentials/<account>/renewal.json` | 1 | 1 | a kept answer with no `received_at` (Coop v11.3.0 and earlier) is refused by name and left as it is | v12.1.0, or `coop login` |
+| Account renewal journal | `~/.config/coop/agents/<provider>/credentials/<account>/renewal.json` | 1 | 1 | a kept answer with no `received_at` (Coop v11.3.0 and earlier) is refused by name and left as it is | v12.1.0, or `coop login` |
 | Linux process start token | pid files, labels, records | `linux-proc-v2:` | `linux-proc-v2:` | `linux-proc-v1:` has no PID namespace and reads as no known shape: Unknown, never a match and never proof of death | none: the record stays |
 | Workspace checkpoint bundle | kept by Ryker's controller | 2 | 1 | decoded so restore can refuse it by name; only a checkpoint file in the worker's own state is still served | none needed |
 | Box supervisor label | `coop.host` on boxes, their brokers and per-run services | 2 | 2 | a v1 label reads as unknown: reported, never removed | none: labels are never rewritten |
-| Pre-v11 provider login | `~/.config/coop/<provider>/profiles/<account>/` and `host-credentials/<account>/` | `credentials/<account>/authority.json` | refused | refused by name for an account with no `credentials/<account>/` folder: run `coop login <provider>@<account>`; the old folders are never read or deleted | v12.1.0 and earlier |
-| Pre-v11 provider history | `~/.config/coop/<provider>/profiles/<account>/`, `acp-sessions/` and flat `acp-threads/*.json` | per-repository `native-homes/` and `acp-homes/` | not imported | an import an older build started and never finished is refused by name at launch; history and thread bindings never imported stay in the old folders unread | v12.1.0 and earlier |
+| Pre-v11 provider login | `~/.config/coop/agents/<provider>/profiles/<account>/` and `host-credentials/<account>/` | `credentials/<account>/authority.json` | refused | refused by name for an account with no `credentials/<account>/` folder: run `coop login <provider>@<account>`; the old folders are never read or deleted | v12.1.0 and earlier |
+| Pre-v11 provider history | `~/.config/coop/agents/<provider>/profiles/<account>/`, `acp-sessions/` and flat `acp-threads/*.json` | per-repository `native-homes/` and `acp-homes/` | not imported | an import an older build started and never finished is refused by name at launch; history and thread bindings never imported stay in the old folders unread | v12.1.0 and earlier |
 
 `<state>` is the session state root (`--state`, default `~/.local/state/coop/sessions`). A worker's
 job forks live under it too, in `<state>/job-sources/<key>/repository-forks/`. Fork records are in
@@ -116,6 +116,7 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
 `legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-17 — rooted the renewal-journal and pre-v11 login and history rows at `~/.config/coop/agents/<provider>/`, where those folders live (audit D1-15).
 - 2026-11-17 — merged two `sources:` lines into one; the second had dropped old_records.go and the first the two box files.
 - 2026-11-04 — retired the v1 box supervisor label, the version 4 service approval hint, the Linux
   start token v1, the renewal journal's undated kept answer, and the custody record written before

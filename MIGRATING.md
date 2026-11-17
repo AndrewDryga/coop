@@ -19,9 +19,10 @@ Coop no longer reads these records of builds up to v12.1.0. None is changed or d
   "filesystem custody record from before the shared filesystem controller" names it. Its protection
   keeps holding. Run Coop v12.1.0 in the project: its daily sweep retires a record whose owner is
   gone. Then come back.
-- **A credential renewal journal without `received_at`** (`credentials/<account>/renewal.json`, kept
-  by Coop v11.3.0 or earlier). The message says it was kept without an arrival time. Open the
-  account once with Coop v12.1.0 to finish it, or run `coop login <agent>@<account>`.
+- **A credential renewal journal without `received_at`**
+  (`~/.config/coop/agents/<agent>/credentials/<account>/renewal.json`, kept by Coop v11.3.0 or
+  earlier). The message says it was kept without an arrival time. Open the account once with Coop
+  v12.1.0 to finish it, or run `coop login <agent>@<account>`.
 - **Version 4 service approvals** grant nothing and are not read. `coop up` shows the review again.
 
 ## v13.0.0: old session store data is refused by name
@@ -34,7 +35,8 @@ the worker stopped is still marked interrupted, as before.
    Exit 0 means the data is current. Exit 4 with "session schema N is older than this coop build
    supports" means the store needs the converting build first.
 2. For a store below schema 26, back up the stopped state folder, open it once with a Coop build at
-   or before commit 29133b0e (it converts to schema 26 on start), stop it, then use the new build.
+   or before commit 29133b0e, such as v12.1.0 (it converts to schema 26 on start), stop it, then
+   use the new build.
 3. For a stored session that the log names as quarantined (no saved job, a blank mode, or the
    removed `readonly` or `bare` mode), either retire its record with
    `{"retire_quarantined": true, "expected_revision": N}` on `/v1/sessions/{id}/discard`, or cancel,
@@ -64,8 +66,9 @@ closed.
 
 ## v13.0.0: logins and history from before v11 are not converted
 
-Coop no longer moves a login out of `profiles/<account>` or `host-credentials/<account>`, and no
-longer imports history or editor thread bindings from the folders Coop before v11 used.
+Coop no longer moves a login out of `profiles/<account>` or `host-credentials/<account>` under
+`~/.config/coop/agents/<agent>/`, and no longer imports history or editor thread bindings from the
+folders Coop before v11 used.
 
 - Run `coop login <agent>@<account>` for every account that `coop credentials` shows as needing a
   new sign-in. The old folder stays where it is, untouched. A Coop-held API key (Gemini) is saved
