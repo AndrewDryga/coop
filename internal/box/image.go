@@ -379,8 +379,13 @@ func (c ImageChange) Unchanged() bool { return c.Before != "" && c.Before == c.A
 
 // PlanBuild resolves what a build would do, without building anything. It loads project.yaml (so
 // a malformed one fails loudly here rather than halfway through) and requires the runtime, since
-// whether the shared base already exists is part of the answer.
+// whether the shared base already exists is part of the answer. COOP_IMAGE means "use exactly this
+// image", so every build refuses under it: launches would not use what it built, and the override
+// is an image coop did not build, which a build must never retag.
 func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) (BuildPlan, error) {
+	if cfg.ImageOverride != "" {
+		return BuildPlan{}, errors.New("COOP_IMAGE is set; unset it to build this project")
+	}
 	if repo == "" {
 		// No project: the shared image, whose definition is Coop's own, so no folder is read.
 		return BuildPlan{Image: cfg.BaseImage}, rt.EnsureDaemon()

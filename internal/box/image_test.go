@@ -671,3 +671,59 @@ func TestIgnoredBuildPathsCoversEverythingBelowAnIgnoredFolder(t *testing.T) {
 		}
 	}
 }
+
+// COOP_IMAGE means "use exactly this image": every build plan, and so `coop build`, `coop update`
+// and an editor session's automatic build, refuses before it touches the runtime, so the
+// operator's image is never retagged.
+func TestEveryBuildRefusesUnderCOOPIMAGE(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho \"$*\" >> '"+calls+"'\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	own := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(own, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, ".agent", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tools := t.TempDir()
+	writeToolVersions(t, tools, "golang 1.26.5\n")
+	cfg := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", ImageOverride: "operator/image:1", Egress: "open"}
+	rt := runtime.Runtime{Name: shim}
+	for name, repo := range map[string]string{"shared base": "", "toolchain": tools, "project Dockerfile": own} {
+		if _, err := PlanBuild(rt, cfg, repo, false); err == nil || err.Error() != "COOP_IMAGE is set; unset it to build this project" {
+			t.Errorf("%s plan under COOP_IMAGE = %v", name, err)
+		}
+		if err := BuildWith(rt, cfg, repo, false, "", strings.NewReader(""), io.Discard); err == nil {
+			t.Errorf("%s build under COOP_IMAGE ran", name)
+		}
+	}
+	if data, _ := os.ReadFile(calls); len(data) > 0 {
+		t.Fatalf("a build under COOP_IMAGE called the runtime:\n%s", data)
+	}
+	if _, skewed := BaseImageSkew(cfg, cfg.ImageOverride); skewed {
+		t.Fatal("the COOP_IMAGE image read as a stale base to rebuild")
+	}
+}
+
+// A worker job builds its own coop-job or toolchain tag on top of COOP_IMAGE, and a missing
+// COOP_IMAGE is never built as Coop's base under the operator's name.
+func TestAControllerBuildNeverTagsTheImageOverride(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	shim := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho \"$*\" >> '"+calls+"'\ncase \"$1 $2\" in \"image inspect\") exit 1 ;; \"info --format\") echo linux/aarch64 ;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	writeToolVersions(t, repo, "golang 1.26.5\n")
+	cfg := &config.Config{LocalDir: t.TempDir(), BaseImage: "coop-box:test", ImageOverride: "operator/image:1", Egress: "open"}
+	_, _ = controllerToolchainImage(cfg, runtime.Runtime{Name: shim}, repo, io.Discard)
+	data, _ := os.ReadFile(calls)
+	if strings.Contains(string(data), "-t operator/image:1") || strings.Contains(string(data), "--tag operator/image:1") {
+		t.Fatalf("a controller build tagged COOP_IMAGE:\n%s", data)
+	}
+}

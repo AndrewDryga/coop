@@ -85,6 +85,9 @@ func (a *app) requireLaunchImage(repo, img string) error {
 		if err := a.rt.EnsureDaemon(); err != nil {
 			return err
 		}
+		if img == a.cfg.ImageOverride {
+			return fmt.Errorf("image %q from COOP_IMAGE is not on this host — pull or build it yourself, or unset COOP_IMAGE", img)
+		}
 		if img == a.cfg.BaseImage {
 			return fmt.Errorf("image %q not built — run 'coop build --egress open' in a directory without a project Dockerfile", img)
 		}

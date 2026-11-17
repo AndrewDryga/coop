@@ -212,7 +212,7 @@ func EarlierManagedBase(cfg *config.Config) (builtBy string, ok bool) {
 // reads as no skew — never nag on a guess. A managed base names its definition in its tag, so
 // only an operator's COOP_BASE_IMAGE can drift this way.
 func BaseImageSkew(cfg *config.Config, img string) (builtBy string, skewed bool) {
-	if IsManagedBase(img) {
+	if IsManagedBase(img) || img == cfg.ImageOverride { // COOP_IMAGE is the operator's, never rebuilt
 		return "", false
 	}
 	builtBy, def, err := readImageMeta(imageMetaPath(cfg, img))

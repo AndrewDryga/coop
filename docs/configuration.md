@@ -15,7 +15,7 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 |---|---|---|
 | `COOP_HOME` | `$XDG_CONFIG_HOME/coop`, or `~/.config/coop` | Absolute path of co:op's settings folder, which holds accounts and `coop.conf`. Use it to keep them out of a sync service, and set it for your editor too. co:op doesn't move your files. |
 | `COOP_RUNTIME` | auto (Docker preferred) | Picks the runtime: `docker` or `container`. |
-| `COOP_IMAGE` | auto | Forces a specific image, overriding `.agent/Dockerfile` detection. |
+| `COOP_IMAGE` | auto | Forces a specific image, overriding `.agent/Dockerfile` detection. co:op never builds or replaces it: with it set, `coop build` and every automatic build refuse, so pull or build that image yourself. |
 | `COOP_BASE_IMAGE` | `coop-box` | The shared base image. `coop-box` selects co:op's own image, with a `coop-box:<definition>` tag for each box definition. |
 | `COOP_REPO` | the nearest folder with `.git` | Chooses the repo instead of detecting it from the current directory. co:op follows links, but refuses a link that leads to your home folder or any folder above it. With this unset outside a repository, the current folder is the project, unless it's your home folder or above, which co:op refuses. Set to your home folder, it works for commands such as `coop tasks`, but no box starts there. |
 | `COOP_WORKDIR` | the repo's real path | Where the repo mounts in the box, as an absolute path. |

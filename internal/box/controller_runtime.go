@@ -120,7 +120,8 @@ func prepareControllerImage(cfg *config.Config, rt runtime.Runtime, grant *Contr
 	buildCfg := cfg.Clone()
 	buildCfg.BaseImage = base
 	usesBase := strings.Contains(string(content), "COOP_BASE_IMAGE")
-	plan := BuildPlan{Project: true, Dockerfile: grant.Runtime.Dockerfile, Image: image, usesBase: usesBase, BaseFirst: usesBase && !ImageExists(rt, base)}
+	// A missing COOP_IMAGE is the operator's to pull: building Coop's base would retag it.
+	plan := BuildPlan{Project: true, Dockerfile: grant.Runtime.Dockerfile, Image: image, usesBase: usesBase, BaseFirst: usesBase && cfg.ImageOverride == "" && !ImageExists(rt, base)}
 	if output == nil {
 		output = os.Stderr
 	}
@@ -223,7 +224,7 @@ func controllerToolchainImage(cfg *config.Config, rt runtime.Runtime, repository
 	}
 	buildCfg := cfg.Clone()
 	buildCfg.BaseImage = base
-	plan := BuildPlan{Project: true, Toolchain: true, Image: image, usesBase: true, BaseFirst: !ImageExists(rt, base)}
+	plan := BuildPlan{Project: true, Toolchain: true, Image: image, usesBase: true, BaseFirst: cfg.ImageOverride == "" && !ImageExists(rt, base)}
 	if err := BuildPlanned(rt, buildCfg, repository, plan, false, "", strings.NewReader(""), output); err != nil {
 		return "", toolchainBuildError(err)
 	}
