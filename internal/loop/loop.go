@@ -1531,7 +1531,7 @@ reviewAgain:
 				if assignedCompletion != nil && !noChangeAccepted {
 					finishedDirs := []string{assignedCompletion.Item.ID + " — " + assignedCompletion.Item.Dir}
 					finishedIDs := taskIDsOf(finishedDirs)
-					runChanges, changesErr := loopChanges(repo, loopStartHead, headAfter, gateSources)
+					runChanges, changesErr := loopChangesFor(repo, loopStartHead, headAfter, gateSources, finishedIDs)
 					// A range Coop cannot read stops the run. A box can break the objects or refs the
 					// read needs, so the failure is no evidence the gate is untouched, and a reviewer
 					// reading the same repository can hit the same failure. The task keeps its

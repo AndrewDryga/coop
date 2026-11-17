@@ -302,6 +302,16 @@ func TestLoopChangesFromGit(t *testing.T) {
 	if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); !mustLoopChanges(t, repo, head, head).empty() {
 		t.Error("an empty range must yield an empty change set")
 	}
+
+	// After one completed task the loop lists only that task's files, not every task of the run.
+	one, err := loopChangesFor(repo, base, forkspace.GitOut(repo, "rev-parse", "HEAD"), nil, []string{"task-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.tasks) != 1 || one.tasks[0].id != "task-a" || !slices.Equal(one.tasks[0].files, cs.tasks[0].files) ||
+		!slices.Equal(one.forTasks([]string{"task-a"}).gateFiles(), cs.forTasks([]string{"task-a"}).gateFiles()) {
+		t.Errorf("task-a alone = %+v", one.tasks)
+	}
 }
 
 // A task another session committed before the loop started is reviewed at that commit. The run's

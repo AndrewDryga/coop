@@ -387,6 +387,14 @@ func subsystemsOf(files []string) []string {
 // An error means Coop could not read the range. It is never a smaller change set: review scrutiny of
 // the gate is decided from these files, and a box can break the objects or refs the reads need.
 func loopChanges(repo, base, head string, gateSources []string) (loopChangeSet, error) {
+	return loopChangesFor(repo, base, head, gateSources, nil)
+}
+
+// loopChangesFor is loopChanges listing the files of only the named tasks' commits (all tasks when
+// only is nil). After each completed task the loop needs that one task's files; listing every task
+// of the run again cost one git process per commit per completion. The range itself is still read
+// whole, so a range Coop cannot read still fails.
+func loopChangesFor(repo, base, head string, gateSources, only []string) (loopChangeSet, error) {
 	if base == "" || head == "" {
 		return loopChangeSet{}, fmt.Errorf("read the changes in %q..%q: the range has no commit at one end", base, head)
 	}
@@ -411,6 +419,9 @@ func loopChanges(repo, base, head string, gateSources []string) (loopChangeSet, 
 		invalidTaskBindings: invalid,
 	}
 	for _, id := range order {
+		if only != nil && !slices.Contains(only, id) {
+			continue
+		}
 		commits := byTask[id]
 		files, err := commitFiles(repo, commits)
 		if err != nil {
