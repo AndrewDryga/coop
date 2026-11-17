@@ -209,8 +209,7 @@ func (a *app) credentialAge(agent, profile string) string {
 }
 
 // profilePath routes the path grammar's per-profile tail: bare shows the account, an
-// attribute token reads or writes one property. Attribute handlers delegate to the same
-// functions the verb forms use, so the two grammars can't drift.
+// attribute token reads or writes one property. It is the only spelling for an edit.
 func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 	if len(rest) == 0 {
 		return a.showProfile(agent, profile)

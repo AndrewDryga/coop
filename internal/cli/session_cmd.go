@@ -1,9 +1,9 @@
 package cli
 
-// Command wiring for `coop sessions`: flag parsing, the CLI's path defaults, the serve loop that
-// owns signal handling, the doctor command that owns the terminal — and the Host adapters that
-// hand internal/sessionsvc the three things a library cannot own for itself (the merge policy
-// scan, the review gate built on this repo's merge image, and a warning line on the terminal).
+// Command wiring for `coop sessions`: flag parsing, the CLI's path defaults, the serve loop (its
+// caller, session_connect.go, owns signal handling), the doctor command that owns the terminal —
+// and the Host adapters that hand internal/sessionsvc the two things a library cannot own for
+// itself (the review gate built on this repo's merge image, and a warning line on the terminal).
 
 import (
 	"context"

@@ -348,10 +348,6 @@ func (s *seenWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// distinctLines passes Compose's progress through a whole line at a time and drops any line it has
-// already passed. Compose 5 prints every network and volume event twice when its output is not a
-// terminal, sometimes with other events between the two copies, and Coop always reads it through a
-// pipe. A repeat carries nothing the first line did not.
 // hashedContainer is the name Coop gives a service's protected wrapper: nobody can tell which service
 // it is, so its progress lines stay out of coop up. The start and result lines say what happened, and
 // a failure keeps its line.
@@ -375,6 +371,10 @@ func composeReviewedVolumeWarning(line string, volumes []string) bool {
 	return false
 }
 
+// distinctLines passes Compose's progress through a whole line at a time and drops any line it has
+// already passed. Compose 5 prints every network and volume event twice when its output is not a
+// terminal, sometimes with other events between the two copies, and Coop always reads it through a
+// pipe. A repeat carries nothing the first line did not.
 type distinctLines struct {
 	w       io.Writer
 	volumes []string // reviewed volume names, whose composeReviewedVolumeWarning is dropped

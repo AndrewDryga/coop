@@ -212,7 +212,7 @@ func resolvePeerTargets(command string, vals, authed []string) ([]agents.Target,
 	return peers, nil
 }
 
-// applyTarget seeds a single run's model + account selection from a target (the loop uses the
+// applyRunTarget seeds a single run's model + account selection from a target (the loop uses the
 // rotation ladder instead). A >1-account ladder is rejected (loop-only).
 func (a *app) applyRunTarget(t agents.Target, command string) error {
 	acct, err := singleAccount(t, command)

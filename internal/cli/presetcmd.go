@@ -19,7 +19,8 @@ import (
 // cmdPresets is the presets view, path-grammar like credentials: bare lists every
 // preset under .agent/presets/ (a broken one shows its error instead of hiding),
 // `coop presets <name>` shows one — the lead and each role with its mode/model/
-// credentials/routing. Read-only: presets are edited as YAML files, not via the CLI.
+// credentials/routing. Presets are edited as YAML files; the one write is `coop presets init`,
+// which scaffolds a new one.
 func (a *app) cmdPresets(args []string) (int, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
@@ -184,7 +185,7 @@ func presetRoleCounts(p *preset.Preset) string {
 }
 
 // presetsInit scaffolds a ready-to-edit preset from the documented frontier template
-// (`coop presets init [<preset>]`, name defaulting to "frontier"). The template loads
+// (`coop presets init [<name>]`, name defaulting to "frontier"). The template loads
 // cleanly as written, so the new preset lists and runs immediately.
 func (a *app) presetsInit(repo string, args []string) (int, error) {
 	for i, arg := range args {

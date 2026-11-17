@@ -262,8 +262,9 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	}
 	code, err := a.runBox(spec)
 	// An interactive/run box makes unsigned commits; sign what THIS session produced on exit so a
-	// protected remote accepts them. Best-effort, session-scoped, skipped for a dirty tree. A
-	// session started inside a fork's folder leaves its commits for the merge to sign.
+	// protected remote accepts them. Best-effort and session-scoped; it signs in a scratch worktree,
+	// so a dirty tree is safe. A session started inside a fork's folder leaves its commits for the
+	// merge to sign.
 	if !spec.Login {
 		a.signOnBoxExit(repo, pre, forkIdentity != nil)
 	}

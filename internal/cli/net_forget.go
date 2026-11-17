@@ -43,8 +43,8 @@ func parseNetForgetArgs(args []string) (string, error) {
 	return project, nil
 }
 
-// cmdNetForget drops ONE project's remembered approval. It is `coop net
-// approve` in reverse and asks the same way, at a terminal — but it is not an
+// cmdNetForget drops ONE project's remembered approval. It is `coop approve`
+// in reverse and asks the same way, at a terminal — but it is not an
 // `rm`: what it removes can be remembered again by approving again, and a run
 // that finds no approval asks for one instead of reaching further. So it never
 // claims the deletion cannot be undone.
