@@ -123,9 +123,10 @@ you approved.
 - For unrestricted access, add `--egress open` to the command (in an editor, to the agent arguments),
   set `COOP_EGRESS=open` in your environment or `coop.conf`, or set `box.egress: open` in the project
   and approve it with `coop approve`.
-- Installing `.tool-versions` tools when the box starts and starting `.agent/compose.yml` services
-  automatically both need open networking. Run with `--egress open`, or build the tools into
-  `.agent/Dockerfile` and start services with `coop up`.
+- A filtered box runs without your `.tool-versions` tools; build them into `.agent/Dockerfile`
+  (`coop init --stack asdf` writes one). It starts and reaches only the `.agent/compose.yml`
+  services its approved rules name: add `service:` rules under `box.egress_rules` and run
+  `coop approve`, which offers them. Run with `--egress open` to keep the old behavior.
 - A project with its own `.agent/Dockerfile` and no `box.egress` needs one more `coop build`. After
   that, co:op rebuilds those files itself when its client image changes.
 - Filtered project images have new names, so an existing filtered project also needs `coop build`

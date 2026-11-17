@@ -28,10 +28,10 @@ or `0`/`false`/`no`/`off` in any letter case, and co:op rejects any other value.
 | `COOP_ALLOW_CASE_EXPOSED_SECRETS` | off | On a Mac, lets one run start when mount protection can't hide every letter-case spelling of a long filename. The box or a service could then read a secret through a name such as `.ENV.PRODUCTION`. To remember this access for file paths you've reviewed, use `coop approve --case-exposure`. Runs protected by eBPF keep these files hidden and need neither. See [hiding secrets](box.md#hiding-secrets). |
 | `COOP_HOMES` | `1` | Mounts each selected agent's repository home into the box. `0` keeps those homes out. Agents sign in through their homes, so with `0` an agent runs only offline, and co:op refuses presets, peers and fork sessions. |
 | `COOP_EGRESS` | `filtered` | Chooses how the box can use the network. See the choices below and [networking](networking.md). |
-| `COOP_NETWORK` | `1` | Joins the services network. |
+| `COOP_NETWORK` | `1` | Joins the services network with `--egress open`. A filtered box never joins it and reaches the services its approved rules name; without such rules it refuses to start in a project with services unless this is `0`. |
 | `COOP_CACHE` | `1` | Mounts the cache volume. |
 | `COOP_AUTO_UP` | `1` | Starts the `.agent/compose.yml` services for working boxes: all of them for an open box, and the ones its approved network rules name for a filtered box. Set `0` to manage development services yourself with `coop up` and `coop down`. A filtered box whose approved rules name services then won't start, because it reaches only the services co:op starts for it. |
-| `COOP_SERVICES_NET` | auto | The services network to join, so parallel forks can share one database. |
+| `COOP_SERVICES_NET` | auto | The network services start on, so parallel forks can share one database. An open box joins it; a filtered box with this set and no approved `service:` rule refuses to start. |
 
 Choose one of these values for `COOP_EGRESS`:
 
