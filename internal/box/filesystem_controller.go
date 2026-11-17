@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +142,20 @@ func (r filesystemControllerRecord) validate() error {
 	return nil
 }
 
+// scannedFilesystemController reads a controller folder found by a scan. A folder with no record
+// is a creation that died before persisting one (recovery removes it); it is skipped, not fatal,
+// so one abandoned folder cannot refuse every later launch.
+func scannedFilesystemController(dir string) (filesystemControllerRecord, bool, error) {
+	r, err := readFilesystemController(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return r, false, nil
+	}
+	if err != nil {
+		return r, false, fmt.Errorf("filesystem controller record at %s: %w", dir, err)
+	}
+	return r, true, nil
+}
+
 func readFilesystemController(dir string) (filesystemControllerRecord, error) {
 	var r filesystemControllerRecord
 	root, err := safefile.OpenRoot(dir)
@@ -227,11 +242,11 @@ func acquireFilesystemController(ctx context.Context, docker *runtime.Docker, im
 			continue
 		}
 		dir := filepath.Join(state, entry.Name())
-		r, err := readFilesystemController(dir)
+		r, recorded, err := scannedFilesystemController(dir)
 		if err != nil {
 			return nil, err
 		}
-		if r.Image != image || r.Endpoint != docker.Endpoint() || r.DaemonID != docker.Info().ID || r.CgroupDriver != driver || r.AppArmor != profile {
+		if !recorded || r.Image != image || r.Endpoint != docker.Endpoint() || r.DaemonID != docker.Info().ID || r.CgroupDriver != driver || r.AppArmor != profile {
 			continue
 		}
 		live, err := controllerLive(ctx, docker, r)
@@ -599,6 +614,11 @@ func recoverFilesystemControllers(ctx context.Context, rt runtime.Runtime, repor
 
 func recoverFilesystemController(ctx context.Context, rt runtime.Runtime, dir string) (bool, error) {
 	r, err := readFilesystemController(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		// The record is written before any container exists, under the registry lock this pass
+		// holds, so a folder without one is a creation that died: nothing to clean but the folder.
+		return true, os.RemoveAll(dir)
+	}
 	if err != nil {
 		return false, err
 	}

@@ -266,3 +266,46 @@ func TestOrphanControllers(t *testing.T) {
 		t.Errorf("orphans = %q, want only the one nothing uses", got)
 	}
 }
+
+// A controller folder whose creation died before its record was written must not refuse every later
+// launch: the launch scan skips it, and recovery removes it. A record that exists but cannot be read
+// still fails, naming its folder.
+func TestARecordlessControllerFolderIsSkippedAndRecovered(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ServiceStateRootEnv, root)
+	d := newFilesystemRecoveryDaemon(t)
+	state, err := filesystemControllerState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(state, "coop-fs-controller-"+strings.Repeat("d", 32)+"-x")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lease"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, recorded, err := scannedFilesystemController(dir); recorded || err != nil {
+		t.Fatalf("the launch scan took a record-less folder as recorded=%v err=%v, want skipped", recorded, err)
+	}
+	count, err := recoverFilesystemControllers(t.Context(), d.rt, nil)
+	if err != nil || count != 1 {
+		t.Fatalf("recovery = %d, %v; want the record-less folder removed", count, err)
+	}
+	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the record-less folder stayed: %v", err)
+	}
+	bad := filepath.Join(state, "coop-fs-controller-"+strings.Repeat("e", 32)+"-y")
+	if err := os.MkdirAll(bad, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "record.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := scannedFilesystemController(bad); err == nil || !strings.Contains(err.Error(), bad) {
+		t.Fatalf("an unreadable record = %v, want an error naming %s", err, bad)
+	}
+}
