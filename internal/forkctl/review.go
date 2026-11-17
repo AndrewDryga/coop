@@ -251,7 +251,7 @@ func (c *Control) ForkReview(args []string) (int, error) {
 		return -1, fmt.Errorf("inspect fork worktree: %w", err)
 	}
 	// Into names the parent's branch: in the gated copy HEAD is detached, so it could only say "HEAD".
-	if err := c.forkBriefAt(reviewRepo, reviewRepo, gitBranch(repo), commits, name, ref,
+	if err := c.forkBriefAt(reviewRepo, repo, gitBranch(repo), commits, name, ref,
 		forkReviewGate{outcome: outcome, configured: gateConfigured, changed: changed}); err != nil {
 		return -1, err
 	}

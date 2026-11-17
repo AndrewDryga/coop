@@ -253,6 +253,25 @@ func TestIsolatedReviewKeepsCanonicalAgentNotes(t *testing.T) {
 	}
 }
 
+// --gate reviews a scratch clone, but the task notes live with the real project's fork records, so
+// the gated review must still show them.
+func TestForkReviewWithGateShowsTheAgentsNotes(t *testing.T) {
+	fill := func(t *testing.T, dir string) {
+		writeTaskFile(t, filepath.Join(dir, "log.md"), "- Added the feature and its test.\n")
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateMode(t, "gated-notes", false, true, fill)
+	c.cfg.RepoOverride, c.cfg.BaseImage, c.cfg.Gate = repo, "gate-image", []string{"make", "check"}
+	c.rt = runtime.Runtime{Name: "true"}
+	c.gateOK = func(string, string, string) bool { return true }
+	out, code, err := reviewCommandOutput(t, c, identity.Name, "--gate", "--stat")
+	if code != 0 || err != nil {
+		t.Fatalf("review --gate = (%d, %v)\n%s", code, err, out)
+	}
+	if !strings.Contains(out, "Agent's notes") || !strings.Contains(out, "Added the feature and its test.") {
+		t.Fatalf("the gated review lost the agent's notes:\n%s", out)
+	}
+}
+
 // A fork that did several tasks shows each task's notes under its own title, oldest log first, and
 // never Coop's template comment. A task whose log holds nothing the worker wrote is left out.
 func TestForkReviewShowsEveryTasksNotesWithoutTheTemplate(t *testing.T) {
