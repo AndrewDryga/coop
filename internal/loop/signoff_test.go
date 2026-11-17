@@ -73,6 +73,11 @@ func TestBlockReopenedTasksLeavesUnrelatedActionableWork(t *testing.T) {
 	if !strings.Contains(string(decision), "review keeps reopening") || strings.Contains(string(decision), "Old decision") {
 		t.Fatalf("review cap retained stale decision:\n%s", decision)
 	}
+	// The replaced decision, and the human's answer on it, is filed in log.md, not lost.
+	logText, err := os.ReadFile(filepath.Join(q, stateBlocked, "review-reopen", "log.md"))
+	if err != nil || !strings.Contains(string(logText), "> **Resolution:** already resolved") {
+		t.Fatalf("replaced decision not kept in log.md (%v):\n%s", err, logText)
+	}
 	// A resumed review parks a task while unrelated work still waits: the decision counts it
 	// instead of claiming the queue drained.
 	if !strings.Contains(string(decision), "with 1 other task still in the queue") || strings.Contains(string(decision), "drained") {

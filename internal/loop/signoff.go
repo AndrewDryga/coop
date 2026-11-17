@@ -2,8 +2,6 @@ package loop
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -146,9 +144,9 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 		moves = append(moves, tasks.TrustedTaskMove{
 			Root: task.Root, Task: tasks.Item{ID: id}, NewState: tasks.StateBlocked,
 			SourceStates:  []string{tasks.StateTodo, tasks.StateInProgress, tasks.StateDone, tasks.StateBlocked},
-			MetadataNames: []string{"decision.md"},
+			MetadataNames: []string{"decision.md", "log.md"},
 			AfterMove: func(dir string) error {
-				return writeReviewBlockDecision(filepath.Join(dir, "decision.md"), id, title, rounds, others)
+				return writeReviewBlockDecision(dir, id, title, rounds, others)
 			},
 		})
 	}
@@ -158,25 +156,29 @@ func blockReopenedTasks(hosts, reopened []string, rounds int) error {
 	return nil
 }
 
-// writeReviewBlockDecision drops a decision.md explaining that the review kept reopening this task
-// past the round cap. Replace an older resolved decision: decision.md carries the current open
-// question, not a stale action from a previous block. others counts the actionable tasks left
-// beside it: a resumed review parks a task while unrelated work still waits, so the text never
-// claims the queue drained.
-func writeReviewBlockDecision(path, id, title string, rounds, others int) error {
+// writeReviewBlockDecision writes a decision.md explaining that the review kept reopening this task
+// past the round cap. decision.md carries the current open question, so an older one is replaced,
+// but never lost: ReplaceDecision files it, with any human answer, in log.md first, and writes
+// through the task-folder helpers a box cannot redirect with a link. others counts the actionable
+// tasks left beside it: a resumed review parks a task while unrelated work still waits, so the
+// text never claims the queue drained.
+func writeReviewBlockDecision(dir, id, title string, rounds, others int) error {
 	queue := "No other task was left in the queue."
 	if others > 0 {
 		queue = fmt.Sprintf("The loop parked it here with %s still in the queue.", ui.Count(others, "other task"))
 	}
-	body := fmt.Sprintf("# Decision: the review keeps reopening %q after %s\n\n"+
-		"**Blocks:** this task (`%s`).\n\n"+
-		"**The decision:** The final review reopened this task %s without it converging — "+
-		"the work loop can't get it to a state the review accepts. %s A human needs to look at why "+
-		"(a gate it can't make green, a spec gap, a flaky test) before it goes back in the queue.\n\n"+
-		"**Recommendation:** Read the review's reopen notes in this task's log.md, fix the underlying "+
-		"issue (or split/redefine the task), then `coop tasks unblock %s`.\n\n"+
-		"---\n\n"+
-		"**Resolution:** <!-- HUMAN: your answer here, then: coop tasks unblock %s -->\n",
-		title, ui.Count(rounds, "round"), id, ui.Count(rounds, "time"), queue, id, id)
-	return os.WriteFile(path, []byte(body), 0o644)
+	_, err := tasks.ReplaceDecision(dir, id, title, tasks.Decision{
+		Question: fmt.Sprintf("the review keeps reopening %q after %s", title, ui.Count(rounds, "round")),
+		Why: fmt.Sprintf("The final review reopened this task %s without it converging — "+
+			"the work loop can't get it to a state the review accepts. %s A human needs to look at why "+
+			"(a gate it can't make green, a spec gap, a flaky test) before it goes back in the queue.",
+			ui.Count(rounds, "time"), queue),
+		Options: []string{
+			"Fix the underlying issue, then unblock the task.",
+			"Split or redefine the task, then unblock it.",
+		},
+		Recommendation: "Read the review's reopen notes in this task's log.md, fix the underlying " +
+			fmt.Sprintf("issue (or split/redefine the task), then `coop tasks unblock %s`.", id),
+	})
+	return err
 }
