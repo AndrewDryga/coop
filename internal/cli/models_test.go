@@ -9,6 +9,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // modelsApp builds an app whose vault has one claude credential ("work"), so the
@@ -200,5 +201,19 @@ func TestModelsMenuHasFrontierIDs(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing the recipe id %q:\n%s", want, out)
 		}
+	}
+}
+
+// The models menu names the runtime as every other command does: Docker, even when COOP_RUNTIME is
+// a path to it, never the path itself.
+func TestProbeBoxRuntimeNamesTheRuntimeLikeOtherCommands(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "docker") // EnsureDaemon probes only the Docker kind, read off the name
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\ncase \"$1\" in info) exit 1 ;; esac\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}, rt: runtime.Runtime{Name: shim}, rtSet: true}
+	var fetch modelFetchError
+	if err := a.probeBoxRuntime(); !errors.As(err, &fetch) || fetch.cause != "Docker is unavailable." {
+		t.Errorf("probeBoxRuntime = %v, want the cause \"Docker is unavailable.\"", err)
 	}
 }

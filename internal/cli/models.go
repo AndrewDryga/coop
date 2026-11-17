@@ -292,7 +292,7 @@ func (a *app) probeBoxRuntime() error {
 		return modelFetchError{cause: "No container runtime is installed.", err: err}
 	}
 	if err := a.rt.EnsureDaemon(); err != nil {
-		return modelFetchError{cause: titleName(a.rt.Name) + " is unavailable.", err: err}
+		return modelFetchError{cause: runtimeTitle(a.rt.Name) + " is unavailable.", err: err}
 	}
 	return nil
 }
