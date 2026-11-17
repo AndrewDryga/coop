@@ -391,7 +391,7 @@ func sectionsFilled(values map[string]string) bool {
 // imported fork proposal) has nothing to replace, and the header would be the first thing its agent
 // reads telling it to redo work that's done. The full reference with worked examples is
 // .agent/tasks/README.md. decision.md is NOT seeded here — `block` writes it, since a pending
-// decision is what moves a task to 50_blocked/ (and a decision.md on a todo task is a lint error).
+// decision is what moves a task to 50_blocked/ (and an unanswered decision.md on a todo task is a lint error).
 // values/subtasks fill the body from structured `add` flags; pass nil/empty for the scaffold.
 func newTaskFiles(template taskTemplate, id, title, now string, values map[string]string, subtasks []string) (map[string]string, error) {
 	taskMD, err := template.render(id, title, now, values, subtasks)

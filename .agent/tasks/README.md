@@ -37,7 +37,7 @@ archive is a manual, human step: `coop tasks rm --all-done`.
       log.md         append-only journal — what you did and WHY (newest last)
       state.md       overwritten resume snapshot — where you are / the next action
       spec.md        optional — the design, when it outgrows task.md's Approach
-      decision.md    the pending decision (present ⇔ task is in 50_blocked/)
+      decision.md    the decision: pending in 50_blocked/, kept with its answer after unblock
       screenshots/   optional — screenshots, the common visual deliverable (git-ignored)
       artifacts/     optional — durable evidence retained with the completed task (git-ignored)
       tmp/           optional — resumable disposable work, removed when the task reaches done
@@ -268,7 +268,8 @@ a commit.
 - Only this README, the state folders and `xx_backlog/` live at the queue root. `coop tasks`
   warns about any other file or folder there (hidden ones are left to tools); keep a task's
   evidence in its folder and everything else outside `.agent/tasks`.
-- A todo task must NOT carry a `decision.md` (that means it's blocked); a blocked one MUST.
+- A blocked task MUST carry a `decision.md`. A todo task carries one only with its answer
+  (`unblock` keeps it as the record the next worker reads): never delete it.
 - Never add a `status:` field — the directory IS the status. `coop tasks lint` checks this.
 - Counts / subtask progress / the blocked list are DERIVED — `coop tasks`,
   `coop tasks decisions`. Never hand-maintain them.
