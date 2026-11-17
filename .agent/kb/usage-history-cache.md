@@ -7,7 +7,8 @@ updated: 2026-11-17
 ---
 
 `ReadUsageHistory` caches normalized token records in private `LocalHome()/usage-cache`
-(`~/.local/state/coop/usage-cache`; `BoxHome` only when no local folder is set): one folder
+(`~/.local/state/coop/usage-cache`; `BoxHome` only when no local folder is set).
+`config.MoveLocalRecords` moves an older `BoxHome/usage-cache` there once. The cache has one folder
 per provider history root, named by the SHA-256 of the provider kind and absolute root path, and
 one entry per transcript, named by the SHA-256 of its root-relative path. An entry keeps tokens
 and coverage flags, versioned by decoder schema. Device/inode, size, mtime and ctime invalidate
@@ -51,6 +52,7 @@ Best-effort callers (completion, rotation, hints) ignore the error and say why; 
 account qualifier refuses a catalog it cannot read.
 
 ## Changelog
+- 2026-11-17 — named the one-time move of an older `BoxHome/usage-cache` (`MoveLocalRecords`).
 - 2026-11-17 — the cache lives under `LocalHome()` since 3d4b11fc, not `BoxHome` (audit AG-16);
   entries are written without an fsync (AG-10); verified against internal/cli/usage.go and
   internal/config/config.go.

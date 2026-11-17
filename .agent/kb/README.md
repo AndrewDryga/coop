@@ -153,7 +153,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 - [canonical-fork-task-authority](canonical-fork-task-authority.md) — the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 - [identity-fences-compare-the-inode](identity-fences-compare-the-inode.md) — inode and timestamp reuse is real; durable fork/network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
-- [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global task ownership and completion trust live in ~/.local/state/coop/task-leases, never a cache dir; every authority flock rechecks its inode
+- [task-authority-registry-is-durable-state](task-authority-registry-is-durable-state.md) — host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; records are read plainly, and only completion-window locks are ever unlinked
 - [task-authority-model](task-authority-model.md) — four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 - [task-tmp-lifetime](task-tmp-lifetime.md) — task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 - [session-evidence-export](session-evidence-export.md) — one bounded versioned read exports a session's network posture, observation, receipt and bound task; every section states its own availability and unknown never collapses into zero

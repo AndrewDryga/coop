@@ -2,7 +2,7 @@
 name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
-sources: [internal/box/run.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
+sources: [internal/box/run.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/box/controller_runtime.go, internal/forkctl/rm.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/forkspace/create.go]
 updated: 2026-11-17
 ---
 Sibling services are brought up per box (`box.Run` → `startServicesFileContext`) and are deliberately
@@ -13,7 +13,7 @@ What is NOT correct is persistence past the WORKSPACE. Teardown is driven by the
 compose file:
 
 ```go
-DownServices(rt, workspace, policyRepo, …) → ComposeFile(workspace, policyRepo) → ComposeFileAt(…)
+DownServices(rt, workspace, policyRepo, …) → project.Load(policyRepo) → ComposeFileAt(workspace, p.ComposeRel())
 // ComposeFileAt returns "" when the file is missing/empty  →  DownServices returns nil, doing NOTHING
 ```
 
@@ -21,17 +21,21 @@ So teardown after `os.RemoveAll(workspace)` doesn't fail — it **silently succe
 nothing**. Observed 2026-08-03: a fork's `keycloak` + `postgres` were still running five days after
 `coop fork rm`, holding disk and a published port the whole time.
 
-**The rule: stop services BEFORE the workspace is deleted.** `forkctl.DestroyFork` (`internal/forkctl/rm.go`)
-does this at the single choke point every destroy path funnels through (`fork rm`, `fork merge`,
-`merge --all`, and the `fork create` rollback), with `volumes: true` — a fork is
-disposable by definition, and leaked volumes were a real share of the disk growth. It is best-effort
-and logs rather than blocking: a service that won't stop must not veto the removal the operator
-asked for.
+**The rule: stop services BEFORE the workspace is deleted.** `stopForkServices`
+(`internal/forkctl/rm.go`) is the shared teardown, with `volumes: true` — a fork is disposable by
+definition, and leaked volumes were a real share of the disk growth. Two paths run it before the
+removal:
+- `forkctl.DestroyFork`, for `fork rm` and `fork --fresh` (`internal/cli/fork_cmd.go`). Without
+  `--force` a failed teardown KEEPS the fork: a service with a writable bind can still write to it.
+  Do not "fix" this into best-effort; `--force` is the operator's way past it.
+- `destroyLandedFork` (`internal/forkctl/merge.go`), for `fork merge` and `merge --all`. Its
+  teardown is best-effort, since the work already landed, and it re-checks the landing approval
+  after the services stop.
 
-The ORDER is why the two halves are split: the removal itself is `forkspace.Destroy`
-(`internal/forkspace/create.go`, a leaf with no container runtime), and `forkctl.DestroyFork` is the
-box-aware wrapper that runs teardown first and then calls it. Anything that reaches for
-`forkspace.Destroy` directly skips the teardown and re-opens this bug.
+The ORDER is why the halves are split: the removal itself is `forkspace.Destroy`
+(`internal/forkspace/create.go`, a leaf with no container runtime). Its sanctioned direct callers are
+`destroyLandedFork` and the session discard below, each after its own teardown. Anything else that
+reaches for `forkspace.Destroy` skips the teardown and re-opens this bug.
 
 Two related seams behave correctly already and are worth copying rather than duplicating:
 - A session's discard doesn't go through that wrapper. A controller job with no project runtime has
@@ -39,9 +43,9 @@ Two related seams behave correctly already and are worth copying rather than dup
   file must not decide or fail worker cleanup, and Compose refuses a non-local Docker endpoint such as
   a dind worker's `tcp://`. A job with a project runtime stops its labeled services first
   (`StopControllerServices` in `executeDiscard`). Either way `discardSessionWorkspace`
-  (`internal/sessionsvc/workspace.go`) calls the leaf `forkspace.Destroy` directly on purpose — the
-  one sanctioned direct caller, and only because teardown is already settled. A controller REVIEW
-  may still start the candidate's `review.compose` stack; `box.Run` removes it itself when the box
+  (`internal/sessionsvc/workspace.go`) calls the leaf `forkspace.Destroy` directly on purpose,
+  because teardown is already settled. A controller REVIEW may still start the candidate's
+  `review.compose` stack; `box.Run` removes it itself when the box
   ends, by label (`StopControllerServices`), because the gate under review may have deleted or broken
   the file.
 - `StopSessionServices` removes by immutable compose LABELS instead of the file, so an agent's
@@ -58,6 +62,10 @@ inspection and non-forced removal honor that same endpoint/daemon. In-use networ
 data volumes remain; inspection/removal failures stay errors rather than false stop success.
 
 ## Changelog
+- 2026-11-17 — corrected the destroy paths: `DestroyFork` serves `fork rm` and `fork --fresh` and
+  keeps the fork when teardown fails without `--force`; merge's `destroyLandedFork` runs
+  `stopForkServices` and calls `forkspace.Destroy` itself. The code block follows `DownServices`'
+  `project.Load` + `ComposeFileAt`. Sources added.
 - 2026-11-17 — a controller review's stack is now removed by label when its box ends; `compose down` refused once the gate had deleted the review file, and nothing removed the stack later.
 - 2026-11-04 — the session service no longer downs services for a job-less session, which could never reach discard; the seam now says what each kind of job does.
 - 2026-11-03 — `coop down` with no default Compose file says "No services to stop" and exits 0
