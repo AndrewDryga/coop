@@ -146,7 +146,12 @@ func extraHostsEntry(args []string) bool {
 			i++
 			value = args[i]
 		}
-		if name, _, _ := strings.Cut(value, ":"); name == networkgateway.OpenBrokerHost {
+		// Docker takes name=ip as well as name:ip; no host name holds "=", so it is cut first.
+		name, _, ok := strings.Cut(value, "=")
+		if !ok {
+			name, _, _ = strings.Cut(value, ":")
+		}
+		if name == networkgateway.OpenBrokerHost {
 			return true
 		}
 	}

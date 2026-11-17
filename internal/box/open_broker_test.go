@@ -124,11 +124,15 @@ func TestOpenRunPlansAHelperOnlyForTheSecretsItCanKeepOut(t *testing.T) {
 	}
 	// The hosts entry is how the box finds the helper; an override in the run's own arguments
 	// would send its stand-ins somewhere else.
-	hijacked := spec
-	hijacked.ExtraArgs = []string{"--add-host", "coop-broker:10.0.0.9"}
-	if _, _, err := planOpenBroker(cfg, runtime.Runtime{Name: "docker"}, hijacked, []byte(openBrokerSnapshot)); err == nil ||
-		!strings.Contains(err.Error(), "remove its --add-host") {
-		t.Fatalf("an --add-host for the broker's own name = %v", err)
+	// Docker takes both name:ip and name=ip.
+	for _, args := range [][]string{{"--add-host", "coop-broker:10.0.0.9"}, {"--add-host", "coop-broker=10.0.0.9"},
+		{"--add-host=coop-broker=10.0.0.9"}, {"--add-host=coop-broker=::1"}} {
+		hijacked := spec
+		hijacked.ExtraArgs = args
+		if _, _, err := planOpenBroker(cfg, runtime.Runtime{Name: "docker"}, hijacked, []byte(openBrokerSnapshot)); err == nil ||
+			!strings.Contains(err.Error(), "remove its --add-host") {
+			t.Fatalf("%q for the broker's own name = %v", args, err)
+		}
 	}
 	// A secret it would broker cannot be smuggled back in through -e.
 	smuggled := spec
