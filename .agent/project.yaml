@@ -48,4 +48,12 @@ box:
 # that implement the command to gate_sources; Makefiles, CI, hooks and Coop config are built in.
 # Iteration uses make check-local SCOPE=<owner>; fork landing keeps the full free gate below.
 gate: make check
-# gate_sources: [run, tools/internal/devtool/gates.go]
+# The tools make check runs beyond the Makefile: a loop task that edits one gets the protected
+# gate audit, as an edit to the Makefile does.
+gate_sources:
+  - tools/checkrules/main.go
+  - tools/aligncomments/main.go
+  - tools/gendocs/main.go
+  - tools/gateslot/main.go
+  - tools/staticcheck.mod
+  - tools/staticcheck.sum

@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
@@ -517,6 +518,38 @@ func TestCommitFilesPreservesUnicodeProtectedPath(t *testing.T) {
 	}
 	if got := tasks.ProtectedGateFiles(files, nil); !slices.Equal(got, []string{guard}) {
 		t.Fatalf("protected attribution = %q, want %q", got, guard)
+	}
+}
+
+// This repository declares the tools make check runs as gate sources, so a loop task that edits
+// one of them, such as the rules checker, gets the protected gate audit.
+func TestOwnGateToolEditIsAProtectedGateChange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	own, err := project.Load(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, run := gitrepo.New(t)
+	checker := filepath.Join(repo, "tools", "checkrules", "main.go")
+	if err := os.MkdirAll(filepath.Dir(checker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(checker, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-qm", "base")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(checker, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("commit", "-qam", "loosen the rules check")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	hits, err := tasks.ProtectedGateChanges(repo, base, head, own.GateSources)
+	if err != nil || !slices.Equal(hits, []string{"tools/checkrules/main.go"}) {
+		t.Fatalf("ProtectedGateChanges with this repo's gate_sources %v = %v, %v; want the rules checker reported", own.GateSources, hits, err)
 	}
 }
 
