@@ -102,7 +102,7 @@ vuln: ## Report reachable Go vulnerabilities with the pinned govulncheck
 		[ "$$scanner" = "$(GOVULNCHECK_VERSION)" ] || { echo "govulncheck@$${scanner:-unknown} is not the pinned $(GOVULNCHECK_VERSION) — run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"; exit 1; }
 	@govulncheck ./...
 
-shellcheck: ## ShellCheck every tracked .sh: the installer, both sweep queue guards, the commit hook
+shellcheck: ## ShellCheck every tracked .sh except the eval starter workloads
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: brew install shellcheck (macOS) or apt-get install -y shellcheck (Debian)"; exit 1; }
 # The file list comes from git, so a new .sh is covered the moment it is tracked — no list here to
 # forget to update. An empty list means git failed or the tree moved, never "nothing to check":
