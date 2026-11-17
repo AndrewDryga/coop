@@ -57,6 +57,20 @@ func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignm
 	return repo, root, base, assignment, done, plan
 }
 
+// An unset struct field is left out of a stored record, as its omit tag says, instead of being
+// written as a zero time or an empty stage.
+func TestRecordsOmitUnsetStructFields(t *testing.T) {
+	for name, value := range map[string]any{"owner": TaskOwnerRecord{}, "plan": PendingReviewPlan{}} {
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"claimed_at"`) || strings.Contains(string(data), `"verify"`) {
+			t.Errorf("%s record = %s, want unset fields left out", name, data)
+		}
+	}
+}
+
 func TestPendingReviewEnrollmentSurvivesRestart(t *testing.T) {
 	repo, root, _, assignment, done, plan := pendingReviewTestCompletion(t)
 	if err := assignment.Lease.MarkCompletedForReview(repo, done, plan, false); err != nil {

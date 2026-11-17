@@ -67,7 +67,7 @@ type PendingReviewPlan struct {
 	Signoff       PendingReviewStage   `json:"signoff"`
 	SignoffRounds int                  `json:"signoff_rounds"`
 	VerifyEnabled bool                 `json:"verify_enabled,omitempty"`
-	Verify        PendingReviewStage   `json:"verify,omitempty"`
+	Verify        PendingReviewStage   `json:"verify,omitzero"`
 	MCPDisabled   bool                 `json:"mcp_disabled,omitempty"`
 	CreatedAt     time.Time            `json:"created_at"`
 }

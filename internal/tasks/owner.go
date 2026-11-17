@@ -67,7 +67,7 @@ type TaskOwnerRecord struct {
 	Source    string    `json:"source,omitempty"`
 	User      string    `json:"user,omitempty"`
 	Host      string    `json:"host,omitempty"`
-	ClaimedAt time.Time `json:"claimed_at,omitempty"`
+	ClaimedAt time.Time `json:"claimed_at,omitzero"`
 
 	// A claim made by an agent process (no terminal) is bound to that process: Actor is the label
 	// the queue shows (the process's command name unless --as named it), ActorPID/ActorStart its
