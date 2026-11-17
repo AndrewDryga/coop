@@ -1837,6 +1837,40 @@ func TestRunDecisionBrowserReportsInputFailure(t *testing.T) {
 	}
 }
 
+// A mistyped command on a question page (:m and :r work only on a fork's merge page) saves nothing:
+// it used to be written as the answer, and the task went back to todo.
+func TestDecisionBrowserRefusesAnUnknownCommand(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"alpha"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add: code=%d err=%v", code, err)
+	}
+	blocked := mustReadTaskTree(t, root)[0]
+	if code, err := tasksFolderBlock(root, []string{blocked.ID}); code != 0 || err != nil {
+		t.Fatalf("block: code=%d err=%v", code, err)
+	}
+	blocked, _ = FindTask(root, blocked.ID)
+	var out bytes.Buffer
+	in := strings.NewReader(":m\n:Q\n:help\n:q\n")
+	if code, err := runDecisionBrowser("", decisionRefs(root, "", []Item{blocked}), in, &out); code != 0 || err != nil {
+		t.Fatalf("browser: code=%d err=%v", code, err)
+	}
+	after, err := FindTask(root, blocked.ID)
+	if err != nil || after.State != StateBlocked {
+		t.Fatalf("an unknown command moved the task to %v (err %v)", after.State, err)
+	}
+	if dec := readFileString(filepath.Join(after.Dir, "decision.md")); strings.Contains(dec, "**Resolution:** :") {
+		t.Errorf("an unknown command was saved as the answer:\n%s", dec)
+	}
+	if got := strings.Count(out.String(), "is not a command here"); got != 3 {
+		t.Errorf("want 3 refusals, got %d:\n%s", got, out.String())
+	}
+	for line, want := range map[string]bool{":m": true, ":Q": true, ":": false, ":1": false, ": use SQLite": false, "SQLite": false, ":use SQLite": false} {
+		if got := unknownBrowserCommand(line); got != want {
+			t.Errorf("unknownBrowserCommand(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
 func TestRunDecisionBrowser(t *testing.T) {
 	root := t.TempDir()
 	for _, title := range []string{"alpha", "beta"} {

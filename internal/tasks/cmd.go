@@ -3387,6 +3387,20 @@ func decisionsInteractive(project, root string, decisions []Item, merges []ready
 	return runDecisionBrowser(project, refs, os.Stdin, os.Stdout)
 }
 
+// unknownBrowserCommand reports a line shaped like a browser command, a colon and letters only,
+// that the question page does not know.
+func unknownBrowserCommand(line string) bool {
+	if len(line) < 2 || line[0] != ':' {
+		return false
+	}
+	for _, r := range line[1:] {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // runDecisionBrowser is the interactive loop with its I/O injected, so it can be driven in a
 // test. Each ref carries its own queue root, so one session can span several queues of the one
 // project whose history an answer's unblock audits.
@@ -3541,6 +3555,12 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		case ":n", "":
 			i++
 		default:
+			// A mistyped command (:m and :r work only on a fork's merge page) is not an answer:
+			// saving it would unblock the task with ":m" as the decision.
+			if unknownBrowserCommand(line) {
+				fmt.Fprintf(out, "  %s is not a command here. Type your answer, :b to park the task, :d to delete it, :q to quit, or press Enter to skip it.\n", sanitizeCell(line))
+				continue
+			}
 			if !resolutionIsAnswer(line) {
 				fmt.Fprintf(out, "  %s\n", waitingAnswerNote)
 				continue // nothing saved: ask this question again
