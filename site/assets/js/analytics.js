@@ -19,7 +19,6 @@
     track_pageview: true, // page views across the landing + docs pages
     persistence: "localStorage", // no tracking cookies
     record_sessions_percent: 100, // session replay (low-traffic public site; text + inputs are masked by default)
-    debug: /^(localhost|127\.0\.0\.1)$/.test(location.hostname),
   });
 
   // A successful clipboard write measures intent, not a completed installation.
