@@ -153,6 +153,11 @@ func buildFilteredProjectWith(ctx context.Context, rt runtime.Runtime, cfg *conf
 	if err := checkFilteredRuntime(rt); err != nil {
 		return ImageChange{}, err
 	}
+	// No setup record can match COOP_IMAGE, so without this refusal the build would run the whole
+	// host setup and then ask to run it again.
+	if err := checkFilteredSupport(cfg); err != nil {
+		return ImageChange{}, err
+	}
 	rt, err := rt.FreezeCompose(ctx)
 	if err != nil {
 		return ImageChange{}, err

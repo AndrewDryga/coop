@@ -78,6 +78,24 @@ func TestFilteredProjectImageRequiresExplicitBuild(t *testing.T) {
 	}
 }
 
+// No setup record can match COOP_IMAGE, so a filtered build refuses it up front, as a launch does,
+// instead of running the host setup and then asking to run it again.
+func TestBuildFilteredProjectRefusesAnImageOverrideBeforeSetup(t *testing.T) {
+	cfg, repo, root := admissionFixture(t)
+	cfg.ImageOverride = "someone-elses:latest"
+	recorder := filepath.Join(t.TempDir(), "docker-calls")
+	_, err := BuildFilteredProject(context.Background(), dockerRecorder(t, recorder), cfg, repo, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "unset COOP_IMAGE") {
+		t.Fatalf("BuildFilteredProject = %v, want the COOP_IMAGE refusal", err)
+	}
+	if calls, readErr := os.ReadFile(recorder); readErr == nil {
+		t.Fatalf("the refused build ran the runtime: %q", calls)
+	}
+	if _, statErr := os.Stat(root); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("the refused build created network state: %v", statErr)
+	}
+}
+
 func projectContextDigest(t *testing.T, repo string) string {
 	t.Helper()
 	entries, err := buildContextSelection(context.Background(), repo)
