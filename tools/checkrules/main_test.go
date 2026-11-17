@@ -89,7 +89,7 @@ func has(problems []string, want string) bool {
 }
 
 func TestParseFrontmatter(t *testing.T) {
-	fm := parseFrontmatter(goodCard)
+	fm, repeated := parseFrontmatter(goodCard)
 	for key, want := range map[string]string{
 		"name":        "sample-rule",
 		"description": "a sample rule, quoted because it has: a colon",
@@ -103,8 +103,11 @@ func TestParseFrontmatter(t *testing.T) {
 	if !fm["sources"].list {
 		t.Error("sources: [a] must read as a list")
 	}
+	if len(repeated) != 0 {
+		t.Errorf("a card with each key once repeats %q", repeated)
+	}
 	for _, text := range []string{"# Just a heading\n", "# Heading\n---\nname: x\n---\n", "---\nname: x\n"} {
-		if fm := parseFrontmatter(text); fm != nil {
+		if fm, _ := parseFrontmatter(text); fm != nil {
 			t.Errorf("%q has no frontmatter (it must open and close the file's first block), got %v", text, fm)
 		}
 	}
@@ -230,6 +233,9 @@ func TestAuditKB(t *testing.T) {
 		// it would resolve under the root, but an agent opens it as written
 		{name: "absolute source", card: strings.Replace(goodKBCard, "[internal/cli/help.go]", "[/internal/cli/help.go]", 1), index: kbIndex,
 			want: []string{`sources names "/internal/cli/help.go" — sources must be repo-relative`}},
+		// the map keeps the last line, so the first list's paths would go unchecked
+		{name: "repeated key", card: strings.Replace(goodKBCard, "sources: [internal/cli/help.go]\n", "sources: [internal/cli/moved.go]\nsources: [internal/cli/help.go]\n", 1), index: kbIndex,
+			want: []string{"sample-card: frontmatter repeats 'sources:'"}},
 		{name: "unindexed card", card: goodKBCard, index: "# .agent/kb\n\n## Index\n",
 			want: []string{"not in the README index — an unindexed card is never read"}},
 		{name: "index link to missing file", card: goodKBCard, index: kbIndex + "- [ghost](ghost.md) — gone\n",

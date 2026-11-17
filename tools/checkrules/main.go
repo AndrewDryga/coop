@@ -8,7 +8,7 @@
 // `check: none`, because everyone stops looking for one.
 //
 // What this enforces in BOTH registers:
-//   - frontmatter present, name matches the filename, updated is a date
+//   - frontmatter present, name matches the filename, updated is a date, no key given twice
 //   - every required key is present and non-empty (a blank `subsystem:` routes nowhere)
 //   - every path in sources: exists
 //   - a `## Changelog` section exists
@@ -171,15 +171,17 @@ func quoteList(items []string) string {
 func quote(s string) string { return strconv.Quote(s) }
 
 // parseFrontmatter is a minimal reader for the fixed shape cards use; nil means there is none.
-func parseFrontmatter(text string) map[string]value {
+// repeated names each key that appears more than once: the map keeps only the last, so an earlier
+// line (a second sources: list, say) would otherwise go unchecked.
+func parseFrontmatter(text string) (fm map[string]value, repeated []string) {
 	if !strings.HasPrefix(text, "---\n") {
-		return nil
+		return nil, nil
 	}
 	end := strings.Index(text[4:], "\n---\n")
 	if end == -1 {
-		return nil
+		return nil, nil
 	}
-	fm := map[string]value{}
+	fm = map[string]value{}
 	for _, line := range strings.Split(text[4:4+end], "\n") {
 		key, val, ok := strings.Cut(line, ":")
 		if !ok || strings.TrimSpace(line) == "" {
@@ -200,9 +202,13 @@ func parseFrontmatter(text string) map[string]value {
 		default:
 			v.text = val
 		}
-		fm[strings.TrimSpace(key)] = v
+		key = strings.TrimSpace(key)
+		if _, seen := fm[key]; seen && !slices.Contains(repeated, key) {
+			repeated = append(repeated, key)
+		}
+		fm[key] = v
 	}
-	return fm
+	return fm, repeated
 }
 
 // readText reads a file as text with its line endings normalized, so a card checked out with CRLF
@@ -267,12 +273,15 @@ func checkCard(root, path string, required []string, doc string) ([]string, map[
 	if err != nil {
 		return []string{fmt.Sprintf("%s: %v", slug, err)}, nil
 	}
-	fm := parseFrontmatter(text)
+	fm, repeated := parseFrontmatter(text)
 	if fm == nil {
 		return []string{fmt.Sprintf("%s: no frontmatter (see %s for the card format)", slug, doc)}, nil
 	}
 
 	var problems []string
+	for _, key := range repeated {
+		problems = append(problems, fmt.Sprintf("%s: frontmatter repeats '%s:'; merge them into one line", slug, key))
+	}
 	for _, key := range required {
 		if v, ok := fm[key]; !ok {
 			problems = append(problems, fmt.Sprintf("%s: frontmatter missing '%s:'", slug, key))
