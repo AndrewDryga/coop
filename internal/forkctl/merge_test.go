@@ -2653,7 +2653,11 @@ func TestControllerJobReviewStartsTheCandidatesReviewStack(t *testing.T) {
 	calls := readLines(t, callsPath)
 	up := slices.IndexFunc(calls, func(call string) bool { return strings.Contains(call, "up -d --wait --remove-orphans") })
 	boxRun := slices.IndexFunc(calls, func(call string) bool { return strings.HasPrefix(call, "run ") })
-	down := slices.IndexFunc(calls, func(call string) bool { return strings.Contains(call, "down --remove-orphans --volumes") })
+	// The stack goes by its project label, not by re-reading the candidate's compose file, which
+	// the gate may have deleted.
+	down := slices.IndexFunc(calls, func(call string) bool {
+		return strings.HasPrefix(call, "ps -q -a --filter label=com.docker.compose.project=")
+	})
 	if up < 0 || boxRun < 0 || down < 0 || !(up < boxRun && boxRun < down) {
 		t.Fatalf("the review stack must start before the gate and go after it:\n%s", strings.Join(calls, "\n"))
 	}
