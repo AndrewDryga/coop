@@ -101,7 +101,7 @@ func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([
 		ui.Note("  .agent/Dockerfile ('coop init --stack asdf' writes one from it) and build again.")
 	}
 	if plan.Project && !plan.Toolchain {
-		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		ui.Note("  Dockerfile: %s", ui.SafeInline(plan.Dockerfile))
 		ui.Note("  Project builds use ordinary networking, not the run's network restrictions.")
 		ui.Note("  Review the Dockerfile and copied build files before building.")
 	}
@@ -118,7 +118,7 @@ func (a *app) buildFilteredBox(repo string, plan box.BuildPlan, title string) ([
 func (a *app) updateFilteredBox(repo string, plan box.BuildPlan) ([]box.ImageChange, error) {
 	ui.Note("Updating the filtered box image")
 	if plan.Project && !plan.Toolchain {
-		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		ui.Note("  Dockerfile: %s", ui.SafeInline(plan.Dockerfile))
 		ui.Note("  Project builds use ordinary networking, so only files you approved with coop build rebuild here.")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -188,7 +188,7 @@ func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 	if plan.Toolchain {
 		ui.Note("  Tools:      .tool-versions")
 	} else {
-		ui.Note("  Dockerfile: %s", plan.Dockerfile)
+		ui.Note("  Dockerfile: %s", ui.SafeInline(plan.Dockerfile))
 	}
 	ui.Note("  Image:      %s", plan.Image)
 	ui.Note("")
@@ -201,7 +201,7 @@ func announceBuild(plan box.BuildPlan, baseTitle, projectTitle string) {
 func warnUntrackedBuild(plan box.BuildPlan) {
 	if plan.Untracked {
 		warnBlock("The box Dockerfile is not tracked in Git",
-			plan.Dockerfile+" controls what runs in the box.",
+			ui.SafeInline(plan.Dockerfile)+" controls what runs in the box.",
 			"Review this file before using the rebuilt box.")
 		ui.Note("")
 	}
@@ -505,7 +505,7 @@ func updateBoxFailure(err error, runtimeName string, selfFailed bool) error {
 func reportInstalledTools(plan box.BuildPlan) {
 	ui.Note("Agent clients")
 	if !plan.CarriesQualifiedClients() {
-		ui.Note("  This project's %s does not build on Coop's box, so it brings its own.", plan.Dockerfile)
+		ui.Note("  This project's %s does not build on Coop's box, so it brings its own.", ui.SafeInline(plan.Dockerfile))
 		return
 	}
 	for _, client := range agents.QualifiedClients() {

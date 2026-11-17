@@ -117,3 +117,17 @@ func TestProjectBuildConfirmationExplainsNetworkingAndDefaultsToRefusal(t *testi
 		t.Fatal("cancelled decision reported a completed build")
 	}
 }
+
+// The Dockerfile path comes from .agent/project.yaml, which a box can edit; the lines a person
+// reads to review a build show it escaped, so a crafted name cannot redraw them.
+func TestBuildAnnouncementsEscapeTheDockerfilePath(t *testing.T) {
+	plan := box.BuildPlan{Project: true, Untracked: true, Dockerfile: "ok\x1b[1A\x1b[2KDockerfile"}
+	out := captureStderr(t, func() {
+		announceBuild(plan, "base", "project")
+		warnUntrackedBuild(plan)
+		reportInstalledTools(plan)
+	})
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, `ok\u001B[1A`) {
+		t.Errorf("build lines did not escape the Dockerfile path: %q", out)
+	}
+}
