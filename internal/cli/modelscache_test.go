@@ -111,6 +111,14 @@ func TestGrokModelDiscoveryNeverUsesHostLogin(t *testing.T) {
 	if _, err := os.Stat(called); !os.IsNotExist(err) {
 		t.Fatal("host Grok was invoked")
 	}
+	// The sign-in check asked no provider, so it leaves no failed attempt to wait out.
+	before, _ := loadModelsCache(a.cfg, "grok")
+	if cause, failed := a.refreshCatalog("grok", nil); !failed || cause != "Sign in: coop login grok@work" {
+		t.Fatalf("signed-out refresh: %q, %v", cause, failed)
+	}
+	if after, _ := loadModelsCache(a.cfg, "grok"); !after.AttemptedAt.Equal(before.AttemptedAt) || after.AttemptError != "" {
+		t.Fatalf("a refused sign-in check was saved as a failed fetch: %+v", after)
+	}
 }
 
 func TestGrokMissingCatalogRetainsGoodCache(t *testing.T) {

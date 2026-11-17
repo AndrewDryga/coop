@@ -162,7 +162,9 @@ func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
 	// sign-in can only fail — say so, as coop credentials does, instead of paying for a container.
 	account := a.cfg.ActiveProfile(agent)
 	if need := box.ProfileSignIn(a.cfg, agent, account, time.Now()); need != agents.SignedIn {
-		return nil, modelFetchError{cause: need.Remedy(agent + "@" + account)}
+		// refused: no provider was asked, so the cache has nothing to back off from. Recording it
+		// kept the menu saying "Sign in" for an hour after the sign-in.
+		return nil, modelFetchError{cause: need.Remedy(agent + "@" + account), refused: true}
 	}
 	return a.fetchACPModelCatalog(agent, spec)
 }
