@@ -169,7 +169,7 @@ func walkMounts(repo, workdir string, expandSpellings bool, remember func([]Moun
 		}
 		var aliases []visibleEntry
 		for _, v := range visible {
-			if at, ok := record[v.id]; ok && at != v.rel {
+			if at, ok := record.originAt(v.id, v.path); ok && at != v.rel {
 				aliases = append(aliases, v)
 			}
 		}

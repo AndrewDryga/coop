@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -136,7 +137,7 @@ func TestALaunchWalksTheRepositoryOnceAndHidesHardLinks(t *testing.T) {
 			t.Fatalf("%s was not hidden on the first launch: %+v", target, mounts)
 		}
 	}
-	if got := loadHiddenFiles(repo); len(got) != 1 || !slices.Contains(slices.Collect(maps.Values(got)), ".env") {
+	if got := loadHiddenFiles(repo); len(got) != 1 || !slices.ContainsFunc(slices.Collect(maps.Values(got)), func(o hiddenOrigin) bool { return o.path == ".env" }) {
 		t.Fatalf("remembered %v, want .env alone", got)
 	}
 	// The next launch's own decider agrees, so both launches hide the same paths.
@@ -211,7 +212,7 @@ func TestAMovedHiddenFileStaysHiddenAfterTheDeviceIsRenumbered(t *testing.T) {
 		t.Fatalf("the moved file was shown to the next launch after a renumbering: %+v", m)
 	}
 	// That launch rewrote the record on the live device, still remembering the file.
-	if remembered := loadHiddenFiles(repo); len(remembered) != 1 || remembered[fileIdentity{dev: live, ino: inodeOf(t, filepath.Join(repo, "cfg/prod.yml"))}] != "config/prod.yml" {
+	if remembered := loadHiddenFiles(repo); len(remembered) != 1 || remembered[fileIdentity{dev: live, ino: inodeOf(t, filepath.Join(repo, "cfg/prod.yml"))}].path != "config/prod.yml" {
 		t.Fatalf("the rewritten record = %v, want the moved file at its first path", remembered)
 	}
 }
@@ -238,9 +239,102 @@ func TestAHiddenFileOnAnotherFilesystemKeepsItsDevice(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := rememberedHidden{{dev: live, ino: 1}: "root.env", {dev: 12, ino: 2}: "mnt/nested.env"}
+	want := rememberedHidden{{dev: live, ino: 1}: {path: "root.env"}, {dev: 12, ino: 2}: {path: "mnt/nested.env"}}
 	if got := loadHiddenFiles(repo); !maps.Equal(got, want) {
 		t.Fatalf("loaded %v, want %v", got, want)
+	}
+}
+
+// Linux reuses a deleted file's inode number, so a remembered identity can name an ordinary file
+// the agent wrote next. A record entry whose proof does not match the file under its identity
+// leaves that file visible to both backends and to the next launch, and forgets it; one whose
+// proof matches is a moved secret and stays hidden.
+func TestAReusedInodeDoesNotHideAnOrdinaryFile(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{"notes.txt": "ordinary\n"})
+	live, ok := rootDevice(repo)
+	if !ok {
+		t.Fatal("no root device")
+	}
+	path, err := hiddenFilesPath(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := hiddenFileProof
+	t.Cleanup(func() { hiddenFileProof = original })
+	for _, tc := range []struct {
+		now    string
+		hidden bool
+	}{{"gen:2", false}, {"gen:1", true}} {
+		record := hiddenFilesRecord{Version: hiddenFilesVersion, RootDev: live,
+			Files: []hiddenFile{{Dev: live, Ino: inodeOf(t, filepath.Join(repo, "notes.txt")), Path: ".env", Proof: "gen:1"}}}
+		data, _ := json.Marshal(record)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		hiddenFileProof = func(string, fs.FileInfo) string { return tc.now }
+		if hidden, err := NewShadowDecider(repo)("notes.txt"); err != nil || hidden != tc.hidden {
+			t.Fatalf("proof %s: Coop's host tools read notes.txt hidden=%v, %v; want %v", tc.now, hidden, err, tc.hidden)
+		}
+		inventory, err := filesystemObjects(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		flags, err := filesystemNamedFlags(repo, inventory, loadHiddenFiles(repo))
+		if err != nil || (flags["notes.txt"]&fsfilter.Secret != 0) != tc.hidden {
+			t.Fatalf("proof %s: the kernel backend flagged notes.txt %v, %v; want hidden=%v", tc.now, flags["notes.txt"], err, tc.hidden)
+		}
+		if m := find(launch(t, repo), "/workspace/notes.txt"); (m != nil) != tc.hidden {
+			t.Fatalf("proof %s: the next launch covered notes.txt with %+v; want hidden=%v", tc.now, m, tc.hidden)
+		}
+		if remembered := loadHiddenFiles(repo); (len(remembered) == 1) != tc.hidden {
+			t.Fatalf("proof %s: remembered %v after the launch; want it kept only while it matches", tc.now, remembered)
+		}
+	}
+}
+
+// Where the filesystem keeps no inode generation, a file proves itself by its size and modification
+// time: a move keeps them and an edit changes them. A folder has only its identity, since its size
+// and time change with every entry written in it. Where it keeps one, the generation alone decides.
+func TestAHiddenFileProofFallsBackToSizeAndTime(t *testing.T) {
+	original := inodeGenerationOf
+	t.Cleanup(func() { inodeGenerationOf = original })
+	inodeGenerationOf = func(string, fs.FileInfo) (uint32, bool) { return 0, false }
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"secret": "KEY=1\n", "folder/inside": "x\n"})
+	proof := func(rel string) string {
+		info, err := os.Lstat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hiddenFileProof(filepath.Join(dir, rel), info)
+	}
+	before := proof("secret")
+	if !strings.HasPrefix(before, "stat:") {
+		t.Fatalf("fallback proof = %q, want size and time", before)
+	}
+	if err := os.Rename(filepath.Join(dir, "secret"), filepath.Join(dir, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if got := proof("moved"); got != before {
+		t.Fatalf("a move changed the proof: %q -> %q", before, got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "moved"), []byte("KEY=22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := proof("moved"); got == before {
+		t.Fatal("an edit kept the size-and-time proof")
+	}
+	if got := proof("folder"); got != "" {
+		t.Fatalf("a folder's fallback proof = %q, want none (identity alone)", got)
+	}
+	inodeGenerationOf = func(string, fs.FileInfo) (uint32, bool) { return 7, true }
+	if got := proof("moved"); got != "gen:7" {
+		t.Fatalf("generation proof = %q, want gen:7", got)
 	}
 }
 

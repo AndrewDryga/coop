@@ -122,11 +122,13 @@ func captureFilesystemSnapshot(root string, profile fsfilter.Profile, grants []s
 		if f := flags[rel]; f != 0 {
 			id := s.objects[rel].id
 			s.protected[id] |= f
-			if f&fsfilter.Secret != 0 && s.origins[id] == "" {
-				s.origins[id] = rel
-				if earlier, ok := before[id]; ok {
-					s.origins[id] = earlier
+			if f&fsfilter.Secret != 0 && s.origins[id].path == "" {
+				path := filepath.Join(root, rel)
+				origin := hiddenOrigin{path: rel, proof: proofAt(id, path)}
+				if earlier, ok := before.originAt(id, path); ok {
+					origin.path = earlier
 				}
+				s.origins[id] = origin
 			}
 		}
 	}
@@ -176,7 +178,7 @@ func filesystemNamedFlags(root string, inventory *filesystemInventory, before re
 			}
 			f = flags[parent] & fsfilter.Secret
 			skip := suppressed[parent] || directory && name == ".git"
-			origin, remembered := before[id]
+			origin, remembered := before.originAt(id, filepath.Join(root, rel))
 			moved := remembered && origin != rel
 			if !skip {
 				switch {
@@ -283,11 +285,11 @@ func (s *filesystemSnapshot) remember() error {
 			continue
 		}
 		origin := s.origins[id]
-		if origin == "" {
+		if origin.path == "" {
 			return errors.New("protected filesystem object lost its policy origin")
 		}
 		seen[id] = true
-		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin})
+		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin.path, Proof: origin.proof})
 	}
 	// Persist captured identities, not a fresh stat of paths the host may have
 	// atomically replaced. An alias must retain its original policy-hidden path.

@@ -2,7 +2,7 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/filesystem_walk.go, internal/box/filesystem_snapshot.go, internal/box/mounts.go, internal/box/hidden_files.go, internal/box/fork_approvals.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
+sources: [internal/box/filesystem_walk.go, internal/box/filesystem_snapshot.go, internal/box/mounts.go, internal/box/hidden_files.go, internal/box/hidden_files_linux.go, internal/box/fork_approvals.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
 updated: 2026-11-17
 ---
 
@@ -20,7 +20,12 @@ scope. It cannot read what it moves, so it cannot copy it, and a move keeps the 
 and folder, with the path the rules hid it at, in the host-private service state root
 (`hidden-files/<sha256 of the repo path>.json`). `box.NewShadowDecider` — the decider the walk, the
 secret scanner, merge, review and init share — hides a remembered identity found at any other path,
-and its folders' contents with it. At its remembered path the rules decide again, so removing a
+and its folders' contents with it. Device and inode are not enough on Linux, where ext4 and XFS
+hand a deleted file's inode number to the next new file: each entry also keeps a `proof` taken at
+hide time (`hiddenFileProof`: the inode generation via FS_IOC_GETVERSION, else size plus mtime; a
+folder without a generation has none, so identity alone decides), and an entry matches only while
+the object under its identity gives the same proof (`rememberedHidden.originAt`, both backends).
+At its remembered path the rules decide again, so removing a
 rule still shows the file, which is then forgotten. A launch fails if it cannot write the record.
 Removing a fork deletes its record and lock (`RetireForkApprovals`), so a later checkout at the
 same path does not inherit its identities; records of other deleted checkouts stay.
@@ -181,6 +186,7 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-17 — remembered entries carry a proof (inode generation, else size and mtime) so a reused inode number no longer hides an ordinary file (audit B1-2/B2-2, owner decision A with B fallback).
 - 2026-11-17 — the working-directory fallback refuses the home folder or above (ErrHomeProject); the parent-writable gap stays for other folders (audit K5-3; checked ResolveRepo in internal/box/repo.go).
 - 2026-11-17 — the mount fallback walks once (task 2026-11-17-the-mount-fallback-path-walks-the-repository-onc);
   checked against internal/box/mounts.go and run.go.

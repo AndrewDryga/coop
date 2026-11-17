@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -27,6 +28,12 @@ import (
 // remembers the identity of what it hid, with the path the rules hid it at, and a later decision
 // hides a remembered file or folder found at any other path. Back at that path, its rules decide
 // it again, so taking a rule out of .coopignore still shows the file.
+//
+// Device and inode alone are not proof: Linux ext4 and XFS give a deleted file's inode number to
+// the next new file, so after an atomic save replaces a hidden .env, an ordinary file written next
+// could take its number and be hidden on every later launch. So each remembered entry also keeps a
+// proof taken when it was hidden (hiddenFileProof), and a file found under its identity counts as
+// that entry only when the proof still matches.
 
 const (
 	hiddenFilesVersion = 1
@@ -39,6 +46,8 @@ type hiddenFile struct {
 	Dev  uint64 `json:"dev"`
 	Ino  uint64 `json:"ino"`
 	Path string `json:"path"` // repository-relative, slash-separated: where the rules hid it
+	// Proof is hiddenFileProof when it was hidden. Empty, identity alone decides.
+	Proof string `json:"proof,omitempty"`
 }
 
 type hiddenFilesRecord struct {
@@ -62,8 +71,55 @@ func rootDevice(repo string) (uint64, bool) {
 
 type fileIdentity struct{ dev, ino uint64 }
 
-// rememberedHidden maps the identity of a file or folder a launch hid to the path it was hidden at.
-type rememberedHidden map[fileIdentity]string
+// hiddenOrigin is where a launch hid a file or folder, with the proof it took of it then.
+type hiddenOrigin struct{ path, proof string }
+
+// rememberedHidden maps the identity of a file or folder a launch hid to where it was hidden.
+type rememberedHidden map[fileIdentity]hiddenOrigin
+
+// originAt is the path a launch hid the object now at path (identity id) at, when it is that
+// object: an entry with a proof matches only while the object there still gives the same one.
+func (r rememberedHidden) originAt(id fileIdentity, path string) (string, bool) {
+	origin, ok := r[id]
+	if !ok {
+		return "", false
+	}
+	if origin.proof != "" && proofAt(id, path) != origin.proof {
+		return "", false
+	}
+	return origin.path, true
+}
+
+// hiddenFileProof is what, beside device and inode, shows a file found under a remembered identity
+// is the one a launch hid: the inode generation where the filesystem keeps one (a reused inode gets
+// a new one; a move or an edit in place keeps it), else its size and modification time, which an
+// edit changes. A folder with no generation has only its identity: its size and time change with
+// every entry written in it. Tests replace it, since real inode reuse cannot be forced.
+var hiddenFileProof = func(path string, info fs.FileInfo) string {
+	if gen, ok := inodeGenerationOf(path, info); ok {
+		return "gen:" + strconv.FormatUint(uint64(gen), 10)
+	}
+	if info.IsDir() {
+		return ""
+	}
+	return "stat:" + strconv.FormatInt(info.Size(), 10) + ":" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
+}
+
+// inodeGenerationOf is inodeGeneration; a test replaces it to take the fallback on any filesystem.
+var inodeGenerationOf = inodeGeneration
+
+// proofAt is hiddenFileProof of the object at path, or "" when it is gone or no longer has
+// identity id. An empty proof falls back to identity alone, the side that hides.
+func proofAt(id fileIdentity, path string) string {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return ""
+	}
+	if now, ok := identityOf(info); !ok || now != id {
+		return ""
+	}
+	return hiddenFileProof(path, info)
+}
 
 func identityOf(info fs.FileInfo) (fileIdentity, bool) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -111,14 +167,15 @@ func loadHiddenFiles(repo string) rememberedHidden {
 		if ok && record.RootDev != 0 && f.Dev == record.RootDev {
 			f.Dev = live
 		}
-		remembered[fileIdentity{dev: f.Dev, ino: f.Ino}] = f.Path
+		remembered[fileIdentity{dev: f.Dev, ino: f.Ino}] = hiddenOrigin{path: f.Path, proof: f.Proof}
 	}
 	return remembered
 }
 
 // movedHere reports whether the file or folder at relSlash is one a launch hid at another path.
 func (r rememberedHidden) movedHere(repo, relSlash string) bool {
-	info, err := os.Lstat(filepath.Join(repo, filepath.FromSlash(relSlash)))
+	path := filepath.Join(repo, filepath.FromSlash(relSlash))
+	info, err := os.Lstat(path)
 	if err != nil {
 		return false
 	}
@@ -126,7 +183,7 @@ func (r rememberedHidden) movedHere(repo, relSlash string) bool {
 	if !ok {
 		return false
 	}
-	at, remembered := r[id]
+	at, remembered := r.originAt(id, path)
 	return remembered && at != relSlash
 }
 
@@ -228,7 +285,8 @@ func rememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 		if !ok || len(record.Files) >= maxHiddenFiles {
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(repo, filepath.FromSlash(rel)))
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		info, err := os.Lstat(path)
 		if err != nil {
 			continue
 		}
@@ -238,10 +296,10 @@ func rememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 		}
 		seen[id] = true
 		at := rel
-		if earlier, ok := before[id]; ok {
+		if earlier, ok := before.originAt(id, path); ok {
 			at = earlier
 		}
-		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: at})
+		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: at, Proof: hiddenFileProof(path, info)})
 	}
 	if len(record.Files) == 0 && len(before) == 0 {
 		return nil
@@ -275,7 +333,7 @@ func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileId
 			if len(record.Files) >= maxHiddenFiles {
 				return errors.New("hidden-file alias record exceeds admission bounds")
 			}
-			record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin})
+			record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin.path, Proof: origin.proof})
 		}
 		return fs.SkipAll
 	}
@@ -303,20 +361,20 @@ func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileId
 		}
 		id, ok := identityOf(info)
 		origin, missingID := missing[id]
-		if !ok || !missingID {
-			return nil
+		if !ok || !missingID || origin.proof != "" && hiddenFileProof(name, info) != origin.proof {
+			return nil // not a remembered object, or a new one that took its inode number
 		}
 		rel, err := filepath.Rel(repo, name)
 		if err != nil {
 			return err
 		}
-		if filepath.ToSlash(rel) == origin {
+		if filepath.ToSlash(rel) == origin.path {
 			return nil
 		}
 		if len(record.Files) >= maxHiddenFiles {
 			return errors.New("hidden-file alias record exceeds admission bounds")
 		}
-		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin})
+		record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin.path, Proof: origin.proof})
 		delete(missing, id)
 		if len(missing) == 0 {
 			return fs.SkipAll
