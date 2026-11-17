@@ -220,6 +220,8 @@ func TestSessionEvidenceValidateRejectsIncoherentEvidence(t *testing.T) {
 		"unknown coverage status":     func(e *SessionEvidence) { e.Network.Observation.Coverage.ProxyBytes.Status = "guessed" },
 		"unknown denial basis":        func(e *SessionEvidence) { e.Network.Observation.Denials[0].Basis = "vibes" },
 		"denial port out of range":    func(e *SessionEvidence) { e.Network.Observation.Denials[0].Port = port(70000) },
+		"denial source port above":    func(e *SessionEvidence) { e.Network.Observation.Denials[0].SourcePort = port(70000) },
+		"denial source port zero":     func(e *SessionEvidence) { e.Network.Observation.Denials[0].SourcePort = port(0) },
 		"observation without run id":  func(e *SessionEvidence) { e.Network.Observation.RunID = nil },
 		"observation without as-of":   func(e *SessionEvidence) { e.Network.Observation.AsOf = nil },
 		"negative omitted count":      func(e *SessionEvidence) { e.Network.Observation.OmittedDenials = -1 },

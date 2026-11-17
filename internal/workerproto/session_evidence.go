@@ -618,6 +618,9 @@ func (d NetworkDenial) validate(included bool) error {
 	if d.Port != nil && (*d.Port < 0 || *d.Port > 65535) {
 		return errors.New("invalid network denial port")
 	}
+	if d.SourcePort != nil && (*d.SourcePort < 1 || *d.SourcePort > 65535) {
+		return errors.New("invalid network denial source port")
+	}
 	return destinationDisclosure(d.Destination, d.DestinationWithheld, included, "denial")
 }
 
