@@ -4286,6 +4286,15 @@ func UnblockResolved(hosts []string) ([]string, error) {
 				ui.Warn("pre-flight: %s was committed before it blocked — give your answer so the next worker can close it: coop tasks unblock %s \"<answer>\"", t.ID, t.ID)
 				continue
 			}
+			// A fork's task resumes only through coop tasks unblock, which also hands the answer to
+			// the fork's copy; moving the folder here would leave it in todo that nobody works.
+			if owner, owned, err := readTaskOwnerRecordOf(host, t); err != nil {
+				ui.Warn("pre-flight: could not inspect the owner of %s: %v — task remains blocked; unblock it explicitly: coop tasks unblock %s", t.ID, err, t.ID)
+				continue
+			} else if owned && owner.Kind == TaskOwnerFork {
+				ui.Warn("pre-flight: %s belongs to a fork — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
+				continue
+			}
 			if err := MoveTaskDir(host, t, StateTodo); err != nil {
 				ui.Warn("pre-flight: could not unblock %s: %v", t.ID, err)
 				continue

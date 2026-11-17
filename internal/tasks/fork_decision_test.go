@@ -190,6 +190,39 @@ func TestForkBlockedDecisionUnblockResumesWithAnswerAndKeepsArtifact(t *testing.
 	}
 }
 
+// Pre-flight's sweep of answered decisions leaves a fork's blocked task alone: only coop tasks
+// unblock hands the answer to the fork's copy and resumes the assignment.
+func TestUnblockResolvedLeavesAForkOwnedTaskBlocked(t *testing.T) {
+	_, root, _ := acceptedForkDecision(t, "decision-preflight", false)
+	canonical, ok := mustCurrentTask(t, root, "assigned")
+	if !ok {
+		t.Fatal("canonical blocked task is missing")
+	}
+	decision := filepath.Join(canonical.Dir, "decision.md")
+	lines := strings.Split(readFileString(decision), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "**Resolution:**") {
+			lines[i] = "**Resolution:** Retry after verifying the marker."
+		}
+	}
+	if err := os.WriteFile(decision, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var ids []string
+	var err error
+	out := captureStderr(t, func() { ids, err = UnblockResolved([]string{root}) })
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("UnblockResolved = %v, %v; want nothing unblocked", ids, err)
+	}
+	if !strings.Contains(out, "coop tasks unblock assigned") {
+		t.Errorf("pre-flight did not name the unblock command:\n%s", out)
+	}
+	if canonical, ok := mustCurrentTask(t, root, "assigned"); !ok || canonical.State != StateBlocked {
+		t.Fatalf("fork-owned task = %+v, found=%v; want still blocked", canonical, ok)
+	}
+}
+
 func TestProjectBoardPlacesBlockedForkAssignmentUnderNeedsYou(t *testing.T) {
 	const name = "decision-board"
 	repo, root, _ := acceptedForkDecision(t, name, false)
