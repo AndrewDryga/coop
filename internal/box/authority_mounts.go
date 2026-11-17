@@ -871,12 +871,14 @@ func parseAuthorityMountPlan(options []string) (authorityMountPlan, error) {
 	var plan authorityMountPlan
 	for i := 0; i < len(options); i++ {
 		arg := options[i]
-		// Docker accepts -v after bundled boolean short flags (for example -iv/host:/box),
-		// but -e consumes the rest of its token as an environment value. Inspect real -v
-		// mounts and refuse ambiguous bundles without mistaking -eAPP_ENV=development for one.
-		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") &&
-			!strings.HasPrefix(arg, "-v") && !strings.HasPrefix(arg, "-e") && strings.Contains(arg[1:], "v") {
-			return plan, fmt.Errorf("runtime option %q bundles -v with another short flag; write -v and its mount as separate arguments", arg)
+		// Docker accepts -v after bundled boolean short flags (for example -iv/host:/box), but a
+		// value flag (-e, -w, -h, -u, ...) consumes the rest of its token. Refuse a bundle only
+		// when every letter before its v is one of docker run's boolean short flags, so
+		// -eAPP_ENV=development and -w/srv/app are not mistaken for one.
+		if bundle, ok := strings.CutPrefix(arg, "-"); ok && !strings.HasPrefix(bundle, "-") && !strings.HasPrefix(bundle, "v") {
+			if before, _, found := strings.Cut(bundle, "v"); found && strings.Trim(before, "dtiPq") == "" {
+				return plan, fmt.Errorf("runtime option %q bundles -v with another short flag; write -v and its mount as separate arguments", arg)
+			}
 		}
 		// Docker's pflag parser accepts the short value joined to -v (for
 		// example, -v/host:/box), so inspect that spelling before the generic
