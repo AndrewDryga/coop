@@ -74,6 +74,27 @@ func TestLoopBarKeepsBlankLines(t *testing.T) {
 	}
 }
 
+// A box decides how long its output lines are. The funnel holds at most maxStreamEventBytes of
+// one: the line shows up to the cap, marked, the rest is dropped to its newline, and the next line
+// reads normally.
+func TestLineWriterCapsAnOverLongLine(t *testing.T) {
+	var lines []string
+	w := &lineWriter{fn: func(s string) { lines = append(lines, s) }}
+	chunk := bytes.Repeat([]byte("x"), 64<<10)
+	for range 32 { // 2 MiB without a newline
+		_, _ = w.Write(chunk)
+		if len(w.buf) > maxStreamEventBytes {
+			t.Fatalf("held %d bytes, cap is %d", len(w.buf), maxStreamEventBytes)
+		}
+	}
+	_, _ = w.Write([]byte("tail of the long line\nnext\npart"))
+	w.flush()
+	if len(lines) != 3 || len(lines[0]) != maxStreamEventBytes+len(" [truncated]") ||
+		!strings.HasSuffix(lines[0], " [truncated]") || lines[1] != "next" || lines[2] != "part" {
+		t.Fatalf("lines = %d %q…", len(lines), lines[len(lines)-1])
+	}
+}
+
 func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 	saved := ui.SpinFrames
 	ui.SpinFrames = []string{"S", "T"}

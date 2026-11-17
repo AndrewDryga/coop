@@ -115,24 +115,49 @@ func elapsed(start time.Time) string {
 // is funneled into the live bar's scroll history one whole line at a time. flush emits a
 // trailing partial line.
 type lineWriter struct {
-	mu  sync.Mutex
-	buf []byte
-	fn  func(string)
+	mu       sync.Mutex
+	buf      []byte
+	dropping bool // the rest of an over-long line is skipped up to its newline
+	fn       func(string)
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.buf = append(w.buf, p...)
-	for {
-		i := bytes.IndexByte(w.buf, '\n')
+	written := len(p)
+	for len(p) > 0 {
+		i := bytes.IndexByte(p, '\n')
+		line := p
+		if i >= 0 {
+			line = p[:i]
+		}
+		if !w.dropping {
+			w.appendFragment(line)
+		}
 		if i < 0 {
 			break
 		}
-		w.fn(string(w.buf[:i]))
-		w.buf = w.buf[i+1:]
+		if !w.dropping {
+			w.fn(string(w.buf))
+		}
+		w.buf, w.dropping = nil, false
+		p = p[i+1:]
 	}
-	return len(p), nil
+	return written, nil
+}
+
+// appendFragment holds part of a line up to maxStreamEventBytes. A box decides how long its lines
+// are, so a longer one is shown up to the cap, marked, and the rest of it dropped up to the next
+// newline, as the stderr filter does, instead of growing host memory without bound.
+func (w *lineWriter) appendFragment(p []byte) {
+	remaining := maxStreamEventBytes - len(w.buf)
+	if len(p) <= remaining {
+		w.buf = append(w.buf, p...)
+		return
+	}
+	w.buf = append(w.buf, p[:remaining]...)
+	w.fn(string(w.buf) + " [truncated]")
+	w.buf, w.dropping = nil, true
 }
 
 func (w *lineWriter) flush() {
@@ -140,6 +165,6 @@ func (w *lineWriter) flush() {
 	defer w.mu.Unlock()
 	if len(w.buf) > 0 {
 		w.fn(string(w.buf))
-		w.buf = nil
 	}
+	w.buf, w.dropping = nil, false
 }
