@@ -241,25 +241,26 @@ func (claudeAgent) Usage() UsageSpec {
 }
 
 // https://platform.claude.com/docs/en/about-claude/pricing — verified 2026-10-01.
+var claudeUsageRates = map[string]usageTariff{
+	"claude-fable-5-1":          {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
+	"claude-mythos-5-1":         {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
+	"claude-fable-5":            {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
+	"claude-mythos-5":           {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
+	"claude-opus-5-5":           {Input: 4, Read: .2, Write: 5, Write1h: 8, Output: 20},
+	"claude-opus-5":             {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+	"claude-opus-4-8":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+	"claude-opus-4-7":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+	"claude-opus-4-6":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+	"claude-opus-4-5":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
+	"claude-sonnet-5-5":         {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
+	"claude-sonnet-5":           {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
+	"claude-sonnet-4-6":         {Input: 3, Read: .3, Write: 3.75, Write1h: 6, Output: 15},
+	"claude-haiku-4-5":          {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
+	"claude-haiku-4-5-20251001": {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
+}
+
 func claudeUsagePrice(event UsageEvent) (float64, bool) {
-	rates := map[string]usageTariff{
-		"claude-fable-5-1":          {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
-		"claude-mythos-5-1":         {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
-		"claude-fable-5":            {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
-		"claude-mythos-5":           {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
-		"claude-opus-5-5":           {Input: 4, Read: .2, Write: 5, Write1h: 8, Output: 20},
-		"claude-opus-5":             {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-		"claude-opus-4-8":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-		"claude-opus-4-7":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-		"claude-opus-4-6":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-		"claude-opus-4-5":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-		"claude-sonnet-5-5":         {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
-		"claude-sonnet-5":           {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
-		"claude-sonnet-4-6":         {Input: 3, Read: .3, Write: 3.75, Write1h: 6, Output: 15},
-		"claude-haiku-4-5":          {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
-		"claude-haiku-4-5-20251001": {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
-	}
-	rate, ok := rates[event.Model]
+	rate, ok := claudeUsageRates[event.Model]
 	if !ok {
 		return 0, false
 	}

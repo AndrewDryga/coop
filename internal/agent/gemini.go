@@ -403,19 +403,20 @@ func (geminiAgent) Usage() UsageSpec {
 // Standard text-token rates, https://ai.google.dev/gemini-api/docs/pricing — 2026-10-01.
 // Native history does not split audio input; exclude media/tool/storage surcharges from this value.
 // Flash 3.6–3.8 use the published promotion through 2026-12-31, not their future tariffs.
+var geminiUsageRates = map[string]usageTariff{
+	"gemini-3.8-flash":                   {Input: .75, Read: .075, Output: 3.75},
+	"gemini-3.7-flash":                   {Input: .75, Read: .075, Output: 3.75},
+	"gemini-3.6-flash":                   {Input: .75, Read: .075, Output: 3.75},
+	"gemini-3.5-flash":                   {Input: 1.5, Read: .15, Output: 9},
+	"gemini-3.5-flash-lite":              {Input: .3, Read: .03, Output: 2.5},
+	"gemini-3.1-pro-preview":             {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+	"gemini-3.1-pro-preview-customtools": {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+	"gemini-2.5-pro":                     {Input: 1.25, Read: .125, Output: 10, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
+	"gemini-2.5-flash":                   {Input: .3, Read: .03, Output: 2.5},
+}
+
 func geminiUsagePrice(event UsageEvent) (float64, bool) {
-	rates := map[string]usageTariff{
-		"gemini-3.8-flash":                   {Input: .75, Read: .075, Output: 3.75},
-		"gemini-3.7-flash":                   {Input: .75, Read: .075, Output: 3.75},
-		"gemini-3.6-flash":                   {Input: .75, Read: .075, Output: 3.75},
-		"gemini-3.5-flash":                   {Input: 1.5, Read: .15, Output: 9},
-		"gemini-3.5-flash-lite":              {Input: .3, Read: .03, Output: 2.5},
-		"gemini-3.1-pro-preview":             {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
-		"gemini-3.1-pro-preview-customtools": {Input: 2, Read: .2, Output: 12, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
-		"gemini-2.5-pro":                     {Input: 1.25, Read: .125, Output: 10, LongAt: 200001, LongInput: 2, LongOutput: 1.5},
-		"gemini-2.5-flash":                   {Input: .3, Read: .03, Output: 2.5},
-	}
-	rate, ok := rates[event.Model]
+	rate, ok := geminiUsageRates[event.Model]
 	if !ok {
 		return 0, false
 	}

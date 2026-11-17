@@ -329,18 +329,19 @@ func (codexAgent) Usage() UsageSpec {
 }
 
 // https://developers.openai.com/api/docs/pricing — standard rates verified 2026-10-14.
+var codexUsageRates = map[string]usageTariff{
+	"gpt-6-astra":   {Input: 10, Read: 1, Write: 12.5, Output: 50, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-6.1-sol":   {Input: 2, Read: .1, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-6-sol":     {Input: 2, Read: .2, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-6-luna":    {Input: .1, Read: .01, Write: .125, Output: .5, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-5.6-sol":   {Input: 4, Read: .4, Write: 5, Output: 20, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-5.6-terra": {Input: 2, Read: .2, Write: 2.5, Output: 12, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-5.6-luna":  {Input: .2, Read: .02, Write: .25, Output: 1.2, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-5.3-codex": {Input: 1.75, Read: .175, Write: 1.75, Output: 14},
+}
+
 func codexUsagePrice(event UsageEvent) (float64, bool) {
-	rates := map[string]usageTariff{
-		"gpt-6-astra":   {Input: 10, Read: 1, Write: 12.5, Output: 50, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-6.1-sol":   {Input: 2, Read: .1, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-6-sol":     {Input: 2, Read: .2, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-6-luna":    {Input: .1, Read: .01, Write: .125, Output: .5, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-5.6-sol":   {Input: 4, Read: .4, Write: 5, Output: 20, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-5.6-terra": {Input: 2, Read: .2, Write: 2.5, Output: 12, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-5.6-luna":  {Input: .2, Read: .02, Write: .25, Output: 1.2, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
-		"gpt-5.3-codex": {Input: 1.75, Read: .175, Write: 1.75, Output: 14},
-	}
-	rate, ok := rates[event.Model]
+	rate, ok := codexUsageRates[event.Model]
 	if !ok {
 		return 0, false
 	}

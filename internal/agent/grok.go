@@ -214,18 +214,19 @@ func (grokAgent) Usage() UsageSpec {
 }
 
 // Global standard endpoint, https://docs.x.ai/developers/pricing — 2026-10-01.
+var grokUsageRates = map[string]usageTariff{
+	"grok-4.7":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.6":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.5":                     {Input: 2, Read: .3, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.3":                     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-build-0.1":               {Input: 1, Read: .2, Write: 1, Output: 2, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.20-multi-agent-0309":   {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.20-0309-reasoning":     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+	"grok-4.20-0309-non-reasoning": {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
+}
+
 func grokUsagePrice(event UsageEvent) (float64, bool) {
-	rates := map[string]usageTariff{
-		"grok-4.7":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.6":                     {Input: 2, Read: .5, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.5":                     {Input: 2, Read: .3, Write: 2, Output: 6, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.3":                     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-build-0.1":               {Input: 1, Read: .2, Write: 1, Output: 2, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.20-multi-agent-0309":   {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.20-0309-reasoning":     {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
-		"grok-4.20-0309-non-reasoning": {Input: 1.25, Read: .2, Write: 1.25, Output: 2.5, LongAt: 200000, LongInput: 2, LongOutput: 2},
-	}
-	rate, ok := rates[event.Model]
+	rate, ok := grokUsageRates[event.Model]
 	if !ok {
 		return 0, false
 	}
