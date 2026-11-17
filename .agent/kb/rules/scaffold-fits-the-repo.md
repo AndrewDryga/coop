@@ -2,9 +2,9 @@
 name: scaffold-fits-the-repo
 description: "`coop init` generates for the detected stack and stays neutral when it detects nothing"
 scope: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go]
-check: "none"
-updated: 2026-11-06
+sources: [internal/scaffold/scaffold.go, internal/scaffold/gates.go, internal/scaffold/projectfile.go, internal/scaffold/gates_test.go, internal/scaffold/scaffold_test.go]
+check: "go test ./internal/scaffold -run 'TestElixirRustGateListBased|TestGateWarnsWhenTheFormatterIsMissing|TestPreCommitHookStopsWhenTheFormatterFails|TestToolchains|TestInitSkillsSource'"
+updated: 2026-11-17
 ---
 
 # coop init scaffolds what the repo uses — it never imposes a stack
@@ -69,6 +69,9 @@ blocks. Guessing wrong is worse than doing nothing.
   exception: preserve it and print chaining guidance.
 
 ## Changelog
+- 2026-11-17 — `check:` names the five scaffold tests the body cites as proof of the gate claims;
+  the claim that `coop init` stays neutral when it detects nothing stays review-only (audit R3-4;
+  checked the tests in internal/scaffold/gates_test.go and scaffold_test.go).
 - 2026-11-06 — rustfmt and mix format no longer fail open in silence (the lead's call on the
   question below: warn, don't block). A failure that is not a formatting diff prints "pre-commit:
   <tool> failed on <files>, so formatting was not checked: <first complaint>" and lets the commit
