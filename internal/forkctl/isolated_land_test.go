@@ -933,6 +933,8 @@ func TestIsolatedPublicationRetainsAllImmutableRiskPolicy(t *testing.T) {
 		{"secret-name", "credentials.json", `{}`},
 		{"secret-content", "ordinary.txt", "github_token = ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij\n"},
 		{"large-file", "oversized.bin", strings.Repeat("x", (5<<20)+1)},
+		{"coopignore", "sub/.coopignore", "!secret.txt\n"},
+		{"queued-task", ".agent/tasks/00_todo/planted/task.md", "# Planted\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, ws, _, c := isolatedTestFork(t)
@@ -954,6 +956,28 @@ func TestIsolatedPublicationRetainsAllImmutableRiskPolicy(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Dropping the project's .coopignore shows every later box what it hid, so an isolated fork may not
+// publish its removal either.
+func TestIsolatedPublicationRefusesRemovingACoopignore(t *testing.T) {
+	repo := initRepo(t)
+	writeTaskFile(t, filepath.Join(repo, "config", ".coopignore"), "private.txt\n")
+	git(t, repo, "add", "config")
+	git(t, repo, "commit", "-qm", "hide a file")
+	repo, ws, _, c := isolatedTestForkFromRepo(t, repo)
+	git(t, ws, "rm", "-q", "config/.coopignore")
+	git(t, ws, "commit", "-qm", "show everything")
+	before, err := captureIsolatedParent(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "config/.coopignore") {
+		t.Fatalf("removing a .coopignore = %v, %v; want a refusal naming it", landed, err)
+	}
+	if after, err := captureIsolatedParent(repo); err != nil || !sameIsolatedParent(before, after) {
+		t.Fatal("the refusal changed the parent", err)
 	}
 }
 

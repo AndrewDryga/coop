@@ -280,6 +280,9 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if reason, automatic := hostsurface.Classify("M", entry.path); automatic {
 				return isolatedRefusal(fmt.Sprintf("The fork changes %q, which Coop will not merge", entry.path), reason, changeInYourCheckout)
 			}
+			if err := isolatedPolicyPath(authority, entry.path); err != nil {
+				return err
+			}
 			hidden, err := shadowed(hostsurface.Key(entry.path))
 			if err != nil {
 				return isolatedRefusal(fmt.Sprintf("Coop cannot check the fork's change to %q", entry.path), err.Error(),
@@ -347,9 +350,32 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if entry.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
 				return nestedSourcesRefusal(entry.path)
 			}
+			if box.IsCoopignoreName(filepath.Base(hostsurface.Key(entry.path))) {
+				return coopignoreRefusal(entry.path)
+			}
 		}
 	}
 	return nil
+}
+
+// isolatedPolicyPath refuses the paths an ordinary merge holds for --force (PolicyScan), which an
+// isolated merge never forces: a .coopignore, which decides what every later box is shown, and a
+// task in the host's queue, which a later loop would run as ready work.
+func isolatedPolicyPath(authority, path string) error {
+	if box.IsCoopignoreName(filepath.Base(hostsurface.Key(path))) {
+		return coopignoreRefusal(path)
+	}
+	if queue := forkTaskQueuePath(authority, path); queue != "" {
+		return isolatedRefusal(fmt.Sprintf("The fork adds or changes the task %q", path),
+			"Tasks come from your "+queue+" queue, never from a fork: a later loop would run this one as ready work.",
+			"Remove it from the fork's commits and add the task in your own checkout.")
+	}
+	return nil
+}
+
+func coopignoreRefusal(path string) error {
+	return isolatedRefusal(fmt.Sprintf("The fork changes %q, which Coop will not merge", path),
+		"A .coopignore decides what every later box is shown.", changeInYourCheckout)
 }
 
 // commitAddsCredential reports whether a finding in content, the commit's version of entry, sits on

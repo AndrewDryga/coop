@@ -156,6 +156,8 @@ refuses the following, and `--force` cannot bypass the refusal:
 - unsafe paths or file modes
 - changes to nested Git sources
 - files that can automatically run code on your host
+- additions, edits and removals of a `.coopignore`
+- tasks added to or changed in your task queue
 - new or changed npm install lifecycle scripts
 - possible credentials that a commit adds
 - oversized files
