@@ -63,10 +63,29 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 		return 1, reported("Could not check project files", pathReason(repo, "read", err),
 			"Fix the path or permissions, then run "+retry+" again.")
 	}
+	// A clean default scan can be false assurance: a box bind-mounts the WHOLE tree, so a
+	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Name the
+	// files --include-ignored would add, so the default's blind spot is visible.
+	warnUnscanned := func(said *bool) {
+		n := len(unscanned)
+		if n == 0 {
+			return
+		}
+		verb, object := "were", "them"
+		if n == 1 {
+			verb, object = "was", "it"
+		}
+		blankBefore(said)
+		warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
+			fmt.Sprintf("The box can read %s:\n%s", object, fileList(unscanned)),
+			fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
+	}
 	if scan.checked == 0 && len(scan.unreadable) == 0 {
 		// Zero findings is not the same answer as zero files: a scan that had nothing to read
 		// proves nothing, and saying "no secrets found" here would be false assurance.
 		ui.Note("No files to check.")
+		said := true
+		warnUnscanned(&said) // nothing to commit can still leave ignored files the box reads
 		return 0, nil
 	}
 
@@ -112,19 +131,7 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 		said = true
 	}
 
-	// A clean default scan can be false assurance: a box bind-mounts the WHOLE tree, so a
-	// gitignored-but-not-shadowed file is still readable by the agent yet skipped here. Name the
-	// files --include-ignored would add, so the default's blind spot is visible.
-	if n := len(unscanned); n > 0 {
-		verb, object := "were", "them"
-		if n == 1 {
-			verb, object = "was", "it"
-		}
-		blankBefore(&said)
-		warnBlock(fmt.Sprintf("%s %s not checked", ui.Count(n, "Git-ignored file"), verb),
-			fmt.Sprintf("The box can read %s:\n%s", object, fileList(unscanned)),
-			fmt.Sprintf("Check %s with coop check-secrets --include-ignored.", object))
-	}
+	warnUnscanned(&said)
 	// Independent of secrets: which files changed since the last commit alter what runs on YOUR
 	// machine — a hook, a settings file, a compose file, the Makefile. The sandbox contains the
 	// box; it cannot contain what your own tools do with files an agent left behind, so this is

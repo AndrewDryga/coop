@@ -536,3 +536,29 @@ func TestIncludeIgnoredKeepsCommitCandidatesInPrunedFolders(t *testing.T) {
 		}
 	}
 }
+
+// A checkout with nothing to commit can still hold Git-ignored files the box reads. The command
+// once returned at "No files to check." before the warning that names them.
+func TestCheckSecretsNamesIgnoredFilesWhenNothingIsCommittable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	pinGitConfig(t)
+	repo, _ := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte("*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	var code int
+	var runErr error
+	out := captureStderr(t, func() { code, runErr = a.cmdCheckSecrets(nil) })
+	if code != 0 || runErr != nil {
+		t.Fatalf("check-secrets = (%d, %v)\n%s", code, runErr, out)
+	}
+	if !strings.Contains(out, "No files to check.") || !strings.Contains(out, "Git-ignored file was not checked") || !strings.Contains(out, "notes.txt") {
+		t.Fatalf("the ignored file the box can read was not named:\n%s", out)
+	}
+}
