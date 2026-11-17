@@ -182,17 +182,13 @@ func evalResultLine(s eval.RunSummary) string {
 	return strings.Join(parts, "; ")
 }
 
+// evalCaseResult is a case's counts in the run line's words, so one screen of eval compare reads the
+// same way for a run and for a case.
 func evalCaseResult(c eval.CaseCounts) string {
-	parts := []string{fmt.Sprintf("%d/%d passed", c.Passed, c.Requested), fmt.Sprintf("%d/%d graded", c.Covered(), c.Requested)}
-	for _, s := range []struct {
-		n     int
-		label string
-	}{{c.Failed, "failed"}, {c.Errored, "error"}, {c.TimedOut, "timed out"}, {c.Pending, "pending"}} {
-		if s.n > 0 {
-			parts = append(parts, fmt.Sprintf("%s %d", s.label, s.n))
-		}
-	}
-	return strings.Join(parts, ", ")
+	return evalResultLine(eval.RunSummary{Requested: c.Requested, Counts: map[eval.TrialStatus]int{
+		eval.TrialPassed: c.Passed, eval.TrialFailed: c.Failed, eval.TrialError: c.Errored,
+		eval.TrialTimedOut: c.TimedOut, eval.TrialPending: c.Pending,
+	}})
 }
 
 // Quote only nonprinting runes: persisted model output must not send cursor, clipboard,

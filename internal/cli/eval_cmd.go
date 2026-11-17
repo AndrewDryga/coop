@@ -497,10 +497,7 @@ func renderEvalComparison(c *eval.Comparison) {
 		printEvalText(label+": ", strings.Join(o.Configs, ", "))
 		fmt.Printf("  Run: %s\n", evalDisplayText(id))
 		renderEvalRuntimes("  ", o.Runtimes)
-		printEvalText("  ", evalResultLine(eval.RunSummary{Requested: o.Requested, Counts: map[eval.TrialStatus]int{
-			eval.TrialPassed: o.Passed, eval.TrialFailed: o.Failed, eval.TrialError: o.Errored,
-			eval.TrialTimedOut: o.TimedOut, eval.TrialPending: o.Pending,
-		}}))
+		printEvalText("  ", evalCaseResult(o.CaseCounts))
 		// Beside the counts, never inside them: this is a review signal, not a score. Its explicit
 		// denominator keeps a missing optional cloc from reading like a zero-sized solution.
 		printEvalText("  Change size: ", evalChangeSizeLine(o.Size, o.Covered()))

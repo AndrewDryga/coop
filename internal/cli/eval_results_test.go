@@ -81,10 +81,14 @@ func TestEvalResultsJourney(t *testing.T) {
 		}
 	}
 	comparison := run("compare", "20260921-errors", "20260921-errors")
-	for _, want := range []string{"claude [config abcdef123456, build v-test]", "no definitive winner", "coop eval inspect 20260921-errors", "timed out 1", "pending 1"} {
+	for _, want := range []string{"claude [config abcdef123456, build v-test]", "no definitive winner", "coop eval inspect 20260921-errors", "1 timed out", "1 pending"} {
 		if !strings.Contains(comparison, want) {
 			t.Errorf("comparison missing %q:\n%s", want, comparison)
 		}
+	}
+	// A case line reads like the run line above it: "1 timed out", never "timed out 1".
+	if strings.Contains(comparison, "timed out 1") || strings.Contains(comparison, "pending 1") {
+		t.Errorf("a case line counts in another order than the run line:\n%s", comparison)
 	}
 }
 
