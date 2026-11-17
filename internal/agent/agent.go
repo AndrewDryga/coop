@@ -439,14 +439,14 @@ const (
 	CredentialNotPortable
 )
 
-// Agent is everything coop needs to drive one coding agent. To add an agent, write a
-// new file implementing this interface and self-register it from an init().
 // ControllerJobConfig is an adapter whose box config differs in a controller job's box, where
 // the client runs headless for a controller and must start every session the same way.
 type ControllerJobConfig interface {
 	ControllerJobMCP(cfg *config.Config, workdir string) (MCPConfig, error)
 }
 
+// Agent is everything coop needs to drive one coding agent. To add an agent, write a
+// new file implementing this interface and self-register it from an init().
 type Agent interface {
 	Name() string
 	// SkillsCapable reports whether the native client discovers project skills.
