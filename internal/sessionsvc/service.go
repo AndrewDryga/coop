@@ -1670,10 +1670,17 @@ func boundedSessionServiceError(err error) string {
 	if err == nil {
 		return "session turn failed"
 	}
-	detail := err.Error()
-	detail = strings.ToValidUTF8(detail, "�")
+	return truncateErrorDetail(strings.ToValidUTF8(err.Error(), "�"))
+}
+
+// truncateErrorDetail cuts a valid UTF-8 detail to the store's bound on a rune boundary: the store
+// refuses invalid UTF-8, so a cut through a rune would lose the whole receipt.
+func truncateErrorDetail(detail string) string {
 	if len(detail) > session.MaxErrorDetailBytes {
 		detail = detail[:session.MaxErrorDetailBytes]
+		for !utf8.ValidString(detail) {
+			detail = detail[:len(detail)-1]
+		}
 	}
 	return detail
 }
@@ -2184,14 +2191,7 @@ func (s *Service) operationalErrorDetail(err error) string {
 			lines[index] = "<redacted secret-bearing diagnostic line>"
 		}
 	}
-	detail = strings.Join(lines, "\n")
-	if len(detail) > session.MaxErrorDetailBytes {
-		detail = detail[:session.MaxErrorDetailBytes]
-		for !utf8.ValidString(detail) {
-			detail = detail[:len(detail)-1]
-		}
-	}
-	return detail
+	return truncateErrorDetail(strings.Join(lines, "\n"))
 }
 
 func utf8SessionText(value string) bool {

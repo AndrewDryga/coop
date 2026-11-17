@@ -2071,6 +2071,39 @@ func TestOperationalErrorDetailSanitizesBeforeByteBounding(t *testing.T) {
 	}
 }
 
+// The fallback turn failure cuts a long error to the store's bound. A cut through a rune made
+// the detail invalid UTF-8, the store refused it, and the turn stayed starting.
+func TestRunnerErrorCutThroughARuneStillFailsTheTurn(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	long := strings.Repeat("x", session.MaxErrorDetailBytes-1) + "é"
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, func(*session.Store) Runner {
+		return RunnerFunc(func(context.Context, session.Session, session.Turn) (session.Turn, error) {
+			return session.Turn{}, errors.New(long)
+		})
+	})
+	defer service.Stop()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "create-long-error", service.request(t, "long-error"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.SubmitTurn(context.Background(), "turn-long-error", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "fail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored session.Turn
+	waitForSessionTest(t, func() bool {
+		stored, _ = service.GetTurn(context.Background(), sess.ID, turn.ID)
+		return stored.State == session.TurnFailed
+	})
+	if !utf8.ValidString(stored.ErrorDetail) || len(stored.ErrorDetail) > session.MaxErrorDetailBytes {
+		t.Fatalf("stored detail is %d bytes, valid=%v", len(stored.ErrorDetail), utf8.ValidString(stored.ErrorDetail))
+	}
+}
+
 func TestOperationalErrorDetailRepairsShortInvalidUTF8BeforeReceipt(t *testing.T) {
 	service := &Service{}
 	detail := service.operationalErrorDetail(errors.New("git failed: \xff"))
