@@ -20,12 +20,16 @@ internal/box/         the engine: secret-shadowing mounts, git env, image select
 internal/acpproxy/    the ACP session proxy: survives box restarts, replays the handshake, coop's editor hooks
 internal/consult/     read-only peer consultation instructions + wrapper
 internal/preset/      orchestration presets (.agent/presets/<name>/preset.yaml): roles, ladders, routing
-internal/project/     .agent/project.yaml — a monorepo's subprojects + the serve ports
+internal/project/     .agent/project.yaml — subprojects, serve ports, box, review, services, gate
 internal/mcp/         one mcp.json → Claude / Codex / Gemini / Grok native configs
 internal/session/     durable local remote sessions: idempotent operations, FIFO turns, events, recovery
 internal/sessionsvc/  the remote-session service ON that store: immutable jobs, Unix API, isolated ACP, workspaces, review, publication
 internal/scaffold/    `coop init` templates + the workflow skills (embedded in the binary)
-internal/cli/         command dispatch, fork lifecycle, the loop + ACP control planes, doctor
+internal/tasks/       the task queue: folder states, claims and leases, review and completion
+internal/loop/        the unattended engine behind coop loop (loop.yaml is read by internal/loopcfg)
+internal/forkctl/     a fork after launch: supervision, review, merge, rm (layout in internal/forkspace)
+internal/acpctl/      the ACP control plane: account rotation, warm sessions, resume
+internal/cli/         command dispatch, launching boxes and forks, doctor
 internal/config·runtime·ui/   settings · runtime detection · terminal output
 install.sh            the curl one-liner: download the prebuilt binary onto PATH
 ```
@@ -73,9 +77,9 @@ the race detector. CI runs every owner in the Makefile's `CI_OWNERS` on its own 
 for every owner, doctor, review-writes and image-vuln, and a failed, cancelled, skipped or missing job can't
 pass it. The doctor, review-writes and image-vuln jobs stay out of `make check` because they need Docker.
 
-Read-only CI jobs cache downloaded modules and compiled Go objects, and only pushes to main save to
-that cache. Behavioral tests always rerun. The release publisher starts fresh, without that cache or
-imported artifacts.
+The check jobs cache downloaded modules and compiled Go objects, and only pushes to main save to
+that cache. The doctor, review-writes and image-vuln jobs use setup-go's own cache. Behavioral
+tests always rerun. The release publisher starts fresh, without that cache or imported artifacts.
 
 Before GoReleaser publishes a tag, the release job runs `go run ./tools/releasenotes notes <tag>`.
 It refuses a tag that isn't the checked-out commit or whose CHANGELOG.md section isn't finalized.
@@ -141,7 +145,7 @@ qualification. Updating pins still follows the provider-client qualification pro
 | Local iteration | `make check-local SCOPE=<owner>` | the docs or rules checks, or an owner's checks and its reverse consumers |
 | Blocking | `make check` | formatting, vet and Staticcheck (both with and without the test build tags), ShellCheck, `go build ./...`, govulncheck, the npm lockfile audit, unit tests under `-race` (CI also runs them plain, with only the required host programs on PATH), deterministic provider process E2E, tagged process-control races, generated docs, rules cards, maintenance tools, and comment alignment. Needs no runtime or credentials |
 | Focused deterministic | `make provider-scripted-e2e` · `make acp-scripted-e2e` · `make live-process-control` | provider CLI, loop and fork policy, ACP switching and recovery, and live-harness contracts, all with fixtures |
-| Runtime boundary | `make doctor` · `make box-runtime-e2e` · `make review-writes-e2e` · `make network-runtime-e2e` · `make task-channel-e2e` | real box isolation, process reaping and signal forwarding, report-only review mounts, filtered networking, and the in-box task channel (in the image `coop build` makes, and CI runs it daily). Requires Docker (or Apple `container` for doctor) |
+| Runtime boundary | `make doctor` · `COOP_RUNTIME=docker make box-runtime-e2e` · `make review-writes-e2e` · `make network-runtime-e2e` · `make task-channel-e2e` · `make filesystem-runtime-e2e` | real box isolation, process reaping and signal forwarding, report-only review mounts, filtered networking, the in-box task channel (in the image `coop build` makes, and CI runs it daily), and the filesystem guard (needs an APFS Docker runtime and `COOP_FILESYSTEM_CLIENT_IMAGE` naming a locally built client image; CI doesn't run it). Requires Docker (or Apple `container` for doctor) |
 | Pinned clients, offline | `make native-roles-e2e` · `make skills-e2e` · `make mcp-e2e` | each pinned client's own role, skill and MCP handling, with no network, in the locked image `coop net setup` builds. No credentials or model calls |
 | Upstream compatibility | provider live targets [below](#live-provider-suites) · `make acp-e2e` | installed CLIs plus isolated credentials. Opt-in, and they consume quota |
 
