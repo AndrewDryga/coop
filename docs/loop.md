@@ -37,8 +37,9 @@ every target is limited, it waits with a countdown until one can run, then retri
 task. A rate limit doesn't count as a failed task attempt.
 
 Add `--preflight` to check the queue before work starts. This pass unblocks tasks in
-`50_blocked/` when their `decision.md` has an answer. It leaves backlog tasks parked with
-`coop tasks park` alone, does no task work and makes no commits. Preflight is off by default.
+`50_blocked/` when their `decision.md` has an answer, and releases claims held by processes that
+have exited. It leaves backlog tasks parked with `coop tasks park` alone, does no task work and
+makes no commits. Preflight is off by default.
 A task its worker committed before blocking it waits for your answer to
 `coop tasks unblock <id> "<answer>"`, which names that commit and lets the next worker close the
 task without a new commit.
@@ -148,10 +149,13 @@ The loop allows half as many review rounds as tasks worked, rounded down, within
 `[3, signoff.rounds]`. `signoff.rounds` defaults to `5` and must be 1 or more. Setting it below
 three overrides the minimum.
 
-Each completed task must match exactly one commit through its `Coop-Task: <id>` trailer. That
-commit must be in the current iteration's commit range, and it must be the only match reachable
-from `HEAD`. When review requests rework, the worker must amend or rewrite the existing task
-commit. co:op rejects a second matching commit and returns the task to in-progress.
+Each completed task must match exactly one commit through its `Coop-Task: <id>` trailer, or close
+with a recorded no-change outcome (`already_satisfied`, `could_not_reproduce` or `wont_fix`) and
+its evidence. That commit must be in the current iteration's commit range, and it must be the only
+match reachable from `HEAD`. co:op rejects a second matching commit and returns the task to
+in-progress. When review reopens a task, the worker never amends or rewrites the bound commit: it
+adds zero new commits when only check evidence was missing, or one repair commit without a trailer
+on top of `HEAD`, which co:op binds to the task.
 
 co:op adds that trailer, and a `Co-authored-by` line naming co:op and the target, to the box's commits
 itself with a Git hook. Gemini CLI runs its shell commands with Git hooks turned off, so a Gemini
