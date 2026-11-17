@@ -585,8 +585,13 @@ func (a *sessionActivity) write(ctx context.Context) {
 // queue-depth limit would add nothing but a second, indistinguishable reason
 // for a gap in the story — and would fire on a fast burst the drain would have
 // caught up with anyway.
+//
+// The heartbeat is outside the budget: it is already limited to one a minute within the
+// turn's deadline, and a long turn that used up its narration is exactly the one whose
+// client most needs to see it is still alive.
 func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map[string]any) {
-	if a.closed || a.budget <= 0 {
+	heartbeat := eventType == session.EventProviderAlive
+	if a.closed || (a.budget <= 0 && !heartbeat) {
 		a.dropped++
 		return
 	}
@@ -594,7 +599,9 @@ func (a *sessionActivity) enqueueLocked(eventType session.EventType, payload map
 	// heartbeat exists for turns that have gone quiet, and a turn narrating its
 	// work is not quiet.
 	a.narratedAt = a.now()
-	a.budget--
+	if !heartbeat {
+		a.budget--
+	}
 	// Only this daemon knows the checkout root, and the worker takes it out of everything it
 	// narrates to its controller (workerconnector/activity_narration.go), so every narrated event
 	// carries it. The local API keeps the absolute paths.

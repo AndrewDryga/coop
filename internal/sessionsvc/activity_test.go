@@ -715,3 +715,36 @@ func TestFrameKindIsAnIdentifierNeverText(t *testing.T) {
 		}
 	}
 }
+
+// The narration budget bounds the story of a turn, not whether it is alive: a long healthy turn
+// that spent its 400 events used to go silent on the stream until it ended.
+func TestAliveOutlivesTheNarrationBudget(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess, "turn-1", sess.Workspace, clock.now)
+	for index := range sessionActivityMaxEvents + 20 {
+		activity.observe(json.RawMessage(
+			`{"update":{"sessionUpdate":"tool_call","toolCallId":"t` + strconv.Itoa(index) + `","title":"Read","kind":"read"}}`))
+	}
+	for range 2 {
+		clock.advance(sessionActivityAliveInterval)
+		activity.frame(512, "")
+		activity.frame(512, "")
+	}
+	activity.close(context.Background())
+
+	events := activityEvents(t, store, sess.ID)
+	alive := 0
+	for _, event := range events {
+		if event.Type == session.EventProviderAlive {
+			alive++
+		}
+	}
+	if alive != 2 {
+		t.Fatalf("want a pulse per window after the budget, got %d", alive)
+	}
+	last := events[len(events)-1]
+	if dropped, _ := activityPayload(t, last)["dropped"].(float64); last.Type != session.EventActivityElided || int(dropped) != 20 {
+		t.Fatalf("elision counted frames, not lost events: %s %v", last.Type, activityPayload(t, last))
+	}
+}
