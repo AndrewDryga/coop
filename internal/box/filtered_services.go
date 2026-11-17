@@ -839,31 +839,17 @@ func filteredPublish(cfg *config.Config, spec RunSpec, free func(int) bool) (opt
 	if !spec.Serve || len(spec.servePorts) == 0 {
 		return nil, nil, nil
 	}
-	// The URLs are collected and printed as ONE section after the loop, in the same shape an open
-	// run prints them — a filtered box is the same box to the person opening the link.
-	var urls []string
 	for _, port := range spec.servePorts {
 		host := project.HostPort(spec.Repo, port)
 		env = append(env, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", port, host))
 		s := spec.servePublicationFor(port, free)
 		plan = append(plan, s)
-		if !s.Published {
-			// Both ports are named: one is the URL to open, the other is what the dev server
-			// inside the box listens on, and they can differ.
-			ui.Warning(fmt.Sprintf("Could not publish box port %d", port),
-				fmt.Sprintf("Host port %d is already in use.", s.bound()),
-				"Free that port, then start the box again.")
-			continue
-		}
-		options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), port))
-		urls = append(urls, fmt.Sprintf("  http://localhost:%d → box port %d", host, port))
-	}
-	if len(urls) > 0 {
-		ui.Section("Available on this host")
-		for _, url := range urls {
-			ui.Note("%s", url)
+		if s.Published {
+			options = append(options, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), port))
 		}
 	}
+	// A filtered box is the same box to the person opening the link, so it reads the same.
+	announceServePlan(plan)
 	return options, plan, env
 }
 

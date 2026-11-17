@@ -69,6 +69,25 @@ func TestAppendPublish(t *testing.T) {
 	}
 }
 
+// Every publishing path (open, native broker, filtered controller) tells the person the same thing:
+// a warning naming the port this box binds for a skipped port, and the host link for a published one.
+func TestAnnounceServePlanNamesEachOutcome(t *testing.T) {
+	out := captureStderr(t, func() {
+		announceServePlan([]servePublication{
+			{Port: 3000, Host: 42076, Published: true},
+			{Port: 5173, Host: 56119, Bind: 41234},
+		})
+	})
+	for _, want := range []string{"Available on this host", "http://localhost:42076 → box port 3000", "Could not publish box port 5173", "Host port 41234 is already in use."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("announcement lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "5173 → ") || strings.Contains(out, "42076 is already") {
+		t.Errorf("announcement mixed up the two ports:\n%s", out)
+	}
+}
+
 // TestHostPortFree covers the seam's production side — the probe appendPublish is given in Run. The
 // port comes from the OS (:0), never from a fixed number, so the test cannot collide with anything.
 func TestHostPortFree(t *testing.T) {

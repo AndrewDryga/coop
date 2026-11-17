@@ -1953,6 +1953,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			return finish(-1, startErr)
 		}
 		spec.nativeNamespace = owner.ref.ID
+		// The broker owns the box's network, so the ports were published on it, not by appendPublish.
+		announceServePlan(spec.servePlan)
 		if spec.filesystem != nil && (spec.filesystem.docker.Endpoint() != owner.docker.Endpoint() || spec.filesystem.docker.Info().ID != owner.docker.Info().ID) {
 			return finish(-1, errors.New("docker daemon changed after filesystem admission"))
 		}
@@ -3340,11 +3342,24 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 	if plan == nil {
 		plan = servePublicationPlan(cfg, spec, free)
 	}
-	var published []servePublication
 	for _, s := range plan {
 		// The assigned host-facing URL is stable workspace discovery even when another process from
 		// this workspace already owns the port. Only the current box's publish mapping is conditional.
 		args = append(args, "-e", fmt.Sprintf("COOP_SERVE_URL_%d=http://localhost:%d", s.Port, s.Host))
+		if s.Published {
+			args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), s.Port))
+		}
+	}
+	announceServePlan(plan)
+	return args
+}
+
+// announceServePlan tells the person what each serve port got, on stderr: a warning per port this
+// box could not publish, then one section of host links. Every path that publishes calls it, so an
+// open, native or filtered box reads the same.
+func announceServePlan(plan []servePublication) {
+	var published []servePublication
+	for _, s := range plan {
 		if !s.Published {
 			// The host port and the box port can differ, so both are named: one is the URL to open,
 			// the other is what the dev server inside the box listens on.
@@ -3353,7 +3368,6 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 				"Free that port, then start the box again.")
 			continue
 		}
-		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", s.bound(), s.Port))
 		published = append(published, s)
 	}
 	if len(published) > 0 {
@@ -3362,7 +3376,6 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 			ui.Note("  http://localhost:%d → box port %d", s.Host, s.Port)
 		}
 	}
-	return args
 }
 
 // hostPortFree reports whether a TCP host port is bindable right now (best-effort; a race with another
