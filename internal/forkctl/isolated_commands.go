@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -83,7 +82,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 		ui.Note("Kept fork %s; future publication starts after its exact published source boundary.", name)
 		return 0, nil
 	}
-	if err := destroyLandedFork(c.rt, repo, name, result.approval, box.ConfigExposureRoots(c.cfg)...); err != nil {
+	if err := c.destroyLanded(repo, name, result.approval); err != nil {
 		return 1, err
 	}
 	ui.OK("Deleted fork %s", name)

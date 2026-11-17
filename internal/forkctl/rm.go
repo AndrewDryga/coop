@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -107,6 +108,34 @@ func DestroyFork(rt runtime.Runtime, repo, name string, force bool, exposedRoots
 		ui.Warn("fork %s: some of its approvals could not be retired (%v); deleting it anyway", name, err)
 	}
 	return forkspace.Destroy(repo, name)
+}
+
+// teardownRuntime detects the container runtime before a fork's teardown. Fork commands start with
+// none, and DestroyFork reads a zero runtime as "nothing to stop", so a removal that skipped this
+// deleted the compose file its services need and left them running. With no runtime installed no
+// services can exist, so that is no reason to keep the fork; any other detection failure keeps it,
+// as a failed teardown does, unless force.
+func (c *Control) teardownRuntime(name string, force bool) error {
+	err := c.ensureRuntime()
+	if err == nil || noRuntimeInstalled(c.cfg) {
+		return nil
+	}
+	if force {
+		ui.Warn("fork %s: Coop could not reach its container runtime (%v), so its services may still be running; deleting it anyway", name, err)
+		return nil
+	}
+	return fmt.Errorf("fork %s was kept: stopping its services needs the container runtime (%v) — start it and run again, or delete it anyway with --force", name, err)
+}
+
+// noRuntimeInstalled reports that no container runtime could have run this fork's services: no
+// COOP_RUNTIME and neither runtime Coop detects is on PATH.
+func noRuntimeInstalled(cfg *config.Config) bool {
+	if cfg != nil && cfg.RuntimeName != "" {
+		return false
+	}
+	_, dockerErr := exec.LookPath("docker")
+	_, appleErr := exec.LookPath("container")
+	return dockerErr != nil && appleErr != nil
 }
 
 // stopForkServices stops the fork's services and returns what failed. Its warnings, when it has
@@ -447,6 +476,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return code, err
 		}
 		ui.Note("")
+	}
+	if err := c.teardownRuntime(name, force); err != nil {
+		return 1, err
 	}
 	unlock, err := forkspace.LockState(repo, name)
 	if err != nil {

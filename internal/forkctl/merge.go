@@ -619,6 +619,15 @@ func (f *landedFork) validateRemoval(repo, name string) error {
 	return ForkWorktreeClean(forkspace.Workspace(repo, name))
 }
 
+// destroyLanded deletes a landed fork on this command's runtime, detected first: a merge with no
+// gate never needed one before, and destroyLandedFork reads a zero runtime as "no services".
+func (c *Control) destroyLanded(repo, name string, approval *landedFork) error {
+	if err := c.ensureRuntime(); err != nil && !noRuntimeInstalled(c.cfg) {
+		return fmt.Errorf("kept the merged fork: stopping its services needs the container runtime (%w) — start it, then run coop fork rm %s", err, name)
+	}
+	return destroyLandedFork(c.rt, repo, name, approval, box.ConfigExposureRoots(c.cfg)...)
+}
+
 func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFork, exposedRoots ...string) error {
 	unlock, err := lockForkForMerge(repo, name)
 	if err != nil {
@@ -1182,7 +1191,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		if !yes {
 			ui.Note("")
 		}
-		if err := destroyLandedFork(c.rt, repo, name, result.approval, box.ConfigExposureRoots(c.cfg)...); err != nil {
+		if err := c.destroyLanded(repo, name, result.approval); err != nil {
 			if isForkMergeLifecycleError(err) {
 				return 1, err
 			}
@@ -1277,7 +1286,7 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			if gitDirty(ws) {
 				ui.Note("Kept fork %s — it still has uncommitted changes.", n)
 			} else if err == nil {
-				if destroyErr := destroyLandedFork(c.rt, repo, n, result.approval, box.ConfigExposureRoots(c.cfg)...); destroyErr != nil {
+				if destroyErr := c.destroyLanded(repo, n, result.approval); destroyErr != nil {
 					ui.Alert("Merged fork "+n+", but its cleanup is incomplete", destroyErr.Error())
 					cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup fork %s: %w", n, destroyErr))
 				} else {
