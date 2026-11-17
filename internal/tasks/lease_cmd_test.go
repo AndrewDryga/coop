@@ -119,6 +119,25 @@ func TestLeaseRunsACommandUnderTheLockAndPropagatesItsExit(t *testing.T) {
 	}
 }
 
+// A command a signal ended is reported by that signal, not as "status -1".
+func TestLeaseNamesTheSignalThatEndedItsCommand(t *testing.T) {
+	root := t.TempDir()
+	inProgressTask(t, root, "killed")
+	var code int
+	var err error
+	out := captureStderr(t, func() {
+		code, err = holdTaskLease(context.Background(), root, leaseRequest{
+			id: "killed", actor: ClaimActor{Label: "codex"}, command: []string{"sh", "-c", "kill -KILL $$"},
+		}, time.Millisecond)
+	})
+	if err != nil || code == 0 {
+		t.Fatalf("lease with a killed command = %d, %v; want a failing exit", code, err)
+	}
+	if !strings.Contains(out, "the command was ended by signal killed") || strings.Contains(out, "status -1") {
+		t.Errorf("lease end did not name the signal:\n%s", out)
+	}
+}
+
 func TestLeaseHoldReleasesWhenTheBoundProcessDies(t *testing.T) {
 	root := t.TempDir()
 	item := inProgressTask(t, root, "held")

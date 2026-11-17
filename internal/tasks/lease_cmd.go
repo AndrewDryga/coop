@@ -247,9 +247,13 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 			return 0, nil
 		case errors.As(err, &exit):
 			// No ✓: the lease ended, but the command failed and its status is coop's exit status.
-			if ctx.Err() != nil {
+			status, ok := exit.Sys().(syscall.WaitStatus)
+			switch {
+			case ctx.Err() != nil:
 				ui.Note("Lease on %s ended: this holder was stopped, and its command with it", t.ID)
-			} else {
+			case ok && status.Signaled():
+				ui.Note("Lease on %s ended: the command was ended by signal %s", t.ID, status.Signal())
+			default:
 				ui.Note("Lease on %s ended: the command exited with status %d", t.ID, exit.ExitCode())
 			}
 			noteLeaseEnd(root, t.ID, req.actor)
