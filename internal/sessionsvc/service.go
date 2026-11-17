@@ -1710,11 +1710,12 @@ func (s *Service) waitForCreateOperation(
 			return session.Session{}, wrapServiceOperationError(op.ID, ctx.Err())
 		case <-ticker.C:
 		}
-		var err error
-		op, err = s.store.GetOperationByID(ctx, op.ID)
+		// A failed read returns an empty operation, so keep the id from the last good one.
+		latest, err := s.store.GetOperationByID(ctx, op.ID)
 		if err != nil {
 			return session.Session{}, wrapServiceOperationError(op.ID, err)
 		}
+		op = latest
 	}
 	return s.replayCreateOperation(ctx, op)
 }
@@ -2404,7 +2405,8 @@ func (s *Service) validateTurnCandidateOperation(
 		case session.OperationSucceeded:
 			turn, err := session.DecodeTurnOperationResult(op.Result)
 			if err != nil {
-				return session.Turn{}, errors.New("decode semantic validation operation result")
+				return session.Turn{}, wrapServiceOperationError(op.ID,
+					fmt.Errorf("decode semantic validation operation result: %w", err))
 			}
 			return turn, nil
 		case session.OperationFailed:

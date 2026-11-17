@@ -1879,6 +1879,27 @@ func TestSessionServiceWatchdogPreservesPendingCancelUntilWorkerRegisters(t *tes
 	}
 }
 
+// A failed store read while a create is awaited must still name the operation, so the client can
+// look it up instead of getting a bare error.
+func TestCreateWaitStoreFailureKeepsTheOperationID(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	defer service.Stop()
+	op, _, err := service.Store().ReserveOperation(context.Background(), "CreateRemoteSession", "create-awaited", service.request(t, "awaited"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Store().Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.waitForCreateOperation(context.Background(), op)
+	var correlated interface{ OperationID() string }
+	if err == nil || !errors.As(err, &correlated) || correlated.OperationID() != op.ID {
+		t.Fatalf("store failure while waiting lost operation %s: %v", op.ID, err)
+	}
+}
+
 // A turn left running with no worker (its usage unsettled, or between the worker's exit and its
 // fallback) will never register. A timed-out cancel must not leave an entry that refuses every
 // later cancel of that turn under a new key.
