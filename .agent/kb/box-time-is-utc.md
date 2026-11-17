@@ -3,20 +3,23 @@ name: box-time-is-utc
 description: boxes run UTC; the host TZ is forwarded so rate-limit reset prose parses back host-local
 subsystem: box
 sources: [internal/box/run.go, internal/ladder/limit.go]
-updated: 2026-10-17
+updated: 2026-11-17
 ---
 The box image's clock is UTC. coop forwards the HOST's timezone into every box as `-e TZ=...`
 (`internal/box/run.go`, via `hostTimezone()`), so agents render clock times on your wall clock.
 
 Why it matters: a rate-limit message often carries its reset time as PROSE ("try again at 4:28 PM"),
-and coop parses that back with `time.ParseInLocation(layout, s, time.Local)` (`ladder.ParseResetTime`,
-`internal/ladder/limit.go`) to schedule how long to wait. If a box rendered that time in UTC
-instead of the host zone, the parsed wait would land HOURS off. So the box TZ and the host
-`time.Local` must agree — if you touch either the TZ forwarding or the reset-time parser, keep them
-on the same clock. See [[sign-in-again-is-actionable]] for the OAuth `expiresAt` clock that
+and coop parses that back (`ladder.ParseResetTime`, `internal/ladder/limit.go`) to schedule how long
+to wait. A stated zone wins: `(UTC)`, `(GMT)` and `(Z)` read as UTC, a slash-qualified IANA name
+such as `(America/Merida)` as that zone, and a short abbreviation such as `(PST)` is refused (zero,
+so the caller backs off). Only a time with no zone is read in the host's `time.Local`. If a box
+rendered such a time in UTC instead of the host zone, the parsed wait would land HOURS off. So the
+box TZ and the host `time.Local` must agree — if you touch either the TZ forwarding or the
+reset-time parser, keep them on the same clock. See [[sign-in-again-is-actionable]] for the OAuth `expiresAt` clock that
 rides the same wall time.
 
 ## Changelog
+- 2026-11-17 — described the parser's zone rules: a stated UTC or IANA zone wins, a short abbreviation is refused, time.Local applies only with no zone (audit K1-6; checked ParseResetTime in internal/ladder/limit.go).
 - 2026-08-09 — re-verified against the sources; the parser moved verbatim from
   `internal/cli/ratelimit.go` to `internal/ladder/limit.go` (`ParseResetTime`) with the ladder
   extraction. Same `time.Local` anchor, same trap.
