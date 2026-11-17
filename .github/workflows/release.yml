@@ -17,6 +17,7 @@ jobs:
   goreleaser:
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write # create the GitHub Release + upload the built assets
       id-token: write # keyless cosign signing + build provenance (Sigstore OIDC)

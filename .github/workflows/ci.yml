@@ -90,6 +90,7 @@ jobs:
   # it isn't covered here yet — the matrix is where it lands when they exist.
   doctor:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

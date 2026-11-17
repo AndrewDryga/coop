@@ -581,6 +581,27 @@ func readReleaseWorkflow(t *testing.T, path string) releaseWorkflow {
 	return workflow
 }
 
+// A hung job must not hold a runner for GitHub's six-hour default, and no checkout leaves a token
+// in .git/config for later steps to read.
+func TestEveryWorkflowJobIsBoundedAndCheckoutKeepsNoCredentials(t *testing.T) {
+	paths, err := filepath.Glob(".github/workflows/*.yml")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("no workflows found: %v", err)
+	}
+	for _, path := range paths {
+		for id, job := range readReleaseWorkflow(t, path).Jobs {
+			if job.Uses == "" && job.Timeout <= 0 {
+				t.Errorf("%s job %s sets no timeout-minutes", path, id)
+			}
+			for _, step := range job.Steps {
+				if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["persist-credentials"] != "false" {
+					t.Errorf("%s job %s checks out with persisted credentials", path, id)
+				}
+			}
+		}
+	}
+}
+
 func TestReleaseWorkflowQualification(t *testing.T) {
 	ci := readReleaseWorkflow(t, ".github/workflows/ci.yml")
 	release := readReleaseWorkflow(t, ".github/workflows/release.yml")
