@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -188,7 +189,7 @@ func (t *WorkspaceCheckpointTaskProjection) validate(entries map[string]bool, to
 	if err := reference(t.ID, 256, "task id"); err != nil {
 		return err
 	}
-	if !containsString(workspaceCheckpointTaskStates, t.State) || !digestPattern.MatchString(t.StateSHA256) {
+	if !slices.Contains(workspaceCheckpointTaskStates, t.State) || !digestPattern.MatchString(t.StateSHA256) {
 		return errors.New("checkpoint task projection state is invalid")
 	}
 	if len(t.Files) == 0 || len(t.Files) > MaxWorkspaceCheckpointTaskFiles {
@@ -286,13 +287,4 @@ func splitPathBytes(value []byte) [][]byte {
 		}
 	}
 	return append(parts, value[start:])
-}
-
-func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
