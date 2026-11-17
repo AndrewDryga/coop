@@ -447,7 +447,7 @@ func diagnosticMessage(reason string) (string, bool) {
 }
 
 // safeReasonCode keeps an unrecognized code printable: the retained grammar is
-// lowercase letters, digits and underscores, and anything else is replaced
+// lowercase letters, digits, underscores and hyphens, and anything else is replaced
 // rather than passed to a terminal.
 func safeReasonCode(reason string) string {
 	if reason == "" {

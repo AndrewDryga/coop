@@ -117,8 +117,7 @@ type ExecutionSpec struct {
 // Its root is opened without creating/regenerating an owner key. Inspection and
 // exact-owned cleanup do not depend on the source project still existing.
 // Besides a run's own artifacts it deletes only what retention lets go: finished
-// runs' records and unused admitted policy snapshots, which include an earlier
-// coop's setup check snapshot once the check's record has marked it.
+// runs' records and unused admitted policy snapshots.
 type Evidence struct{ files *Store }
 
 // Path is the store's folder, where the records a page names live.

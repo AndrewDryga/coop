@@ -3,7 +3,7 @@ name: identity-fences-compare-the-inode
 description: inode and timestamp reuse is real; durable fork and network roots use private hardlink anchors, while tasks and destructive plans combine logical identity, semantic checks and live pins
 subsystem: security
 sources: [internal/fsidentity/anchor.go, internal/fsidentity/link_unix.go, internal/forkspace/generation.go, internal/networkstate/project_anchor.go, internal/networkstate/authority.go, internal/box/serviceanchor.go, internal/box/authority_mounts.go, internal/tasks/identity.go, internal/tasks/completion.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/device_fence_test.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_probe.go]
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 
 Coop often needs to answer “is this still the object I authorized?” Linux overlayfs disproved the
@@ -59,8 +59,8 @@ error keeps its anchor and workspace for retry. Retirement removes the anchor be
 record; session rollback and discard likewise retire exact generation authority before deleting the
 workspace, and accept only exact prefix-completed retries.
 
-Migration is explicit. Allocator-based network approvals load only so the UI can request a fresh
-review; they never grant. A v1/v2 fork generation record (inode, and inode plus birth time) is
+Migration is explicit. Allocator-based network approvals are refused by version on every read
+(`networkstate` `approval`); they never grant. A v1/v2 fork generation record (inode, and inode plus birth time) is
 refused by name on every read and left as it is: the fork is neither unbound nor free, and Coop
 v12.1.0 anchored it when the stopped fork next started, after verifying the branch and absolute
 canonical origin and refusing a repository-controlled `commondir` redirect. Ordinary forks require
@@ -75,6 +75,8 @@ from a malicious process already running as the host user: that actor can alter 
 records directly. The relevant attacker is repository/model code confined to the box.
 
 ## Changelog
+- 2026-11-17 — old network approvals are refused on read, not loaded for the UI (audit NS-9).
+  Verified against internal/networkstate/authority.go.
 - 2026-11-04 — the v1/v2 generation record migration is retired; they are refused by name (task
   2026-11-04-drop-the-old-fork-and-task-record-readers). Verified against internal/forkspace/generation.go.
 - 2026-11-01 — moved the unchanged live-device boundary into the parallel inventory and updated

@@ -138,8 +138,8 @@ func admittedFingerprint(name string) (string, bool) {
 }
 
 // removeUnusedSnapshot looks once more under the snapshot lock, where nothing can
-// put it to use. A marker used inside the window, either name that is a link or
-// not a private regular file, and a snapshot that does not read as the recorded
+// put it to use. A marker used inside the window, a marker that is a link or not
+// a private regular file, and a snapshot that does not read as the recorded
 // snapshot its name promises keep both. The snapshot goes before its marker, so
 // a snapshot found without one was never marked, and a load needs no lock to
 // trust that it stays. A removal that stops halfway

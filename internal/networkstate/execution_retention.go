@@ -27,8 +27,9 @@ func (s ExecutionSummary) Expired(now time.Time) bool {
 func (e *Evidence) RemoveExpired(ctx context.Context, id string, now time.Time) (bool, error) {
 	removed := false
 	err := e.files.lockExecution(ctx, id, func() error {
-		// read opens without following links, so a link planted under a record's
-		// name fails here and is never removed.
+		// read follows a link only inside the store, and a record must validate
+		// under its own name, so a link planted under a record's name fails here
+		// and is never removed.
 		record, err := e.files.execution(id)
 		if errors.Is(err, ErrEvidenceUnavailable) {
 			return nil

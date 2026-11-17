@@ -3,7 +3,7 @@ name: network-consumers
 description: how the loop, direct/ACP runs and remote sessions consume one frozen network capture per box, and which surface reads which evidence
 subsystem: networking
 sources: [internal/networkstate/execution.go, internal/egress/snapshot.go, internal/networkreport/report.go, internal/box/run.go, internal/box/launch_sections.go, internal/box/network_summary.go, internal/box/network_admission.go, internal/cli/launch_box.go, internal/loop/network.go, internal/loop/host.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/acpctl/warm.go, internal/cli/fork_cmd.go, internal/cli/fork_acp.go, internal/cli/boxsweep.go, internal/forkctl/meta.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/forkctl/ls.go, internal/cli/net_cmd.go, internal/cli/net_diagnostic.go, internal/box/network_session.go, internal/box/network_recover.go, internal/sessionsvc/network.go, internal/sessionsvc/service.go, internal/sessionsvc/acp.go, internal/sessionsvc/http.go, internal/networkstate/admission.go, internal/networkstate/job.go, internal/networkstate/execution_retention.go, internal/networkstate/snapshot_retention.go, internal/networkstate/qualification.go, internal/box/network_setup.go, internal/session/schema.go, internal/workerproto/protocol.go, internal/cli/acp_refresh.go, internal/networkgateway/resolver.go, internal/networkgateway/collector.go, internal/networkstate/inspection.go, internal/box/project_preparation.go, internal/box/derived_image.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 Admission happens ONCE per unit of work and the resulting `*box.CapturedEgress` is passed down; a
@@ -133,14 +133,10 @@ project admission CREATED is removable: `saveSnapshot` writes `admitted-<fingerp
 on that exclusive create, and never for `CaptureJob`. A session row names its job snapshot forever,
 rows are never deleted, and they live in session stores under any `--state` the pass cannot find, so
 job snapshots and every snapshot from before markers (possibly a pre-job session's) stay; whoever
-adds session deletion must remove the job snapshot in that change. The one pre-marker snapshot that
-goes is a `coop net setup` check's: only the check's own run names or loads it, nothing else admits
-a rule with `networkstate.SetupOrigin()`, and a crashed setup is rerun in a new scratch project,
-never resumed (`QualificationSmoke`); `SetupNetwork` also deletes that scratch project when it
-returns, though not when it is killed. The smoke admits its one rule with that origin
-(`box/network_setup.go`, `admitSetupSmoke`; marked like any admission), so it goes like any marked
-snapshot. A check snapshot an earlier coop wrote without a marker is no longer marked when its run
-record expires: it stays on disk, unused. A marked snapshot stays while a
+adds session deletion must remove the job snapshot in that change. A `coop net setup` check admits
+its one rule like any launch (`box/network_setup.go`, `admitSetupSmoke`), so its snapshot is marked
+and goes like any marked snapshot. A check snapshot an earlier coop wrote without a marker is never
+marked: it stays on disk, unused. A marked snapshot stays while a
 listed run names it (it goes one pass after its last record) or while its marker's mtime is inside
 the 90 days. The mtime is the last use: re-admitting an unchanged policy (`saveSnapshot`'s EEXIST
 branch) and loading a marked snapshot (`loadSnapshotScope`) refresh it under `snapshot-lock`, where
@@ -207,6 +203,8 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-17 — dropped the claim that a pre-marker setup snapshot goes: origin-based marking is gone,
+  and the card said both (audit NS-9).
 - 2026-11-06 — `forget`'s confirmation lists no rules or mode, by the approved 2026-09-13 short reset
   wording; docs/networking.md had said it shows the saved access and now says it does not (task
   2026-11-06-make-coop-net-forget-s-docs-match-and-name-the-m).

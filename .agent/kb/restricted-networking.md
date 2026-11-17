@@ -18,8 +18,7 @@ gateway. Five boring layers stand between that mode and `docker run`:
    Each capture is published once as `snapshot-<fingerprint>.json`. One a project admission created
    carries an `admitted-` marker and goes once no run record names it and nothing admitted or
    loaded it for 90 days, serialized on `snapshot-lock`; a controller job's stays for good, and so
-   does one from before markers unless its rule's recorded origin proves a `coop net setup` check
-   made it ([[network-consumers]]).
+   does one from before markers ([[network-consumers]]).
 3. **Admission** — `box.AdmitNetwork` (box/network_admission.go) resolves the posture and, for
    filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
@@ -422,6 +421,7 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-17 — a pre-marker snapshot always stays: origin-based setup marking is gone (audit NS-9).
 - 2026-11-17 — names the production mount check `validateMountsContext` (audit B2-20).
 - 2026-11-08 — filtered services network uses isolated gateway mode (security review: services reached host listeners).
 - 2026-11-07 — an `--egress-rules` file may be group-writable only in the owner's private group, with
