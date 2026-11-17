@@ -29,8 +29,10 @@ var (
 	// prose cannot turn time.LoadLocation into a filesystem traversal.
 	tzParenRe = regexp.MustCompile(`\(([A-Za-z][A-Za-z0-9_+.-]*(?:/[A-Za-z0-9][A-Za-z0-9_+.-]*)*)\)\s*$`)
 	// API-style hints carrying a delay: "retry-after: 30" (bare = seconds), "retry after 30s",
-	// "try again in 5 minutes", "retry after 2 hours". The unit is optional and scaled by its
-	// first letter (m→minutes, h→hours, else seconds) in the caller.
+	// "try again in 5 minutes", "retry after 2 hours", "try again in 345ms". The caller reads a
+	// bare number as seconds and a millisecond spelling (ms, msec, millisecond) as milliseconds;
+	// any other unit scales by its first letter (s→seconds, m→minutes, h→hours), and a unit with
+	// another first letter is prose, not a limit.
 	retryAfterRe = regexp.MustCompile(`(?i)(?:retry[ -]?after|try again in)[^\d]{0,8}(\d{1,7})\s*([a-z]+)?`)
 	// Output/token exhaustion is recoverable by immediately asking the same model to continue; it is
 	// not a provider rate limit, so it must not rotate credentials or sleep until a reset.
@@ -67,7 +69,11 @@ func DetectLimit(output string, now time.Time) LimitHint {
 	if m := retryAfterRe.FindStringSubmatch(lower); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil {
 			unit, isTime := time.Second, true // a bare number (HTTP Retry-After) is seconds
-			if len(m[2]) > 0 {
+			switch m[2] {
+			case "":
+			case "ms", "msec", "msecs", "millisecond", "milliseconds":
+				unit = time.Millisecond // matched before the first letter: "ms" is not minutes
+			default:
 				switch m[2][0] {
 				case 's':
 					unit = time.Second
