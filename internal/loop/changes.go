@@ -18,7 +18,7 @@ import (
 // what a run changed and how it went — so a signoff/verify prompt like "e2e the affected features"
 // resolves against a concrete, per-task list instead of guessing. It leans on the Coop-Task trailer
 // (which binds each commit to the task it completed) and the per-iteration health the loop already
-// records (reopens, retries, gate-file edits).
+// records (reopens, gate-file edits).
 
 // commitInfo is one commit in a loop's range: its short sha and subject line.
 type commitInfo struct{ sha, subject string }
@@ -48,7 +48,6 @@ func (cs loopChangeSet) empty() bool { return len(cs.tasks) == 0 && len(cs.misc)
 type taskHealth struct {
 	reopens   int      // times the signoff reopened it before it passed
 	gateFiles []string // gate-defining files it edited (a task weakening its own checker)
-	retries   int      // work-iteration retries spent on it
 }
 
 // loopHealth accumulates per-task health across a run; the zero value is a clean run.
@@ -319,7 +318,6 @@ func (h *loopHealth) noteIteration(finished, gateFiles []string) {
 	for _, id := range finished {
 		th := h.at(id)
 		th.gateFiles = append(th.gateFiles, gateFiles...)
-		th.retries++
 	}
 }
 

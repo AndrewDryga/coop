@@ -185,15 +185,6 @@ func TestCostFromRecords(t *testing.T) {
 	if rc.total.usd != 18.5 {
 		t.Errorf("total = %v, want 18.5", rc.total.usd)
 	}
-	if rc.byTask["a"].usd != 12.5 {
-		t.Errorf("task a = %v, want 12.5", rc.byTask["a"].usd)
-	}
-	if c := rc.byTask["c"]; c.usd != 1.0 || c.inTok != 100 || c.outTok != 10 {
-		t.Errorf("split task c = %+v, want usd 1.0 in 100 out 10", c)
-	}
-	if _, ok := rc.byTask[""]; ok {
-		t.Error("a stage with no finished task must not create a task bucket")
-	}
 	// by-model: claude:fable-5 (12.5+2.0) leads codex:gpt-5.6-terra (4.0), sorted by cost desc.
 	if len(rc.byModel) != 2 {
 		t.Fatalf("byModel = %+v, want 2 models", rc.byModel)

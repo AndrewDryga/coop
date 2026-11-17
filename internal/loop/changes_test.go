@@ -525,7 +525,6 @@ func TestRunSummary(t *testing.T) {
 	h := newLoopHealth()
 	h.noteReopen([]string{"2026-09-11-task-json"})
 	cost := runCost{
-		byTask:  map[string]stageCost{"2026-09-11-task-json": {usd: 3.50, inTok: 120000, outTok: 4200}},
 		byModel: []modelSpend{{"claude:fable-5", stageCost{usd: 2.50, inTok: 100000, outTok: 4000}}, {"codex:gpt-5.6-terra", stageCost{usd: 1.00, inTok: 20000, outTok: 200}}},
 		total:   stageCost{usd: 3.50, inTok: 120000, outTok: 4200},
 	}

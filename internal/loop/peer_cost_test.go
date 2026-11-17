@@ -24,9 +24,6 @@ func TestPeerReportedCostReachesModelAndRunTotals(t *testing.T) {
 	if got := rc.total; got.usd != 1.75 || got.inTok != 640 || got.outTok != 64 {
 		t.Fatalf("run total = %+v, want $1.75 and 640/64 tokens", got)
 	}
-	if got := rc.byTask["task"]; got.usd != 1 || got.inTok != 40 || got.outTok != 4 {
-		t.Fatalf("unattributed peer usage changed the task's own stage tally: %+v", got)
-	}
 	if len(rc.byModel) != 2 {
 		t.Fatalf("models = %+v, want lead/peer bucket plus token-only peer", rc.byModel)
 	}

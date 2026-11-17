@@ -230,11 +230,9 @@ func addReportedUsage(cost *stageCost, record StageRecord) {
 	cost.elapsed.add(record.ProviderMS)
 }
 
-// runCost is a run's cost broken out per task (a work stage's cost, keyed by the task it finished),
-// per model (every costed stage's model, plus peer models once captured), and the run total (EVERY
-// stage's cost, so review overhead shows in the total even before it's attributed per task).
+// runCost is a run's cost broken out per model (every costed stage's model, plus peer models once
+// captured) and the run total (EVERY stage's cost, so review overhead shows in the total).
 type runCost struct {
-	byTask  map[string]stageCost
 	byModel []modelSpend
 	total   stageCost
 }
@@ -369,17 +367,17 @@ func WorkspaceCost(ws string) (usd float64, summary string) {
 func costForRepo(repo string) runCost {
 	runsRoot, err := openRunsRoot(repo, false)
 	if err != nil {
-		return runCost{byTask: map[string]stageCost{}}
+		return runCost{}
 	}
 	defer runsRoot.Close()
 	dir, err := runsRoot.Open(".")
 	if err != nil {
-		return runCost{byTask: map[string]stageCost{}}
+		return runCost{}
 	}
 	entries, err := dir.ReadDir(maxRunTelemetryFiles + 1)
 	_ = dir.Close()
 	if err != nil || len(entries) > maxRunTelemetryFiles {
-		return runCost{byTask: map[string]stageCost{}}
+		return runCost{}
 	}
 	var stages []StageRecord
 	var peers []PeerRecord
@@ -433,12 +431,11 @@ func readRunFile(repo, name string) ([]byte, error) {
 	return data, nil
 }
 
-// costFromRecords aggregates telemetry into a runCost: every stage's cost/tokens sum into the total,
-// and a stage that carries cost is attributed to the task(s) it finished (split evenly on the rare
-// multi-finish; cost with no finished task lands in the total only). In-turn consult/delegate peers
-// add reported tokens and cost to the matching model and total. Pure — unit-tested.
+// costFromRecords aggregates telemetry into a runCost: every stage's cost/tokens sum into the total
+// and into its model. In-turn consult/delegate peers add reported tokens and cost to the matching
+// model and total. Pure — unit-tested.
 func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
-	rc := runCost{byTask: map[string]stageCost{}}
+	var rc runCost
 	models := map[string]stageCost{}
 	for _, r := range recs {
 		rc.total.usd += r.CostUSD
@@ -457,18 +454,6 @@ func costFromRecords(recs []StageRecord, peers []PeerRecord) runCost {
 		mc.outTok += r.OutTok
 		addReportedUsage(&mc, r)
 		models[k] = mc
-		n := len(r.Finished)
-		if n == 0 {
-			continue // costed but finished no task (e.g. interrupted) — in the total + by-model only
-		}
-		for _, id := range r.Finished {
-			c := rc.byTask[id]
-			c.usd += r.CostUSD / float64(n)
-			c.costReported = c.costReported || validReportedCost(r.ReportedCost) || r.CostUSD > 0
-			c.inTok += r.InTok / n
-			c.outTok += r.OutTok / n
-			rc.byTask[id] = c
-		}
 	}
 	// Peers carry no task assignment, so their spend belongs only to the model and run totals.
 	for _, p := range peers {

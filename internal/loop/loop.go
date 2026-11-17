@@ -1665,7 +1665,7 @@ reviewAgain:
 				// otherwise wait for the reset. Either way the same iteration is retried, not burned.
 				if rot.Rotates() {
 					// Advancing the rotation is the point — the loop head re-derives the agent
-					// from rot (applyTarget), so the returned name would go unread here.
+					// from rot (applyTarget).
 					c.rotateOnLimit(rot, resetAt, &waits, wake)
 				} else {
 					c.waitOutLimit(wait, resetAt, wake)
