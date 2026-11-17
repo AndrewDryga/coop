@@ -40,6 +40,7 @@ type netDiagnosticOptions struct {
 func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, error) {
 	var opts netDiagnosticOptions
 	command := "coop net " + verb
+	icmp := false // --icmp is stored as the protocol, but a refusal names the option that was typed
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(args[i], "=")
 		switch {
@@ -75,6 +76,9 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 				if value == "" {
 					return opts, ui.MissingOptionValue(name, command, "coop net check example.com --protocol tls")
 				}
+				if icmp {
+					return opts, ui.ConflictingOptions("--icmp", "--protocol", command)
+				}
 				if opts.policy.Protocol != "" {
 					return opts, ui.RepeatedOption("--protocol", command)
 				}
@@ -93,10 +97,13 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 			if inline {
 				return opts, ui.InvalidOptionValue(value, "--icmp", command, "This option takes no value.", "coop net check 10.0.0.1 --run e644f07a --icmp")
 			}
+			if icmp {
+				return opts, ui.RepeatedOption("--icmp", command)
+			}
 			if opts.policy.Protocol != "" {
 				return opts, ui.ConflictingOptions("--icmp", "--protocol", command)
 			}
-			opts.policy.Protocol = "icmp"
+			icmp, opts.policy.Protocol = true, "icmp"
 		case strings.HasPrefix(args[i], "-"):
 			valid := netDiagnosticFlags
 			if verb == "blocked" {

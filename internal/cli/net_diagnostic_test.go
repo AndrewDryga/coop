@@ -687,3 +687,25 @@ func TestBlockedWarnsWhenTheRunTrimmedItsRefusals(t *testing.T) {
 		t.Errorf("a trimmed run's absence read as complete:\n%s", got)
 	}
 }
+
+// A refusal names the options that were typed: --icmp is stored as the protocol, yet a repeat of
+// --icmp is a repeat, and --icmp with --protocol is a conflict in either order. coop net forget
+// --project takes no option as its folder.
+func TestNetOptionRefusalsNameWhatWasTyped(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"10.0.0.1", "--icmp", "--icmp"}, `Option "--icmp" can only be used once`},
+		{[]string{"10.0.0.1", "--icmp", "--protocol", "tcp"}, "--icmp"},
+		{[]string{"10.0.0.1", "--protocol", "tcp", "--icmp"}, "--icmp"},
+	} {
+		_, err := parseNetDiagnosticArgs("check", c.args)
+		if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), `Option "--protocol" can only be used once`) {
+			t.Errorf("check %q = %v, want a refusal naming %s", c.args, err, c.want)
+		}
+	}
+	if _, err := parseNetForgetArgs([]string{"--project", "--x"}); err == nil || !strings.Contains(err.Error(), "Missing") {
+		t.Errorf("net forget --project --x = %v, want a missing value", err)
+	}
+}

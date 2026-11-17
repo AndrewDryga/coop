@@ -30,7 +30,7 @@ func parseNetForgetArgs(args []string) (string, error) {
 		}
 		if !inline {
 			i++
-			if i == len(args) {
+			if i == len(args) || strings.HasPrefix(args[i], "-") { // an option, not a folder: --project=<path> takes any name
 				return "", ui.MissingOptionValue("--project", command, "coop net forget --project ~/Projects/old-app")
 			}
 			value = args[i]
