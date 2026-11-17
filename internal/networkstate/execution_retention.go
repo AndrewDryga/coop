@@ -9,14 +9,17 @@ import (
 // ExecutionRetention is how long a finished run's record is kept after the run
 // ended. Every settle pass reads every record, so keeping them all made each
 // filtered launch slower forever. A run still owed cleanup has no limit: its
-// record is the only map of what is left to remove.
+// record is the only map of what is left to remove. Neither has a run that
+// belongs to a session: the session's evidence and its sealed receipt are built
+// from its runs, and session rows are never deleted, so the run is kept for as
+// long as the session's policy snapshot is (snapshot_retention.go).
 const ExecutionRetention = 90 * 24 * time.Hour
 
-// Expired reports whether retention may remove this run's record: its receipt
-// is sealed, nothing it created is left to clean up, and it ended more than
-// ExecutionRetention before now.
+// Expired reports whether retention may remove this run's record: it belongs to
+// no session, its receipt is sealed, nothing it created is left to clean up, and
+// it ended more than ExecutionRetention before now.
 func (s ExecutionSummary) Expired(now time.Time) bool {
-	return s.Final && !s.CleanupPending && now.Sub(s.EndedAt) > ExecutionRetention
+	return s.SessionID == "" && s.Final && !s.CleanupPending && now.Sub(s.EndedAt) > ExecutionRetention
 }
 
 // RemoveExpired deletes one run's record once Expired allows it, and reports

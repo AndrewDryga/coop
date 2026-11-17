@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,45 @@ func TestRetentionRemovesOnlyFinishedRunsPastNinetyDays(t *testing.T) {
 	}
 	if page, err := evidence.Executions(""); err != nil || page.Incomplete || len(page.Executions) != 2 {
 		t.Fatalf("listing after retention = %+v, %v", page, err)
+	}
+}
+
+// A session's evidence and sealed receipt are built from its runs, and session rows are never
+// deleted, so a finished session run is kept past the window a session-less run expires in.
+func TestRetentionKeepsASessionsRunsForAsLongAsTheSession(t *testing.T) {
+	s, live := executionFixture(t)
+	ref := JobSnapshotRef{JobDigest: strings.Repeat("a", 64), SessionID: "remote_one"}
+	job, err := s.CaptureJob(ref, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := executionSmoke(t, s).CreateExecution(context.Background(), ExecutionSpec{Project: live.Project,
+		PolicyFingerprint: job.Fingerprint, JobDigest: ref.JobDigest, SessionID: ref.SessionID, Runtime: live.Runtime,
+		DaemonID: live.DaemonID, Endpoint: live.Endpoint, GatewayImage: live.GatewayImage, ClientImage: live.ClientImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := finishedRun(t, s, record)
+	evidence, err := OpenEvidence(s.Path(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.Close()
+	later := time.Now().Add(10 * ExecutionRetention)
+	page, err := evidence.Executions("")
+	if err != nil || page.Incomplete {
+		t.Fatalf("listing = %+v, %v", page, err)
+	}
+	for _, summary := range page.Executions {
+		if summary.ID == finished.ID && (summary.SessionID != ref.SessionID || summary.Expired(later)) {
+			t.Fatalf("a finished session run expired: %+v", summary)
+		}
+	}
+	if removed, err := evidence.RemoveExpired(context.Background(), finished.ID, later); removed || err != nil {
+		t.Fatalf("RemoveExpired(session run) = %v, %v", removed, err)
+	}
+	if _, err := os.Lstat(filepath.Join(s.Path(), "execution-"+finished.ID+".json")); err != nil {
+		t.Fatal("the session run's record is gone", err)
 	}
 }
 

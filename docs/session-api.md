@@ -1238,6 +1238,8 @@ An `unavailable` section includes a `reason`. A session that never ran filtered 
 can't change. If the host can't read the network registry, those settings stay available while the
 affected sections report that they couldn't be read. Before its first run, a filtered session
 reports `no_run` and a `provisional` receipt with `run_count` `0`, not an empty activity counter.
+A session's run records are kept for as long as the session, so an old session's evidence and its
+final receipt stay as they were; only runs that belong to no session expire after 90 days.
 
 Counters are unsigned decimal strings so JavaScript clients can preserve values above 2^53
 without rounding them. A `null` counter means the metric was not measured, never that it was
