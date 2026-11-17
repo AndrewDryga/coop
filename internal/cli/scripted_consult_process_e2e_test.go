@@ -1159,14 +1159,14 @@ func consultTraceArgv(provider, delivery, model, effort, prompt, sessionHash str
 	if delivery == "resume" {
 		sessionFlag = "--resume"
 		if provider == "codex" {
-			return []string{"codex", value("exec"), value("resume"), "--enable", value("use_legacy_landlock"), sessionHash, "-c", value("sandbox_mode=read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
+			return []string{"codex", value("exec"), value("resume"), "--enable", value("use_legacy_landlock"), sessionHash, "-c", value("sandbox_mode=read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", "--", value(prompt)}
 		}
 	}
 	switch provider {
 	case "claude":
 		return []string{"claude", "-p", "--permission-mode", value("plan"), sessionFlag, sessionHash, "--output-format", value("json"), "--model", value(model), "--effort", value(effort), "--", value(prompt)}
 	case "codex":
-		return []string{"codex", value("exec"), "--enable", value("use_legacy_landlock"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", value(prompt)}
+		return []string{"codex", value("exec"), "--enable", value("use_legacy_landlock"), "-s", value("read-only"), "--model", value(model), "-c", value("model_reasoning_effort=" + effort), "--json", "--", value(prompt)}
 	case "gemini":
 		return []string{"gemini", "--approval-mode", value("plan"), sessionFlag, sessionHash, "-o", value("stream-json"), "--model", value(model), "-p", value(prompt)}
 	case "grok":

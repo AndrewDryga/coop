@@ -660,7 +660,7 @@ func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, erro
 // collab calls report their own start and completion — a tool lifecycle the watchdog can pair.
 func (codexAgent) Stream() StreamSpec {
 	return StreamSpec{
-		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ReviewStdoutOnly: true,
+		Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 2, ReviewStdoutOnly: true,
 	}
 }
 
@@ -737,9 +737,10 @@ func (codexAgent) LaunchArgs(typed, native []string) []string {
 }
 
 func (a codexAgent) Headless(cfg *config.Config, prompt string) []string {
-	// codex runs headless via an `exec` subcommand; the prompt is positional.
+	// codex runs headless via an `exec` subcommand; the prompt is positional, behind `--` so a
+	// markdown bullet is not read as an option or `help` as a subcommand.
 	b := a.base(cfg)
-	return append(append([]string{b[0], "exec"}, b[1:]...), prompt)
+	return append(append([]string{b[0], "exec"}, b[1:]...), "--", prompt)
 }
 
 func (a codexAgent) HeadlessSession(cfg *config.Config, prompt, id string, resume bool) ([]string, bool) {
@@ -751,7 +752,7 @@ func (a codexAgent) HeadlessSession(cfg *config.Config, prompt, id string, resum
 	}
 	b := a.base(cfg)
 	cmd := append([]string{b[0], "exec", "resume", id}, b[1:]...)
-	return append(cmd, prompt), true
+	return append(cmd, "--", prompt), true
 }
 
 // ACP is a separate adapter binary whose default "agent" mode enables Codex's inner
@@ -1421,7 +1422,7 @@ const codexConsultUsage = `[.[] | select(type=="object" and .type=="turn.complet
 // unprivileged box. Landlock keeps repository content read-only there; it may still allow
 // recoverable file-mode changes.
 func (codexAgent) ConsultFresh() string {
-	return `codex_run codex exec ${codex_eval_web_tools:-} --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; finish_status=$?
+	return `codex_run codex exec ${codex_eval_web_tools:-} --enable use_legacy_landlock -s read-only ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json -- "$prompt"; finish_status=$?
 	# Only record a thread id parsed from a bounded usable reply. The generic wrapper commits this
 	# candidate after validating the decoded stdout, so failed calls never become resumable.
 	tid=$(jq -r 'select(.type=="thread.started" and (.thread_id|type)=="string") | .thread_id | select(test("^[A-Za-z0-9._:-]{1,512}$"))' "$codex_raw" 2>/dev/null | head -n1)
@@ -1432,11 +1433,11 @@ func (codexAgent) ConsultFresh() string {
 }
 
 func (codexAgent) ConsultResume() string {
-	return `codex_run codex exec resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only ${codex_eval_web_tools:-} ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"; return "$?"`
+	return `codex_run codex exec resume --enable use_legacy_landlock "$id" -c sandbox_mode=read-only ${codex_eval_web_tools:-} ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json -- "$prompt"; return "$?"`
 }
 
 func (codexAgent) DelegateExec() string {
-	return `codex exec ${codex_eval_web_tools:-} --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json "$prompt"`
+	return `codex exec ${codex_eval_web_tools:-} --dangerously-bypass-approvals-and-sandbox ${model:+--model "$model"} ${effort:+-c model_reasoning_effort="$effort"} --json -- "$prompt"`
 }
 
 func (codexAgent) UsagePrelude() string {

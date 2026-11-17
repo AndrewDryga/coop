@@ -529,10 +529,10 @@ func parseCodexConsultArgs(args []string) (consultInvocation, error) {
 		invocation.Effort = strings.TrimPrefix(args[1], "model_reasoning_effort=")
 		args = args[2:]
 	}
-	if len(args) != 2 || args[0] != "--json" || !safeConsultValue(args[1], 512<<10) || !safeConsultValue(invocation.Model, 256) || !safeConsultValue(invocation.Effort, 64) {
+	if len(args) != 3 || args[0] != "--json" || args[1] != "--" || !safeConsultValue(args[2], 512<<10) || !safeConsultValue(invocation.Model, 256) || !safeConsultValue(invocation.Effort, 64) {
 		return consultInvocation{}, errors.New("codex consult argv has unexpected trailing values")
 	}
-	invocation.Prompt = args[1]
+	invocation.Prompt = args[2]
 	return invocation, nil
 }
 

@@ -28,8 +28,8 @@ func TestIterationCommandStreamFlags(t *testing.T) {
 		},
 		{
 			agent: "codex",
-			base:  []string{"codex", "exec", "--model", "gpt-5.6", "prompt"},
-			want:  []string{"codex", "exec", "--model", "gpt-5.6", "--json", "prompt"},
+			base:  []string{"codex", "exec", "--model", "gpt-5.6", "--", "prompt"},
+			want:  []string{"codex", "exec", "--model", "gpt-5.6", "--json", "--", "prompt"},
 		},
 		{
 			agent: "gemini",

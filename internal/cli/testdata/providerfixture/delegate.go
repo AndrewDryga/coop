@@ -374,10 +374,10 @@ func parseDelegateInvocation(provider string, args []string) (delegateInvocation
 			return delegateInvocation{}, errors.New("codex delegate argv has no exact JSON output flag")
 		}
 		rest = rest[1:]
-		if len(rest) != 1 || !safeConsultValue(rest[0], 96<<10) {
+		if len(rest) != 2 || rest[0] != "--" || !safeConsultValue(rest[1], 96<<10) {
 			return delegateInvocation{}, errors.New("codex delegate argv has unexpected trailing values")
 		}
-		invocation.Prompt = rest[0]
+		invocation.Prompt = rest[1]
 		return invocation, nil
 	default:
 		return delegateInvocation{}, fmt.Errorf("unsupported delegate provider %q", provider)

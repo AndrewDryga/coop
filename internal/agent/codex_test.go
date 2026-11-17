@@ -9,7 +9,51 @@ import (
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
+
+// TestCodexPromptsFollowDoubleDash: `codex exec` reads a prompt starting with a dash as an option
+// ("unexpected argument '- '") and a bare `help` as a subcommand, so every one-prompt shape puts
+// `--` right before the prompt. Raw consult questions, role tasks and eval instructions reach these.
+func TestCodexPromptsFollowDoubleDash(t *testing.T) {
+	cleanCmdEnv(t)
+	const prompt = "- fix this bug"
+	a, _ := Get("codex")
+	cfg := &config.Config{}
+	resumed, ok := a.HeadlessSession(cfg, prompt, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", true)
+	if !ok {
+		t.Fatal("valid native session rejected")
+	}
+	argvs := map[string][]string{"headless": a.Headless(cfg, prompt), "headless resume": resumed}
+
+	dir := t.TempDir()
+	argsfile := filepath.Join(dir, "args")
+	mustWrite(t, filepath.Join(dir, "codex"), "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARGSFILE\"\n")
+	if err := os.Chmod(filepath.Join(dir, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, fragment := range map[string]string{"consult fresh": a.ConsultFresh(), "consult resume": a.ConsultResume(), "delegate": a.DelegateExec()} {
+		script := a.UsagePrelude() + "\ncodex_run() { \"$@\"; }\n" +
+			"prompt='" + prompt + "'; id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa; model=m; effort=high; " +
+			"candidate_idfile=$ARGSFILE.id; codex_raw=/dev/null; invoke() {\n" + fragment + "\n}\ninvoke\n"
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "ARGSFILE="+argsfile, "COOP_MCP_ACTIVE=0", "COOP_RUN_ID=")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s shell: %v: %s", name, err, output)
+		}
+		data, err := os.ReadFile(argsfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		argvs[name] = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	}
+	for name, argv := range argvs {
+		if n := len(argv); n < 2 || argv[n-2] != "--" || argv[n-1] != prompt {
+			t.Errorf("%s argv does not end in -- and the prompt: %q", name, argv)
+		}
+	}
+}
 
 func TestCodexLaunchArgs(t *testing.T) {
 	for _, c := range []struct {

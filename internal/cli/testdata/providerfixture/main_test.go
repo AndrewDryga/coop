@@ -928,7 +928,7 @@ func TestParseConsultInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		{"gemini", []string{"--approval-mode", "plan", "--session-id", "session-2", "-o", "stream-json", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-2", Prompt: "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--session-id", "session-3", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, consultInvocation{Delivery: "fresh", Session: "session-3", Model: "grok-model", Effort: "xhigh", Prompt: "question"}},
 		{"grok", []string{"--tools", "Read,Grep", "--resume", "session-3", "--output-format", "streaming-json", "-p", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-3", Prompt: "follow-up"}},
-		{"codex", []string{"exec", "resume", "--enable", "use_legacy_landlock", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
+		{"codex", []string{"exec", "resume", "--enable", "use_legacy_landlock", "session-4", "-c", "sandbox_mode=read-only", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "--", "follow-up"}, consultInvocation{Delivery: "resume", Session: "session-4", Model: "codex-model", Effort: "high", Prompt: "follow-up"}},
 	}
 	for _, tc := range cases {
 		got, err := parseConsultInvocation(tc.provider, tc.args)
@@ -1043,7 +1043,7 @@ func TestParseDelegateInvocationPinsEveryAdapterGrammar(t *testing.T) {
 		want     delegateInvocation
 	}{
 		{"claude", []string{"-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus", "--effort", "high", "--", "question"}, delegateInvocation{Prompt: "question", Model: "opus", Effort: "high"}},
-		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
+		{"codex", []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "codex-model", "-c", "model_reasoning_effort=high", "--json", "--", "question"}, delegateInvocation{Prompt: "question", Model: "codex-model", Effort: "high"}},
 		{"gemini", []string{"--yolo", "--model", "flash", "-o", "stream-json", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "flash"}},
 		{"grok", []string{"--permission-mode", "bypassPermissions", "--output-format", "streaming-json", "--model", "grok-model", "--reasoning-effort", "xhigh", "-p", "question"}, delegateInvocation{Prompt: "question", Model: "grok-model", Effort: "xhigh"}},
 	}

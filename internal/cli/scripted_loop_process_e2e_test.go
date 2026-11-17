@@ -638,7 +638,7 @@ func loopProcessArgv(provider, model, effort, prompt string) []string {
 	base := directExpectedArgv(directProviderContracts[provider], model, effort, nil)
 	if provider == "codex" {
 		base = append([]string{base[0], "exec"}, base[1:]...)
-		return append(base, prompt)
+		return append(base, "--", prompt)
 	}
 	return append(base, "-p", prompt)
 }

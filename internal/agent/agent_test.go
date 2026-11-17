@@ -144,7 +144,7 @@ func TestCommands(t *testing.T) {
 			[]string{"claude-agent-acp"}},
 		{"codex",
 			[]string{"codex", "--dangerously-bypass-approvals-and-sandbox"},
-			[]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "go"},
+			[]string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--", "go"},
 			[]string{"env", "INITIAL_AGENT_MODE=agent-full-access", "codex-acp"}},
 		{"gemini",
 			[]string{"gemini", "--yolo"},
@@ -176,7 +176,7 @@ func TestStreamSpecs(t *testing.T) {
 		want StreamSpec
 	}{
 		{"claude", StreamSpec{Format: StreamClaudeJSON, Flags: []string{"--output-format", "stream-json", "--verbose"}}},
-		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 1, ReviewStdoutOnly: true}},
+		{"codex", StreamSpec{Format: StreamCodexJSON, Flags: []string{"--json"}, TrailingArgs: 2, ReviewStdoutOnly: true}},
 		{"gemini", StreamSpec{Format: StreamGeminiJSON, Flags: []string{"-o", "stream-json"}, TrailingArgs: 2}},
 		// Grok's pinned 1.0.25 streaming-json opens and closes every tool under a toolCallId (the
 		// v0.2.101 CLI emitted only thought/text/end), so its tools suspend the idle deadline too.
@@ -831,7 +831,7 @@ func TestHeadlessSessionCommands(t *testing.T) {
 		fresh, next []string
 	}{
 		{"claude", []string{"claude", "--dangerously-skip-permissions", "--session-id", id, "-p", "review"}, []string{"claude", "--dangerously-skip-permissions", "--resume", id, "-p", "correct"}},
-		{"codex", []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "review"}, []string{"codex", "exec", "resume", id, "--dangerously-bypass-approvals-and-sandbox", "correct"}},
+		{"codex", []string{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--", "review"}, []string{"codex", "exec", "resume", id, "--dangerously-bypass-approvals-and-sandbox", "--", "correct"}},
 		{"gemini", []string{"gemini", "--yolo", "--session-id", id, "-p", "review"}, []string{"gemini", "--yolo", "--resume", id, "-p", "correct"}},
 		{"grok", []string{"grok", "--permission-mode", "bypassPermissions", "--session-id", id, "-p", "review"}, []string{"grok", "--permission-mode", "bypassPermissions", "--resume", id, "-p", "correct"}},
 	}
