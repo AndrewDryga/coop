@@ -903,14 +903,14 @@ func ignoredBuildPaths(repo string) func(string) bool {
 	}
 
 	files := make(map[string]struct{})
-	var dirs []string
+	dirs := make(map[string]struct{})
 	for _, raw := range strings.Split(string(out), "\x00") {
 		path := filepath.ToSlash(strings.TrimPrefix(raw, "./"))
 		if path == "" {
 			continue
 		}
 		if strings.HasSuffix(path, "/") {
-			dirs = append(dirs, path)
+			dirs[path] = struct{}{}
 			continue
 		}
 		files[path] = struct{}{}
@@ -920,10 +920,13 @@ func ignoredBuildPaths(repo string) func(string) bool {
 		if _, ok := files[path]; ok {
 			return true
 		}
+		// An ignored folder ignores everything below it: look up the path and each folder above it.
 		path += "/"
-		for _, dir := range dirs {
-			if strings.HasPrefix(path, dir) {
-				return true
+		for i := range len(path) {
+			if path[i] == '/' {
+				if _, ok := dirs[path[:i+1]]; ok {
+					return true
+				}
 			}
 		}
 		return false

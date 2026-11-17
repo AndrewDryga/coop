@@ -648,3 +648,26 @@ func TestBaseInstallsNoToolsAtStart(t *testing.T) {
 		}
 	}
 }
+
+// An ignored folder ignores itself and everything below it, at any depth; a name that only starts
+// like it does not.
+func TestIgnoredBuildPathsCoversEverythingBelowAnIgnoredFolder(t *testing.T) {
+	pinHome(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{".gitignore": "build/\nsrc/cache/\nnotes.txt\n", "build/a/b.txt": "x", "src/cache/c": "x", "src/cachex/d": "x", "src/main.go": "x", "notes.txt": "x"})
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	ignored := ignoredBuildPaths(repo)
+	for path, want := range map[string]bool{"build": true, "build/a/b.txt": true, "./build/a": true, "src/cache": true, "src/cache/c": true,
+		"notes.txt": true, "src": false, "src/cachex/d": false, "src/main.go": false, "buildx": false} {
+		if got := ignored(path); got != want {
+			t.Errorf("ignored(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
