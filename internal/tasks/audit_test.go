@@ -5956,6 +5956,27 @@ func TestInterruptedWorkFilesReportsRenameTargets(t *testing.T) {
 	}
 }
 
+// An unstaged edit's porcelain line starts with a space; the hint must still name the whole path
+// when that line comes first.
+func TestInterruptedWorkFilesKeepsALeadingUnstagedPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "add alpha.txt")
+	if err := os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if files := interruptedWorkFiles(repo); !slices.Equal(files, []string{"alpha.txt"}) {
+		t.Errorf("interruptedWorkFiles(unstaged edit) = %q, want [alpha.txt]", files)
+	}
+}
+
 // The stranded-work hint is for RESUMED tasks only. A fresh claim in a dirty checkout is somebody
 // else's work in the tree; pointing a new task at it invites cross-task edits.
 func TestResumePrefixOnlyFlagsStrandedWorkForAResumedTask(t *testing.T) {

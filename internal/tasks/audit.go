@@ -3891,8 +3891,9 @@ func uncommittedResumeLine(id string, files []string) string {
 // is gitignored working state, so it never appears here; a clean tree yields nothing and the
 // blind-resume prompt stays byte-identical.
 func interruptedWorkFiles(repo string) []string {
-	out := forkspace.GitOut(repo, "status", "--porcelain")
-	if out == "" {
+	// Untrimmed: an unstaged edit's line starts with a space that the status columns need.
+	out, err := forkspace.GitOutput(repo, "status", "--porcelain")
+	if err != nil || out == "" {
 		return nil
 	}
 	var files []string
