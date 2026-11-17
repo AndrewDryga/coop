@@ -117,6 +117,8 @@ func TestValidateComposeRejects(t *testing.T) {
 		"bare host port":             "services:\n  x:\n    image: a\n    ports: [\"5432:5432\"]\n",
 		"0.0.0.0 port":               "services:\n  x:\n    image: a\n    ports: [\"0.0.0.0:5432:5432\"]\n",
 		"lan ip port":                "services:\n  x:\n    image: a\n    ports: [\"192.168.1.5:5432:5432\"]\n",
+		"localhost port":             "services:\n  x:\n    image: a\n    ports: [\"localhost:5432:5432\"]\n",
+		"localhost host_ip":          "services:\n  x:\n    image: a\n    ports:\n      - target: 5432\n        published: 5432\n        host_ip: localhost\n",
 		"interp port":                "services:\n  x:\n    image: a\n    ports: [\"${IP}:5432:5432\"]\n",
 		"long-form 0.0.0.0 port":     "services:\n  x:\n    image: a\n    ports:\n      - target: 5432\n        published: 5432\n",
 		"missing image (build-only)": "services:\n  x:\n    command: sleep 1\n",

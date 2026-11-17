@@ -592,9 +592,9 @@ func checkBindSource(svc, source, composeDir, realRepo string) error {
 }
 
 // checkPort rejects a published port bound to any host interface other than loopback (D2): a bare
-// "5432:5432" binds 0.0.0.0 (LAN-exposed), so a host port must name 127.0.0.1/localhost/::1
-// explicitly. A single-field "5432" also publishes a randomly allocated host port; only expose
-// is container-network-only. `$` is rejected for the same reason as bind sources.
+// "5432:5432" binds 0.0.0.0 (LAN-exposed), so a host port must name 127.0.0.1 or ::1 explicitly.
+// The name localhost is refused: Docker takes an IP address here, not a host name. A single-field
+// "5432" also publishes a randomly allocated host port; only expose is container-network-only. `$` is rejected for the same reason as bind sources.
 func checkPort(svc string, entry any) error {
 	switch v := entry.(type) {
 	case string:
@@ -607,7 +607,7 @@ func checkPort(svc string, entry any) error {
 			return fmt.Errorf("service %q: port publishes to all interfaces — set host_ip: 127.0.0.1 to bind loopback only", svc)
 		}
 		if !isLoopback(hostIP) {
-			return fmt.Errorf("service %q: port host_ip %q is not loopback — only 127.0.0.1/localhost/::1 may be published", svc, hostIP)
+			return fmt.Errorf("service %q: port host_ip %q is not loopback — only 127.0.0.1 or ::1 may be published", svc, hostIP)
 		}
 		return nil
 	default:
@@ -641,7 +641,7 @@ func checkPortSpec(svc, spec string) error {
 		return fmt.Errorf("service %q: port %q publishes to all interfaces — write \"127.0.0.1:%s\" to bind loopback only", svc, spec, spec)
 	default:
 		if !isLoopback(parts[0]) {
-			return fmt.Errorf("service %q: port %q binds a non-loopback address %q — publish to 127.0.0.1/localhost only", svc, spec, parts[0])
+			return fmt.Errorf("service %q: port %q binds a non-loopback address %q — publish to 127.0.0.1 or ::1 only", svc, spec, parts[0])
 		}
 		return nil
 	}
@@ -649,7 +649,7 @@ func checkPortSpec(svc, spec string) error {
 
 func isLoopback(host string) bool {
 	switch host {
-	case "127.0.0.1", "localhost", "::1":
+	case "127.0.0.1", "::1":
 		return true
 	}
 	return false
