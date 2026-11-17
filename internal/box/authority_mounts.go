@@ -343,9 +343,6 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		}
 		return nil
 	}
-	if len(projects) == 0 && len(private) == 0 {
-		return nil
-	}
 	plan, err := parseAuthorityMountPlan(options)
 	if err != nil {
 		return err
@@ -372,10 +369,10 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		}
 	}
 	if plan.volumesFrom {
-		return errors.New("an anchored box cannot use --volumes-from because its host sources cannot be proven private")
+		return errors.New("a box cannot use --volumes-from because its host sources cannot be proven clear of Coop's private state")
 	}
 	if plan.customVolumeDriver {
-		return errors.New("an anchored box cannot create a runtime volume with custom driver options; use an existing inspected volume or an explicit bind")
+		return errors.New("a box cannot create a runtime volume with custom driver options; use an existing inspected volume or an explicit bind")
 	}
 	allowedSources := map[string]bool{}
 	for source := range allow.sources {
@@ -419,7 +416,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		return checkMutableMountSources(sources)
 	}
 	if volumes == nil {
-		return errors.New("anchored runtime volumes require an inspectable runtime")
+		return errors.New("runtime volumes require an inspectable runtime")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -438,7 +435,7 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		for _, name := range group.names {
 			exposure, err := volumes(ctx, []string{name})
 			if err != nil {
-				return fmt.Errorf("inspect anchored runtime volumes: %w", err)
+				return fmt.Errorf("inspect runtime volumes: %w", err)
 			}
 			trustedOpaque := false
 			if len(isolatedParents) > 0 && allow.trustedSharedVolumes[name] && len(exposure.Sources) > 0 {
@@ -959,7 +956,7 @@ func addVolumeShorthand(plan *authorityMountPlan, value string) error {
 	}
 	if looksLikePath(parts[0]) {
 		if !filepath.IsAbs(parts[0]) {
-			return errors.New("anchored runtime bind sources must be absolute host paths")
+			return errors.New("runtime bind sources must be absolute host paths")
 		}
 		plan.binds = append(plan.binds, authorityBind{source: parts[0], writable: writable})
 		return nil
@@ -996,7 +993,7 @@ func addLongMount(plan *authorityMountPlan, value string) error {
 	switch kind {
 	case "bind":
 		if source == "" || !filepath.IsAbs(source) {
-			return errors.New("anchored runtime bind sources must be absolute host paths")
+			return errors.New("runtime bind sources must be absolute host paths")
 		}
 		plan.binds = append(plan.binds, authorityBind{source: source, writable: writable})
 	case "volume":
@@ -1011,9 +1008,9 @@ func addLongMount(plan *authorityMountPlan, value string) error {
 		}
 	case "tmpfs", "image":
 	case "":
-		return errors.New("anchored runtime --mount needs an explicit type")
+		return errors.New("runtime --mount needs an explicit type")
 	default:
-		return fmt.Errorf("anchored runtime mount type %q cannot be inspected", kind)
+		return fmt.Errorf("runtime mount type %q cannot be inspected", kind)
 	}
 	return nil
 }
