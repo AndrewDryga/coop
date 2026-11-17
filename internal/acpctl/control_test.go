@@ -2568,6 +2568,41 @@ roles:
 	if _, restart := set("coop_preset", "none"); !restart || c.sel != (Selection{Provider: "claude"}) {
 		t.Errorf("preset none: restart=%v sel=%+v, want effective preset lead claude + auto", restart, c.sel)
 	}
+	// Zed replays a saved Auto at session start. A spawn resolves Auto to the default account, and
+	// that is no change: restarting would lose the new session's load.
+	_, _, _ = c.SpawnTarget()
+	if c.autoAccount != "personal" {
+		t.Fatalf("a spawn on Auto resolved %q, want the default account", c.autoAccount)
+	}
+	if _, restart := set("coop_account", "auto"); restart {
+		t.Error("replaying Auto on an Auto session restarted the box")
+	}
+	// After a recovery rotation moved Auto off the default account, Auto starts over from it.
+	_, _, _ = c.SpawnTarget()
+	c.mu.Lock()
+	c.autoAccount = "work"
+	c.mu.Unlock()
+	if _, restart := set("coop_account", "auto"); !restart {
+		t.Error("Auto after a rotation should restart on the default account")
+	}
+	// Under a preset an Account write is a refused no-op, even with a plain Auto account left over.
+	if _, restart := set("coop_preset", "frontier"); !restart {
+		t.Fatal("preset set should restart")
+	}
+	_, _, _ = c.SpawnTarget()
+	c.mu.Lock()
+	c.autoAccount = "work"
+	rotation := c.rot
+	c.mu.Unlock()
+	if _, restart := set("coop_account", "auto"); restart || c.sel != (Selection{Preset: "frontier"}) {
+		t.Errorf("Auto replay under a preset: restart=%v sel=%+v, want a no-op", restart, c.sel)
+	}
+	c.mu.Lock()
+	kept := rotation != nil && c.rot == rotation
+	c.mu.Unlock()
+	if !kept {
+		t.Error("Auto replay under a preset reset the preset's rotation")
+	}
 }
 
 // The carried history records (user, assistant) pairs: fromEditor captures the prompt text,

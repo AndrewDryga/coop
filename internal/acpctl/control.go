@@ -90,7 +90,7 @@ type Control struct {
 
 	mu          sync.Mutex
 	sel         Selection                    // tagged plain lead or preset-owned selection, never both (normalizeACPSelection)
-	autoAccount string                       // concrete account behind Account=Auto after a recovery rotation
+	autoAccount string                       // concrete account behind Account=Auto: the default once spawned, another after a recovery rotation
 	authFailed  map[string]bool              // provider@account failures already tried in automatic mode
 	cached      map[string]json.RawMessage   // sessionId -> the rewritten configOptions array (for set responses)
 	nativeCache map[string]nativeOptionCache // sessionId -> provider-owned raw options/models truth
@@ -2926,8 +2926,10 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 	// the session has any transcript, so the replayed session/load fails "Resource not found" and the
 	// conversation is lost before it begins. A no-op (or a refused value) just re-acks.
 	changed := next != c.sel
-	if h.Params.ConfigID == CoopAccountID && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
-		if h.Params.Value == "auto" && c.autoAccount != "" {
+	// A preset owns its accounts, so an Account write there is a refused no-op. On Auto, a spawn
+	// resolves the default account; only a recovery rotation off it makes Auto a real change.
+	if h.Params.ConfigID == CoopAccountID && c.sel.Preset == "" && (h.Params.Value == "auto" || next.Account == h.Params.Value) {
+		if h.Params.Value == "auto" && c.autoAccount != "" && (len(c.accounts) == 0 || c.autoAccount != c.accounts[0]) {
 			changed = true
 		}
 		c.autoAccount = ""
