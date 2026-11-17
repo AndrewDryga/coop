@@ -99,6 +99,15 @@ func TestHostGitRefusesPointersIntoAnotherRepository(t *testing.T) {
 		{"HEAD linked outside refs", func(t *testing.T, repo string) {
 			link(t, filepath.Join(otherGit, "HEAD"), filepath.Join(repo, ".git", "HEAD"))
 		}, "Replace the link"},
+		// A folder with HEAD and objects passes for a bare repository, so its store is checked too.
+		{"bare look-alike linked to another repository's store", func(t *testing.T, repo string) {
+			if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			write(t, filepath.Join(repo, "HEAD"), "ref: refs/heads/main\n")
+			link(t, filepath.Join(otherGit, "objects"), filepath.Join(repo, "objects"))
+			link(t, filepath.Join(otherGit, "refs"), filepath.Join(repo, "refs"))
+		}, "Replace the link"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, _ := viewTestRepo(t)
@@ -132,6 +141,12 @@ func TestHostGitFollowsTheLayoutsGitMakes(t *testing.T) {
 	run("clone", "-q", "--shared", repo, shared)
 	if out, err := viewRun(t, shared, "status", "--porcelain"); err != nil || strings.TrimSpace(out) != "" {
 		t.Fatalf("a shared clone's view = %q, %v", out, err)
+	}
+
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	run("clone", "-q", "--bare", repo, bare)
+	if out, err := viewRun(t, bare, "rev-parse", "HEAD"); err != nil || strings.TrimSpace(out) == "" {
+		t.Fatalf("a bare repository's view = %q, %v", out, err)
 	}
 
 	worktree := filepath.Join(t.TempDir(), "wt")

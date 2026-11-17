@@ -371,8 +371,14 @@ func resolveGitDirs(workTree string, checkStores bool) (gitDir, commonDir string
 		abs = real
 	}
 	// A bare repository (coop's own audit snapshots) is its own git dir: no .git, but HEAD and
-	// an object store right here.
+	// an object store right here. A box can lay out a folder the same way, so its store is
+	// checked like any other; Coop's own bare stores share objects through alternates, not links.
 	if fileExists(filepath.Join(abs, "HEAD")) && fileExists(filepath.Join(abs, "objects")) && !fileExists(filepath.Join(abs, ".git")) {
+		if checkStores {
+			if err := checkStoreLinks(abs, abs); err != nil {
+				return "", "", err
+			}
+		}
 		return abs, abs, nil
 	}
 	root, gitDir, err := nearestGitDir(abs)

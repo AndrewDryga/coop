@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitview_redirect_test.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-16
+updated: 2026-11-17
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -100,9 +100,10 @@ store: `objects`, `objects/info`, `objects/pack`, the 256 loose-object folders, 
 folder needs no object names and linked refs or logs give them away, so no single top-level check
 is enough. Still followed, since each yields an object only by its name: `objects/info/alternates`
 (refusing them broke shared-clone companion sources,
-`TestSessionServicePinsPersistsAndDiscardsCompanionRepositories`) and single loose-object files (too many to walk per command). Bare
-repositories skip the checks: only Coop's own private snapshot and status stores are bare, and
-their alternates are Coop's. `config.worktree` wins over
+`TestSessionServicePinsPersistsAndDiscardsCompanionRepositories`) and single loose-object files (too many to walk per command). A bare
+repository gets the same store check: a box can lay out its workspace like one (`HEAD` and
+`objects`, no `.git`) with linked `objects` or `refs`, and Coop's own bare snapshot and status
+stores share objects through alternates, never links. `config.worktree` wins over
 `config` for the backlink, since `git sparse-checkout init` moves `core.worktree` there. The
 superproject a submodule check resolves skips the store check (`resolveGitDirs(…, false)`): no git
 runs there, and repeating it per nesting level per command was the cost. Advice to move a git dir
@@ -262,6 +263,10 @@ rebase, and in an unattended loop it is a pipe or `/dev/null`, so that rebase is
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-11-17 — a folder with `HEAD` and `objects` and no `.git` passed for a bare repository and
+  skipped `checkStoreLinks`, so a box could link its `objects` and `refs` to another repository.
+  The bare branch now runs the store check (`TestHostGitRefusesPointersIntoAnotherRepository`,
+  bare look-alike case; a real bare clone still works). 2026-11-10 audit, find FS-2.
 - 2026-11-16 — the stall limit's exemption tested whether a command inherited coop's stdin or
   stdout, not whether a terminal was there, so an unattended loop's signing rebase had no limit.
   `inheritedTerminal` now asks the handle (the same ioctl `internal/runtime` uses, because
