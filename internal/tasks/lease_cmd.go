@@ -24,6 +24,13 @@ var leaseHoldPoll = 2 * time.Second
 // such a holder may be told to stand down by the agent that started it.
 const leaseHolderRunPrefix = "lease:"
 
+// leaseCommandStopDelay is how long a stopped holder gives its command after SIGTERM before it
+// kills it. Whoever stopped the holder waits that long plus leaseHolderStopMargin for the release.
+const (
+	leaseCommandStopDelay = 5 * time.Second
+	leaseHolderStopMargin = 5 * time.Second
+)
+
 // stopOwnLeaseHolder lets `coop tasks done` (and block) finish a task whose lease is held by a
 // `coop tasks lease` holder the SAME agent started: the holder is bound to the caller's own process
 // identity, so telling it to stand down is the agent stopping its own worker, not stealing a lock.
@@ -56,10 +63,11 @@ func stopLeaseHolderBoundTo(root string, item Item, pid int, start string) (int,
 	if err := syscall.Kill(meta.ControllerPID, syscall.SIGTERM); err != nil {
 		return 0, fmt.Errorf("stop lease holder (pid %d): %w", meta.ControllerPID, err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	limit := leaseCommandStopDelay + leaseHolderStopMargin
+	deadline := time.Now().Add(limit)
 	for observeTaskLease(item, time.Now()).State != leaseUnleased {
 		if time.Now().After(deadline) {
-			return 0, fmt.Errorf("lease holder (pid %d) did not release within 5s", meta.ControllerPID)
+			return 0, fmt.Errorf("lease holder (pid %d) did not release within %s", meta.ControllerPID, limit)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -229,7 +237,7 @@ func holdTaskLease(ctx context.Context, root string, req leaseRequest, poll time
 		cmd := exec.CommandContext(ctx, req.command[0], req.command[1:]...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-		cmd.WaitDelay = 5 * time.Second
+		cmd.WaitDelay = leaseCommandStopDelay
 		err := cmd.Run()
 		var exit *exec.ExitError
 		switch {

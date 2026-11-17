@@ -382,7 +382,11 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 		actor := ClaimActor{Label: "codex", PID: pid, StartToken: os.Getenv("COOP_TEST_LEASE_HOLDER_ACTOR_START")}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // as the CLI does
 		defer stop()
-		code, err := holdTaskLease(ctx, os.Getenv("COOP_TEST_LEASE_HOLDER_ROOT"), leaseRequest{id: id, actor: actor}, 20*time.Millisecond)
+		req := leaseRequest{id: id, actor: actor}
+		if command := os.Getenv("COOP_TEST_LEASE_HOLDER_COMMAND"); command != "" {
+			req.command = []string{"sh", "-c", command}
+		}
+		code, err := holdTaskLease(ctx, os.Getenv("COOP_TEST_LEASE_HOLDER_ROOT"), req, 20*time.Millisecond)
 		fmt.Printf("HOLDER_EXIT code=%d err=%v\n", code, err)
 		return
 	}
@@ -471,6 +475,35 @@ func TestDoneStopsTheCallersOwnLeaseHolderOnly(t *testing.T) {
 	defer lease.Release()
 	if code, err := tasksFolderMoveWith(root, []string{"loop"}, StateDone, "done", claimOptions{actor: me}); code == 0 || err == nil || !strings.Contains(err.Error(), "leased by another controller") {
 		t.Fatalf("done beside a loop iteration's lease = %d, %v; want a refusal (and this process alive)", code, err)
+	}
+}
+
+// A leased command that ignores SIGTERM is killed by its holder after leaseCommandStopDelay; done
+// waits that long and more for the release instead of failing first.
+func TestStopOwnLeaseHolderOutwaitsACommandThatIgnoresTerm(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the holder's stop delay")
+	}
+	root := t.TempDir()
+	me := selfActor(t, "codex")
+	item := inProgressTask(t, root, "stubborn")
+	marker := filepath.Join(t.TempDir(), "trapped")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDoneStopsTheCallersOwnLeaseHolderOnly$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"COOP_LEASE_HELPER=1", TestLeaseAuthorityRootEnv+"="+os.Getenv(TestLeaseAuthorityRootEnv),
+		"COOP_TEST_LEASE_HOLDER_ROOT="+root, "COOP_TEST_LEASE_HOLDER_TASK="+item.ID,
+		"COOP_TEST_LEASE_HOLDER_ACTOR_PID="+strconv.Itoa(me.PID), "COOP_TEST_LEASE_HOLDER_ACTOR_START="+me.StartToken,
+		"COOP_TEST_LEASE_HOLDER_COMMAND=trap '' TERM; touch "+marker+"; exec sleep 60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	wait.For(t, "leased command ignores TERM", func() bool {
+		meta, ok := readLeaseAuthorityMetadata(root, item.ID)
+		return ok && meta.ControllerPID == cmd.Process.Pid && pathExists(marker)
+	})
+	if stopped, err := stopOwnLeaseHolder(root, item, me); !stopped || err != nil {
+		t.Fatalf("stopOwnLeaseHolder = %v, %v; want the holder stopped once its command was killed", stopped, err)
 	}
 }
 
