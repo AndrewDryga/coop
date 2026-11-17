@@ -856,6 +856,28 @@ X-Tenant = "one"
 	}
 }
 
+// Grok and Gemini expand ${VAR} in a header themselves, so every variable a header names is
+// required, as it is for Codex: the launch refuses an unset one and freezes its value, rather than
+// the client sending the literal text upstream. A name that is not a usable variable is refused.
+func TestGrokAndGeminiRequireEveryHeaderVariable(t *testing.T) {
+	src := `{ "mcpServers": {
+		"keyed": { "url": "https://a.example/mcp", "headers": { "X-Api-Key": "${API_KEY}", "X-Tenant": "tenant-${TENANT_ID}", "X-Plain": "one" } },
+		"bearer": { "url": "https://b.example/mcp", "bearer_token_env_var": "B_TOKEN" }
+	} }`
+	path := writeTmp(t, "mcp.json", src)
+	want := []string{"API_KEY", "B_TOKEN", "TENANT_ID"}
+	for client, generate := range map[string]func(string, string) (string, []string, error){"grok": GenerateGrok, "gemini": GenerateGemini} {
+		_, required, err := generate(path, "")
+		if err != nil || !slices.Equal(required, want) {
+			t.Errorf("%s required env = %v, %v; want %v", client, required, err, want)
+		}
+		bad := writeTmp(t, "bad.json", `{"mcpServers":{"keyed":{"url":"https://a.example/mcp","headers":{"X-Api-Key":"${api key}"}}}}`)
+		if _, _, err := generate(bad, ""); err == nil || !strings.Contains(err.Error(), `header "X-Api-Key" refers to "api key"`) {
+			t.Errorf("%s accepted an unusable header variable: %v", client, err)
+		}
+	}
+}
+
 // HTTP header names are case-insensitive. Allowing two spellings, or synthesizing an
 // Authorization header beside an inline one, gives providers different credentials for the same
 // server. The shared mcp.json boundary rejects both shapes before any renderer can diverge.

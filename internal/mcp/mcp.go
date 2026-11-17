@@ -102,6 +102,13 @@ func GenerateGemini(mcpFile, existing string) (string, []string, error) {
 				nestedObject(def, "headers")["Authorization"] = "Bearer ${" + ref + "}"
 				requiredEnv = append(requiredEnv, ref)
 			}
+			if headers, ok := def["headers"].(map[string]any); ok {
+				names, err := headerEnvNames(name, headers)
+				if err != nil {
+					return "", nil, err
+				}
+				requiredEnv = append(requiredEnv, names...)
+			}
 			merged[name] = def
 		}
 		settings["mcpServers"] = merged
@@ -432,10 +439,9 @@ func writeTOMLRemoteAuth(b *strings.Builder, name string, s server, dialect head
 				fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(envValueString(headers[key])))
 			}
 		}
-		if s.BearerTokenEnvVar != "" {
-			return []string{s.BearerTokenEnvVar}, nil
-		}
-		return nil, nil
+		// Every header variable is required, as for Codex: an unset one would be sent as the
+		// literal text, and the launch freezes each value between start and use.
+		return headerEnvNames(name, headers)
 	}
 
 	// Codex. Its two header tables are exclusive per header: a literal value goes in http_headers,
@@ -512,6 +518,23 @@ func resolveHeaderReferences(value string, lookupEnv func(string) (string, bool)
 	}
 	// Replace only the original template: a secret may itself contain reference syntax.
 	return strings.NewReplacer(replacements...).Replace(value), true
+}
+
+// headerEnvNames lists every ${VARIABLE} one server's headers name, so a launch refuses an
+// unset one and freezes its value instead of the client sending the literal characters upstream
+// (Gemini) or dropping the header (Codex). A reference that is not a usable variable name is
+// refused, as Codex refuses it.
+func headerEnvNames(server string, headers map[string]any) ([]string, error) {
+	var names []string
+	for _, key := range sortedKeys(headers) {
+		for _, name := range headerReferences(envValueString(headers[key])) {
+			if !validBearerReference(name) {
+				return nil, fmt.Errorf("MCP server %q header %q refers to %q, which is not a usable variable name — use upper-case letters, digits and underscores, starting with a letter or underscore", server, key, name)
+			}
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 // envReference classifies a header value, returning the referenced name when there is one.

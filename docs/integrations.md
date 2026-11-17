@@ -364,6 +364,10 @@ For Codex, a literal value becomes a static header, and a value containing exact
 generated config. Codex can't represent a mixed value such as `Bearer ${TOKEN}`, so use
 `bearer_token_env_var` for that form.
 
+For Codex, Gemini and Grok, every variable a header names must be set: a launch stops and names
+the variable when it is not, rather than sending the literal `${…}` text to the server. The value
+is read once at launch and stays fixed for the run.
+
 ### SSE servers
 
 The agents handle a legacy SSE server (`"type": "sse"`) differently:

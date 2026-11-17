@@ -75,7 +75,10 @@ forces `general.enableAutoUpdate`, `general.enableAutoUpdateNotification` and
 `mcp.GenerateGrok` server writer and gets no managed block: its CLI does not know Codex's keys.
 Grok accepts literal HTTP headers and expands `${VAR}` in header values, so the renderer translates
 `bearer_token_env_var` to Authorization while returning the required name for the same private
-environment capture Gemini uses. Codex takes headers too, in two exclusive tables: a literal value
+environment capture Gemini uses. Grok and Gemini return every `${VAR}` a header names too
+(`headerEnvNames`), not only the bearer one, so all three clients follow one rule: an unset header
+variable refuses the launch by name and its value is frozen, instead of the literal text going
+upstream. A reference that is not a usable variable name is refused, as for Codex. Codex takes headers too, in two exclusive tables: a literal value
 goes in `http_headers`, and a value that is exactly one `${VARIABLE}` goes in `env_http_headers` as
 the variable's NAME, so the secret is resolved by the client and never written into the file
 (qualified with `codex mcp get` against codex-cli 0.153.4, which lists both tables beside
@@ -109,7 +112,8 @@ Gemini 0.62 rejects a system file or ancestor owned by a nonroot user or writabl
 Login and effort files therefore belong in the image, not runtime mounts below the model home.
 
 Gemini's native schema rejects canonical `bearer_token_env_var`. Its renderer converts that field
-to `headers.Authorization: "Bearer ${NAME}"` and returns the required variable names; it never
+to `headers.Authorization: "Bearer ${NAME}"` and returns the required variable names (with every
+other header's `${VAR}`); it never
 stores token values in settings. Before a provider launch, `captureRequiredMCPEnv` resolves those
 names from the assembled, credential-scoped runtime environment and freezes nonempty values in a
 private temporary env file, removing their explicit argv overrides. Missing or blank values stop
@@ -219,6 +223,7 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+- 2026-11-17 — Grok and Gemini now require every header `${VAR}`, as Codex does (owner decision on audit find AP-2); `headerEnvNames` in internal/mcp/mcp.go.
 - 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go); sources gain the files its named symbols live in (audit K3-7).
 - 2026-11-06 — security review follow-up: the scrub also reads the file `COOP_MCP_FILE` chose when
   MCP is turned off (`config.ChosenMCPFile`), an unreadable names-only file refuses the launch
