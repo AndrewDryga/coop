@@ -116,17 +116,6 @@ func reuseLockedServiceFilesystem(ctx context.Context, rt runtime.Runtime, dir s
 	if !r.Services || r.Pending != "" || r.Ready == nil || r.ServiceConfigDigest != digest || r.WorkloadImage != image || r.ProtectionDigest == "" || r.HelperStartedAt.IsZero() || supervisor.origin(host) != originHere {
 		return nil, nil
 	}
-	snapshot, err := captureFilesystemSnapshot(r.Workspace, r.Profile, grants, nil)
-	if err != nil {
-		return nil, err
-	}
-	protection, err := snapshot.digest()
-	if err != nil {
-		return nil, err
-	}
-	if protection != r.ProtectionDigest {
-		return nil, nil
-	}
 	docker, err := runtime.BindDockerForSetup(ctx, rt, r.Endpoint, r.DaemonID)
 	if err != nil {
 		return nil, err
@@ -158,6 +147,19 @@ func reuseLockedServiceFilesystem(ctx context.Context, rt runtime.Runtime, dir s
 		return nil, err
 	}
 	if !present {
+		return nil, nil
+	}
+	// The repository walk comes after the two cheap container checks: after a Docker restart every
+	// stale service record fails those, and should not pay for a full walk first.
+	snapshot, err := captureFilesystemSnapshot(r.Workspace, r.Profile, grants, nil)
+	if err != nil {
+		return nil, err
+	}
+	protection, err := snapshot.digest()
+	if err != nil {
+		return nil, err
+	}
+	if protection != r.ProtectionDigest {
 		return nil, nil
 	}
 	a := &filesystemAdmission{docker: docker, dir: dir, record: r, snapshots: []*filesystemSnapshot{snapshot}, workloadImage: image, lease: lease, reused: true}
