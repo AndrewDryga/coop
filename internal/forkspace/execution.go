@@ -405,9 +405,13 @@ func openServiceLaunchLock(path, repo string) (*os.File, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
 	current, pathErr := os.Lstat(path)
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if err != nil || pathErr != nil || !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || !os.SameFile(info, current) {
+	if pathErr != nil || !ok || !info.Mode().IsRegular() || stat.Nlink != 1 || !os.SameFile(info, current) {
 		_ = f.Close()
 		return nil, nil, errors.New("service launch authority changed while opening")
 	}
