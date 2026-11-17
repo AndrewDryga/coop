@@ -414,13 +414,6 @@ func TestWithEffort(t *testing.T) {
 			t.Errorf("withEffort(%v) = %v, want %v", tc.baked, got, tc.want)
 		}
 	}
-	joined := EffortSpec{Style: EffortFlagJoined, Flag: "--thinking"}
-	if got := joined.Args("high"); !slices.Equal(got, []string{"--thinking=high"}) {
-		t.Errorf("joined effort args = %v", got)
-	}
-	if got, ok := normalizeJoinedFlag([]string{"agent", "--thinking=low", "--thinking=max"}, []string{"--thinking"}, "high"); !ok || !slices.Equal(got, []string{"agent", "--thinking=high"}) {
-		t.Errorf("joined effort normalization = %v, %v", got, ok)
-	}
 	if got, ok := normalizeAssignmentFlag([]string{"agent", "--config=reasoning=low", "-c", "reasoning=max"}, []string{"-c", "--config"}, "reasoning=", "reasoning=high"); !ok || !slices.Equal(got, []string{"agent", "--config=reasoning=high"}) {
 		t.Errorf("assignment-alias effort normalization = %v, %v", got, ok)
 	}

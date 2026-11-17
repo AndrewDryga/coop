@@ -75,7 +75,6 @@ type EffortFlagStyle uint8
 
 const (
 	EffortFlagSplit      EffortFlagStyle = iota // --effort high
-	EffortFlagJoined                            // --effort=high
 	EffortFlagAssignment                        // -c model_reasoning_effort=high
 )
 
@@ -204,8 +203,6 @@ func (s EffortSpec) Args(level string) []string {
 		return nil
 	}
 	switch s.Style {
-	case EffortFlagJoined:
-		return []string{s.Flag + "=" + level}
 	case EffortFlagAssignment:
 		return []string{s.Flag, s.Assignment + "=" + level}
 	default:
@@ -821,10 +818,6 @@ func withEffort(cmd []string, a Agent, level string) []string {
 	}
 	names := append([]string{spec.Flag}, spec.Aliases...)
 	switch spec.Style {
-	case EffortFlagJoined:
-		if out, ok := normalizeJoinedFlag(cmd, names, level); ok {
-			return out
-		}
 	case EffortFlagAssignment:
 		marker := spec.Assignment + "="
 		if out, ok := normalizeAssignmentFlag(cmd, names, marker, marker+level); ok {
@@ -836,34 +829,6 @@ func withEffort(cmd []string, a Agent, level string) []string {
 		}
 	}
 	return appendBeforeSeparator(cmd, spec.Args(level)...)
-}
-
-func normalizeJoinedFlag(cmd, names []string, value string) ([]string, bool) {
-	out := make([]string, 0, len(cmd))
-	found := false
-	for i, arg := range cmd {
-		if arg == "--" {
-			out = append(out, cmd[i:]...)
-			break
-		}
-		matched := false
-		for _, name := range names {
-			if arg == name || strings.HasPrefix(arg, name+"=") {
-				if !found {
-					out = append(out, name+"="+value)
-				}
-				found, matched = true, true
-				break
-			}
-		}
-		if !matched {
-			out = append(out, arg)
-		}
-	}
-	if !found {
-		return nil, false
-	}
-	return out, true
 }
 
 // normalizeAssignmentFlag replaces and deduplicates `-c key=value`-style options while
