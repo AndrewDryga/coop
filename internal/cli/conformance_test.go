@@ -38,7 +38,8 @@ func TestCLIConformance(t *testing.T) {
 	t.Run("rm_no_remove_alias", func(t *testing.T) {
 		a := newApp()
 		closed := map[string]func([]string) (int, error){
-			"tasks": func(args []string) (int, error) { return cmdTasksFolder("", t.TempDir(), args) },
+			"tasks":   func(args []string) (int, error) { return cmdTasksFolder("", t.TempDir(), args) },
+			"backlog": func(args []string) (int, error) { return newApp().cmdBacklog(args) },
 		}
 		for name, run := range closed {
 			if _, err := run([]string{"rm"}); err != nil && strings.Contains(err.Error(), "Unknown command") {
@@ -48,8 +49,10 @@ func TestCLIConformance(t *testing.T) {
 				t.Errorf("%s: remove should be unknown (no compat alias in v3), got %v", name, err)
 			}
 		}
-		if _, err := a.cmdFork([]string{"rm"}); err != nil && strings.Contains(err.Error(), "unknown") {
-			t.Errorf("fork: rm was not accepted: %v", err)
+		// A bare `coop fork rm` must reach rm's own missing-name usage error: without the verb it
+		// would be a fork named "rm" or a verb typo, neither of which names rm's usage line.
+		if code, err := a.cmdFork([]string{"rm"}); code != 2 || err == nil || !strings.Contains(err.Error(), "coop fork rm <name>") {
+			t.Errorf("fork: bare rm = (%d, %v), want exit 2 with the rm usage line", code, err)
 		}
 	})
 
