@@ -1351,6 +1351,22 @@ func TestACPControlFlushesHeldChunkOnContinue(t *testing.T) {
 	}
 }
 
+// A session that cannot rotate still holds an auth-looking chunk, so the next content chunk must
+// release it in place rather than leave it for the end of the turn.
+func TestACPControlFlushesHeldAuthChunkInUngatedSession(t *testing.T) {
+	c := newTestControlWithHost(t, testHost()) // no accounts, no preset: nothing to rotate to
+	fromEditorPrompt(c, []byte(`{"jsonrpc":"2.0","id":"p1","method":"session/prompt","params":{"sessionId":"S","prompt":[{"type":"text","text":"explain"}]}}`+"\n"))
+	notice := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a 401 means not authenticated"}}}}` + "\n")
+	if out, _ := c.toEditor(notice); out != nil {
+		t.Fatalf("an auth-looking chunk is held pending the outcome, got: %s", out)
+	}
+	next := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" and so on"}}}}` + "\n")
+	out, _ := c.toEditor(next)
+	if first, second := strings.Index(string(out), "not authenticated"), strings.Index(string(out), "and so on"); first < 0 || second < first {
+		t.Fatalf("the held chunk must be flushed in place before the continuation, got: %s", out)
+	}
+}
+
 func TestACPHistoryIgnoresPrePromptStatus(t *testing.T) {
 	c := newTestControl(t)
 	startup := []byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"S","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Authentication required"}}}}` + "\n")

@@ -1341,8 +1341,8 @@ func (c *Control) chunkGate(line []byte) (hold bool, flush []byte) {
 				return true, nil
 			}
 		}
-		if !gated {
-			return false, nil
+		if !gated { // nothing to rotate to, but a held auth notice above still goes out in place
+			return false, c.takeHeld(s)
 		}
 		if hint := ladder.DetectLimit(text, time.Now()); hint.Limited && !hint.OutputLimited {
 			c.mu.Lock()
