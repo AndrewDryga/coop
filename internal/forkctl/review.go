@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/project"
@@ -363,11 +364,12 @@ func resolveEditor(cfgEditor string) string {
 // the fork's own folder, or the private copy of an isolated fork's committed files: the fork is
 // named either way, never the copy's folder. See resolveEditor for how the editor is chosen.
 func (c *Control) openInEditor(ws, fork string) (int, error) {
-	editor := resolveEditor(c.cfg.Editor)
-	if editor == "" {
+	// Split like git does, so a quoted path with a space stays one argument.
+	parts := config.ShellSplit(resolveEditor(c.cfg.Editor))
+	if len(parts) == 0 {
 		return 1, errors.New("no editor found — set $COOP_EDITOR, git config core.editor, or $VISUAL/$EDITOR (or install code/cursor/zed/idea)")
 	}
-	parts := append(strings.Fields(editor), ws)
+	parts = append(parts, ws)
 	ui.Note("Opening fork %s in %s", fork, filepath.Base(parts[0]))
 	ui.Note("  %s", ws)
 	cmd := exec.Command(parts[0], parts[1:]...)

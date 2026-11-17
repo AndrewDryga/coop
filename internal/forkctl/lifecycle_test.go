@@ -1031,6 +1031,26 @@ func TestResolveEditor(t *testing.T) {
 	}
 }
 
+// An editor path with a space works when quoted, as git runs the same core.editor.
+func TestOpenInEditorHonorsQuotes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Application Support")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "args.txt")
+	editor := filepath.Join(dir, "edit")
+	if err := os.WriteFile(editor, []byte("#!/bin/sh\nprintf '%s|' \"$@\" > \""+out+"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &Control{cfg: &config.Config{Editor: `"` + editor + `" -w`}}
+	if code, err := a.openInEditor("/the/fork", "demo"); err != nil || code != 0 {
+		t.Fatalf("openInEditor = (%d, %v), want (0, nil)", code, err)
+	}
+	if data, _ := os.ReadFile(out); string(data) != "-w|/the/fork|" {
+		t.Errorf("editor arguments = %q, want %q", data, "-w|/the/fork|")
+	}
+}
+
 func TestRunReviewCmd(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.txt")

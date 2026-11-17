@@ -108,9 +108,9 @@ The `--preflight` flag turns on the same cleanup for one run.
 
 ### Command-valued settings
 
-co:op splits `COOP_GATE`, `COOP_RUN_ARGS` and the `COOP_<AGENT>_CMD` overrides into `argv`. Single
-and double quotes group text into one argument, and `\` escapes a character. It doesn't run these
-settings through a shell, so it doesn't expand wildcard paths or `$VAR` values.
+co:op splits `COOP_GATE`, `COOP_RUN_ARGS`, `COOP_EDITOR` and the `COOP_<AGENT>_CMD` overrides into
+`argv`. Single and double quotes group text into one argument, and `\` escapes a character. It
+doesn't run these settings through a shell, so it doesn't expand wildcard paths or `$VAR` values.
 
 For example, `COOP_GATE='bash -lc "make check && make lint"'` produces three arguments, with the
 quoted text as one of them. co:op passes a bare `&&`, `|` or `$VAR` literally, so wrap commands that
