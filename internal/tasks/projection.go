@@ -1007,14 +1007,18 @@ func syncProjectionTree(src, dst string, completed bool) error {
 	if err != nil {
 		return err
 	}
+	// Every name is checked before the first write, so a refusal leaves the canonical folder as it was.
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != TaskIdentityFile && (!projectionSyncTopLevel[name] || completed && name == "tmp") {
+			return fmt.Errorf("task projection contains unsupported top-level entry %q", name)
+		}
+	}
 	sourceNames := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == TaskIdentityFile {
 			continue
-		}
-		if !projectionSyncTopLevel[name] || completed && name == "tmp" {
-			return fmt.Errorf("task projection contains unsupported top-level entry %q", name)
 		}
 		sourceNames[name] = true
 		from, to := filepath.Join(src, name), filepath.Join(dst, name)
