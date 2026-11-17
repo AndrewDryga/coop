@@ -74,10 +74,10 @@ override for a link to any other folder, `~/.config` say, which then mounts read
 the decoys hiding anything. That is an escape, not a leak: the next box can write
 `coop/coop.conf` there with `COOP_RUN_ARGS=-v /:/host`, and the launch after it gets the host's
 root. Backlog item 2026-10-17-decide-how-coop-treats-a-coop-repo-whose-parent holds the decision.
-The working-directory fallback has the same gap: a shell that enters the swapped folder through
-its link has the home folder as its working directory, and when no `.git` sits at or above it,
-`ResolveRepo` takes that folder as the project (task
-2026-10-16-let-coop-login-and-coop-doctor-run-without-a-pro).
+The working-directory fallback does not take the home folder: a shell that entered the swapped
+folder through its link has the home folder as its kernel working directory, and with no `.git` at
+or above it `ResolveRepo` refuses it as home or above (`ErrHomeProject`). The parent-writable gap
+above still holds for any other folder.
 
 **Cost follows local clutter, not the repo.** On 2026-10-04 this checkout held 44k files in 12k
 directories, 41k of them under `.agent/tasks`. The walk took 4.1 s, while a clean clone of the same
@@ -181,6 +181,7 @@ builds alternated, load 8 to 10), a filtered start in this checkout took 2.62 s 
 and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
 
 ## Changelog
+- 2026-11-17 — the working-directory fallback refuses the home folder or above (ErrHomeProject); the parent-writable gap stays for other folders (audit K5-3; checked ResolveRepo in internal/box/repo.go).
 - 2026-11-17 — the mount fallback walks once (task 2026-11-17-the-mount-fallback-path-walks-the-repository-onc);
   checked against internal/box/mounts.go and run.go.
 - 2026-11-02 — avoid repeated cleaning of inventory paths and linear literal-glob scans; checked
