@@ -85,6 +85,12 @@ func TestExtractTasksFlags(t *testing.T) {
 		t.Errorf("rest = %v, want [list --debug]", rest)
 	}
 
+	// A leased command's own --tasks stays with that command.
+	flags, rest, err = ExtractTasksFlags("coop tasks", []string{"lease", "x", "--tasks", "a", "--", "coop", "tasks", "--tasks", "b", "ls"})
+	if err != nil || !slices.Equal(flags, []string{"a"}) || !slices.Equal(rest, []string{"lease", "x", "--", "coop", "tasks", "--tasks", "b", "ls"}) {
+		t.Errorf("after -- = %v, %v, %v; want [a] and the command untouched", flags, rest, err)
+	}
+
 	// A value-bearing flag with no value is an error, not a silently-dropped flag.
 	for _, bad := range [][]string{{"--tasks"}, {"list", "--tasks"}, {"--tasks="}, {"--tasks", "--debug"}} {
 		_, _, err := ExtractTasksFlags("coop loop", bad)

@@ -18,9 +18,13 @@ import (
 // ExtractTasksFlags pulls every `--tasks <path>` (or `--tasks=<path>`) out of args,
 // returning the collected paths and the remaining args. Shared by `coop tasks` and
 // `coop loop` so they accept the same repeatable flag. A trailing `--tasks` with no path
-// is an error, not a silently-dropped flag.
+// is an error, not a silently-dropped flag. Everything from a bare `--` on belongs to a command
+// the caller runs (coop tasks lease <id> -- <command>), so it is passed through untouched.
 func ExtractTasksFlags(command string, args []string) (tasks []string, rest []string, err error) {
 	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			return tasks, append(rest, args[i:]...), nil
+		}
 		if v, n, ok, e := flagValue(args, i, "--tasks"); ok {
 			if e != nil {
 				return nil, nil, ui.MissingOptionValue("--tasks", command, command+" --tasks .agent/tasks")
