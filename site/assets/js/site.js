@@ -522,9 +522,20 @@ if ("IntersectionObserver" in window && matchMedia("(prefers-reduced-motion: no-
   }
 }
 
+// The id the address's fragment names. A malformed escape (a mangled paste, "#%") would make
+// decodeURIComponent throw and stop the rest of this script, so it falls back to the raw text.
+const hashId = () => {
+  const raw = location.hash.slice(1);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
 // A deep link lands before the web font arrives, and the text that reflows above its target pushes
 // the target away: once the font is in, land on it again.
-const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+const target = location.hash && document.getElementById(hashId());
 if (target && document.fonts) document.fonts.ready.then(() => target.scrollIntoView({ behavior: "instant" }));
 
 // A block wider than its column fades at the edge that has more, so it reads as scrollable where
@@ -574,7 +585,7 @@ if (side) {
   };
   for (const group of groups) group.button.addEventListener("click", () => show(group.list.hidden ? group : null));
   const groupOf = (link) => groups.find((group) => group.list.contains(link));
-  let readingGroup = groupOf(links.get(decodeURIComponent(location.hash.slice(1)))) ?? groups[0];
+  let readingGroup = groupOf(links.get(hashId())) ?? groups[0];
   show(readingGroup);
   if ("IntersectionObserver" in window) {
     const reading = new IntersectionObserver((entries) => {
