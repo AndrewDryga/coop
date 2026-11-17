@@ -140,6 +140,47 @@ func TestSessionCreateReplaysAmbiguousReservationPublication(t *testing.T) {
 	}
 }
 
+// Two creates stuck on publication must not restart each other with no delay: one still running
+// after its attempt hands no slot over and waits for the ticker.
+func TestStuckCreatesDoNotRescheduleEachOther(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service, err := openSessionFixture(t, Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), Runner: &periodicCleanupRunner{}, CleanupInterval: time.Hour,
+	}, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Stop()
+	previous := reserveSessionWorkspaceLocked
+	var attempts atomic.Int32
+	reserveSessionWorkspaceLocked = func(repo string, reservation forkspace.WorkspaceReservation) error {
+		attempts.Add(1)
+		if err := previous(repo, reservation); err != nil {
+			return err
+		}
+		return errors.New("reservation directory sync keeps failing")
+	}
+	t.Cleanup(func() { reserveSessionWorkspaceLocked = previous })
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"stuck-a", "stuck-b"} {
+		if _, err := service.CreateRemoteSessionAsync(context.Background(), key, service.request(t, key)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if got := attempts.Load(); got > 3 {
+		t.Fatalf("two stuck creates made %d reservation attempts before the ticker", got)
+	}
+	for _, key := range []string{"stuck-a", "stuck-b"} {
+		if op, err := service.Store().GetOperation(context.Background(), key); err != nil || op.State != session.OperationRunning {
+			t.Fatalf("stuck create %s = %+v, %v; want it left running", key, op, err)
+		}
+	}
+}
+
 func TestSessionCreateReplaysAmbiguousGenerationPublication(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")

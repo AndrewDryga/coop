@@ -209,7 +209,13 @@ func (s *Service) scheduleBackgroundOperation(operationID string) {
 		} else {
 			err = s.runCreateOperation(ctx, operationID)
 		}
-		completed = err == nil || op.Method == "CreateRemoteSession"
+		// Hand the slot to waiting operations only when this one settled. One still running retries
+		// on the ticker; two stuck creates would otherwise restart each other with no delay.
+		if err == nil {
+			completed = true
+		} else if latest, getErr := s.store.GetOperationByID(context.Background(), operationID); getErr == nil {
+			completed = latest.State != session.OperationRunning
+		}
 		if err != nil && ctx.Err() == nil {
 			code := session.CodeOf(err)
 			if code == "" {
