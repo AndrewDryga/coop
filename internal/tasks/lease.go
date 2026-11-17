@@ -240,7 +240,7 @@ func LeaseAuthorityKey(root, id string) (string, error) {
 // leaseAuthorityRoot resolves where the host-global completion-trust registry lives. Everything
 // in this registry — lock-authority inodes, completion receipts, audit-reopen authority, departure
 // records, and the completion-window journal — is durable trust state, so it lives with the session
-// store's state root (see defaultSessionStateRoot in internal/sessionsvc/http.go). Losing this
+// store's state root (see defaultSessionStateRoot in internal/cli/session_cmd.go). Losing this
 // directory could split lock authority and erase the receipts used by crash recovery.
 //
 // A test binary must name its own root: falling back to HOME let one package's tests leave 120,000

@@ -142,7 +142,7 @@ func taskQueueExists(path string) (bool, error) {
 var subtaskRe = regexp.MustCompile(`^[ \t]*[-*] \[(.)\] `)
 
 // SplitFrontmatter separates a leading `---` … `---` YAML-ish header from the body.
-// It parses only flat `key: value` lines (enough for id/title/labels/parent/updated);
+// It parses only flat `key: value` lines (enough for id/title/updated/priority/waits_on);
 // comment (`#`) and blank lines are skipped. With no well-formed header, all of content
 // is the body and fields is empty.
 func SplitFrontmatter(content string) (fields map[string]string, body string) {

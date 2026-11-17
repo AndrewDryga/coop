@@ -2,7 +2,7 @@
 name: task-authority-registry-is-durable-state
 description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; records are read plainly, and only completion-window locks are ever unlinked
 subsystem: tasks
-sources: [internal/tasks/lease.go, internal/tasks/loop_note.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/committed_block.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/sessionsvc/http.go, internal/testutil/teststate/teststate.go]
+sources: [internal/tasks/lease.go, internal/tasks/loop_note.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/committed_block.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/cli/session_cmd.go, internal/testutil/teststate/teststate.go]
 updated: 2026-11-17
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
@@ -32,7 +32,7 @@ only for a task whose last holder is that run, so an old stop never explains a l
 
 `leaseAuthorityRoot` (`internal/tasks/lease.go`) resolves
 `$HOME/.local/state/coop/task-leases/v1` on both Darwin and Linux, the same durable family as the
-session store's `defaultSessionStateRoot` (`internal/sessionsvc/http.go`) and intentionally not
+session store's `defaultSessionStateRoot` (`internal/cli/session_cmd.go`) and intentionally not
 XDG-configurable. `OpenLeaseAuthorityRoot` creates that directory with owner-only permissions.
 
 **No box reaches the registry, so it is read plainly.** Its records go through `readLeaseRecord`
@@ -67,6 +67,8 @@ collision followed by an unlink also fails the reopen, so it must retry first. T
 2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
 
 ## Changelog
+- 2026-11-17 — `defaultSessionStateRoot` lives in internal/cli/session_cmd.go, not
+  internal/sessionsvc/http.go (audit find T2-21).
 - 2026-11-17 — `coop tasks rm` also deletes the task's `.holder.json` (audit find T2-18).
 - 2026-11-06 — only an answer given to `coop tasks unblock` spends `<sha>.committed-block.json`
   (task 2026-11-06-grant-re-close-authority-only-for-the-worker-s-o).

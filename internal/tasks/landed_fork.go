@@ -42,8 +42,8 @@ type landedForkRelease struct {
 }
 
 // CompleteLandedForkTask completes task, which a fork holds, because the one commit carrying its
-// Coop-Task trailer is already reachable from project's HEAD. Only a person's `coop tasks done
-// --from-fork` reaches it; see completeLandedForkTask for what it refuses.
+// Coop-Task trailer is already reachable from project's HEAD. Only tests call it; a person's
+// `coop tasks done --from-fork` calls completeLandedForkTask, which says what it refuses.
 func CompleteLandedForkTask(project, root string, task Item) (LandedForkTask, error) {
 	_, landed, err := completeLandedForkTask(project, root, task, completionOptions{})
 	return landed, err

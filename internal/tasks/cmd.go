@@ -37,8 +37,9 @@ type taskArgSpec struct {
 
 // taskArgSpecs validates the structured `coop tasks` subcommands so an unsupported flag or a stray
 // argument fails loudly instead of being silently ignored or mistaken for an id. add takes a
-// free-form title that may start with "-"; block, claim, rm, unblock and decisions validate their
-// own grammar (their flags take values), so those commands are intentionally absent.
+// free-form title that may start with "-"; block, claim, decisions, lease, park, rm and unblock
+// parse their own grammar (free text, valued flags, sub-verbs or exclusive modes), so those
+// commands are intentionally absent.
 var taskArgSpecs = map[string]taskArgSpec{
 	"ls":      {lsFlags, 0, "coop tasks ls [<options>...]"},
 	"lint":    {nil, 0, "coop tasks lint"},
@@ -89,7 +90,7 @@ func filterLabel(only []string) string {
 }
 
 // validateArgs enforces a subcommand's grammar from its spec: any token starting with "-" must be
-// one of its options, and at most spec.maxPos positionals are allowed. So `coop tasks ls --done` or
+// one of its options, and at most spec.maxPos positionals are allowed. So `coop tasks ls --bogus` or
 // `coop tasks release a b` is refused — naming the FIRST extra argument — rather than quietly doing
 // the wrong thing. cmd is the command path without "coop".
 func validateArgs(cmd string, args []string, spec taskArgSpec) error {
