@@ -1,9 +1,9 @@
 ---
 name: native-credential-custody
-description: canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; Docker listings are patient and fail closed
+description: canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; launch mounts that overlap protected state are refused
 subsystem: credentials
-sources: [internal/box/account_authority.go, internal/box/authority_mounts.go, internal/box/native_account.go, internal/runtime/mounts.go, internal/runtime/mounts_test.go]
-updated: 2026-11-04
+sources: [internal/box/account_authority.go, internal/box/account_renewal.go, internal/box/authority_mounts.go, internal/box/native_account.go]
+updated: 2026-11-17
 ---
 
 Canonical credential custody (authority.json, the renewal journal) sits in folders no box mounts,
@@ -18,28 +18,16 @@ A login only the old `profiles/<account>` or `host-credentials/<account>` folder
 or moved (`refuseLegacyLogin`): the launch, `coop usage` and `coop credentials` name
 `coop login <provider>@<account>`, and the old folders are left alone.
 
-Docker bind inventory freezes the endpoint and rechecks daemon identity after enumeration,
-around each inspect batch and at return, including empty results. Full IDs are inspected in
-32-container streams containing only ID, lifecycle status and mounts, each record bounded to
-the existing 1 MiB mount limit. Missing/duplicate/mismatched/malformed/overflowed records,
-failed commands or cancellation return no partial public inventory. Read-only and stopped
-containers remain visible. `BindMount.Stopped` is true only when every observed user of a
-source is created/exited; any live observation prevents that conclusion across batches.
-
-Docker is shared, so the inventory and the label check around it (`listDockerPatiently`) ask up to
-three times within 45 seconds. A pass can fail on load alone or on a container removed between `ps`
-and `inspect`. A launch runs several of these checks, and a slow listing delays every one of them.
-Only a complete pass counts. If none completes the launch refuses, and a failed listing is never
-read as an empty one. `safeModelProbeCause` finds that refusal by its text, so change them together.
-
-An unrelated stopped container may name a removed temporary directory. Only confirmed
-created/exited sources may resolve missing tails from their nearest existing ancestor.
-`resolveAuthorityPath` refuses existing dangling aliases before ascending; native checks use
-inode-aware `authorityPathsOverlap`. Missing credential descendants still overlap. Unresolved
-live/paused/restarting/dead binds refuse: they can retain a deleted alias's inode. Unknown
-paths, permissions and symlink loops are never inferred harmless or dropped from inventory.
+A launch's mount sources are checked against Coop's protected host state (`authority_mounts.go`).
+`resolveAuthorityPath` resolves each source, rebuilding only a missing tail and refusing an existing
+dangling alias, and `authorityPathsOverlap` compares the results by path and by inode, so a mount
+that reaches protected state through another name is refused even read-only. Unknown paths,
+permission errors and symlink loops are errors, never read as harmless.
 
 ## Changelog
+- 2026-11-17 — dropped the Docker listing and stopped-container paragraphs: 925253ae deleted
+  `listDockerPatiently` and the container custody check. What remains is the flock, `lockAccountHomes`,
+  `keepRenewal`, `refuseLegacyLogin` and the launch-mount overlap check. Sources updated.
 - 2026-11-04 — removed the pre-v11 cutover (writer fence, legacy writer locks, the Gemini encrypted
   cache refusal, the stopped-container and VM-share mount checks that only the fence used); renamed
   from native-credential-cutover. Docker listing patience stays.

@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go, internal/box/native_account.go, internal/cli/project_build.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -388,15 +388,15 @@ before regenerating.
 The Dockerfile is embedded on its own, not in the tar: editing it leaves `source.tar` byte-identical
 but still moves `Fingerprint()` (recipe plus tar), so every host sets up networking again. Its first
 `FROM` is the one Go pin a network setup records: `GoBase()` reads that digest-pinned `golang` image
-from the recipe for the setup's `go_base`, since Coop's box images no longer build with Go. Its nine
-Ubuntu packages are pinned to exact versions and install from a dated
-`snapshot.ubuntu.com/ubuntu/<YYYYMMDDTHHMMSSZ>` archive written into `sources.list`. Six of the nine
-versions are jammy's release versions, which never leave the archive; nftables, libnftables1 and
-libxtables12 come from jammy-updates, which keeps only each package's newest version, so a pin
-against the live archive breaks at the next nftables or iptables update. Move the date with the
-versions. Canonical says it intends to keep snapshots for at least two years, so the date set on
-2026-10-15 must move before 2028-10. The `ubuntu` path serves every architecture (`ubuntu-ports`
-answers 401); the Release files carry no `Valid-Until` and are signed with the 2018 archive key the
+from the recipe for the setup's `go_base`, since Coop's box images no longer build with Go. Its
+thirteen Ubuntu packages are pinned to exact versions and install from a dated
+`snapshot.ubuntu.com/ubuntu/<YYYYMMDDTHHMMSSZ>` archive written into `sources.list`. Six of the
+thirteen are jammy's release versions, which never leave the archive; apt, libapt-pkg6.0, openssl,
+libssl3, nftables, libnftables1 and libxtables12 come from jammy-updates, which keeps only each
+package's newest version, so a pin against the live archive breaks at the next update of any of
+them. Move the date with the versions. Canonical says it intends to keep snapshots for at least two
+years, so the Dockerfile's date (20261109T000000Z) must move before 2028-11. The `ubuntu` path
+serves every architecture (`ubuntu-ports` answers 401); the Release files carry no `Valid-Until` and are signed with the 2018 archive key the
 jammy keyring trusts, so apt's signature check stays on with no override.
 
 **Stop latency.** A run's teardown ends with the guard's terminal counters barrier
@@ -430,6 +430,9 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-17 — the image pins thirteen packages (apt, libapt-pkg6.0, openssl and libssl3 added), seven
+  from jammy-updates, from snapshot 20261109T000000Z, to move before 2028-11; verified against
+  `gatewayimage/Dockerfile`.
 - 2026-11-06 — a closed terminal (SIGHUP) stops a filtered launch like Ctrl-C, and Ctrl-C during the
   first launch's host check stops that check, both with the box's own cleanup; a cancelled
   `coop login` says `Sign-in cancelled. Nothing was saved.`, exits 130 (129) and removes its staging

@@ -2,8 +2,8 @@
 name: loop-provider-watchdog
 description: built-in attempts always stream; the watchdog is ARMED by default (10m/30m/2h) and trusts only decoder events, and the box's own process group makes redirected loops handle stop signals themselves
 subsystem: loop
-sources: [internal/loop/watchdog.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
-updated: 2026-11-05
+sources: [internal/loop/watchdog.go, internal/loop/watchdog_test.go, internal/box/supervisor/main.go, internal/loop/streamjson.go, internal/loop/streamjson_providers.go, internal/loop/loop.go, internal/loop/iteration.go, internal/loop/ratelimit.go, internal/agent/agent.go, internal/agent/grok.go, internal/box/run.go, internal/runtime/runtime.go]
+updated: 2026-11-17
 ---
 
 Every built-in loop/review/preflight attempt requests the provider's structured stream —
@@ -95,13 +95,11 @@ Traps the code doesn't obviously carry:
   deliberately NOT `transport-bounds-do-not-abort-valid-work` material: it bounds a hostile stream's
   wall clock at a multiple no legitimate iteration reaches, not the volume of valid work.
 - **The idle deadline and the box's descendant drain are one coupled pair.** A draining box emits
-  no stream events, so `COOP_DESCENDANT_TIMEOUT` (900s in `internal/box/image.go`) and the 30m idle
+  no stream events, so `COOP_DESCENDANT_TIMEOUT` (900s, `descendantTimeout` in `internal/box/supervisor/main.go`) and the 30m idle
   deadline run from the same instant; if the drain could reach the deadline, a box held open by a
   leaked descendant would die as a wedged provider and the drain's own exit codes would never be
-  observed. `TestShippedProviderDeadlinesAreArmed` reads the drain default out of
-  `box.BaseDockerfile("arm64")` and fails if idle drops below 2× it — check the test, not the prose, before
-  moving either. (image.go's own comment still says the deadline is disabled by default: its text is
-  sha256-stamped into the box image, so editing a comment there marks every built image stale.)
+  observed. `TestShippedProviderDeadlinesAreArmed` reads the drain default out of the supervisor's source
+  and fails if idle drops below 2× it — check the test, not the prose, before moving either.
 - **`COOP_PROVIDER_TIMEOUTS` is obeyed as given, and announced.** Only the host sets it (the coop
   process's environment or the person's own coop.conf; no box writes either), so the phases it
   names take any positive duration. A phase it never names keeps its default, a malformed field
@@ -118,10 +116,12 @@ Traps the code doesn't obviously carry:
   adapter whose stream has no tool ids would have a long gate killed at the idle deadline, so probe
   it first. The process e2e scripts grok TOOL scenarios like the others (`tool-gated-complete`,
   `tool-wait`).
-- Parent cancellation always wins over a watchdog fire (`ctx.Err()` guard in runIteration):
+- Parent cancellation always wins over a watchdog fire (`ctx.Err()` guard in runIterationWithMode):
   an interrupted run stays `interrupted`, never a provider timeout.
 
 ## Changelog
+- 2026-11-17 — the 900s drain default lives in the box supervisor (`descendantTimeout`), which the
+  deadline test reads; the cancellation guard is in runIterationWithMode. Sources updated.
 - 2026-11-05 — a redirected loop's first SIGINT is now the same soft stop as Ctrl-C, so a supervisor
   can let the current attempt finish; SIGTERM/SIGHUP stay hard. The interrupted-resume recovery
   e2e now stops with SIGTERM.

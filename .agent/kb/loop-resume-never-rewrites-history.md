@@ -2,15 +2,16 @@
 name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/committed_block.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/image.go, internal/box/run.go]
-updated: 2026-11-06
+sources: [internal/tasks/audit.go, internal/tasks/committed_block.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/supervisor/main.go, internal/box/run.go]
+updated: 2026-11-17
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
 
 1. The agent commits with its `Coop-Task` trailer and moves the folder to `99_done/`.
 2. A descendant it started never exits — a leaked headless Chromium from a browser test is the real
-   case. `coop-entry` waits `COOP_DESCENDANT_TIMEOUT` (default **900s**, `internal/box/image.go`)
+   case. The box supervisor (`coop-supervise`, which `coop-entry` execs) waits
+   `COOP_DESCENDANT_TIMEOUT` (default **900s**, `descendantTimeout` in `internal/box/supervisor/main.go`)
    and exits `DescendantsTimedOutExit` (191). It now announces that wait once with the process names
    holding the box open, and names them again on termination — before that it was silent for the
    whole window, which reads as a hung loop.
@@ -144,6 +145,8 @@ checked nothing" would again diff to nothing. For the same reason a history that
 parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
 
 ## Changelog
+- 2026-11-17 — the drain default now lives in the box supervisor's `descendantTimeout`, not
+  image.go's shell; sources repointed.
 - 2026-11-06 — only an answer given to `coop tasks unblock` spends the committed-block note, the
   unblock names the commit, and only a binding made before `tasks_block` read HEAD counts (task
   2026-11-06-grant-re-close-authority-only-for-the-worker-s-o).

@@ -3,7 +3,7 @@ name: lifecycle-latency-measurement
 description: how to measure a box/editor start or stop change without fooling yourself — pair the two builds and alternate them, never bisect a noisy metric single-shot, build the comparison binary where its version stamp is honest, and know why an old binary cannot run in an approved project
 subsystem: testing
 sources: [tools/lifecyclebench, tools/servicesbench, Makefile, internal/box/run.go, internal/cli/acp_cmd.go, internal/cli/cli.go, internal/runtime/docker_lifecycle.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 `make lifecycle-bench` (`go run ./tools/lifecyclebench`) is the instrument for every start/stop
@@ -96,8 +96,10 @@ bisect, make the predicate itself paired against a fixed reference arm measured 
 0.23 s; pointing `COOP_MCP_FILE` at another absent path, pool still on, recovered ~0.21 s (an absent
 `COOP_MCP_FILE` is refused since 2026-11-06; `COOP_MCP_FILE=` turns MCP off). Those sum
 to more than the whole, so they are not two causes — they are two ways of skipping one thing that
-is not yet named. The old revision already fanned the pool out concurrently, so "the fan-out competes
-with the lead" does not explain the difference either. The cause is open.
+is not yet named. Commit 887b4d55 named it from the proxy's trace: the warm fills started in the same
+millisecond as the lead's box, and the lead's adapter booted on a busy machine. The fan-out now waits
+for the editor's initialize answer, or `leadAnswerGrace` (3 s), through `acpFanOut`
+(`internal/cli/acp_cmd.go`). The probes showed what could be skipped; only the trace showed why.
 
 ## Build the comparison binary where its version stamp is honest
 
@@ -153,9 +155,13 @@ an approved project is unobtainable at acceptable cost — use the bare control 
 
 `internal/cli/acp_cmd.go` carried, in two places, the claim that the warm pool's fan-out left
 "startup latency unchanged" — from the day the pool was written, never measured, and read as settled
-until 2026-09-20's paired A/B put a number against it. Both now state the number.
+until 2026-09-20's paired A/B put a number against it. That comment is gone with the eager fan-out;
+don't write an unmeasured performance claim in its place.
 
 ## Changelog
+- 2026-11-17 — the +0.23 s `acp_initialize` cause is no longer open: 887b4d55 traced it to the warm
+  fan-out starting beside the lead and gated it on the editor's answer (`acpFanOut`,
+  `leadAnswerGrace`). The comment section no longer points at comments that are gone.
 - 2026-11-06 — an absent `COOP_MCP_FILE` now stops a launch, so the knob-probe note names
   `COOP_MCP_FILE=` as the way to turn MCP off; the measurements themselves were not rerun.
 - 2026-10-17 — stand-ins are written under syscall.ForkLock and never rewritten, after CI failed on

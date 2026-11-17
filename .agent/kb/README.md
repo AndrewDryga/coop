@@ -97,7 +97,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [default-account-resolution](default-account-resolution.md) — the default is the marked account or the literal "default"; a first sign-in becomes it even when named, and a missing default beside signed-in accounts is refused with those accounts, never another login
 - [credential-presence-is-adapter-declared](credential-presence-is-adapter-declared.md) — adapters own credential presence, selected env authority, and inspectable stored readiness
 - [agent-homes-off](agent-homes-off.md) — COOP_HOMES=0 connects no account: the credential scope is empty and every brokered sign-in lives in files in the home, so a plain agent run that reaches a provider is refused in the CLI, never in box.Run
-- [native-credential-custody](native-credential-custody.md) — canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; Docker listings are patient and fail closed
+- [native-credential-custody](native-credential-custody.md) — canonical credential custody is read plainly under a flock; a login only the pre-v11 folders hold is refused by name; launch mounts that overlap protected state are refused
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
 - [native-broker-images](native-broker-images.md) — Codex generation and editing require exact image routes for each provider credential family
