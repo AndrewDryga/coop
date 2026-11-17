@@ -32,8 +32,8 @@ var sessionHTTPJSONRoutes = []struct{ handler, path string }{
 
 // An unknown field can carry a bearer token past a caller that thinks the field was retired, so
 // every JSON route refuses one before it acts. The control body {} decodes on every route and
-// fails later for its own reason; only the decoder's refusal says "request body is invalid JSON",
-// so a route that stops refusing unknown fields answers like the control and fails here.
+// fails later for its own reason; only the decoder's refusal says "request body has an unknown
+// field", so a route that stops refusing unknown fields answers like the control and fails here.
 func TestSessionHTTPJSONRoutesRefuseUnknownFields(t *testing.T) {
 	if got, want := sessionHTTPBodyHandlers(t), sessionHTTPJSONRouteHandlers(); !slices.Equal(got, want) {
 		t.Fatalf("handlers that decode a JSON body = %v, table covers %v", got, want)
@@ -41,7 +41,7 @@ func TestSessionHTTPJSONRoutesRefuseUnknownFields(t *testing.T) {
 	service, _ := newHTTPTestSessionService(t)
 	defer service.Stop()
 	handler := NewHTTPHandler(service.Service)
-	const refused = "request body is invalid JSON"
+	const refused = "request body has an unknown field"
 	for _, route := range sessionHTTPJSONRoutes {
 		control := sessionHTTPTestRequest(t, handler, http.MethodPost, route.path, `{}`, "unknown-field-control", "application/json")
 		if strings.Contains(control.Body.String(), refused) {

@@ -181,7 +181,7 @@ func TestSessionHTTPStrictBodiesAndRedaction(t *testing.T) {
 		t.Fatalf("missing idempotency response = %d %s", response.Code, response.Body.String())
 	}
 	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", strings.TrimSuffix(validBody, "}")+`,"extra":true}`, "create-unknown", "application/json")
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || !strings.Contains(response.Body.String(), "request body is invalid JSON") {
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || !strings.Contains(response.Body.String(), "request body has an unknown field") {
 		t.Fatalf("unknown body field status = %d body=%s", response.Code, response.Body.String())
 	}
 	response = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", validBody, "create-content", "text/plain")

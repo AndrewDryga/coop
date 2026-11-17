@@ -1451,12 +1451,16 @@ func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	return decodeSessionJSONLimit(w, r, value, sessionHTTPMaxBody)
 }
 
-// sessionBodyProblem tells JSON that does not parse from JSON this endpoint cannot use, naming the
-// field. It never repeats a value from the body.
+// sessionBodyProblem tells JSON that does not parse from JSON this endpoint cannot use: a field of
+// the wrong type, which it names, or an unknown field. It never repeats a value from the body.
 func sessionBodyProblem(err error) string {
 	var wrongType *json.UnmarshalTypeError
 	if errors.As(err, &wrongType) && wrongType.Field != "" {
 		return fmt.Sprintf("request body field %q has the wrong type", wrongType.Field)
+	}
+	// The decoder's unknown-field error is plain text. The field name stays out: it is body text.
+	if strings.HasPrefix(err.Error(), "json: unknown field ") {
+		return "request body has an unknown field"
 	}
 	return "request body is invalid JSON"
 }
