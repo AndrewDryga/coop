@@ -30,8 +30,9 @@ coop eval run ./examples/evals/maintenance/suite.yaml codex --timeout 3h --dry-r
 ```
 
 `qualification.sh` expects three unfinished baselines to fail, three reference completions to
-pass and eight mutants to fail. A mutant is a reference completion with one deliberate fault: a
-missing step, or damage to behavior that should stay the same.
+pass and ten mutants to fail. A mutant is a reference completion with one deliberate fault: a
+missing step, damage to behavior that should stay the same, or code that tries to end the
+verifier with a passing exit code.
 
 `runtime-qualification.sh` repeats the baseline and reference verdicts in the image you give it,
 with no network, no credentials, a read-only image root, resource limits and a read-only verifier

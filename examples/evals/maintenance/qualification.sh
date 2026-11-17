@@ -75,5 +75,12 @@ check static fail # collateral MIME regression
 oracle static
 mutate static server.js 's#if (!candidate.startsWith(realRoot + path.sep)) {#if (!candidate.startsWith(realRoot + path.sep) || name.split("/").length > 2) {#'
 check static fail # overbroad denial of legitimate nested files
+oracle static
+printf 'process.exit(0);\n' >> "$work/static/server.js"
+check static fail # candidate code exiting 0 as it loads cannot forge a pass
+oracle static
+mutate static server.js 's/text\/html/application\/octet-stream/'
+printf "process.on('exit', () => { process.exitCode = 0; });\n" >> "$work/static/server.js"
+check static fail # nor can an exit hook that rewrites the exit code of a failed check
 
-echo 'qualification: 3 baseline failures, 3 oracle passes, 8 discriminatory mutant failures'
+echo 'qualification: 3 baseline failures, 3 oracle passes, 10 discriminatory mutant failures'

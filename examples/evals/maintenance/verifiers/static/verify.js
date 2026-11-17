@@ -3,7 +3,51 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+
+// The candidate's server.js runs in a child node process, never in this one: module code runs as
+// it loads, and in this process a process.exit(0) or an exit hook setting exitCode would forge the
+// verdict. The child listens on a free port and prints it; every check goes over HTTP.
+const serveCandidate = `
+const server = require(process.argv[1]).createServer(process.argv[2]);
+server.listen(0, '127.0.0.1', () => process.stdout.write('port ' + server.address().port + '\\n'));
+`;
+
+function startCandidate(root) {
+  const child = spawn(process.execPath, ['-e', serveCandidate, path.resolve('server.js'), root],
+    { stdio: ['ignore', 'pipe', 'pipe'] });
+  const port = new Promise((resolve, reject) => {
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => reject(new Error('candidate server did not start within 5s')), 5000);
+    child.stdout.on('data', chunk => {
+      out += chunk;
+      const match = /^port (\d+)$/m.exec(out);
+      if (match) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+    child.stderr.on('data', chunk => { err += chunk; });
+    child.on('exit', code => {
+      clearTimeout(timer);
+      reject(new Error(`candidate server exited (${code}) before listening: ${err.slice(-2000)}`));
+    });
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+  return { child, port };
+}
+
+function stopCandidate(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise(resolve => {
+    child.once('exit', resolve);
+    child.kill('SIGKILL');
+  });
+}
 
 function request(port, url, method = 'GET') {
   return new Promise((resolve, reject) => {
@@ -31,12 +75,9 @@ async function verify() {
   fs.writeFileSync(path.join(root, 'nested', 'ok.txt'), 'nested text');
   fs.writeFileSync(path.join(temporary, 'outside.txt'), 'outside canary');
   fs.symlinkSync(path.join(temporary, 'outside.txt'), path.join(root, 'shortcut.txt'));
-  let server;
+  const candidate = startCandidate(root);
   try {
-    const { createServer: factory } = require(path.resolve('server.js'));
-    server = factory(root);
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const port = server.address().port;
+    const port = await candidate.port;
     const index = await request(port, '/index.html?cache=1');
     assert.equal(index.status, 200, 'query broke ordinary GET');
     assert.equal(index.body, '<h1>Private fixture</h1>');
@@ -62,7 +103,7 @@ async function verify() {
     assert.ok(malformed.status >= 400 && malformed.status < 500, 'bad encoding was not denied');
     console.log('static: passed');
   } finally {
-    if (server && server.listening) await new Promise(resolve => server.close(resolve));
+    await stopCandidate(candidate.child);
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
