@@ -143,6 +143,12 @@ func TestAPendingNoteIsNoAnswerAndARealAnswerIs(t *testing.T) {
 	for _, answer := range realAnswers {
 		check(answer, answer)
 	}
+	// The stub's comment is invisible in a rendered view, so an answer can land on either side of it.
+	stub := "<!-- Human: write your answer here, or use coop tasks unblock. -->"
+	check(stub, "")
+	check(stub+" Use B", "Use B")
+	check("Use B "+stub, "Use B")
+	check("<!-- unterminated Use B", "")
 }
 
 // blockedWithResolution writes the blocked task "brand" with a hand-written decision.md holding

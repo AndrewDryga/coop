@@ -1670,7 +1670,8 @@ func decisionResolved(decPath string) (bool, error) {
 func decisionResolution(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		if r, ok := strings.CutPrefix(line, decisionResolutionPrefix); ok {
-			if r = strings.TrimSpace(r); resolutionIsAnswer(r) {
+			// The stub's comment is invisible when rendered, so an answer may sit on either side of it.
+			if r = strings.TrimSpace(withoutHTMLComments(r)); resolutionIsAnswer(r) {
 				return r
 			}
 			return ""
