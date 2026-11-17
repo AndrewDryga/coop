@@ -481,7 +481,7 @@ func prepareCompositionArtifactParent(artifacts *compositionArtifactOps, cfg *co
 // compositionArtifactExposureRoots is what a box can actually reach through ordinary generated
 // mounts. The stable runfiles parent deliberately lives below BoxHome; ConfigDir and BoxHome are
 // protected control-plane ancestors, not broad mounts, so treating them as exposed would reject
-// every private artifact. Exact credential homes and external ACP aliases remain exposure roots.
+// every private artifact. Exact credential homes and other mounted writables remain exposure roots.
 func compositionArtifactExposureRoots(cfg *config.Config, spec RunSpec) []string {
 	roots := []string{projectPolicyRepo(spec)}
 	for _, companion := range spec.CompanionRepositories {

@@ -15,10 +15,10 @@ import (
 )
 
 // ConfigExposureRoots includes both Coop's host-control home and the potentially relocated
-// provider config tree, plus exact ACP transcript mount sources. Transcript subdirectories may be
-// aliases outside the config tree, and another provider using this same config may already have
-// them mounted. BoxHome remains authority even when COOP_CONFIG_DIR points elsewhere: it contains
-// coop.conf, session policy, presets and image bookkeeping that a workload must not rewrite.
+// provider config tree. Native homes are complete directories below ConfigDir, so no transcript
+// mount or provider-controlled alias needs a root of its own. BoxHome remains authority even when
+// COOP_CONFIG_DIR points elsewhere: it contains coop.conf, session policy, presets and image
+// bookkeeping that a workload must not rewrite.
 func ConfigExposureRoots(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
@@ -33,11 +33,6 @@ func ConfigExposureRoots(cfg *config.Config) []string {
 	add(cfg.NativeAuthorityConfig().ConfigDir)
 	add(cfg.BoxHome)
 	add(cfg.RunfilesHome())
-	if cfg.ConfigDir == "" {
-		return roots
-	}
-	// Native homes are strict complete directories below ConfigDir; there are
-	// no independent transcript mounts or provider-controlled source aliases.
 	return roots
 }
 
