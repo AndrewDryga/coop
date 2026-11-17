@@ -79,13 +79,19 @@ func (q queueIndex) waiting(item Item) bool {
 
 // WaitsForAnotherTask reports whether task went back to 00_todo/ to wait (tasks_wait). Handing a task
 // back is progress, not a stalled attempt: the loop takes other work next. A queue it cannot read is
-// an error, not "no wait": the box can write the queue, so it must not be able to hide a wait.
+// an error, not "no wait": the box can write the queue, so it must not be able to hide a wait. It
+// reads the whole queue, not only the task's folders, so anything unreadable the box left fails it.
 func WaitsForAnotherTask(task QueuedTask) (bool, error) {
-	current, ok, err := CurrentTask(task.Root, task.Item.ID)
+	items, err := ReadTaskTree(task.Root)
 	if err != nil {
 		return false, fmt.Errorf("read task %s after its attempt: %w", task.Item.ID, err)
 	}
-	return ok && current.State == StateTodo && current.WaitsOn != "", nil
+	for _, current := range items {
+		if current.ID == task.Item.ID {
+			return current.State == StateTodo && current.WaitsOn != "", nil
+		}
+	}
+	return false, nil
 }
 
 // RestoreRejectedWait returns a task whose wait the loop refused to in progress, with its work and

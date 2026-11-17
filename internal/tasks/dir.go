@@ -520,6 +520,107 @@ func readTaskTreeOnce(root string) ([]Item, bool, error) {
 	return items, false, nil
 }
 
+// readOneTask is readTaskTreeOnce for one id: the same queue and state-folder checks, then a look
+// for <state>/<id> in each state instead of a parse of every folder. An id found in two states is
+// the same error the whole read gives, after the same second look that tolerates a move in flight.
+func readOneTask(root, id string) (Item, bool, bool, error) {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\`) {
+		return Item{}, false, false, nil // never a folder name in a state folder
+	}
+	info, err := lstatTaskPath(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, false, nil
+	}
+	if err != nil {
+		return Item{}, false, false, fmt.Errorf("inspect task queue %s: %w", root, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return Item{}, false, false, fmt.Errorf("task queue %s is not a real directory", root)
+	}
+	queue, err := openQueueRoot(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, true, nil
+	}
+	if err != nil {
+		return Item{}, false, false, fmt.Errorf("open task queue %s: %w", root, err)
+	}
+	defer queue.Close()
+	var found []Item
+	for _, state := range TaskStates {
+		stateDir := filepath.Join(root, state)
+		info, err := queue.Lstat(state)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return Item{}, false, false, fmt.Errorf("inspect lifecycle state %s: %w", stateDir, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return Item{}, false, false, fmt.Errorf("lifecycle state %s is not a real directory", stateDir)
+		}
+		folder, err := openRealSubroot(queue, state)
+		if errors.Is(err, os.ErrNotExist) {
+			return Item{}, false, true, nil
+		}
+		if err != nil {
+			return Item{}, false, false, fmt.Errorf("read lifecycle state %s: %w", stateDir, err)
+		}
+		item, ok, err := lookupTaskEntry(folder, stateDir, id, state)
+		folder.Close()
+		if errors.Is(err, os.ErrNotExist) {
+			return Item{}, false, true, nil
+		}
+		if err != nil {
+			return Item{}, false, false, err
+		}
+		if ok {
+			found = append(found, item)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return Item{}, false, false, nil
+	case 1:
+		return found[0], true, false, nil
+	}
+	var still []string
+	for _, item := range found {
+		_, err := queue.Lstat(filepath.Join(item.State, id, "task.md"))
+		if err == nil {
+			still = append(still, item.State)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Item{}, false, false, fmt.Errorf("recheck duplicate task %s in %s: %w", id, item.State, err)
+		}
+	}
+	if len(still) > 1 {
+		return Item{}, false, false, fmt.Errorf("task %s exists in multiple lifecycle states: %s", id, strings.Join(still, ", "))
+	}
+	return Item{}, false, true, nil
+}
+
+// lookupTaskEntry is readStateFolder's handling of one entry, for the entry named id: absent or a
+// stray regular file is no task, anything else that is not a real folder is refused.
+func lookupTaskEntry(folder *os.Root, stateDir, id, state string) (Item, bool, error) {
+	info, err := folder.Lstat(id)
+	if errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, nil
+	}
+	if err != nil {
+		return Item{}, false, fmt.Errorf("read task %s/%s: %w", state, id, err)
+	}
+	if !info.IsDir() {
+		if info.Mode().IsRegular() {
+			return Item{}, false, nil
+		}
+		return Item{}, false, fmt.Errorf("task entry %s is not a real directory", filepath.Join(stateDir, id))
+	}
+	item, ok, err := parseTaskEntry(folder, stateDir, id, state)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Item{}, false, fmt.Errorf("read task %s/%s: %w", state, id, err)
+	}
+	return item, ok, err
+}
+
 // readStateFolder parses every task folder in one open state folder, recording ids in seen and
 // a second sighting in duplicates. retry reports a folder that moved away mid-read.
 func readStateFolder(folder *os.Root, stateDir, state string, seen map[string]string, duplicates map[string][]string) ([]Item, bool, error) {

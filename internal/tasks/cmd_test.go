@@ -1044,6 +1044,80 @@ func TestTasksRemoveRefusesLiveLeaseBeforePurging(t *testing.T) {
 	}
 }
 
+// Pruning the archive reads the whole queue a fixed number of times, not once or twice per archived
+// task: a 1,500-task archive made the old per-task lookups quadratic.
+func TestTasksFolderRemoveAllDoneReadsTheQueueAFixedNumberOfTimes(t *testing.T) {
+	reads := func(n int) int64 {
+		root := t.TempDir()
+		for i := range n {
+			writeTaskFile(t, filepath.Join(root, StateDone, fmt.Sprintf("2026-01-01-done-%02d", i), "task.md"), "# Done\n")
+		}
+		writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-02-open", "task.md"), "# Open\n")
+		before := taskTreeReads.Load()
+		if code, err := tasksFolderRemove(root, []string{"--all-done", "--yes"}); code != 0 || err != nil {
+			t.Fatalf("rm --all-done over %d tasks = (%d, %v)", n, code, err)
+		}
+		if items := mustReadTaskTree(t, root); len(items) != 1 || items[0].State != StateTodo {
+			t.Fatalf("after rm --all-done over %d tasks, left %+v; want only the open task", n, items)
+		}
+		return taskTreeReads.Load() - before
+	}
+	if small, large := reads(3), reads(30); small != large {
+		t.Fatalf("whole-queue reads: %d for 3 archived tasks, %d for 30; want the same count", small, large)
+	}
+}
+
+// CurrentTask reads one task's folders yet keeps the whole read's refusals: an id in two states, a
+// linked queue or state folder, and a linked task folder. A missing id is plainly not found.
+func TestCurrentTaskLooksUpOneTaskWithTheWholeReadsRefusals(t *testing.T) {
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# A\n")
+	writeTaskFile(t, filepath.Join(root, StateDone, "2026-01-02-b", "task.md"), "# B\n- [x] one\n")
+	before := taskTreeReads.Load()
+	item, ok, err := CurrentTask(root, "2026-01-02-b")
+	if err != nil || !ok || item.State != StateDone || item.Title != "B" || len(item.Subtasks) != 1 {
+		t.Fatalf("CurrentTask = %+v, %v, %v; want the done task B", item, ok, err)
+	}
+	if reads := taskTreeReads.Load() - before; reads != 0 {
+		t.Fatalf("CurrentTask read the whole queue %d times", reads)
+	}
+	for _, id := range []string{"2026-01-09-missing", "", ".", "..", "../" + filepath.Base(root), StateTodo + "/2026-01-01-a"} {
+		if _, ok, err := CurrentTask(root, id); ok || err != nil {
+			t.Errorf("CurrentTask(%q) = %v, %v; want not found", id, ok, err)
+		}
+	}
+	if _, ok, err := CurrentTask(filepath.Join(root, "absent"), "2026-01-01-a"); ok || err != nil {
+		t.Errorf("CurrentTask on a missing queue = %v, %v; want not found", ok, err)
+	}
+
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "2026-01-02-b", "task.md"), "# B\n")
+	if _, _, err := CurrentTask(root, "2026-01-02-b"); err == nil || !strings.Contains(err.Error(), "multiple lifecycle states") {
+		t.Fatalf("duplicate id error = %v", err)
+	}
+
+	elsewhere := t.TempDir()
+	writeTaskFile(t, filepath.Join(elsewhere, "2026-01-03-c", "task.md"), "# C\n")
+	if err := os.Symlink(filepath.Join(elsewhere, "2026-01-03-c"), filepath.Join(root, StateTodo, "2026-01-03-c")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CurrentTask(root, "2026-01-03-c"); err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("linked task folder error = %v", err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(root, StateBlocked)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CurrentTask(root, "2026-01-01-a"); err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("linked state folder error = %v", err)
+	}
+	linked := filepath.Join(t.TempDir(), "tasks")
+	if err := os.Symlink(root, linked); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CurrentTask(linked, "2026-01-01-a"); err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("linked queue error = %v", err)
+	}
+}
+
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done

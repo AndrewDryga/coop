@@ -903,17 +903,16 @@ func (s *TaskLeaseSummary) add(o TaskLeaseObservation) {
 	}
 }
 
+// CurrentTask finds one task by id in root's lifecycle states, reading only its own folders, so a
+// caller looping over many tasks does not reread the whole archive for each one.
 func CurrentTask(root, id string) (Item, bool, error) {
-	items, err := ReadTaskTree(root)
-	if err != nil {
-		return Item{}, false, err
-	}
-	for _, t := range items {
-		if t.ID == id {
-			return t, true, nil
+	for attempt := 0; attempt < 3; attempt++ {
+		item, ok, retry, err := readOneTask(root, id)
+		if err != nil || !retry {
+			return item, ok, err
 		}
 	}
-	return Item{}, false, nil
+	return Item{}, false, fmt.Errorf("task %s kept moving while it was read; retry", id)
 }
 
 // TryTaskLease locks a candidate without waiting, writes metadata only after the authoritative
