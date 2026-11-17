@@ -333,7 +333,17 @@ func (b *openBroker) waitReadyWithin(timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case line := <-ready:
+	case line, ok := <-ready:
+		if !ok {
+			// The output ended without a line: the helper is exiting, and only its exit says that its
+			// stderr is all copied.
+			select {
+			case <-b.helper.Exited():
+				return fmt.Errorf("the MCP credential broker stopped before it was ready%s", b.stderr.detail())
+			case <-timer.C:
+				return fmt.Errorf("the MCP credential broker closed its output and did not exit within %s; no agent started%s", timeout, b.stderr.detail())
+			}
+		}
 		address, err := netip.ParseAddr(line)
 		if err != nil || !address.Is4() {
 			return fmt.Errorf("the MCP credential broker named no usable address%s", b.stderr.detail())
