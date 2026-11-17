@@ -217,8 +217,14 @@ func TestContextWithoutTaskIgnoresQueues(t *testing.T) {
 		t.Fatalf("path-only context inspected task queues: (%d, %v)", code, err)
 	}
 	ctxWrite(t, filepath.Join(repo, ".agent", "project.yaml"), "context: [\n")
-	if code, err := a.cmdContext([]string{"--task=shared", "--tasks=a/.agent/tasks"}); code != 2 || err == nil {
+	// A broken project.yaml is the command failing, exit 1 through reportExit, as for every command.
+	code, err = a.cmdContext([]string{"--task=shared", "--tasks=a/.agent/tasks"})
+	if code != -1 || err == nil {
 		t.Fatalf("explicit queue bypassed project config: (%d, %v)", code, err)
+	}
+	captureStderr(t, func() { code = reportExit(code, err) })
+	if code != 1 {
+		t.Errorf("a broken project.yaml exits %d, want 1 as for every command", code)
 	}
 }
 

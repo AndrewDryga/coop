@@ -85,7 +85,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	// committed), so a fork gets the parent's routes while its scope (below) comes from its own tree.
 	p, err := project.Load(repo)
 	if err != nil {
-		return 2, err
+		return -1, err // a broken project.yaml is a command failure (exit 1), as for every command
 	}
 	scope, err := a.contextScope(repo, p, paths, changed, taskID, queueFlags)
 	if err != nil {
