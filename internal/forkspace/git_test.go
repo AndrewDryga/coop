@@ -351,3 +351,20 @@ func TestPinnedHistoryCopyOwnsOnlyAuthorizedComparisonRoots(t *testing.T) {
 		t.Fatalf("cache acquired mutable source refs: %s", refs)
 	}
 }
+
+// A pinned clone that fails after git made its folder removes it, so the next fork create does
+// not adopt a half-made workspace.
+func TestPinnedCloneRemovesItsFolderWhenTheFetchFails(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := committedSetupRepo(t)
+	dst := filepath.Join(t.TempDir(), "fork")
+	missing := strings.Repeat("0", len(strings.TrimSpace(string(readOut(t, repo, "rev-parse", "HEAD")))))
+	if err := GitClonePinnedContext(t.Context(), repo, dst, missing); err == nil {
+		t.Fatal("a clone pinned to a commit the source does not have succeeded")
+	}
+	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+		t.Fatalf("the failed clone left its folder: %v", err)
+	}
+}

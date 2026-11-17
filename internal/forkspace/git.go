@@ -68,8 +68,9 @@ func GitCloneContext(ctx context.Context, src, dst string) error {
 }
 
 // GitClonePinnedContext copies an exact revision without checkout, hardlinks or
-// source-side executable configuration. The caller owns the new destination.
-func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
+// source-side executable configuration. The caller owns the new destination; a failure after
+// git made it removes it again, so a half-made copy is never adopted as a finished one.
+func GitClonePinnedContext(ctx context.Context, src, dst, commit string) (err error) {
 	if !ValidObjectID(commit) {
 		return errors.New("invalid pinned clone commit")
 	}
@@ -86,6 +87,13 @@ func GitClonePinnedContext(ctx context.Context, src, dst, commit string) error {
 		}
 		return err
 	}
+	defer func() {
+		if err != nil {
+			if cleanupErr := os.RemoveAll(dst); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove incomplete clone %s: %w", dst, cleanupErr))
+			}
+		}
+	}()
 	if err := GitFetchPinnedContext(ctx, src, dst, commit); err != nil {
 		return err
 	}
