@@ -636,15 +636,11 @@ type hostInterrupt struct {
 	sig os.Signal
 }
 
-func newHostInterrupt() (context.Context, *hostInterrupt) {
-	ctx, h, _ := listenForInterrupt(context.Background())
-	return ctx, h
-}
-
-// listenForInterrupt is newHostInterrupt over parent, for a stretch of the launch that ends before
-// the process does. Its stop gives the signals their default action back, and after it returns the
-// recorder is final: a signal that landed while stop ran is recorded, so a caller reads one it
-// would otherwise have lost.
+// listenForInterrupt starts a hostInterrupt over parent, for a stretch of the launch that ends
+// before the process does. Its stop gives the signals their default action back, and after it
+// returns the recorder is final: a signal that landed while stop ran is recorded, so a caller reads
+// one it would otherwise have lost. Every caller must call stop; a registration left behind would
+// swallow the process's next signal.
 func listenForInterrupt(parent context.Context) (context.Context, *hostInterrupt, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	h := &hostInterrupt{}

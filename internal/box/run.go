@@ -988,7 +988,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			// A filtered box is torn down by THIS process, so an interrupt has to arrive
 			// as a cancellation the cleanup below can act on — and teardown names the
 			// signal it was (hostInterrupt).
-			spec.Ctx, interrupt = newHostInterrupt()
+			var stopInterrupt func()
+			spec.Ctx, interrupt, stopInterrupt = listenForInterrupt(context.Background())
+			// Deferred before the teardown below, so it runs after it: a signal during teardown is
+			// still caught once, and the next one after this run takes its default action again.
+			defer stopInterrupt()
 		}
 		filtered, err = prepareFilteredExecution(spec.Ctx, cfg, rt, spec, spec.CapturedEgress, composeFile, spec.networkSmoke, sections)
 		if filtered != nil {

@@ -764,7 +764,8 @@ func TestStopReasonNeverInfersASignalFromAnExitStatus(t *testing.T) {
 // The recorder turns the first host signal into the cancellation cleanup acts on AND remembers
 // which signal it was.
 func TestHostInterruptRecordsTheSignalAndCancels(t *testing.T) {
-	ctx, interrupt := newHostInterrupt()
+	ctx, interrupt, stop := listenForInterrupt(context.Background())
+	defer stop()
 	if interrupt.reason() != "" || ctx.Err() != nil {
 		t.Fatal("nothing arrived yet")
 	}
