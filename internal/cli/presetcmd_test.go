@@ -414,7 +414,7 @@ func TestManualEndsWithThisProjectsPresets(t *testing.T) {
 	if !strings.Contains(pages, "frontier: a preset for multiple models") {
 		t.Errorf("the project's preset is missing from the manual:\n%s", pages)
 	}
-	if strings.Contains(RenderManual(cfg), "frontier:") {
+	if strings.Contains(RenderManual(), "frontier:") {
 		t.Error("RenderManual is the tool's documentation — a project's preset must not be in it")
 	}
 }

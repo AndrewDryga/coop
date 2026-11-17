@@ -428,7 +428,7 @@ func helpLayoutProblems(page string) []string {
 // RenderManual is the single source for `coop help --all`, docs/cli.md, and site/llms.txt — it must
 // be deterministic and plain (no ANSI, no host-specific version/paths/state), or gendocs -check flaps.
 func TestRenderManual(t *testing.T) {
-	m := RenderManual(&config.Config{BoxHome: "/host-boxhome", ConfigDir: "/host-configdir"})
+	m := RenderManual()
 	if strings.Contains(m, "\x1b[") {
 		t.Error("RenderManual must be plain — no ANSI escapes")
 	}
@@ -436,12 +436,6 @@ func TestRenderManual(t *testing.T) {
 	// its own GET STARTED heading (the tasks family does), which is approved copy, not state.
 	if strings.Contains(m, "GET STARTED: sign in") {
 		t.Error("RenderManual must omit the state-aware GET STARTED block")
-	}
-	if strings.Contains(m, "/host-boxhome") || strings.Contains(m, "/host-configdir") {
-		t.Error("RenderManual must not leak host config paths")
-	}
-	if RenderManual(&config.Config{}) != m {
-		t.Error("RenderManual must be cfg-independent (deterministic across machines)")
 	}
 	// Contributor build/test guidance belongs in CONTRIBUTING.md, where a contributor looks — not
 	// appended to the user's command reference.
@@ -461,7 +455,7 @@ func TestRenderManual(t *testing.T) {
 // The manual opens with the reference form of the approved menu: the same copy, with the machine's
 // version, service names and dimming left out so every machine renders the same bytes.
 func TestManualOpensWithTheApprovedMenu(t *testing.T) {
-	manual := RenderManual(&config.Config{})
+	manual := RenderManual()
 	menu, rest, ok := strings.Cut(manual, "\n"+manualSeparator+"\n")
 	if !ok || rest == "" {
 		t.Fatal("the manual should be the menu, then one separated page per command")
@@ -507,7 +501,7 @@ func TestManualPageOrder(t *testing.T) {
 	if !slices.Equal(manualOrder, wantManualOrder) {
 		t.Errorf("manualOrder drifted from the approved reference order:\n got: %v\nwant: %v", manualOrder, wantManualOrder)
 	}
-	manual := RenderManual(&config.Config{})
+	manual := RenderManual()
 	_, pages, _ := strings.Cut(manual, "\n"+manualSeparator+"\n")
 	at := 0
 	for _, name := range wantManualOrder {
@@ -561,7 +555,7 @@ func TestManualPagesEndWithoutANewline(t *testing.T) {
 // parsers refuse it, so no page may teach it (.agent/kb/rules/offline-not-none.md). The generated
 // docs/cli.md follows the manual, so the manual stands for it.
 func TestHelpSpellsTheNoNetworkModeOffline(t *testing.T) {
-	surfaces := map[string]string{"CLI manual": RenderManual(&config.Config{})}
+	surfaces := map[string]string{"CLI manual": RenderManual()}
 	for _, path := range []string{"README.md", "docs/agents.md", "docs/box.md", "docs/configuration.md",
 		"docs/integrations.md", "docs/loop.md", "docs/networking.md"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", path))

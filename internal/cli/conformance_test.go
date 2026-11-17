@@ -153,7 +153,7 @@ func TestCLIConformance(t *testing.T) {
 		_, presetInitErr := a.presetsInit(t.TempDir(), []string{"frontier", "extra"})
 		_, loginErr := a.cmdLogin(nil)
 		surfaces := map[string]string{
-			"manual":            RenderManual(a.cfg),
+			"manual":            RenderManual(),
 			"top-level help":    renderHelp(a.cfg, true),
 			"agent help":        agentHelp("claude"),
 			"credentials help":  commandHelp["credentials"],

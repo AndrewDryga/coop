@@ -61,7 +61,8 @@ func helpText(cfg *config.Config) string { return renderHelp(cfg, false) }
 // renderHelp renders the top-level command menu. ref=true is the DETERMINISTIC reference form for
 // docs/`coop help --all`: forced no-color, no state-aware GET STARTED block, and the generic
 // service rows with no per-project names or dimming — so the output is identical on every machine
-// (gendocs -check depends on it). ref=false is the live, state-aware terminal view.
+// (gendocs -check depends on it) and never reads cfg, which may be nil. ref=false is the live,
+// state-aware terminal view.
 func renderHelp(cfg *config.Config, ref bool) string {
 	p := ui.For(os.Stdout) // help is a stdout view — gate color on stdout so a pipe stays clean
 	if ref {
@@ -293,9 +294,9 @@ var manualSeparator = strings.Repeat("=", 78)
 // (ui.Palette{}) and state-free, so its bytes never depend on the terminal, this project's Compose
 // file, the config paths, or which accounts are signed in. Contributor build/test guidance is NOT
 // here: it lives in CONTRIBUTING.md, where a contributor looks, not in the user's command reference.
-func RenderManual(cfg *config.Config) string {
+func RenderManual() string {
 	var b strings.Builder
-	b.WriteString(renderHelp(cfg, true))
+	b.WriteString(renderHelp(nil, true))
 	for _, name := range manualOrder {
 		page := manualPage(name)
 		if page == "" {
