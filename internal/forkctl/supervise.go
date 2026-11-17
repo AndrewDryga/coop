@@ -68,9 +68,9 @@ func workerStateFormatError(repo, name string, err error) error {
 	case errors.Is(err, forkspace.ErrNotAStateFile):
 		// sed would wait forever on a named pipe and never finish a device, and ls -l lists a
 		// folder's contents, so the inspection is ls -ld.
-		return fmt.Errorf("fork %s state: %w — Coop left it unchanged (inspect it with: ls -ld %q). %s", name, err, path, recovery)
+		return fmt.Errorf("fork %s state: %w — Coop left it unchanged (inspect it with: %s). %s", name, err, shellLine([]string{"ls", "-ld", path}), recovery)
 	default:
-		return fmt.Errorf("fork %s state at %q is malformed (%v) — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: sed -n '1,4p' %q). %s", name, path, err, path, recovery)
+		return fmt.Errorf("fork %s state at %q is malformed (%v) — Coop left the exact file unchanged and will not infer a process identity from it (inspect it with: %s). %s", name, path, err, shellLine([]string{"sed", "-n", "1,4p", path}), recovery)
 	}
 }
 
@@ -371,9 +371,9 @@ func forkLogError(repo, name string, err error) error {
 // removeCommand is the shell command that removes what is at path; rm refuses a folder.
 func removeCommand(path string) string {
 	if info, err := os.Lstat(path); err == nil && info.IsDir() {
-		return fmt.Sprintf("rmdir -- %q", path)
+		return shellLine([]string{"rmdir", "--", path})
 	}
-	return fmt.Sprintf("rm -- %q", path)
+	return shellLine([]string{"rm", "--", path})
 }
 
 // logChunkLimit bounds how much of one log line streamLog holds. A longer line prints in pieces, so
@@ -678,7 +678,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	}
 	c.settleForkRuns(name, forkspace.Workspace(repo, name))
 	if err := forkspace.RemoveWorkerState(repo, name); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: ls -ld %q %q; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, forkspace.PidPath(repo, name), forkspace.StateDir(repo), name)
+		return 1, fmt.Errorf("fork %s box is gone, but its cleanup state could not be cleared: %w — inspect it and its parent with: %s; remove any obstruction or restore parent write permission, then retry: coop fork stop %s", name, err, shellLine([]string{"ls", "-ld", forkspace.PidPath(repo, name), forkspace.StateDir(repo)}), name)
 	}
 	_ = forkspace.RemoveWorkerContinue(repo, name)
 	if hasGeneration {

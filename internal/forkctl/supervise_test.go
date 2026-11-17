@@ -108,14 +108,14 @@ func TestForkStartAndStopRefuseALinkAtTheLockOrLog(t *testing.T) {
 		name string
 		run  func(repo string) (int, error)
 		path func(repo string) string
-		want string // %[1]s is the planted path
+		want string // %[1]s is the planted path, %[2]s the command that removes it
 	}{
 		{name: "start/lock", run: start, path: lock,
-			want: "lock fork perf state: %[1]s is a link — remove it: rm -- %[1]q, then retry the original coop fork command"},
+			want: "lock fork perf state: %[1]s is a link — remove it: %[2]s, then retry the original coop fork command"},
 		{name: "start/log", run: start, path: func(repo string) string { return forkspace.LogPath(repo, "perf") },
-			want: "fork perf log: %[1]s is a link — remove it: rm -- %[1]q, then retry"},
+			want: "fork perf log: %[1]s is a link — remove it: %[2]s, then retry"},
 		{name: "stop/lock", run: stop, path: lock,
-			want: "lock fork perf state: %[1]s is a link — remove it: rm -- %[1]q, then retry: coop fork stop perf"},
+			want: "lock fork perf state: %[1]s is a link — remove it: %[2]s, then retry: coop fork stop perf"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// repo itself is never created, so a start that wrongly got past the log fails to start
@@ -139,7 +139,7 @@ func TestForkStartAndStopRefuseALinkAtTheLockOrLog(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, err := tc.run(repo)
-			if want := fmt.Sprintf(tc.want, path); code != -1 || err == nil || err.Error() != want {
+			if want := fmt.Sprintf(tc.want, path, shellLine([]string{"rm", "--", path})); code != -1 || err == nil || err.Error() != want {
 				t.Fatalf("%s over a link = (%d, %v), want (-1, %s)", tc.name, code, err, want)
 			}
 			if pathExists(forkspace.PidPath(repo, "perf")) {
@@ -264,7 +264,7 @@ func TestForkStopRejectsInvalidStateWithoutSideEffects(t *testing.T) {
 				steps := []string{
 					"pgrep -fl -- '[f]ork perf .*--_detached'",
 					"stop only one whose working directory is this repository",
-					fmt.Sprintf("then remove the file: rm -- %q", path),
+					"then remove the file: " + shellLine([]string{"rm", "--", path}),
 					"then run: coop fork stop perf",
 				}
 				last := -1
@@ -586,10 +586,10 @@ func TestForkStopAndLsRefuseStateThatIsNotARecord(t *testing.T) {
 			}
 			steps := []string{
 				fmt.Sprintf("fork perf state: %s is %s — Coop left it unchanged", path, tc.found),
-				fmt.Sprintf("inspect it with: ls -ld %q", path),
+				"inspect it with: " + shellLine([]string{"ls", "-ld", path}),
 				"pgrep -fl -- '[f]ork perf .*--_detached'",
 				"stop only one whose working directory is this repository",
-				fmt.Sprintf("then remove the file: %s -- %q", remove, path),
+				"then remove the file: " + shellLine([]string{remove, "--", path}),
 				"then run: coop fork stop perf",
 			}
 			last := -1
@@ -1644,7 +1644,7 @@ func TestForkLogsAllSurvivesALogThatIsNotAFile(t *testing.T) {
 	}
 	for name, found := range map[string]string{"fifo": "a named pipe", "link": "a link"} {
 		path := forkspace.LogPath(repo, name)
-		if want := fmt.Sprintf("fork %s log: %s is %s — remove it: rm -- %q", name, path, found, path); !strings.Contains(runErr.Error(), want) {
+		if want := fmt.Sprintf("fork %s log: %s is %s — remove it: %s", name, path, found, shellLine([]string{"rm", "--", path})); !strings.Contains(runErr.Error(), want) {
 			t.Errorf("ForkLogs(all) error lacks %q:\n%v", want, runErr)
 		}
 	}
@@ -1676,7 +1676,7 @@ func TestForkLogsFollowReportsStreamFailure(t *testing.T) {
 		t.Fatalf("ForkLogs(--follow) = (%d, %v), want stream failure", code, err)
 	}
 	path := forkspace.LogPath(repo, "broken")
-	if got, want := strings.Join(lines, "\n"), fmt.Sprintf("fork broken log: %s is a folder — remove it: rmdir -- %q", path, path); !strings.Contains(got, want) {
+	if got, want := strings.Join(lines, "\n"), fmt.Sprintf("fork broken log: %s is a folder — remove it: %s", path, shellLine([]string{"rmdir", "--", path})); !strings.Contains(got, want) {
 		t.Fatalf("follow failure output = %q, want %q", got, want)
 	}
 }
@@ -1815,5 +1815,14 @@ func TestForkStopRefusesAnUnreadableRegistryBeforeSignaling(t *testing.T) {
 	}
 	if !pathExists(forkspace.PidPath(repo, "perf")) {
 		t.Fatal("the worker record was removed")
+	}
+}
+
+// A pasted command must act on the path as written: Go's %q makes a double-quoted string, inside
+// which a shell still expands $ and backticks.
+func TestRemoveCommandQuotesPathsForTheShell(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "proj-$HOME-`id`")
+	if got, want := removeCommand(path), "rm -- '"+path+"'"; got != want {
+		t.Fatalf("removeCommand = %s, want %s", got, want)
 	}
 }

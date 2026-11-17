@@ -930,7 +930,7 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	}
 	if rebaseErr != nil {
 		_ = forkspace.GitRun(ws, "rebase", "--abort")
-		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (cd %q && git rebase %s %s), then re-run", name, gitBranch(repo), ws, head, name)
+		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (%s && git rebase %s %s), then re-run", name, gitBranch(repo), shellLine([]string{"cd", ws}), head, name)
 	}
 	// The fork stands on head now, so the parent's commits up to it are no changes of the fork's, even
 	// if the checks below fail and leave it rebased. Only a display (coop fork ls) reads the base, so
@@ -982,7 +982,7 @@ func untrustedRebaseState(ws string) string {
 // outcomes are loud: what was found and what was done, or who owns it and how to stop them.
 func recoverInterruptedRebase(repo, ws, name string) error {
 	if dir := untrustedRebaseState(ws); dir != "" {
-		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: its state (%s) is in the fork's own git dir, which coop does not run checkouts against — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, ws, filepath.Base(dir), ws)
+		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: its state (%s) is in the fork's own git dir, which coop does not run checkouts against — finish it by hand (%s && git status; git rebase --abort), then re-run the merge", name, ws, filepath.Base(dir), shellLine([]string{"cd", ws}))
 	}
 	dir := leftoverRebaseState(ws)
 	if dir == "" {
@@ -998,7 +998,7 @@ func recoverInterruptedRebase(repo, ws, name string) error {
 	ui.Warn("fork %s has an unfinished rebase (%s) from an interrupted land — aborting it to recover the worktree", name, filepath.Base(dir))
 	// forkspace.GitOutErr, not forkspace.GitRun: git's own stderr is the only explanation a human gets for a failed abort.
 	if _, err := forkspace.GitOutErr(ws, "rebase", "--abort"); err != nil {
-		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (cd %q && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, ws)
+		return fmt.Errorf("%s: could not abort the unfinished rebase in %s: %w — finish it by hand (%s && git status; git rebase --abort), then re-run the merge", name, filepath.Base(dir), err, shellLine([]string{"cd", ws}))
 	}
 	ui.Detail("aborted the unfinished rebase; %s is back on its branch", name)
 	return nil
