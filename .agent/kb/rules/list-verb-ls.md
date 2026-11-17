@@ -2,9 +2,9 @@
 name: list-verb-ls
 description: "entity-listing subcommands use `ls`; recorded-run views use `runs`, never `list`"
 scope: cli-grammar
-sources: [internal/cli/help.go, internal/cli/conformance_test.go]
+sources: [internal/cli/help.go, internal/cli/conformance_test.go, internal/tasks/cmd.go, internal/tasks/queue.go]
 check: "go test ./internal/cli -run TestCLIConformance"
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 
 # Entity listings use `ls`; recorded-run views use `runs`
@@ -21,7 +21,7 @@ dual-accepting compat. This mirrors [[destructive-verb-rm]] (rm is the only dest
 **How to apply:**
 - A new listing subcommand: name it `ls`; do NOT add a `list` alias. Advertise `ls` in the help row,
   group-help line, usage string, and unknown-subcommand suggestions.
-- Dispatch is a single `case "ls":` (no `, "list"`), and `list` is NOT in `tasksVerbs`/`isTasksSubcommand`.
+- Dispatch is a single `case "ls":` (no `, "list"`), and `list` is NOT in `tasks.TasksVerbs`/`isTasksSubcommand`.
 - Prose descriptions may still say "list" as the English verb ("ls — list tasks by state"); that's
   the *description*, not an accepted subcommand.
 - `TestCLIConformance` asserts `ls` lists and `list` is unknown. The
@@ -31,6 +31,7 @@ dual-accepting compat. This mirrors [[destructive-verb-rm]] (rm is the only dest
 See also [[destructive-verb-rm]] (the sibling: rm is the only destructive verb) and [[help-output-style]].
 
 ## Changelog
+- 2026-11-17 — the verb list is the exported `tasks.TasksVerbs` (audit R2-4; checked internal/tasks/cmd.go; `list` is still in neither).
 - 2026-11-04 — `coop conformance` is not a command; the line names `TestCLIConformance` alone.
   Verified against internal/cli/conformance_test.go.
 - 2026-09-29 — swept `eval` and `net` dispatch/help: both use `runs` for recorded runs, while
