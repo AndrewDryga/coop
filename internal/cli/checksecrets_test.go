@@ -16,7 +16,7 @@ import (
 )
 
 // pinGitConfig closes both git config doors in the PROCESS environment, which the fixture repo
-// (gitrepo.New pins its own runner) does not do for the code under test: candidateFiles shells out
+// (gitrepo.New pins its own runner) does not do for the code under test: listProject shells out
 // to `git ls-files --exclude-standard` with the ambient environment, so a developer's
 // core.excludesFile would change which files these tests see as gitignored.
 // See .agent/kb/rules/hermetic-git-tests.md.
@@ -141,7 +141,7 @@ func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
 	mk("config.tf", token)           // tracked-able source → must be scanned
 
 	// Default mode: the gitignored file is out of the commit-candidate set.
-	scan, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(listProject(repo), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestScanVisibleTreeSkipsGitignored(t *testing.T) {
 	}
 
 	// --include-ignored: the box can see the gitignored file (whole tree is mounted), so flag it.
-	ignored, err := scanVisibleTree(repo, true)
+	ignored, err := scanVisibleTree(listProject(repo), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestScanVisibleTreeIncludeIgnoredSkipsShadowedAndDeps(t *testing.T) {
 	mk("node_modules/pkg/index.js", "x="+token) // dependency dir → pruned
 	mk("notes.txt", "token: "+token+"\n")       // plain visible file → flagged
 
-	scan, err := scanVisibleTree(repo, true)
+	scan, err := scanVisibleTree(listProject(repo), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestScanVisibleTree(t *testing.T) {
 	// A clean file → no finding.
 	mk("README.md", "nothing secret here\n")
 
-	scan, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(listProject(repo), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestUnscannedIgnoredFiles(t *testing.T) {
 	run("add", ".gitignore", "tracked.go")
 	run("commit", "-qm", "add")
 
-	if files, err := unscannedIgnoredFiles(repo); len(files) != 1 || files[0] != "secret.txt" || err != nil {
+	if files, err := unscannedIgnoredFiles(listProject(repo)); len(files) != 1 || files[0] != "secret.txt" || err != nil {
 		t.Errorf("unscannedIgnoredFiles = %q, %v; want only secret.txt (.env shadowed, .agent/* now scanned by default, tracked.go committed)", files, err)
 	}
 }
@@ -289,7 +289,7 @@ func TestScanVisibleTreeScansAgentByDefault(t *testing.T) {
 	run("add", ".gitignore")
 	run("commit", "-qm", "init")
 
-	scan, err := scanVisibleTree(repo, false) // DEFAULT scan, no --include-ignored
+	scan, err := scanVisibleTree(listProject(repo), false) // DEFAULT scan, no --include-ignored
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestReadScannable(t *testing.T) {
 }
 
 // A poisoned core.fsmonitor must not fire when `coop check-secrets` enumerates files —
-// candidateFiles runs `git ls-files`, which refreshes the index and so executes fsmonitor. The
+// listProject runs `git ls-files`, which refreshes the index and so executes fsmonitor. The
 // repo's .git is agent-writable, so this is a host-RCE vector if the call isn't hardened. The
 // positive control fires with genuinely raw git, so a green test means the hardening works rather
 // than that the trap is dead. (The fork/merge half of this guard lives in internal/forkctl.)
@@ -356,11 +356,11 @@ func TestCheckSecretsLsFilesIsHardened(t *testing.T) {
 		t.Fatal(err)
 	}
 	run("config", "core.fsmonitor", evil)
-	if _, _, err := candidateFiles(repo, false); err != nil { // hardened — must not run fsmonitor
-		t.Fatalf("candidateFiles: %v", err)
+	if _, _, err := listProject(repo).candidates(false); err != nil { // hardened — must not run fsmonitor
+		t.Fatalf("candidates: %v", err)
 	}
 	if pathExists(marker) {
-		t.Fatal("candidateFiles ran the parent's core.fsmonitor on the host")
+		t.Fatal("listProject ran the parent's core.fsmonitor on the host")
 	}
 	_ = exec.Command("git", "-C", repo, "ls-files", "--cached", "--others", "--exclude-standard").Run() // raw control
 	if !pathExists(marker) {
@@ -397,7 +397,7 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	mk("key.txt", key)      // plain commit candidate → the control
 	mk(".agent/tasks/notes/secret.key", key)
 
-	scan, err := scanVisibleTree(repo, false)
+	scan, err := scanVisibleTree(listProject(repo), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestCheckSecretsReportsNameShadowedCommitCandidates(t *testing.T) {
 	if !strings.Contains(joined, "silenced.pem") || strings.Contains(joined, "ignored.pem") {
 		t.Errorf("default scan must report hidden candidates but skip hidden noncandidates:\n%s", joined)
 	}
-	all, err := scanVisibleTree(repo, true)
+	all, err := scanVisibleTree(listProject(repo), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
 		}
 	}
 	write("coop-network-approval-v3\n" + strings.Repeat("a", 64) + "\n" + strings.Repeat("b", 32) + "\n")
-	if got, err := unscannedIgnoredFiles(repo); err != nil || len(got) != 0 {
+	if got, err := unscannedIgnoredFiles(listProject(repo)); err != nil || len(got) != 0 {
 		t.Fatalf("unchecked with a real marker = %v, %v", got, err)
 	}
 	for name, body := range map[string]string{
@@ -492,7 +492,7 @@ func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
 		"other file": "AWS_SECRET=x\n",
 	} {
 		write(body)
-		if got, err := unscannedIgnoredFiles(repo); err != nil || !slices.Contains(got, networkstate.ProjectApprovalMarker) {
+		if got, err := unscannedIgnoredFiles(listProject(repo)); err != nil || !slices.Contains(got, networkstate.ProjectApprovalMarker) {
 			t.Errorf("%s: unchecked = %v, %v; want the marker listed", name, got, err)
 		}
 	}
@@ -523,7 +523,7 @@ func TestIncludeIgnoredKeepsCommitCandidatesInPrunedFolders(t *testing.T) {
 	run("add", ".gitignore", "vendor")
 	run("commit", "-qm", "vendored")
 	for _, wide := range []bool{false, true} {
-		scan, err := scanVisibleTree(repo, wide)
+		scan, err := scanVisibleTree(listProject(repo), wide)
 		if err != nil {
 			t.Fatal(err)
 		}

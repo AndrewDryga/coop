@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -49,12 +50,13 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 		retry += " --include-ignored"
 	}
 
-	scan, err := scanVisibleTree(repo, includeIgnored)
+	listing := listProject(repo)
+	scan, err := scanVisibleTree(listing, includeIgnored)
 	// The default scan's blind spot is found before anything is printed: a .coopignore coop cannot
 	// read leaves it unknown, and stops the command as it stops the scan.
 	var unscanned []string
 	if err == nil && !includeIgnored {
-		unscanned, err = unscannedIgnoredFiles(repo)
+		unscanned, err = unscannedIgnoredFiles(listing)
 	}
 	if err != nil {
 		if refused := reportUnreadableCoopignore(err, retry, ""); refused != nil {
@@ -246,9 +248,9 @@ type treeScan struct {
 // the user what --include-ignored would add, so a clean default scan isn't false assurance.
 // Returns none when git is unavailable (both sets fall back to the same full walk), and the
 // refusal of a .coopignore that coop cannot read, which leaves the list unknown.
-func unscannedIgnoredFiles(repo string) ([]string, error) {
-	all, _, err1 := candidateFiles(repo, true)
-	scanned, _, err2 := candidateFiles(repo, false)
+func unscannedIgnoredFiles(l *projectListing) ([]string, error) {
+	all, _, err1 := l.candidates(true)
+	scanned, _, err2 := l.candidates(false)
 	if err1 != nil || err2 != nil {
 		return nil, nil
 	}
@@ -256,17 +258,16 @@ func unscannedIgnoredFiles(repo string) ([]string, error) {
 	for _, r := range scanned {
 		inScan[r] = true
 	}
-	shadowed := box.NewShadowDecider(repo)
 	var out []string
 	for _, r := range all {
 		if inScan[r] {
 			continue // already scanned by default (incl. coop's .agent/ state)
 		}
-		hidden, err := shadowed(r)
+		hidden, err := l.shadowed(r)
 		if err != nil {
 			return nil, err
 		}
-		if !hidden && !isApprovalMarker(repo, r) {
+		if !hidden && !isApprovalMarker(l.repo, r) {
 			out = append(out, r) // box-visible, user-gitignored, unprotected → a real blind spot
 		}
 	}
@@ -316,7 +317,7 @@ func unchangedSetupFiles(n int) string {
 	return fmt.Sprintf("%d unchanged Coop setup files that run commands are not listed.", n)
 }
 
-// scanVisibleTree scans candidateFiles, skipping only hidden noncandidates. It shares
+// scanVisibleTree scans the listing's candidates, skipping only hidden noncandidates. It shares
 // detectors with the fork-merge policy and box.NewShadowDecider with the mount plan.
 // Hidden commit candidates still need scanning: hiding protects the box, not a push.
 // includeIgnored widens the candidate set to the full tree (gitignored files included),
@@ -325,25 +326,27 @@ func unchangedSetupFiles(n int) string {
 // A file it could not READ is recorded, not skipped: an intentionally skipped binary or oversized
 // blob is a decision, while a permission error is a hole in the answer, and reporting a clean
 // scan over a hole is the failure mode this exists to prevent.
-func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
-	rels, usedGit, err := candidateFiles(repo, includeIgnored)
+func scanVisibleTree(l *projectListing, includeIgnored bool) (treeScan, error) {
+	rels, usedGit, err := l.candidates(includeIgnored)
 	if err != nil {
 		return treeScan{}, err
 	}
 	scan := treeScan{git: usedGit}
-	repoRoot, err := os.OpenRoot(repo)
+	repoRoot, err := os.OpenRoot(l.repo)
 	if err != nil {
 		return treeScan{}, err
 	}
 	defer repoRoot.Close()
-	shadowed := box.NewShadowDecider(repo)
-	committable := commitCandidateSet(repo)
+	committable := make(map[string]bool, len(l.commit))
+	for _, rel := range l.commit {
+		committable[rel] = true
+	}
 	for _, rel := range rels {
 		// Built-in names and explicit .coopignore rules both protect only the box.
 		// Every commit candidate is scanned; only an exact reviewed finding may be excused.
 		// A shadowed file git would not commit
 		// (gitignored, or coop's own .agent/ state) is protected on both sides and skipped.
-		hidden, err := shadowed(rel)
+		hidden, err := l.shadowed(rel)
 		if err != nil {
 			return treeScan{}, err // a .coopignore coop cannot read leaves this file undecided
 		}
@@ -366,75 +369,65 @@ func scanVisibleTree(repo string, includeIgnored bool) (treeScan, error) {
 	return scan, nil
 }
 
-// commitCandidateSet is the set of files git would commit (tracked + untracked, gitignored
-// excluded). Empty when git is unavailable or repo is not a work tree: nothing is then known to
-// be committable, so a shadowed file stays skipped as before.
-func commitCandidateSet(repo string) map[string]bool {
-	out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return nil
-	}
-	set := map[string]bool{}
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p != "" {
-			set[p] = true
-		}
-	}
-	return set
+// projectListing is what one check-secrets run asks Git about the project, asked once: the scan
+// and the blind-spot warning read the same lists rather than running the same Git commands again,
+// and share one shadow decider.
+type projectListing struct {
+	repo     string
+	commit   []string // what Git would commit: tracked plus untracked, gitignored excluded
+	gitOK    bool     // false when git is unavailable or repo is not a work tree
+	agent    []string // Coop's gitignored .agent/ working state (ignoredAgentFiles)
+	shadowed func(rel string) (bool, error)
 }
 
-// candidateFiles lists the repo-relative paths worth scanning. The default is the
-// commit-candidate set: tracked plus untracked files, gitignored ones excluded — what
-// you'd commit (and what a fork sees), not vendored deps or build output. includeIgnored
-// instead walks the full working tree, since a `coop run`/`shell`/`loop` bind-mounts the
-// whole tree and a gitignored file is still visible to the agent. Both fall back to the
-// full walk when repo isn't a git work tree; usedGit reports which list the caller got, so
-// the result can say what it actually covered.
-func candidateFiles(repo string, includeIgnored bool) (rels []string, usedGit bool, err error) {
-	// Build the args through gitArgs so the hardening (-c core.fsmonitor=, core.hooksPath=/dev/null,
-	// …) applies: ls-files refreshes the index, which would otherwise EXECUTE a poisoned repo's
-	// core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box run can plant
-	// it. Keep the raw .Output() (not forkspace.GitOut) so "git failed" (→ filesystem fallback) stays
-	// distinct from "git succeeded, empty list"; forkspace.GitOut deliberately collapses both to "".
-	commitCandidates := func() ([]string, bool) {
-		out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-		if err != nil {
-			return nil, false
-		}
-		var listed []string
-		for _, p := range strings.Split(string(out), "\x00") {
-			if p != "" {
-				listed = append(listed, p)
-			}
-		}
-		return listed, true
+// listProject lists repo's commit candidates through gitArgs, so the hardening (-c core.fsmonitor=,
+// core.hooksPath=/dev/null, …) applies: ls-files refreshes the index, which would otherwise EXECUTE
+// a poisoned repo's core.fsmonitor on the host — the repo's .git is agent-writable, so a prior box
+// run can plant it. It keeps the raw output (not forkspace.GitOut) so "git failed" (→ filesystem
+// fallback) stays distinct from "git succeeded, empty list"; forkspace.GitOut collapses both to "".
+func listProject(repo string) *projectListing {
+	l := &projectListing{repo: repo, shadowed: box.NewShadowDecider(repo)}
+	out, err := gitOutputBytes(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return l
 	}
-	if !includeIgnored {
-		if listed, ok := commitCandidates(); ok {
-			rels = listed
-			// Also scan coop's own gitignored .agent/ working state — the box reads it (the task
-			// queue + backlog + agent notes), so a secret pasted into a task's .agent/.../log.md or
-			// state.md is a real exposure the commit-candidate set (gitignored excluded) misses.
-			rels = append(rels, ignoredAgentFiles(repo)...)
-			return rels, true, nil
+	l.gitOK = true
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			l.commit = append(l.commit, p)
 		}
-		// git unavailable / not a work tree → fall through to the full walk (covers .agent too).
 	}
-	rels, err = walkVisibleTree(repo)
+	l.agent = ignoredAgentFiles(repo)
+	return l
+}
+
+// candidates lists the repo-relative paths worth scanning. The default is the commit-candidate
+// set: tracked plus untracked files, gitignored ones excluded — what you'd commit (and what a fork
+// sees), not vendored deps or build output. includeIgnored instead walks the full working tree,
+// since a `coop run`/`shell`/`loop` bind-mounts the whole tree and a gitignored file is still
+// visible to the agent. Both fall back to the full walk when repo isn't a git work tree; usedGit
+// reports which list the caller got, so the result can say what it actually covered.
+func (l *projectListing) candidates(includeIgnored bool) (rels []string, usedGit bool, err error) {
+	if !includeIgnored && l.gitOK {
+		// Also scan coop's own gitignored .agent/ working state — the box reads it (the task queue +
+		// backlog + agent notes), so a secret pasted into a task's .agent/.../log.md or state.md is a
+		// real exposure the commit-candidate set (gitignored excluded) misses.
+		return slices.Concat(l.commit, l.agent), true, nil
+	}
+	// git unavailable / not a work tree → the full walk (covers .agent too).
+	rels, err = walkVisibleTree(l.repo)
 	if err != nil || !includeIgnored {
 		return rels, false, err
 	}
 	// The walk prunes dependency and build folders by name. A file Git would commit under one of
 	// them (vendor/key.pem) is in the default scan, so the wider scan keeps it too.
-	if listed, ok := commitCandidates(); ok {
-		walked := make(map[string]bool, len(rels))
-		for _, rel := range rels {
-			walked[rel] = true
-		}
-		for _, rel := range listed {
-			if !walked[rel] {
-				rels = append(rels, rel)
-			}
+	walked := make(map[string]bool, len(rels))
+	for _, rel := range rels {
+		walked[rel] = true
+	}
+	for _, rel := range l.commit {
+		if !walked[rel] {
+			rels = append(rels, rel)
 		}
 	}
 	return rels, false, nil
