@@ -227,7 +227,7 @@ func rememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 	if len(record.Files) == 0 && len(before) == 0 {
 		return nil
 	}
-	if err := preserveHiddenAliases(repo, before, seen, &record); err != nil {
+	if err := preserveHiddenAliases(repo, before, seen, hiddenDirs(workdir, mounts), &record); err != nil {
 		return err
 	}
 	return writeHiddenFiles(repo, record)
@@ -237,7 +237,11 @@ func rememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 // identity a complete filesystem admission recorded there, or a subsequent host
 // atomic save can leave its old alias exposed. Ordinary unchanged records need
 // no additional walk; deliberate declassification at the original path remains.
-func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileIdentity]bool, record *hiddenFilesRecord) error {
+//
+// A folder the mount plan hides that Coop cannot read is skipped (the box only sees its decoy), and
+// an entry that vanishes mid-walk is no alias. Past the walk bound the identities still missing are
+// kept, not forgotten. Any other walk error fails the launch, so the record is rewritten next time.
+func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileIdentity]bool, hidden []string, record *hiddenFilesRecord) error {
 	missing := rememberedHidden{}
 	for id, origin := range before {
 		if !seen[id] {
@@ -247,16 +251,34 @@ func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileId
 	if len(missing) == 0 {
 		return nil
 	}
+	keepMissing := func() error {
+		for id, origin := range missing {
+			if len(record.Files) >= maxHiddenFiles {
+				return errors.New("hidden-file alias record exceeds admission bounds")
+			}
+			record.Files = append(record.Files, hiddenFile{Dev: id.dev, Ino: id.ino, Path: origin})
+		}
+		return fs.SkipAll
+	}
 	visited := 0
 	err := filepath.WalkDir(repo, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
+			if rel, err := filepath.Rel(repo, name); err == nil && errors.Is(walkErr, fs.ErrPermission) && underHiddenDir(filepath.ToSlash(rel), hidden) {
+				return nil
+			}
 			return walkErr
 		}
 		visited++
 		if visited > 1_000_000 {
-			return errors.New("hidden-file alias inventory exceeds admission bounds")
+			return keepMissing()
 		}
 		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -284,6 +306,26 @@ func preserveHiddenAliases(repo string, before rememberedHidden, seen map[fileId
 	})
 	slices.SortFunc(record.Files, func(a, b hiddenFile) int { return strings.Compare(a.Path, b.Path) })
 	return err
+}
+
+// hiddenDirs lists the repository-relative folders the mount plan covers with a decoy.
+func hiddenDirs(workdir string, mounts []Mount) []string {
+	var dirs []string
+	for _, m := range mounts {
+		if rel, ok := strings.CutPrefix(m.Target, workdir+"/"); ok && m.Kind == DirDecoy {
+			dirs = append(dirs, rel)
+		}
+	}
+	return dirs
+}
+
+func underHiddenDir(rel string, dirs []string) bool {
+	for _, dir := range dirs {
+		if rel == dir || strings.HasPrefix(rel, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func writeHiddenFiles(repo string, record hiddenFilesRecord) error {

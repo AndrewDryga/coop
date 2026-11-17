@@ -105,6 +105,28 @@ func TestAHiddenFileStaysHiddenAfterABoxMovesIt(t *testing.T) {
 	})
 }
 
+// A hidden folder Coop cannot read (a database folder a container user owns, listed in .coopignore)
+// does not fail a launch once a remembered hidden file is replaced: the alias walk skips it, since
+// the box sees only its decoy.
+func TestAnUnreadableHiddenFolderDoesNotFailTheAliasWalk(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{".coopignore": "pgdata/\n", "pgdata/base/1": "x\n", ".env": "KEY=1\n"})
+	launch(t, repo)
+	if err := os.Chmod(filepath.Join(repo, "pgdata"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(repo, "pgdata"), 0o700) })
+	// An atomic save gives .env a new inode, so the remembered one is missing and the walk runs.
+	if err := os.Remove(filepath.Join(repo, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, repo, map[string]string{".env": "KEY=2\n"})
+	for range 2 {
+		launch(t, repo)
+	}
+}
+
 // Remembering never overrides the person's rules where the file still is: back at its path, a file
 // whose rule was taken out of .coopignore is shown, and forgotten.
 func TestAFileStillAtItsPathFollowsTheCurrentRules(t *testing.T) {
