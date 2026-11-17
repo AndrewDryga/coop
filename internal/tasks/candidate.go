@@ -316,7 +316,7 @@ func AuthorizeForkCandidateReview(repo string, identity forkspace.Identity, cand
 		return err
 	}
 	state, exists, err := readForkCandidateState(repo, identity)
-	if err != nil || !exists || state.manifest == nil {
+	if err != nil || !exists {
 		return errors.Join(err, errors.New("fork candidate review is no longer current"))
 	}
 	manifest := *state.manifest

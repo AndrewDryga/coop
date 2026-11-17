@@ -195,15 +195,8 @@ func validateForkCandidateManifest(manifest forkCandidateManifest, identity fork
 		if err := validateForkCandidate(*manifest.Pending); err != nil {
 			return err
 		}
-		want := uint64(1)
-		if manifest.Current != nil {
-			if manifest.Current.Round == forkCandidateRoundLimit {
-				return errors.New("fork candidate round limit reached")
-			}
-			want = manifest.Current.Round + 1
-		}
-		if pendingRound(manifest) != want {
-			return errors.New("pending fork candidate has a non-contiguous round")
+		if manifest.Current != nil && manifest.Current.Round == forkCandidateRoundLimit {
+			return errors.New("fork candidate round limit reached")
 		}
 	case forkCandidateLanded, forkCandidateDiscarded:
 		if manifest.Pending != nil || !validAssignmentID(manifest.TerminalID) ||
@@ -456,7 +449,7 @@ func forkCandidateFingerprintValue(repo string, identity forkspace.Identity) (fo
 		return forkCandidateFingerprint{}, exists, err
 	}
 	value := forkCandidateFingerprint{Manifest: state.manifest}
-	if state.manifest != nil && state.manifest.Current != nil {
+	if state.manifest.Current != nil {
 		record, err := readForkCandidateRound(repo, identity, *state.manifest.Current)
 		if err != nil {
 			return forkCandidateFingerprint{}, false, err
