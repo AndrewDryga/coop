@@ -1038,14 +1038,15 @@ var retiredMainConfigKeys = map[string]struct{}{
 }
 
 var booleanMainConfigKeys = map[string]struct{}{
-	"COOP_AUTO_UP":           {},
-	"COOP_CACHE":             {},
-	"COOP_CAFFEINATE":        {},
-	"COOP_HOMES":             {},
-	"COOP_NETWORK":           {},
-	"COOP_NO_NEW_PRIVILEGES": {},
-	"COOP_NO_UPDATE_CHECK":   {},
-	"COOP_STREAM_TRACE":      {},
+	"COOP_ALLOW_CASE_EXPOSED_SECRETS": {},
+	"COOP_AUTO_UP":                    {},
+	"COOP_CACHE":                      {},
+	"COOP_CAFFEINATE":                 {},
+	"COOP_HOMES":                      {},
+	"COOP_NETWORK":                    {},
+	"COOP_NO_NEW_PRIVILEGES":          {},
+	"COOP_NO_UPDATE_CHECK":            {},
+	"COOP_STREAM_TRACE":               {},
 }
 
 // adapterConfigKeys is populated by the agent registry during package initialization. That

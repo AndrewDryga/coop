@@ -306,12 +306,16 @@ func TestMainConfSyntaxAndDynamicKeys(t *testing.T) {
 }
 
 func TestInvalidFileValueIsNotHiddenByEnvironment(t *testing.T) {
-	clearAgentEnv(t)
-	path := writeMainConf(t, "COOP_HOMES=flase\n")
-	t.Setenv("COOP_CONF", path)
-	t.Setenv("COOP_HOMES", "true")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), path+":1") {
-		t.Fatalf("invalid overridden file value error = %v", err)
+	for _, key := range []string{"COOP_HOMES", "COOP_ALLOW_CASE_EXPOSED_SECRETS"} {
+		t.Run(key, func(t *testing.T) {
+			clearAgentEnv(t)
+			path := writeMainConf(t, key+"=flase\n")
+			t.Setenv("COOP_CONF", path)
+			t.Setenv(key, "true")
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), path+":1") {
+				t.Fatalf("invalid overridden file value error = %v", err)
+			}
+		})
 	}
 }
 
