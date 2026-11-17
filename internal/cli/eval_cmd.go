@@ -674,8 +674,8 @@ func positiveInt(flag, value string) (int, error) {
 }
 
 // renderEvalPlan shows the matrix before any work: the suite, its cases, every configuration, the
-// repetitions, the effective workers and the total deadline. Resource, reviewer, image, network and
-// cache detail resolve at preparation (a later milestone) and are named as such rather than faked.
+// repetitions, the effective workers and the total deadline. A runtime-profile case's image and
+// platform resolve only at execution, and the preview says so rather than faking them.
 func renderEvalPlan(p *eval.Plan, frozen []eval.FrozenConfig) {
 	kind := "agent"
 	if p.Suite.IsLoop() {

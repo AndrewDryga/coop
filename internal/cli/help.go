@@ -230,7 +230,7 @@ func projectServices(cfg *config.Config, ref bool) (compose string, services []s
 
 // anyAgentSignedIn reports whether any agent has a signed-in default or named credential.
 // Pure-local (reads the config dir + env file, no runtime), so `coop help` can key its
-// FIRST RUN hint on it without breaking the runtime-free help path.
+// GET STARTED group on it without breaking the runtime-free help path.
 func anyAgentSignedIn(cfg *config.Config) bool {
 	for _, agent := range agents.Names() {
 		// Only a hint: a listing error at worst shows the first-run hint to a signed-in user.

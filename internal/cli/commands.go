@@ -372,7 +372,9 @@ func (a *app) cmdRun(args []string) (int, error) {
 	}
 	if len(options) > 0 {
 		if options[0] == "-h" || options[0] == "--help" {
-			printHelpPage(runHelp) // not forwarded to the box, where it would exec `--help` and crash
+			// Main answers a leading -h before dispatch (helpAsked), so only a direct caller gets here;
+			// the box must never get it, where it would exec `--help` and crash.
+			printHelpPage(runHelp)
 			return 0, nil
 		}
 		// An option Coop did not take is a typo, not a program: refuse it HERE, before the box is
