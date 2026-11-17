@@ -52,7 +52,7 @@ if grep -rqs hunter2 . 2>/dev/null; then echo "RESULT FAIL sandbox.secret_value"
 # No host control plane: the agent must not be able to drive the host. The box ships only coop-entry
 # (the entrypoint), never the orchestration CLI, and coop never mounts the docker socket. The ONE
 # host control surface a loop box gets is the task socket (/coop/tasks/mcp.sock), asserted in its
-# own section below: the eight task tools, nothing shell-, exec-, or file-shaped, and a lease it
+# own section below: the nine task tools, nothing shell-, exec-, or file-shaped, and a lease it
 # cannot override.
 if command -v coop >/dev/null 2>&1; then echo "RESULT FAIL host.coop_cli"; else echo "RESULT PASS host.coop_cli"; fi
 if [ -S /var/run/docker.sock ]; then echo "RESULT FAIL host.docker_socket"; else echo "RESULT PASS host.docker_socket"; fi
@@ -503,7 +503,7 @@ const doctorTaskProbe = `#!/bin/sh
 const doctorTaskChecks = 4
 
 // doctorCheckTaskChannel proves the task socket by attacking it from inside a box: it must list
-// exactly the eight task tools and nothing shell-, exec-, or file-shaped; refuse a call outside
+// exactly the loop's task tools (taskmcp.ToolNames) and nothing shell-, exec-, or file-shaped; refuse a call outside
 // that set; and refuse a mutation on a task another live process holds — here a task the doctor's
 // own process leases through the same host authority a concurrent loop would — while the box's own
 // assigned task stays reachable, so the refusals cannot pass vacuously on a dead channel.

@@ -621,8 +621,8 @@ func agentArgs(agent string, args []string) []string {
 	return slices.Concat(typed, native)
 }
 
-// defaultCmd is the agent's autonomous interactive command; an unknown name runs as a
-// raw passthrough (so `coop npm test` still works).
+// defaultCmd is the agent's autonomous interactive command. Its callers pass a registered agent
+// (dispatch refuses an unknown command); an unknown name would come back as itself.
 func (a *app) defaultCmd(tool string) []string {
 	if ag, ok := agents.Get(tool); ok {
 		return ag.Interactive(a.cfg)
@@ -944,8 +944,9 @@ func loginAccountSuffix(tool, profile string) string {
 // cmdPrompt prints a compact, single-line status of this repo for embedding in a shell prompt, a
 // tmux status bar, or a menubar: task-queue counts and fork/loop activity, "·"-separated,
 // non-zero segments only — nothing when idle, so an embedding prompt stays clean. It is READ-ONLY
-// and does only cheap local reads (the task dirs + fork pidfiles, plus one git-root lookup) — never
-// a per-fork git shell-out and never docker — so it's safe to run on every prompt redraw. It takes
+// and does only cheap local reads (the task dirs + fork pidfiles, plus one git-root lookup and the
+// signing check below) — never a per-fork git shell-out and never docker — so it's safe to run on
+// every prompt redraw. It takes
 // no arguments and never errors out loud (a prompt must not spew): an unresolvable repo prints
 // nothing.
 func (a *app) cmdPrompt(args []string) (int, error) {
@@ -972,8 +973,9 @@ func (a *app) cmdPrompt(args []string) (int, error) {
 			looping++
 		}
 	}
-	// One extra bounded git call, and only when you sign by default: is HEAD unsigned (a box commit
-	// not yet signed)? A nudge to run `coop sign` before a protected remote rejects the push.
+	// Whether you sign by default costs one `git config` call on every redraw; only when you do, one
+	// more bounded git call asks whether HEAD is unsigned (a box commit not yet signed) — a nudge to
+	// run `coop sign` before a protected remote rejects the push.
 	signWarn := false
 	if forkspace.WantsSigning() {
 		signWarn = headUnsigned(repo)

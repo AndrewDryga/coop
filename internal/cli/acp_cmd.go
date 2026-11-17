@@ -591,7 +591,7 @@ func acpProjectHasServices(repo string) bool {
 func (a *app) cmdACPSupervise(rest []string, ctrl *acpctl.Control) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return 1, fmt.Errorf("acp --supervise: %w", err)
+		return 1, fmt.Errorf("locate the coop binary: %w", err)
 	}
 	inner := append([]string{"acp"}, rest...)
 	// A per-supervisor id, stamped on this supervisor's boxes (coop.sup=<id>) so it can
@@ -879,8 +879,8 @@ func (a *app) readFixedProject(ctrl *acpctl.Control, repo, superID string) {
 }
 
 // acpReloadAfterCleanup decides what a failed pre-exec box sweep means for a SIGHUP reload: the
-// reload goes ahead. `coop update` and `coop build` SIGHUP every supervisor at once, so one
-// transient `docker ps` / `rm -f` failure must not end editor sessions; Run already stopped the
+// reload goes ahead. A SIGHUP reload is the person's way to put an editor session on a fresh box
+// (coop help acp), so one transient `docker ps` / `rm -f` failure must not end it; Run already stopped the
 // active box, and anything the sweep missed still carries this supervisor's label, so the next
 // generation retries the sweep (PriorSupervisor) and the orphan sweep reaps it once the supervisor
 // is gone. Only the reload path is this lenient — the final teardown sweep returns its error.

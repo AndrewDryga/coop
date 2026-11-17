@@ -323,9 +323,9 @@ const networkModeRows = `  filtered  allow only what approved network rules perm
   open      allow unrestricted internet access
   offline   block internet access`
 
-// runHelp is `coop run`'s page. It's deliberately NOT in commandHelp: the dispatch's help check
-// is `--`-blind, so `coop run -- --help` (which must run --help in the box) would otherwise print
-// this instead. cmdRun (which honors --) and helpForCommand print it directly.
+// runHelp is `coop run`'s page. It is not in commandHelp: run's help check must stop where its box
+// command starts, so `coop run ls --help` runs ls --help. helpAsked, cmdRun and helpForPath honor
+// that and print it directly.
 const runHelp = `coop run: run a command in the box
 
 Usage:
