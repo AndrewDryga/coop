@@ -3321,3 +3321,22 @@ func TestACPPeekSpawnTargetMatchesTheNextSpawnWithoutSideEffects(t *testing.T) {
 		t.Fatalf("a peek across a provider switch answered (%v) or moved the lead to %q", ok, c.lead)
 	}
 }
+
+// The model cache is keyed by the lead, which a retarget changes under c.mu; the race detector
+// fails this test if cacheModels reads the lead without the lock.
+func TestCacheModelsReadsTheLeadUnderTheLock(t *testing.T) {
+	c := newTestControlWithHost(t, testHost())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			c.cacheModels(nil)
+		}
+	}()
+	for range 100 {
+		c.mu.Lock()
+		c.lead = "codex"
+		c.mu.Unlock()
+	}
+	<-done
+}

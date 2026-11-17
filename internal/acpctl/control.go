@@ -2096,7 +2096,10 @@ func (c *Control) rewriteConfigOptions(raw, models json.RawMessage, sid string, 
 // extra cost (the session/new models are already parsed here). Best-effort: an empty list or
 // a write error is ignored, so the plain `coop models` just falls back to the static list.
 func (c *Control) cacheModels(models []agents.Model) {
-	_ = c.host.WriteModelsCache(c.cfg, c.lead, models)
+	c.mu.Lock()
+	lead := c.lead
+	c.mu.Unlock()
+	_ = c.host.WriteModelsCache(c.cfg, lead, models)
 }
 
 // coopOptions builds the toolbar: plain sessions show Preset, Provider, and Account; an active
