@@ -403,6 +403,54 @@ func TestSessionHTTPWorkspaceAndCheckpointRequireMutationHeadersAndNoQuery(t *te
 	}
 }
 
+// A create hashes its job in canonical (sorted-key) form. The fence hashed the job as sent, so a
+// controller that marshals its job from a struct could not fence its own create: the fence after
+// an accepted create, and the create after a fence, both answered idempotency_conflict.
+func TestSessionHTTPCreateFenceMatchesWhateverOrderTheJobKeysCameIn(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service.Service)
+	structOrder := func(task string) string {
+		req := service.request(t, task)
+		job, err := workerproto.DecodeJobSpec(req.Job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Job, err = json.Marshal(job); err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := job.CanonicalDocument()
+		if err != nil || bytes.Equal(canonical, req.Job) {
+			t.Fatalf("struct order is the canonical order, so this test proves nothing: %v", err)
+		}
+		body, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	created := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", service.body(t, "accepted"), "accepted-create", "application/json")
+	if created.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	fence := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/operations/fence",
+		`{"method":"CreateRemoteSession","request":`+structOrder("accepted")+`}`, "accepted-create", "application/json")
+	if fence.Code != http.StatusOK || !strings.Contains(fence.Body.String(), `"state":"succeeded"`) {
+		t.Fatalf("fence after an accepted create = %d %s", fence.Code, fence.Body.String())
+	}
+
+	fence = sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/operations/fence",
+		`{"method":"CreateRemoteSession","request":`+structOrder("stopped")+`}`, "stopped-create", "application/json")
+	if fence.Code != http.StatusOK || !strings.Contains(fence.Body.String(), `"error_code":"operation_fenced"`) {
+		t.Fatalf("fence before the create = %d %s", fence.Code, fence.Body.String())
+	}
+	stale := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", structOrder("stopped"), "stopped-create", "application/json")
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"code":"operation_fenced"`) {
+		t.Fatalf("create after a fence = %d %s", stale.Code, stale.Body.String())
+	}
+}
+
 // Responder records remote mutation intent before the socket send. If Stop
 // wins in that gap, the owner-only fence must occupy the exact Coop operation
 // key without creating the session or model turn it is trying to stop.

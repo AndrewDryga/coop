@@ -1753,7 +1753,7 @@ func (s *Service) beginCreateOperation(
 	if req.Task == "" || len(req.Task) > session.MaxExternalRefBytes || !utf8SessionText(req.Task) {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "bounded task is required"}
 	}
-	job, err := workerproto.DecodeJobSpec(req.Job)
+	job, err := canonicalCreateJob(&req)
 	if err != nil {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}
@@ -1766,10 +1766,6 @@ func (s *Service) beginCreateOperation(
 	digest, err := job.Digest()
 	if err != nil || digest != req.ExpectedJobDigest {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "job digest does not match the controller document"}
-	}
-	req.Job, err = job.CanonicalDocument()
-	if err != nil {
-		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}
 	if err := session.ValidateControllerTools(req.ControllerTools); err != nil {
 		return session.Operation{}, err
@@ -3433,7 +3429,25 @@ func (s *Service) FenceCreateRemoteSession(
 	key string,
 	req CreateRemoteSessionRequest,
 ) (session.Operation, error) {
+	// A job that does not decode was never admitted, so its raw form fences nothing real either way.
+	_, _ = canonicalCreateJob(&req)
 	return s.store.FenceOperation(ctx, "CreateRemoteSession", key, req)
+}
+
+// canonicalCreateJob decodes a create's job and replaces it with the canonical document, the
+// form the create operation hashes. A fence must hash the same form, or a controller whose job
+// keys are in any other order could not fence its own accepted create.
+func canonicalCreateJob(req *CreateRemoteSessionRequest) (workerproto.JobSpec, error) {
+	job, err := workerproto.DecodeJobSpec(req.Job)
+	if err != nil {
+		return workerproto.JobSpec{}, err
+	}
+	canonical, err := job.CanonicalDocument()
+	if err != nil {
+		return workerproto.JobSpec{}, err
+	}
+	req.Job = canonical
+	return job, nil
 }
 
 func (s *Service) FenceSubmitTurn(
