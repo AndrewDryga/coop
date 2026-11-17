@@ -705,9 +705,10 @@ A candidate's `review.compose` can replace the Work stack with a separate dispos
 
 co:op computes the job digest itself. It writes the job's JSON the way Go's `encoding/json`
 does: no extra whitespace, object keys in sorted order, and `&`, `<` and `>` inside strings
-escaped as `\u0026`, `\u003c` and `\u003e`. The digest is the SHA-256 of those bytes, in
-lowercase hex. If it differs from `expected_job_digest`, co:op refuses the session with
-`invalid_request`.
+escaped as `\u0026`, `\u003c` and `\u003e`. U+2028 and U+2029 become `\u2028` and `\u2029`. Tab,
+backspace and form feed become `\t`, `\b` and `\f`, and other control characters become lowercase
+`\u00xx`. The digest is the SHA-256 of those bytes, in lowercase hex. If it differs from
+`expected_job_digest`, co:op refuses the session with `invalid_request`.
 
 To check your encoder, use the [digest test vectors](../testdata/protocol/job-digest-v2.json). Each
 one gives a job, the exact bytes co:op takes the digest of, and the digest. The file also lists
