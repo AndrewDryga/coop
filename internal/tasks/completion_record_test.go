@@ -90,6 +90,31 @@ func TestWriteTaskStateRefusesALineThatReadsAsAField(t *testing.T) {
 	}
 }
 
+// A no-change closure that fails after the move puts the task back where it was, todo included
+// (an assigned task tasks_wait returned to todo), with its records as they were.
+func TestCompleteTaskWithClosureRollsBackToTheOriginalState(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"Fix login retries", "--context", "c", "--acceptance", "a", "--approach", "p", "--subtask", "s"}, StateTodo, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add = (%d, %v)", code, err)
+	}
+	item := mustReadTaskTree(t, root)[0]
+	full := strings.Repeat("x", taskMetadataFileLimit-8) + "\n"
+	writeTaskFile(t, filepath.Join(item.Dir, "log.md"), full)
+	state := readFileString(filepath.Join(item.Dir, "state.md"))
+
+	closure := TaskClosure{Outcome: "already_satisfied", Reason: "r", Evidence: "e"}
+	if err := CompleteTaskWithClosure(root, item, closure); err == nil {
+		t.Fatal("closure with a full log.md was accepted")
+	}
+	current, ok := mustCurrentTask(t, root, item.ID)
+	if !ok || current.State != StateTodo {
+		t.Fatalf("failed closure left the task at %+v, want todo", current)
+	}
+	if readFileString(filepath.Join(current.Dir, "log.md")) != full || readFileString(filepath.Join(current.Dir, "state.md")) != state {
+		t.Fatal("failed closure changed the task's records")
+	}
+}
+
 func TestStateTemplateFields(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

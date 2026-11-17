@@ -274,7 +274,7 @@ func CompleteTaskWithClosure(root string, item Item, closure TaskClosure) error 
 	rollback := func(cause error) error {
 		current := item
 		current.State, current.Dir = StateDone, dir
-		moveErr := MoveTaskDir(root, current, StateInProgress)
+		moveErr := MoveTaskDir(root, current, item.State)
 		if moveErr == nil {
 			moveErr = restoreTaskMetadata(item.Dir, metadata)
 		}
