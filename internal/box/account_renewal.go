@@ -136,7 +136,7 @@ func renewAccountAuthority(ctx context.Context, cfg *config.Config, spec account
 	// Publish even when the answer could not be kept: the issued grant exists only in memory
 	// then, and publishing is what keeps it.
 	next.Renewal = pending.ID
-	published, effect, err := root.publish(spec, account, current, next, nil)
+	published, effect, err := root.publish(spec, account, current, next)
 	if err != nil {
 		return published, effect, errors.Join(err, readinessErr)
 	}
@@ -243,13 +243,10 @@ func (root *accountAuthorityRoot) settleRenewal(spec accountAuthoritySpec, accou
 		return current, errors.Join(errAccountRenewalUncertain, err)
 	}
 	next.Artifacts, next.Renewal = files, pending.ID
-	published, effect, err := root.publish(spec, account, current, next, nil)
-	if err != nil && !effect {
+	published, _, err := root.publish(spec, account, current, next)
+	if err != nil {
 		// The kept answer is still the only copy of the grant; a host sign-in may supersede it.
 		return current, errors.Join(errAccountRenewalUncertain, err)
-	}
-	if err != nil {
-		return published, err
 	}
 	return published, root.clearRenewal()
 }
@@ -312,7 +309,7 @@ func replaceAccountAuthority(ctx context.Context, cfg *config.Config, spec accou
 	if err := ctx.Err(); err != nil {
 		return current, false, err
 	}
-	next, effect, err := root.publish(spec, account, current, next, nil)
+	next, effect, err := root.publish(spec, account, current, next)
 	if err != nil {
 		return next, effect, err
 	}

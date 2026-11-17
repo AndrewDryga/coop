@@ -249,7 +249,7 @@ func TestAccountRenewalArchivesASupersededJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := authorityTestRecord(current.Epoch + 1)
-	if _, _, err := root.publish(spec, "work", current, next, nil); err != nil {
+	if _, _, err := root.publish(spec, "work", current, next); err != nil {
 		t.Fatal(err)
 	}
 	_ = lock.Close()
@@ -280,7 +280,7 @@ func TestAccountRenewalRecoversOnlyExactPublishedReceipt(t *testing.T) {
 			if matches {
 				next.Renewal = pending.ID
 			}
-			if _, effect, err := root.publish(spec, "work", current, next, nil); err != nil || !effect {
+			if _, effect, err := root.publish(spec, "work", current, next); err != nil || !effect {
 				t.Fatal(err)
 			}
 			_ = lock.Close()

@@ -301,9 +301,9 @@ func cloneAccountAuthority(current *accountAuthority) *accountAuthority {
 // publish replaces the envelope with next if its generation follows current coherently. Callers
 // hold the custody lock, so current is what is on disk.
 func (root *accountAuthorityRoot) publish(spec accountAuthoritySpec, account string,
-	current, next *accountAuthority, readinessErr error) (*accountAuthority, bool, error) {
+	current, next *accountAuthority) (*accountAuthority, bool, error) {
 	if next == nil {
-		return current, false, readinessErr
+		return current, false, nil
 	}
 	var epoch, revision uint64
 	if current != nil {
@@ -327,7 +327,7 @@ func (root *accountAuthorityRoot) publish(spec accountAuthoritySpec, account str
 	if err := writeAccountPrivate(root, "authority.json", append(data, '\n')); err != nil {
 		return current, false, err
 	}
-	return next, true, readinessErr
+	return next, true, nil
 }
 
 // writeAccountPrivate publishes one custody record whole: a temp file, fsynced, renamed over name.

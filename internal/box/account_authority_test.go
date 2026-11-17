@@ -28,7 +28,10 @@ func transactAccountAuthority(ctx context.Context, cfg *config.Config, spec acco
 		return current, false, err
 	}
 	next, readinessErr := change(cloneAccountAuthority(current))
-	return root.publish(spec, account, current, next, readinessErr)
+	if record, published, err = root.publish(spec, account, current, next); err == nil {
+		err = readinessErr
+	}
+	return record, published, err
 }
 
 func authorityTestSpec() accountAuthoritySpec {

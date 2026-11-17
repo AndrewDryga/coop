@@ -255,7 +255,7 @@ func removeNativeAuthority(ctx context.Context, cfg *config.Config, provider, ac
 		if current != nil {
 			epoch = current.Epoch + 1
 		}
-		if _, _, err := root.publish(spec, account, current, &accountAuthority{Epoch: epoch, Revoked: true}, nil); err != nil {
+		if _, _, err := root.publish(spec, account, current, &accountAuthority{Epoch: epoch, Revoked: true}); err != nil {
 			return err
 		}
 	}
