@@ -570,7 +570,9 @@ func createTaskFolder(project, root, state, slug, title string, values map[strin
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", setup, err
 	}
-	queue, err := os.OpenRoot(root)
+	// Opened as a real folder (or through its pin), as every reader opens it: a queue root a box
+	// swapped for a link is refused, never written through.
+	queue, err := openQueueRoot(root)
 	if err != nil {
 		return "", setup, err
 	}

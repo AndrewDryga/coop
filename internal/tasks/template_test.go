@@ -274,6 +274,26 @@ func TestQueueTemplateMayHaveAnotherHardLink(t *testing.T) {
 	}
 }
 
+// A queue root a box swapped for a link is refused by every reader, so add refuses it too rather
+// than creating the state folders and the task in the link's target.
+func TestTasksAddRefusesALinkedQueueRoot(t *testing.T) {
+	for state, label := range map[string]string{StateTodo: "tasks add", StateBacklog: "backlog add"} {
+		t.Run(state, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "tasks")
+			other := t.TempDir()
+			if err := os.Symlink(other, root); err != nil {
+				t.Fatal(err)
+			}
+			if code, err := tasksFolderAdd(root, []string{"Planted"}, state, label); code == 0 || err == nil || !strings.Contains(err.Error(), "is a link") {
+				t.Fatalf("%s through a linked queue = %d, %v", label, code, err)
+			}
+			if entries, err := os.ReadDir(other); err != nil || len(entries) != 0 {
+				t.Fatalf("%s wrote through the link: %v, %v", label, entries, err)
+			}
+		})
+	}
+}
+
 // `coop tasks add` creates through the queue folder as the in-box task tool does, so a todo or
 // backlog folder that is a link to another project's is refused, never written through.
 func TestTasksAddRefusesALinkedQueueStateFolder(t *testing.T) {
