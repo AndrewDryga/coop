@@ -2824,14 +2824,17 @@ func (r *sessionTurnRunner) runACP(
 						activity.observePublicMessage(envelope.Params, rungAgent.ACPProgressChunk)
 					}
 					activity.observe(envelope.Params)
-				}
-				transcriptBytes += sessionACPUpdateTranscriptBytes(
-					envelope.Params,
-					len(frame)+1,
-					imageFrame,
-				)
-				if transcriptBytes > sessionACPTranscriptLimit {
-					return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
+					// Only the admitted prompt's own updates are transcript. History an adapter
+					// replays while answering session/load is read and discarded, and would
+					// otherwise fail every turn once a long session's history passed the bound.
+					transcriptBytes += sessionACPUpdateTranscriptBytes(
+						envelope.Params,
+						len(frame)+1,
+						imageFrame,
+					)
+					if transcriptBytes > sessionACPTranscriptLimit {
+						return nil, "", acpFailure(sessionACPProtocolError, "ACP transcript exceeded its bound")
+					}
 				}
 				return nil, "", nil
 			}

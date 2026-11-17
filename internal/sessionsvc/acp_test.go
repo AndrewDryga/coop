@@ -40,6 +40,29 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+// A session without warm execution loads its whole native history on every turn. Once the
+// replayed answers passed the transcript bound, every later turn failed before its prompt was sent.
+func TestReplayedHistoryIsNotChargedToTheTurnTranscript(t *testing.T) {
+	fixture := newSessionACPFixture(t, "long-history")
+	first := fixture.submitWithTools(t, "first prompt")
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := fixture.store.GetSession(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.session = bound
+	second := fixture.submitWithTools(t, "second prompt")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, second)
+	if err != nil {
+		t.Fatalf("a turn after a long replayed history failed: %v", err)
+	}
+	if result.AssistantMessage != "hello world" {
+		t.Fatalf("load history leaked into assistant message: %.40q", result.AssistantMessage)
+	}
+}
+
 func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 	fixture := newSessionACPFixture(t, "normal")
 	first := fixture.submitWithTools(t, "first prompt")
@@ -3740,7 +3763,15 @@ func TestSessionACPChildHelper(t *testing.T) {
 			if scenario == "load-fail" {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "error": map[string]any{"code": -32000, "message": "load failed"}})
 			} else {
-				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": "old history"}}}})
+				history := "old history"
+				replays := 1
+				if scenario == "long-history" {
+					// A long session's replayed answers, past the turn's transcript bound in total.
+					history, replays = strings.Repeat("h", 1<<20), sessionACPTranscriptLimit>>20+2
+				}
+				for range replays {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": history}}}})
+				}
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{}})
 			}
 		case "session/prompt":
