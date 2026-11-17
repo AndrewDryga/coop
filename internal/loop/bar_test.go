@@ -53,6 +53,27 @@ func TestLoopBarReceivesUILines(t *testing.T) {
 	}
 }
 
+// A blank line (ui.Note(""), a blank line of agent output) stays a blank row above the bar instead
+// of vanishing, as it does when the same run is redirected.
+func TestLoopBarKeepsBlankLines(t *testing.T) {
+	var buf bytes.Buffer
+	width := loopWidth(80)
+	region := ui.NewRegion(&buf, width)
+	bar := newLoopBar(region, width, time.Now(), tasks.TaskCounts{Todo: 1}, "demo")
+	bar.history("first")
+	bar.history("")
+	bar.history("second")
+	if !strings.Contains(buf.String(), "\x1b[J\x1b[K\n\x1b[K") {
+		t.Errorf("blank line lost above the bar:\n%q", buf.String())
+	}
+	out := &lineWriter{fn: bar.history}
+	buf.Reset()
+	_, _ = out.Write([]byte("third\n\nfourth\n"))
+	if !strings.Contains(buf.String(), "\x1b[J\x1b[K\n\x1b[K") {
+		t.Errorf("blank output line lost above the bar:\n%q", buf.String())
+	}
+}
+
 func TestLoopBarSpinnerCanFreezeWithoutColor(t *testing.T) {
 	saved := ui.SpinFrames
 	ui.SpinFrames = []string{"S", "T"}

@@ -62,7 +62,14 @@ func (b *loopBar) render(history string) {
 	b.region.Update(history, []string{line})
 }
 
-func (b *loopBar) history(s string) { b.render(s) }
+// history scrolls one line above the bar. An empty line is a real blank row: the region reads an
+// empty history as "nothing to print", so it is sent as a lone newline.
+func (b *loopBar) history(s string) {
+	if s == "" {
+		s = "\n"
+	}
+	b.render(s)
+}
 
 func (b *loopBar) setCounts(c tasks.TaskCounts) {
 	b.mu.Lock()
