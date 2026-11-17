@@ -222,7 +222,7 @@ func quiescenceFailure(state string, err error) error {
 				"This command reads the running session service's database, WAL and index files.",
 			[2]string{"", "Check the --state path, and that the session service is running."})
 	}
-	return ui.CommandFailed(headline, upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+	return ui.CommandFailed(headline, sentence(sessionsvc.BoundedDetail(err.Error())))
 }
 
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
@@ -403,7 +403,7 @@ func runSessionCheck(state string) (int, error) {
 			[2]string{"", "Stop the service, then run the command again."})
 	}
 	if err != nil {
-		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+		return 1, ui.CommandFailed("Could not check session data", sentence(sessionsvc.BoundedDetail(err.Error())))
 	}
 	defer release()
 	store, err := session.CheckStore(state)
@@ -425,7 +425,7 @@ func runSessionCheck(state string) (int, error) {
 			Older: snapshots.Older, Damaged: snapshots.Damaged})
 	}
 	if err != nil {
-		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+		return 1, ui.CommandFailed("Could not check session data", sentence(sessionsvc.BoundedDetail(err.Error())))
 	}
 	if err == nil {
 		var primary sessionsvc.CompanionSnapshotCheck
@@ -436,7 +436,7 @@ func runSessionCheck(state string) (int, error) {
 			Older: primary.Older, Damaged: primary.Damaged})
 	}
 	if err != nil {
-		return 1, ui.CommandFailed("Could not check session data", upperFirstSentence(sessionsvc.BoundedDetail(err.Error())))
+		return 1, ui.CommandFailed("Could not check session data", sentence(sessionsvc.BoundedDetail(err.Error())))
 	}
 	code, err := reportSessionCheck(state, store, records)
 	if err == nil && rebuildable > 0 {
@@ -455,7 +455,7 @@ func reportSessionCheck(state string, store session.StoreCheck, records []worker
 	var refusals, damaged []string
 	newer, current := store.Status == session.StoreTooNew, 0
 	if store.Refusal != nil {
-		refusals = append(refusals, upperFirstSentence(store.Refusal.Error()))
+		refusals = append(refusals, sentence(store.Refusal.Error()))
 	}
 	for _, kind := range records {
 		current += kind.Current

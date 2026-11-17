@@ -103,7 +103,7 @@ func (a *app) admitInteractiveNetwork(spec box.RunSpec, session bool) (capture *
 
 func confirmProjectBuild(ctx context.Context, dockerfile, reason string, confirm func() bool) error {
 	ui.Section("Preparing the project box")
-	ui.Note("  %s", upperFirstSentence(reason))
+	ui.Note("  %s", sentence(reason))
 	ui.Note("  Dockerfile: %s", dockerfile)
 	ui.Note("  Review this saved snapshot and its copied build files before continuing.")
 	ui.Note("  Only these saved files will be built; later checkout edits are not approved.")

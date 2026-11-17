@@ -95,7 +95,7 @@ func extractNetworkFlags(command string, args []string) (networkFlags, []string,
 // URL are the near misses people type, so each is told what to give instead; anything else keeps the
 // validator's own reason.
 func invalidAllowDomain(value, command string, err error) error {
-	cause, example := upperFirstSentence(err.Error()), "docs.example.com"
+	cause, example := sentence(err.Error()), "docs.example.com"
 	if strings.Contains(value, "*") {
 		cause = "Give one exact hostname. For a wildcard, put the rule in a file and pass --egress-rules."
 	} else if host := urlHost(value); host != "" {
@@ -141,19 +141,6 @@ func (f networkFlags) args() ([]string, error) {
 		out = append(out, "--egress-rules", path)
 	}
 	return out, nil
-}
-
-// upperFirstSentence turns a validator's fragment into the sentence the block shows: capitalized,
-// ended. The validators keep their Go-style message for logs and callers that join it into one.
-func upperFirstSentence(s string) string {
-	if s == "" {
-		return s
-	}
-	s = strings.ToUpper(s[:1]) + s[1:]
-	if !strings.HasSuffix(s, ".") {
-		s += "."
-	}
-	return s
 }
 
 // networkFlagExample is the spelling that works for a launch flag given with no value — the same

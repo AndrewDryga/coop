@@ -554,7 +554,7 @@ const acpRebuildingText = "**Rebuilding this project's box.**\n\nYour approved b
 // not wrap a code block, so a sentence in one runs off the panel's edge. Coop knows the rules and the
 // real decision is the review, so a thread sends the person to `coop approve` rather than to their file.
 func acpServicesWaitText(services *box.ServicesNeedRules, waits string) string {
-	blocks := []string{acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: acpSentence(services.Reason) + " " + waits})}
+	blocks := []string{acpctl.ProblemText(acpctl.Problem{Title: acpBoxNotStarting, Detail: sentence(services.Reason) + " " + waits})}
 	if services.Rules != "" {
 		intro := "Run this in this project, on the host, to see the rules to add:"
 		if len(services.Offer()) > 0 {
@@ -562,16 +562,7 @@ func acpServicesWaitText(services *box.ServicesNeedRules, waits string) string {
 		}
 		blocks = append(blocks, intro, acpctl.CodeBlock("coop approve"))
 	}
-	return strings.Join(append(blocks, acpctl.MarkdownText(acpSentence(services.TurnOff))), "\n\n")
-}
-
-// acpSentence makes a part of a refusal stand on its own: a thread has no "cannot start because" for it
-// to follow.
-func acpSentence(part string) string {
-	if part == "" {
-		return ""
-	}
-	return strings.ToUpper(part[:1]) + strings.TrimSuffix(part[1:], ".") + "."
+	return strings.Join(append(blocks, acpctl.MarkdownText(sentence(services.TurnOff))), "\n\n")
 }
 
 // brokenFileReason is what a thread shows of why the project's file does not load. An error can quote

@@ -257,18 +257,8 @@ func presetCreateErr(name string, err error) error {
 			Rows:     [][2]string{{"Help:", "coop help presets init"}},
 		}
 	}
-	return ui.CommandFailed(fmt.Sprintf("Could not create preset %q", name), upperFirst(err.Error())+".",
+	return ui.CommandFailed(fmt.Sprintf("Could not create preset %q", name), sentence(err.Error()),
 		[2]string{"Help:", "coop help presets init"})
-}
-
-// upperFirst starts a borrowed message (a filesystem error, a loader detail) as the sentence the
-// block renders it as, without rewriting what it says.
-func upperFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	r := []rune(s)
-	return strings.ToUpper(string(r[0])) + string(r[1:])
 }
 
 // showPreset prints one preset's full recipe — the path grammar's read at preset depth.

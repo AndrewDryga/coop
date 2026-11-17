@@ -482,7 +482,7 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 		writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked as " + clause + run})
 		return
 	}
-	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: upperFirstSentence(result.Message)})
+	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: sentence(result.Message)})
 }
 
 // netBlockedClause names the boundary that refused a recorded attempt as a noun
@@ -836,7 +836,7 @@ func netBlockedCause(explanation networkstate.EventExplanation, grouped bool) st
 	case "observation_unavailable":
 		return "Coop could not record enough information to explain this attempt."
 	}
-	return upperFirstSentence(explanation.Message)
+	return sentence(explanation.Message)
 }
 
 // netBlockedVerb keeps three different things apart in the title: a policy
