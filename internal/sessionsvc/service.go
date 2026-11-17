@@ -2080,6 +2080,11 @@ func rollbackSessionCreate(
 }
 
 func (s *Service) failServiceOperation(ctx context.Context, id string, err error) error {
+	// The request's own cancellation is the client leaving, not the operation failing. Leave the
+	// row unsettled so a same-key retry reruns it; the stale reconciler settles it otherwise.
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		return &serviceOperationError{operationID: id, err: err}
+	}
 	code := session.CodeOf(err)
 	if code == "" {
 		code = session.CodeInternal
